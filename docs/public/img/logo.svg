@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000">
+  <defs>
+    <!-- Dégradés simples pour chaque face -->
+    <linearGradient id="topGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#E67E22"/>
+      <stop offset="100%" style="stop-color:#E67E22"/>
+    </linearGradient>
+    
+    <linearGradient id="leftGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#D35400"/>
+      <stop offset="100%" style="stop-color:#D35400"/>
+    </linearGradient>
+    
+    <linearGradient id="rightGradient" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#BA4A00"/>
+      <stop offset="100%" style="stop-color:#BA4A00"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="scale(0.9) translate(50,50)">
+    <!-- Face gauche -->
+    <path 
+      d="M 85 310
+        v 400 q 0 37 25 50
+        l 350 190 q 25 10 25 -20
+        v -400 q 0 -37 -25 -50
+        l -350 -190 q -25 -10 -25 20
+        Z"
+      fill="url(#leftGradient)"
+    />
+
+    <!-- Face droite -->
+    <path
+      d="M 910 310
+        v 400 q 0 37 -25 50
+        l -350 190 q -25 10 -25 -20
+        v -400 q 0 -37 25 -50
+        l 350 -190 q 25 -10 25 20
+        Z"
+      fill="url(#rightGradient)"
+    />
+
+    <!-- Face supérieure -->
+    <path
+      d="M 120 270
+        l 345 180 q 30 15 60 0
+        l 345 -180 q 15 -15 0 -30
+        l -345 -180 q -30 -15 -60 0
+        l -345 180 q -15 15 0 30
+        Z"
+      fill="url(#topGradient)"
+    />
+  </g>
+</svg>

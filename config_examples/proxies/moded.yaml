@@ -1,0 +1,6 @@
+domains:
+  - "moded.local"
+addresses:
+  - "127.0.0.1:25568"
+sendProxyProtocol: false
+proxyMode: client_only

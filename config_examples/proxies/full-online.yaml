@@ -1,0 +1,6 @@
+domains:
+  - "full-online.local"
+addresses:
+  - "127.0.0.1:25567"
+sendProxyProtocol: false
+proxyMode: full

@@ -1,0 +1,9 @@
+bind: "127.0.0.1:25565"
+keepAliveTimeout: 30s
+filters:
+  rateLimiter:
+    requestLimit: 10
+    windowLength: 1s
+proxyProtocol:
+  receive: false
+  trustedCIDRs: []

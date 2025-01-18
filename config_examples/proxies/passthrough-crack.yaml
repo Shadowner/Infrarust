@@ -1,0 +1,6 @@
+domains:
+  - "passthrough-crack.local"
+addresses:
+  - "127.0.0.1:25566"
+sendProxyProtocol: false
+proxyMode: passthrough

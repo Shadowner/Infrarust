@@ -1,0 +1,109 @@
+/**
+ * Colors
+ */
+
+:root {
+  /* Base brand colors for Infrarust */
+  --vp-c-rust-1: #d07d0b;
+  --vp-c-rust-2: #b45f06;
+  --vp-c-rust-3: #873e03;
+  --vp-c-rust-soft: rgba(208, 125, 11, 0.14);
+
+  /* Mapping default colors */
+  --vp-c-default-1: var(--vp-c-gray-1);
+  --vp-c-default-2: var(--vp-c-gray-2);
+  --vp-c-default-3: var(--vp-c-gray-3);
+  --vp-c-default-soft: var(--vp-c-gray-soft);
+
+  /* Brand colors mapped to rust */
+  --vp-c-brand-1: var(--vp-c-rust-1);
+  --vp-c-brand-2: var(--vp-c-rust-2);
+  --vp-c-brand-3: var(--vp-c-rust-3);
+  --vp-c-brand-soft: var(--vp-c-rust-soft);
+
+  /* Tips using brand colors */
+  --vp-c-tip-1: var(--vp-c-brand-1);
+  --vp-c-tip-2: var(--vp-c-brand-2);
+  --vp-c-tip-3: var(--vp-c-brand-3);
+  --vp-c-tip-soft: var(--vp-c-brand-soft);
+
+  /* Warning colors - ajustées pour être cohérentes */
+  --vp-c-warning-1: #e9a047;
+  --vp-c-warning-2: #d68a2e;
+  --vp-c-warning-3: #b87324;
+  --vp-c-warning-soft: rgba(233, 160, 71, 0.14);
+
+  /* Danger colors - conservées mais ajustées */
+  --vp-c-danger-1: #cc3e38;
+  --vp-c-danger-2: #b02d28;
+  --vp-c-danger-3: #931f1a;
+  --vp-c-danger-soft: rgba(204, 62, 56, 0.14);
+}
+
+/**
+ * Component: Button
+ */
+
+:root {
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-text: var(--vp-c-white);
+  --vp-button-brand-bg: var(--vp-c-brand-3);
+  --vp-button-brand-hover-border: transparent;
+  --vp-button-brand-hover-text: var(--vp-c-white);
+  --vp-button-brand-hover-bg: var(--vp-c-brand-2);
+  --vp-button-brand-active-border: transparent;
+  --vp-button-brand-active-text: var(--vp-c-white);
+  --vp-button-brand-active-bg: var(--vp-c-brand-1);
+}
+
+/**
+ * Component: Home
+ */
+
+:root {
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: -webkit-linear-gradient(
+    120deg,
+    var(--vp-c-brand-1) 30%,
+    var(--vp-c-brand-3)
+  );
+
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    var(--vp-c-brand-1) 50%,
+    var(--vp-c-brand-3) 50%
+  );
+  --vp-home-hero-image-filter: blur(44px);
+}
+
+@media (min-width: 640px) {
+  :root {
+    --vp-home-hero-image-filter: blur(56px);
+  }
+}
+
+@media (min-width: 960px) {
+  :root {
+    --vp-home-hero-image-filter: blur(68px);
+  }
+}
+
+/**
+ * Component: Custom Block
+ */
+
+:root {
+  --vp-custom-block-tip-border: transparent;
+  --vp-custom-block-tip-text: var(--vp-c-text-1);
+  --vp-custom-block-tip-bg: var(--vp-c-brand-soft);
+  --vp-custom-block-tip-code-bg: var(--vp-c-brand-soft);
+}
+
+/**
+ * Component: Algolia
+ */
+
+.DocSearch {
+  --docsearch-primary-color: var(--vp-c-brand-1) !important;
+}
+

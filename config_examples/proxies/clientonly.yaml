@@ -1,0 +1,6 @@
+domains:
+  - "clientonly.local"
+addresses:
+  - "127.0.0.1:25566"
+sendProxyProtocol: false
+proxyMode: client_only
