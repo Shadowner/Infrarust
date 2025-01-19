@@ -74,30 +74,6 @@
   border-radius: 16px;
 }
 
-
-.VPImage .image-src {
-  position: relative;
-  z-index: 2;
-  transition: transform 0.3s ease;
-}
-
-.VPImage.image-src:hover {
-  transform: scale(1.05);
-}
-
-.VPImage .image-src {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 180px;
-  height: 180px;
-  background: rgba(230, 126, 34, 0.15);
-  filter: blur(20px);
-  border-radius: 50%;
-  z-index: 1;
-}
-
 .image-container {
   width: 100%;
   transform: translate(0px, 0px) !important;
@@ -117,15 +93,45 @@
   align-items: center;
 }
 
-  .clip {
-    font-size: 3.5rem !important;
-    font-weight: 700 !important;
-    margin: 1.5rem 0 0.5rem !important;
-    background: linear-gradient(135deg, #E67E22 0%, #D35400 100%) !important; ;
-    -webkit-background-clip: text !important;
-    -webkit-text-fill-color: transparent !important;
-    animation: titleGlow 4s ease-in-out infinite !important;
-  }
+.clip {
+  font-size: 3.5rem !important;
+  font-weight: 700 !important;
+  margin: 1.5rem 0 0.5rem !important;
+  background: linear-gradient(135deg, #e67e22 0%, #d35400 100%) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  animation: titleGlow 4s ease-in-out infinite !important;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px) scale(0.9); }
+  50% { transform: translateY(-20px) scale(0.9); }
+}
+
+@keyframes shine {
+  0% { stop-color: #E67E22; }
+  50% { stop-color: #F39C12; }
+  100% { stop-color: #E67E22; }
+}
+
+@keyframes rotate {
+  0% { transform: scale(0.9) rotateY(0deg); }
+  100% { transform: scale(0.9) rotateY(360deg); }
+}
+
+img.VPImage.image-src {
+  transition: all 0.2s !important;
+  position: static !important;
+  animation: float 3s ease-in-out infinite !important;
+}
+
+img.VPImage.image-src:hover {
+  animation: rotate 2s ease-in-out forwards !important;
+}
+
+.image-container stop {
+  animation: shine 3s ease-in-out infinite !important;
+}
 
 @keyframes titleGlow {
   0%, 100% {
