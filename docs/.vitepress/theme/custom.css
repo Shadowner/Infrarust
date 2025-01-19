@@ -74,7 +74,6 @@
   border-radius: 16px;
 }
 
-
 .VPImage .image-src {
   position: relative;
   z-index: 2;
@@ -117,15 +116,15 @@
   align-items: center;
 }
 
-  .clip {
-    font-size: 3.5rem !important;
-    font-weight: 700 !important;
-    margin: 1.5rem 0 0.5rem !important;
-    background: linear-gradient(135deg, #E67E22 0%, #D35400 100%) !important; ;
-    -webkit-background-clip: text !important;
-    -webkit-text-fill-color: transparent !important;
-    animation: titleGlow 4s ease-in-out infinite !important;
-  }
+.clip {
+  font-size: 3.5rem !important;
+  font-weight: 700 !important;
+  margin: 1.5rem 0 0.5rem !important;
+  background: linear-gradient(135deg, #e67e22 0%, #d35400 100%) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  animation: titleGlow 4s ease-in-out infinite !important;
+}
 
 @keyframes titleGlow {
   0%, 100% {

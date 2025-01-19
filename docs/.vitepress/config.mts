@@ -1,60 +1,212 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from "vitepress-plugin-mermaid";
 
-// https://vitepress.dev/reference/site-config
-export default defineConfig({
+export default withMermaid({
   title: "Infrarust",
   description: "High-Performance Minecraft Reverse Proxy in Rust",
 
+  locales: {
+    root: {
+      label: 'English',
+      lang: 'en'
+    },
+    fr: {
+      label: 'Français',
+      lang: 'fr', // optional, will be added  as `lang` attribute on `html` tag
+      link: '/fr/', // default /fr/ -- shows on navbar translations menu, can be external
+    }
+  },
+
   head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: 'img/logo.svg' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/img/logo.svg' }],
   ],
 
   themeConfig: {
-    // https://vitepress.dev/reference/default-theme-config
-    logo: { src: 'img/logo.svg', width: 24, height: 24 },
+    logo: { src: '/img/logo.svg', width: 24, height: 24 },
 
     nav: [
       { text: 'Home', link: '/' },
-      { text: 'Guide', link: '/docs/installation' },
-      { text: 'Documentation', link: '/docs/configuration' },
-      { text: 'Reference', link: '/docs/api' }
+      { text: 'Getting Started', link: '/quickstart/' },
+      { text: 'Documentation', link: '/proxy/' },
+      { text: 'API', link: '/api/' },
+      { text: 'Contributing', link: '/development/contributing/' }
     ],
 
-    sidebar: [
-      {
-        text: 'Getting Started',
-        items: [
-          { text: 'Installation', link: '/docs/installation' },
-          { text: 'Quick Start', link: '/docs/quick-start' }
-        ]
-      },
-      {
-        text: 'Configuration',
-        items: [
-          { text: 'Basic Setup', link: '/docs/configuration' },
-          { text: 'Proxy Modes', link: '/docs/proxy-modes' },
-          { text: 'Domain Routing', link: '/docs/domain-routing' }
-        ]
-      },
-      {
-        text: 'Features',
-        items: [
-          { text: 'Authentication', link: '/docs/authentication' },
-          { text: 'Security', link: '/docs/security' },
-          { text: 'Performance', link: '/docs/performance' }
-        ]
-      },
-      {
-        text: 'API Reference',
-        items: [
-          { text: 'Overview', link: '/docs/api' },
-          { text: 'Configuration API', link: '/docs/api/configuration' }
-        ]
-      }
-    ],
+    sidebar: {
+      '/fr/': [
+        {
+          text: 'Pour Commencer',
+          items: [
+            { text: 'Introduction', link: '/fr/quickstart/' },
+            { text: 'Installation', link: '/fr/quickstart/installation' },
+            {
+              text: 'Configuration',
+              link: '/fr/quickstart/configuration/',
+            },
+            {
+              text: 'Déploiement',
+              link: '/fr/quickstart/deployment/',
+            },
+          ]
+        },
+        {
+          text: 'Proxy',
+          link: '/fr/proxy/',
+          items: [
+            { text: 'Performance', link: '/fr/proxy/performance' },
+            {
+              text: 'Modes de Proxy', link: '/fr/proxy/modes', collapsed: true, items: [
+                { text: 'Passthrough', link: '/fr/proxy/modes/passthrough' },
+                { text: 'ClientOnly', link: '/fr/proxy/modes/client-only' },
+                { text: 'Hors-ligne', link: '/fr/proxy/modes/offline' },
+                {
+                  collapsed: true,
+                  text: 'Non fonctionnel', items: [
+                    { text: 'Complet', link: '/fr/proxy/modes/full' },
+                  ]
+                },
+              ]
+            },
+          ]
+        },
+        {
+          text: 'Fonctionnalités',
+          items: [
+            { text: 'Mise en Cache', link: '/fr/features/caching' },
+            { text: 'Rate Limiting', link: '/fr/features/rate-limiting' },
+            {
+              text: 'Feuille de Route', link: "/fr/roadmap/", collapsed: true, items: [
+                { text: 'Authentification', link: '/fr/roadmap/authentication' },
+                { text: 'Système de Plugins', link: '/fr/roadmap/plugins' },
+                { text: 'Télémétrie', link: '/fr/roadmap/telemetry' },
+                { text: 'Api', link: '/fr/roadmap/api' },
+                { text: 'Tableau de bord', link: '/fr/roadmap/dashboard' },
+              ]
+            },
+          ]
+        },
+        {
+          text: "Développement",
+          link: '/fr/development/',
+          collapsed: true,
+          items: [
+            {
+              text: 'Architecture',
+              link: '/fr/development/architecture/',
+              items: [
+                { text: 'Réseau', link: '/fr/development/architecture/network' },
+                { text: 'Protocole', link: '/fr/development/architecture/protocol' },
+                { text: 'Sécurité', link: '/fr/development/architecture/security' }
+              ]
+            },
+            {
+              text: 'API',
+              link: '/fr/development/api/',
+              items: [
+                { text: 'Référence', link: '/fr/development/api/reference' }
+              ]
+            },
+
+          ]
+        },
+        {
+          text: 'Contribuer',
+          items: [],
+          link: '/fr/contributing',
+        },
+      ],
+      '/': [
+        {
+          text: 'Getting Started',
+          items: [
+            { text: 'Introduction', link: '/quickstart/' },
+            { text: 'Installation', link: '/quickstart/installation' },
+            {
+              text: 'Configuration',
+              link: '/quickstart/configuration/',
+            },
+            {
+              text: 'Deployment',
+              link: '/quickstart/deployment/',
+            },
+          ]
+        },
+        {
+          text: 'Proxy',
+          link: '/proxy/',
+          items: [
+            { text: 'Performance', link: '/proxy/performance' },
+            {
+              text: 'Proxy Modes', link: '/proxy/modes', collapsed: true, items: [
+                { text: 'Passthrough', link: '/proxy/modes/passthrough' },
+                { text: 'ClientOnly', link: '/proxy/modes/client-only' },
+                { text: 'Offline', link: '/proxy/modes/offline' },
+                {
+                  collapsed: true,
+                  text: 'Not working', items: [
+                    { text: 'Full', link: '/proxy/modes/full' },
+                  ]
+                },
+              ]
+            },
+          ]
+        },
+        {
+          text: 'Features',
+          items: [
+            { text: 'Caching', link: '/features/caching' },
+            { text: 'Rate Limiting', link: '/features/rate-limiting' },
+            {
+              text: 'Roadmap', link: "/roadmap/", collapsed: true, items: [
+                { text: 'Authentication', link: '/roadmap/authentication' },
+                { text: 'Plugin System', link: '/roadmap/plugins' },
+                { text: 'Telemetry', link: '/roadmap/telemetry' },
+                { text: 'Api', link: '/roadmap/api' },
+                { text: 'Dashboard web', link: '/roadmap/dashboard' },
+              ]
+            },
+          ]
+        },
+        {
+          text: "Development",
+          link: '/development/',
+          collapsed: true,
+          items: [
+            {
+              text: 'Architecture',
+              link: '/development/architecture/',
+              items: [
+                { text: 'Network', link: '/development/architecture/network' },
+                { text: 'Protocol', link: '/development/architecture/protocol' },
+                { text: 'Security', link: '/development/architecture/security' }
+              ]
+            },
+            {
+              text: 'API',
+              link: '/development/api/',
+              items: [
+                { text: 'Reference', link: '/development/api/reference' }
+              ]
+            },
+
+          ]
+        },
+        {
+          text: 'Contributing',
+          link: '/contributing',
+          items: []
+        },
+      ],
+      
+      
+    },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/shadowner/infrarust' }
+      { icon: 'github', link: 'https://github.com/shadowner/infrarust' },
+      {
+        icon: 'discord',
+        link: 'https://discord.gg/uzs5nZsWaB',
+      }
     ],
 
     footer: {
@@ -67,12 +219,11 @@ export default defineConfig({
     }
   },
 
-  // Personnalisation du markdown
   markdown: {
     theme: {
       light: 'github-light',
       dark: 'github-dark'
     },
-    lineNumbers: true
+    lineNumbers: true,
   }
 })

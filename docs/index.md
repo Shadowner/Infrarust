@@ -5,81 +5,93 @@ layout: home
 hero:
   name: "Infrarust"
   text: "High-Performance Minecraft Reverse Proxy"
-  tagline: Propulsez vos serveurs Minecraft avec la puissance de Rust
+  tagline: Power your Minecraft servers with Rust's performance
   image:
     src: /img/logo.svg
     alt: Infrarust Logo
   actions:
     - theme: brand
-      text: Démarrage Rapide →
-      link: /getting-started/
+      text: Quick Start →
+      link: /en/quickstart/
     - theme: alt
       text: Documentation
-      link: /guide/
+      link: /en/proxy/
     - theme: alt
-      text: Voir sur GitHub
+      text: View on GitHub
       link: https://github.com/shadowner/infrarust
 
 features:
   - icon: 🚀
-    title: Performant
-    details: Conçu en Rust pour une efficacité maximale, avec une empreinte mémoire minimale et une utilisation optimisée du CPU.
+    title: Performance
+    details: Built in Rust for maximum efficiency, with minimal memory footprint and optimized CPU usage.
   
   - icon: 🔒
-    title: Sécurité Renforcée
-    details: Système de filtres dynamique intégré
+    title: Enhanced Security
+    details: Built-in dynamic filtering system
   
   - icon: 🌐
-    title: Routage Intelligent
-    details: Support des domaines wildcards et routage multi-domaines pour une flexibilité maximale.
+    title: Smart Routing
+    details: Wildcard domains and multi-domain routing support for maximum flexibility.
   
   - icon: 🔄
-    title: Modes Multiples
-    details: Plusieurs modes d'authentification (ClientOnly, Passthrough, Offline) pour s'adapter à vos besoins.
+    title: Multiple Modes
+    details: Several proxy modes (ClientOnly, Passthrough, Offline) to adapt to your needs.
   
 ---
 
-::: tip VERSION ACTUELLE
-<span class="version-tag">v1.0.0</span> - En développement actif
+::: tip CURRENT VERSION
+<span class="version-tag">v1.0.1</span> - Under active development
 <br>
-<i>Version portable bientôt disponible</i>
 :::
 
-## 🎯 Pourquoi Infrarust ?
+## 🎯 Why Infrarust?
 
-Infrarust est né de la volonté de créer un proxy Minecraft haute performance en tirant parti de la puissance et de la sécurité de Rust. Inspiré par [Infrared](https://infrared.dev/), nous avons repensé l'architecture pour offrir :
+Infrarust was born from the desire to create a high-performance Minecraft proxy by leveraging the power and security of Rust. Inspired by [Infrared](https://infrared.dev/), we redesigned the architecture to offer:
 
-- **Performance maximale** : Écrit en Rust pour des performances natives
-- **Sécurité renforcée** : Protection intégrée contre les attaques
-- **Simplicité d'utilisation** : Configuration intuitive en YAML
-- **Flexibilité totale** : Adapté à toutes les configurations
+- **Maximum Performance**: Written in Rust for native performance
+- **Enhanced Security**: Built-in protection against attacks
+- **Ease of Use**: Intuitive YAML configuration
+- **Total Flexibility**: Adapted to all configurations
 
-## 🚀 Installation Rapide
+## 🚀 Quick Installation
 
 ```bash
-# Installation depuis les sources
+# Install from source
 git clone https://github.com/shadowner/infrarust
 cd infrarust
 cargo build --release
 
-# Ou via cargo
+# Via cargo
 cargo install infrarust
+
+# Or via binaries
+https://github.com/Shadowner/Infrarust/releases/
 ```
 
-## 🛣️ Feuille de Route
+## 🛣️ Roadmap
 
-| Fonctionnalité | Statut |
-|----------------|--------|
-| API REST | 💡 Proposé |
-| Dashboard Web | 💡 Proposé |
-| Support Multi-Version | 💡 Proposé |
-| Version Desktop | 💡 Proposé |
-| Système de Plugins | 💡 Proposé |
+| Feature | Status |
+|---------|--------|
+| REST API | 💡 Proposed |
+| Web Dashboard | 💡 Proposed |
+| Multi-Version Support | 💡 Proposed |
+| Desktop Version | 💡 Proposed |
+| Plugin System | 💡 Proposed |
 
-## 🤝 Rejoignez la Communauté
+## 🤝 Join the Community
 
-Infrarust est un projet open source en pleine croissance. Nous accueillons toutes les contributions !
+Infrarust is a growing open source project. We welcome all contributions!
 
-- 📖 [Guide de Contribution](/contributing/)
-- 💬 [Discord](https://discord.gg/infrarust) #TODO
-- 🐛 [Signaler un Bug](https://github.com/shadowner/infrarust/issues)
+- 📖 [Contribution Guide](/contributing/)
+- 💬 [Discord](https://discord.gg/uzs5nZsWaB)
+- 🐛 [Report a Bug](https://github.com/shadowner/infrarust/issues)
+
+<script>
+
+// TODO: Look for another way with vitepress
+
+if (navigator.language.startsWith('fr') && !localStorage.getItem('redirected')) {
+  window.location.replace('/fr' + window.location.pathname);
+  localStorage.setItem('redirected', 'true');
+}
+</script>
