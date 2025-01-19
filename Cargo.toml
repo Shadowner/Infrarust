@@ -1,6 +1,6 @@
 [package]
 name = "infrarust"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 authors = ["Shadowner"]
 description = "A Rust adaptation of the Infrared Minecraft proxy"
@@ -12,13 +12,11 @@ categories = ["network-programming", "command-line-utilities"]
 keywords = ["networking", "proxy", "minecraft", "gameserver", "protocol"]
 exclude = [
     "docs/*",
+    "!docs/public/img/logo.svg",
     "docker/*",
     "config_examples/*",
     ".github/*",
     ".vscode/*",
-]
-include = [
-    "docs/public/img/logo.svg"
 ]
 
 [dependencies]
