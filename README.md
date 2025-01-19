@@ -52,7 +52,7 @@ A blazing fast Minecraft reverse proxy that allows you to expose multiple Minecr
 
 ### Prerequisites
 
-- Rust 1.75+ and Cargo
+- Rust 1.80+ and Cargo
 
 ### Installation
 
@@ -83,7 +83,7 @@ domains:
   - "hub.minecraft.example.com"
 addresses:
   - "localhost:25566"
-proxyMode: "passthrough"  # Options: passthrough, clientOnly, offline
+proxyMode: "passthrough"  # Options: passthrough, cllient-only, offline
 ```
 
 ## Documentation

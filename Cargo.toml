@@ -1,6 +1,6 @@
 [package]
 name = "infrarust"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 authors = ["Shadowner"]
 description = "A Rust adaptation of the Infrared Minecraft proxy"
@@ -37,7 +37,7 @@ generic-array = "1.2.0"
 # Networking
 proxy-protocol = "0.5"
 ipnetwork = "0.21.1"
-reqwest = { version = "0.12.2", features = ["json"] }
+reqwest = { version = "0.12.2", features = ["json"], default-features = false }
 
 # Utilities
 log = {version = "0.4.25", features = ["release_max_level_info"]}
@@ -82,7 +82,7 @@ panic = "abort"
 
 [profile.dev]
 opt-level = 0
-debug = true
+debug = true     
 
 [[bin]]
 name = "infrarust"
