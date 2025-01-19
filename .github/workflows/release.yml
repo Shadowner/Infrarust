@@ -88,3 +88,19 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/infrarust:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/infrarust:${{ needs.check-release.outputs.version }}
+
+  crate-publish:
+    needs: check-release
+    runs-on: ubuntu-latest
+    steps:
+        - uses: actions/checkout@v4
+          with:
+            ref: v${{ needs.check-release.outputs.version}}
+          
+        - name: Install Rust
+          uses: dtolnay/rust-toolchain@stable
+          
+        - name: Publish to crates.io
+          env:
+            CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          run: cargo publish
