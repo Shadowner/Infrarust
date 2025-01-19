@@ -1,90 +1,42 @@
-name: Version and Release
+name: Release Build
 
 on:
   push:
-    branches:
-      - release
+    branches: [ main ]
 
 jobs:
-  check-main:
+  check-release:
     runs-on: ubuntu-latest
+    if: startsWith(github.event.head_commit.message, 'MAJOR') ||startsWith(github.event.head_commit.message, 'MINOR') || startsWith(github.event.head_commit.message, 'PATCH')
     outputs:
-      proceed: ${{ steps.check.outputs.proceed }}
+      version: ${{ steps.get-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          
-      - name: Check if commit comes from main
-        id: check
-        run: |
-          COMMIT_IN_MAIN=$(git branch -r --contains HEAD | grep 'origin/main' || true)
-          if [ ! -z "$COMMIT_IN_MAIN" ]; then
-            echo "proceed=true" >> $GITHUB_OUTPUT
-          else
-            echo "proceed=false" >> $GITHUB_OUTPUT
-          fi
-
-  version:
-    needs: check-main
-    if: needs.check-main.outputs.proceed == 'true'
-    runs-on: ubuntu-latest
-    outputs:
-      new_version: ${{ steps.semver.outputs.new_version }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       
-      - name: Get commit message
-        id: commit
+      - name: Get version from Cargo.toml
+        id: get-version
         run: |
-          COMMIT_MSG=$(git log -1 --pretty=format:"%s")
-          echo "message=$COMMIT_MSG" >> $GITHUB_OUTPUT
-      
-      - name: Determine version bump
-        id: semver
-        run: |
-          current_version=$(cargo metadata --format-version 1 | jq -r '.packages[0].version')
-          if [[ "${{ steps.commit.outputs.message }}" == *"MAJOR"* ]]; then
-            new_version=$(echo $current_version | awk -F. '{$1 = $1 + 1; $2 = 0; $3 = 0} 1' OFS=.)
-          elif [[ "${{ steps.commit.outputs.message }}" == *"MINOR"* ]]; then
-            new_version=$(echo $current_version | awk -F. '{$2 = $2 + 1; $3 = 0} 1' OFS=.)
-          else
-            new_version=$(echo $current_version | awk -F. '{$3 = $3 + 1} 1' OFS=.)
-          fi
-          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+          VERSION=$(grep '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
           
-      - name: Update Cargo.toml
-        run: |
-          sed -i "s/^version = \".*\"/version = \"${{ steps.semver.outputs.new_version }}\"/" Cargo.toml
-          
-      - name: Commit and tag version
+      - name: Create tag
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add Cargo.toml
-          git commit -m "Bump version to ${{ steps.semver.outputs.new_version }}"
-          git tag v${{ steps.semver.outputs.new_version }}
-          git push && git push --tags
+          git tag "v${{ steps.get-version.outputs.version }}"
+          git push origin "v${{ steps.get-version.outputs.version }}"
 
-  build:
-    needs: [check-main, version]
-    if: needs.check-main.outputs.proceed == 'true'
+  build-and-release:
+    needs: check-release
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: v${{ needs.version.outputs.new_version }}
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
         
       - name: Build
         run: cargo build --release
@@ -94,29 +46,26 @@ jobs:
         run: |
           cd target/release
           if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            mv your_binary_name.exe your_binary_name-${{ needs.version.outputs.new_version }}-windows.exe
+            mv infrarust.exe infrarust-${{ needs.check-release.outputs.version }}-windows.exe
           elif [ "${{ matrix.os }}" == "macos-latest" ]; then
-            mv your_binary_name your_binary_name-${{ needs.version.outputs.new_version }}-macos
+            mv infrarust infrarust-${{ needs.check-release.outputs.version }}-macos
           else
-            mv your_binary_name your_binary_name-${{ needs.version.outputs.new_version }}-linux
+            mv infrarust infrarust-${{ needs.check-release.outputs.version }}-linux
           fi
 
       - name: Upload to release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ needs.version.outputs.new_version }}
-          files: target/release/your_binary_name-*
+          tag_name: v${{ needs.check-release.outputs.version }}
+          files: target/release/infrarust-*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
-    needs: [check-main, version]
-    if: needs.check-main.outputs.proceed == 'true'
+    needs: check-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: v${{ needs.version.outputs.new_version }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -137,22 +86,5 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            shadowner/infrarust:latest
-            shadowner/infrarust:${{ needs.version.outputs.new_version }}
-
-  publish:
-    needs: [check-main, version, build, docker]
-    if: needs.check-main.outputs.proceed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: v${{ needs.version.outputs.new_version }}
-          
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        
-      - name: Publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+            ${{ secrets.DOCKERHUB_USERNAME }}/infrarust:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/infrarust:${{ needs.check-release.outputs.version }}
