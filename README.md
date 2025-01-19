@@ -122,5 +122,5 @@ Infrarust is licensed under the GNU Affero General Public License v3.0 - see the
 
 <br />
 <p align="center">
-  <img height="60" src="assets/agplv3_logo.svg"/>
+  <img height="60" src="docs/public/img/agplv3_logo.svg"/>
 </p>

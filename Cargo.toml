@@ -17,6 +17,9 @@ exclude = [
     ".github/*",
     ".vscode/*",
 ]
+include = [
+    "docs/public/img/logo.svg"
+]
 
 [dependencies]
 # Async runtime
