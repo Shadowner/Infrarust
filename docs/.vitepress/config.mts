@@ -12,8 +12,8 @@ export default withMermaid({
     },
     fr: {
       label: 'Français',
-      lang: 'fr', // optional, will be added  as `lang` attribute on `html` tag
-      link: '/fr/', // default /fr/ -- shows on navbar translations menu, can be external
+      lang: 'fr', 
+      link: '/fr/',
     }
   },
 
@@ -28,8 +28,7 @@ export default withMermaid({
       { text: 'Home', link: '/' },
       { text: 'Getting Started', link: '/quickstart/' },
       { text: 'Documentation', link: '/proxy/' },
-      { text: 'API', link: '/api/' },
-      { text: 'Contributing', link: '/development/contributing/' }
+      { text: 'Contributing', link: '/contributing/' }
     ],
 
     sidebar: {

@@ -2,6 +2,9 @@
 
 ClientOnly mode ensures Minecraft client authentication while allowing plugin usage. It works with servers configured with `online_mode=false`.
 
+:::warning
+Actually ClientOnly mode only work with vanilla minecraft < 1.20, no Forge / Fabric support at the moment [#6](https://github.com/Shadowner/Infrarust/issues/6)
+:::
 
 ## Operation
 

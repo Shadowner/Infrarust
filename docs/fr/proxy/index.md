@@ -1,6 +1,9 @@
 # Vue d'Ensemble du Proxy
 
 Infrarust est un proxy inverse Minecraft haute performance écrit en Rust. Cette page explique son fonctionnement et son architecture.
+:::warning
+Le mode ClientOnly ne fonctionne qu'avec minecraft vanilla < 1.20, pas de support Forge / Fabric pour le moment [#6](https://github.com/Shadowner/Infrarust/issues/6)
+:::
 
 ## Architecture Générale
 

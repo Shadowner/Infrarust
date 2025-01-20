@@ -12,10 +12,10 @@ hero:
   actions:
     - theme: brand
       text: Quick Start →
-      link: /en/quickstart/
+      link: /quickstart/
     - theme: alt
       text: Documentation
-      link: /en/proxy/
+      link: /proxy/
     - theme: alt
       text: View on GitHub
       link: https://github.com/shadowner/infrarust
