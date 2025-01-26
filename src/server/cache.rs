@@ -3,6 +3,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use log::debug;
+
 use crate::{
     network::{packet::Packet, proxy_protocol::ProtocolResult},
     version::Version,
@@ -44,7 +46,7 @@ impl StatusCache {
 
         let mut conn = server.dial().await?;
         let response = self.fetch_status(&mut conn, req).await?;
-
+        debug!("Caching status response for {:?}", server.config.addresses);
         self.entries.insert(
             key,
             CacheEntry {
@@ -61,8 +63,10 @@ impl StatusCache {
         conn: &mut ServerConnection,
         req: &ServerRequest,
     ) -> ProtocolResult<Packet> {
-        conn.write_packet(&req.read_packets[0]).await?;
-        conn.write_packet(&req.read_packets[1]).await?;
+        debug!("ReadPacket: {:?}", req.read_packets[0]);
+        debug!("ReadPacket: {:?}", req.read_packets[1]);
+        conn.write_packet(&req.read_packets[0].clone()).await?;
+        conn.write_packet(&req.read_packets[1].clone()).await?;
         conn.read_packet().await
     }
 

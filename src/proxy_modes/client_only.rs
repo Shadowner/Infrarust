@@ -43,7 +43,7 @@ impl ProxyModeHandler for ClientOnlyMode {
         proxy_protocol: Version,
     ) -> io::Result<()> {
         let mut client_encryption = EncryptionState::new();
-        let server = response.server_conn;
+        let server = response.server_conn.unwrap();
         let server_addr = server.peer_addr().await?;
 
         debug!("=== Starting client-only mode ===");

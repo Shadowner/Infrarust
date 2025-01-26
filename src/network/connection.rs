@@ -7,13 +7,20 @@ use tokio::{
 
 use crate::EncryptionState;
 
+use super::packet::io::RawPacketIO;
 use super::packet::{Packet, PacketReader, PacketResult, PacketWriter};
 use super::proxy_protocol::ProtocolResult;
+
+pub enum PossibleReadValue {
+    Packet(Packet),
+    Raw(Vec<u8>),
+}
 
 pub struct Connection {
     reader: PacketReader<BufReader<OwnedReadHalf>>,
     writer: PacketWriter<BufWriter<OwnedWriteHalf>>,
     timeout: Duration,
+    raw_mode: bool,
 }
 
 impl Connection {
@@ -25,7 +32,12 @@ impl Connection {
             reader: PacketReader::new(BufReader::new(read_half)),
             writer: PacketWriter::new(BufWriter::new(write_half)),
             timeout: Duration::from_secs(30),
+            raw_mode: false,
         })
+    }
+
+    pub async fn enable_raw_mode(&mut self) {
+        self.raw_mode = true;
     }
 
     pub async fn connect<A: tokio::net::ToSocketAddrs>(addr: A) -> io::Result<Self> {
@@ -60,6 +72,32 @@ impl Connection {
 
     pub async fn write_packet(&mut self, packet: &Packet) -> ProtocolResult<()> {
         self.writer.write_packet(packet).await
+    }
+
+    pub async fn write_raw(&mut self, data: &[u8]) -> ProtocolResult<()> {
+        Ok(self.writer.write_raw(data).await?)
+    }
+
+    pub async fn write(&mut self, data: PossibleReadValue) -> ProtocolResult<()> {
+        match data {
+            PossibleReadValue::Packet(packet) => self.write_packet(&packet).await?,
+            PossibleReadValue::Raw(data) => self.write_raw(&data).await?,
+        }
+        Ok(())
+    }
+
+    pub async fn read(&mut self) -> PacketResult<PossibleReadValue> {
+        if self.raw_mode {
+            let data = match self.reader.read_raw().await? {
+                Some(data) => data,
+                None => return Ok(PossibleReadValue::Raw(Vec::new())),
+            };
+
+            Ok(PossibleReadValue::Raw(data.into()))
+        } else {
+            let packet = self.reader.read_packet().await?;
+            Ok(PossibleReadValue::Packet(packet))
+        }
     }
 
     pub async fn close(&mut self) -> PacketResult<()> {
@@ -160,5 +198,17 @@ impl ServerConnection {
 
     pub async fn write_packet(&mut self, packet: &Packet) -> ProtocolResult<()> {
         self.connection.write_packet(packet).await
+    }
+
+    pub async fn write_raw(&mut self, data: &[u8]) -> ProtocolResult<()> {
+        self.connection.write_raw(data).await
+    }
+
+    pub async fn write(&mut self, data: PossibleReadValue) -> ProtocolResult<()> {
+        self.connection.write(data).await
+    }
+
+    pub async fn read(&mut self) -> PacketResult<PossibleReadValue> {
+        self.connection.read().await
     }
 }

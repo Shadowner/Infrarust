@@ -21,7 +21,7 @@ impl ProxyModeHandler for FullMode {
         proxy_protocol: Version,
     ) -> io::Result<()> {
         if let Some(_addr) = response.server_addr {
-            let mut server = response.server_conn;
+            let mut server = response.server_conn.unwrap();
             let mut encryption_started = false;
 
             debug!("Forwarding initial handshake packets in full mode");

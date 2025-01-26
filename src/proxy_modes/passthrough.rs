@@ -20,7 +20,7 @@ impl ProxyModeHandler for PassthroughMode {
             let server = response.server_conn;
 
             let (mut client_read, mut client_write) = client.into_split_raw();
-            let (mut server_read, mut server_write) = server.into_split_raw();
+            let (mut server_read, mut server_write) = server.unwrap().into_split_raw();
             client_read.set_protocol_version(protocol_version);
             server_read.set_protocol_version(protocol_version);
 

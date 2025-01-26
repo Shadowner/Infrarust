@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::io;
 
 #[async_trait::async_trait]
-pub trait ProxyModeHandler: Send + Sync {
+pub trait ProxyModeHandler {
     async fn handle(
         &self,
         client: Connection,
