@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use log::debug;
 use tokio::net::TcpStream;
 
@@ -9,11 +11,11 @@ use crate::{
 
 #[derive(Clone)]
 pub struct Server {
-    pub config: ServerConfig,
+    pub config: Arc<ServerConfig>,
 }
 
 impl Server {
-    pub fn new(config: ServerConfig) -> ProtocolResult<Self> {
+    pub fn new(config: Arc<ServerConfig>) -> ProtocolResult<Self> {
         if config.addresses.is_empty() {
             return Err(ProxyProtocolError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -26,7 +28,9 @@ impl Server {
     pub async fn dial(&self) -> ProtocolResult<ServerConnection> {
         let mut last_error = None;
 
-        debug!("Dialing server: {:?}", self.config.addresses);
+
+
+        debug!("Dialing server with ping: {:?}", self.config.addresses);
 
         for addr in &self.config.addresses {
             match TcpStream::connect(addr).await {

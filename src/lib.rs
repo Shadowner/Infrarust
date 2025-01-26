@@ -6,9 +6,12 @@
 
 // Core modules
 pub mod core;
-pub use core::config::{FileProvider, FileType, InfrarustConfig};
+use core::config::provider::file::{FileProvider, FileType};
+use core::config::provider::ConfigProvider;
+pub use core::config::InfrarustConfig;
 pub use core::error::RsaError;
 use core::error::SendError;
+use core::event::{GatewayMessage, ProviderMessage};
 use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
@@ -50,9 +53,11 @@ pub use security::{
 // Server implementation
 pub mod server;
 
-use server::gateway::ServerGateway;
+use serde::de;
+use server::gateway::Gateway;
 use server::{ServerRequest, ServerRequester, ServerResponse};
 use tokio::net::TcpListener;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 
 use crate::version::Version;
@@ -62,22 +67,55 @@ pub struct Infrarust {
     filter_chain: FilterChain,
     //TODO: For future use
     _connections: Arc<Mutex<HashMap<String, Connection>>>,
-    server_gateway: Arc<ServerGateway>,
+    server_gateway: Arc<Gateway>,
+
+    gateway_sender: Sender<GatewayMessage>,
+    provider_sender: Sender<ProviderMessage>,
 }
 
 impl Infrarust {
     pub fn new(config: InfrarustConfig) -> io::Result<Self> {
-        let server_gateway = Arc::new(ServerGateway::new(config.server_configs.clone()));
+        let (gateway_sender, gateway_receiver) = tokio::sync::mpsc::channel(100);
+        let (provider_sender, provider_receiver) = tokio::sync::mpsc::channel(100);
+
+        let server_gateway = Arc::new(Gateway::new(gateway_sender.clone()));
+        let mut config_provider = ConfigProvider::new(
+            gateway_sender.clone(),
+            provider_receiver,
+            provider_sender.clone(),
+        );
+
+        let file_provider = FileProvider::new(
+            vec!["./config/proxies.yml".to_string()],
+            FileType::Yaml,
+            true,
+            provider_sender.clone(),
+        );
+
+        let guard = server_gateway.clone();
+        tokio::spawn(async move {
+            debug!("Starting Gateway");
+            guard.clone().run(gateway_receiver).await;
+        });
+
+        tokio::spawn(async move {
+            debug!("Starting ConfigProvider");
+            config_provider.register_provider(Box::new(file_provider));
+            config_provider.run().await;
+        });
 
         Ok(Self {
             config: config.clone(),
             filter_chain: FilterChain::new(),
             _connections: Arc::new(Mutex::new(HashMap::new())),
             server_gateway,
+            gateway_sender,
+            provider_sender,
         })
     }
 
     pub async fn run(self: Arc<Self>) -> Result<(), SendError> {
+        debug!("Starting Infrarust server");
         let bind_addr = self.config.bind.clone().unwrap_or_default();
         let listener = TcpListener::bind(&bind_addr).await?;
         info!("Listening on {}", bind_addr);
@@ -94,7 +132,7 @@ impl Infrarust {
 
                             filter_chain.filter(&stream).await?;
                             let conn = Connection::new(stream).await?;
-                            Self::handle_connection(conn, server_gateway).await?;
+                            Self::handle_connection(this, conn, server_gateway).await?;
 
                             Ok::<_, SendError>(())
                         }
@@ -112,8 +150,9 @@ impl Infrarust {
     }
 
     async fn handle_connection(
+        this: Arc<Self>,
         mut client: Connection,
-        server_gateway: Arc<ServerGateway>,
+        server_gateway: Arc<Gateway>,
     ) -> io::Result<()> {
         let handshake_packet = client.read_packet().await?;
         let handshake = ServerBoundHandshake::from_packet(&handshake_packet)?;
@@ -124,30 +163,49 @@ impl Infrarust {
 
         let second_packet = client.read_packet().await?;
         let protocol_version = Version::from(handshake.protocol_version.0);
-        let response = match server_gateway
-            .request_server(ServerRequest {
-                client_addr: client.peer_addr().await?,
-                domain: domain.clone(),
-                is_login: handshake.is_login_request(),
-                protocol_version,
-                read_packets: [handshake_packet, second_packet],
-            })
-            .await
-        {
-            Ok(resp) => resp,
-            Err(e) => {
-                error!("Failed to find server for domain '{}': {}", domain, e);
-                return Err(io::Error::new(io::ErrorKind::NotFound, e.to_string()));
-            }
-        };
 
-        if handshake.is_status_request() {
-            debug!("Handling status request for domain: {}", domain);
-            return Self::handle_status(client, response).await;
-        }
+        let client_addr = client.peer_addr().await?;
+        tokio::spawn(async move {
+            Gateway::handle_client_connection(
+                client,
+                ServerRequest {
+                    client_addr: client_addr,
+                    domain: domain.clone(),
+                    is_login: handshake.is_login_request(),
+                    protocol_version,
+                    read_packets: [handshake_packet, second_packet],
+                },
+                server_gateway,
+            )
+            .await;
+        });
 
-        debug!("Handling login request for domain: {}", domain);
-        Self::handle_login(client, response, protocol_version).await
+        Ok(())
+
+        // let response = match server_gateway
+        //     .request_server(ServerRequest {
+        //         client_addr: client.peer_addr().await?,
+        //         domain: domain.clone(),
+        //         is_login: handshake.is_login_request(),
+        //         protocol_version,
+        //         read_packets: [handshake_packet, second_packet],
+        //     })
+        //     .await
+        // {
+        //     Ok(resp) => resp,
+        //     Err(e) => {
+        //         error!("Failed to find server for domain '{}': {}", domain, e);
+        //         return Err(io::Error::new(io::ErrorKind::NotFound, e.to_string()));
+        //     }
+        // };
+
+        // if handshake.is_status_request() {
+        //     debug!("Handling status request for domain: {}", domain);
+        //     return Self::handle_status(client, response).await;
+        // }
+
+        // debug!("Handling login request for domain: {}", domain);
+        // Self::handle_login(this, client, response, protocol_version).await
     }
 
     async fn handle_status(mut client: Connection, mut response: ServerResponse) -> io::Result<()> {
@@ -202,46 +260,52 @@ impl Infrarust {
         Ok(())
     }
 
-    async fn handle_login(
-        client: Connection,
-        response: ServerResponse,
-        protocol_version: Version,
-    ) -> io::Result<()> {
-        let proxy_mode: Box<dyn ProxyModeHandler> = match response.proxy_mode {
-            ProxyModeEnum::Passthrough => Box::new(PassthroughMode),
-            ProxyModeEnum::Full => Box::new(FullMode),
-            ProxyModeEnum::ClientOnly => Box::new(ClientOnlyMode),
-            ProxyModeEnum::Offline => Box::new(OfflineMode),
-            ProxyModeEnum::ServerOnly => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Server-only mode not supported yet",
-                ))
-            }
-        };
+    // async fn handle_login(
+    //     this: Arc<Self>,
+    //     client: Connection,
+    //     response: ServerResponse,
+    //     protocol_version: Version,
+    // ) -> io::Result<()> {
+    //     let proxy_mode: Box<dyn ProxyModeHandler> = match response.proxy_mode {
+    //         ProxyModeEnum::Passthrough => Box::new(PassthroughMode),
+    //         ProxyModeEnum::Full => Box::new(FullMode),
+    //         ProxyModeEnum::ClientOnly => Box::new(ClientOnlyMode),
+    //         ProxyModeEnum::Offline => Box::new(OfflineMode),
+    //         ProxyModeEnum::ServerOnly => {
+    //             return Err(io::Error::new(
+    //                 io::ErrorKind::Other,
+    //                 "Server-only mode not supported yet",
+    //             ))
+    //         }
+    //     };
+    //     let server_gateway = Arc::clone(&this.server_gateway);
 
-        let login_start = &response.read_packets[1];
-        let username = ServerBoundLoginStart::try_from(login_start)?.name.0;
-        let server_addr = response.server_addr;
-        info!(
-            "Handling login request for user: {} on {}({}) in ProxyMode : {:?}",
-            username,
-            response
-                .proxied_domain
-                .clone()
-                .unwrap_or("Direct IP".to_string()),
-            server_addr
-                .map(|addr| addr.to_string())
-                .unwrap_or_else(|| "Unknown".to_string()),
-            response.proxy_mode
-        );
+    //     let login_start = &response.read_packets[1];
+    //     let username = ServerBoundLoginStart::try_from(login_start)?.name.0;
+    //     let server_addr = response.server_addr;
+    //     info!(
+    //         "Handling login request for user: {} on {}({}) in ProxyMode : {:?}",
+    //         username,
+    //         response
+    //             .proxied_domain
+    //             .clone()
+    //             .unwrap_or("Direct IP".to_string()),
+    //         server_addr
+    //             .map(|addr| addr.to_string())
+    //             .unwrap_or_else(|| "Unknown".to_string()),
+    //         response.proxy_mode
+    //     );
 
-        debug!(
-            "Handling login request with proxy mode: {:?}",
-            response.proxy_mode
-        );
-        proxy_mode.handle(client, response, protocol_version).await
-    }
+    //     debug!(
+    //         "Handling login request with proxy mode: {:?}",
+    //         response.proxy_mode
+    //     );
+
+    //     server_gateway
+    //         .handle_full_connection(client, response)
+    //         .await;
+    //     Ok(())
+    // }
 }
 
 #[cfg(test)]
