@@ -10,6 +10,7 @@ use crate::{
         event::{GatewayMessage, MinecraftCommunication},
     },
     network::connection::PossibleReadValue,
+    proxy_modes::{self, ServerProxyModeHandler},
     server::{self, gateway, ServerRequest, ServerResponse},
     ServerConnection,
 };
@@ -22,21 +23,23 @@ pub enum ServerEvent {
     Shutdown,
 }
 
-struct MinecraftServer {
-    server_request: Option<ServerResponse>,
-    gateway_receiver: mpsc::Receiver<GatewayMessage>,
+pub struct MinecraftServer<T> {
+    pub server_request: Option<ServerResponse>,
+    pub gateway_receiver: mpsc::Receiver<GatewayMessage>,
 
-    client_sender: mpsc::Sender<MinecraftCommunication>,
-    server_receiver: mpsc::Receiver<MinecraftCommunication>,
-    is_login: bool,
+    pub client_sender: mpsc::Sender<T>,
+    pub server_receiver: mpsc::Receiver<T>,
+
+    pub is_login: bool,
 }
 
-impl MinecraftServer {
+impl<T> MinecraftServer<T> {
     fn new(
         gateway_receiver: mpsc::Receiver<GatewayMessage>,
 
-        client_sender: mpsc::Sender<MinecraftCommunication>,
-        server_receiver: mpsc::Receiver<MinecraftCommunication>,
+        client_sender: mpsc::Sender<T>,
+        server_receiver: mpsc::Receiver<T>,
+
         is_login: bool,
     ) -> Self {
         Self {
@@ -54,44 +57,18 @@ impl MinecraftServer {
         }
     }
 
-    async fn handle_message(&mut self, message: MinecraftCommunication) {
-        match message {
-            MinecraftCommunication::Packet(packet) => {
-                debug!("Received packet from: {:?}", packet);
-                // We are sure that the server_request is Some because we only receive packets after a server request
-                if let Some(server_conn) = &mut self.server_request.as_mut().unwrap().server_conn {
-                    let _ = server_conn.write_packet(&packet).await;
-                }
-            }
-            MinecraftCommunication::RawData(data) => {
-                debug!("Received raw data: {:?}", data);
-                // We are sure that the server_request is Some because we only receive packets after a server request
-
-                if let Some(server_conn) = &mut self.server_request.as_mut().unwrap().server_conn {
-                    let _ = server_conn.write_raw(&data).await;
-                }
-            }
-            MinecraftCommunication::Shutdown => {
-                info!("Shutting down Minecraft Server Actor");
-                if let Some(server_conn) = &mut self.server_request.as_mut().unwrap().server_conn {
-                    let _ = server_conn.close().await;
-                }
-            }
-            _ => {}
-        }
-    }
-
     fn set_server_request(&mut self, request: ServerResponse) {
         self.server_request = Some(request);
-        // Handle any initialization needed with the new server request
     }
 }
 
-async fn start_minecraft_server_actor(
-    mut actor: MinecraftServer,
+async fn start_minecraft_server_actor<T>(
+    mut actor: MinecraftServer<MinecraftCommunication<T>>,
     oneshot: oneshot::Receiver<ServerResponse>,
-) {
-    debug!("Starting Minecraft Server Actor");
+    proxy_mode: Box<dyn ServerProxyModeHandler<MinecraftCommunication<T>>>,
+) where
+    T: Send + 'static,
+{
     let client_sender = actor.client_sender.clone();
 
     // Wait for the server request in a separate task to not block message processing
@@ -108,83 +85,47 @@ async fn start_minecraft_server_actor(
         }
     };
 
-    debug!("Received server request: {:?}", request.proxied_domain);
+    actor.server_request = Some(request);
 
-    let packets = request.read_packets.clone();
-
-    if request.status_response.is_some() {
-        debug!("Sending status response to client");
-        let _ = actor
-            .client_sender
-            .send(MinecraftCommunication::Packet(
-                request.status_response.unwrap(),
-            ))
-            .await;
-
-        let ping_packet = match actor.server_receiver.recv().await {
-            Some(MinecraftCommunication::Packet(packet)) => packet,
-            _ => {
-                debug!("Failed to receive ping packet from server");
+    if let Some(request) = &actor.server_request {
+        match proxy_mode.initialize_server(&mut actor).await {
+            Ok(_) => {}
+            Err(e) => {
+                warn!("Failed to initialize server proxy mode: {:?}", e);
                 client_sender
                     .send(MinecraftCommunication::Shutdown)
                     .await
                     .unwrap();
+                debug!("Shutting down Minecraft Server Actor");
                 return;
             }
         };
-
-        debug!("Received ping packet from server: {:?}", ping_packet);
-        actor
-            .client_sender
-            .send(MinecraftCommunication::Packet(ping_packet))
-            .await
-            .unwrap();
-
-        client_sender
-            .send(MinecraftCommunication::Shutdown)
-            .await
-            .unwrap();
-        return;
     }
 
-    actor.set_server_request(request);
 
-    debug!("Sending packets to server : {:?}", packets);
-    for packet in packets {
-        debug!("Sending packet to server: {:?}", packet);
-        actor
-            .handle_message(MinecraftCommunication::Packet(packet))
-            .await;
-    }
-    debug!("Finished sending packets to server");
-
+    debug!("Starting Minecraft Server Actor for ID");
     loop {
         if let Some(server_request) = &mut actor.server_request {
+            if server_request.status_response.is_some() {
+                debug!("Server request is a status response");
+                break;
+            }
+
             if let Some(server_conn) = &mut server_request.server_conn {
                 tokio::select! {
                     Some(msg) = actor.gateway_receiver.recv() => {
                         actor.handle_gateway_message(msg);
                     }
                     Some(msg) = actor.server_receiver.recv() => {
-                        actor.handle_message(msg).await;
+                        let _ = proxy_mode.handle_internal_server(msg, &mut actor).await;
                     }
                     Ok(read_value) = server_conn.read() => {
-                        match read_value {
-                            PossibleReadValue::Packet(packet) => {
-                                debug!("Received packet from Server: {:?}", packet);
-                                let _ = actor.client_sender.send(MinecraftCommunication::Packet(packet)).await;
-
-                            },
-                            PossibleReadValue::Raw(data) => {
-                                debug!("Received raw data from Server: {:?}", data.len());
-                                let _ = actor.client_sender.send(MinecraftCommunication::RawData(data)).await;
-                            }
-                        }
+                        let _ = proxy_mode.handle_external_server(read_value, &mut actor).await;
                     }
                     else => break,
                 }
             } else {
-                warn!("Server connection is None");
+                warn!("Server connection is None L114");
                 break;
             }
         } else {
@@ -200,23 +141,28 @@ pub struct MinecraftServerHandler {
 }
 
 impl MinecraftServerHandler {
-    pub fn new(
-        client_sender: mpsc::Sender<MinecraftCommunication>,
-        server_receiver: mpsc::Receiver<MinecraftCommunication>,
+    pub fn new<T: Send + 'static>(
+        client_sender: mpsc::Sender<MinecraftCommunication<T>>,
+        server_receiver: mpsc::Receiver<MinecraftCommunication<T>>,
         is_login: bool,
         request_server: oneshot::Receiver<ServerResponse>,
+        proxy_mode: Box<dyn ServerProxyModeHandler<MinecraftCommunication<T>>>,
     ) -> Self {
-        let (sender, receiver) = mpsc::channel(100);
+        let (sender, receiver) = mpsc::channel(64);
 
         let actor = MinecraftServer::new(receiver, client_sender, server_receiver, is_login);
-        tokio::spawn(start_minecraft_server_actor(actor, request_server));
+        tokio::spawn(start_minecraft_server_actor(
+            actor,
+            request_server,
+            proxy_mode,
+        ));
 
         Self {
             sender_to_actor: sender,
         }
     }
 
-    pub fn send_message(&self, message: GatewayMessage) {
-        self.sender_to_actor.send(message);
+    pub async fn send_message(&self, message: GatewayMessage) {
+        let _ = self.sender_to_actor.send(message).await;
     }
 }

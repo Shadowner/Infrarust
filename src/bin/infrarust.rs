@@ -9,7 +9,10 @@ use std::process;
 use std::sync::Arc;
 use std::time::Duration;
 
-use infrarust::{core::config::{provider::file::FileProvider, InfrarustConfig}, Infrarust};
+use infrarust::{
+    core::config::{provider::file::FileProvider, InfrarustConfig},
+    Infrarust,
+};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

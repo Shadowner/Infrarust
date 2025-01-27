@@ -1,4 +1,8 @@
-use super::ProxyModeHandler;
+use super::{ClientProxyModeHandler, ProxyMessage, ProxyModeMessageType, ServerProxyModeHandler};
+use crate::core::actors::client::MinecraftClient;
+use crate::core::actors::server::{self, MinecraftServer};
+use crate::core::event::MinecraftCommunication;
+use crate::network::connection::PossibleReadValue;
 use crate::network::{connection::Connection, packet::io::RawPacketIO};
 use crate::server::ServerResponse;
 use crate::version::Version;
@@ -8,80 +12,147 @@ use std::io::{self};
 
 pub struct PassthroughMode;
 
+#[derive(Debug)]
+pub enum PassthroughMessage {
+    RawData(Vec<u8>),
+}
+
 #[async_trait]
-impl ProxyModeHandler for PassthroughMode {
-    async fn handle(
+impl ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for PassthroughMode {
+    async fn handle_internal_client(
         &self,
-        client: Connection,
-        response: ServerResponse,
-        protocol_version: Version,
+        message: MinecraftCommunication<PassthroughMessage>,
+        actor: &mut MinecraftClient<MinecraftCommunication<PassthroughMessage>>,
     ) -> io::Result<()> {
-        if let Some(_addr) = response.server_addr {
-            let server = response.server_conn;
-
-            let (mut client_read, mut client_write) = client.into_split_raw();
-            let (mut server_read, mut server_write) = server.unwrap().into_split_raw();
-            client_read.set_protocol_version(protocol_version);
-            server_read.set_protocol_version(protocol_version);
-
-            // Forward initial handshake packets
-            debug!("Forwarding initial handshake packets in passthrough mode");
-            for packet in response.read_packets {
-                debug!("Client -> Server: Packet ID: 0x{:02x}", packet.id);
-                match packet.into_raw() {
-                    Ok(data) => server_write.write_raw(&data).await?,
-                    Err(e) => {
-                        error!("Failed to convert packet to raw data: {}", e);
-                        continue;
-                    }
-                }
+        match message {
+            MinecraftCommunication::RawData(data) => {
+                actor.conn.write_raw(&data).await?;
             }
+            MinecraftCommunication::Shutdown => {
+                debug!("Shutting down client (Received Shutdown message)");
+                actor.conn.close().await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 
-            debug!("=== Login sequence completed, entering play phase ===");
-
-            loop {
-                tokio::select! {
-                    result = client_read.read_raw() => {
-                        match result {
-                            Ok(Some(data)) => {
-                                debug!("Client -> Server: Raw data length: {}", data.len());
-                                if let Err(e) = server_write.write_raw(&data).await {
-                                    error!("Failed to write to server: {}", e);
-                                    break;
-                                }
-                            }
-                            Ok(None) => {
-                                debug!("Client disconnected cleanly");
-                                break;
-                            }
-                            Err(e) => {
-                                error!("Client read error: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                    result = server_read.read_raw() => {
-                        match result {
-                            Ok(Some(data)) => {
-                                debug!("Server -> Client: Raw data length: {}", data.len());
-                                if let Err(e) = client_write.write_raw(&data).await {
-                                    error!("Failed to write to client: {}", e);
-                                    break;
-                                }
-                            }
-                            Ok(None) => {
-                                debug!("Server disconnected cleanly");
-                                break;
-                            }
-                            Err(e) => {
-                                error!("Server read error: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                }
+    async fn handle_external_client(
+        &self,
+        data: PossibleReadValue,
+        actor: &mut MinecraftClient<MinecraftCommunication<PassthroughMessage>>,
+    ) -> io::Result<()> {
+        match data {
+            PossibleReadValue::Raw(data) => {
+                let _ = actor
+                    .server_sender
+                    .send(MinecraftCommunication::RawData(data))
+                    .await;
+            }
+            _ => {
+                debug!("Shutting down client ");
+                let _ = actor
+                    .server_sender
+                    .send(MinecraftCommunication::Shutdown)
+                    .await;
             }
         }
         Ok(())
     }
+
+    async fn initialize_client(
+        &self,
+        actor: &mut MinecraftClient<MinecraftCommunication<PassthroughMessage>>,
+    ) -> io::Result<()> {
+        debug!("Initializing client passthrough proxy mode");
+
+        actor.conn.enable_raw_mode();
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for PassthroughMode {
+    async fn handle_external_server(
+        &self,
+        data: PossibleReadValue,
+        actor: &mut MinecraftServer<MinecraftCommunication<PassthroughMessage>>,
+    ) -> io::Result<()> {
+        match data {
+            PossibleReadValue::Raw(data) => {
+                let _ = actor
+                    .client_sender
+                    .send(MinecraftCommunication::RawData(data))
+                    .await;
+            }
+            _ => {
+                debug!("Shutting down server");
+                let _ = actor
+                    .client_sender
+                    .send(MinecraftCommunication::Shutdown)
+                    .await;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_internal_server(
+        &self,
+        message: MinecraftCommunication<PassthroughMessage>,
+        actor: &mut MinecraftServer<MinecraftCommunication<PassthroughMessage>>,
+    ) -> io::Result<()> {
+        match message {
+            MinecraftCommunication::RawData(data) => {
+                actor
+                    .server_request
+                    .as_mut()
+                    .unwrap()
+                    .server_conn
+                    .as_mut()
+                    .unwrap()
+                    .write_raw(&data)
+                    .await?;
+            }
+            MinecraftCommunication::Shutdown => {
+                debug!("Shutting down server (Received Shutdown message)");
+                actor
+                    .server_request
+                    .as_mut()
+                    .unwrap()
+                    .server_conn
+                    .as_mut()
+                    .unwrap()
+                    .close()
+                    .await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn initialize_server(
+        &self,
+        actor: &mut MinecraftServer<MinecraftCommunication<PassthroughMessage>>,
+    ) -> io::Result<()> {
+        debug!("Initializing server passthrough proxy mode");
+        if let Some(server_request) = &mut actor.server_request {
+            if let Some(server_conn) = &mut server_request.server_conn {
+                for packet in server_request.read_packets.iter() {
+                    server_conn.write_packet(packet).await?;
+                }
+                server_conn.enable_raw_mode();
+            } else {
+                error!("Server connection is None");
+            }
+        } else {
+            error!("Server request is None");
+        }
+        Ok(())
+    }
+}
+impl ProxyMessage for PassthroughMessage {}
+
+impl ProxyModeMessageType for PassthroughMode {
+    type Message = PassthroughMessage;
 }

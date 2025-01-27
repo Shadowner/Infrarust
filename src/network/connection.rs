@@ -36,7 +36,7 @@ impl Connection {
         })
     }
 
-    pub async fn enable_raw_mode(&mut self) {
+    pub fn enable_raw_mode(&mut self) {
         self.raw_mode = true;
     }
 
@@ -210,5 +210,9 @@ impl ServerConnection {
 
     pub async fn read(&mut self) -> PacketResult<PossibleReadValue> {
         self.connection.read().await
+    }
+
+    pub fn enable_raw_mode(&mut self) {
+        self.connection.enable_raw_mode();
     }
 }

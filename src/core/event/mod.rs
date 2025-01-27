@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::network::packet::Packet;
+use crate::{network::packet::Packet, proxy_modes::passthrough::PassthroughMessage};
 
 use super::config::ServerConfig;
 
@@ -26,8 +26,9 @@ pub enum ProviderMessage {
 }
 
 #[derive(Debug, Clone)]
-pub enum MinecraftCommunication {
+pub enum MinecraftCommunication<T> {
     RawData(Vec<u8>),
     Packet(Packet),
     Shutdown,
+    CustomData(T),
 }
