@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{any::Any, collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use log::{debug, info, warn};
@@ -15,6 +15,11 @@ use crate::{
         event::{GatewayMessage, MinecraftCommunication},
     },
     network::proxy_protocol::{errors::ProxyProtocolError, ProtocolResult},
+    proxy_modes::{
+        passthrough::{PassthroughMessage, PassthroughMode},
+        status::{StatusMessage, StatusMode},
+        ClientProxyModeHandler, ProxyModeEnum, ServerProxyModeHandler,
+    },
     Connection,
 };
 
@@ -88,8 +93,6 @@ impl Gateway {
         request: ServerRequest,
         gateway: Arc<Gateway>,
     ) {
-        let (server_sender, server_receiver) = mpsc::channel::<MinecraftCommunication>(64);
-        let (client_sender, client_receiver) = mpsc::channel::<MinecraftCommunication>(64);
         let (oneshot_request_sender, oneshot_request_receiver) =
             oneshot::channel::<ServerResponse>();
 
@@ -102,38 +105,91 @@ impl Gateway {
         };
 
         let is_login = request.is_login.clone();
+        if !is_login {
+            debug!("Handling status request for domain: {}", request.domain);
+            let c_mode: Box<dyn ClientProxyModeHandler<MinecraftCommunication<StatusMessage>>> =
+                Box::new(StatusMode);
+            let s_mode: Box<dyn ServerProxyModeHandler<MinecraftCommunication<StatusMessage>>> =
+                Box::new(StatusMode);
+            let (s_tx, s_rx) = mpsc::channel(1);
+            let (c_tx, c_rx) = mpsc::channel(1);
 
-        // Create client actor
-        let mut client_lock = gateway.client_actors.write().await;
-        let serv_id = server_config.config_id.clone();
-        let client_actor = client_lock
-            .entry(serv_id.clone())
-            .or_insert_with(|| std::sync::Mutex::new(vec![]));
+            let client = MinecraftClientHandler::new(s_tx, c_rx, c_mode, client_conn, is_login);
+            let server =
+                MinecraftServerHandler::new(c_tx, s_rx, is_login, oneshot_request_receiver, s_mode);
+            let config_id = server_config.config_id.clone();
+            let gateway_handle = gateway.clone();
+            tokio::spawn(async move {
+                gateway.register_client_actor(&config_id, client).await;
+                gateway.register_server_actor(&config_id, server).await;
+            });
 
-        let client = MinecraftClientHandler::new(server_sender, client_receiver, client_conn, is_login);
-        client_actor.lock().unwrap().push(client);
+            tokio::spawn(async move {
+                match gateway_handle.wake_up_server(request, server_config).await {
+                    Ok(response) => {
+                        debug!("Received server response: sending to Server Actor");
+                        let _ = oneshot_request_sender.send(response);
+                    }
+                    Err(e) => {
+                        warn!("Failed to request server: {:?}", e);
+                    }
+                }
+            });
 
-        // Create server actor
-        let server = MinecraftServerHandler::new(
-            client_sender,
-            server_receiver,
-            is_login,
-            oneshot_request_receiver,
-        );
+            return;
+        }
 
-        let mut server_lock = gateway.server_actors.write().await;
-        let server_actor = server_lock
-            .entry(serv_id.clone())
-            .or_insert_with(|| std::sync::Mutex::new(vec![]));
+        match server_config.proxy_mode.clone().unwrap() {
+            ProxyModeEnum::Passthrough => {
+                let client_handler: Box<
+                    dyn ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>>,
+                > = Box::new(PassthroughMode);
+                let server_handler: Box<
+                    dyn ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>>,
+                > = Box::new(PassthroughMode);
+                let (server_sender, server_receiver) =
+                    mpsc::channel::<MinecraftCommunication<PassthroughMessage>>(64);
+                let (client_sender, client_receiver) =
+                    mpsc::channel::<MinecraftCommunication<PassthroughMessage>>(64);
 
-        server_actor.lock().unwrap().push(server);
+                let client = MinecraftClientHandler::new(
+                    server_sender,
+                    client_receiver,
+                    client_handler,
+                    client_conn,
+                    is_login,
+                );
+
+                let server = MinecraftServerHandler::new(
+                    client_sender,
+                    server_receiver,
+                    is_login,
+                    oneshot_request_receiver,
+                    server_handler,
+                );
+
+                let config_id = server_config.config_id.clone();
+                let gateway_handle = gateway.clone();
+                tokio::spawn(async move {
+                    gateway_handle
+                        .register_client_actor(&config_id, client)
+                        .await;
+                    gateway_handle
+                        .register_server_actor(&config_id, server)
+                        .await;
+                });
+            }
+            ProxyModeEnum::ServerOnly => {
+                panic!("ServerOnly mode not implemented yet");
+            }
+        };
 
         // Spawn server request task
         let gateway_handle = gateway.clone();
         tokio::spawn(async move {
             match gateway_handle.wake_up_server(request, server_config).await {
                 Ok(response) => {
-                    debug!("Received server response: sending to client");
+                    debug!("Received server response: sending to Server Actor");
                     let _ = oneshot_request_sender.send(response);
                 }
                 Err(e) => {
@@ -141,6 +197,24 @@ impl Gateway {
                 }
             }
         });
+    }
+
+    async fn register_client_actor(&self, server_id: &str, client: MinecraftClientHandler) {
+        let mut client_lock = self.client_actors.write().await;
+        let client_actor = client_lock
+            .entry(server_id.to_string())
+            .or_insert_with(|| std::sync::Mutex::new(vec![]));
+
+        client_actor.lock().unwrap().push(client);
+    }
+
+    async fn register_server_actor(&self, server_id: &str, server: MinecraftServerHandler) {
+        let mut server_lock = self.server_actors.write().await;
+        let server_actor = server_lock
+            .entry(server_id.to_string())
+            .or_insert_with(|| std::sync::Mutex::new(vec![]));
+
+        server_actor.lock().unwrap().push(server);
     }
 
     async fn find_server(&self, domain: &str) -> Option<Arc<ServerConfig>> {

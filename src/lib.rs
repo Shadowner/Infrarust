@@ -39,11 +39,7 @@ pub use network::{
     proxy_protocol::{write_proxy_protocol_header, ProxyProtocolConfig},
 };
 pub mod proxy_modes;
-use proxy_modes::client_only::ClientOnlyMode;
-use proxy_modes::full::FullMode;
-use proxy_modes::offline::OfflineMode;
 use proxy_modes::passthrough::PassthroughMode;
-use proxy_modes::{ProxyModeEnum, ProxyModeHandler};
 pub use security::{
     encryption::EncryptionState,
     filter::{Filter, FilterChain, FilterConfig},
@@ -86,7 +82,10 @@ impl Infrarust {
         );
 
         let file_provider = FileProvider::new(
-            vec!["./config/proxies.yml".to_string()],
+            vec![
+                "./proxies"
+                    .to_string(),
+            ],
             FileType::Yaml,
             true,
             provider_sender.clone(),
