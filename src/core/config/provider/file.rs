@@ -234,9 +234,9 @@ impl FileProvider {
         last_paths: &HashMap<PathBuf, Instant>,
         debounce_duration: Duration,
     ) -> bool {
-        last_paths.get(path).map_or(false, |last_time| {
-            now.duration_since(*last_time) < debounce_duration
-        })
+        last_paths
+            .get(path)
+            .is_some_and(|last_time| now.duration_since(*last_time) < debounce_duration)
     }
 
     fn create_watcher(&self, file_event_tx: Sender<FileEvent>) -> io::Result<RecommendedWatcher> {
@@ -311,6 +311,9 @@ impl Provider for FileProvider {
             }
         }
 
+        //HACK: This is a workaround to keep the task running
+        // Until the sender is opened
+        #[allow(clippy::never_loop)]
         loop {
             let sender = self.sender.clone();
             tokio::select! {

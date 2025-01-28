@@ -54,10 +54,8 @@ impl<T> MinecraftServer<T> {
         }
     }
 
-    fn handle_gateway_message(&mut self, message: GatewayMessage) -> io::Result<()> {
-        match message {
-            _ => Ok(()),
-        }
+    fn handle_gateway_message(&mut self, _message: GatewayMessage) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -89,7 +87,7 @@ async fn start_minecraft_server_actor<T>(
     actor.server_request = Some(request);
 
     // Just to ensure that the initialize_server has the request
-    if let Some(_) = &actor.server_request {
+    if actor.server_request.is_some() {
         match proxy_mode.initialize_server(&mut actor).await {
             Ok(_) => {}
             Err(_e) => {
@@ -103,6 +101,8 @@ async fn start_minecraft_server_actor<T>(
                 return;
             }
         };
+    } else {
+        warn!("Server request is None");
     }
 
     debug!("Starting Minecraft Server Actor for ID");
@@ -123,16 +123,12 @@ async fn start_minecraft_server_actor<T>(
                         }
                     }
                     Some(msg) = actor.server_receiver.recv() => {
-                        match msg {
-                            MinecraftCommunication::Shutdown => {
-                                debug!("Shutting down server (Received Shutdown message)");
-                                server_conn.close().await.unwrap();
-                                actor.server_receiver.close();
-                                shutdown_flag.store(true, Ordering::SeqCst);
-                            }
-                            _ => {}
-
-                        };
+                        if let MinecraftCommunication::Shutdown = msg {
+                             debug!("Shutting down server (Received Shutdown message)");
+                             server_conn.close().await.unwrap();
+                             actor.server_receiver.close();
+                             shutdown_flag.store(true, Ordering::SeqCst);
+                         };
 
                         if let Err(e) = proxy_mode.handle_internal_server(msg, &mut actor).await {
                             warn!("Internal handler error: {:?}", e);

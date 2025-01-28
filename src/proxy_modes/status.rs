@@ -19,11 +19,8 @@ impl ClientProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
         message: MinecraftCommunication<StatusMessage>,
         actor: &mut MinecraftClient<MinecraftCommunication<StatusMessage>>,
     ) -> io::Result<()> {
-        match message {
-            MinecraftCommunication::Packet(data) => {
-                actor.conn.write_packet(&data).await?;
-            }
-            _ => {}
+        if let MinecraftCommunication::Packet(data) = message {
+            actor.conn.write_packet(&data).await?;
         }
         Ok(())
     }
@@ -33,14 +30,11 @@ impl ClientProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
         data: PossibleReadValue,
         actor: &mut MinecraftClient<MinecraftCommunication<StatusMessage>>,
     ) -> io::Result<()> {
-        match data {
-            PossibleReadValue::Packet(data) => {
-                let _ = actor
-                    .server_sender
-                    .send(MinecraftCommunication::Packet(data))
-                    .await;
-            }
-            _ => {}
+        if let PossibleReadValue::Packet(data) = data {
+            let _ = actor
+                .server_sender
+                .send(MinecraftCommunication::Packet(data))
+                .await;
         }
         Ok(())
     }
@@ -60,14 +54,11 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
         data: PossibleReadValue,
         actor: &mut MinecraftServer<MinecraftCommunication<StatusMessage>>,
     ) -> io::Result<()> {
-        match data {
-            PossibleReadValue::Packet(data) => {
-                let _ = actor
-                    .client_sender
-                    .send(MinecraftCommunication::Packet(data))
-                    .await;
-            }
-            _ => {}
+        if let PossibleReadValue::Packet(data) = data {
+            let _ = actor
+                .client_sender
+                .send(MinecraftCommunication::Packet(data))
+                .await;
         }
 
         Ok(())
@@ -78,19 +69,16 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
         message: MinecraftCommunication<StatusMessage>,
         actor: &mut MinecraftServer<MinecraftCommunication<StatusMessage>>,
     ) -> io::Result<()> {
-        match message {
-            MinecraftCommunication::Packet(data) => {
-                actor
-                    .server_request
-                    .as_mut()
-                    .unwrap()
-                    .server_conn
-                    .as_mut()
-                    .unwrap()
-                    .write_packet(&data)
-                    .await?;
-            }
-            _ => {}
+        if let MinecraftCommunication::Packet(data) = message {
+            actor
+                .server_request
+                .as_mut()
+                .unwrap()
+                .server_conn
+                .as_mut()
+                .unwrap()
+                .write_packet(&data)
+                .await?;
         }
         Ok(())
     }

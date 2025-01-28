@@ -10,6 +10,12 @@ pub struct ConfigurationService {
     configurations: Arc<RwLock<HashMap<String, Arc<ServerConfig>>>>,
 }
 
+impl Default for ConfigurationService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfigurationService {
     pub fn new() -> Self {
         Self {

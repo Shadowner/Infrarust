@@ -157,7 +157,7 @@ impl Infrarust {
             Gateway::handle_client_connection(
                 client,
                 ServerRequest {
-                    client_addr: client_addr,
+                    client_addr,
                     domain: domain.clone(),
                     is_login: handshake.is_login_request(),
                     protocol_version,

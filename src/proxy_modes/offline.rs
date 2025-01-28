@@ -40,14 +40,11 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         data: PossibleReadValue,
         actor: &mut MinecraftClient<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
-        match data {
-            PossibleReadValue::Packet(data) => {
-                let _ = actor
-                    .server_sender
-                    .send(MinecraftCommunication::Packet(data))
-                    .await;
-            }
-            _ => {}
+        if let PossibleReadValue::Packet(data) = data {
+            let _ = actor
+                .server_sender
+                .send(MinecraftCommunication::Packet(data))
+                .await;
         }
         Ok(())
     }
@@ -68,16 +65,12 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         data: PossibleReadValue,
         actor: &mut MinecraftServer<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
-        match data {
-            PossibleReadValue::Packet(data) => {
-                let _ = actor
-                    .client_sender
-                    .send(MinecraftCommunication::Packet(data))
-                    .await;
-            }
-            _ => {}
+        if let PossibleReadValue::Packet(data) = data {
+            let _ = actor
+                .client_sender
+                .send(MinecraftCommunication::Packet(data))
+                .await;
         }
-
         Ok(())
     }
 

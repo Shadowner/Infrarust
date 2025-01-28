@@ -59,14 +59,11 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         data: PossibleReadValue,
         actor: &mut MinecraftClient<MinecraftCommunication<ClientOnlyMessage>>,
     ) -> io::Result<()> {
-        match data {
-            PossibleReadValue::Packet(data) => {
-                let _ = actor
-                    .server_sender
-                    .send(MinecraftCommunication::Packet(data))
-                    .await;
-            }
-            _ => {}
+        if let PossibleReadValue::Packet(data) = data {
+            let _ = actor
+                .server_sender
+                .send(MinecraftCommunication::Packet(data))
+                .await;
         }
         Ok(())
     }
