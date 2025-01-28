@@ -48,10 +48,8 @@ impl<T> MinecraftClient<T> {
         }
     }
 
-    fn handle_gateway_message(&mut self, message: GatewayMessage) {
-        match message {
-            _ => {}
-        }
+    fn handle_gateway_message(&mut self, _message: GatewayMessage) {
+        {}
     }
 }
 async fn start_minecraft_client_actor<T>(
@@ -76,14 +74,12 @@ async fn start_minecraft_client_actor<T>(
                 actor.handle_gateway_message(msg);
             }
             Some(msg) = actor.client_receiver.recv() => {
-                match msg {
-                    MinecraftCommunication::Shutdown => {
-                        shutdown_flag.store(true, Ordering::SeqCst);
-                        actor.client_receiver.close();
-                        let _ = actor.conn.close().await;
-                    }
-                    _ => {}
+                if let MinecraftCommunication::Shutdown = msg {
+                     shutdown_flag.store(true, Ordering::SeqCst);
+                     actor.client_receiver.close();
+                     let _ = actor.conn.close().await;
                 }
+
                 match proxy_mode.handle_internal_client(msg, &mut actor).await {
                     Ok(_) => {}
                     Err(e) => {

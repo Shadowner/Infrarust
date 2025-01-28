@@ -22,14 +22,11 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         data: PossibleReadValue,
         actor: &mut MinecraftServer<MinecraftCommunication<ClientOnlyMessage>>,
     ) -> io::Result<()> {
-        match data {
-            PossibleReadValue::Packet(data) => {
-                let _ = actor
-                    .client_sender
-                    .send(MinecraftCommunication::Packet(data))
-                    .await;
-            }
-            _ => {}
+        if let PossibleReadValue::Packet(data) = data {
+            let _ = actor
+                .client_sender
+                .send(MinecraftCommunication::Packet(data))
+                .await;
         }
 
         Ok(())

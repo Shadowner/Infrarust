@@ -71,16 +71,15 @@ impl ConfigProvider {
         debug!("Registering provider: {}", provider.get_name());
         let sender = self.provider_sender.clone();
         tokio::spawn(async move {
-            match provider.run().await {
-                _ => {
-                    debug!("Provider finished: {}", provider.get_name());
-                    sender
-                        .send(ProviderMessage::Error(
-                            "Unexpected end for provider".to_string(),
-                        ))
-                        .await
-                        .unwrap();
-                }
+            provider.run().await;
+            {
+                debug!("Provider finished: {}", provider.get_name());
+                sender
+                    .send(ProviderMessage::Error(
+                        "Unexpected end for provider".to_string(),
+                    ))
+                    .await
+                    .unwrap();
             };
         });
     }

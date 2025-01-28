@@ -32,16 +32,21 @@ use crate::{
 use super::{backend::Server, cache::StatusCache, ServerRequest, ServerRequester, ServerResponse};
 use crate::core::config::service::ConfigurationService;
 
+//TODO: In the future I think this will be replaced by a more generic actor system
+// For plugin handling
+type ClientActorMap =
+    HashMap<String, std::sync::Mutex<Vec<(MinecraftClientHandler, Arc<AtomicBool>)>>>;
+type ServerActorMap =
+    HashMap<String, std::sync::Mutex<Vec<(MinecraftServerHandler, Arc<AtomicBool>)>>>;
+
 pub struct Gateway {
     config_service: Arc<ConfigurationService>,
     status_cache: Arc<Mutex<StatusCache>>,
     _sender: mpsc::Sender<GatewayMessage>,
 
     // The string represents the id provided by a Provider
-    client_actors:
-        RwLock<HashMap<String, std::sync::Mutex<Vec<(MinecraftClientHandler, Arc<AtomicBool>)>>>>,
-    server_actors:
-        RwLock<HashMap<String, std::sync::Mutex<Vec<(MinecraftServerHandler, Arc<AtomicBool>)>>>>,
+    client_actors: RwLock<ClientActorMap>,
+    server_actors: RwLock<ServerActorMap>,
 }
 
 impl Gateway {
@@ -61,6 +66,9 @@ impl Gateway {
     }
 
     pub async fn run(&self, mut receiver: mpsc::Receiver<GatewayMessage>) {
+        //TODO: For future use
+        // Keep the gateway running until a shutdown message is received
+        #[allow(clippy::never_loop)]
         while let Some(message) = receiver.recv().await {
             match message {
                 GatewayMessage::Shutdown => break,
