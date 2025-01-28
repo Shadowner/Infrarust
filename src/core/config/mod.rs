@@ -1,4 +1,5 @@
 pub mod provider;
+pub mod service;
 use std::io::{self, Read};
 use std::time::Duration;
 use std::{fs, path::Path};

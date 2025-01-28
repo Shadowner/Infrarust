@@ -1,5 +1,4 @@
 use std::{
-    any::Any,
     collections::HashMap,
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
@@ -11,12 +10,11 @@ use tokio::sync::{
     mpsc::{self},
     oneshot, Mutex, RwLock,
 };
-use wildmatch::WildMatch;
 
 use crate::{
     core::{
         actors::{client::MinecraftClientHandler, server::MinecraftServerHandler},
-        config::{self, ServerConfig},
+        config::ServerConfig,
         event::{GatewayMessage, MinecraftCommunication},
     },
     network::proxy_protocol::{errors::ProxyProtocolError, ProtocolResult},
@@ -32,10 +30,10 @@ use crate::{
 };
 
 use super::{backend::Server, cache::StatusCache, ServerRequest, ServerRequester, ServerResponse};
+use crate::core::config::service::ConfigurationService;
 
 pub struct Gateway {
-    configurations: RwLock<HashMap<String, Arc<ServerConfig>>>,
-
+    config_service: Arc<ConfigurationService>,
     status_cache: Arc<Mutex<StatusCache>>,
     _sender: mpsc::Sender<GatewayMessage>,
 
@@ -46,27 +44,15 @@ pub struct Gateway {
         RwLock<HashMap<String, std::sync::Mutex<Vec<(MinecraftServerHandler, Arc<AtomicBool>)>>>>,
 }
 
-#[derive(Clone)]
-pub struct GatewayHandle {
-    inner: Arc<Gateway>,
-}
-
-impl GatewayHandle {
-    fn new(gateway: Arc<Gateway>) -> Self {
-        Self { inner: gateway }
-    }
-
-    pub async fn request_server(&self, request: ServerRequest) -> ProtocolResult<ServerResponse> {
-        self.inner.request_server(request).await
-    }
-}
-
 impl Gateway {
-    pub fn new(sender: mpsc::Sender<GatewayMessage>) -> Self {
+    pub fn new(
+        sender: mpsc::Sender<GatewayMessage>,
+        config_service: Arc<ConfigurationService>,
+    ) -> Self {
         info!("Initializing ServerGateway");
 
         Self {
-            configurations: RwLock::new(HashMap::new()),
+            config_service,
             _sender: sender,
             client_actors: RwLock::new(HashMap::new()),
             server_actors: RwLock::new(HashMap::new()),
@@ -77,18 +63,6 @@ impl Gateway {
     pub async fn run(&self, mut receiver: mpsc::Receiver<GatewayMessage>) {
         while let Some(message) = receiver.recv().await {
             match message {
-                GatewayMessage::ConfigurationUpdate { key, configuration } => {
-                    debug!("Configuration update received for key: {}", key);
-
-                    match configuration {
-                        Some(config) => {
-                            self.update_configurations(vec![config]).await;
-                        }
-                        None => {
-                            self.remove_configuration(&key).await;
-                        }
-                    }
-                }
                 GatewayMessage::Shutdown => break,
                 _ => {
                     debug!("Received unknown message: {:?}", message);
@@ -98,15 +72,13 @@ impl Gateway {
     }
 
     pub async fn update_configurations(&self, configurations: Vec<ServerConfig>) {
-        let mut config_lock = self.configurations.write().await;
-        for config in configurations {
-            config_lock.insert(config.config_id.clone(), Arc::new(config));
-        }
+        self.config_service
+            .update_configurations(configurations)
+            .await;
     }
 
     pub async fn remove_configuration(&self, config_id: &str) {
-        let mut config_lock = self.configurations.write().await;
-        config_lock.remove(config_id);
+        self.config_service.remove_configuration(config_id).await;
     }
 
     pub async fn handle_client_connection(
@@ -127,7 +99,7 @@ impl Gateway {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
 
         let is_login = request.is_login.clone();
-        if !is_login {
+        if (!is_login) {
             debug!("Handling status request for domain: {}", request.domain);
             let c_mode: Box<dyn ClientProxyModeHandler<MinecraftCommunication<StatusMessage>>> =
                 Box::new(StatusMode);
@@ -350,44 +322,11 @@ impl Gateway {
     }
 
     async fn find_server(&self, domain: &str) -> Option<Arc<ServerConfig>> {
-        let domain = domain.to_lowercase();
-        let time = std::time::Instant::now();
-        warn!("Start waiting for lock in find_server : {}", domain);
-        let serv_guard = self.configurations.read().await;
-        let elapsed = time.elapsed();
-        warn!(
-            "End waiting for lock in find_server : {}, {}s",
-            domain,
-            elapsed.as_micros()
-        );
-
-        let result = serv_guard.values().cloned().into_iter().find(|server| {
-            debug!("Checking server: {:?}", server);
-            server.domains.iter().any(|pattern| {
-                let matches = WildMatch::new(pattern).matches(&domain);
-                debug!(
-                    "Checking pattern '{}' against '{}': {}",
-                    pattern, domain, matches
-                );
-                matches
-            })
-        });
-        if result.is_none() {
-            debug!(
-                "Available patterns: {:?}",
-                serv_guard.keys().collect::<Vec<_>>()
-            );
-        }
-
-        result
+        self.config_service.find_server_by_domain(domain).await
     }
 
     pub async fn get_server_from_ip(&self, ip: &str) -> Option<Arc<ServerConfig>> {
-        let serv_guard = self.configurations.read().await;
-        serv_guard
-            .iter()
-            .find(|(_, server)| server.addresses.contains(&ip.to_string()))
-            .map(|(_, server)| Arc::clone(server))
+        self.config_service.find_server_by_ip(ip).await
     }
 }
 
