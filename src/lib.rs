@@ -8,6 +8,7 @@
 pub mod core;
 use core::config::provider::file::{FileProvider, FileType};
 use core::config::provider::ConfigProvider;
+use core::config::service::ConfigurationService;
 pub use core::config::InfrarustConfig;
 pub use core::error::RsaError;
 use core::error::SendError;
@@ -59,6 +60,7 @@ use tokio::sync::Mutex;
 use crate::version::Version;
 
 pub struct Infrarust {
+    _config_service: Arc<ConfigurationService>,
     config: InfrarustConfig,
     filter_chain: FilterChain,
     //TODO: For future use
@@ -71,12 +73,18 @@ pub struct Infrarust {
 
 impl Infrarust {
     pub fn new(config: InfrarustConfig) -> io::Result<Self> {
+        let config_service = Arc::new(ConfigurationService::new());
+        
         let (gateway_sender, gateway_receiver) = tokio::sync::mpsc::channel(100);
         let (provider_sender, provider_receiver) = tokio::sync::mpsc::channel(100);
 
-        let server_gateway = Arc::new(Gateway::new(gateway_sender.clone()));
-        let mut config_provider = ConfigProvider::new(
+        let server_gateway = Arc::new(Gateway::new(
             gateway_sender.clone(),
+            config_service.clone()
+        ));
+
+        let mut config_provider = ConfigProvider::new(
+            config_service.clone(),
             provider_receiver,
             provider_sender.clone(),
         );
@@ -104,7 +112,8 @@ impl Infrarust {
         });
 
         Ok(Self {
-            config: config.clone(),
+            _config_service: config_service.clone(), 
+            config,
             filter_chain: FilterChain::new(),
             _connections: Arc::new(Mutex::new(HashMap::new())),
             server_gateway,

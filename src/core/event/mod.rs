@@ -7,10 +7,6 @@ use super::config::ServerConfig;
 
 #[derive(Debug, Clone)]
 pub enum GatewayMessage {
-    ConfigurationUpdate {
-        key: String,
-        configuration: Option<ServerConfig>,
-    },
     Shutdown,
 }
 
