@@ -1,31 +1,13 @@
 pub mod client;
 pub mod server;
 
-use crate::network::connection::Connection;
-use crate::network::packet::{Packet, PacketCodec};
+use crate::network::packet::Packet;
 use crate::protocol::minecraft::java::handshake::ServerBoundHandshake;
-use crate::protocol::minecraft::java::login::clientbound_loginsuccess::{
-    ClientBoundLoginSuccess, Property,
-};
-use crate::protocol::minecraft::java::login::{
-    ClientBoundEncryptionRequest, ServerBoundEncryptionResponse,
-};
-use crate::protocol::types::{Boolean, Byte, ByteArray, ProtocolString, UnsignedShort, VarInt};
-use crate::version::Version;
-use crate::{EncryptionState, ProtocolRead};
-use async_trait::async_trait;
-use log::{debug, error, info};
-use reqwest::Client;
-use serde::Deserialize;
-use std::error::Error;
+use crate::protocol::types::{Byte, ProtocolString, UnsignedShort, VarInt};
+use crate::ProtocolRead;
 use std::io::{self};
-use uuid::Uuid;
 
-use super::{ClientProxyModeHandler, ProxyMessage, ProxyModeMessageType, ServerProxyModeHandler};
-use crate::core::actors::client::MinecraftClient;
-use crate::core::actors::server::MinecraftServer;
-use crate::core::event::MinecraftCommunication;
-use crate::network::connection::PossibleReadValue;
+use super::{ProxyMessage, ProxyModeMessageType};
 
 pub struct ClientOnlyMode;
 

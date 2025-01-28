@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use crate::{network::packet::Packet, proxy_modes::passthrough::PassthroughMessage};
+use crate::network::packet::Packet;
 
 use super::config::ServerConfig;
-
 
 #[derive(Debug, Clone)]
 pub enum GatewayMessage {

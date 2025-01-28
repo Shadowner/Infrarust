@@ -4,16 +4,11 @@
 
 use clap::Parser;
 use env_logger::Env;
-use log::{error, info, warn};
-use rsa::rand_core::le;
+use log::{error, info};
 use std::process;
 use std::sync::Arc;
-use std::time::Duration;
 
-use infrarust::{
-    core::config::{provider::file::{FileProvider, FileType}, InfrarustConfig},
-    Infrarust,
-};
+use infrarust::{core::config::provider::file::FileProvider, Infrarust};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -33,7 +28,7 @@ async fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
     let args = Args::parse();
-    
+
     let config = match FileProvider::try_load_config(Some(&args.config_path)) {
         Ok(mut config) => {
             if let Some(ref mut file_provider) = config.file_provider {

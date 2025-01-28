@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    default, fs,
+    fs,
     io::{self, Read},
     path::{Path, PathBuf},
     thread::sleep,
@@ -289,7 +289,6 @@ impl FileProvider {
 impl Provider for FileProvider {
     async fn run(&mut self) {
         //TODO: Implement real communication with the ConfigProvider
-        let (_, mut rx) = mpsc::channel::<ProviderMessage>(32);
 
         let _watcher = if self.watch {
             Some(

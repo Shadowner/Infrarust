@@ -1,11 +1,8 @@
 use log::{debug, error};
 use std::sync::Arc;
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::core::{
-    config::service::ConfigurationService,
-    event::{GatewayMessage, ProviderMessage},
-};
+use crate::core::{config::service::ConfigurationService, event::ProviderMessage};
 
 pub mod file;
 
@@ -19,7 +16,7 @@ pub trait Provider: Send {
 }
 
 pub struct ConfigProvider {
-    providers: Vec<Box<dyn Provider>>,
+    _providers: Vec<Box<dyn Provider>>,
     config_service: Arc<ConfigurationService>,
     provider_receiver: Receiver<ProviderMessage>,
     provider_sender: Sender<ProviderMessage>,
@@ -32,7 +29,7 @@ impl ConfigProvider {
         provider_sender: Sender<ProviderMessage>,
     ) -> Self {
         Self {
-            providers: vec![],
+            _providers: vec![],
             config_service,
             provider_receiver,
             provider_sender,
@@ -42,12 +39,15 @@ impl ConfigProvider {
     pub async fn run(&mut self) {
         debug!("Starting ConfigProvider(run)");
         while let Some(message) = self.provider_receiver.recv().await {
+            debug!("Received message in ConfigProvider(run): {:?}", message);
             match message {
                 ProviderMessage::Update { key, configuration } => {
                     debug!("Configuration update received for key: {}", key);
                     match configuration {
                         Some(config) => {
-                            self.config_service.update_configurations(vec![config]).await;
+                            self.config_service
+                                .update_configurations(vec![config])
+                                .await;
                         }
                         None => {
                             self.config_service.remove_configuration(&key).await;

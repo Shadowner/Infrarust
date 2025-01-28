@@ -1,15 +1,11 @@
-pub mod passthrough;
-pub mod offline;
-pub mod status;
 pub mod client_only;
+pub mod offline;
+pub mod passthrough;
+pub mod status;
 
 use crate::core::actors::client::MinecraftClient;
 use crate::core::actors::server::MinecraftServer;
-use crate::core::event::MinecraftCommunication;
 use crate::network::connection::PossibleReadValue;
-use crate::server::ServerResponse;
-use crate::version::Version;
-use crate::{core::actors::server::MinecraftServerHandler, network::connection::Connection};
 use client_only::ClientOnlyMode;
 use offline::OfflineMode;
 use passthrough::PassthroughMode;

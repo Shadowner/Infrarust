@@ -1,13 +1,10 @@
-use crate::network::connection::Connection;
-use crate::server::ServerResponse;
-use crate::version::Version;
 use async_trait::async_trait;
 use log::{debug, error, info};
 use std::io::{self};
 
 use super::{ClientProxyModeHandler, ProxyMessage, ProxyModeMessageType, ServerProxyModeHandler};
 use crate::core::actors::client::MinecraftClient;
-use crate::core::actors::server::{self, MinecraftServer};
+use crate::core::actors::server::MinecraftServer;
 use crate::core::event::MinecraftCommunication;
 use crate::network::connection::PossibleReadValue;
 

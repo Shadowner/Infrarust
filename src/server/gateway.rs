@@ -64,9 +64,6 @@ impl Gateway {
         while let Some(message) = receiver.recv().await {
             match message {
                 GatewayMessage::Shutdown => break,
-                _ => {
-                    debug!("Received unknown message: {:?}", message);
-                }
             }
         }
     }
@@ -98,8 +95,8 @@ impl Gateway {
         };
         let shutdown_flag = Arc::new(AtomicBool::new(false));
 
-        let is_login = request.is_login.clone();
-        if (!is_login) {
+        let is_login = request.is_login;
+        if !is_login {
             debug!("Handling status request for domain: {}", request.domain);
             let c_mode: Box<dyn ClientProxyModeHandler<MinecraftCommunication<StatusMessage>>> =
                 Box::new(StatusMode);
@@ -304,7 +301,7 @@ impl Gateway {
             .entry(server_id.to_string())
             .or_insert_with(|| std::sync::Mutex::new(vec![]));
 
-        client_actor.lock().unwrap().push((client, shutdown));
+        client_actor.get_mut().unwrap().push((client, shutdown));
     }
 
     async fn register_server_actor(
@@ -318,7 +315,7 @@ impl Gateway {
             .entry(server_id.to_string())
             .or_insert_with(|| std::sync::Mutex::new(vec![]));
 
-        server_actor.lock().unwrap().push((server, shutdown));
+        server_actor.get_mut().unwrap().push((server, shutdown));
     }
 
     async fn find_server(&self, domain: &str) -> Option<Arc<ServerConfig>> {
@@ -381,9 +378,6 @@ impl ServerRequester for Gateway {
 
 #[cfg(test)]
 mod tests {
-    use crate::{core::config::ServerConfig, proxy_modes::ProxyModeEnum};
-
-    use super::*;
     use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
 
     fn setup_test_server() -> (TcpListener, String) {
@@ -394,7 +388,7 @@ mod tests {
 
     #[test]
     fn test_server_gateway() {
-        let (_listener, addr) = setup_test_server();
+        let (_listener, _addr) = setup_test_server();
 
         // let server_config = ServerConfig {
         //     domains: vec!["example.com".to_string()],

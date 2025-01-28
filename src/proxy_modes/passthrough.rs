@@ -1,11 +1,8 @@
 use super::{ClientProxyModeHandler, ProxyMessage, ProxyModeMessageType, ServerProxyModeHandler};
 use crate::core::actors::client::MinecraftClient;
-use crate::core::actors::server::{self, MinecraftServer};
+use crate::core::actors::server::MinecraftServer;
 use crate::core::event::MinecraftCommunication;
 use crate::network::connection::PossibleReadValue;
-use crate::network::{connection::Connection, packet::io::RawPacketIO};
-use crate::server::ServerResponse;
-use crate::version::Version;
 use async_trait::async_trait;
 use log::{debug, error};
 use std::io::{self};
@@ -26,6 +23,10 @@ impl ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
     ) -> io::Result<()> {
         match message {
             MinecraftCommunication::RawData(data) => {
+                debug!(
+                    "Received raw data from client (PassthroughMode) with length: {}",
+                    data.len()
+                );
                 actor.conn.write_raw(&data).await?;
             }
             MinecraftCommunication::Shutdown => {
