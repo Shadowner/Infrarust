@@ -1,4 +1,10 @@
-use std::sync::Arc;
+use std::{
+    io,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use log::{debug, info, warn};
 use rsa::rand_core::le;
@@ -51,9 +57,9 @@ impl<T> MinecraftServer<T> {
         }
     }
 
-    fn handle_gateway_message(&mut self, message: GatewayMessage) {
+    fn handle_gateway_message(&mut self, message: GatewayMessage) -> io::Result<()> {
         match message {
-            _ => {}
+            _ => Ok(()),
         }
     }
 
@@ -66,6 +72,7 @@ async fn start_minecraft_server_actor<T>(
     mut actor: MinecraftServer<MinecraftCommunication<T>>,
     oneshot: oneshot::Receiver<ServerResponse>,
     proxy_mode: Box<dyn ServerProxyModeHandler<MinecraftCommunication<T>>>,
+    shutdown: Arc<AtomicBool>,
 ) where
     T: Send + 'static,
 {
@@ -80,6 +87,7 @@ async fn start_minecraft_server_actor<T>(
                 .send(MinecraftCommunication::Shutdown)
                 .await
                 .unwrap();
+            actor.server_receiver.close();
             debug!("Shutting down Minecraft Server Actor");
             return;
         }
@@ -96,43 +104,72 @@ async fn start_minecraft_server_actor<T>(
                     .send(MinecraftCommunication::Shutdown)
                     .await
                     .unwrap();
+                actor.server_receiver.close();
                 debug!("Shutting down Minecraft Server Actor");
                 return;
             }
         };
     }
 
-
     debug!("Starting Minecraft Server Actor for ID");
-    loop {
+    while !shutdown.load(Ordering::SeqCst) {
         if let Some(server_request) = &mut actor.server_request {
             if server_request.status_response.is_some() {
-                debug!("Server request is a status response");
-                break;
+                debug!("Returning because Actor is for a Status Check");
+                return;
             }
 
             if let Some(server_conn) = &mut server_request.server_conn {
+                let shutdown_flag = shutdown.clone();
                 tokio::select! {
                     Some(msg) = actor.gateway_receiver.recv() => {
-                        actor.handle_gateway_message(msg);
+                        if let Err(e) = actor.handle_gateway_message(msg) {
+                            warn!("Gateway handler error: {:?}", e);
+                            shutdown_flag.store(true, Ordering::SeqCst);
+                        }
                     }
                     Some(msg) = actor.server_receiver.recv() => {
-                        let _ = proxy_mode.handle_internal_server(msg, &mut actor).await;
+                        match msg {
+                            MinecraftCommunication::Shutdown => {
+                                debug!("Shutting down server (Received Shutdown message)");
+                                server_conn.close().await.unwrap();
+                                actor.server_receiver.close(); // Close the channel to prevent further messages
+                                shutdown_flag.store(true, Ordering::SeqCst);
+                            }
+                            _ => {}
+
+                        };
+
+                        if let Err(e) = proxy_mode.handle_internal_server(msg, &mut actor).await {
+                            warn!("Internal handler error: {:?}", e);
+                            shutdown_flag.store(true, Ordering::SeqCst);
+                        }
                     }
+
                     Ok(read_value) = server_conn.read() => {
-                        let _ = proxy_mode.handle_external_server(read_value, &mut actor).await;
+                        if let Err(e) = proxy_mode.handle_external_server(read_value, &mut actor).await {
+                            warn!("External handler error: {:?}", e);
+                            shutdown_flag.store(true, Ordering::SeqCst);
+                        }
                     }
-                    else => break,
+
+                    else => {
+                        debug!("All channels closed");
+                        shutdown_flag.store(true, Ordering::SeqCst);
+                    }
                 }
             } else {
                 warn!("Server connection is None L114");
-                break;
             }
         } else {
             warn!("Server request is None");
-            break;
         }
     }
+
+    // Cleanup
+    debug!("Shutting down server actor");
+    let _ = client_sender.send(MinecraftCommunication::Shutdown).await;
+    actor.server_receiver.close();
 }
 
 #[derive(Clone)]
@@ -147,6 +184,7 @@ impl MinecraftServerHandler {
         is_login: bool,
         request_server: oneshot::Receiver<ServerResponse>,
         proxy_mode: Box<dyn ServerProxyModeHandler<MinecraftCommunication<T>>>,
+        shutdown: Arc<AtomicBool>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(64);
 
@@ -155,6 +193,7 @@ impl MinecraftServerHandler {
             actor,
             request_server,
             proxy_mode,
+            shutdown,
         ));
 
         Self {

@@ -87,7 +87,7 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
             length
         };
 
-        debug!("Reading packet with total length: {}", packet_length);
+        // debug!("Reading packet with total length: {}", packet_length);
 
         // Read packet data (may be encrypted)
         let mut encrypted_data = vec![0u8; packet_length as usize];
@@ -104,7 +104,7 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
         let packet_data = if let CompressionState::Enabled { threshold: _ } = self.compression {
             let mut cursor = Cursor::new(&encrypted_data);
             let (VarInt(data_length), bytes_read) = VarInt::read_from(&mut cursor)?;
-            debug!("Data length (uncompressed): {}", data_length);
+            // debug!("Data length (uncompressed): {}", data_length);
 
             if data_length == 0 {
                 BytesMut::from(&encrypted_data[bytes_read..])

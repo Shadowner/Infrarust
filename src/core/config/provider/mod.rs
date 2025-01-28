@@ -1,4 +1,4 @@
-use log::debug;
+use log::{debug, error};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
 use crate::core::event::{GatewayMessage, ProviderMessage};
@@ -51,7 +51,6 @@ impl ConfigProvider {
     pub async fn run(&mut self) {
         debug!("Starting ConfigProvider(run)");
         while let Some(message) = self.provider_receiver.recv().await {
-            debug!("Received message: {:?}", message);
             match message {
                 ProviderMessage::Update { key, configuration } => {
                     debug!("Configuration update received for key: {}", key);
@@ -64,19 +63,18 @@ impl ConfigProvider {
                         .unwrap();
                 }
                 ProviderMessage::FirstInit(configs) => {
-                    debug!("First init received for configs: {:?}", configs);
+                    debug!("First init received for configs: {:?}", configs.keys());
                     for (key, config) in configs {
-                        self.gateway_sender
+                        let _ = self.gateway_sender
                             .send(GatewayMessage::ConfigurationUpdate {
                                 key: key.clone(),
-                                configuration: config,
+                                configuration: Some(config),
                             })
-                            .await
-                            .unwrap();
+                            .await;
                     }
                 }
                 ProviderMessage::Error(err) => {
-                    println!("Provider error: {}", err);
+                    error!("Provider error: {}", err);
                 }
                 ProviderMessage::Shutdown => break,
             }

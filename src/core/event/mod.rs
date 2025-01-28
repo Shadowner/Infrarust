@@ -9,7 +9,7 @@ use super::config::ServerConfig;
 pub enum GatewayMessage {
     ConfigurationUpdate {
         key: String,
-        configuration: ServerConfig,
+        configuration: Option<ServerConfig>,
     },
     Shutdown,
 }
@@ -18,7 +18,7 @@ pub enum GatewayMessage {
 pub enum ProviderMessage {
     Update {
         key: String,
-        configuration: ServerConfig,
+        configuration: Option<ServerConfig>,
     },
     FirstInit(HashMap<String, ServerConfig>),
     Error(String),
