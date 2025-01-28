@@ -4,6 +4,12 @@ filters:
   rateLimiter:
     requestLimit: 10
     windowLength: 1s
+
+file_provider:
+  proxies_path: 
+    - "./config_examples/proxies"
+  watch: true
+
 proxyProtocol:
   receive: false
   trustedCIDRs: []

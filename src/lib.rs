@@ -6,7 +6,7 @@
 
 // Core modules
 pub mod core;
-use core::config::provider::file::{FileProvider, FileType};
+use core::config::provider::file::{self, FileProvider, FileType};
 use core::config::provider::ConfigProvider;
 use core::config::service::ConfigurationService;
 pub use core::config::InfrarustConfig;
@@ -74,14 +74,11 @@ pub struct Infrarust {
 impl Infrarust {
     pub fn new(config: InfrarustConfig) -> io::Result<Self> {
         let config_service = Arc::new(ConfigurationService::new());
-        
+
         let (gateway_sender, gateway_receiver) = tokio::sync::mpsc::channel(100);
         let (provider_sender, provider_receiver) = tokio::sync::mpsc::channel(100);
 
-        let server_gateway = Arc::new(Gateway::new(
-            gateway_sender.clone(),
-            config_service.clone()
-        ));
+        let server_gateway = Arc::new(Gateway::new(gateway_sender.clone(), config_service.clone()));
 
         let mut config_provider = ConfigProvider::new(
             config_service.clone(),
@@ -89,19 +86,18 @@ impl Infrarust {
             provider_sender.clone(),
         );
 
-        let file_provider = FileProvider::new(
-            vec![
-                "./proxies"
-                    .to_string(),
-            ],
-            FileType::Yaml,
-            true,
-            provider_sender.clone(),
-        );
+        if let Some(file_config) = config.file_provider.clone() {
+            let file_provider = FileProvider::new(
+                file_config.proxies_path,
+                file_config.file_type,
+                file_config.watch,
+                provider_sender.clone(),
+            );
+            config_provider.register_provider(Box::new(file_provider));
+        }
 
         tokio::spawn(async move {
             debug!("Starting ConfigProvider");
-            config_provider.register_provider(Box::new(file_provider));
             config_provider.run().await;
         });
 
@@ -112,7 +108,7 @@ impl Infrarust {
         });
 
         Ok(Self {
-            _config_service: config_service.clone(), 
+            _config_service: config_service.clone(),
             config,
             filter_chain: FilterChain::new(),
             _connections: Arc::new(Mutex::new(HashMap::new())),
@@ -131,16 +127,14 @@ impl Infrarust {
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => {
-                    let this = Arc::clone(&self);
+                    let filter_chain = self.filter_chain.clone();
+                    let server_gateway = Arc::clone(&self.server_gateway);
 
                     tokio::spawn(async move {
                         if let Err(e) = async move {
-                            let filter_chain = this.filter_chain.clone();
-                            let server_gateway = Arc::clone(&this.server_gateway);
-
                             filter_chain.filter(&stream).await?;
                             let conn = Connection::new(stream).await?;
-                            Self::handle_connection(this, conn, server_gateway).await?;
+                            Self::handle_connection(conn, server_gateway).await?;
 
                             Ok::<_, SendError>(())
                         }
@@ -158,7 +152,6 @@ impl Infrarust {
     }
 
     async fn handle_connection(
-        this: Arc<Self>,
         mut client: Connection,
         server_gateway: Arc<Gateway>,
     ) -> io::Result<()> {
@@ -189,131 +182,7 @@ impl Infrarust {
         });
 
         Ok(())
-
-        // let response = match server_gateway
-        //     .request_server(ServerRequest {
-        //         client_addr: client.peer_addr().await?,
-        //         domain: domain.clone(),
-        //         is_login: handshake.is_login_request(),
-        //         protocol_version,
-        //         read_packets: [handshake_packet, second_packet],
-        //     })
-        //     .await
-        // {
-        //     Ok(resp) => resp,
-        //     Err(e) => {
-        //         error!("Failed to find server for domain '{}': {}", domain, e);
-        //         return Err(io::Error::new(io::ErrorKind::NotFound, e.to_string()));
-        //     }
-        // };
-
-        // if handshake.is_status_request() {
-        //     debug!("Handling status request for domain: {}", domain);
-        //     return Self::handle_status(client, response).await;
-        // }
-
-        // debug!("Handling login request for domain: {}", domain);
-        // Self::handle_login(this, client, response, protocol_version).await
     }
-
-    async fn handle_status(mut client: Connection, mut response: ServerResponse) -> io::Result<()> {
-        debug!("Handling status request");
-
-        if response.status_response.is_none() {
-            let status_json = ResponseJSON {
-                version: VersionJSON {
-                    name: "1.18.2".to_string(),
-                    protocol: 758,
-                },
-                players: PlayersJSON {
-                    max: 100,
-                    online: 0,
-                    sample: vec![],
-                },
-                description: serde_json::json!({
-                    "text": "Minecraft Server"
-                }),
-                favicon: None,
-                previews_chat: false,
-                enforces_secure_chat: false,
-                modinfo: None,
-                forge_data: None,
-            };
-
-            let json_str = serde_json::to_string(&status_json)?;
-            let mut response_packet = Packet::new(CLIENTBOUND_RESPONSE_ID);
-            response_packet.encode(&ClientBoundResponse {
-                json_response: ProtocolString(json_str),
-            })?;
-            response.status_response = Some(response_packet);
-        }
-
-        if let Some(status) = response.status_response {
-            debug!("Sending status response");
-            client.write_packet(&status).await?;
-        }
-
-        debug!("Waiting for ping packet");
-        match client.read_packet().await {
-            Ok(ping_packet) => {
-                debug!("Received ping packet, sending response");
-                client.write_packet(&ping_packet).await?;
-            }
-            Err(e) => {
-                error!("Error reading ping packet: {}", e);
-                return Err(e.into());
-            }
-        }
-
-        Ok(())
-    }
-
-    // async fn handle_login(
-    //     this: Arc<Self>,
-    //     client: Connection,
-    //     response: ServerResponse,
-    //     protocol_version: Version,
-    // ) -> io::Result<()> {
-    //     let proxy_mode: Box<dyn ProxyModeHandler> = match response.proxy_mode {
-    //         ProxyModeEnum::Passthrough => Box::new(PassthroughMode),
-    //         ProxyModeEnum::Full => Box::new(FullMode),
-    //         ProxyModeEnum::ClientOnly => Box::new(ClientOnlyMode),
-    //         ProxyModeEnum::Offline => Box::new(OfflineMode),
-    //         ProxyModeEnum::ServerOnly => {
-    //             return Err(io::Error::new(
-    //                 io::ErrorKind::Other,
-    //                 "Server-only mode not supported yet",
-    //             ))
-    //         }
-    //     };
-    //     let server_gateway = Arc::clone(&this.server_gateway);
-
-    //     let login_start = &response.read_packets[1];
-    //     let username = ServerBoundLoginStart::try_from(login_start)?.name.0;
-    //     let server_addr = response.server_addr;
-    //     info!(
-    //         "Handling login request for user: {} on {}({}) in ProxyMode : {:?}",
-    //         username,
-    //         response
-    //             .proxied_domain
-    //             .clone()
-    //             .unwrap_or("Direct IP".to_string()),
-    //         server_addr
-    //             .map(|addr| addr.to_string())
-    //             .unwrap_or_else(|| "Unknown".to_string()),
-    //         response.proxy_mode
-    //     );
-
-    //     debug!(
-    //         "Handling login request with proxy mode: {:?}",
-    //         response.proxy_mode
-    //     );
-
-    //     server_gateway
-    //         .handle_full_connection(client, response)
-    //         .await;
-    //     Ok(())
-    // }
 }
 
 #[cfg(test)]
@@ -326,7 +195,6 @@ mod tests {
     async fn test_infrared_basic() {
         let config = InfrarustConfig {
             bind: Some("127.0.0.1:25565".to_string()),
-            server_configs: vec![],
             keepalive_timeout: Some(Duration::from_secs(30)),
             ..Default::default()
         };
