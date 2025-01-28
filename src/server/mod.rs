@@ -33,8 +33,11 @@ pub struct ServerResponse {
 
 #[async_trait]
 pub trait ServerRequester: Send + Sync {
-    async fn request_server(&self, req: ServerRequest, ) -> ProtocolResult<ServerResponse>;
+    async fn request_server(&self, req: ServerRequest) -> ProtocolResult<ServerResponse>;
 
-    async fn wake_up_server(&self, req: ServerRequest, server: Arc<ServerConfig>) -> ProtocolResult<ServerResponse>;
+    async fn wake_up_server(
+        &self,
+        req: ServerRequest,
+        server: Arc<ServerConfig>,
+    ) -> ProtocolResult<ServerResponse>;
 }
-

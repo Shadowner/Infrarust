@@ -1,16 +1,10 @@
 pub mod provider;
 pub mod service;
-use std::io::{self, Read};
 use std::time::Duration;
-use std::{fs, path::Path};
 
-use log::debug;
 use provider::file::FileProviderConfig;
-use serde::{de::DeserializeOwned, Deserialize};
-use walkdir::WalkDir;
+use serde::Deserialize;
 
-use crate::network::proxy_protocol::errors::ProxyProtocolError;
-use crate::network::proxy_protocol::ProtocolResult;
 use crate::proxy_modes::ProxyModeEnum;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,7 +37,7 @@ pub struct InfrarustConfig {
     pub domains: Option<Vec<String>>,
     pub addresses: Option<Vec<String>>,
     pub keepalive_timeout: Option<Duration>,
-    pub file_provider : Option<FileProviderConfig>,
+    pub file_provider: Option<FileProviderConfig>,
 }
 
 impl ServerConfig {
@@ -62,7 +56,6 @@ impl InfrarustConfig {
 mod tests {
     use std::fs;
 
-    use super::*;
     use tempfile::TempDir;
 
     #[test]

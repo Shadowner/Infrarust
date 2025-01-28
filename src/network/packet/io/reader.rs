@@ -4,7 +4,6 @@ use aes::cipher::BlockDecryptMut;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use libdeflater::Decompressor;
-use log::debug;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::super::{

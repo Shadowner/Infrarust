@@ -28,8 +28,6 @@ impl Server {
     pub async fn dial(&self) -> ProtocolResult<ServerConnection> {
         let mut last_error = None;
 
-
-
         debug!("Dialing server with ping: {:?}", self.config.addresses);
 
         for addr in &self.config.addresses {

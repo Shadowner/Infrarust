@@ -1,22 +1,16 @@
 use log::{debug, info};
-use serde::de;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use crate::core::actors::client;
 use crate::{
     core::{
         config::ServerConfig,
         event::{GatewayMessage, MinecraftCommunication},
     },
-    network::connection::PossibleReadValue,
     proxy_modes::ClientProxyModeHandler,
     Connection,
 };
-
-use super::{server::ServerEvent, Actor};
 
 pub enum ClientEvent {
     ConfigurationUpdate {
@@ -119,7 +113,8 @@ async fn start_minecraft_client_actor<T>(
 
 #[derive(Clone)]
 pub struct MinecraftClientHandler {
-    sender: mpsc::Sender<GatewayMessage>,
+    //TODO: establish a connection to talk to an actor
+    _sender: mpsc::Sender<GatewayMessage>,
 }
 
 impl MinecraftClientHandler {
@@ -144,6 +139,6 @@ impl MinecraftClientHandler {
 
         tokio::spawn(start_minecraft_client_actor(actor, proxy_mode, shutdown));
 
-        Self { sender }
+        Self { _sender: sender }
     }
 }

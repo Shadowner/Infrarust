@@ -6,27 +6,20 @@
 
 // Core modules
 pub mod core;
-use core::config::provider::file::{self, FileProvider, FileType};
+use core::config::provider::file::FileProvider;
 use core::config::provider::ConfigProvider;
 use core::config::service::ConfigurationService;
 pub use core::config::InfrarustConfig;
 pub use core::error::RsaError;
 use core::error::SendError;
 use core::event::{GatewayMessage, ProviderMessage};
-use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 
 // Protocol modules
 pub mod protocol;
 use log::{debug, error, info};
-use network::packet::{Packet, PacketCodec};
 use protocol::minecraft::java::handshake::ServerBoundHandshake;
-use protocol::minecraft::java::login::ServerBoundLoginStart;
-use protocol::minecraft::java::status::clientbound_response::{
-    ClientBoundResponse, PlayersJSON, ResponseJSON, VersionJSON, CLIENTBOUND_RESPONSE_ID,
-};
-use protocol::types::ProtocolString;
 pub use protocol::{
     types::{ProtocolRead, ProtocolWrite},
     version,
@@ -40,7 +33,6 @@ pub use network::{
     proxy_protocol::{write_proxy_protocol_header, ProxyProtocolConfig},
 };
 pub mod proxy_modes;
-use proxy_modes::passthrough::PassthroughMode;
 pub use security::{
     encryption::EncryptionState,
     filter::{Filter, FilterChain, FilterConfig},
@@ -50,12 +42,10 @@ pub use security::{
 // Server implementation
 pub mod server;
 
-use serde::de;
 use server::gateway::Gateway;
-use server::{ServerRequest, ServerRequester, ServerResponse};
+use server::ServerRequest;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::Mutex;
 
 use crate::version::Version;
 
@@ -63,12 +53,10 @@ pub struct Infrarust {
     _config_service: Arc<ConfigurationService>,
     config: InfrarustConfig,
     filter_chain: FilterChain,
-    //TODO: For future use
-    _connections: Arc<Mutex<HashMap<String, Connection>>>,
     server_gateway: Arc<Gateway>,
 
-    gateway_sender: Sender<GatewayMessage>,
-    provider_sender: Sender<ProviderMessage>,
+    _gateway_sender: Sender<GatewayMessage>,
+    _provider_sender: Sender<ProviderMessage>,
 }
 
 impl Infrarust {
@@ -111,10 +99,9 @@ impl Infrarust {
             _config_service: config_service.clone(),
             config,
             filter_chain: FilterChain::new(),
-            _connections: Arc::new(Mutex::new(HashMap::new())),
             server_gateway,
-            gateway_sender,
-            provider_sender,
+            _gateway_sender: gateway_sender,
+            _provider_sender: provider_sender,
         })
     }
 

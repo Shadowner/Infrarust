@@ -3,11 +3,8 @@ use crate::core::actors::client::MinecraftClient;
 use crate::core::actors::server::MinecraftServer;
 use crate::core::event::MinecraftCommunication;
 use crate::network::connection::PossibleReadValue;
-use crate::network::{connection::Connection, packet::io::RawPacketIO};
-use crate::server::ServerResponse;
-use crate::version::Version;
 use async_trait::async_trait;
-use log::{debug, error};
+use log::debug;
 use std::io::{self};
 
 pub struct StatusMode;

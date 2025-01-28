@@ -6,7 +6,22 @@ use reqwest::Client;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::{core::{actors::client::MinecraftClient, event::MinecraftCommunication}, network::{connection::PossibleReadValue, packet::{Packet, PacketCodec}}, protocol::{minecraft::java::login::{clientbound_loginsuccess::{ClientBoundLoginSuccess, Property}, ClientBoundEncryptionRequest, ServerBoundEncryptionResponse}, types::{Boolean, ByteArray, ProtocolString, VarInt}}, proxy_modes::{client_only::ClientOnlyMessage, ClientProxyModeHandler}, EncryptionState};
+use crate::{
+    core::{actors::client::MinecraftClient, event::MinecraftCommunication},
+    network::{
+        connection::PossibleReadValue,
+        packet::{Packet, PacketCodec},
+    },
+    protocol::{
+        minecraft::java::login::{
+            clientbound_loginsuccess::{ClientBoundLoginSuccess, Property},
+            ClientBoundEncryptionRequest, ServerBoundEncryptionResponse,
+        },
+        types::{Boolean, ByteArray, ProtocolString, VarInt},
+    },
+    proxy_modes::{client_only::ClientOnlyMessage, ClientProxyModeHandler},
+    EncryptionState,
+};
 
 use super::ClientOnlyMode;
 

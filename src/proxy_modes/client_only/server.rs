@@ -3,7 +3,15 @@ use std::io;
 use async_trait::async_trait;
 use log::{debug, error};
 
-use crate::{core::{actors::server::MinecraftServer, event::MinecraftCommunication}, network::{connection::PossibleReadValue, packet::PacketCodec}, protocol::types::VarInt, proxy_modes::{client_only::{prepare_server_handshake, ClientOnlyMessage}, ServerProxyModeHandler}};
+use crate::{
+    core::{actors::server::MinecraftServer, event::MinecraftCommunication},
+    network::{connection::PossibleReadValue, packet::PacketCodec},
+    protocol::types::VarInt,
+    proxy_modes::{
+        client_only::{prepare_server_handshake, ClientOnlyMessage},
+        ServerProxyModeHandler,
+    },
+};
 
 use super::ClientOnlyMode;
 

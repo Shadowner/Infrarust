@@ -6,8 +6,7 @@ use std::{
     },
 };
 
-use log::{debug, info, warn};
-use rsa::rand_core::le;
+use log::{debug, warn};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
@@ -15,10 +14,8 @@ use crate::{
         config::ServerConfig,
         event::{GatewayMessage, MinecraftCommunication},
     },
-    network::connection::PossibleReadValue,
-    proxy_modes::{self, ServerProxyModeHandler},
-    server::{self, gateway, ServerRequest, ServerResponse},
-    ServerConnection,
+    proxy_modes::ServerProxyModeHandler,
+    server::ServerResponse,
 };
 
 pub enum ServerEvent {
@@ -62,10 +59,6 @@ impl<T> MinecraftServer<T> {
             _ => Ok(()),
         }
     }
-
-    fn set_server_request(&mut self, request: ServerResponse) {
-        self.server_request = Some(request);
-    }
 }
 
 async fn start_minecraft_server_actor<T>(
@@ -95,11 +88,12 @@ async fn start_minecraft_server_actor<T>(
 
     actor.server_request = Some(request);
 
-    if let Some(request) = &actor.server_request {
+    // Just to ensure that the initialize_server has the request
+    if let Some(_) = &actor.server_request {
         match proxy_mode.initialize_server(&mut actor).await {
             Ok(_) => {}
-            Err(e) => {
-                warn!("Failed to initialize server proxy mode: {:?}", e);
+            Err(_e) => {
+                warn!("Failed to initialize server proxy mode: {:?}", _e);
                 client_sender
                     .send(MinecraftCommunication::Shutdown)
                     .await
@@ -133,7 +127,7 @@ async fn start_minecraft_server_actor<T>(
                             MinecraftCommunication::Shutdown => {
                                 debug!("Shutting down server (Received Shutdown message)");
                                 server_conn.close().await.unwrap();
-                                actor.server_receiver.close(); // Close the channel to prevent further messages
+                                actor.server_receiver.close();
                                 shutdown_flag.store(true, Ordering::SeqCst);
                             }
                             _ => {}
