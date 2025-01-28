@@ -5,6 +5,7 @@ use std::time::Duration;
 use std::{fs, path::Path};
 
 use log::debug;
+use provider::file::FileProviderConfig;
 use serde::{de::DeserializeOwned, Deserialize};
 use walkdir::WalkDir;
 
@@ -42,9 +43,7 @@ pub struct InfrarustConfig {
     pub domains: Option<Vec<String>>,
     pub addresses: Option<Vec<String>>,
     pub keepalive_timeout: Option<Duration>,
-
-    #[serde(skip)]
-    pub server_configs: Vec<ServerConfig>,
+    pub file_provider : Option<FileProviderConfig>,
 }
 
 impl ServerConfig {

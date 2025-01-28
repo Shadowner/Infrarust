@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fs,
+    default, fs,
     io::{self, Read},
     path::{Path, PathBuf},
     thread::sleep,
@@ -9,33 +9,42 @@ use std::{
 
 use log::{debug, error, warn};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Deserialize};
 use tokio::sync::mpsc::{self, channel, Sender};
 use walkdir::WalkDir;
 
 use crate::{
     core::{config::ServerConfig, event::ProviderMessage},
     network::proxy_protocol::errors::ProxyProtocolError,
+    InfrarustConfig,
 };
 
 use super::Provider;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
 pub enum FileType {
+    // serde default value
+    #[serde(rename = "yaml")]
+    #[default]
     Yaml,
 }
 
 // Configuration structure pour FileProvider
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct FileProviderConfig {
-    proxies_path: Vec<String>,
-    file_type: FileType,
-    watch: bool,
+    #[serde(default)]
+    pub proxies_path: Vec<String>,
+    #[serde(default)]
+    pub file_type: FileType,
+    #[serde(default)]
+    pub watch: bool,
 }
 
 pub struct FileProvider {
-    config: FileProviderConfig,
-    provider_sender: mpsc::Sender<ProviderMessage>,
+    pub paths: Vec<String>,
+    pub file_type: FileType,
+    pub watch: bool,
+    sender: Sender<ProviderMessage>,
 }
 
 #[derive(Debug)]
@@ -45,19 +54,34 @@ struct FileEvent {
 }
 
 impl FileProvider {
+    pub fn try_load_config(
+        path: Option<&str>,
+    ) -> Result<InfrarustConfig, Box<dyn std::error::Error>> {
+        // try to read the file
+        let mut file = fs::File::open(path.unwrap_or("config.yaml"))?;
+        let mut content = String::new();
+
+        // read the file
+        file.read_to_string(&mut content)?;
+
+        // decode the file
+
+        let config: InfrarustConfig = serde_yaml::from_str(&content)?;
+
+        Ok(config)
+    }
+
     pub fn new(
-        proxies_path: Vec<String>,
+        paths: Vec<String>,
         file_type: FileType,
         watch: bool,
-        provider_sender: mpsc::Sender<ProviderMessage>,
+        sender: Sender<ProviderMessage>,
     ) -> Self {
         Self {
-            config: FileProviderConfig {
-                proxies_path,
-                file_type,
-                watch,
-            },
-            provider_sender,
+            paths,
+            file_type,
+            watch,
+            sender,
         }
     }
 
@@ -105,7 +129,7 @@ impl FileProvider {
             .filter(|e| e.file_type().is_file())
         {
             if let Ok(config) =
-                Self::load_server_config(entry.path(), self.config.file_type, self.get_name())
+                Self::load_server_config(entry.path(), self.file_type, self.get_name())
             {
                 if !config.is_empty() {
                     configs.insert(config.config_id.clone(), config);
@@ -147,9 +171,9 @@ impl FileProvider {
         let (file_event_tx, mut file_event_rx) = channel::<FileEvent>(5);
         let debounce_duration = Duration::from_millis(100);
 
-        let file_type = self.config.file_type;
+        let file_type = self.file_type;
         let provider_name = self.get_name();
-        let provider_sender = self.provider_sender.clone();
+        let provider_sender = self.sender.clone();
 
         tokio::spawn(async move {
             let mut last_paths: HashMap<PathBuf, Instant> = HashMap::new();
@@ -216,41 +240,40 @@ impl FileProvider {
     }
 
     fn create_watcher(&self, file_event_tx: Sender<FileEvent>) -> io::Result<RecommendedWatcher> {
-        let mut watcher = match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(event) = res {
-                if notify::EventKind::is_access(&event.kind)
-                    || notify::EventKind::is_other(&event.kind)
-                {
-                    return;
-                }
+        let mut watcher =
+            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                if let Ok(event) = res {
+                    if notify::EventKind::is_access(&event.kind)
+                        || notify::EventKind::is_other(&event.kind)
+                    {
+                        return;
+                    }
 
-                if notify::EventKind::is_create(&event.kind)
-                    || notify::EventKind::is_modify(&event.kind)
-                {
-                    //HACK: Workaround to let the file be written before reading it
-                    // Yes that's an actual bug that I can't find a solution to
-                    sleep(Duration::from_millis(100));
-                }
+                    if notify::EventKind::is_create(&event.kind)
+                        || notify::EventKind::is_modify(&event.kind)
+                    {
+                        //HACK: Workaround to let the file be written before reading it
+                        // Yes that's an actual bug that I can't find a solution to
+                        sleep(Duration::from_millis(100));
+                    }
 
-                for path in event.paths {
-                    if !path.is_dir() {
-                        let _ = file_event_tx.blocking_send(FileEvent {
-                            path,
-                            kind: event.kind,
-                        });
+                    for path in event.paths {
+                        if !path.is_dir() {
+                            let _ = file_event_tx.blocking_send(FileEvent {
+                                path,
+                                kind: event.kind,
+                            });
+                        }
                     }
                 }
-            }
-        }) {
-            Ok(watcher) => watcher,
-            Err(e) => {
-                return Err(io::Error::new(io::ErrorKind::Other, e));
-            }
-        };
+            }) {
+                Ok(watcher) => watcher,
+                Err(e) => {
+                    return Err(io::Error::new(io::ErrorKind::Other, e));
+                }
+            };
 
-        
-
-        for path in &self.config.proxies_path {
+        for path in &self.paths {
             debug!("Watching path: {:?} for changes", path);
             let proxy_path = fs::canonicalize(path)?;
             watcher
@@ -265,33 +288,32 @@ impl FileProvider {
 #[async_trait::async_trait]
 impl Provider for FileProvider {
     async fn run(&mut self) {
-
         //TODO: Implement real communication with the ConfigProvider
         let (_, mut rx) = mpsc::channel::<ProviderMessage>(32);
 
-        let _watcher = if self.config.watch {
-            Some(self.setup_file_watcher().await.unwrap())
+        let _watcher = if self.watch {
+            Some(
+                self.setup_file_watcher()
+                    .await
+                    .expect("Failed to setup file watcher for FileProvider"),
+            )
         } else {
             None
         };
 
-        for path in &self.config.proxies_path {
+        for path in &self.paths {
             match self.load_configs(path) {
                 Ok(configs) => {
-                    if let Err(e) = self
-                        .provider_sender
-                        .send(ProviderMessage::FirstInit(configs))
-                        .await
-                    {
+                    if let Err(e) = self.sender.send(ProviderMessage::FirstInit(configs)).await {
                         warn!("Failed to send FirstInit: {}", e);
                     }
                 }
                 Err(e) => warn!("Failed to load server configs: {:?}", e),
             }
         }
-        
+
         loop {
-            let sender = self.provider_sender.clone();
+            let sender = self.sender.clone();
             tokio::select! {
                 () = sender.closed() => {
                     break;
@@ -309,12 +331,10 @@ impl Provider for FileProvider {
 
     fn new(sender: mpsc::Sender<ProviderMessage>) -> Self {
         Self {
-            config: FileProviderConfig {
-                proxies_path: Vec::new(),
-                file_type: FileType::Yaml,
-                watch: false,
-            },
-            provider_sender: sender,
+            paths: Vec::new(),
+            file_type: FileType::Yaml,
+            watch: false,
+            sender,
         }
     }
 }
