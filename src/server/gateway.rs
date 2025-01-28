@@ -1,4 +1,9 @@
-use std::{any::Any, collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    any::Any,
+    collections::HashMap,
+    sync::{atomic::AtomicBool, Arc},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use log::{debug, info, warn};
@@ -11,11 +16,14 @@ use wildmatch::WildMatch;
 use crate::{
     core::{
         actors::{client::MinecraftClientHandler, server::MinecraftServerHandler},
-        config::ServerConfig,
+        config::{self, ServerConfig},
         event::{GatewayMessage, MinecraftCommunication},
     },
     network::proxy_protocol::{errors::ProxyProtocolError, ProtocolResult},
+    protocol::minecraft::java::login::ServerBoundLoginStart,
     proxy_modes::{
+        client_only::{ClientOnlyMessage, ClientOnlyMode},
+        offline::{OfflineMessage, OfflineMode},
         passthrough::{PassthroughMessage, PassthroughMode},
         status::{StatusMessage, StatusMode},
         ClientProxyModeHandler, ProxyModeEnum, ServerProxyModeHandler,
@@ -32,8 +40,10 @@ pub struct Gateway {
     _sender: mpsc::Sender<GatewayMessage>,
 
     // The string represents the id provided by a Provider
-    client_actors: RwLock<HashMap<String, std::sync::Mutex<Vec<MinecraftClientHandler>>>>,
-    server_actors: RwLock<HashMap<String, std::sync::Mutex<Vec<MinecraftServerHandler>>>>,
+    client_actors:
+        RwLock<HashMap<String, std::sync::Mutex<Vec<(MinecraftClientHandler, Arc<AtomicBool>)>>>>,
+    server_actors:
+        RwLock<HashMap<String, std::sync::Mutex<Vec<(MinecraftServerHandler, Arc<AtomicBool>)>>>>,
 }
 
 #[derive(Clone)]
@@ -69,9 +79,15 @@ impl Gateway {
             match message {
                 GatewayMessage::ConfigurationUpdate { key, configuration } => {
                     debug!("Configuration update received for key: {}", key);
-                    self.update_configurations(vec![configuration]).await;
 
-                    // Handle configuration updates
+                    match configuration {
+                        Some(config) => {
+                            self.update_configurations(vec![config]).await;
+                        }
+                        None => {
+                            self.remove_configuration(&key).await;
+                        }
+                    }
                 }
                 GatewayMessage::Shutdown => break,
                 _ => {
@@ -86,6 +102,11 @@ impl Gateway {
         for config in configurations {
             config_lock.insert(config.config_id.clone(), Arc::new(config));
         }
+    }
+
+    pub async fn remove_configuration(&self, config_id: &str) {
+        let mut config_lock = self.configurations.write().await;
+        config_lock.remove(config_id);
     }
 
     pub async fn handle_client_connection(
@@ -103,6 +124,7 @@ impl Gateway {
                 return;
             }
         };
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
 
         let is_login = request.is_login.clone();
         if !is_login {
@@ -114,16 +136,25 @@ impl Gateway {
             let (s_tx, s_rx) = mpsc::channel(1);
             let (c_tx, c_rx) = mpsc::channel(1);
 
-            let client = MinecraftClientHandler::new(s_tx, c_rx, c_mode, client_conn, is_login);
-            let server =
-                MinecraftServerHandler::new(c_tx, s_rx, is_login, oneshot_request_receiver, s_mode);
-            let config_id = server_config.config_id.clone();
-            let gateway_handle = gateway.clone();
-            tokio::spawn(async move {
-                gateway.register_client_actor(&config_id, client).await;
-                gateway.register_server_actor(&config_id, server).await;
-            });
+            MinecraftClientHandler::new(
+                s_tx,
+                c_rx,
+                c_mode,
+                client_conn,
+                is_login,
+                "".to_string(),
+                shutdown_flag.clone(),
+            );
+            MinecraftServerHandler::new(
+                c_tx,
+                s_rx,
+                is_login,
+                oneshot_request_receiver,
+                s_mode,
+                shutdown_flag.clone(),
+            );
 
+            let gateway_handle = gateway.clone();
             tokio::spawn(async move {
                 match gateway_handle.wake_up_server(request, server_config).await {
                     Ok(response) => {
@@ -138,6 +169,9 @@ impl Gateway {
 
             return;
         }
+        let login_start = &request.read_packets[1];
+        //TODO: Match instead of unwrap
+        let username = ServerBoundLoginStart::try_from(login_start).unwrap().name.0;
 
         match server_config.proxy_mode.clone().unwrap() {
             ProxyModeEnum::Passthrough => {
@@ -158,6 +192,8 @@ impl Gateway {
                     client_handler,
                     client_conn,
                     is_login,
+                    username,
+                    shutdown_flag.clone(),
                 );
 
                 let server = MinecraftServerHandler::new(
@@ -166,16 +202,102 @@ impl Gateway {
                     is_login,
                     oneshot_request_receiver,
                     server_handler,
+                    shutdown_flag.clone(),
                 );
 
                 let config_id = server_config.config_id.clone();
                 let gateway_handle = gateway.clone();
                 tokio::spawn(async move {
                     gateway_handle
-                        .register_client_actor(&config_id, client)
+                        .register_client_actor(&config_id, client, shutdown_flag.clone())
                         .await;
                     gateway_handle
-                        .register_server_actor(&config_id, server)
+                        .register_server_actor(&config_id, server, shutdown_flag.clone())
+                        .await;
+                });
+            }
+
+            ProxyModeEnum::Offline => {
+                let client_handler: Box<
+                    dyn ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>>,
+                > = Box::new(OfflineMode);
+                let server_handler: Box<
+                    dyn ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>>,
+                > = Box::new(OfflineMode);
+                let (server_sender, server_receiver) =
+                    mpsc::channel::<MinecraftCommunication<OfflineMessage>>(64);
+                let (client_sender, client_receiver) =
+                    mpsc::channel::<MinecraftCommunication<OfflineMessage>>(64);
+
+                let client = MinecraftClientHandler::new(
+                    server_sender,
+                    client_receiver,
+                    client_handler,
+                    client_conn,
+                    is_login,
+                    username,
+                    shutdown_flag.clone(),
+                );
+
+                let server = MinecraftServerHandler::new(
+                    client_sender,
+                    server_receiver,
+                    is_login,
+                    oneshot_request_receiver,
+                    server_handler,
+                    shutdown_flag.clone(),
+                );
+
+                let config_id = server_config.config_id.clone();
+                let gateway_handle = gateway.clone();
+                tokio::spawn(async move {
+                    gateway_handle
+                        .register_client_actor(&config_id, client, shutdown_flag.clone())
+                        .await;
+                    gateway_handle
+                        .register_server_actor(&config_id, server, shutdown_flag.clone())
+                        .await;
+                });
+            }
+            ProxyModeEnum::ClientOnly => {
+                let client_handler: Box<
+                    dyn ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>>,
+                > = Box::new(ClientOnlyMode);
+                let server_handler: Box<
+                    dyn ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>>,
+                > = Box::new(ClientOnlyMode);
+                let (server_sender, server_receiver) =
+                    mpsc::channel::<MinecraftCommunication<ClientOnlyMessage>>(64);
+                let (client_sender, client_receiver) =
+                    mpsc::channel::<MinecraftCommunication<ClientOnlyMessage>>(64);
+
+                let client = MinecraftClientHandler::new(
+                    server_sender,
+                    client_receiver,
+                    client_handler,
+                    client_conn,
+                    is_login,
+                    username,
+                    shutdown_flag.clone(),
+                );
+
+                let server = MinecraftServerHandler::new(
+                    client_sender,
+                    server_receiver,
+                    is_login,
+                    oneshot_request_receiver,
+                    server_handler,
+                    shutdown_flag.clone(),
+                );
+
+                let config_id = server_config.config_id.clone();
+                let gateway_handle = gateway.clone();
+                tokio::spawn(async move {
+                    gateway_handle
+                        .register_client_actor(&config_id, client, shutdown_flag.clone())
+                        .await;
+                    gateway_handle
+                        .register_server_actor(&config_id, server, shutdown_flag.clone())
                         .await;
                 });
             }
@@ -199,22 +321,32 @@ impl Gateway {
         });
     }
 
-    async fn register_client_actor(&self, server_id: &str, client: MinecraftClientHandler) {
+    async fn register_client_actor(
+        &self,
+        server_id: &str,
+        client: MinecraftClientHandler,
+        shutdown: Arc<AtomicBool>,
+    ) {
         let mut client_lock = self.client_actors.write().await;
         let client_actor = client_lock
             .entry(server_id.to_string())
             .or_insert_with(|| std::sync::Mutex::new(vec![]));
 
-        client_actor.lock().unwrap().push(client);
+        client_actor.lock().unwrap().push((client, shutdown));
     }
 
-    async fn register_server_actor(&self, server_id: &str, server: MinecraftServerHandler) {
+    async fn register_server_actor(
+        &self,
+        server_id: &str,
+        server: MinecraftServerHandler,
+        shutdown: Arc<AtomicBool>,
+    ) {
         let mut server_lock = self.server_actors.write().await;
         let server_actor = server_lock
             .entry(server_id.to_string())
             .or_insert_with(|| std::sync::Mutex::new(vec![]));
 
-        server_actor.lock().unwrap().push(server);
+        server_actor.lock().unwrap().push((server, shutdown));
     }
 
     async fn find_server(&self, domain: &str) -> Option<Arc<ServerConfig>> {
@@ -230,6 +362,7 @@ impl Gateway {
         );
 
         let result = serv_guard.values().cloned().into_iter().find(|server| {
+            debug!("Checking server: {:?}", server);
             server.domains.iter().any(|pattern| {
                 let matches = WildMatch::new(pattern).matches(&domain);
                 debug!(

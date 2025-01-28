@@ -50,7 +50,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
 
     async fn initialize_client(
         &self,
-        actor: &mut MinecraftClient<MinecraftCommunication<StatusMessage>>,
+        _actor: &mut MinecraftClient<MinecraftCommunication<StatusMessage>>,
     ) -> io::Result<()> {
         Ok(())
     }
@@ -115,10 +115,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
                 Some(MinecraftCommunication::Packet(packet)) => packet,
                 _ => {
                     debug!("Failed to receive ping packet from server");
-                    actor.client_sender
+                    let _ = actor
+                        .client_sender
                         .send(MinecraftCommunication::Shutdown)
-                        .await
-                        .unwrap();
+                        .await;
                     return Ok(());
                 }
             };
@@ -138,7 +138,8 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
                 ))
                 .await;
 
-            actor.client_sender
+            actor
+                .client_sender
                 .send(MinecraftCommunication::Shutdown)
                 .await
                 .unwrap();

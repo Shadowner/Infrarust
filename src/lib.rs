@@ -91,16 +91,16 @@ impl Infrarust {
             provider_sender.clone(),
         );
 
-        let guard = server_gateway.clone();
-        tokio::spawn(async move {
-            debug!("Starting Gateway");
-            guard.clone().run(gateway_receiver).await;
-        });
-
         tokio::spawn(async move {
             debug!("Starting ConfigProvider");
             config_provider.register_provider(Box::new(file_provider));
             config_provider.run().await;
+        });
+
+        let guard = server_gateway.clone();
+        tokio::spawn(async move {
+            debug!("Starting Gateway");
+            guard.clone().run(gateway_receiver).await;
         });
 
         Ok(Self {

@@ -1,4 +1,5 @@
-pub mod provider;use std::io::{self, Read};
+pub mod provider;
+use std::io::{self, Read};
 use std::time::Duration;
 use std::{fs, path::Path};
 
@@ -9,7 +10,6 @@ use walkdir::WalkDir;
 use crate::network::proxy_protocol::errors::ProxyProtocolError;
 use crate::network::proxy_protocol::ProtocolResult;
 use crate::proxy_modes::ProxyModeEnum;
-
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
