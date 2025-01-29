@@ -103,6 +103,11 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
             });
         }
 
+        //TODO: I think I've miss implemented the decompression part
+        // Sometimes the code paninc withhread 'tokio-runtime-worker'
+        // panicked at src/network/packet/io/reader.rs:127:22:
+        // called `Result::unwrap()` on an `Err` value: BadData
+
         // Handle decompression if enabled
         let packet_data = if let CompressionState::Enabled { threshold: _ } = self.compression {
             let mut cursor = Cursor::new(&encrypted_data);
