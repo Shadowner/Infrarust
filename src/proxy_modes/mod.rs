@@ -3,13 +3,14 @@ pub mod offline;
 pub mod passthrough;
 pub mod status;
 
-use crate::core::actors::client::MinecraftClient;
 use crate::core::actors::server::MinecraftServer;
+use crate::core::{actors::client::MinecraftClient, event::MinecraftCommunication};
 use crate::network::connection::PossibleReadValue;
-use client_only::ClientOnlyMode;
-use offline::OfflineMode;
-use passthrough::PassthroughMode;
+use client_only::{ClientOnlyMessage, ClientOnlyMode};
+use offline::{OfflineMessage, OfflineMode};
+use passthrough::{PassthroughMessage, PassthroughMode};
 use serde::{Deserialize, Serialize};
+use status::StatusMessage;
 use std::io;
 
 #[async_trait::async_trait]
@@ -52,29 +53,37 @@ pub trait ProxyModeMessageType {
     type Message: ProxyMessage;
 }
 
-pub fn get_proxy_mode<T: ProxyMessage>(
-    mode: ProxyModeEnum,
-) -> (
-    Box<dyn ClientProxyModeHandler<T>>,
-    Box<dyn ServerProxyModeHandler<T>>,
-)
-where
-    PassthroughMode: ProxyModeMessageType<Message = T>,
-    PassthroughMode: ClientProxyModeHandler<T>,
-    PassthroughMode: ServerProxyModeHandler<T>,
-    OfflineMode: ProxyModeMessageType<Message = T>,
-    OfflineMode: ClientProxyModeHandler<T>,
-    OfflineMode: ServerProxyModeHandler<T>,
-    ClientOnlyMode: ProxyModeMessageType<Message = T>,
-    ClientOnlyMode: ClientProxyModeHandler<T>,
-    ClientOnlyMode: ServerProxyModeHandler<T>,
-{
-    match mode {
-        ProxyModeEnum::Passthrough => (Box::new(PassthroughMode), Box::new(PassthroughMode)),
-        ProxyModeEnum::Offline => (Box::new(OfflineMode), Box::new(OfflineMode)),
-        ProxyModeEnum::ClientOnly => (Box::new(ClientOnlyMode), Box::new(ClientOnlyMode)),
-        ProxyModeEnum::ServerOnly => (Box::new(PassthroughMode), Box::new(PassthroughMode)),
-    }
+//TODO: Refacor to remove the warning
+#[allow(clippy::type_complexity)]
+pub fn get_passthrough_mode() -> (
+    Box<dyn ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>>>,
+    Box<dyn ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>>>,
+) {
+    (Box::new(PassthroughMode), Box::new(PassthroughMode))
+}
+
+#[allow(clippy::type_complexity)]
+pub fn get_offline_mode() -> (
+    Box<dyn ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>>>,
+    Box<dyn ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>>>,
+) {
+    (Box::new(OfflineMode), Box::new(OfflineMode))
+}
+
+#[allow(clippy::type_complexity)]
+pub fn get_client_only_mode() -> (
+    Box<dyn ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>>>,
+    Box<dyn ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>>>,
+) {
+    (Box::new(ClientOnlyMode), Box::new(ClientOnlyMode))
+}
+
+#[allow(clippy::type_complexity)]
+pub fn get_status_mode() -> (
+    Box<dyn ClientProxyModeHandler<MinecraftCommunication<StatusMessage>>>,
+    Box<dyn ServerProxyModeHandler<MinecraftCommunication<StatusMessage>>>,
+) {
+    (Box::new(status::StatusMode), Box::new(status::StatusMode))
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
@@ -90,4 +99,7 @@ pub enum ProxyModeEnum {
     Offline,
     #[serde(rename = "server_only")]
     ServerOnly,
+
+    #[serde(skip)]
+    Status,
 }

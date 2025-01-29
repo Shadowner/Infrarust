@@ -23,7 +23,7 @@ pub enum ClientEvent {
 pub struct MinecraftClient<T> {
     pub server_sender: mpsc::Sender<T>,
     pub client_receiver: mpsc::Receiver<T>,
-    pub gateway_receiver: mpsc::Receiver<GatewayMessage>,
+    pub supervisor_receiver: mpsc::Receiver<GatewayMessage>,
     pub conn: Connection,
     pub is_login: bool,
     pub username: String,
@@ -31,7 +31,7 @@ pub struct MinecraftClient<T> {
 
 impl<T> MinecraftClient<T> {
     fn new(
-        gateway_receiver: mpsc::Receiver<GatewayMessage>,
+        supervisor_receiver: mpsc::Receiver<GatewayMessage>,
         server_sender: mpsc::Sender<T>,
         client_receiver: mpsc::Receiver<T>,
         conn: Connection,
@@ -39,7 +39,7 @@ impl<T> MinecraftClient<T> {
         username: String,
     ) -> Self {
         Self {
-            gateway_receiver,
+            supervisor_receiver,
             server_sender,
             client_receiver,
             conn,
@@ -48,7 +48,7 @@ impl<T> MinecraftClient<T> {
         }
     }
 
-    fn handle_gateway_message(&mut self, _message: GatewayMessage) {
+    fn handle_supervisor_message(&mut self, _message: GatewayMessage) {
         {}
     }
 }
@@ -70,8 +70,8 @@ async fn start_minecraft_client_actor<T>(
     let shutdown_flag = shutdown.clone();
     while !shutdown_flag.load(Ordering::SeqCst) {
         tokio::select! {
-            Some(msg) = actor.gateway_receiver.recv() => {
-                actor.handle_gateway_message(msg);
+            Some(msg) = actor.supervisor_receiver.recv() => {
+                actor.handle_supervisor_message(msg);
             }
             Some(msg) = actor.client_receiver.recv() => {
                 if let MinecraftCommunication::Shutdown = msg {
@@ -123,6 +123,7 @@ impl MinecraftClientHandler {
         username: String,
         shutdown: Arc<AtomicBool>,
     ) -> Self {
+        // TODO: Implement better supervisor handling
         let (sender, receiver) = mpsc::channel(100);
         let actor = MinecraftClient::new(
             receiver,
