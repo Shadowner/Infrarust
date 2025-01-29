@@ -1,7 +1,7 @@
 use std::{error::Error, io};
 
 use async_trait::async_trait;
-use log::{debug, error, info};
+use tracing::{debug, error, info};
 use reqwest::Client;
 use serde::Deserialize;
 use uuid::Uuid;

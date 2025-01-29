@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use log::debug;
+use tracing::debug;
 use num_bigint::{BigInt, Sign};
 use sha1::{digest::Update, Digest, Sha1};
 

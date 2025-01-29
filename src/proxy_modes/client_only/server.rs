@@ -1,7 +1,7 @@
 use std::io;
 
 use async_trait::async_trait;
-use log::{debug, error};
+use tracing::{debug, error};
 
 use crate::{
     core::{actors::server::MinecraftServer, event::MinecraftCommunication},

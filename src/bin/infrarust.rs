@@ -3,12 +3,13 @@
 //! Command-line interface for the InfraRust proxy server.
 
 use clap::Parser;
-use env_logger::Env;
-use log::{error, info};
 use std::process;
 use std::sync::Arc;
+use tracing::{error, info};
 
-use infrarust::{core::config::provider::file::FileProvider, Infrarust};
+use infrarust::{
+    core::config::provider::file::FileProvider, telemetry::init_tracing_subscriber, Infrarust,
+};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -25,8 +26,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
+    // env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
+    let _guard = init_tracing_subscriber();
     let args = Args::parse();
 
     let config = match FileProvider::try_load_config(Some(&args.config_path)) {

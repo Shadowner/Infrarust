@@ -3,7 +3,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use log::debug;
+use tracing::{debug, debug_span, instrument, Instrument};
 
 use crate::{
     network::{
@@ -35,6 +35,10 @@ impl StatusCache {
         }
     }
 
+    #[instrument(name = "get_status_response", skip(self, server), fields(
+        server_addr = %server.config.addresses.first().unwrap_or(&String::new()),
+        protocol_version = ?req.protocol_version
+    ))]
     pub async fn get_status_response(
         &mut self,
         server: &Server,
@@ -44,12 +48,24 @@ impl StatusCache {
 
         if let Some(entry) = self.entries.get(&key) {
             if entry.expires_at > SystemTime::now() {
+                debug!("Cache hit, returning cached status response");
                 return Ok(entry.response.clone());
             }
+            debug!("Cache expired");
+        } else {
+            debug!("Cache miss");
         }
 
-        let response = match server.dial().await {
-            Ok(mut conn) => self.fetch_status(&mut conn, req).await?,
+        let response = match server
+            .dial()
+            .instrument(debug_span!("backend_server_connect"))
+            .await 
+        {
+            Ok(mut conn) => {
+                self.fetch_status(&mut conn, req)
+                    .instrument(debug_span!("fetch_server_status"))
+                    .await?
+            }
             Err(e) => {
                 let guard = CONFIG.read();
 
@@ -86,7 +102,7 @@ impl StatusCache {
             return Ok(response_packet);
         }
 
-        debug!("Caching status response for {:?}", server.config.addresses);
+        debug!("Caching new status response");
         self.entries.insert(
             key,
             CacheEntry {
@@ -98,6 +114,9 @@ impl StatusCache {
         Ok(response)
     }
 
+    #[instrument(skip(self, conn), fields(
+        packets_count = %req.read_packets.len()
+    ))]
     pub async fn fetch_status(
         &self,
         conn: &mut ServerConnection,

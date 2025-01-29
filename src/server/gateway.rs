@@ -1,11 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use log::{info, warn};
 use tokio::sync::{
     mpsc::{self},
     oneshot, Mutex,
 };
+use tracing::{debug, debug_span, info, instrument, warn, Instrument, Span};
 
 use crate::{
     core::{actors::supervisor::ActorSupervisor, config::ServerConfig, event::GatewayMessage},
@@ -61,15 +61,24 @@ impl Gateway {
         self.config_service.remove_configuration(config_id).await;
     }
 
+    #[instrument(name = "client_connection_handling", skip(client, request, gateway), fields(
+        domain = %request.domain,
+        is_login = request.is_login,
+        protocol_version = ?request.protocol_version,
+        client_addr = %request.client_addr
+    ))]
     pub async fn handle_client_connection(
-        client_conn: Connection,
+        client: Connection,
         request: ServerRequest,
         gateway: Arc<Gateway>,
     ) {
-        let (oneshot_request_sender, oneshot_request_receiver) =
-            oneshot::channel::<ServerResponse>();
+        let span = Span::current();
 
-        let server_config = match gateway.find_server(&request.domain).await {
+        let server_config = match gateway
+            .find_server(&request.domain)
+            .instrument(span.clone())
+            .await
+        {
             Some(server) => server,
             None => {
                 warn!("Server not found for domain: {}", request.domain);
@@ -78,41 +87,58 @@ impl Gateway {
         };
 
         let is_login = request.is_login;
-        let mut proxy_mode = server_config.proxy_mode.clone().unwrap_or_default();
-        let mut username = String::new();
-        if !is_login {
-            proxy_mode = ProxyModeEnum::Status;
+        let proxy_mode = if !is_login {
+            ProxyModeEnum::Status
         } else {
-            let login_start = &request.read_packets[1];
-            username = ServerBoundLoginStart::try_from(login_start).unwrap().name.0;
-        }
+            server_config.proxy_mode.clone().unwrap_or_default()
+        };
 
+        let username = if is_login {
+            let login_start = &request.read_packets[1];
+            ServerBoundLoginStart::try_from(login_start).unwrap().name.0
+        } else {
+            String::new()
+        };
+
+        let (oneshot_request_sender, oneshot_request_receiver) = oneshot::channel();
+
+        // Créer les acteurs avec le span parent
         gateway
             .actor_supervisor
             .create_actor_pair(
                 &server_config.config_id,
-                client_conn,
-                proxy_mode,
+                client,
+                proxy_mode.clone(),
                 oneshot_request_receiver,
                 is_login,
-                username,
+                username.clone(),
             )
+            .instrument(debug_span!(parent: span.clone(), "create_actors",
+                username = %username,
+                proxy_mode = ?proxy_mode
+            ))
             .await;
 
-        // Spawn server request task
-        let gateway_handle = gateway.clone();
-        tokio::spawn(async move {
-            match gateway_handle.wake_up_server(request, server_config).await {
-                Ok(response) => {
-                    let _ = oneshot_request_sender.send(response);
+        // Wake up server dans le même span
+        tokio::spawn(
+            async move {
+                match gateway.wake_up_server(request, server_config).await {
+                    Ok(response) => {
+                        let _ = oneshot_request_sender.send(response);
+                    }
+                    Err(e) => warn!("Failed to request server: {:?}", e),
                 }
-                Err(e) => warn!("Failed to request server: {:?}", e),
             }
-        });
+            .instrument(span),
+        );
     }
 
     async fn find_server(&self, domain: &str) -> Option<Arc<ServerConfig>> {
-        self.config_service.find_server_by_domain(domain).await
+        let span = debug_span!("gateway: find_server", domain = domain);
+        self.config_service
+            .find_server_by_domain(domain)
+            .instrument(span)
+            .await
     }
 
     pub async fn get_server_from_ip(&self, ip: &str) -> Option<Arc<ServerConfig>> {
@@ -122,15 +148,27 @@ impl Gateway {
 
 #[async_trait]
 impl ServerRequester for Gateway {
+    #[instrument(name = "request_server", skip(self, req), fields(
+        domain = %req.domain,
+        is_login = req.is_login
+    ))]
     async fn request_server(&self, req: ServerRequest) -> ProtocolResult<ServerResponse> {
         let server_config = self
             .find_server(&req.domain)
+            .instrument(debug_span!("server_request: find_server"))
             .await
             .ok_or_else(|| ProxyProtocolError::Other("Server not found".to_string()))?;
 
-        self.wake_up_server(req, server_config).await
+        self.wake_up_server(req, server_config)
+            .instrument(debug_span!("server_request: wake_up_server"))
+            .await
     }
 
+    #[instrument(name = "wake_up_server", skip(self, req, server), fields(
+        domain = %req.domain,
+        is_login = %req.is_login,
+        server_addr = %server.addresses.first().unwrap_or(&String::new())
+    ))]
     async fn wake_up_server(
         &self,
         req: ServerRequest,
@@ -139,6 +177,7 @@ impl ServerRequester for Gateway {
         let tmp_server = Server::new(server.clone())?;
 
         if req.is_login {
+            debug!("Creating login connection to backend server");
             let conn = tmp_server.dial().await?;
             Ok(ServerResponse {
                 server_conn: Some(conn),
@@ -151,9 +190,13 @@ impl ServerRequester for Gateway {
                 initial_config: server.clone(),
             })
         } else {
-            let mut cache = self.status_cache.lock().await; //TODO: This may cause a deadlock
+            debug!("Fetching status from cache or backend");
+            let mut cache = self.status_cache.lock().await;
 
-            let response = cache.get_status_response(&tmp_server, &req).await?;
+            let response = cache
+                .get_status_response(&tmp_server, &req)
+                .instrument(debug_span!("status_cache_lookup"))
+                .await?;
 
             Ok(ServerResponse {
                 server_conn: None,

@@ -13,19 +13,21 @@ pub use core::config::InfrarustConfig;
 pub use core::error::RsaError;
 use core::error::SendError;
 use core::event::{GatewayMessage, ProviderMessage};
-use std::io;
 use std::sync::Arc;
+use std::{io, panic};
+
+pub mod telemetry;
 
 // Protocol modules
 pub mod protocol;
 use lazy_static::lazy_static;
-use log::{debug, error, info};
 use parking_lot::RwLock;
 use protocol::minecraft::java::handshake::ServerBoundHandshake;
 pub use protocol::{
     types::{ProtocolRead, ProtocolWrite},
     version,
 };
+use tracing::{debug, debug_span, error, info, info_span, instrument, Instrument, Span}; // Remplacer log par tracing
 
 // Network and security modules
 pub mod network;
@@ -48,6 +50,7 @@ use server::gateway::Gateway;
 use server::ServerRequest;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::version::Version;
 
@@ -68,6 +71,9 @@ lazy_static! {
 
 impl Infrarust {
     pub fn new(config: InfrarustConfig) -> io::Result<Self> {
+        let span = info_span!("infrarust_init");
+        let _enter = span.enter();
+
         debug!("Initializing Infrarust server with config: {:?}", config);
         let config_service = Arc::new(ConfigurationService::new());
         {
@@ -92,18 +98,25 @@ impl Infrarust {
                 file_config.watch,
                 provider_sender.clone(),
             );
+
             config_provider.register_provider(Box::new(file_provider));
         }
 
+        let provider_span = Span::current();
         tokio::spawn(async move {
             debug!("Starting ConfigProvider");
-            config_provider.run().await;
+            config_provider.run().instrument(provider_span).await;
         });
 
         let guard = server_gateway.clone();
+        let gateway_span = Span::current();
         tokio::spawn(async move {
             debug!("Starting Gateway");
-            guard.clone().run(gateway_receiver).await;
+            guard
+                .clone()
+                .run(gateway_receiver)
+                .instrument(gateway_span)
+                .await;
         });
 
         Ok(Self {
@@ -125,22 +138,29 @@ impl Infrarust {
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => {
+                    let span = info_span!("TCP Connection", %addr);
+                    debug!("New TCP connection accepted");
+
                     let filter_chain = self.filter_chain.clone();
                     let server_gateway = Arc::clone(&self.server_gateway);
-
+                    let clone_span = span.clone();
                     tokio::spawn(async move {
                         if let Err(e) = async move {
+                            debug!("Starting connection processing");
                             filter_chain.filter(&stream).await?;
-                            let conn = Connection::new(stream).await?;
-                            Self::handle_connection(conn, server_gateway).await?;
+                            let conn = Connection::new(stream).instrument(debug_span!("New connection")).await?;
+                            Self::handle_connection(conn, server_gateway).instrument(clone_span).await?;
 
                             Ok::<_, SendError>(())
                         }
+                        .instrument(span)
                         .await
                         {
                             error!("Connection error from {}: {}", addr, e);
                         }
-                    });
+                    })
+                    .await
+                    .unwrap_or_default();
                 }
                 Err(e) => {
                     error!("Accept error: {}", e);
@@ -149,6 +169,9 @@ impl Infrarust {
         }
     }
 
+    #[instrument(name = "connection_flow", skip(client, server_gateway), fields(
+        peer_addr = %client.peer_addr().await?,
+    ))]
     async fn handle_connection(
         mut client: Connection,
         server_gateway: Arc<Gateway>,
@@ -157,27 +180,27 @@ impl Infrarust {
         let handshake = ServerBoundHandshake::from_packet(&handshake_packet)?;
         let domain = handshake.parse_server_address();
 
-        debug!("Received connection request for domain: {}", domain);
-        debug!("Handshake packet: {:?}", handshake);
+        debug!(domain = %domain, "Received connection request");
 
         let second_packet = client.read_packet().await?;
         let protocol_version = Version::from(handshake.protocol_version.0);
+        let is_login = handshake.is_login_request();
 
         let client_addr = client.peer_addr().await?;
-        tokio::spawn(async move {
-            Gateway::handle_client_connection(
-                client,
-                ServerRequest {
-                    client_addr,
-                    domain: domain.clone(),
-                    is_login: handshake.is_login_request(),
-                    protocol_version,
-                    read_packets: [handshake_packet, second_packet],
-                },
-                server_gateway,
-            )
-            .await;
-        });
+
+        Gateway::handle_client_connection(
+            client,
+            ServerRequest {
+                client_addr,
+                domain: domain.clone(),
+                is_login,
+                protocol_version,
+                read_packets: [handshake_packet, second_packet],
+            },
+            server_gateway,
+        )
+        .instrument(debug_span!("handle_client_flow", domain = %domain, is_login = %is_login))
+        .await;
 
         Ok(())
     }

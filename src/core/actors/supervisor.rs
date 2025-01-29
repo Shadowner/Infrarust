@@ -3,6 +3,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use tokio::sync::{mpsc, oneshot, RwLock};
+use tracing::{debug_span, instrument, Instrument, Span};
 
 use crate::{
     core::{
@@ -44,6 +45,12 @@ impl ActorSupervisor {
         }
     }
 
+    #[instrument(name = "supervisor_create_pair", skip(self, client_conn, proxy_mode, oneshot_request_receiver), fields(
+        config_id = %config_id,
+        username = %username,
+        proxy_mode = ?proxy_mode,
+        is_login = is_login
+    ))]
     pub async fn create_actor_pair(
         &self,
         config_id: &str,
@@ -54,8 +61,9 @@ impl ActorSupervisor {
         username: String,
     ) -> ActorPair {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let span = debug_span!("actor_pair_setup");
 
-        match proxy_mode {
+        let pair = match proxy_mode {
             ProxyModeEnum::Status => {
                 let (client_handler, server_handler) = get_status_mode();
                 self.create_actor_pair_with_handlers(
@@ -68,6 +76,7 @@ impl ActorSupervisor {
                     username,
                     shutdown_flag,
                 )
+                .instrument(span)
                 .await
             }
             ProxyModeEnum::Passthrough => {
@@ -82,6 +91,7 @@ impl ActorSupervisor {
                     username,
                     shutdown_flag,
                 )
+                .instrument(span)
                 .await
             }
             ProxyModeEnum::Offline => {
@@ -96,6 +106,7 @@ impl ActorSupervisor {
                     username,
                     shutdown_flag,
                 )
+                .instrument(span)
                 .await
             }
             ProxyModeEnum::ClientOnly => {
@@ -110,6 +121,7 @@ impl ActorSupervisor {
                     username,
                     shutdown_flag,
                 )
+                .instrument(span)
                 .await
             }
             ProxyModeEnum::ServerOnly => {
@@ -124,13 +136,23 @@ impl ActorSupervisor {
                     username,
                     shutdown_flag,
                 )
+                .instrument(span)
                 .await
             }
-        }
+        };
+
+        self.register_actor_pair(config_id, pair.clone())
+            .instrument(debug_span!("register_pair"))
+            .await;
+
+        pair
     }
 
-    //TODO: Refactor this function to remove the clippy warning
-    #[allow(clippy::too_many_arguments)]
+    #[instrument(skip(self, client_conn, client_handler, server_handler, oneshot_request_receiver, shutdown_flag), fields(
+        config_id = %config_id,
+        username = %username,
+        is_login = is_login
+    ))]
     async fn create_actor_pair_with_handlers<T>(
         &self,
         config_id: &str,
@@ -148,6 +170,17 @@ impl ActorSupervisor {
         let (server_sender, server_receiver) = mpsc::channel(64);
         let (client_sender, client_receiver) = mpsc::channel(64);
 
+        let root_span = if is_login {
+            Some(debug_span!(
+                parent: None,
+                "actor_handling",
+                username = %username,
+                is_login = is_login
+            ))
+        } else {
+            None
+        };
+
         let client = MinecraftClientHandler::new(
             server_sender,
             client_receiver,
@@ -156,6 +189,7 @@ impl ActorSupervisor {
             is_login,
             username.clone(),
             shutdown_flag.clone(),
+            root_span.clone(),
         );
 
         let server = MinecraftServerHandler::new(
@@ -165,6 +199,7 @@ impl ActorSupervisor {
             oneshot_request_receiver,
             server_handler,
             shutdown_flag.clone(),
+            root_span.clone(),
         );
 
         let pair = ActorPair {
@@ -178,6 +213,7 @@ impl ActorSupervisor {
         pair
     }
 
+    #[instrument(skip(self, pair), fields(config_id = %config_id))]
     async fn register_actor_pair(&self, config_id: &str, pair: ActorPair) {
         let mut actors = self.actors.write().await;
         actors
