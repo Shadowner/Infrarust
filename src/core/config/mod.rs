@@ -4,8 +4,38 @@ use std::time::Duration;
 
 use provider::file::FileProviderConfig;
 use serde::Deserialize;
+use uuid::Uuid;
 
-use crate::proxy_modes::ProxyModeEnum;
+use crate::{
+    proxy_modes::ProxyModeEnum, security::filter::RateLimiterConfig, server::motd::MotdConfig,
+};
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccessListConfig<T> {
+    pub enabled: bool,
+    pub whitelist: Vec<T>,
+    pub blacklist: Vec<T>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilterConfig {
+    pub rate_limiter: Option<RateLimiterConfig>,
+    pub ip_filter: Option<AccessListConfig<String>>,
+    pub id_filter: Option<AccessListConfig<Uuid>>,
+    pub name_filter: Option<AccessListConfig<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StatusCacheOptions {
+    pub enabled: bool,
+    pub ttl: Duration,
+    pub max_size: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CacheConfig {
+    pub status: Option<StatusCacheOptions>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
@@ -15,7 +45,12 @@ pub struct ServerConfig {
     pub send_proxy_protocol: Option<bool>,
     #[serde(rename = "proxyMode")]
     pub proxy_mode: Option<ProxyModeEnum>,
-    #[serde(skip)]
+    pub filters: Option<FilterConfig>,
+    pub caches: Option<CacheConfig>,
+
+    pub motd: Option<MotdConfig>,
+
+    #[serde(rename = "configId", default)]
     pub config_id: String,
 }
 
@@ -27,6 +62,23 @@ impl Default for ServerConfig {
             send_proxy_protocol: Some(false),
             proxy_mode: Some(ProxyModeEnum::default()),
             config_id: String::new(),
+            filters: None,
+            caches: None,
+            motd: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ServerMotds {
+    pub unknown: Option<MotdConfig>,
+    pub unreachable: Option<MotdConfig>,
+}
+impl Default for ServerMotds {
+    fn default() -> Self {
+        ServerMotds {
+            unknown: Some(MotdConfig::default()),
+            unreachable: Some(MotdConfig::default_unreachable()),
         }
     }
 }
@@ -38,6 +90,9 @@ pub struct InfrarustConfig {
     pub addresses: Option<Vec<String>>,
     pub keepalive_timeout: Option<Duration>,
     pub file_provider: Option<FileProviderConfig>,
+
+    #[serde(default)]
+    pub motds: ServerMotds,
 }
 
 impl ServerConfig {
@@ -49,6 +104,36 @@ impl ServerConfig {
 impl InfrarustConfig {
     pub fn is_empty(&self) -> bool {
         self.bind.is_none() && self.domains.is_none() && self.addresses.is_none()
+    }
+
+    pub fn merge(&mut self, other: &InfrarustConfig) {
+        if let Some(bind) = &other.bind {
+            self.bind = Some(bind.clone());
+        }
+
+        if let Some(domains) = &other.domains {
+            self.domains = Some(domains.clone());
+        }
+
+        if let Some(addresses) = &other.addresses {
+            self.addresses = Some(addresses.clone());
+        }
+
+        if let Some(keepalive_timeout) = &other.keepalive_timeout {
+            self.keepalive_timeout = Some(*keepalive_timeout);
+        }
+
+        if let Some(file_provider) = &other.file_provider {
+            self.file_provider = Some(file_provider.clone());
+        }
+
+        if other.motds.unknown.is_some() {
+            self.motds.unknown = other.motds.unknown.clone();
+        }
+
+        if other.motds.unreachable.is_some() {
+            self.motds.unreachable = other.motds.unreachable.clone();
+        }
     }
 }
 

@@ -18,7 +18,9 @@ use std::sync::Arc;
 
 // Protocol modules
 pub mod protocol;
+use lazy_static::lazy_static;
 use log::{debug, error, info};
+use parking_lot::RwLock;
 use protocol::minecraft::java::handshake::ServerBoundHandshake;
 pub use protocol::{
     types::{ProtocolRead, ProtocolWrite},
@@ -59,10 +61,19 @@ pub struct Infrarust {
     _provider_sender: Sender<ProviderMessage>,
 }
 
+lazy_static! {
+    pub static ref CONFIG: RwLock<Arc<InfrarustConfig>> =
+        RwLock::new(Arc::new(InfrarustConfig::default()));
+}
+
 impl Infrarust {
     pub fn new(config: InfrarustConfig) -> io::Result<Self> {
+        debug!("Initializing Infrarust server with config: {:?}", config);
         let config_service = Arc::new(ConfigurationService::new());
-
+        {
+            let mut guard = CONFIG.write();
+            *guard = Arc::new(config.clone());
+        }
         let (gateway_sender, gateway_receiver) = tokio::sync::mpsc::channel(100);
         let (provider_sender, provider_receiver) = tokio::sync::mpsc::channel(100);
 

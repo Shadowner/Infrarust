@@ -65,10 +65,11 @@ impl FileProvider {
         file.read_to_string(&mut content)?;
 
         // decode the file
-
+        let mut default_config = InfrarustConfig::default();
         let config: InfrarustConfig = serde_yaml::from_str(&content)?;
+        default_config.merge(&config);
 
-        Ok(config)
+        Ok(default_config)
     }
 
     pub fn new(
@@ -107,7 +108,7 @@ impl FileProvider {
                 configuration: if config.is_empty() {
                     None
                 } else {
-                    Some(config)
+                    Some(Box::new(config))
                 },
             };
 

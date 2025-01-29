@@ -46,7 +46,7 @@ impl ConfigProvider {
                     match configuration {
                         Some(config) => {
                             self.config_service
-                                .update_configurations(vec![config])
+                                .update_configurations(vec![*config])
                                 .await;
                         }
                         None => {

@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod cache;
 pub mod gateway;
+pub mod motd;
 
 use crate::core::config::ServerConfig;
 use crate::network::packet::Packet;

@@ -13,7 +13,7 @@ pub enum GatewayMessage {
 pub enum ProviderMessage {
     Update {
         key: String,
-        configuration: Option<ServerConfig>,
+        configuration: Option<Box<ServerConfig>>,
     },
     FirstInit(HashMap<String, ServerConfig>),
     Error(String),

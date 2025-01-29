@@ -6,9 +6,13 @@ use std::{
 use log::debug;
 
 use crate::{
-    network::{packet::Packet, proxy_protocol::ProtocolResult},
+    network::{
+        packet::Packet,
+        proxy_protocol::{errors::ProxyProtocolError, ProtocolResult},
+    },
+    server::motd::{generate_motd, MotdConfig},
     version::Version,
-    ServerConnection,
+    ServerConnection, CONFIG,
 };
 
 use super::{backend::Server, ServerRequest};
@@ -44,8 +48,44 @@ impl StatusCache {
             }
         }
 
-        let mut conn = server.dial().await?;
-        let response = self.fetch_status(&mut conn, req).await?;
+        let response = match server.dial().await {
+            Ok(mut conn) => self.fetch_status(&mut conn, req).await?,
+            Err(e) => {
+                let guard = CONFIG.read();
+
+                if guard.motds.unreachable.is_some() {
+                    let motd = guard.motds.unreachable.clone().unwrap();
+
+                    if motd.enabled && !motd.is_empty() {
+                        return generate_motd(&motd, true);
+                    } else if motd.enabled {
+                        return generate_motd(&MotdConfig::default_unreachable(), true);
+                    }
+                }
+
+                debug!("Failed to connect to server: {}", e);
+
+                return Err(ProxyProtocolError::Other(format!(
+                    "Failed to connect to server: {}",
+                    e
+                )));
+            }
+        };
+
+        if let Some(motd) = &server.config.motd {
+            let response_packet = generate_motd(motd, false)?;
+
+            self.entries.insert(
+                key,
+                CacheEntry {
+                    expires_at: SystemTime::now() + self.ttl,
+                    response: response_packet.clone(),
+                },
+            );
+
+            return Ok(response_packet);
+        }
+
         debug!("Caching status response for {:?}", server.config.addresses);
         self.entries.insert(
             key,
