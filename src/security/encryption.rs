@@ -1,5 +1,5 @@
 use aes::cipher::KeyIvInit;
-use log::{debug, error};
+use tracing::{debug, error};
 use rand::RngCore;
 use rsa::{
     pkcs1::DecodeRsaPublicKey,

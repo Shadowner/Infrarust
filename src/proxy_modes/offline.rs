@@ -1,12 +1,12 @@
 use async_trait::async_trait;
-use log::{debug, error, info};
 use std::io::{self};
+use tracing::{debug, debug_span, error, info, instrument, Instrument};
 
 use super::{ClientProxyModeHandler, ProxyMessage, ProxyModeMessageType, ServerProxyModeHandler};
-use crate::core::actors::client::MinecraftClient;
-use crate::core::actors::server::MinecraftServer;
-use crate::core::event::MinecraftCommunication;
-use crate::network::connection::PossibleReadValue;
+use crate::{
+    core::{actors::client::MinecraftClient, actors::server::MinecraftServer, event::MinecraftCommunication},
+    network::connection::PossibleReadValue,
+};
 
 pub struct OfflineMode;
 
@@ -23,12 +23,11 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         match message {
             MinecraftCommunication::Packet(data) => {
                 if data.id == 0x03 && !actor.conn.is_compressing() {
-                    debug!("Received Compression packet {:?}", data);
+                    debug!("Received Compression packet");
                     actor.conn.write_packet(&data).await?;
                     actor.conn.enable_compression(256);
                     return Ok(());
                 }
-
                 actor.conn.write_packet(&data).await?;
             }
             MinecraftCommunication::Shutdown => {
@@ -36,7 +35,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                 actor.conn.close().await?;
             }
             _ => {
-                info!("Unhandled message: {:?}", message);
+                info!("Unhandled message");
             }
         }
         Ok(())
@@ -56,6 +55,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         Ok(())
     }
 
+    #[instrument(name = "offline_client_init", skip(self, _actor), fields(username = %_actor.username))]
     async fn initialize_client(
         &self,
         _actor: &mut MinecraftClient<MinecraftCommunication<OfflineMessage>>,
@@ -75,12 +75,11 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         if let Some(request) = &mut actor.server_request {
             if let Some(server_conn) = &mut request.server_conn {
                 if let PossibleReadValue::Packet(data) = data {
-                    //TODO: Better handle phase of actors (playing_phase, login_phase)
                     if data.id == 0x03 && !server_conn.is_compressing() {
-                        debug!("Received Compression packet srv {:?}", data);
+                        debug!("Received Compression packet srv");
                         server_conn.enable_compression(256);
                     }
-
+                    
                     let _ = actor
                         .client_sender
                         .send(MinecraftCommunication::Packet(data))
@@ -88,7 +87,6 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                 }
             }
         }
-
         Ok(())
     }
 
@@ -99,7 +97,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
     ) -> io::Result<()> {
         match message {
             MinecraftCommunication::Packet(data) => {
-                debug!("Received packet from server: {:?}", data);
+                debug!("Received packet from server");
                 actor
                     .server_request
                     .as_mut()
@@ -127,16 +125,24 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         Ok(())
     }
 
+    #[instrument(name = "offline_server_init", skip(self, actor), fields(
+        domain = %actor.server_request.as_ref().map(|r| r.initial_config.domains.join(", ")).unwrap_or_else(|| "unknown".to_string())
+    ))]
     async fn initialize_server(
         &self,
         actor: &mut MinecraftServer<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
         debug!("Initializing server offline proxy mode");
+        
         if let Some(server_request) = &mut actor.server_request {
             if let Some(server_conn) = &mut server_request.server_conn {
-                for packet in server_request.read_packets.iter() {
-                    server_conn.write_packet(packet).await?;
-                }
+                let span = debug_span!("initialize_connection");
+                async {
+                    for packet in server_request.read_packets.iter() {
+                        server_conn.write_packet(packet).await?;
+                    }
+                    Ok::<(), io::Error>(())
+                }.instrument(span).await?;
             } else {
                 error!("Server connection is None");
             }
@@ -146,6 +152,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         Ok(())
     }
 }
+
 impl ProxyMessage for OfflineMessage {}
 
 impl ProxyModeMessageType for OfflineMode {

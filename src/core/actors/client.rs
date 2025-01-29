@@ -1,7 +1,7 @@
-use log::{debug, info};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tracing::{debug, info, instrument, Instrument};
 
 use crate::{
     core::{
@@ -52,6 +52,11 @@ impl<T> MinecraftClient<T> {
         {}
     }
 }
+
+#[instrument(skip(actor, proxy_mode, shutdown), fields(
+    is_login = actor.is_login,
+    name = %actor.username
+))]
 async fn start_minecraft_client_actor<T>(
     mut actor: MinecraftClient<MinecraftCommunication<T>>,
     proxy_mode: Box<dyn ClientProxyModeHandler<MinecraftCommunication<T>>>,
@@ -63,9 +68,11 @@ async fn start_minecraft_client_actor<T>(
         Ok(_) => {}
         Err(e) => {
             info!("Error initializing client: {:?}", e);
+            // drop the span
             return;
         }
     };
+    drop(tracing::Span::current());
 
     let shutdown_flag = shutdown.clone();
     while !shutdown_flag.load(Ordering::SeqCst) {
@@ -122,9 +129,11 @@ impl MinecraftClientHandler {
         is_login: bool,
         username: String,
         shutdown: Arc<AtomicBool>,
+        start_span: Option<tracing::Span>,
     ) -> Self {
-        // TODO: Implement better supervisor handling
+        let span = tracing::Span::current();
         let (sender, receiver) = mpsc::channel(100);
+
         let actor = MinecraftClient::new(
             receiver,
             server_sender,
@@ -134,8 +143,17 @@ impl MinecraftClientHandler {
             username,
         );
 
-        tokio::spawn(start_minecraft_client_actor(actor, proxy_mode, shutdown));
-
-        Self { _sender: sender }
+        if is_login {
+            span.in_scope(|| {
+                //We'are sure that in is_login the start_span exist
+                tokio::spawn(start_minecraft_client_actor(actor, proxy_mode, shutdown).instrument(start_span.unwrap()));
+                Self { _sender: sender }
+            })
+        } else {
+            tokio::spawn(
+                start_minecraft_client_actor(actor, proxy_mode, shutdown).instrument(span),
+            );
+            Self { _sender: sender }
+        }
     }
 }

@@ -5,7 +5,7 @@ use crate::{
     version::Version,
 };
 use async_trait::async_trait;
-use log::{debug, error};
+use tracing::{debug, error};
 use std::io;
 
 /// First attempt at a proxy before realising that Yggdrasil authentication

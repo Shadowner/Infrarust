@@ -37,12 +37,17 @@ generic-array = "1.2.0"
 # Networking
 proxy-protocol = "0.5"
 ipnetwork = "0.21.1"
-reqwest = { version = "0.12.2", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.12.2", features = [
+    "json",
+    "rustls-tls",
+], default-features = false }
 
 # Utilities
-log = {version = "0.4.25", features = ["release_max_level_info"]}
-uuid = { version = "1.12.0", features = ["v4", "serde"] }
-xxhash-rust = { version = "0.8", features = ["xxh64"] } 
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
+#log = { version = "0.4.25", features = ["release_max_level_info"] }
+uuid = { version = "1.12.1", features = ["v4", "serde"] }
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
 wildmatch = "2.1"
 walkdir = "2.3"
 
@@ -62,19 +67,35 @@ sha1 = "0.10"
 hex = "0.4"
 
 # Command line parsing for bin
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.5.27", features = ["derive"] }
 notify = "8.0.0"
 lazy_static = "1.5.0"
 
+# Telemetry 
+opentelemetry = { version = "0.27.1", features = ["metrics"] }
+opentelemetry_sdk = { version = "0.27.1", features = ["metrics", "rt-tokio"] }
+opentelemetry-appender-log = { version = "0.27.0", features = [] }
+opentelemetry-prometheus = "0.27.0"
+opentelemetry-stdout = "0.27.0"
+opentelemetry-otlp = { version = "0.27.0", features = [
+    "grpc-tonic",
+    "trace",
+    "metrics",
+    "logs",
+    "tokio"
+] }
+tracing-opentelemetry = "0.28.0" 
+opentelemetry-semantic-conventions = "0.27.0"
+
 [dev-dependencies]
-tempfile = "3.8"
+tempfile = "3.16.0"
 env_logger = "0.11.6"
 
 [features]
 default = []
 telemetry = [] # Planned amelioration for metrics and monitoring
 dashboard = [] # Planned amelioration for a web dashboard
-api = [] # Planned amelioration for a REST API
+api = []       # Planned amelioration for a REST API
 
 [profile.release]
 opt-level = 3
@@ -84,7 +105,7 @@ panic = "abort"
 
 [profile.dev]
 opt-level = 0
-debug = true     
+debug = true
 
 [[bin]]
 name = "infrarust"

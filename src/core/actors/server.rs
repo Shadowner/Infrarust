@@ -6,8 +6,8 @@ use std::{
     },
 };
 
-use log::{debug, warn};
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, instrument, warn, Instrument};
 
 use crate::{
     core::{
@@ -59,6 +59,9 @@ impl<T> MinecraftServer<T> {
     }
 }
 
+#[instrument(skip(actor, oneshot, proxy_mode, shutdown), fields(
+    is_login = actor.is_login
+))]
 async fn start_minecraft_server_actor<T>(
     mut actor: MinecraftServer<MinecraftCommunication<T>>,
     oneshot: oneshot::Receiver<ServerResponse>,
@@ -175,19 +178,36 @@ impl MinecraftServerHandler {
         request_server: oneshot::Receiver<ServerResponse>,
         proxy_mode: Box<dyn ServerProxyModeHandler<MinecraftCommunication<T>>>,
         shutdown: Arc<AtomicBool>,
+        start_span: Option<tracing::Span>,
     ) -> Self {
+        let span = tracing::Span::current();
         let (sender, receiver) = mpsc::channel(64);
 
         let actor = MinecraftServer::new(receiver, client_sender, server_receiver, is_login);
-        tokio::spawn(start_minecraft_server_actor(
-            actor,
-            request_server,
-            proxy_mode,
-            shutdown,
-        ));
 
-        Self {
-            sender_to_actor: sender,
+        if is_login {
+            span.in_scope(|| {
+                tokio::spawn(start_minecraft_server_actor(
+                    actor,
+                    request_server,
+                    proxy_mode,
+                    shutdown,
+                //We'are sure that in is_login the start_span exist
+                ).instrument(start_span.unwrap()));
+
+                Self {
+                    sender_to_actor: sender,
+                }
+            })
+        } else {
+            tokio::spawn(
+                start_minecraft_server_actor(actor, request_server, proxy_mode, shutdown)
+                    .instrument(span),
+            );
+
+            Self {
+                sender_to_actor: sender,
+            }
         }
     }
 

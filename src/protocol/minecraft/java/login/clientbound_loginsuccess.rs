@@ -2,7 +2,7 @@ use std::io::{self, Read, Write};
 
 use crate::network::packet::{Packet, PacketCodec};
 use crate::protocol::types::{Boolean, ProtocolRead, ProtocolString, ProtocolWrite, VarInt};
-use log::debug;
+use tracing::debug;
 use serde::Deserialize;
 use uuid::Uuid;
 

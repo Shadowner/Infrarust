@@ -9,7 +9,7 @@
 //     ProtocolWrite,
 // };
 // use bytes::BytesMut;
-// use log::{debug, error};
+// use tracing::{debug, error};
 // use std::io::{Read, Write};
 
 // /// Trait pour la compression/décompression des paquets

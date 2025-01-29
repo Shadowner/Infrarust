@@ -12,6 +12,7 @@ use passthrough::{PassthroughMessage, PassthroughMode};
 use serde::{Deserialize, Serialize};
 use status::StatusMessage;
 use std::io;
+use tracing::{debug, instrument};
 
 #[async_trait::async_trait]
 pub trait ClientProxyModeHandler<T>: Send + Sync {
@@ -55,34 +56,42 @@ pub trait ProxyModeMessageType {
 
 //TODO: Refacor to remove the warning
 #[allow(clippy::type_complexity)]
+#[instrument(name = "create_passthrough_mode")]
 pub fn get_passthrough_mode() -> (
     Box<dyn ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>>>,
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>>>,
 ) {
+    debug!("Creating new passthrough mode handler pair");
     (Box::new(PassthroughMode), Box::new(PassthroughMode))
 }
 
 #[allow(clippy::type_complexity)]
+#[instrument(name = "create_offline_mode")]
 pub fn get_offline_mode() -> (
     Box<dyn ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>>>,
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>>>,
 ) {
+    debug!("Creating new offline mode handler pair");
     (Box::new(OfflineMode), Box::new(OfflineMode))
 }
 
 #[allow(clippy::type_complexity)]
+#[instrument(name = "create_client_only_mode")]
 pub fn get_client_only_mode() -> (
     Box<dyn ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>>>,
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>>>,
 ) {
+    debug!("Creating new client-only mode handler pair");
     (Box::new(ClientOnlyMode), Box::new(ClientOnlyMode))
 }
 
 #[allow(clippy::type_complexity)]
+#[instrument(name = "create_status_mode")]
 pub fn get_status_mode() -> (
     Box<dyn ClientProxyModeHandler<MinecraftCommunication<StatusMessage>>>,
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<StatusMessage>>>,
 ) {
+    debug!("Creating new status mode handler pair");
     (Box::new(status::StatusMode), Box::new(status::StatusMode))
 }
 

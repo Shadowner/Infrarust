@@ -4,8 +4,9 @@ use crate::core::actors::server::MinecraftServer;
 use crate::core::event::MinecraftCommunication;
 use crate::network::connection::PossibleReadValue;
 use async_trait::async_trait;
-use log::debug;
 use std::io::{self};
+use tracing::debug;
+use tracing::instrument;
 
 pub struct StatusMode;
 
@@ -39,9 +40,10 @@ impl ClientProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
         Ok(())
     }
 
+    #[instrument(name = "status_client_init",skip(self, actor), fields(username = %actor.username))]
     async fn initialize_client(
         &self,
-        _actor: &mut MinecraftClient<MinecraftCommunication<StatusMessage>>,
+        actor: &mut MinecraftClient<MinecraftCommunication<StatusMessage>>,
     ) -> io::Result<()> {
         Ok(())
     }
@@ -83,6 +85,9 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
         Ok(())
     }
 
+    #[instrument(name = "status_server_init", skip(self, actor), fields(
+        domain = %actor.server_request.as_ref().map(|r| r.initial_config.domains.join(", ")).unwrap_or_else(|| "unknown".to_string())
+    ))]
     async fn initialize_server(
         &self,
         actor: &mut MinecraftServer<MinecraftCommunication<StatusMessage>>,

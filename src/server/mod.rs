@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct ServerRequest {
     pub client_addr: SocketAddr,
     pub domain: String,
