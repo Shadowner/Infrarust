@@ -23,8 +23,8 @@ jobs:
       - name: Get commit Title without MAJOR/MINOR/PATCH
         id: get-commit-title
         run: |
-          COMMIT_TITLE=$(echo ${{ github.event.head_commit.message }} | sed -E 's/^(MAJOR|MINOR|PATCH)[[:space:]]*:[[:space:]]*//')
-          echo "commit_title=$COMMIT_TITLE" >> $GITHUB_OUTPUT
+          COMMIT_TITLE=$(git log -1 --pretty=%B | head -n 1 | sed -E 's/^(MAJOR|MINOR|PATCH)[[:space:]]*:[[:space:]]*//') 
+          echo "commit_title=${COMMIT_TITLE}" >> $GITHUB_OUTPUT
           
       - name: Create tag
         run: |
