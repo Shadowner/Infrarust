@@ -22,6 +22,13 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
     ) -> io::Result<()> {
         match message {
             MinecraftCommunication::Packet(data) => {
+                if data.id == 0x03 && !actor.conn.is_compressing() {
+                    debug!("Received Compression packet {:?}", data);
+                    actor.conn.write_packet(&data).await?;
+                    actor.conn.enable_compression(256);
+                    return Ok(());
+                }
+
                 actor.conn.write_packet(&data).await?;
             }
             MinecraftCommunication::Shutdown => {
@@ -65,12 +72,23 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         data: PossibleReadValue,
         actor: &mut MinecraftServer<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
-        if let PossibleReadValue::Packet(data) = data {
-            let _ = actor
-                .client_sender
-                .send(MinecraftCommunication::Packet(data))
-                .await;
+        if let Some(request) = &mut actor.server_request {
+            if let Some(server_conn) = &mut request.server_conn {
+                if let PossibleReadValue::Packet(data) = data {
+                    //TODO: Better handle phase of actors (playing_phase, login_phase)
+                    if data.id == 0x03 && !server_conn.is_compressing() {
+                        debug!("Received Compression packet srv {:?}", data);
+                        server_conn.enable_compression(256);
+                    }
+
+                    let _ = actor
+                        .client_sender
+                        .send(MinecraftCommunication::Packet(data))
+                        .await;
+                }
+            }
         }
+
         Ok(())
     }
 
