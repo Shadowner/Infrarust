@@ -66,6 +66,10 @@ impl Connection {
         self.writer.disable_compression();
     }
 
+    pub fn is_compressing(&self) -> bool {
+        self.reader.is_compressing()
+    }
+
     pub async fn read_packet(&mut self) -> ProtocolResult<Packet> {
         Ok(self.reader.read_packet().await?)
     }
@@ -190,6 +194,10 @@ impl ServerConnection {
 
     pub fn disable_compression(&mut self) {
         self.connection.disable_compression();
+    }
+
+    pub fn is_compressing(&self) -> bool {
+        self.connection.is_compressing()
     }
 
     pub async fn read_packet(&mut self) -> ProtocolResult<Packet> {

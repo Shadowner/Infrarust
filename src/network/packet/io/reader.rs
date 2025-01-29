@@ -56,6 +56,10 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
         self.compression = CompressionState::Disabled;
     }
 
+    pub fn is_compressing(&self) -> bool {
+        matches!(self.compression, CompressionState::Enabled { .. })
+    }
+
     pub fn set_protocol_version(&mut self, version: Version) {
         self.protocol_version = version;
     }
