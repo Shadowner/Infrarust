@@ -21,7 +21,7 @@ use crate::{
 pub enum ServerEvent {
     ConfigurationUpdate {
         key: String,
-        configuration: ServerConfig,
+        configuration: Box<ServerConfig>,
     },
     Shutdown,
 }

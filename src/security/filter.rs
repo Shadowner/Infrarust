@@ -1,6 +1,7 @@
 use std::{io, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use serde::Deserialize;
 use tokio::net::TcpStream;
 
 #[async_trait]
@@ -30,12 +31,12 @@ impl FilterChain {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct FilterConfig {
     pub rate_limiter: Option<RateLimiterConfig>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RateLimiterConfig {
     pub request_limit: u32,
     pub window_length: Duration,
