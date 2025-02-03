@@ -3,6 +3,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, Instrument};
 
+use crate::network::connection::PossibleReadValue;
+use crate::telemetry::{Direction, TELEMETRY};
 use crate::{
     core::{
         config::ServerConfig,
@@ -11,6 +13,8 @@ use crate::{
     proxy_modes::ClientProxyModeHandler,
     Connection,
 };
+
+use super::supervisor::SupervisorMessage;
 
 pub enum ClientEvent {
     ConfigurationUpdate {
@@ -23,7 +27,7 @@ pub enum ClientEvent {
 pub struct MinecraftClient<T> {
     pub server_sender: mpsc::Sender<T>,
     pub client_receiver: mpsc::Receiver<T>,
-    pub supervisor_receiver: mpsc::Receiver<GatewayMessage>,
+    pub supervisor_receiver: mpsc::Receiver<SupervisorMessage>,
     pub conn: Connection,
     pub is_login: bool,
     pub username: String,
@@ -31,7 +35,7 @@ pub struct MinecraftClient<T> {
 
 impl<T> MinecraftClient<T> {
     fn new(
-        supervisor_receiver: mpsc::Receiver<GatewayMessage>,
+        supervisor_receiver: mpsc::Receiver<SupervisorMessage>,
         server_sender: mpsc::Sender<T>,
         client_receiver: mpsc::Receiver<T>,
         conn: Connection,
@@ -48,7 +52,7 @@ impl<T> MinecraftClient<T> {
         }
     }
 
-    fn handle_supervisor_message(&mut self, _message: GatewayMessage) {
+    fn handle_supervisor_message(&mut self, _message: SupervisorMessage) {
         {}
     }
 }
@@ -62,16 +66,17 @@ async fn start_minecraft_client_actor<T>(
     proxy_mode: Box<dyn ClientProxyModeHandler<MinecraftCommunication<T>>>,
     shutdown: Arc<AtomicBool>,
 ) {
+    let start_time = std::time::Instant::now();
     debug!("Starting Minecraft Client Actor for ID");
-
+    let peer_address = actor.conn.peer_addr().await.unwrap();
     match proxy_mode.initialize_client(&mut actor).await {
         Ok(_) => {}
         Err(e) => {
             info!("Error initializing client: {:?}", e);
-            // drop the span
             return;
         }
     };
+    // drop the span because it would be too long just for the connection processing
     drop(tracing::Span::current());
 
     let shutdown_flag = shutdown.clone();
@@ -100,7 +105,7 @@ async fn start_minecraft_client_actor<T>(
                     info!("Error handling external client message: {:?}", e);
                     shutdown_flag.store(true, Ordering::SeqCst);
                 }
-            }
+                }
             else => {
                 debug!("All channels closed");
                 shutdown_flag.store(true, Ordering::SeqCst);
@@ -110,14 +115,21 @@ async fn start_minecraft_client_actor<T>(
 
     // Cleanup
     debug!("Shutting down client actor");
-
-    actor.client_receiver.close();
+    if actor.is_login {
+        TELEMETRY.record_connection_end(
+            &peer_address.to_string(),
+            start_time.elapsed().as_secs_f64(),
+            "normal_disconnect",
+            actor.conn.session_id,
+        );
+    }
+    let _ = actor.conn.close().await;
 }
 
 #[derive(Clone)]
 pub struct MinecraftClientHandler {
     //TODO: establish a connection to talk to an actor
-    _sender: mpsc::Sender<GatewayMessage>,
+    _sender: mpsc::Sender<SupervisorMessage>,
 }
 
 impl MinecraftClientHandler {
@@ -146,7 +158,10 @@ impl MinecraftClientHandler {
         if is_login {
             span.in_scope(|| {
                 //We'are sure that in is_login the start_span exist
-                tokio::spawn(start_minecraft_client_actor(actor, proxy_mode, shutdown).instrument(start_span.unwrap()));
+                tokio::spawn(
+                    start_minecraft_client_actor(actor, proxy_mode, shutdown)
+                        .instrument(start_span.unwrap()),
+                );
                 Self { _sender: sender }
             })
         } else {
@@ -155,5 +170,9 @@ impl MinecraftClientHandler {
             );
             Self { _sender: sender }
         }
+    }
+
+    pub async fn send_message(&self, message: SupervisorMessage) {
+        let _ = self._sender.send(message).await;
     }
 }

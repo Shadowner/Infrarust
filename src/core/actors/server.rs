@@ -2,6 +2,7 @@ use std::{
     io,
     sync::{
         atomic::{AtomicBool, Ordering},
+        mpsc::Receiver,
         Arc,
     },
 };
@@ -11,12 +12,17 @@ use tracing::{debug, instrument, warn, Instrument};
 
 use crate::{
     core::{
+        actors::server,
         config::ServerConfig,
         event::{GatewayMessage, MinecraftCommunication},
     },
+    network::connection::PossibleReadValue,
     proxy_modes::ServerProxyModeHandler,
     server::ServerResponse,
+    telemetry::{Direction, TELEMETRY},
 };
+
+use super::supervisor::SupervisorMessage;
 
 pub enum ServerEvent {
     ConfigurationUpdate {
@@ -126,6 +132,7 @@ async fn start_minecraft_server_actor<T>(
                         }
                     }
                     Some(msg) = actor.server_receiver.recv() => {
+
                         if let MinecraftCommunication::Shutdown = msg {
                              debug!("Shutting down server (Received Shutdown message)");
                              server_conn.close().await.unwrap();
@@ -159,7 +166,32 @@ async fn start_minecraft_server_actor<T>(
         }
     }
 
-    // Cleanup
+    if actor.is_login
+        && actor.server_request.is_some()
+        && actor.server_request.as_ref().unwrap().server_conn.is_some()
+    {
+
+        //TODO: Update this system so server have a different player counter than the proxy global one
+        TELEMETRY.update_player_count(
+            -1,
+            &actor
+                .server_request
+                .as_ref()
+                .unwrap()
+                .initial_config
+                .config_id
+                .as_str(),
+            actor
+                .server_request
+                .as_ref()
+                .unwrap()
+                .server_conn
+                .as_ref()
+                .unwrap()
+                .session_id,
+                "",
+        );
+    }
     debug!("Shutting down server actor");
     let _ = client_sender.send(MinecraftCommunication::Shutdown).await;
     actor.server_receiver.close();
@@ -187,13 +219,16 @@ impl MinecraftServerHandler {
 
         if is_login {
             span.in_scope(|| {
-                tokio::spawn(start_minecraft_server_actor(
-                    actor,
-                    request_server,
-                    proxy_mode,
-                    shutdown,
-                //We'are sure that in is_login the start_span exist
-                ).instrument(start_span.unwrap()));
+                tokio::spawn(
+                    start_minecraft_server_actor(
+                        actor,
+                        request_server,
+                        proxy_mode,
+                        shutdown,
+                        //We'are sure that in is_login the start_span exist
+                    )
+                    .instrument(start_span.unwrap()),
+                );
 
                 Self {
                     sender_to_actor: sender,

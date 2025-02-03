@@ -8,7 +8,9 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 use infrarust::{
-    core::config::provider::file::FileProvider, telemetry::init_tracing_subscriber, Infrarust,
+    core::config::provider::file::FileProvider,
+    telemetry::{self, exporter::resource, init_meter_provider, init_tracer_provider},
+    Infrarust,
 };
 
 #[derive(Parser)]
@@ -28,7 +30,10 @@ struct Args {
 async fn main() {
     // env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
-    let _guard = init_tracing_subscriber();
+    let _meter_guard = init_meter_provider(resource());
+    let _tracer_guard = init_tracer_provider(resource());
+
+    telemetry::tracing::init_subscriber(&_tracer_guard.0);
     let args = Args::parse();
 
     let config = match FileProvider::try_load_config(Some(&args.config_path)) {

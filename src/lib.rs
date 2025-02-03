@@ -13,7 +13,9 @@ pub use core::config::InfrarustConfig;
 pub use core::error::RsaError;
 use core::error::SendError;
 use core::event::{GatewayMessage, ProviderMessage};
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 use std::{io, panic};
 
 pub mod telemetry;
@@ -27,6 +29,7 @@ pub use protocol::{
     types::{ProtocolRead, ProtocolWrite},
     version,
 };
+use telemetry::{start_system_metrics_collection, TELEMETRY};
 use tracing::{debug, debug_span, error, info, info_span, instrument, Instrument, Span}; // Remplacer log par tracing
 
 // Network and security modules
@@ -51,6 +54,7 @@ use server::ServerRequest;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+use uuid::Uuid;
 
 use crate::version::Version;
 
@@ -73,7 +77,7 @@ impl Infrarust {
     pub fn new(config: InfrarustConfig) -> io::Result<Self> {
         let span = info_span!("infrarust_init");
         let _enter = span.enter();
-
+        start_system_metrics_collection();
         debug!("Initializing Infrarust server with config: {:?}", config);
         let config_service = Arc::new(ConfigurationService::new());
         {
@@ -138,7 +142,8 @@ impl Infrarust {
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => {
-                    let span = info_span!("TCP Connection", %addr);
+                    let session_id = Uuid::new_v4();
+                    let span = info_span!("TCP Connection", %addr, %session_id);
                     debug!("New TCP connection accepted");
 
                     let filter_chain = self.filter_chain.clone();
@@ -148,8 +153,12 @@ impl Infrarust {
                         if let Err(e) = async move {
                             debug!("Starting connection processing");
                             filter_chain.filter(&stream).await?;
-                            let conn = Connection::new(stream).instrument(debug_span!("New connection")).await?;
-                            Self::handle_connection(conn, server_gateway).instrument(clone_span).await?;
+                            let conn = Connection::new(stream, session_id)
+                                .instrument(debug_span!("New connection"))
+                                .await?;
+                            Self::handle_connection(conn, server_gateway)
+                                .instrument(clone_span)
+                                .await?;
 
                             Ok::<_, SendError>(())
                         }
@@ -187,7 +196,7 @@ impl Infrarust {
         let is_login = handshake.is_login_request();
 
         let client_addr = client.peer_addr().await?;
-
+        let session_id = client.session_id.clone();
         Gateway::handle_client_connection(
             client,
             ServerRequest {
@@ -196,6 +205,7 @@ impl Infrarust {
                 is_login,
                 protocol_version,
                 read_packets: [handshake_packet, second_packet],
+                session_id: session_id.clone(),
             },
             server_gateway,
         )

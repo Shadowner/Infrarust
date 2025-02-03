@@ -15,6 +15,8 @@ use crate::{
     ServerConnection, CONFIG,
 };
 
+use crate::telemetry::TELEMETRY;
+
 use super::{backend::Server, ServerRequest};
 
 pub struct StatusCache {
@@ -44,6 +46,29 @@ impl StatusCache {
         server: &Server,
         req: &ServerRequest,
     ) -> ProtocolResult<Packet> {
+        let result = match self.try_get_status_response(server, req).await {
+            Ok(response) => Ok(response),
+            Err(e) => {
+                TELEMETRY.record_protocol_error(
+                    "status_fetch_failed",
+                    &e.to_string(),
+                    req.session_id,
+                );
+                Err(e)
+            }
+        };
+        result
+    }
+
+    #[instrument(name = "try_get_status_response", skip(self, server), fields(
+        server_addr = %server.config.addresses.first().unwrap_or(&String::new()),
+        protocol_version = ?req.protocol_version
+    ))]
+    pub async fn try_get_status_response(
+        &mut self,
+        server: &Server,
+        req: &ServerRequest,
+    ) -> ProtocolResult<Packet> {
         let key = self.cache_key(server, req.protocol_version);
 
         if let Some(entry) = self.entries.get(&key) {
@@ -57,9 +82,9 @@ impl StatusCache {
         }
 
         let response = match server
-            .dial()
+            .dial(req.session_id)
             .instrument(debug_span!("backend_server_connect"))
-            .await 
+            .await
         {
             Ok(mut conn) => {
                 self.fetch_status(&mut conn, req)

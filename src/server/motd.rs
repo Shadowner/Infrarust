@@ -12,6 +12,7 @@ use crate::{
         },
         types::ProtocolString,
     },
+    telemetry::TELEMETRY,
 };
 
 pub fn generate_motd(
@@ -47,10 +48,12 @@ pub fn generate_motd(
     let json_str = match serde_json::to_string(&status_json) {
         Ok(json_str) => json_str,
         Err(e) => {
+            TELEMETRY.record_internal_error("status_json_serialize_failed", None, None);
+
             return Err(ProxyProtocolError::Other(format!(
                 "Failed to serialize status JSON: {}",
                 e
-            )))
+            )));
         }
     };
 

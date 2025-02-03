@@ -1,0 +1,76 @@
+version: "3.8"
+
+services:
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    command: ["--config=/etc/otel-collector-config.yml"]
+    volumes:
+      - ./config/otel-collector-config.yaml:/etc/otel-collector-config.yml
+    ports:
+      - "4317:4317"   # OTLP gRPC (pour l'application)
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Metrics pour Prometheus
+    networks:
+      - observability
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - observability
+    depends_on:
+      - otel-collector
+
+  # Grafana
+  grafana:
+    image: grafana/grafana-enterprise:10.2.3
+    environment:
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - observability
+    depends_on:
+      - prometheus
+
+  # Tempo
+  tempo:
+    image: grafana/tempo:latest
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    container_name: tempo
+    user: root  # Ajout de l'utilisateur root pour les permissions
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml
+      - tempo_data:/tmp/tempo
+    ports:
+      - "3200:3200"   # tempo UI
+      - "9411:9411"   # zipkin compatibility
+      - "4319:4317"
+    expose:
+      - "4319"  # OTLP gRPC (interne)
+      - "4318"  # OTLP HTTP (interne)
+      - "4317"  # OTLP gRPC (interne)
+    networks:
+      - observability
+
+networks:
+  observability:
+
+volumes:
+  grafana_data:
+  tempo_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/tempo-data  # Dossier local pour les données
+      o: bind

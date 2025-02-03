@@ -23,14 +23,9 @@ impl ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
     ) -> io::Result<()> {
         match message {
             MinecraftCommunication::RawData(data) => {
-                debug!(
-                    "Received raw data from client (PassthroughMode) with length: {}",
-                    data.len()
-                );
                 actor.conn.write_raw(&data).await?;
             }
             MinecraftCommunication::Shutdown => {
-                debug!("Shutting down client (Received Shutdown message)");
                 actor.conn.close().await?;
             }
             _ => {}

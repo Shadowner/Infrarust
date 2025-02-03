@@ -17,6 +17,7 @@ use crate::{
 
 use super::{backend::Server, cache::StatusCache, ServerRequest, ServerRequester, ServerResponse};
 use crate::core::config::service::ConfigurationService;
+use crate::telemetry::TELEMETRY;
 
 pub struct Gateway {
     config_service: Arc<ConfigurationService>,
@@ -88,8 +89,14 @@ impl Gateway {
 
         let is_login = request.is_login;
         let proxy_mode = if !is_login {
+            TELEMETRY.record_request();
             ProxyModeEnum::Status
         } else {
+            TELEMETRY.record_new_connection(
+                &request.client_addr.to_string(),
+                &request.domain,
+                request.session_id,
+            );
             server_config.proxy_mode.clone().unwrap_or_default()
         };
 
@@ -126,7 +133,9 @@ impl Gateway {
                     Ok(response) => {
                         let _ = oneshot_request_sender.send(response);
                     }
-                    Err(e) => warn!("Failed to request server: {:?}", e),
+                    Err(e) => {
+                        warn!("Failed to request server: {:?}", e);
+                    }
                 }
             }
             .instrument(span),
@@ -178,7 +187,7 @@ impl ServerRequester for Gateway {
 
         if req.is_login {
             debug!("Creating login connection to backend server");
-            let conn = tmp_server.dial().await?;
+            let conn = tmp_server.dial(req.session_id).await?;
             Ok(ServerResponse {
                 server_conn: Some(conn),
                 status_response: None,
