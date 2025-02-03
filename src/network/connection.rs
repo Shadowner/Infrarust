@@ -4,7 +4,10 @@ use tokio::{
     io::{self, BufReader, BufWriter},
     net::TcpStream,
 };
+use tracing::warn;
+use uuid::Uuid;
 
+use crate::telemetry::{Direction, TELEMETRY};
 use crate::EncryptionState;
 
 use super::packet::io::RawPacketIO;
@@ -21,11 +24,19 @@ pub struct Connection {
     writer: PacketWriter<BufWriter<OwnedWriteHalf>>,
     timeout: Duration,
     raw_mode: bool,
+    pub session_id: Uuid,
 }
 
 impl Connection {
-    pub async fn new(stream: TcpStream) -> io::Result<Self> {
-        stream.set_nodelay(true)?;
+    pub async fn new(stream: TcpStream, session_id: Uuid) -> io::Result<Self> {
+        match stream.set_nodelay(true) {
+            Ok(_) => {}
+            Err(e) => {
+                TELEMETRY.record_internal_error("nodelay_failed", None, None);
+                warn!("Failed to set nodelay: {}", e);
+            }
+        }
+
         let (read_half, write_half) = stream.into_split();
 
         Ok(Self {
@@ -33,6 +44,7 @@ impl Connection {
             writer: PacketWriter::new(BufWriter::new(write_half)),
             timeout: Duration::from_secs(30),
             raw_mode: false,
+            session_id,
         })
     }
 
@@ -40,9 +52,12 @@ impl Connection {
         self.raw_mode = true;
     }
 
-    pub async fn connect<A: tokio::net::ToSocketAddrs>(addr: A) -> io::Result<Self> {
+    pub async fn connect<A: tokio::net::ToSocketAddrs>(
+        addr: A,
+        session_id: Uuid,
+    ) -> io::Result<Self> {
         let stream = TcpStream::connect(addr).await?;
-        Self::new(stream).await
+        Self::new(stream, session_id).await
     }
 
     pub fn set_timeout(&mut self, timeout: Duration) {
@@ -50,9 +65,15 @@ impl Connection {
     }
 
     pub fn enable_encryption(&mut self, encryption_state: &EncryptionState) {
-        if let Some((encrypt, decrypt)) = encryption_state.create_cipher() {
-            self.reader.enable_encryption(decrypt);
-            self.writer.enable_encryption(encrypt);
+        match encryption_state.create_cipher() {
+            Some((encrypt, decrypt)) => {
+                self.reader.enable_encryption(decrypt);
+                self.writer.enable_encryption(encrypt);
+            }
+            None => {
+                TELEMETRY.record_protocol_error("encryption_failed", "", self.session_id);
+                warn!("Failed to enable encryption");
+            }
         }
     }
 
@@ -75,14 +96,29 @@ impl Connection {
     }
 
     pub async fn write_packet(&mut self, packet: &Packet) -> ProtocolResult<()> {
-        self.writer.write_packet(packet).await
+        TELEMETRY.record_bytes_transferred(Direction::Outgoing, packet.data.len() as u64, self.session_id);
+        TELEMETRY.record_packet_processing(
+            &format!("0x{:02x}", &packet.id),
+            0.,
+            self.session_id,
+        );
+        let result = self.writer.write_packet(packet).await;
+
+        result
     }
 
     pub async fn write_raw(&mut self, data: &[u8]) -> ProtocolResult<()> {
+        TELEMETRY.record_bytes_transferred(Direction::Outgoing, data.len() as u64, self.session_id);
         Ok(self.writer.write_raw(data).await?)
     }
 
     pub async fn write(&mut self, data: PossibleReadValue) -> ProtocolResult<()> {
+        let (len, packet_id) = match &data {
+            PossibleReadValue::Packet(packet) => (packet.data.len(), Some(packet.id)),
+            PossibleReadValue::Raw(data) => (data.len(), None),
+        };
+        if packet_id.is_some() {}
+
         match data {
             PossibleReadValue::Packet(packet) => self.write_packet(&packet).await?,
             PossibleReadValue::Raw(data) => self.write_raw(&data).await?,
@@ -93,13 +129,31 @@ impl Connection {
     pub async fn read(&mut self) -> PacketResult<PossibleReadValue> {
         if self.raw_mode {
             let data = match self.reader.read_raw().await? {
-                Some(data) => data,
-                None => return Ok(PossibleReadValue::Raw(Vec::new())),
+                Some(data) => {
+                    let len = data.len();
+                    TELEMETRY.record_bytes_transferred(
+                        Direction::Incoming,
+                        len as u64,
+                        self.session_id,
+                    );
+                    data
+                }
+                None => {
+                    let len = 0;
+                    TELEMETRY.record_bytes_transferred(
+                        Direction::Incoming,
+                        len as u64,
+                        self.session_id,
+                    );
+                    return Ok(PossibleReadValue::Raw(Vec::new()));
+                }
             };
 
             Ok(PossibleReadValue::Raw(data.into()))
         } else {
             let packet = self.reader.read_packet().await?;
+            let len = packet.data.len();
+            TELEMETRY.record_bytes_transferred(Direction::Incoming, len as u64, self.session_id);
             Ok(PossibleReadValue::Packet(packet))
         }
     }
@@ -139,18 +193,24 @@ impl Connection {
 
 pub struct ServerConnection {
     connection: Connection,
+    pub session_id: Uuid,
 }
 
 impl ServerConnection {
-    pub async fn new(stream: TcpStream) -> io::Result<Self> {
+    pub async fn new(stream: TcpStream, session_id: Uuid) -> io::Result<Self> {
         Ok(Self {
-            connection: Connection::new(stream).await?,
+            connection: Connection::new(stream, session_id).await?,
+            session_id,
         })
     }
 
-    pub async fn connect<A: tokio::net::ToSocketAddrs>(addr: A) -> io::Result<Self> {
+    pub async fn connect<A: tokio::net::ToSocketAddrs>(
+        addr: A,
+        session_id: Uuid,
+    ) -> io::Result<Self> {
         Ok(Self {
-            connection: Connection::connect(addr).await?,
+            connection: Connection::connect(addr, session_id).await?,
+            session_id,
         })
     }
 

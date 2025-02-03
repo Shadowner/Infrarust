@@ -15,8 +15,14 @@ use crate::{
         ClientProxyModeHandler, ProxyMessage, ProxyModeEnum, ServerProxyModeHandler,
     },
     server::ServerResponse,
+    telemetry::TELEMETRY,
     Connection,
 };
+
+pub enum SupervisorMessage {
+    Shutdown,
+    Disconnect,
+}
 
 #[derive(Clone)]
 pub struct ActorPair {
@@ -62,6 +68,10 @@ impl ActorSupervisor {
     ) -> ActorPair {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let span = debug_span!("actor_pair_setup");
+
+        if is_login {
+            TELEMETRY.update_player_count(1, config_id, client_conn.session_id, &username);
+        }
 
         let pair = match proxy_mode {
             ProxyModeEnum::Status => {

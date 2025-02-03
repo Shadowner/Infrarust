@@ -1,5 +1,4 @@
 use aes::cipher::KeyIvInit;
-use tracing::{debug, error};
 use rand::RngCore;
 use rsa::{
     pkcs1::DecodeRsaPublicKey,
@@ -7,8 +6,11 @@ use rsa::{
     traits::PublicKeyParts,
     Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey,
 };
+use tracing::{debug, error};
 
-use crate::{protocol::minecraft::java::sha1::generate_server_hash, RsaError};
+use crate::{
+    protocol::minecraft::java::sha1::generate_server_hash, telemetry::TELEMETRY, RsaError,
+};
 pub type Aes128Cfb8Enc = cfb8::Encryptor<aes::Aes128>;
 pub type Aes128Cfb8Dec = cfb8::Decryptor<aes::Aes128>;
 

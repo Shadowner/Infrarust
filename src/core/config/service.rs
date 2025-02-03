@@ -1,9 +1,9 @@
-use tracing::{debug, debug_span, info_span, instrument, Instrument};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
+use tracing::{debug, debug_span, info_span, instrument, Instrument};
 use wildmatch::WildMatch;
 
-use crate::core::config::ServerConfig;
+use crate::{core::config::ServerConfig, telemetry::TELEMETRY};
 
 #[derive(Clone)]
 pub struct ConfigurationService {
@@ -39,7 +39,7 @@ impl ConfigurationService {
                     .any(|pattern| WildMatch::new(pattern).matches(&domain))
             })
             .cloned();
-        
+
         debug!(found = result.is_some(), "Domain lookup result");
         result
     }
@@ -52,14 +52,14 @@ impl ConfigurationService {
             .iter()
             .find(|(_, server)| server.addresses.contains(&ip.to_string()))
             .map(|(_, server)| Arc::clone(server));
-            
+
         debug!(found = result.is_some(), "IP lookup result");
         result
     }
 
     pub async fn update_configurations(&self, configs: Vec<ServerConfig>) {
         let span = info_span!(
-            "config_service: update_config_store", 
+            "config_service: update_config_store",
             config_count = configs.len()
         );
 
@@ -71,6 +71,7 @@ impl ConfigurationService {
                     domains = ?config.domains,
                     "Updating configuration"
                 );
+                TELEMETRY.update_backend_count(1, &config.config_id);
                 config_lock.insert(config.config_id.clone(), Arc::new(config));
             }
         }
@@ -81,6 +82,12 @@ impl ConfigurationService {
     #[instrument(skip(self), fields(config_id = %config_id))]
     pub async fn remove_configuration(&self, config_id: &str) {
         let mut config_lock = self.configurations.write().await;
+        debug!(
+            config_id = %config_id,
+            "Removing configuration"
+        );
+
+        TELEMETRY.update_backend_count(-1, &config_id);
         if config_lock.remove(config_id).is_some() {
             debug!("Configuration removed successfully");
         } else {

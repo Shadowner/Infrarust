@@ -44,6 +44,7 @@ impl RateLimiter {
         let rate = counter.get_rate(&key, now);
 
         if rate >= f64::from(self.request_limit) {
+            //TODO : Metrics Filter
             return Err(io::Error::new(io::ErrorKind::Other, "Rate limit exceeded"));
         }
 

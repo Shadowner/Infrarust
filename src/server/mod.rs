@@ -20,6 +20,7 @@ pub struct ServerRequest {
     pub is_login: bool,
     pub protocol_version: Version,
     pub read_packets: [Packet; 2],
+    pub session_id: uuid::Uuid,
 }
 
 pub struct ServerResponse {
