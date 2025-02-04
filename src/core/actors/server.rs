@@ -2,7 +2,6 @@ use std::{
     io,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::Receiver,
         Arc,
     },
 };
@@ -12,17 +11,14 @@ use tracing::{debug, instrument, warn, Instrument};
 
 use crate::{
     core::{
-        actors::server,
         config::ServerConfig,
         event::{GatewayMessage, MinecraftCommunication},
     },
-    network::connection::PossibleReadValue,
     proxy_modes::ServerProxyModeHandler,
     server::ServerResponse,
-    telemetry::{Direction, TELEMETRY},
+    telemetry::TELEMETRY,
 };
 
-use super::supervisor::SupervisorMessage;
 
 pub enum ServerEvent {
     ConfigurationUpdate {
@@ -174,7 +170,7 @@ async fn start_minecraft_server_actor<T>(
         //TODO: Update this system so server have a different player counter than the proxy global one
         TELEMETRY.update_player_count(
             -1,
-            &actor
+            actor
                 .server_request
                 .as_ref()
                 .unwrap()

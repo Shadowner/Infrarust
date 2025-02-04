@@ -10,10 +10,7 @@ pub use opentelemetry::global;
 
 use lazy_static::lazy_static;
 use metrics::InfrarustMetrics;
-use std::{
-    collections::HashSet,
-    time::{Duration, Instant},
-};
+use std::collections::HashSet;
 
 lazy_static! {
     pub static ref TELEMETRY: InfrarustMetrics = InfrarustMetrics::new();

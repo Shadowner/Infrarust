@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc};
+use std::sync::Arc;
 
 use tokio::net::TcpStream;
 use tracing::debug;
@@ -33,7 +33,7 @@ impl Server {
 
         for addr in &self.config.addresses {
             let now = std::time::Instant::now();
-            TELEMETRY.record_backend_request_start(&self.config.config_id, &addr, &session_id);
+            TELEMETRY.record_backend_request_start(&self.config.config_id, addr, &session_id);
             match TcpStream::connect(addr).await {
                 Ok(stream) => {
                     debug!("Connected to {}", addr);

@@ -102,9 +102,9 @@ impl Connection {
             0.,
             self.session_id,
         );
-        let result = self.writer.write_packet(packet).await;
+        
 
-        result
+        self.writer.write_packet(packet).await
     }
 
     pub async fn write_raw(&mut self, data: &[u8]) -> ProtocolResult<()> {
@@ -113,12 +113,6 @@ impl Connection {
     }
 
     pub async fn write(&mut self, data: PossibleReadValue) -> ProtocolResult<()> {
-        let (len, packet_id) = match &data {
-            PossibleReadValue::Packet(packet) => (packet.data.len(), Some(packet.id)),
-            PossibleReadValue::Raw(data) => (data.len(), None),
-        };
-        if packet_id.is_some() {}
-
         match data {
             PossibleReadValue::Packet(packet) => self.write_packet(&packet).await?,
             PossibleReadValue::Raw(data) => self.write_raw(&data).await?,

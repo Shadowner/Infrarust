@@ -87,7 +87,7 @@ impl ConfigurationService {
             "Removing configuration"
         );
 
-        TELEMETRY.update_backend_count(-1, &config_id);
+        TELEMETRY.update_backend_count(-1, config_id);
         if config_lock.remove(config_id).is_some() {
             debug!("Configuration removed successfully");
         } else {
