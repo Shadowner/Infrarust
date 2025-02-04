@@ -46,7 +46,6 @@ impl StatusCache {
         server: &Server,
         req: &ServerRequest,
     ) -> ProtocolResult<Packet> {
-        
         match self.try_get_status_response(server, req).await {
             Ok(response) => Ok(response),
             Err(e) => {

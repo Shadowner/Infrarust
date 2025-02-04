@@ -8,9 +8,7 @@ use rsa::{
 };
 use tracing::{debug, error};
 
-use crate::{
-    protocol::minecraft::java::sha1::generate_server_hash, RsaError,
-};
+use crate::{protocol::minecraft::java::sha1::generate_server_hash, RsaError};
 pub type Aes128Cfb8Enc = cfb8::Encryptor<aes::Aes128>;
 pub type Aes128Cfb8Dec = cfb8::Decryptor<aes::Aes128>;
 

@@ -4,7 +4,10 @@ use tracing::{debug, debug_span, error, info, instrument, Instrument};
 
 use super::{ClientProxyModeHandler, ProxyMessage, ProxyModeMessageType, ServerProxyModeHandler};
 use crate::{
-    core::{actors::client::MinecraftClient, actors::server::MinecraftServer, event::MinecraftCommunication},
+    core::{
+        actors::client::MinecraftClient, actors::server::MinecraftServer,
+        event::MinecraftCommunication,
+    },
     network::connection::PossibleReadValue,
 };
 
@@ -79,7 +82,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                         debug!("Received Compression packet srv");
                         server_conn.enable_compression(256);
                     }
-                    
+
                     let _ = actor
                         .client_sender
                         .send(MinecraftCommunication::Packet(data))
@@ -133,7 +136,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         actor: &mut MinecraftServer<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
         debug!("Initializing server offline proxy mode");
-        
+
         if let Some(server_request) = &mut actor.server_request {
             if let Some(server_conn) = &mut server_request.server_conn {
                 let span = debug_span!("initialize_connection");
@@ -142,7 +145,9 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                         server_conn.write_packet(packet).await?;
                     }
                     Ok::<(), io::Error>(())
-                }.instrument(span).await?;
+                }
+                .instrument(span)
+                .await?;
             } else {
                 error!("Server connection is None");
             }

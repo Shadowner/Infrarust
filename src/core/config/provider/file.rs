@@ -7,10 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tracing::{debug, debug_span, error, info, instrument, warn, Instrument};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{de::DeserializeOwned, Deserialize};
 use tokio::sync::mpsc::{self, channel, Sender};
+use tracing::{debug, debug_span, error, info, instrument, warn, Instrument};
 use walkdir::WalkDir;
 
 use crate::{
@@ -106,8 +106,10 @@ impl FileProvider {
     ) -> io::Result<()> {
         let span = debug_span!("file_provider: handle_config_update", ?path);
         async {
-            if let Ok(config) = Self::load_server_config(path, file_type, provider_name.to_string()) {
-                let span = debug_span!("file_provider: send_update", key = %config.config_id.clone());
+            if let Ok(config) = Self::load_server_config(path, file_type, provider_name.to_string())
+            {
+                let span =
+                    debug_span!("file_provider: send_update", key = %config.config_id.clone());
                 let message = ProviderMessage::Update {
                     span: span.clone(),
                     key: config.config_id.clone(),
@@ -122,7 +124,9 @@ impl FileProvider {
                 }
             }
             Ok(())
-        }.instrument(span).await
+        }
+        .instrument(span)
+        .await
     }
 
     #[instrument(skip(self), fields(path = %path), name = "file_provider: load_configs")]
@@ -190,26 +194,26 @@ impl FileProvider {
             let provider_name = self.get_name();
             let provider_sender = self.sender.clone();
 
-            tokio::spawn(
-                async move {
-                    let mut last_paths: HashMap<PathBuf, Instant> = HashMap::new();
+            tokio::spawn(async move {
+                let mut last_paths: HashMap<PathBuf, Instant> = HashMap::new();
 
-                    while let Some(event) = file_event_rx.recv().await {
-                        Self::handle_file_event(
-                            event,
-                            &mut last_paths,
-                            debounce_duration,
-                            file_type,
-                            &provider_name,
-                            &provider_sender,
-                        )
-                        .await;
-                    }
+                while let Some(event) = file_event_rx.recv().await {
+                    Self::handle_file_event(
+                        event,
+                        &mut last_paths,
+                        debounce_duration,
+                        file_type,
+                        &provider_name,
+                        &provider_sender,
+                    )
+                    .await;
                 }
-            );
+            });
 
             self.create_watcher(file_event_tx)
-        }.instrument(span).await
+        }
+        .instrument(span)
+        .await
     }
 
     async fn handle_file_event(
@@ -227,7 +231,7 @@ impl FileProvider {
             event_kind = ?event.kind,
             provider = %provider_name
         );
-        
+
         let span_clone = root_span.clone();
         async {
             if notify::EventKind::is_remove(&event.kind) {
@@ -343,10 +347,10 @@ impl Provider for FileProvider {
             };
 
             for path in &self.paths {
-                match self.load_configs(path)
-                {
+                match self.load_configs(path) {
                     Ok(configs) => {
-                        if let Err(e) = self.sender.send(ProviderMessage::FirstInit(configs)).await {
+                        if let Err(e) = self.sender.send(ProviderMessage::FirstInit(configs)).await
+                        {
                             warn!("Failed to send FirstInit: {}", e);
                         }
                     }
@@ -368,7 +372,9 @@ impl Provider for FileProvider {
                     }
                 }
             }
-        }.instrument(span).await
+        }
+        .instrument(span)
+        .await
     }
 
     fn get_name(&self) -> String {

@@ -19,7 +19,6 @@ use crate::{
     telemetry::TELEMETRY,
 };
 
-
 pub enum ServerEvent {
     ConfigurationUpdate {
         key: String,
@@ -166,7 +165,6 @@ async fn start_minecraft_server_actor<T>(
         && actor.server_request.is_some()
         && actor.server_request.as_ref().unwrap().server_conn.is_some()
     {
-
         //TODO: Update this system so server have a different player counter than the proxy global one
         TELEMETRY.update_player_count(
             -1,
@@ -185,7 +183,7 @@ async fn start_minecraft_server_actor<T>(
                 .as_ref()
                 .unwrap()
                 .session_id,
-                "",
+            "",
         );
     }
     debug!("Shutting down server actor");

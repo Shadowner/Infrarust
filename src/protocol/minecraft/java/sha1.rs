@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use tracing::debug;
 use num_bigint::{BigInt, Sign};
 use sha1::{digest::Update, Digest, Sha1};
+use tracing::debug;
 
 pub fn calc_hash(input: &str) -> String {
     let hash = Sha1::new().chain(input).finalize();

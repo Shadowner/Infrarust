@@ -96,13 +96,12 @@ impl Connection {
     }
 
     pub async fn write_packet(&mut self, packet: &Packet) -> ProtocolResult<()> {
-        TELEMETRY.record_bytes_transferred(Direction::Outgoing, packet.data.len() as u64, self.session_id);
-        TELEMETRY.record_packet_processing(
-            &format!("0x{:02x}", &packet.id),
-            0.,
+        TELEMETRY.record_bytes_transferred(
+            Direction::Outgoing,
+            packet.data.len() as u64,
             self.session_id,
         );
-        
+        TELEMETRY.record_packet_processing(&format!("0x{:02x}", &packet.id), 0., self.session_id);
 
         self.writer.write_packet(packet).await
     }
