@@ -3,13 +3,16 @@
 //! Command-line interface for the InfraRust proxy server.
 
 use clap::Parser;
-use std::process;
 use std::sync::Arc;
-use tracing::{error, info};
+use std::{process, time::Duration};
+use tracing::{error, info, warn};
 
 use infrarust::{
     core::config::provider::file::FileProvider,
-    telemetry::{self, exporter::resource, init_meter_provider, init_tracer_provider},
+    telemetry::{
+        self, exporter::resource, init_meter_provider, start_system_metrics_collection,
+        tracing::init_tracer_provider,
+    },
     Infrarust,
 };
 
@@ -28,12 +31,6 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    // env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
-
-    let _meter_guard = init_meter_provider(resource());
-    let _tracer_guard = init_tracer_provider(resource());
-
-    telemetry::tracing::init_subscriber(&_tracer_guard.0);
     let args = Args::parse();
 
     let config = match FileProvider::try_load_config(Some(&args.config_path)) {
@@ -48,9 +45,27 @@ async fn main() {
         }
         Err(e) => {
             error!("Failed to load configuration: {}", e);
+            println!("Failed to load configuration: {}", e);
             process::exit(1);
         }
     };
+
+    let mut _meter_guard: Option<telemetry::MeterProviderGuard> = None;
+    let _tracer_guard = init_tracer_provider(resource(), config.telemetry.export_url.clone());
+    if config.telemetry.enabled.clone() {
+        if config.telemetry.enable_metrics.clone() {
+            if config.telemetry.export_url.clone().is_none() {
+                warn!("Metrics enabled but no export URL provided");
+            } else {
+                start_system_metrics_collection();
+                _meter_guard = Some(init_meter_provider(
+                    resource(),
+                    config.telemetry.export_url.clone().unwrap(),
+                    Duration::from_secs(config.telemetry.export_interval_seconds.clone()),
+                ));
+            }
+        }
+    }
 
     info!("Starting Infrarust proxy...");
 

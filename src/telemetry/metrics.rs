@@ -13,15 +13,15 @@ use super::Direction;
 
 pub struct MeterProviderGuard(SdkMeterProvider);
 
-pub fn init_meter_provider(resource: Resource) -> MeterProviderGuard {
+pub fn init_meter_provider(resource: Resource, endpoint: String, duration: Duration) -> MeterProviderGuard {
     let exporter = opentelemetry_otlp::MetricExporter::builder()
         .with_tonic()
-        .with_endpoint("http://localhost:4317")
+        .with_endpoint(endpoint)
         .build()
         .unwrap();
 
     let reader = PeriodicReader::builder(exporter, runtime::Tokio)
-        .with_interval(std::time::Duration::from_secs(30))
+        .with_interval(duration)
         .build();
 
     let provider = MeterProviderBuilder::default()

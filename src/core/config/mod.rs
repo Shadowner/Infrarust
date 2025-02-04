@@ -38,6 +38,32 @@ pub struct CacheConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct TelemetryConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub export_interval_seconds: u64,
+    #[serde(default)]
+    pub export_url: Option<String>,
+    #[serde(default)]
+    pub enable_metrics: bool,
+    #[serde(default)]
+    pub enable_tracing: bool,
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        TelemetryConfig {
+            enabled: false,
+            export_interval_seconds: 30,
+            export_url: None,
+            enable_metrics: false,
+            enable_tracing: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
     pub domains: Vec<String>,
     pub addresses: Vec<String>,
@@ -92,6 +118,9 @@ pub struct InfrarustConfig {
     pub file_provider: Option<FileProviderConfig>,
 
     #[serde(default)]
+    pub telemetry: TelemetryConfig,
+
+    #[serde(default)]
     pub motds: ServerMotds,
 }
 
@@ -133,6 +162,10 @@ impl InfrarustConfig {
 
         if other.motds.unreachable.is_some() {
             self.motds.unreachable = other.motds.unreachable.clone();
+        }
+
+        if other.telemetry.enabled {
+            self.telemetry = other.telemetry.clone();
         }
     }
 }

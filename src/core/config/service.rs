@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::{debug, debug_span, info_span, instrument, Instrument};
+use tracing::{debug, debug_span, instrument, Instrument};
 use wildmatch::WildMatch;
 
 use crate::{core::config::ServerConfig, telemetry::TELEMETRY};
@@ -58,7 +58,7 @@ impl ConfigurationService {
     }
 
     pub async fn update_configurations(&self, configs: Vec<ServerConfig>) {
-        let span = info_span!(
+        let span = debug_span!(
             "config_service: update_config_store",
             config_count = configs.len()
         );

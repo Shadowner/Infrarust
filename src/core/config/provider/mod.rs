@@ -1,4 +1,4 @@
-use tracing::{debug, debug_span, error, info, info_span, instrument, warn, Instrument, Span};
+use tracing::{debug, debug_span, error, info, instrument, warn, Instrument, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -41,7 +41,7 @@ impl ConfigProvider {
 
     #[instrument(skip(self))]
     pub async fn run(&mut self) {
-        let span = info_span!("config_provider_run");
+        let span = debug_span!("config_provider_run");
         async {
             info!("Starting configuration provider");
             while let Some(message) = self.provider_receiver.recv().await {
@@ -55,7 +55,7 @@ impl ConfigProvider {
         match message {
             ProviderMessage::Update { key, configuration, span } => {
                 // Set span parent to the span that was passed in
-                let new_span = info_span!(
+                let new_span = debug_span!(
                     "config_provider: config_update",
                     key = %key,
                     has_config = configuration.is_some(),

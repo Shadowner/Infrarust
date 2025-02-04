@@ -13,3 +13,10 @@ file_provider:
 proxyProtocol:
   receive: false
   trustedCIDRs: []
+
+telemetry:
+  enabled: true
+  export_url: "http://localhost:4317"
+  export_interval_seconds: 10
+  enable_metrics: true
+  enable_tracing: true

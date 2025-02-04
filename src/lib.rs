@@ -30,7 +30,7 @@ pub use protocol::{
     version,
 };
 use telemetry::{start_system_metrics_collection, TELEMETRY};
-use tracing::{debug, debug_span, error, info, info_span, instrument, Instrument, Span}; // Remplacer log par tracing
+use tracing::{debug, debug_span, error, info, instrument, Instrument, Span}; // Remplacer log par tracing
 
 // Network and security modules
 pub mod network;
@@ -53,7 +53,6 @@ use server::gateway::Gateway;
 use server::ServerRequest;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
 use crate::version::Version;
@@ -75,9 +74,9 @@ lazy_static! {
 
 impl Infrarust {
     pub fn new(config: InfrarustConfig) -> io::Result<Self> {
-        let span = info_span!("infrarust_init");
+        let span = debug_span!("infrarust_init");
         let _enter = span.enter();
-        start_system_metrics_collection();
+
         debug!("Initializing Infrarust server with config: {:?}", config);
         let config_service = Arc::new(ConfigurationService::new());
         {
@@ -143,7 +142,7 @@ impl Infrarust {
             match listener.accept().await {
                 Ok((stream, addr)) => {
                     let session_id = Uuid::new_v4();
-                    let span = info_span!("TCP Connection", %addr, %session_id);
+                    let span = debug_span!("TCP Connection", %addr, %session_id);
                     debug!("New TCP connection accepted");
 
                     let filter_chain = self.filter_chain.clone();
