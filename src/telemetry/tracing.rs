@@ -2,15 +2,14 @@ use opentelemetry::global;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
-    trace::{RandomIdGenerator, Sampler, Tracer, TracerProvider},
+    trace::TracerProvider,
     Resource,
 };
 use tracing::Level;
-use tracing_subscriber::{fmt::format::FmtSpan, Layer};
+use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use std::str::FromStr;
 
-use crate::CONFIG;
 
 pub struct TracerProviderGuard(pub TracerProvider);
 

@@ -3,12 +3,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, Instrument};
 
-use crate::network::connection::PossibleReadValue;
-use crate::telemetry::{Direction, TELEMETRY};
+use crate::telemetry::TELEMETRY;
 use crate::{
     core::{
         config::ServerConfig,
-        event::{GatewayMessage, MinecraftCommunication},
+        event::MinecraftCommunication,
     },
     proxy_modes::ClientProxyModeHandler,
     Connection,
@@ -66,7 +65,6 @@ async fn start_minecraft_client_actor<T>(
     proxy_mode: Box<dyn ClientProxyModeHandler<MinecraftCommunication<T>>>,
     shutdown: Arc<AtomicBool>,
 ) {
-    let start_time = std::time::Instant::now();
     debug!("Starting Minecraft Client Actor for ID");
     let peer_address = actor.conn.peer_addr().await.unwrap();
     match proxy_mode.initialize_client(&mut actor).await {
@@ -118,7 +116,6 @@ async fn start_minecraft_client_actor<T>(
     if actor.is_login {
         TELEMETRY.record_connection_end(
             &peer_address.to_string(),
-            start_time.elapsed().as_secs_f64(),
             "normal_disconnect",
             actor.conn.session_id,
         );
@@ -133,6 +130,8 @@ pub struct MinecraftClientHandler {
 }
 
 impl MinecraftClientHandler {
+    //TODO: Refactor to remove the warning
+    #[allow(clippy::too_many_arguments)]
     pub fn new<T: Send + 'static>(
         server_sender: mpsc::Sender<MinecraftCommunication<T>>,
         client_receiver: mpsc::Receiver<MinecraftCommunication<T>>,

@@ -46,7 +46,8 @@ impl StatusCache {
         server: &Server,
         req: &ServerRequest,
     ) -> ProtocolResult<Packet> {
-        let result = match self.try_get_status_response(server, req).await {
+        
+        match self.try_get_status_response(server, req).await {
             Ok(response) => Ok(response),
             Err(e) => {
                 TELEMETRY.record_protocol_error(
@@ -56,8 +57,7 @@ impl StatusCache {
                 );
                 Err(e)
             }
-        };
-        result
+        }
     }
 
     #[instrument(name = "try_get_status_response", skip(self, server), fields(

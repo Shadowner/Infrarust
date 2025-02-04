@@ -11,9 +11,13 @@ use uuid::Uuid;
 
 use super::Direction;
 
-pub struct MeterProviderGuard(SdkMeterProvider);
+pub struct MeterProviderGuard(pub SdkMeterProvider);
 
-pub fn init_meter_provider(resource: Resource, endpoint: String, duration: Duration) -> MeterProviderGuard {
+pub fn init_meter_provider(
+    resource: Resource,
+    endpoint: String,
+    duration: Duration,
+) -> MeterProviderGuard {
     let exporter = opentelemetry_otlp::MetricExporter::builder()
         .with_tonic()
         .with_endpoint(endpoint)
@@ -60,6 +64,12 @@ pub struct InfrarustMetrics {
     pub protocol_errors: Counter<u64>,
     pub player_count: UpDownCounter<i64>,
     pub packet_processing_time: Histogram<f64>,
+}
+
+impl Default for InfrarustMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl InfrarustMetrics {
@@ -178,13 +188,7 @@ impl InfrarustMetrics {
         );
     }
 
-    pub fn record_connection_end(
-        &self,
-        client_ip: &str,
-        duration_secs: f64,
-        reason: &str,
-        session_id: Uuid,
-    ) {
+    pub fn record_connection_end(&self, client_ip: &str, reason: &str, session_id: Uuid) {
         self.active_connections.add(
             -1,
             &[
@@ -193,10 +197,6 @@ impl InfrarustMetrics {
                 KeyValue::new("session_id", session_id.to_string()),
             ],
         );
-        // self.connection_latency.record(
-        //     duration_secs * 1000.0,
-        //     &[KeyValue::new("client_ip", client_ip.to_string())],
-        // );
     }
 
     // Méthodes pour les connexions

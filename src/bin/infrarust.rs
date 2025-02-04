@@ -52,18 +52,16 @@ async fn main() {
 
     let mut _meter_guard: Option<telemetry::MeterProviderGuard> = None;
     let _tracer_guard = init_tracer_provider(resource(), config.telemetry.export_url.clone());
-    if config.telemetry.enabled.clone() {
-        if config.telemetry.enable_metrics.clone() {
-            if config.telemetry.export_url.clone().is_none() {
-                warn!("Metrics enabled but no export URL provided");
-            } else {
-                start_system_metrics_collection();
-                _meter_guard = Some(init_meter_provider(
-                    resource(),
-                    config.telemetry.export_url.clone().unwrap(),
-                    Duration::from_secs(config.telemetry.export_interval_seconds.clone()),
-                ));
-            }
+    if config.telemetry.enabled && config.telemetry.enable_metrics {
+        if config.telemetry.export_url.clone().is_none() {
+            warn!("Metrics enabled but no export URL provided");
+        } else {
+            start_system_metrics_collection();
+            _meter_guard = Some(init_meter_provider(
+                resource(),
+                config.telemetry.export_url.clone().unwrap(),
+                Duration::from_secs(config.telemetry.export_interval_seconds),
+            ));
         }
     }
 

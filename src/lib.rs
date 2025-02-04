@@ -13,10 +13,8 @@ pub use core::config::InfrarustConfig;
 pub use core::error::RsaError;
 use core::error::SendError;
 use core::event::{GatewayMessage, ProviderMessage};
-use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
-use std::{io, panic};
+use std::io;
 
 pub mod telemetry;
 
@@ -29,7 +27,6 @@ pub use protocol::{
     types::{ProtocolRead, ProtocolWrite},
     version,
 };
-use telemetry::{start_system_metrics_collection, TELEMETRY};
 use tracing::{debug, debug_span, error, info, instrument, Instrument, Span}; // Remplacer log par tracing
 
 // Network and security modules
@@ -195,7 +192,7 @@ impl Infrarust {
         let is_login = handshake.is_login_request();
 
         let client_addr = client.peer_addr().await?;
-        let session_id = client.session_id.clone();
+        let session_id = client.session_id;
         Gateway::handle_client_connection(
             client,
             ServerRequest {
@@ -204,7 +201,7 @@ impl Infrarust {
                 is_login,
                 protocol_version,
                 read_packets: [handshake_packet, second_packet],
-                session_id: session_id.clone(),
+                session_id,
             },
             server_gateway,
         )

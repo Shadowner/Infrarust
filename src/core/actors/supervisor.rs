@@ -3,7 +3,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use tokio::sync::{mpsc, oneshot, RwLock};
-use tracing::{debug_span, instrument, Instrument, Span};
+use tracing::{debug_span, instrument, Instrument};
 
 use crate::{
     core::{
@@ -163,6 +163,8 @@ impl ActorSupervisor {
         username = %username,
         is_login = is_login
     ))]
+    //TODO: Refactor to remove the warning
+    #[allow(clippy::too_many_arguments)]
     async fn create_actor_pair_with_handlers<T>(
         &self,
         config_id: &str,
