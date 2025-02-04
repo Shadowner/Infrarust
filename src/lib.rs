@@ -13,8 +13,8 @@ pub use core::config::InfrarustConfig;
 pub use core::error::RsaError;
 use core::error::SendError;
 use core::event::{GatewayMessage, ProviderMessage};
-use std::sync::Arc;
 use std::io;
+use std::sync::Arc;
 
 pub mod telemetry;
 

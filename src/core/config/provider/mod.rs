@@ -1,7 +1,7 @@
-use tracing::{debug, debug_span, error, info, instrument, warn, Instrument, Span};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::{debug, debug_span, error, info, instrument, warn, Instrument, Span};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::core::{config::service::ConfigurationService, event::ProviderMessage};
 
@@ -24,7 +24,10 @@ pub struct ConfigProvider {
 }
 
 impl ConfigProvider {
-    #[instrument(skip(config_service, provider_receiver, provider_sender), name = "create_config_provider")]
+    #[instrument(
+        skip(config_service, provider_receiver, provider_sender),
+        name = "create_config_provider"
+    )]
     pub fn new(
         config_service: Arc<ConfigurationService>,
         provider_receiver: Receiver<ProviderMessage>,
@@ -45,15 +48,20 @@ impl ConfigProvider {
         async {
             info!("Starting configuration provider");
             while let Some(message) = self.provider_receiver.recv().await {
-                self.handle_message(message)
-                    .await;
+                self.handle_message(message).await;
             }
-        }.instrument(span).await
+        }
+        .instrument(span)
+        .await
     }
 
     async fn handle_message(&mut self, message: ProviderMessage) {
         match message {
-            ProviderMessage::Update { key, configuration, span } => {
+            ProviderMessage::Update {
+                key,
+                configuration,
+                span,
+            } => {
                 // Set span parent to the span that was passed in
                 let new_span = debug_span!(
                     "config_provider: config_update",
@@ -62,7 +70,7 @@ impl ConfigProvider {
                 );
 
                 new_span.set_parent(span.context());
-                
+
                 async {
                     info!("Processing configuration update");
                     self.config_service
@@ -74,7 +82,10 @@ impl ConfigProvider {
                 .await;
             }
             ProviderMessage::FirstInit(configs) => {
-                debug!(config_count = configs.len(), "First initialization received");
+                debug!(
+                    config_count = configs.len(),
+                    "First initialization received"
+                );
                 let config_vec = configs.into_values().collect();
                 self.config_service.update_configurations(config_vec).await;
             }
@@ -93,9 +104,7 @@ impl ConfigProvider {
         let sender = self.provider_sender.clone();
         tokio::spawn(
             async move {
-                provider.run()
-                    .instrument(debug_span!("provider_run"))
-                    .await;
+                provider.run().instrument(debug_span!("provider_run")).await;
                 warn!("Provider stopped unexpectedly");
                 if let Err(e) = sender
                     .send(ProviderMessage::Error(

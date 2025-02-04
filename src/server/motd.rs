@@ -95,6 +95,8 @@ impl Default for MotdConfig {
 
 impl MotdConfig {
     pub fn default_unreachable() -> Self {
+        let version = env!("CARGO_PKG_VERSION");
+
         MotdConfig {
             enabled: true,
             text: Some("This server seems to be offline".to_string()),
@@ -102,7 +104,7 @@ impl MotdConfig {
             online_players: Some(0),
             protocol_version: Some(0),
             samples: Some(Vec::new()),
-            version_name: Some("Infrarust V1.0.2".to_string()),
+            version_name: Some(("Infrarust v").to_string() + version),
             favicon: Some(FAVICON.to_string()),
         }
     }

@@ -4,8 +4,8 @@ use crate::core::actors::server::MinecraftServer;
 use crate::core::event::MinecraftCommunication;
 use crate::network::connection::PossibleReadValue;
 use async_trait::async_trait;
-use tracing::{debug, error};
 use std::io::{self};
+use tracing::{debug, error};
 
 pub struct PassthroughMode;
 

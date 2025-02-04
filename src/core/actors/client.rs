@@ -5,10 +5,7 @@ use tracing::{debug, info, instrument, Instrument};
 
 use crate::telemetry::TELEMETRY;
 use crate::{
-    core::{
-        config::ServerConfig,
-        event::MinecraftCommunication,
-    },
+    core::{config::ServerConfig, event::MinecraftCommunication},
     proxy_modes::ClientProxyModeHandler,
     Connection,
 };
