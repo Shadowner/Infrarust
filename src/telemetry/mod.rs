@@ -2,10 +2,9 @@ pub mod exporter;
 pub mod metrics;
 pub mod tracing;
 
-pub use exporter::configure_otlp_exporter;
 pub use metrics::{init_meter_provider, MeterProviderGuard};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
-pub use tracing::{init_tracer_provider, TracerProviderGuard};
+pub use tracing::TracerProviderGuard;
 
 pub use opentelemetry::global;
 
@@ -41,9 +40,6 @@ pub fn start_system_metrics_collection() {
                 ProcessRefreshKind::nothing().with_cpu(),
             );
             if let Some(process) = sys.process(pid) {
-                let cpu = process.cpu_usage() as f64;
-                let memory = process.memory() as f64;
-
                 TELEMETRY.update_system_metrics(
                     f64::from(process.cpu_usage()) / cpu_count,
                     process.memory() as f64,

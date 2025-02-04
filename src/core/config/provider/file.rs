@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tracing::{debug, debug_span, error, info, info_span, instrument, warn, Instrument};
+use tracing::{debug, debug_span, error, info, instrument, warn, Instrument};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{de::DeserializeOwned, Deserialize};
 use tokio::sync::mpsc::{self, channel, Sender};
@@ -221,7 +221,7 @@ impl FileProvider {
         provider_sender: &Sender<ProviderMessage>,
     ) {
         // Créer un nouveau span racine pour chaque événement fichier
-        let root_span = info_span!(
+        let root_span = debug_span!(
             "file_provider: file_change",
             path = ?event.path,
             event_kind = ?event.kind,
@@ -326,7 +326,7 @@ impl FileProvider {
 impl Provider for FileProvider {
     #[instrument(skip(self), name = "file_provider: run", fields(paths = ?self.paths))]
     async fn run(&mut self) {
-        let span = info_span!("file_provider_run");
+        let span = debug_span!("file_provider_run");
         async {
             info!("Starting file provider");
             //TODO: Implement real communication with the ConfigProvider

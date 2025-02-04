@@ -7,11 +7,3 @@ pub fn resource() -> Resource {
         KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
     ])
 }
-
-pub fn configure_otlp_exporter() -> opentelemetry_otlp::ExportConfig {
-    opentelemetry_otlp::ExportConfig {
-        endpoint: Some("http://127.0.0.1:4317".to_string()),
-        timeout: std::time::Duration::from_secs(1),
-        ..Default::default()
-    }
-}
