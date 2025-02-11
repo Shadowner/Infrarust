@@ -82,5 +82,5 @@ https://github.com/Shadowner/Infrarust/releases/
 Infrarust est un projet open source en pleine croissance. Nous accueillons toutes les contributions !
 
 - 📖 [Guide de Contribution](/contributing)
-- 💬 [Discord](https://discord.gg/uzs5nZsWaB) 
+- 💬 [Discord](https://discord.gg/sqbJhZVSgG) 
 - 🐛 [Signaler un Bug](https://github.com/shadowner/infrarust/issues)

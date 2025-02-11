@@ -227,5 +227,5 @@ For production environments, it's recommended to use a specific version rather t
 If you encounter installation issues:
 
 1. Check [known issues](https://github.com/shadowner/infrarust/issues)
-2. Join our [Discord](https://discord.gg/uzs5nZsWaB)
+2. Join our [Discord](https://discord.gg/sqbJhZVSgG)
 3. Open a ticket on GitHub

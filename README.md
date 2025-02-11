@@ -110,7 +110,7 @@ Infrarust is built in Rust with a focus on performance and reliability:
 
 Contributions are welcome! Check out our [Contributing Guidelines](CONTRIBUTING.md) to get started.
 
-Feel free to join our [Discord](https://discord.gg/uzs5nZsWaB) if you have any question !
+Feel free to join our [Discord](https://discord.gg/sqbJhZVSgG) if you have any question !
 
 ## Similar Projects
 
