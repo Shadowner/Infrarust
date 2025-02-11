@@ -202,7 +202,7 @@ export default withMermaid({
       { icon: 'github', link: 'https://github.com/shadowner/infrarust' },
       {
         icon: 'discord',
-        link: 'https://discord.gg/uzs5nZsWaB',
+        link: 'https://discord.gg/sqbJhZVSgG',
       }
     ],
 

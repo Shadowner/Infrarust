@@ -237,5 +237,5 @@ Pour les environnements de production, il est recommandé d'utiliser une version
 Si vous rencontrez des problèmes lors de l'installation :
 
 1. Consultez les [problèmes connus](https://github.com/shadowner/infrarust/issues)
-2. Rejoignez notre [Discord](https://discord.gg/uzs5nZsWaB)
+2. Rejoignez notre [Discord](https://discord.gg/sqbJhZVSgG)
 3. Ouvrez un ticket sur GitHub
