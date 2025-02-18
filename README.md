@@ -1,52 +1,40 @@
-<div align="center" class="header-container">
-  <div class="logo-wrapper">
-    <img width="200" height="auto" src="docs/public/img/logo.svg" alt="Infrarust Logo" class="main-logo">
-    <div class="logo-glow"></div>
-  </div>
+<div align="center" >
+    <img width="200" height="auto" src="docs/public/img/logo.svg" alt="Infrarust Logo">
   
-  <h1 class="title">Infrarust</h1>
-  <h3 class="subtitle">High-Performance Minecraft Reverse Proxy in Rust</h3>
-  
-  <div class="badges-container">
+  <h1>Infrarust</h1>
+  <h3>High-Performance Minecraft Reverse Proxy in Rust</h3>
+    <div class="badges-container">
     <a href="https://crates.io/crates/infrarust" class="badge-link">
       <img alt="Crates.io" src="https://img.shields.io/crates/v/infrarust?style=flat-square" />
     </a>
     <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" />
   </div>
+  
+  <h4>Compatible with <i>almost</i> every Minecraft Versions + Modded Versions</h4>
 </div>
 
 > [!WARNING]
 > Infrarust is currently in active development. This project is a Rust implementation inspired by [Infrared](https://infrared.dev/), focusing on performance and enhanced features.
 
-A blazing fast Minecraft reverse proxy that allows you to expose multiple Minecraft servers through a single port. It uses domain/subdomain-based routing to direct clients to specific Minecraft servers while providing advanced features for authentication and monitoring.
+A blazing fast Minecraft reverse proxy that allows you to expose multiple Minecraft servers through a single port. It uses domain/subdomain-based routing to direct clients to specific Minecraft servers.
 
 ## Key Features
 
-- [X] Efficient Reverse Proxy
-  - [X] Wildcard Domain Support
-  - [X] Multi-Domain Routing
-  - [X] Direct IP Connection Support
-- [X] Advanced Authentication Modes
-  - [X] ClientOnly Mode with Mojang Authentication
-  - [X] Passthrough Mode
-  - [X] Offline Mode
-- [X] Performance Optimizations
-  - [X] Status Response Caching
-  - [X] Connection Pooling
-  - [ ] Proxy Protocol Support
-- [X] Security Features
-  - [X] Rate Limiting
-  - [X] DDoS Protection
-  - [X] IP Filtering
-
-## Upcoming Features (#1)
-
-- [ ] RESTful API for Dynamic Configuration
-- [ ] Advanced Telemetry and Metrics
-- [ ] Web Dashboard
-- [ ] Hot Configuration Reload
-- [ ] Plugin System
-- [ ] Multi-version Support (BE/JE)
+- [x] Efficient Reverse Proxy
+  - [x] Wildcard Domain Support
+  - [x] Multi-Domain Routing
+  - [x] Direct IP Connection Support
+- [x] Authentication Modes
+  - [x] ClientOnly Mode (only works with vanilla < 1.20)
+  - [x] Passthrough Mode
+  - [x] Offline Mode
+- [x] Performance Optimizations
+  - [x] Connection Pooling
+  - [x] Zero-copy packet forwarding
+- [x] Security Features
+  - [x] Rate Limiting
+  - [x] Basic DDoS Protection
+- [x] Basic Telemetry
 
 ## Quick Start
 
@@ -66,37 +54,66 @@ cargo build --release
 cargo install infrarust
 ```
 
-### Configuration
+### Basic Configuration
 
-Create a `config.yaml` file:
+Create a `config.yaml` file, known as the Proxy Configuration File:
 
 ```yaml
 bind: "0.0.0.0:25565"
 domains:
-  - "*.minecraft.example.com"
+  - "minecraft.example.com"
 ```
 
-And create your server configurations in the `proxies` directory:
+And create your server configurations in the `proxies` directory known as the Servier Configuration File:
 
 ```yaml
 domains:
   - "hub.minecraft.example.com"
 addresses:
   - "localhost:25566"
-proxyMode: "passthrough"  # Options: passthrough, cllient-only, offline
+proxyMode: "passthrough" # Options: passthrough, cllient-only, offline
 ```
 
 ## Documentation
 
+Visit [infrarust.dev](https://infrarust.dev) for complete documentation:
+
 - [Installation Guide](https://infrarust.dev/docs/installation)
 - [Configuration Reference](https://infrarust.dev/docs/configuration)
 - [Proxy Modes](https://infrarust.dev/docs/proxy-modes)
-- [API Documentation](https://infrarust.dev/docs/api)
-- [Performance Tuning](https://infrarust.dev/docs/performance)
+
+## Telemetry & Monitoring
+
+Infrarust provides comprehensive telemetry through OpenTelemetry integration, including metrics, traces, and logs. The project includes a ready-to-use monitoring stack in the [docker/monitoring](docker/monitoring) directory.
+
+### Quick Start Monitoring
+
+```bash
+cd docker/monitoring
+docker compose up -d
+```
+
+This will start:
+
+- Grafana (http://localhost:3000)
+- Prometheus (http://localhost:9090)
+- Tempo (Traces)
+- OpenTelemetry Collector
+
+### Available Metrics
+
+- Connection metrics (active connections, errors, latency)
+- Backend metrics (server status, response times)
+- System metrics (CPU, memory, threads)
+- Minecraft-specific metrics (protocol errors, player count)
+
+<p align="center">
+  <img src="docs/public/img/grafana_dashboard.png"/>
+</p>
 
 ## Performance
 
-Infrarust is built in Rust with a focus on performance and reliability:
+Infrarust leverages Rust's performance capabilities:
 
 - Minimal memory footprint
 - Low CPU utilization
