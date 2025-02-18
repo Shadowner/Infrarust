@@ -58,6 +58,7 @@ This mode is currently non-functional due to technical limitations with Minecraf
 | Plugin Support*   | ✅         | ✅      | ❌          | ❌   |
 | Performance       | ⭐⭐⭐     | ⭐⭐⭐   | ⭐⭐⭐⭐⭐   | ❌   |
 | Server Online Mode| ❌         | ❌      | ✅          | ✅   |
+| Compatible Versions| Non modded - 1.16+ | Modded - 1.7.10+ | Modded - All | Non working |
 
 >*System not implemented yet
 

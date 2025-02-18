@@ -24,6 +24,7 @@ sequenceDiagram
 ## Caractéristiques
 
 - ✅ Performances maximales
+- ✅ Compatible avec toutes les version de Minecraft, Fabric, Quilt, Forge...
 - ✅ Compatibilité totale avec les serveurs en `online_mode=true`
 - ✅ Overhead minimal
 - ❌ Pas de support des plugins

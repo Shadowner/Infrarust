@@ -76,4 +76,3 @@ The rate limiter will expose metrics in the future:
 - Connection spikes
 
 See [Monitoring](../quickstart/deployment) for more details.
-

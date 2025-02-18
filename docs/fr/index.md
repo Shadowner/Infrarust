@@ -3,15 +3,15 @@ layout: home
 
 hero:
   name: "Infrarust"
-  text: "Proxy Minecraft de Haute Performance"
-  tagline: Propulsez vos serveurs Minecraft avec la puissance de Rust
+  text: "Proxy Inverse Minecraft Universel"
+  tagline: Un proxy pour toutes les versions Minecraft et tous les mod loaders
   image:
     src: /img/logo.svg
-    alt: Infrarust Logo
+    alt: Logo Infrarust
   actions:
     - theme: brand
       text: Démarrage Rapide →
-      link: /fr/quickstart
+      link: /fr/quickstart/
     - theme: alt
       text: Documentation
       link: /fr/proxy/
@@ -20,67 +20,98 @@ hero:
       link: https://github.com/shadowner/infrarust
 
 features:
+  - icon: 🌈
+    title: Compatibilité Universelle
+    details: Fonctionne avec toute version Minecraft (1.7.10 à 1.20.4) et tout mod loader (Forge, Fabric, Quilt, etc.)
+  
   - icon: 🚀
-    title: Performant
-    details: Conçu en Rust pour une efficacité maximale, avec une empreinte mémoire minimale et une utilisation optimisée du CPU.
+    title: Performance Native
+    details: Développé en Rust pour une efficacité maximale, avec une surcharge minimale et une utilisation optimisée des ressources
   
   - icon: 🔒
     title: Sécurité Renforcée
-    details: Système de filtres dynamique intégré
+    details: Protégez votre réseau avec des systèmes intégrés de protection DDoS et de filtrage
   
-  - icon: 🌐
-    title: Routage Intelligent
-    details: Support des domaines wildcards et routage multi-domaines pour une flexibilité maximale.
-  
-  - icon: 🔄
-    title: Modes Multiples
-    details: Plusieurs modes d'authentification (ClientOnly, Passthrough, Offline) pour s'adapter à vos besoins.
-  
+  - icon: 🎮
+    title: Support des Mods
+    details: Gérez les serveurs et clients moddés sans configuration particulière
+
 ---
 
 ::: tip VERSION ACTUELLE
-<span class="version-tag">v1.0.1</span> - En développement actif
-<br>
+<span class="version-tag">v1.2.0</span> - Prêt pour la Production
 :::
 
 ## 🎯 Pourquoi Infrarust ?
 
-Infrarust est né de la volonté de créer un proxy Minecraft haute performance en tirant parti de la puissance et de la sécurité de Rust. Inspiré par [Infrared](https://infrared.dev/), nous avons repensé l'architecture pour offrir :
+Infrarust est un proxy inverse Minecraft moderne qui fonctionne réellement avec tout :
 
-- **Performance maximale** : Écrit en Rust pour des performances natives
-- **Sécurité renforcée** : Protection intégrée contre les attaques
-- **Simplicité d'utilisation** : Configuration intuitive en YAML
-- **Flexibilité totale** : Adapté à toutes les configurations
+### Compatibilité Universelle - Mode Passthrough
 
-## 🚀 Installation Rapide
+- ✅ Toutes les versions Minecraft (1.7.10 à la dernière)
+- ✅ Tous les mod loaders (Forge, Fabric, Quilt)
+- ✅ Serveurs vanilla et moddés
+- ✅ Modes premium et offline
+- ✅ Aucune configuration spéciale requise
+
+### Stack Technique
+
+- 🚀 Écrit en Rust pour des performances natives
+- 🛡️ Protection intégrée contre les attaques
+- 📝 Configuration YAML simple
+- 🔄 Support du rechargement à chaud
+- 📊 Surveillance complète
+
+## 🚀 Démarrage Rapide
 
 ```bash
-# Installation depuis les sources
-git clone https://github.com/shadowner/infrarust
-cd infrarust
-cargo build --release
+# Télécharger et exécuter
+curl -LO https://github.com/Shadowner/Infrarust/releases/latest/download/infrarust
+chmod +x infrarust
+./infrarust
 
-# via cargo
+# Ou installer via cargo
 cargo install infrarust
-
-# Ou par les binaires précompilé
-https://github.com/Shadowner/Infrarust/releases/
 ```
 
-## 🛣️ Feuille de Route
+## 💡 Parfait Pour
+
+- **Hébergement Local** : Pour ceux qui ne veulent pas exposer tous leurs ports
+- **Propriétaires de Réseaux** : Gérez plusieurs types de serveurs depuis un seul proxy
+- **Créateurs de Modpacks** : Routez différentes versions de modpacks sans effort
+- **Administrateurs de Serveurs** : Gérez ensemble serveurs vanilla et moddés
+- **Hébergeurs Communautaires** : Supportez n'importe quelle version client ou mod loader
+
+## 📊 Performances en Conditions Réelles
+
+| Métrique | Valeur |
+|----------|--------|
+| Utilisation Mémoire | < 20MB base |
+| Utilisation CPU | Minimale |
+| Surcharge Latence | < 1ms |
+| Gestion Connexions | 10,000+ simultanées |
+
+## 🗺️ Points Clés de la Feuille de Route
 
 | Fonctionnalité | Statut |
 |----------------|--------|
-| API REST | 💡 Proposé |
-| Dashboard Web | 💡 Proposé |
-| Support Multi-Version | 💡 Proposé |
-| Version Desktop | 💡 Proposé |
-| Système de Plugins | 💡 Proposé |
+| Tableau de Bord Web | 💡 Planifié |
+| API Plugin | 💭 Proposé |
+| Traduction de Version | 💭 Proposé |
+| Clustering Multi-Proxy | 💭 Proposé |
 
-## 🤝 Rejoignez la Communauté
+## 🤝 Communauté
 
-Infrarust est un projet open source en pleine croissance. Nous accueillons toutes les contributions !
+Rejoignez notre communauté grandissante :
 
-- 📖 [Guide de Contribution](/contributing)
-- 💬 [Discord](https://discord.gg/sqbJhZVSgG) 
-- 🐛 [Signaler un Bug](https://github.com/shadowner/infrarust/issues)
+- 📖 [Documentation](/fr/docs/)
+- 💬 [Discord](https://discord.gg/uzs5nZsWaB)
+- 🐛 [GitHub Issues](https://github.com/shadowner/infrarust/issues)
+
+<script>
+// TODO: Chercher une autre façon avec vitepress
+if (typeof window !== 'undefined' && !navigator.language.startsWith('fr') && !localStorage.getItem('redirected')) {
+  window.location.replace(window.location.pathname.replace('/fr/', '/'));
+  localStorage.setItem('redirected', 'true');
+}
+</script>

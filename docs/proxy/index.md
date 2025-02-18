@@ -71,6 +71,7 @@ sequenceDiagram
 - Direct packet transmission
 - Maximum performance
 - No data modification
+- Compatible with every Minecraft Version
 
 ### 2. ClientOnly Mode
 
