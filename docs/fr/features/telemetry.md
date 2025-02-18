@@ -10,7 +10,7 @@ Activez la télémétrie dans votre `config.yaml` :
 telemetry:
   enabled: true                    # Activer la collecte de télémétrie
   export_interval_seconds: 30      # Intervalle d'exportation
-  export_url: "http://localhost:4317"  # Point de terminaison OTLP
+  export_url: "http://127.0.0.1:4317"  # Point de terminaison OTLP
   enable_metrics: true            # Activer la collecte de métriques
   enable_tracing: true           # Activer le traçage distribué
 ```
@@ -65,8 +65,8 @@ docker compose up -d
 
 Cela démarrera :
 
-- Grafana (Interface : <http://localhost:3000>)
-- Prometheus (Interface : <http://localhost:9090>)
+- Grafana (Interface : <http://127.0.0.1:3000>)
+- Prometheus (Interface : <http://127.0.0.1:9090>)
 - Tempo (Traces)
 - Collecteur OpenTelemetry
 
@@ -106,11 +106,11 @@ service:
 
 ### Accès à la Stack de Surveillance
 
-1. **Grafana** : <http://localhost:3000>
+1. **Grafana** : <http://127.0.0.1:3000>
    - Identifiants par défaut : admin/admin
    - Tableaux de bord préconfigurés disponibles
 
-2. **Prometheus** : <http://localhost:9090>
+2. **Prometheus** : <http://127.0.0.1:9090>
    - Accès direct aux métriques
    - Interface de requête pour l'exploration des métriques
 

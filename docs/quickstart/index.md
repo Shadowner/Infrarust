@@ -161,7 +161,7 @@ Once basic configuration is complete, you can:
 ## Need Help?
 
 - 🐛 Report a bug on [GitHub](https://github.com/shadowner/infrarust/issues)
-- 💬 Join our [Discord](https://discord.gg/uzs5nZsWaB)
+- 💬 Join our [Discord](https://discord.gg/sqbJhZVSgG)
 
 ::: tip
 Remember to check the documentation regularly as Infrarust is under active development and new features are added regularly.

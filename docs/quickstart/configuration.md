@@ -178,5 +178,5 @@ The following features are planned but not yet implemented:
 ## Need Help?
 
 - 🐛 Report issues on [GitHub](https://github.com/shadowner/infrarust/issues)
-- 💬 Join our [Discord](https://discord.gg/uzs5nZsWaB)
+- 💬 Join our [Discord](https://discord.gg/sqbJhZVSgG)
 - 📚 Check the [documentation](https://infrarust.dev)

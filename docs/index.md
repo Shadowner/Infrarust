@@ -103,8 +103,8 @@ cargo install infrarust
 
 Join our growing community:
 
-- 📖 [Documentation](/docs/)
-- 💬 [Discord](https://discord.gg/uzs5nZsWaB)
+- 📖 [Documentation](/quickstart/)
+- 💬 [Discord](https://discord.gg/sqbJhZVSgG)
 - 🐛 [GitHub Issues](https://github.com/shadowner/infrarust/issues)
 
 <script>

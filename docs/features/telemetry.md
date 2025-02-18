@@ -10,7 +10,7 @@ Enable telemetry in your `config.yaml`:
 telemetry:
   enabled: true                    # Enable telemetry collection
   export_interval_seconds: 30      # Export interval
-  export_url: "http://localhost:4317"  # OTLP endpoint
+  export_url: "http://127.0.0.1:4317"  # OTLP endpoint
   enable_metrics: true            # Enable metrics collection
   enable_tracing: true           # Enable distributed tracing
 ```
@@ -65,8 +65,8 @@ docker compose up -d
 
 This will start:
 
-- Grafana (UI: http://localhost:3000)
-- Prometheus (UI: http://localhost:9090)
+- Grafana (UI: http://127.0.0.1:3000)
+- Prometheus (UI: http://127.0.0.1:9090)
 - Tempo (Traces)
 - OpenTelemetry Collector
 
@@ -106,11 +106,11 @@ service:
 
 ### Accessing the Monitoring Stack
 
-1. **Grafana**: http://localhost:3000
+1. **Grafana**: http://127.0.0.1:3000
    - Default credentials: admin/admin
    - Preconfigured dashboards available
 
-2. **Prometheus**: http://localhost:9090
+2. **Prometheus**: http://127.0.0.1:9090
    - Direct access to metrics
    - Query interface for metric exploration
 
