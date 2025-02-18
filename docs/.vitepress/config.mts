@@ -73,11 +73,11 @@ export default withMermaid({
           items: [
             { text: 'Mise en Cache', link: '/fr/features/caching' },
             { text: 'Rate Limiting', link: '/fr/features/rate-limiting' },
+            { text: 'Télémétrie', link: '/fr/features/telemetry' },
             {
               text: 'Feuille de Route', link: "/fr/roadmap/", collapsed: true, items: [
                 { text: 'Authentification', link: '/fr/roadmap/authentication' },
                 { text: 'Système de Plugins', link: '/fr/roadmap/plugins' },
-                { text: 'Télémétrie', link: '/fr/roadmap/telemetry' },
                 { text: 'Api', link: '/fr/roadmap/api' },
                 { text: 'Tableau de bord', link: '/fr/roadmap/dashboard' },
               ]
@@ -155,11 +155,11 @@ export default withMermaid({
           items: [
             { text: 'Caching', link: '/features/caching' },
             { text: 'Rate Limiting', link: '/features/rate-limiting' },
+            { text: 'Telemetry', link: '/features/telemetry' },
             {
               text: 'Roadmap', link: "/roadmap/", collapsed: true, items: [
                 { text: 'Authentication', link: '/roadmap/authentication' },
                 { text: 'Plugin System', link: '/roadmap/plugins' },
-                { text: 'Telemetry', link: '/roadmap/telemetry' },
                 { text: 'Api', link: '/roadmap/api' },
                 { text: 'Dashboard web', link: '/roadmap/dashboard' },
               ]

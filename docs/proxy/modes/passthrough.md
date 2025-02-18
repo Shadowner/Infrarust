@@ -1,6 +1,8 @@
 # Passthrough Mode
 
-Passthrough mode is Infrarust's simplest and most performant mode. It acts as a pure forwarding proxy, not modifying the data flow between client and server.
+Passthrough mode is Infrarust's simplest and most performant mode. It acts as a pure forwarding proxy, not modifying or reading, the data flow between client and server.
+
+> This mode is also compatible with modded Minecraft Servers
 
 ::: tip Performance
 Passthrough mode is the optimal choice for performance. Use it when you don't need advanced features.
@@ -24,6 +26,7 @@ sequenceDiagram
 ## Features
 
 - ✅ Maximum performance
+- ✅ Compatible with every Minecraft Version, Fabric, Quilt, Forge
 - ✅ Full compatibility with `online_mode=true` servers
 - ✅ Minimal overhead
 - ❌ No plugin support
@@ -44,12 +47,6 @@ proxy_mode: "passthrough"
 options:
   # Connection timeout
   connection_timeout: 30s
-  
-  # Transfer buffer size
-  buffer_size: 8192
-  
-  # Forward client IP
-  forward_ip: true
 ```
 
 ## Use Cases

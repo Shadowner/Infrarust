@@ -1,52 +1,194 @@
-# Roadmap
+# Infrarust Roadmap
 
-> [!NOTE]  
-> Infrarust is under active development. This roadmap presents the major features planned for upcoming versions.
+<style>
+.feature-list {
+  padding-left: 1.5rem;
+  margin-bottom: 2rem;
+}
 
-## Live Config Reloading
-Dynamic configuration updates without proxy restart.
-- Hot reload of configurations
-- Automatic change validation
-- Rollback on error
-[Learn more](./live-config.md)
+.phase-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-right: 0.5rem;
+}
 
-## Custom Auth System
-Customizable and autonomous Minecraft authentication system.
-- Independent session management  
-- Offline servers support
-- Third-party system integration
-[Learn more](./auth-system.md)
+.phase-badge.current {
+  background: var(--vp-c-brand-1);
+  color: var(--vp-c-soft-3);
+}
 
-## Plugin System
-Modular architecture to extend proxy capabilities.
-- Real-time packet interception
-- Data modification API
-- Events support
-[Learn more](./plugins.md)
+.phase-badge.next {
+  background: var(--vp-c-default-1);
+}
 
-## Telemetry
-Usage metrics collection and analysis.
-- Player and server statistics
-- Performance monitoring
-- Configurable alerts
-[Learn more](./telemetry.md)
+.completed {
+  color: var(--vp-c-green);
+}
+</style>
 
-## REST API
-Programmatic interface for proxy control.
-- Players and servers management
-- Configuration control
-- External tools integration
-[Learn more](./rest-api.md)
+::: info Current Status
+Infrarust is under active development. This roadmap outlines our planned features and enhancements.
+:::
 
-## Web Dashboard
-Web interface for proxy management.
-### Phase 1 - Read-only
-- Metrics visualization
-- Servers status
-- Real-time logs
+# Development Phases
 
-### Phase 2 - Administration
-- Configuration management
-- Player actions
-- Proxy control
-[Learn more](./dashboard.md)
+## <span class="phase-badge current">Current</span> Phase 0: Core Foundation
+
+<div class="feature-list completed">
+
+- ✅ Basic reverse proxy with hostname routing
+- ✅ OpenTelemetry integration
+- ✅ Grafana dashboard templates
+- ✅ Protocol-agnostic passthrough mode
+- ✅ Hot-reload configuration
+- ✅ Modular configuration provider
+
+</div>
+
+## <span class="phase-badge next">Next</span> Phase 1: Architecture Refactoring
+
+<div class="feature-list">
+
+### Valence Integration
+
+- 🔄 Protocol handling adaptation
+- 🔄 Packet management system
+- 🔄 Connection state machine
+
+### Multi-Crate Architecture
+
+- 📦 Feature modularization
+- 📦 Platform-specific optimizations
+- 📦 Clean architecture patterns
+
+</div>
+
+## Phase 2: Data & Configuration
+
+<div class="feature-list">
+
+### Storage Layer
+
+- 💾 Async SQLx (PostgreSQL/SQLite)
+- 💾 Schema versioning (Refinery)
+- 💾 Redis caching integration
+
+### Enhanced Configuration
+
+- 🔐 Secret management
+- 🔐 Encrypted credentials
+- 🔐 Secure key storage
+
+</div>
+
+## Phase 3: Command Framework
+
+<div class="feature-list">
+
+### Access Control
+
+- 👥 RBAC implementation
+- 👥 Permission hierarchy
+- 👥 Minecraft-style config
+
+### Management Features
+
+- 🎮 REPL interface
+- 🎮 State management
+- 🎮 Webhook system
+- 🎮 Audit logging
+
+</div>
+
+## Phase 4: Advanced Load Balancing
+
+<div class="feature-list">
+
+### Load Distribution
+
+- ⚖️ Weighted round-robin
+- ⚖️ Connection-based balancing
+- ⚖️ Latency-aware routing
+- ⚖️ Session persistence
+
+### High Availability
+
+- 🔄 Server pooling
+- 🔄 Automatic failover
+- 🔄 Graceful shutdown
+- 🔄 Multi-proxy clustering
+
+</div>
+
+## Phase 5: Administration Interface
+
+<div class="feature-list">
+
+### Backend API
+
+- 🔌 RESTful endpoints
+- 🔌 Real-time updates
+- 🔌 Metrics aggregation
+
+### Monitoring Suite
+
+- 📊 Traffic visualization
+- 📊 Alert configuration
+- 📊 Performance analytics
+
+### Control Panel
+
+- 🎛️ JWT authentication
+- 🎛️ Configuration UI
+- 🎛️ Connection monitoring
+
+</div>
+
+## Phase 6: Plugin Architecture
+
+<div class="feature-list">
+
+### Core System
+
+- 🧩 WASM runtime
+- 🧩 Plugin derive macros
+- 🧩 Dynamic loading
+
+### Integration
+
+- 🔌 Packet interception
+- 🔌 Platform compatibility
+- 🔌 Event system
+
+</div>
+
+## Phase 7: Network Optimizations
+
+<div class="feature-list">
+
+### Protocol Support
+
+- 🌐 Version translation (1.8→1.20+)
+- 🌐 QUIC implementation
+- 🌐 Zero-copy optimization
+
+### Security Features
+
+- 🛡️ BungeeGuard integration
+- 🛡️ Advanced rate limiting
+- 🛡️ DDoS protection
+
+</div>
+
+::: warning Future Considerations
+The following features are being evaluated but are not currently on the roadmap:
+
+## Authentication System
+
+- 🔒 Custom session management
+- 🔒 Offline mode support
+- 🔒 Third-party integration
+:::

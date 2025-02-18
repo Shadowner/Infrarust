@@ -2,45 +2,18 @@
 
 This guide will help you install and configure Infrarust for your first use.
 
-## Prerequisites
+## Quick Installation
 
-Before starting, make sure you have:
+### Download Precompiled Binary
 
-> Those prequisite apply only if you don't use the precompiled binaries
+1. Download the latest version from the [releases page](https://github.com/shadowner/infrarust/releases)
+2. Extract the archive to your desired location
 
-- Rust 1.80 or higher
-- Cargo (Rust package manager)
-- An existing Minecraft server
-- A domain (optional, for domain-based routing)
+## Basic Setup
 
-## Installation
+### 1. Create Configuration Files
 
-### Method 1: Precompiled Binaries
-
-Download the latest version from the [releases page](https://github.com/shadowner/infrarust/releases).
-
-### Method 2: Via Cargo (Recommended)
-
-```bash
-cargo install infrarust
-```
-
-### Method 3: From Source
-
-```bash
-# Clone the repository
-git clone https://github.com/shadowner/infrarust
-cd infrarust
-
-# Build the project
-cargo build --release
-
-# The executable is located in target/release/infrarust
-```
-
-## Quick Configuration
-
-1. Create a `config.yaml` file in your working directory:
+Create a `config.yaml` file in your working directory:
 
 ```yaml
 # Minimal configuration
@@ -50,10 +23,9 @@ filters:
   rateLimiter:
     requestLimit: 10
     windowLength: 1s
-keepalive_timeout: 30s  # Keepalive timeout
 ```
 
-2. Create a `proxies` folder and add a configuration file for your server:
+Create a `proxies` folder and add server configurations:
 
 ```yaml
 # proxies/my-server.yml
@@ -64,6 +36,18 @@ addresses:
 proxyMode: "passthrough"  # Proxy mode
 ```
 
+### 2. Start Infrarust
+
+```bash
+./infrarust
+```
+
+### 3. Connect and Verify
+
+1. Launch your Minecraft client
+2. Connect to your configured domain
+3. Check the logs to confirm the connection
+
 ## Folder Structure
 
 ```
@@ -71,10 +55,32 @@ infrarust/
 ├── config.yaml          # Main configuration
 ├── proxies/            # Server configurations
 │   ├── hub.yml
-│   ├── survival.yml
-│   └── creative.yml
-├── infrarust.exe
-└── logs/               # Logs (created automatically) //TODO: Not implemented yet
+│   └── survival.yml
+├── infrarust[.exe]
+└── logs/               # Logs (created automatically)
+```
+
+## Building from Source
+
+If you prefer to build from source, you'll need:
+
+- Rust 1.80 or higher
+- Cargo (Rust package manager)
+
+### Installation Methods
+
+#### Via Cargo
+
+```bash
+cargo install infrarust
+```
+
+#### From Source
+
+```bash
+git clone https://github.com/shadowner/infrarust
+cd infrarust
+cargo build --release
 ```
 
 ## First Steps
@@ -105,7 +111,7 @@ Infrarust offers several proxy modes for different use cases:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
-| `passthrough` | Direct transmission | No plugin functionality, just proxy |
+| `passthrough` | Direct transmission | No plugin functionality, just proxy compatible with every minecraft version |
 | `client_only` | Client-side auth | Servers in `online_mode=false`, but premium client |
 | `offline` | No authentication | `online_mode=false` servers and cracked client |
 
@@ -121,15 +127,6 @@ filters:
   rateLimiter:
     requestLimit: 10
     windowLength: 1s
-```
-
-### Status Cache
-
-```yaml
-# In config.yaml
-statusCache: ### NOT IMPLEMENTED YET ###
-  enabled: true
-  ttl: 30s
 ```
 
 ## Next Steps
@@ -164,8 +161,8 @@ Once basic configuration is complete, you can:
 ## Need Help?
 
 - 🐛 Report a bug on [GitHub](https://github.com/shadowner/infrarust/issues)
-- 💬 Join our [Discord](https://discord.gg/sqbJhZVSgG)
- 
+- 💬 Join our [Discord](https://discord.gg/uzs5nZsWaB)
+
 ::: tip
 Remember to check the documentation regularly as Infrarust is under active development and new features are added regularly.
 :::

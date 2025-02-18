@@ -107,3 +107,30 @@
   --docsearch-primary-color: var(--vp-c-brand-1) !important;
 }
 
+.feature-list {
+  padding-left: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.phase-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-right: 0.5rem;
+}
+
+.phase-badge.current {
+  background: var(--vp-c-brand-1);
+  color: var(--vp-c-brand-3);
+}
+
+.phase-badge.next {
+  background: var(--vp-c-tip-1);
+  color: var(--vp-c-tip-soft);
+}
+
+.completed {
+  color: var(--vp-c-green);
+}

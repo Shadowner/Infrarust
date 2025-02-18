@@ -1,11 +1,10 @@
 ---
-# https://vitepress.dev/reference/default-theme-home-page
 layout: home
 
 hero:
   name: "Infrarust"
-  text: "High-Performance Minecraft Reverse Proxy"
-  tagline: Power your Minecraft servers with Rust's performance
+  text: "Universal Minecraft Reverse Proxy"
+  tagline: One proxy for all Minecraft versions and mod loaders
   image:
     src: /img/logo.svg
     alt: Infrarust Logo
@@ -21,73 +20,94 @@ hero:
       link: https://github.com/shadowner/infrarust
 
 features:
+  - icon: 🌈
+    title: Universal Compatibility
+    details: Works with any Minecraft version (1.7.10 to 1.20.4) and any mod loader (Forge, Fabric, Quilt, etc.)
+  
   - icon: 🚀
-    title: Performance
-    details: Built in Rust for maximum efficiency, with minimal memory footprint and optimized CPU usage.
+    title: Native Performance
+    details: Built in Rust for maximum efficiency, with minimal overhead and optimized resource usage
   
   - icon: 🔒
     title: Enhanced Security
-    details: Built-in dynamic filtering system
+    details: Protect your network with built-in DDoS protection and filtering systems
   
-  - icon: 🌐
-    title: Smart Routing
-    details: Wildcard domains and multi-domain routing support for maximum flexibility.
-  
-  - icon: 🔄
-    title: Multiple Modes
-    details: Several proxy modes (ClientOnly, Passthrough, Offline) to adapt to your needs.
-  
+  - icon: 🎮
+    title: Modded Support
+    details: Seamlessly handle modded servers and clients without any special configuration
 ---
 
 ::: tip CURRENT VERSION
-<span class="version-tag">v1.0.1</span> - Under active development
-<br>
+<span class="version-tag">v1.2.0</span> - Production Ready
 :::
 
 ## 🎯 Why Infrarust?
 
-Infrarust was born from the desire to create a high-performance Minecraft proxy by leveraging the power and security of Rust. Inspired by [Infrared](https://infrared.dev/), we redesigned the architecture to offer:
+Infrarust is a modern Minecraft reverse proxy that truly works with everything:
 
-- **Maximum Performance**: Written in Rust for native performance
-- **Enhanced Security**: Built-in protection against attacks
-- **Ease of Use**: Intuitive YAML configuration
-- **Total Flexibility**: Adapted to all configurations
+### Universal Compatibility - Passthrough Mode
 
-## 🚀 Quick Installation
+- ✅ All Minecraft versions (1.7.10 to latest)
+- ✅ Every mod loader (Forge, Fabric, Quilt)
+- ✅ Vanilla and modded servers
+- ✅ Premium and offline modes
+- ✅ No special configuration needed
+
+### Technical Stack
+
+- 🚀 Written in Rust for native performance
+- 🛡️ Built-in protection against attacks
+- 📝 Simple YAML configuration
+- 🔄 Hot-reload support
+- 📊 Comprehensive monitoring
+
+## 🚀 Quick Start
 
 ```bash
-# Install from source
-git clone https://github.com/shadowner/infrarust
-cd infrarust
-cargo build --release
+# Download and run
+curl -LO https://github.com/Shadowner/Infrarust/releases/latest/download/infrarust
+chmod +x infrarust
+./infrarust
 
-# Via cargo
+# Or install via cargo
 cargo install infrarust
-
-# Or via binaries
-https://github.com/Shadowner/Infrarust/releases/
 ```
 
-## 🛣️ Roadmap
+## 💡 Perfect For
+
+- **Local Hosting**: For those who doesn't want to expose all their ports
+- **Network Owners**: Handle multiple server types from one proxy
+- **Modpack Creators**: Route different modpack versions seamlessly
+- **Server Admins**: Manage vanilla and modded servers together
+- **Community Hosts**: Support any client version or mod loader
+
+## 📊 Real-World Performance
+
+| Metric | Value |
+|--------|--------|
+| Memory Usage | < 20MB base |
+| CPU Usage | Minimal |
+| Latency Overhead | < 1ms |
+| Connection Handling | 10,000+ concurrent |
+
+## 🗺️ Roadmap Highlights
 
 | Feature | Status |
 |---------|--------|
-| REST API | 💡 Proposed |
-| Web Dashboard | 💡 Proposed |
-| Multi-Version Support | 💡 Proposed |
-| Desktop Version | 💡 Proposed |
-| Plugin System | 💡 Proposed |
+| Web Dashboard | 💡 Planned |
+| Plugin API | 💭 Proposed |
+| Version Translation | 💭 Proposed |
+| Multi-Proxy Clustering | 💭 Proposed |
 
-## 🤝 Join the Community
+## 🤝 Community
 
-Infrarust is a growing open source project. We welcome all contributions!
+Join our growing community:
 
-- 📖 [Contribution Guide](/contributing)
-- 💬 [Discord](https://discord.gg/sqbJhZVSgG)
-- 🐛 [Report a Bug](https://github.com/shadowner/infrarust/issues)
+- 📖 [Documentation](/docs/)
+- 💬 [Discord](https://discord.gg/uzs5nZsWaB)
+- 🐛 [GitHub Issues](https://github.com/shadowner/infrarust/issues)
 
 <script>
-
 // TODO: Look for another way with vitepress
 if (typeof window !== 'undefined' && navigator.language.startsWith('fr') && !localStorage.getItem('redirected')) {
   window.location.replace('/fr' + window.location.pathname);
