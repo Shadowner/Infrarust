@@ -187,14 +187,23 @@ impl ServerRequester for Gateway {
 
         if req.is_login {
             debug!("Creating login connection to backend server");
-            let conn = tmp_server.dial(req.session_id).await?;
+            let conn = if tmp_server.config.send_proxy_protocol.unwrap_or(false) {
+                debug!("Using proxy protocol for connection");
+                tmp_server
+                    .dial_with_proxy_protocol(req.session_id, req.client_addr)
+                    .await?
+            } else {
+                debug!("Using standard connection");
+                tmp_server.dial(req.session_id).await?
+            };
+
             Ok(ServerResponse {
                 server_conn: Some(conn),
                 status_response: None,
                 send_proxy_protocol: tmp_server.config.send_proxy_protocol.unwrap_or_default(),
                 read_packets: req.read_packets.to_vec(),
-                server_addr: req.client_addr.to_string().parse().ok(),
-                proxy_mode: tmp_server.config.proxy_mode.clone().unwrap_or_default(), // Ajout du mode
+                server_addr: Some(req.client_addr),
+                proxy_mode: tmp_server.config.proxy_mode.clone().unwrap_or_default(),
                 proxied_domain: Some(req.domain.clone()),
                 initial_config: server.clone(),
             })
@@ -213,7 +222,7 @@ impl ServerRequester for Gateway {
                 send_proxy_protocol: tmp_server.config.send_proxy_protocol.unwrap_or_default(),
                 read_packets: vec![], // No packets to forward
                 server_addr: None,
-                proxy_mode: tmp_server.config.proxy_mode.clone().unwrap_or_default(), // Ajout du mode
+                proxy_mode: tmp_server.config.proxy_mode.clone().unwrap_or_default(),
                 proxied_domain: Some(req.domain.clone()),
                 initial_config: server.clone(),
             })

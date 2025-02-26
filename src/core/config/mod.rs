@@ -78,6 +78,7 @@ pub struct ServerConfig {
 
     #[serde(rename = "configId", default)]
     pub config_id: String,
+    pub proxy_protocol_version: Option<u8>,
 }
 
 impl Default for ServerConfig {
@@ -91,6 +92,7 @@ impl Default for ServerConfig {
             filters: None,
             caches: None,
             motd: None,
+            proxy_protocol_version: Some(2)
         }
     }
 }

@@ -1,6 +1,6 @@
 domains:
   - "passthrough-crack.local"
 addresses:
-  - "127.0.0.1:25566"
-sendProxyProtocol: false
+  - "127.0.0.1:25567"
+sendProxyProtocol: true
 proxyMode: passthrough

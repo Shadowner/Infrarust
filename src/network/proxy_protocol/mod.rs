@@ -1,68 +1,78 @@
 use std::{io, net::SocketAddr, str::FromStr};
 
+use bytes::BytesMut;
 use errors::ProxyProtocolError;
 use ipnetwork::IpNetwork;
+use proxy_protocol::{encode, version1::ProxyAddresses, ProxyHeader};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 
 pub mod errors;
 
 pub type ProtocolResult<T> = Result<T, ProxyProtocolError>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct ProxyProtocolConfig {
-    pub receive: bool,
-    pub trusted_cidrs: Vec<IpNetwork>,
-}
-
-// Implement a real ProxyProtocolConfig
-
-impl ProxyProtocolConfig {
-    pub fn new(trusted_cidrs: Vec<String>) -> Result<Self, ProxyProtocolError> {
-        if trusted_cidrs.is_empty() {
-            return Err(ProxyProtocolError::NoTrustedCIDRs);
-        }
-
-        let trusted_networks = trusted_cidrs
-            .iter()
-            .map(|cidr| IpNetwork::from_str(cidr))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| ProxyProtocolError::Io(io::Error::new(io::ErrorKind::InvalidInput, e)))?;
-
-        Ok(Self {
-            receive: true,
-            trusted_cidrs: trusted_networks,
-        })
-    }
-
-    pub fn is_trusted(&self, addr: &SocketAddr) -> bool {
-        self.trusted_cidrs
-            .iter()
-            .any(|cidr| cidr.contains(addr.ip()))
-    }
-}
-
-pub async fn write_proxy_protocol_header(
+    pub enabled: bool,
+    pub version: Option<u8>, // 1 pour v1, 2 pour v2
+}pub async fn write_proxy_protocol_header(
+    stream: &mut TcpStream,
     client_addr: SocketAddr,
-    server: &mut TcpStream,
+    server_addr: SocketAddr,
+    config: &ProxyProtocolConfig,
 ) -> io::Result<()> {
-    // Create the PROXY protocol v2 header
-    let header = b"\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A"; // Signature
-    let version_command = b"\x21"; // Version 2, PROXY command
-    let family = if client_addr.is_ipv4() {
-        b"\x11"
-    } else {
-        b"\x12"
-    }; // TCP/IPv4 or TCP/IPv6
+    if !config.enabled {
+        return Ok(());
+    }
 
-    // Write the header parts
-    server.write_all(header).await?;
-    server.write_all(version_command).await?;
-    server.write_all(family).await?;
-
-    // For now, just write some placeholder address data
-    let addr_data = [0u8; 16]; // Placeholder for address data
-    server.write_all(&addr_data).await?;
-
-    server.flush().await?;
+    let header_bytes = match config.version.unwrap_or(1) {
+        1 => create_v1_header(client_addr, server_addr)?,
+        2 => create_v2_header(client_addr, server_addr)?,
+        _ => create_v1_header(client_addr, server_addr)?, // default v1
+    };
+    
+    stream.write_all(&header_bytes).await?;
+    
     Ok(())
+}
+
+fn create_v1_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Result<BytesMut> {
+    use proxy_protocol::version1::ProxyAddresses;
+    use proxy_protocol::{ProxyHeader, encode};
+    
+    let addresses = match (client_addr, server_addr) {
+        (SocketAddr::V4(source), SocketAddr::V4(destination)) => {
+            ProxyAddresses::Ipv4 { source, destination }
+        },
+        (SocketAddr::V6(source), SocketAddr::V6(destination)) => {
+            ProxyAddresses::Ipv6 { source, destination }
+        },
+        _ => ProxyAddresses::Unknown,
+    };
+
+    let header = ProxyHeader::Version1 { addresses };
+    
+    encode(header).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+}
+
+fn create_v2_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Result<BytesMut> {
+    use proxy_protocol::version2::{ProxyAddresses, ProxyCommand, ProxyTransportProtocol};
+    use proxy_protocol::{ProxyHeader, encode};
+    
+    let (addresses, transport_protocol) = match (client_addr, server_addr) {
+        (SocketAddr::V4(source), SocketAddr::V4(destination)) => {
+            (ProxyAddresses::Ipv4 { source, destination }, ProxyTransportProtocol::Stream)
+        },
+        (SocketAddr::V6(source), SocketAddr::V6(destination)) => {
+            (ProxyAddresses::Ipv6 { source, destination }, ProxyTransportProtocol::Stream)
+        },
+        _ => (ProxyAddresses::Unspec, ProxyTransportProtocol::Unspec),
+    };
+
+    let header = ProxyHeader::Version2 { 
+        command: ProxyCommand::Proxy,
+        transport_protocol,
+        addresses,
+    };
+    
+    encode(header).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
 }

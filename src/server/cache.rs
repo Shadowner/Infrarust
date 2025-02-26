@@ -80,11 +80,21 @@ impl StatusCache {
             debug!("Cache miss");
         }
 
-        let response = match server
-            .dial(req.session_id)
-            .instrument(debug_span!("backend_server_connect"))
-            .await
-        {
+        let use_proxy_protocol = server.config.send_proxy_protocol.unwrap_or(false);
+
+        let response = match if use_proxy_protocol {
+            debug!("Using proxy protocol for status connection");
+            server
+                .dial_with_proxy_protocol(req.session_id, req.client_addr)
+                .instrument(debug_span!("backend_server_connect_with_proxy"))
+                .await
+        } else {
+            debug!("Using standard connection for status");
+            server
+                .dial(req.session_id)
+                .instrument(debug_span!("backend_server_connect"))
+                .await
+        } {
             Ok(mut conn) => {
                 self.fetch_status(&mut conn, req)
                     .instrument(debug_span!("fetch_server_status"))
