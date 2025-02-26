@@ -10,10 +10,6 @@ file_provider:
     - "./config_examples/proxies"
   watch: true
 
-proxyProtocol:
-  receive: false
-  trustedCIDRs: []
-
 telemetry:
   enabled: true
   export_url: "http://localhost:4317"
