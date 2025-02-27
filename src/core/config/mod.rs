@@ -92,7 +92,7 @@ impl Default for ServerConfig {
             filters: None,
             caches: None,
             motd: None,
-            proxy_protocol_version: Some(2)
+            proxy_protocol_version: Some(2),
         }
     }
 }
