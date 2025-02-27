@@ -5,7 +5,10 @@ use tracing::debug;
 use uuid::Uuid;
 
 use crate::{
-    core::config::ServerConfig, network::proxy_protocol::{errors::ProxyProtocolError, ProtocolResult}, telemetry::TELEMETRY, write_proxy_protocol_header, ProxyProtocolConfig, ServerConnection
+    core::config::ServerConfig,
+    network::proxy_protocol::{errors::ProxyProtocolError, ProtocolResult},
+    telemetry::TELEMETRY,
+    write_proxy_protocol_header, ProxyProtocolConfig, ServerConnection,
 };
 
 #[derive(Clone)]
@@ -23,7 +26,7 @@ impl Server {
         }
         Ok(Self { config })
     }
-    
+
     pub async fn dial(&self, session_id: Uuid) -> ProtocolResult<ServerConnection> {
         let mut last_error = None;
         debug!("Dialing server with ping: {:?}", self.config.addresses);
