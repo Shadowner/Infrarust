@@ -1,0 +1,57 @@
+[package]
+name = "infrarust"
+version = "1.1.1"
+edition = "2021"
+authors = ["Shadowner"]
+description = "A Rust adaptation of the Infrared Minecraft proxy"
+license = "AGPL-3.0-only"
+homepage = "https://infrarust.dev"
+repository = "https://github.com/shadowner/infrarust"
+readme = "README.md"
+categories = ["network-programming", "command-line-utilities"]
+keywords = ["networking", "proxy", "minecraft", "gameserver", "protocol"]
+exclude = [
+    "docs/*",
+    "!docs/public/img/logo.svg",
+    "docker/*",
+    "config_examples/*",
+    ".github/*",
+    ".vscode/*",
+]
+
+[dependencies]
+# Internal dependencies - tout l'ecosystème
+infrarust_core = { path = "../infrarust_core" }
+infrarust_protocol = { path = "../infrarust_protocol" }
+infrarust_network = { path = "../infrarust_network" }
+infrarust_proxy = { path = "../infrarust_proxy" }
+infrarust_security = { path = "../infrarust_security" }
+infrarust_server = { path = "../infrarust_server" }
+infrarust_telemetry = { path = "../infrarust_telemetry" }
+
+# CLI
+clap = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Config
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.16.0"
+env_logger = "0.11.6"
+
+[features]
+default = []
+telemetry = [] # TODO Permit a build not include any telemtry code at all
+dashboard = [] # Planned amelioration for a web dashboard
+api = []       # Planned amelioration for a REST API
+
+[[bin]]
+name = "infrarust"
+path = "src/main.rs"

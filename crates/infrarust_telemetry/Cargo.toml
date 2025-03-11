@@ -1,0 +1,26 @@
+[package]
+name = "infrarust_telemetry"
+version = "1.1.1"
+edition = "2024"
+
+[dependencies]
+# Internal dependencies
+infrarust_core = { path = "../infrarust_core" }
+
+# Telemetry
+opentelemetry = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+
+# System metrics
+sysinfo = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Utils
+lazy_static = { workspace = true }
+uuid = { workspace = true }

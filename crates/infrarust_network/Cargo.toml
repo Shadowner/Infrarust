@@ -1,0 +1,28 @@
+[package]
+name = "infrarust_network"
+version = "1.1.1"
+edition = "2024"
+
+[dependencies]
+# Internal dependencies
+infrarust_core = { path = "../infrarust_core" }
+infrarust_protocol = { path = "../infrarust_protocol" }
+
+# Networking
+tokio = { workspace = true }
+bytes = { workspace = true }
+libdeflater = { workspace = true }
+ipnetwork = { workspace = true }
+proxy-protocol = { workspace = true }
+
+# Cryptography for encrypted connections
+aes = { workspace = true }
+cfb8 = { workspace = true }
+
+# Utils
+uuid = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+
+# Logging
+tracing = { workspace = true }

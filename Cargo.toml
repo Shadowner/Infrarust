@@ -1,25 +1,17 @@
-[package]
-name = "infrarust"
-version = "1.1.0"
-edition = "2021"
-authors = ["Shadowner"]
-description = "A Rust adaptation of the Infrared Minecraft proxy"
-license = "AGPL-3.0-only"
-homepage = "https://infrarust.dev"
-repository = "https://github.com/shadowner/infrarust"
-readme = "README.md"
-categories = ["network-programming", "command-line-utilities"]
-keywords = ["networking", "proxy", "minecraft", "gameserver", "protocol"]
-exclude = [
-    "docs/*",
-    "!docs/public/img/logo.svg",
-    "docker/*",
-    "config_examples/*",
-    ".github/*",
-    ".vscode/*",
+[workspace]
+members = [
+    "crates/infrarust",
+    "crates/infrarust_core",
+    "crates/infrarust_protocol",
+    "crates/infrarust_network",
+    "crates/infrarust_proxy",
+    "crates/infrarust_security",
+    "crates/infrarust_server",
+    "crates/infrarust_telemetry", "crates/infrarust_actor",
 ]
+resolver = "2"
 
-[dependencies]
+[workspace.dependencies]
 # Async & Runtime
 tokio = { version = "1.32", features = ["full"] }
 async-trait = "0.1.85"
@@ -83,16 +75,6 @@ anyhow = "1.0.95"
 clap = { version = "4.5.28", features = ["derive"] }
 env_logger = "0.11.6"
 
-[dev-dependencies]
-tempfile = "3.16.0"
-env_logger = "0.11.6"
-
-[features]
-default = []
-telemetry = [] # TODO Permit a build not include any telemtry code at all
-dashboard = [] # Planned amelioration for a web dashboard
-api = []       # Planned amelioration for a REST API
-
 [profile.release]
 opt-level = 3
 lto = true
@@ -103,6 +85,3 @@ panic = "abort"
 opt-level = 0
 debug = true
 
-[[bin]]
-name = "infrarust"
-path = "src/bin/infrarust.rs"

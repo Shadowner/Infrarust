@@ -1,0 +1,31 @@
+[package]
+name = "infrarust_core"
+version = "1.1.1"
+edition = "2024"
+
+[dependencies]
+# Async and concurrency
+tokio = { workspace = true }
+async-trait = { workspace = true }
+parking_lot = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Utils
+uuid = { workspace = true }
+lazy_static = { workspace = true }
+wildmatch = { workspace = true }
+
+# File system monitoring
+notify = { workspace = true }
+walkdir = { workspace = true }
+
+rsa = { workspace = true }

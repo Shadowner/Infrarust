@@ -1,0 +1,32 @@
+[package]
+name = "infrarust_security"
+version = "1.1.1"
+edition = "2024"
+
+[dependencies]
+# Internal dependencies
+infrarust_core = { path = "../infrarust_core" }
+infrarust_network = { path = "../infrarust_network" }
+
+# Cryptography
+rsa = { workspace = true }
+aes = { workspace = true }
+cfb8 = { workspace = true }
+rand = { workspace = true }
+rsa-der = { workspace = true }
+base64 = { workspace = true }
+sha1 = { workspace = true }
+num-bigint = { workspace = true }
+
+# Rate limiting
+xxhash-rust = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
