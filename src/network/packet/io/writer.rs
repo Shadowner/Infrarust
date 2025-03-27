@@ -33,6 +33,19 @@ impl<W: AsyncWrite + Unpin + Send> PacketWriter<W> {
         }
     }
 
+    pub async fn flush(&mut self) -> PacketResult<()> {
+        self.writer.flush().await?;
+        Ok(())
+    }
+
+    pub fn get_ref(&self) -> &W {
+        &self.writer
+    }
+
+    pub fn get_mut(&mut self) -> &mut W {
+        &mut self.writer
+    }
+
     pub fn enable_encryption(&mut self, cipher: Aes128Cfb8Enc) {
         self.encryption = Some(cipher);
     }

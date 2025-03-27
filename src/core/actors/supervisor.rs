@@ -2,8 +2,11 @@ use std::{
     collections::HashMap,
     sync::{atomic::AtomicBool, Arc},
 };
-use tokio::sync::{mpsc, oneshot, RwLock};
-use tracing::{debug_span, instrument, Instrument};
+use tokio::{
+    sync::{mpsc, oneshot, RwLock},
+    task::JoinHandle,
+};
+use tracing::{debug, debug_span, instrument, Instrument};
 
 use crate::{
     core::{
@@ -30,12 +33,14 @@ pub struct ActorPair {
     pub client: MinecraftClientHandler,
     pub server: MinecraftServerHandler,
     pub shutdown: Arc<AtomicBool>,
+    pub created_at: std::time::Instant,
 }
 
 type ActorStorage = HashMap<String, Vec<ActorPair>>;
 
 pub struct ActorSupervisor {
     actors: RwLock<ActorStorage>,
+    tasks: RwLock<HashMap<String, Vec<JoinHandle<()>>>>,
 }
 
 impl Default for ActorSupervisor {
@@ -48,6 +53,7 @@ impl ActorSupervisor {
     pub fn new() -> Self {
         Self {
             actors: RwLock::new(HashMap::new()),
+            tasks: RwLock::new(HashMap::new()),
         }
     }
 
@@ -219,6 +225,7 @@ impl ActorSupervisor {
             client,
             server,
             shutdown: shutdown_flag,
+            created_at: std::time::Instant::now(),
         };
 
         self.register_actor_pair(config_id, pair.clone()).await;
@@ -238,10 +245,74 @@ impl ActorSupervisor {
         let mut actors = self.actors.write().await;
         if let Some(pairs) = actors.get_mut(config_id) {
             for pair in pairs.iter() {
+                debug!("Shutting down actor for user {}", pair.username);
                 pair.shutdown
                     .store(true, std::sync::atomic::Ordering::SeqCst);
             }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             pairs.clear();
         }
+
+        let mut tasks = self.tasks.write().await;
+        if let Some(task_handles) = tasks.remove(config_id) {
+            for handle in task_handles {
+                handle.abort();
+            }
+        }
+    }
+
+    pub async fn register_task(&self, config_id: &str, handle: JoinHandle<()>) {
+        let mut tasks = self.tasks.write().await;
+        tasks
+            .entry(config_id.to_string())
+            .or_insert_with(Vec::new)
+            .push(handle);
+    }
+
+    // Periodic health check to clear dead actors
+    // TODO: Upgrade to a more sophisticated actor lifecycle management system
+    pub async fn health_check(&self) {
+        let mut actors = self.actors.write().await;
+        let mut tasks = self.tasks.write().await;
+
+        for (config_id, pairs) in actors.iter_mut() {
+            let before_count = pairs.len();
+
+            // Remove actors with shutdown flag set
+            pairs.retain(|pair| !pair.shutdown.load(std::sync::atomic::Ordering::SeqCst));
+
+            let after_count = pairs.len();
+            if before_count != after_count {
+                debug!(
+                    "Cleaned up {} dead actors for config {}",
+                    before_count - after_count,
+                    config_id
+                );
+
+                // Clean up any associated tasks
+                if let Some(task_handles) = tasks.get_mut(config_id) {
+                    while task_handles.len() > pairs.len() {
+                        if let Some(handle) = task_handles.pop() {
+                            debug!("Aborting orphaned task for {}", config_id);
+                            handle.abort();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check for stale tasks without associated actors
+        tasks.retain(|config_id, handles| {
+            if !actors.contains_key(config_id) || actors[config_id].is_empty() {
+                for handle in handles.iter() {
+                    debug!("Aborting orphaned task for {}", config_id);
+                    handle.abort();
+                }
+                false
+            } else {
+                true
+            }
+        });
     }
 }

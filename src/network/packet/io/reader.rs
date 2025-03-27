@@ -18,7 +18,6 @@ use crate::{
 };
 use crate::{protocol::types::VarInt, ProtocolRead};
 
-/// Handles packet reading with support for compression and encryption
 pub struct PacketReader<R> {
     pub reader: R,
     encryption: Option<Aes128Cfb8Dec>,
