@@ -22,7 +22,7 @@ RUN mkdir sbin
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git/db \
     --mount=type=cache,target=/usr/src/infrarust/target \
-    cargo build --release & \
+    cargo build --release ; \
     cp target/release/infrarust sbin/
 
 
