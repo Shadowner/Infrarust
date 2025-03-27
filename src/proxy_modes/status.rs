@@ -5,10 +5,10 @@ use crate::core::event::MinecraftCommunication;
 use crate::network::connection::PossibleReadValue;
 use async_trait::async_trait;
 use std::io::{self};
-use tokio::time::timeout;
 use std::time::Duration;
-use tracing::{debug, warn};
+use tokio::time::timeout;
 use tracing::instrument;
+use tracing::{debug, warn};
 
 pub struct StatusMode;
 
@@ -111,12 +111,15 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
     ) -> io::Result<()> {
         if let Some(request) = &actor.server_request {
             debug!("Starting status mode for server request");
-            
+
             // Send the status response immediately
             if let Some(status) = &request.status_response {
-                if actor.client_sender.send(MinecraftCommunication::Packet(
-                    status.clone()
-                )).await.is_err() {
+                if actor
+                    .client_sender
+                    .send(MinecraftCommunication::Packet(status.clone()))
+                    .await
+                    .is_err()
+                {
                     debug!("Client disconnected, cannot send status response");
                     return Ok(());
                 }
@@ -124,18 +127,18 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
                 warn!("No status response available");
                 return Ok(());
             }
-            
+
             // Wait for the ping packet with a timeout
-            let ping_result = timeout(
-                Duration::from_secs(5), 
-                actor.server_receiver.recv()
-            ).await;
-            
+            let ping_result = timeout(Duration::from_secs(5), actor.server_receiver.recv()).await;
+
             match ping_result {
                 Ok(Some(MinecraftCommunication::Packet(packet))) => {
                     debug!("Received ping packet, sending back to client");
                     // Ignore error if client already disconnected
-                    let _ = actor.client_sender.send(MinecraftCommunication::Packet(packet)).await;
+                    let _ = actor
+                        .client_sender
+                        .send(MinecraftCommunication::Packet(packet))
+                        .await;
                 }
                 Ok(Some(_)) => {
                     debug!("Received non-packet message from client");
@@ -147,9 +150,12 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
                     debug!("Timeout waiting for ping packet");
                 }
             }
-            
+
             // Always attempt to cleanly shut down the client connection
-            let _ = actor.client_sender.send(MinecraftCommunication::Shutdown).await;
+            let _ = actor
+                .client_sender
+                .send(MinecraftCommunication::Shutdown)
+                .await;
             debug!("Status response complete, status server actor shutting down");
         } else {
             warn!("No server request available for status mode");

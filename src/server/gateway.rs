@@ -39,7 +39,7 @@ impl Gateway {
             actor_supervisor: Arc::new(ActorSupervisor::new()),
             status_cache: Arc::new(Mutex::new(StatusCache::new(Duration::from_secs(30)))),
         };
-        
+
         // Start a background task for periodic health checks
         let supervisor = gateway.actor_supervisor.clone();
         tokio::spawn(async move {
@@ -49,7 +49,7 @@ impl Gateway {
                 supervisor.health_check().await;
             }
         });
-        
+
         gateway
     }
 
@@ -146,8 +146,8 @@ impl Gateway {
             ))
             .await;
 
-            let supervisor = gateway.actor_supervisor.clone();
-            let server_config_clone = server_config.clone();
+        let supervisor = gateway.actor_supervisor.clone();
+        let server_config_clone = server_config.clone();
         // Wake up server in the same span
         let task_handle = tokio::spawn(
             async move {
@@ -158,7 +158,9 @@ impl Gateway {
                             if is_login {
                                 warn!("Failed to send server response: receiver dropped");
                                 // Only explicitly set shutdown for login connections
-                                actor_pair.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+                                actor_pair
+                                    .shutdown
+                                    .store(true, std::sync::atomic::Ordering::SeqCst);
                             }
                         }
                     }
@@ -166,17 +168,21 @@ impl Gateway {
                         warn!("Failed to request server: {:?}", e);
                         if is_login {
                             // Only explicitly set shutdown for login connections
-                            actor_pair.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+                            actor_pair
+                                .shutdown
+                                .store(true, std::sync::atomic::Ordering::SeqCst);
                         }
                     }
                 }
             }
             .instrument(span),
         );
-        
+
         // Don't track status request tasks - they're short-lived
         if is_login {
-            supervisor.register_task(&server_config_clone.config_id, task_handle).await;
+            supervisor
+                .register_task(&server_config_clone.config_id, task_handle)
+                .await;
         }
     }
 

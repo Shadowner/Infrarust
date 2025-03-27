@@ -77,16 +77,14 @@ impl Connection {
         }
 
         match self.mode {
-            ConnectionMode::Protocol => {
-                match self.reader.read_packet().await {
-                    Ok(packet) => Ok(PossibleReadValue::Packet(packet)),
-                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
-                        self.closed.store(true, Ordering::SeqCst);
-                        Ok(PossibleReadValue::Eof)
-                    }
-                    Err(e) => Err(e.into()),
+            ConnectionMode::Protocol => match self.reader.read_packet().await {
+                Ok(packet) => Ok(PossibleReadValue::Packet(packet)),
+                Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                    self.closed.store(true, Ordering::SeqCst);
+                    Ok(PossibleReadValue::Eof)
                 }
-            }
+                Err(e) => Err(e.into()),
+            },
             ConnectionMode::Raw => {
                 match self.reader.read_raw().await {
                     Ok(None) => {

@@ -63,7 +63,7 @@ async fn start_minecraft_client_actor<T>(
     shutdown: Arc<AtomicBool>,
 ) {
     debug!("Starting Minecraft Client Actor for ID");
-    
+
     let peer_address = match actor.conn.peer_addr().await {
         Ok(addr) => addr,
         Err(e) => {
@@ -142,7 +142,7 @@ async fn start_minecraft_client_actor<T>(
 
     // Cleanup
     debug!("Shutting down client actor");
-    
+
     // Record telemetry for logins
     if actor.is_login {
         TELEMETRY.record_connection_end(
@@ -151,13 +151,16 @@ async fn start_minecraft_client_actor<T>(
             actor.conn.session_id,
         );
     }
-    
+
     // Close the client connection
     if let Err(e) = actor.conn.close().await {
         debug!("Error during final client connection close: {:?}", e);
     }
-    
-    let _ = actor.server_sender.send(MinecraftCommunication::Shutdown).await;
+
+    let _ = actor
+        .server_sender
+        .send(MinecraftCommunication::Shutdown)
+        .await;
 }
 
 #[derive(Clone)]

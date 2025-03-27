@@ -13,7 +13,11 @@ use crate::{
     core::{
         config::ServerConfig,
         event::{GatewayMessage, MinecraftCommunication},
-    }, network::connection::PossibleReadValue, proxy_modes::ServerProxyModeHandler, server::ServerResponse, telemetry::TELEMETRY
+    },
+    network::connection::PossibleReadValue,
+    proxy_modes::ServerProxyModeHandler,
+    server::ServerResponse,
+    telemetry::TELEMETRY,
 };
 
 pub enum ServerEvent {
@@ -95,10 +99,13 @@ async fn start_minecraft_server_actor<T>(
         Ok(req) => req,
         Err(e) => {
             debug!("Failed to receive server request: {:?}", e);
-            if actor.is_login {
-                if client_sender.send(MinecraftCommunication::Shutdown).await.is_err() {
-                    debug!("Client channel already closed during server initialization");
-                }
+            if actor.is_login
+                && client_sender
+                    .send(MinecraftCommunication::Shutdown)
+                    .await
+                    .is_err()
+            {
+                debug!("Client channel already closed during server initialization");
             }
             actor.server_receiver.close();
             debug!("Shutting down Minecraft Server Actor");
@@ -114,7 +121,11 @@ async fn start_minecraft_server_actor<T>(
             Ok(_) => {}
             Err(e) => {
                 warn!("Failed to initialize server proxy mode: {:?}", e);
-                if client_sender.send(MinecraftCommunication::Shutdown).await.is_err() {
+                if client_sender
+                    .send(MinecraftCommunication::Shutdown)
+                    .await
+                    .is_err()
+                {
                     debug!("Client channel already closed");
                 }
                 actor.server_receiver.close();
@@ -128,14 +139,19 @@ async fn start_minecraft_server_actor<T>(
 
     debug!("Starting Minecraft Server Actor for ID");
     while !shutdown.load(Ordering::SeqCst) {
-        if actor.server_request.as_ref().map_or(false, |req| req.status_response.is_some()) {
+        if actor
+            .server_request
+            .as_ref()
+            .is_some_and(|req| req.status_response.is_some())
+        {
             debug!("Returning because Actor is for a Status Check");
             return;
         }
 
-        let server_conn_available = actor.server_request.as_ref().map_or(false, |req| 
-            req.server_conn.is_some()
-        );
+        let server_conn_available = actor
+            .server_request
+            .as_ref()
+            .is_some_and(|req| req.server_conn.is_some());
 
         if !server_conn_available {
             warn!("Server connection is None");
@@ -143,7 +159,7 @@ async fn start_minecraft_server_actor<T>(
         }
 
         let shutdown_flag = shutdown.clone();
-                
+
         macro_rules! handle_server_error {
             ($err:expr) => {{
                 warn!("Server error: {:?}", $err);
@@ -151,7 +167,10 @@ async fn start_minecraft_server_actor<T>(
                 if let Some(server_request) = &mut actor.server_request {
                     if let Some(server_conn) = &mut server_request.server_conn {
                         if let Err(close_err) = server_conn.close().await {
-                            debug!("Error closing server connection after error: {:?}", close_err);
+                            debug!(
+                                "Error closing server connection after error: {:?}",
+                                close_err
+                            );
                         }
                     }
                 }
@@ -179,10 +198,8 @@ async fn start_minecraft_server_actor<T>(
                     actor.server_receiver.close();
                     shutdown_flag.store(true, Ordering::SeqCst);
                     break;
-                } else {
-                    if let Err(e) = proxy_mode.handle_internal_server(msg, &mut actor).await {
-                        handle_server_error!(e);
-                    }
+                } else if let Err(e) = proxy_mode.handle_internal_server(msg, &mut actor).await {
+                    handle_server_error!(e);
                 }
             }
             read_result = read_from_server(&mut actor.server_request) => {
@@ -206,7 +223,7 @@ async fn start_minecraft_server_actor<T>(
     }
 
     debug!("Shutting down server actor");
-    
+
     // Close the server connection if it exists
     if let Some(server_request) = &mut actor.server_request {
         if let Some(server_conn) = &mut server_request.server_conn {
@@ -215,9 +232,9 @@ async fn start_minecraft_server_actor<T>(
             }
         }
     }
-    
+
     let _ = client_sender.send(MinecraftCommunication::Shutdown).await;
-    
+
     actor.server_receiver.close();
 
     if actor.is_login
@@ -245,7 +262,11 @@ async fn start_minecraft_server_actor<T>(
         );
     }
     debug!("Shutting down server actor");
-    if client_sender.send(MinecraftCommunication::Shutdown).await.is_err() {
+    if client_sender
+        .send(MinecraftCommunication::Shutdown)
+        .await
+        .is_err()
+    {
         debug!("Client channel already closed during server shutdown");
     }
     actor.server_receiver.close();
