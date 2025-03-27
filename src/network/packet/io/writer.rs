@@ -33,8 +33,9 @@ impl<W: AsyncWrite + Unpin + Send> PacketWriter<W> {
         }
     }
 
-    pub async fn flush(&mut self) {
-        self.writer.flush().await.unwrap();
+    pub async fn flush(&mut self) -> PacketResult<()> {
+        self.writer.flush().await?;
+        Ok(())
     }
 
     pub fn get_ref(&self) -> &W {

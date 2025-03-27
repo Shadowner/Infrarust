@@ -192,7 +192,7 @@ impl Connection {
         }
 
         // Shutdown the writer - this should trigger EOF on the remote end
-        self.writer.flush().await;
+        self.writer.flush().await?;
         self.writer.get_mut().shutdown().await?;
 
         // For the reader, we can't do much other than mark it as closed
