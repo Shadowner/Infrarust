@@ -1,55 +1,108 @@
-use std::time::Duration;
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use std::{
+    io::{self, Error, ErrorKind},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+
 use tokio::{
-    io::{self, BufReader, BufWriter},
-    net::TcpStream,
+    io::{AsyncWriteExt, BufReader, BufWriter},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream,
+    },
 };
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::telemetry::{Direction, TELEMETRY};
-use crate::EncryptionState;
+use crate::{
+    telemetry::{Direction, TELEMETRY},
+    EncryptionState,
+};
 
-use super::packet::io::RawPacketIO;
-use super::packet::{Packet, PacketReader, PacketResult, PacketWriter};
-use super::proxy_protocol::ProtocolResult;
+use super::{
+    packet::{io::RawPacketIO, Packet, PacketError, PacketReader, PacketResult, PacketWriter},
+    proxy_protocol::ProtocolResult,
+};
 
+#[derive(Debug)]
 pub enum PossibleReadValue {
-    Packet(Packet),
     Raw(Vec<u8>),
+    Packet(Packet),
+    Nothing,
+    Eof,
+}
+
+enum ConnectionMode {
+    Protocol,
+    Raw,
 }
 
 pub struct Connection {
     reader: PacketReader<BufReader<OwnedReadHalf>>,
     writer: PacketWriter<BufWriter<OwnedWriteHalf>>,
-    timeout: Duration,
-    raw_mode: bool,
     pub session_id: Uuid,
+    mode: ConnectionMode,
+    closed: Arc<AtomicBool>,
+    timeout: Duration,
 }
 
 impl Connection {
     pub async fn new(stream: TcpStream, session_id: Uuid) -> io::Result<Self> {
-        match stream.set_nodelay(true) {
-            Ok(_) => {}
-            Err(e) => {
-                TELEMETRY.record_internal_error("nodelay_failed", None, None);
-                warn!("Failed to set nodelay: {}", e);
-            }
-        }
-
         let (read_half, write_half) = stream.into_split();
 
         Ok(Self {
             reader: PacketReader::new(BufReader::new(read_half)),
             writer: PacketWriter::new(BufWriter::new(write_half)),
-            timeout: Duration::from_secs(30),
-            raw_mode: false,
             session_id,
+            mode: ConnectionMode::Protocol,
+            closed: Arc::new(AtomicBool::new(false)),
+            timeout: Duration::from_secs(30),
         })
     }
 
     pub fn enable_raw_mode(&mut self) {
-        self.raw_mode = true;
+        self.mode = ConnectionMode::Raw;
+    }
+
+    pub async fn read(&mut self) -> io::Result<PossibleReadValue> {
+        // If connection is already closed don't try to read
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(Error::new(
+                ErrorKind::ConnectionAborted,
+                "Connection already closed",
+            ));
+        }
+
+        match self.mode {
+            ConnectionMode::Protocol => {
+                match self.reader.read_packet().await {
+                    Ok(packet) => Ok(PossibleReadValue::Packet(packet)),
+                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                        self.closed.store(true, Ordering::SeqCst);
+                        Ok(PossibleReadValue::Eof)
+                    }
+                    Err(e) => Err(e.into()),
+                }
+            }
+            ConnectionMode::Raw => {
+                match self.reader.read_raw().await {
+                    Ok(None) => {
+                        // EOF - mark connection as closed
+                        self.closed.store(true, Ordering::SeqCst);
+                        Ok(PossibleReadValue::Eof)
+                    }
+                    Ok(Some(bytes)) => Ok(PossibleReadValue::Raw(bytes.to_vec())),
+                    Err(e) => {
+                        // Mark connection as closed on error
+                        self.closed.store(true, Ordering::SeqCst);
+                        Err(e.into())
+                    }
+                }
+            }
+        }
     }
 
     pub async fn connect<A: tokio::net::ToSocketAddrs>(
@@ -115,44 +168,15 @@ impl Connection {
         match data {
             PossibleReadValue::Packet(packet) => self.write_packet(&packet).await?,
             PossibleReadValue::Raw(data) => self.write_raw(&data).await?,
+            PossibleReadValue::Eof => {
+                self.close().await?;
+                return Err(
+                    io::Error::new(io::ErrorKind::UnexpectedEof, "Connection closed").into(),
+                );
+            }
+            PossibleReadValue::Nothing => {}
         }
         Ok(())
-    }
-
-    pub async fn read(&mut self) -> PacketResult<PossibleReadValue> {
-        if self.raw_mode {
-            let data = match self.reader.read_raw().await? {
-                Some(data) => {
-                    let len = data.len();
-                    TELEMETRY.record_bytes_transferred(
-                        Direction::Incoming,
-                        len as u64,
-                        self.session_id,
-                    );
-                    data
-                }
-                None => {
-                    let len = 0;
-                    TELEMETRY.record_bytes_transferred(
-                        Direction::Incoming,
-                        len as u64,
-                        self.session_id,
-                    );
-                    return Ok(PossibleReadValue::Raw(Vec::new()));
-                }
-            };
-
-            Ok(PossibleReadValue::Raw(data.into()))
-        } else {
-            let packet = self.reader.read_packet().await?;
-            let len = packet.data.len();
-            TELEMETRY.record_bytes_transferred(Direction::Incoming, len as u64, self.session_id);
-            Ok(PossibleReadValue::Packet(packet))
-        }
-    }
-
-    pub async fn close(&mut self) -> PacketResult<()> {
-        self.writer.close().await
     }
 
     pub async fn peer_addr(&self) -> PacketResult<std::net::SocketAddr> {
@@ -161,6 +185,22 @@ impl Connection {
             .get_ref()
             .peer_addr()
             .map_err(|e| e.into())
+    }
+
+    pub async fn close(&mut self) -> io::Result<()> {
+        // Avoid double-closing
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        // Shutdown the writer - this should trigger EOF on the remote end
+        self.writer.flush().await;
+        self.writer.get_mut().shutdown().await?;
+
+        // For the reader, we can't do much other than mark it as closed
+        // The next read will return an error
+
+        Ok(())
     }
 
     pub fn into_split(
@@ -226,7 +266,7 @@ impl ServerConnection {
     }
 
     pub async fn close(&mut self) -> PacketResult<()> {
-        self.connection.close().await
+        self.connection.close().await.map_err(PacketError::from)
     }
 
     pub async fn peer_addr(&self) -> PacketResult<std::net::SocketAddr> {
@@ -269,7 +309,7 @@ impl ServerConnection {
         self.connection.write(data).await
     }
 
-    pub async fn read(&mut self) -> PacketResult<PossibleReadValue> {
+    pub async fn read(&mut self) -> io::Result<PossibleReadValue> {
         self.connection.read().await
     }
 

@@ -63,11 +63,25 @@ async fn start_minecraft_client_actor<T>(
     shutdown: Arc<AtomicBool>,
 ) {
     debug!("Starting Minecraft Client Actor for ID");
-    let peer_address = actor.conn.peer_addr().await.unwrap();
+    
+    let peer_address = match actor.conn.peer_addr().await {
+        Ok(addr) => addr,
+        Err(e) => {
+            info!("Cannot get peer address: {:?}", e);
+
+            // Ensure shutdown flag is set
+            shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+            return;
+        }
+    };
+
     match proxy_mode.initialize_client(&mut actor).await {
         Ok(_) => {}
         Err(e) => {
             info!("Error initializing client: {:?}", e);
+
+            // Ensure connection is closed before returning
+            let _ = actor.conn.close().await;
             return;
         }
     };
@@ -84,7 +98,10 @@ async fn start_minecraft_client_actor<T>(
                 if let MinecraftCommunication::Shutdown = msg {
                      shutdown_flag.store(true, Ordering::SeqCst);
                      actor.client_receiver.close();
-                     let _ = actor.conn.close().await;
+                     if let Err(e) = actor.conn.close().await {
+                         info!("Error closing client connection during shutdown: {:?}", e);
+                     }
+                     break;
                 }
 
                 match proxy_mode.handle_internal_client(msg, &mut actor).await {
@@ -92,24 +109,41 @@ async fn start_minecraft_client_actor<T>(
                     Err(e) => {
                         info!("Error handling internal client message: {:?}", e);
                         shutdown_flag.store(true, Ordering::SeqCst);
+                        break;
                     }
                 };
             }
-            Ok(read_value) = actor.conn.read() => {
-                if let Err(e) = proxy_mode.handle_external_client(read_value, &mut actor).await {
-                    info!("Error handling external client message: {:?}", e);
-                    shutdown_flag.store(true, Ordering::SeqCst);
+            read_result = actor.conn.read() => {
+                match read_result {
+                    Ok(read_value) => {
+                        match proxy_mode.handle_external_client(read_value, &mut actor).await {
+                            Ok(_) => {}
+                            Err(e) => {
+                                debug!("Error handling external client message: {:?}", e);
+                                shutdown_flag.store(true, Ordering::SeqCst);
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Client connection read error: {:?}", e);
+                        shutdown_flag.store(true, Ordering::SeqCst);
+                        break;
+                    }
                 }
-                }
+            }
             else => {
                 debug!("All channels closed");
                 shutdown_flag.store(true, Ordering::SeqCst);
+                break;
             }
         }
     }
 
     // Cleanup
     debug!("Shutting down client actor");
+    
+    // Record telemetry for logins
     if actor.is_login {
         TELEMETRY.record_connection_end(
             &peer_address.to_string(),
@@ -117,7 +151,13 @@ async fn start_minecraft_client_actor<T>(
             actor.conn.session_id,
         );
     }
-    let _ = actor.conn.close().await;
+    
+    // Close the client connection
+    if let Err(e) = actor.conn.close().await {
+        debug!("Error during final client connection close: {:?}", e);
+    }
+    
+    let _ = actor.server_sender.send(MinecraftCommunication::Shutdown).await;
 }
 
 #[derive(Clone)]

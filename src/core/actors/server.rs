@@ -13,10 +13,7 @@ use crate::{
     core::{
         config::ServerConfig,
         event::{GatewayMessage, MinecraftCommunication},
-    },
-    proxy_modes::ServerProxyModeHandler,
-    server::ServerResponse,
-    telemetry::TELEMETRY,
+    }, network::connection::PossibleReadValue, proxy_modes::ServerProxyModeHandler, server::ServerResponse, telemetry::TELEMETRY
 };
 
 pub enum ServerEvent {
@@ -71,17 +68,38 @@ async fn start_minecraft_server_actor<T>(
 ) where
     T: Send + 'static,
 {
+    async fn read_from_server(
+        server_request: &mut Option<ServerResponse>,
+    ) -> Result<PossibleReadValue, std::io::Error> {
+        if let Some(req) = server_request {
+            if let Some(conn) = &mut req.server_conn {
+                conn.read().await
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "No server connection",
+                ))
+            }
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "No server request",
+            ))
+        }
+    }
+
     let client_sender = actor.client_sender.clone();
 
     // Wait for the server request in a separate task to not block message processing
     let request = match oneshot.await {
         Ok(req) => req,
-        _ => {
-            debug!("Failed to receive server request");
-            client_sender
-                .send(MinecraftCommunication::Shutdown)
-                .await
-                .unwrap();
+        Err(e) => {
+            debug!("Failed to receive server request: {:?}", e);
+            if actor.is_login {
+                if client_sender.send(MinecraftCommunication::Shutdown).await.is_err() {
+                    debug!("Client channel already closed during server initialization");
+                }
+            }
             actor.server_receiver.close();
             debug!("Shutting down Minecraft Server Actor");
             return;
@@ -94,12 +112,11 @@ async fn start_minecraft_server_actor<T>(
     if actor.server_request.is_some() {
         match proxy_mode.initialize_server(&mut actor).await {
             Ok(_) => {}
-            Err(_e) => {
-                warn!("Failed to initialize server proxy mode: {:?}", _e);
-                client_sender
-                    .send(MinecraftCommunication::Shutdown)
-                    .await
-                    .unwrap();
+            Err(e) => {
+                warn!("Failed to initialize server proxy mode: {:?}", e);
+                if client_sender.send(MinecraftCommunication::Shutdown).await.is_err() {
+                    debug!("Client channel already closed");
+                }
                 actor.server_receiver.close();
                 debug!("Shutting down Minecraft Server Actor");
                 return;
@@ -111,61 +128,102 @@ async fn start_minecraft_server_actor<T>(
 
     debug!("Starting Minecraft Server Actor for ID");
     while !shutdown.load(Ordering::SeqCst) {
-        if let Some(server_request) = &mut actor.server_request {
-            if server_request.status_response.is_some() {
-                debug!("Returning because Actor is for a Status Check");
-                return;
-            }
+        if actor.server_request.as_ref().map_or(false, |req| req.status_response.is_some()) {
+            debug!("Returning because Actor is for a Status Check");
+            return;
+        }
 
-            if let Some(server_conn) = &mut server_request.server_conn {
-                let shutdown_flag = shutdown.clone();
-                tokio::select! {
-                    Some(msg) = actor.gateway_receiver.recv() => {
-                        if let Err(e) = actor.handle_gateway_message(msg) {
-                            warn!("Gateway handler error: {:?}", e);
-                            shutdown_flag.store(true, Ordering::SeqCst);
+        let server_conn_available = actor.server_request.as_ref().map_or(false, |req| 
+            req.server_conn.is_some()
+        );
+
+        if !server_conn_available {
+            warn!("Server connection is None");
+            break;
+        }
+
+        let shutdown_flag = shutdown.clone();
+                
+        macro_rules! handle_server_error {
+            ($err:expr) => {{
+                warn!("Server error: {:?}", $err);
+                shutdown_flag.store(true, Ordering::SeqCst);
+                if let Some(server_request) = &mut actor.server_request {
+                    if let Some(server_conn) = &mut server_request.server_conn {
+                        if let Err(close_err) = server_conn.close().await {
+                            debug!("Error closing server connection after error: {:?}", close_err);
                         }
-                    }
-                    Some(msg) = actor.server_receiver.recv() => {
-
-                        if let MinecraftCommunication::Shutdown = msg {
-                             debug!("Shutting down server (Received Shutdown message)");
-                             server_conn.close().await.unwrap();
-                             actor.server_receiver.close();
-                             shutdown_flag.store(true, Ordering::SeqCst);
-                         };
-
-                        if let Err(e) = proxy_mode.handle_internal_server(msg, &mut actor).await {
-                            warn!("Internal handler error: {:?}", e);
-                            shutdown_flag.store(true, Ordering::SeqCst);
-                        }
-                    }
-
-                    Ok(read_value) = server_conn.read() => {
-                        if let Err(e) = proxy_mode.handle_external_server(read_value, &mut actor).await {
-                            warn!("External handler error: {:?}", e);
-                            shutdown_flag.store(true, Ordering::SeqCst);
-                        }
-                    }
-
-                    else => {
-                        debug!("All channels closed");
-                        shutdown_flag.store(true, Ordering::SeqCst);
                     }
                 }
-            } else {
-                warn!("Server connection is None L114");
+                break;
+            }};
+        }
+
+        tokio::select! {
+            Some(msg) = actor.gateway_receiver.recv() => {
+                if let Err(e) = actor.handle_gateway_message(msg) {
+                    handle_server_error!(e);
+                }
             }
-        } else {
-            warn!("Server request is None");
+            Some(msg) = actor.server_receiver.recv() => {
+                if let MinecraftCommunication::Shutdown = &msg {
+                    debug!("Shutting down server (Received Shutdown message)");
+                    // Close the server connection
+                    if let Some(server_request) = &mut actor.server_request {
+                        if let Some(server_conn) = &mut server_request.server_conn {
+                            if let Err(e) = server_conn.close().await {
+                                warn!("Error closing server connection: {:?}", e);
+                            }
+                        }
+                    }
+                    actor.server_receiver.close();
+                    shutdown_flag.store(true, Ordering::SeqCst);
+                    break;
+                } else {
+                    if let Err(e) = proxy_mode.handle_internal_server(msg, &mut actor).await {
+                        handle_server_error!(e);
+                    }
+                }
+            }
+            read_result = read_from_server(&mut actor.server_request) => {
+                match read_result {
+                    Ok(read_value) => {
+                        if let Err(e) = proxy_mode.handle_external_server(read_value, &mut actor).await {
+                            handle_server_error!(e);
+                        }
+                    }
+                    Err(e) => {
+                        handle_server_error!(e);
+                    }
+                }
+            }
+            else => {
+                debug!("All channels closed");
+                shutdown_flag.store(true, Ordering::SeqCst);
+                break;
+            }
         }
     }
+
+    debug!("Shutting down server actor");
+    
+    // Close the server connection if it exists
+    if let Some(server_request) = &mut actor.server_request {
+        if let Some(server_conn) = &mut server_request.server_conn {
+            if let Err(e) = server_conn.close().await {
+                debug!("Error during final server connection close: {:?}", e);
+            }
+        }
+    }
+    
+    let _ = client_sender.send(MinecraftCommunication::Shutdown).await;
+    
+    actor.server_receiver.close();
 
     if actor.is_login
         && actor.server_request.is_some()
         && actor.server_request.as_ref().unwrap().server_conn.is_some()
     {
-        //TODO: Update this system so server have a different player counter than the proxy global one
         TELEMETRY.update_player_count(
             -1,
             actor
@@ -187,7 +245,9 @@ async fn start_minecraft_server_actor<T>(
         );
     }
     debug!("Shutting down server actor");
-    let _ = client_sender.send(MinecraftCommunication::Shutdown).await;
+    if client_sender.send(MinecraftCommunication::Shutdown).await.is_err() {
+        debug!("Client channel already closed during server shutdown");
+    }
     actor.server_receiver.close();
 }
 

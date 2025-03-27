@@ -33,12 +33,24 @@ impl Gateway {
     ) -> Self {
         info!("Initializing ServerGateway");
 
-        Self {
+        let gateway = Self {
             config_service,
             _sender: sender,
             actor_supervisor: Arc::new(ActorSupervisor::new()),
             status_cache: Arc::new(Mutex::new(StatusCache::new(Duration::from_secs(30)))),
-        }
+        };
+        
+        // Start a background task for periodic health checks
+        let supervisor = gateway.actor_supervisor.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                supervisor.health_check().await;
+            }
+        });
+        
+        gateway
     }
 
     pub async fn run(&self, mut receiver: mpsc::Receiver<GatewayMessage>) {
@@ -47,9 +59,13 @@ impl Gateway {
         #[allow(clippy::never_loop)]
         while let Some(message) = receiver.recv().await {
             match message {
-                GatewayMessage::Shutdown => break,
+                GatewayMessage::Shutdown => {
+                    debug!("Gateway received shutdown message");
+                    break;
+                }
             }
         }
+        debug!("Gateway run loop exited");
     }
 
     pub async fn update_configurations(&self, configurations: Vec<ServerConfig>) {
@@ -69,7 +85,7 @@ impl Gateway {
         client_addr = %request.client_addr
     ))]
     pub async fn handle_client_connection(
-        client: Connection,
+        mut client: Connection,
         request: ServerRequest,
         gateway: Arc<Gateway>,
     ) {
@@ -83,6 +99,10 @@ impl Gateway {
             Some(server) => server,
             None => {
                 warn!("Server not found for domain: {}", request.domain);
+                // Make sure to close the connection to prevent hanging
+                if let Err(e) = client.close().await {
+                    warn!("Error closing connection: {:?}", e);
+                }
                 return;
             }
         };
@@ -109,8 +129,8 @@ impl Gateway {
 
         let (oneshot_request_sender, oneshot_request_receiver) = oneshot::channel();
 
-        // Créer les acteurs avec le span parent
-        gateway
+        // Create the actors with the parent span
+        let actor_pair = gateway
             .actor_supervisor
             .create_actor_pair(
                 &server_config.config_id,
@@ -126,20 +146,38 @@ impl Gateway {
             ))
             .await;
 
-        // Wake up server dans le même span
-        tokio::spawn(
+            let supervisor = gateway.actor_supervisor.clone();
+            let server_config_clone = server_config.clone();
+        // Wake up server in the same span
+        let task_handle = tokio::spawn(
             async move {
                 match gateway.wake_up_server(request, server_config).await {
                     Ok(response) => {
-                        let _ = oneshot_request_sender.send(response);
+                        if oneshot_request_sender.send(response).is_err() {
+                            // For status requests, a closed channel is expected and not an error
+                            if is_login {
+                                warn!("Failed to send server response: receiver dropped");
+                                // Only explicitly set shutdown for login connections
+                                actor_pair.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+                            }
+                        }
                     }
                     Err(e) => {
                         warn!("Failed to request server: {:?}", e);
+                        if is_login {
+                            // Only explicitly set shutdown for login connections
+                            actor_pair.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
                     }
                 }
             }
             .instrument(span),
         );
+        
+        // Don't track status request tasks - they're short-lived
+        if is_login {
+            supervisor.register_task(&server_config_clone.config_id, task_handle).await;
+        }
     }
 
     async fn find_server(&self, domain: &str) -> Option<Arc<ServerConfig>> {

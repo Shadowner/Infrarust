@@ -40,17 +40,15 @@ impl ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
     ) -> io::Result<()> {
         match data {
             PossibleReadValue::Raw(data) => {
-                let _ = actor
-                    .server_sender
-                    .send(MinecraftCommunication::RawData(data))
-                    .await;
+                // Don't fail immediately if send fails - server might be disconnecting naturally
+                if actor.server_sender.send(MinecraftCommunication::RawData(data)).await.is_err() {
+                    debug!("Server channel closed, client will close soon");
+                }
             }
             _ => {
-                debug!("Shutting down client ");
-                let _ = actor
-                    .server_sender
-                    .send(MinecraftCommunication::Shutdown)
-                    .await;
+                debug!("Client disconnected, notifying server");
+                // Ignore errors when sending shutdown - channel might already be closed
+                let _ = actor.server_sender.send(MinecraftCommunication::Shutdown).await;
             }
         }
         Ok(())
@@ -76,17 +74,34 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
     ) -> io::Result<()> {
         match data {
             PossibleReadValue::Raw(data) => {
-                let _ = actor
-                    .client_sender
-                    .send(MinecraftCommunication::RawData(data))
-                    .await;
+                // Don't fail immediately if send fails - client might be disconnecting naturally
+                if actor.client_sender.send(MinecraftCommunication::RawData(data)).await.is_err() {
+                    debug!("Client channel closed");
+                }
+            }
+            PossibleReadValue::Eof => {
+                // Server disconnected unexpectedly - we need to force close everything
+                debug!("Server EOF detected, initiating clean shutdown");
+                
+                // Explicitly notify client to close
+                let _ = actor.client_sender.send(MinecraftCommunication::Shutdown).await;
+                
+                // Close our end of the connection to the server too
+                if let Some(server_request) = &mut actor.server_request {
+                    if let Some(server_conn) = &mut server_request.server_conn {
+                        if let Err(e) = server_conn.close().await {
+                            debug!("Error closing server connection after EOF: {:?}", e);
+                        }
+                    }
+                }
+                
+                // Return error to break the server actor loop
+                return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "Server disconnected"));
             }
             _ => {
-                debug!("Shutting down server");
-                let _ = actor
-                    .client_sender
-                    .send(MinecraftCommunication::Shutdown)
-                    .await;
+                debug!("Server disconnected, notifying client");
+                // Ignore errors when sending shutdown - channel might already be closed
+                let _ = actor.client_sender.send(MinecraftCommunication::Shutdown).await;
             }
         }
 
