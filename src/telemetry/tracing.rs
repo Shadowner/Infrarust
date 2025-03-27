@@ -1,22 +1,25 @@
 use opentelemetry::global;
-use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{trace::TracerProvider, Resource};
+use opentelemetry_sdk::trace::{SdkTracerProvider, TracerProviderBuilder};
+use opentelemetry_sdk::Resource;
 use std::str::FromStr;
 use tracing::Level;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-pub struct TracerProviderGuard(pub TracerProvider);
+pub struct TracerProviderGuard(pub SdkTracerProvider);
 
 impl Drop for TracerProviderGuard {
     fn drop(&mut self) {
-        global::shutdown_tracer_provider();
+        if let Err(exporter) = self.0.shutdown() {
+            println!("Failed to shutdown exporter: {:?}", exporter);
+        };
     }
 }
 
 pub fn init_tracer_provider(resource: Resource, export_url: Option<String>) -> TracerProviderGuard {
-    let mut provider = TracerProvider::builder();
+    let mut provider = TracerProviderBuilder::default();
     if export_url.clone().is_some() {
         let exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
@@ -24,7 +27,7 @@ pub fn init_tracer_provider(resource: Resource, export_url: Option<String>) -> T
             .build()
             .unwrap();
 
-        provider = provider.with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio);
+        provider = provider.with_batch_exporter(exporter);
     }
 
     provider = provider.with_resource(resource);
@@ -40,7 +43,7 @@ pub fn init_tracer_provider(resource: Resource, export_url: Option<String>) -> T
     TracerProviderGuard(provider)
 }
 
-pub fn init_subscriber_with_optl(provider: &TracerProvider) {
+pub fn init_subscriber_with_optl(provider: &SdkTracerProvider) {
     let tracer = provider.tracer("proxy");
     let layer = tracing_opentelemetry::layer().with_tracer(tracer);
 

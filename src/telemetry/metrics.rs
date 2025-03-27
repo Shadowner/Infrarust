@@ -3,7 +3,7 @@ use opentelemetry::{global, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
-    runtime, Resource,
+    Resource,
 };
 use std::io::Error;
 use std::time::{Duration, Instant};
@@ -24,7 +24,7 @@ pub fn init_meter_provider(
         .build()
         .unwrap();
 
-    let reader = PeriodicReader::builder(exporter, runtime::Tokio)
+    let reader = PeriodicReader::builder(exporter)
         .with_interval(duration)
         .build();
 

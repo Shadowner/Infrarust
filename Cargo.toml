@@ -1,7 +1,7 @@
 [package]
 name = "infrarust"
 version = "1.1.1"
-edition = "2021"
+edition = "2024"
 authors = ["Shadowner"]
 description = "A Rust adaptation of the Infrared Minecraft proxy"
 license = "AGPL-3.0-only"
@@ -21,39 +21,38 @@ exclude = [
 
 [dependencies]
 # Async & Runtime
-tokio = { version = "1.32", features = ["full"] }
-async-trait = "0.1.85"
+tokio = { version = "1.44.1", features = ["full"] }
+async-trait = "0.1.88"
 
 # Logging & Telemetry
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
-tracing-opentelemetry = "0.28.0"
-opentelemetry = { version = "0.27.1", features = ["metrics"] }
-opentelemetry_sdk = { version = "0.27.1", features = ["metrics", "rt-tokio"] }
-opentelemetry-appender-log = { version = "0.27.0" }
-opentelemetry-prometheus = "0.27.0"
-opentelemetry-stdout = "0.27.0"
-opentelemetry-otlp = { version = "0.27.0", features = ["grpc-tonic", "trace", "metrics", "logs", "tokio"] }
-opentelemetry-semantic-conventions = "0.27.0"
+tracing-opentelemetry = "0.30.0"
+opentelemetry = { version = "0.29.0", features = ["metrics"] }
+opentelemetry_sdk = { version = "0.29.0", features = ["metrics", "rt-tokio"] }
+opentelemetry-appender-log = { version = "0.29.0" }
+opentelemetry-stdout = "0.29.0"
+opentelemetry-otlp = { version = "0.29.0", features = ["grpc-tonic", "trace", "metrics", "logs", "tokio"] }
+opentelemetry-semantic-conventions = "0.29.0"
 
 # Serialization & Data Formats
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
 serde_yaml = "0.9"
 base64 = "0.22.1"
-bytes = "1.9.0"
+bytes = "1.10.1"
 
 # Networking & Protocol
 proxy-protocol = "0.5"
 ipnetwork = "0.21.0"
-reqwest = { version = "0.12.2", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.12.15", features = ["json", "rustls-tls"], default-features = false }
 
 # Cryptography & Security
 aes = "0.8.4"
 cfb8 = "0.8.1"
-rsa = "0.9.6"
+rsa = "0.9.8"
 rsa-der = "0.3.0"
-rand = "0.8"
+rand = "0.8.5" ### Cannot update to > 0.8.5 because crate rsa is on 0.6.4 
 sha1 = "0.10"
 hex = "0.4"
 
@@ -65,10 +64,10 @@ xxhash-rust = { version = "0.8", features = ["xxh64"] }
 
 # System & Resource Management
 sysinfo = "0.33.1"
-libdeflater = "1.23.0"
+libdeflater = "1.23.1"
 
 # Utility & Helper Libraries
-uuid = { version = "1.12.1", features = ["v4", "serde"] }
+uuid = { version = "1.16.0", features = ["v4", "serde"] }
 parking_lot = "0.12.3"
 lazy_static = "1.5.0"
 walkdir = "2.3"
@@ -76,15 +75,15 @@ wildmatch = "2.1"
 notify = "8.0.0"
 
 # Error Handling
-thiserror = "2.0.11"
-anyhow = "1.0.95"
+thiserror = "2.0.12"
+anyhow = "1.0.97"
 
 # CLI & Configuration
-clap = { version = "4.5.28", features = ["derive"] }
-env_logger = "0.11.6"
+clap = { version = "4.5.34", features = ["derive"] }
+env_logger = "0.11.7"
 
 [dev-dependencies]
-tempfile = "3.16.0"
+tempfile = "3.19.1"
 env_logger = "0.11.6"
 
 [features]
