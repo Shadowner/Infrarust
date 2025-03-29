@@ -10,7 +10,7 @@
     <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" />
   </div>
   
-  <h4>Compatible with <i>almost</i> every Minecraft Versions + Modded Versions</h4>
+  <h4>Compatible with <i>almost</i> all vanilla, plugin, and modded Minecraft servers</h4>
 </div>
 
 > [!WARNING]
@@ -64,14 +64,14 @@ domains:
   - "minecraft.example.com"
 ```
 
-And create your server configurations in the `proxies` directory known as the Servier Configuration File:
+And create your server configurations in the `proxies` directory known as the Server Configuration File:
 
 ```yaml
 domains:
   - "hub.minecraft.example.com"
 addresses:
   - "localhost:25566"
-proxyMode: "passthrough" # Options: passthrough, cllient-only, offline
+proxyMode: "passthrough" # Options: passthrough, client-only, offline
 ```
 
 ## Documentation
@@ -127,7 +127,7 @@ Infrarust leverages Rust's performance capabilities:
 
 Contributions are welcome! Check out our [Contributing Guidelines](CONTRIBUTING.md) to get started.
 
-Feel free to join our [Discord](https://discord.gg/sqbJhZVSgG) if you have any question !
+Feel free to join our [Discord](https://discord.gg/sqbJhZVSgG) if you have any questions!
 
 ## Similar Projects
 
