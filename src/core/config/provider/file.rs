@@ -1,25 +1,34 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{self, Read},
     path::{Path, PathBuf},
+    sync::{
+        RwLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     thread::sleep,
     time::{Duration, Instant},
 };
 
+use lazy_static::lazy_static;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use serde::{de::DeserializeOwned, Deserialize};
-use tokio::sync::mpsc::{self, channel, Sender};
-use tracing::{debug, debug_span, error, info, instrument, warn, Instrument};
+use serde::{Deserialize, de::DeserializeOwned};
+use tokio::sync::mpsc::{self, Sender, channel};
+use tracing::{Instrument, debug, debug_span, error, info, instrument, warn};
 use walkdir::WalkDir;
 
 use crate::{
-    core::{config::ServerConfig, event::ProviderMessage},
-    network::proxy_protocol::errors::ProxyProtocolError,
     InfrarustConfig,
+    core::{config::ServerConfig, event::ProviderMessage},
 };
 
 use super::Provider;
+
+lazy_static! {
+    static ref WATCHED_PATHS: RwLock<HashSet<String>> = RwLock::new(HashSet::new());
+    static ref WATCHER_COUNT: AtomicUsize = AtomicUsize::new(0);
+}
 
 #[derive(Debug, Clone, Copy, Deserialize, Default)]
 pub enum FileType {
@@ -45,6 +54,7 @@ pub struct FileProvider {
     pub file_type: FileType,
     pub watch: bool,
     sender: Sender<ProviderMessage>,
+    instance_id: usize,
 }
 
 #[derive(Debug)]
@@ -79,12 +89,22 @@ impl FileProvider {
         watch: bool,
         sender: Sender<ProviderMessage>,
     ) -> Self {
-        info!("Creating new file provider");
+        let mut unique_paths = Vec::new();
+        for path in paths {
+            if !unique_paths.contains(&path) {
+                unique_paths.push(path);
+            }
+        }
+
+        let instance_id = WATCHER_COUNT.fetch_add(1, Ordering::SeqCst);
+        debug!("Initialized file provider instance {}", instance_id);
+
         Self {
-            paths,
+            paths: unique_paths,
             file_type,
             watch,
             sender,
+            instance_id,
         }
     }
 
@@ -183,12 +203,13 @@ impl FileProvider {
 
     #[instrument(skip(self), name = "file_provider: setup_file_watcher")]
     async fn setup_file_watcher(&self) -> io::Result<RecommendedWatcher> {
-        let span = debug_span!("setup_watcher");
+        let span = debug_span!("setup_watcher", instance_id = self.instance_id);
         async {
-            info!("Setting up file watcher");
-            debug!("Setting up file watcher");
-            let (file_event_tx, mut file_event_rx) = channel::<FileEvent>(5);
-            let debounce_duration = Duration::from_millis(100);
+            debug!("Setting up file watcher for instance {}", self.instance_id);
+
+            let (file_event_tx, mut file_event_rx) = channel::<FileEvent>(100);
+
+            let debounce_duration = Duration::from_millis(1000);
 
             let file_type = self.file_type;
             let provider_name = self.get_name();
@@ -196,11 +217,13 @@ impl FileProvider {
 
             tokio::spawn(async move {
                 let mut last_paths: HashMap<PathBuf, Instant> = HashMap::new();
+                let mut last_processed: HashMap<String, Instant> = HashMap::new();
 
                 while let Some(event) = file_event_rx.recv().await {
                     Self::handle_file_event(
                         event,
                         &mut last_paths,
+                        &mut last_processed,
                         debounce_duration,
                         file_type,
                         &provider_name,
@@ -219,12 +242,12 @@ impl FileProvider {
     async fn handle_file_event(
         event: FileEvent,
         last_paths: &mut HashMap<PathBuf, Instant>,
+        last_processed: &mut HashMap<String, Instant>,
         debounce_duration: Duration,
         file_type: FileType,
         provider_name: &str,
         provider_sender: &Sender<ProviderMessage>,
     ) {
-        // Créer un nouveau span racine pour chaque événement fichier
         let root_span = debug_span!(
             "file_provider: file_change",
             path = ?event.path,
@@ -234,11 +257,13 @@ impl FileProvider {
 
         let span_clone = root_span.clone();
         async {
+            let config_id = Self::generate_config_id(&event.path, provider_name);
+
             if notify::EventKind::is_remove(&event.kind) {
-                info!("File removed, sending configuration removal");
+                debug!("File removed: {}", event.path.display());
                 let message = ProviderMessage::Update {
                     span: span_clone,
-                    key: Self::generate_config_id(&event.path, provider_name),
+                    key: config_id,
                     configuration: None,
                 };
                 if let Err(e) = provider_sender.send(message).await {
@@ -248,13 +273,28 @@ impl FileProvider {
             }
 
             let now = Instant::now();
+
             if Self::should_skip_event(&event.path, now, last_paths, debounce_duration) {
-                debug!("Skipping debounced event");
+                debug!(
+                    "Skipping debounced event for path: {}",
+                    event.path.display()
+                );
+                return;
+            }
+
+            if last_processed
+                .get(&config_id)
+                .is_some_and(|last_time| now.duration_since(*last_time) < debounce_duration)
+            {
+                debug!("Skipping recently processed config ID: {}", config_id);
                 return;
             }
 
             last_paths.insert(event.path.clone(), now);
-            last_paths.retain(|_, time| now.duration_since(*time) < debounce_duration);
+            last_processed.insert(config_id.clone(), now);
+
+            last_paths.retain(|_, time| now.duration_since(*time) < debounce_duration * 2);
+            last_processed.retain(|_, time| now.duration_since(*time) < debounce_duration * 2);
 
             if let Err(e) =
                 Self::handle_config_update(&event.path, file_type, provider_name, provider_sender)
@@ -295,7 +335,7 @@ impl FileProvider {
                     {
                         //HACK: Workaround to let the file be written before reading it
                         // Yes that's an actual bug that I can't find a solution to
-                        sleep(Duration::from_millis(100));
+                        sleep(Duration::from_millis(150)); // Increased sleep time
                     }
 
                     for path in event.paths {
@@ -314,12 +354,35 @@ impl FileProvider {
                 }
             };
 
+        let mut watched_paths = WATCHED_PATHS.write().unwrap();
+
         for path in &self.paths {
-            debug!("Watching path: {:?} for changes", path);
-            let proxy_path = fs::canonicalize(path)?;
-            watcher
-                .watch(proxy_path.as_path(), RecursiveMode::Recursive)
-                .map_err(|e| ProxyProtocolError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+            let canonical_path = match fs::canonicalize(path) {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("Could not canonicalize path {}: {}", path, e);
+                    continue;
+                }
+            };
+
+            let path_str = canonical_path.to_string_lossy().to_string();
+
+            if watched_paths.contains(&path_str) {
+                debug!("Path {} is already being watched, skipping", path_str);
+                continue;
+            }
+
+            info!(
+                "File Provider: Watching path: {} for changes",
+                canonical_path.display()
+            );
+
+            if let Err(e) = watcher.watch(&canonical_path, RecursiveMode::Recursive) {
+                error!("Failed to watch path {}: {}", canonical_path.display(), e);
+                continue;
+            }
+
+            watched_paths.insert(path_str);
         }
 
         Ok(watcher)
@@ -328,49 +391,56 @@ impl FileProvider {
 
 #[async_trait::async_trait]
 impl Provider for FileProvider {
-    #[instrument(skip(self), name = "file_provider: run", fields(paths = ?self.paths))]
+    #[instrument(skip(self), name = "file_provider: run", fields(paths = ?self.paths, instance_id = self.instance_id))]
     async fn run(&mut self) {
-        let span = debug_span!("file_provider_run");
+        let span = debug_span!("file_provider_run", instance_id = self.instance_id);
         async {
-            info!("Starting file provider");
-            //TODO: Implement real communication with the ConfigProvider
+            let mut all_configs = HashMap::new();
+            for path in &self.paths {
+                match self.load_configs(path) {
+                    Ok(configs) => {
+                        for (id, config) in configs {
+                            all_configs.insert(id, config);
+                        }
+                    }
+                    Err(e) => warn!("Failed to load server configs from {}: {:?}", path, e),
+                }
+            }
+
+            if !all_configs.is_empty() {
+                if let Err(e) = self
+                    .sender
+                    .send(ProviderMessage::FirstInit(all_configs))
+                    .await
+                {
+                    warn!("Failed to send FirstInit: {}", e);
+                }
+
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
 
             let _watcher = if self.watch {
-                Some(
-                    self.setup_file_watcher()
-                        .instrument(debug_span!("watcher_setup"))
-                        .await
-                        .expect("Failed to setup file watcher for FileProvider"),
-                )
+                match self
+                    .setup_file_watcher()
+                    .instrument(debug_span!("watcher_setup", instance_id = self.instance_id))
+                    .await
+                {
+                    Ok(watcher) => Some(watcher),
+                    Err(e) => {
+                        error!(
+                            "Failed to setup file watcher for instance {}: {}",
+                            self.instance_id, e
+                        );
+                        None
+                    }
+                }
             } else {
                 None
             };
 
-            for path in &self.paths {
-                match self.load_configs(path) {
-                    Ok(configs) => {
-                        if let Err(e) = self.sender.send(ProviderMessage::FirstInit(configs)).await
-                        {
-                            warn!("Failed to send FirstInit: {}", e);
-                        }
-                    }
-                    Err(e) => warn!("Failed to load server configs: {:?}", e),
-                }
-            }
-
-            //HACK: This is a workaround to keep the task running
-            // Until the sender is opened
-            #[allow(clippy::never_loop)]
+            // Block indefinitely to keep the watcher alive
             loop {
-                let sender = self.sender.clone();
-                tokio::select! {
-                    () = sender.closed() => {
-                        break;
-                    }
-                    else => {
-                        break;
-                    }
-                }
+                tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         }
         .instrument(span)
@@ -387,6 +457,7 @@ impl Provider for FileProvider {
             file_type: FileType::Yaml,
             watch: false,
             sender,
+            instance_id: WATCHER_COUNT.fetch_add(1, Ordering::SeqCst),
         }
     }
 }

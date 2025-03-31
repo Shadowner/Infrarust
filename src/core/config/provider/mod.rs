@@ -72,11 +72,16 @@ impl ConfigProvider {
                 new_span.set_parent(span.context());
 
                 async {
-                    info!("Processing configuration update");
-                    self.config_service
-                        .update_configurations(vec![*configuration.unwrap()])
-                        .instrument(debug_span!("config_provider: apply_config_update"))
-                        .await;
+                    debug!("Processing configuration update for: {}", key);
+                    
+                    if let Some(config) = configuration {
+                        self.config_service
+                            .update_configurations(vec![*config])
+                            .instrument(debug_span!("config_provider: apply_config_update"))
+                            .await;
+                    } else {
+                        self.config_service.remove_configuration(&key).await;
+                    }
                 }
                 .instrument(new_span)
                 .await;

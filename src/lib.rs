@@ -140,18 +140,20 @@ impl Infrarust {
                 Ok((stream, addr)) => {
                     let session_id = Uuid::new_v4();
                     let span = debug_span!("TCP Connection", %addr, %session_id);
-                    debug!("New TCP connection accepted");
+                    debug!("New TCP connection accepted : ({})[{}]", addr, session_id);
 
                     let filter_chain = self.filter_chain.clone();
                     let server_gateway = Arc::clone(&self.server_gateway);
                     let clone_span = span.clone();
                     tokio::spawn(async move {
                         if let Err(e) = async move {
-                            debug!("Starting connection processing");
+                            debug!("Starting connection processing for ({})[{}]", addr, session_id);
                             filter_chain.filter(&stream).await?;
+                            debug!("Connection passed filters for ({})[{}]", addr, session_id);
                             let conn = Connection::new(stream, session_id)
                                 .instrument(debug_span!("New connection"))
                                 .await?;
+                            debug!("Connection established for ({})[{}]", addr, session_id);
                             Self::handle_connection(conn, server_gateway)
                                 .instrument(clone_span)
                                 .await?;
@@ -181,7 +183,14 @@ impl Infrarust {
         mut client: Connection,
         server_gateway: Arc<Gateway>,
     ) -> io::Result<()> {
-        let handshake_packet = client.read_packet().await?;
+
+        let handshake_packet = if let Ok(packet) = client.read_packet().await {
+            packet
+        } else {
+            debug!("Failed to read handshake packet");
+            return Ok(());
+        };
+        
         let handshake = ServerBoundHandshake::from_packet(&handshake_packet)?;
         let domain = handshake.parse_server_address();
 
