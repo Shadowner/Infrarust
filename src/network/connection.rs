@@ -1,8 +1,8 @@
 use std::{
     io::{self, Error, ErrorKind},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
@@ -10,24 +10,24 @@ use std::{
 use tokio::{
     io::{AsyncWriteExt, BufReader, BufWriter},
     net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
     },
 };
 use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
-    telemetry::{Direction, TELEMETRY},
     EncryptionState,
+    telemetry::{Direction, TELEMETRY},
 };
 
 use super::{
-    packet::{io::RawPacketIO, Packet, PacketError, PacketReader, PacketResult, PacketWriter},
+    packet::{Packet, PacketError, PacketReader, PacketResult, PacketWriter, io::RawPacketIO},
     proxy_protocol::ProtocolResult,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PossibleReadValue {
     Raw(Vec<u8>),
     Packet(Packet),
@@ -35,11 +35,24 @@ pub enum PossibleReadValue {
     Eof,
 }
 
+impl PossibleReadValue {
+    pub fn get_type(&self) -> &'static str {
+        match self {
+            PossibleReadValue::Packet(_) => "Packet",
+            PossibleReadValue::Raw(_) => "Raw",
+            PossibleReadValue::Nothing => "Nothing",
+            PossibleReadValue::Eof => "Eof",
+        }
+    }
+}
+
+#[derive(Debug)]
 enum ConnectionMode {
     Protocol,
     Raw,
 }
 
+#[derive(Debug)]
 pub struct Connection {
     reader: PacketReader<BufReader<OwnedReadHalf>>,
     writer: PacketWriter<BufWriter<OwnedWriteHalf>>,
@@ -222,6 +235,7 @@ impl Connection {
     }
 }
 
+#[derive(Debug)]
 pub struct ServerConnection {
     connection: Connection,
     pub session_id: Uuid,

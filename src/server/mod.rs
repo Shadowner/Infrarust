@@ -23,6 +23,7 @@ pub struct ServerRequest {
     pub session_id: uuid::Uuid,
 }
 
+#[derive(Debug)]
 pub struct ServerResponse {
     pub server_conn: Option<ServerConnection>,
     pub status_response: Option<Packet>,
@@ -32,6 +33,21 @@ pub struct ServerResponse {
     pub proxy_mode: ProxyModeEnum,
     pub proxied_domain: Option<String>,
     pub initial_config: Arc<ServerConfig>,
+}
+
+impl Default for ServerResponse {
+    fn default() -> Self {
+        Self {
+            server_conn: None,
+            status_response: None,
+            send_proxy_protocol: false,
+            read_packets: Vec::new(),
+            server_addr: None,
+            proxy_mode: ProxyModeEnum::default(),
+            proxied_domain: None,
+            initial_config: Arc::new(ServerConfig::default()),
+        }
+    }
 }
 
 #[async_trait]

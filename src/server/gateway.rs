@@ -2,20 +2,21 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use tokio::sync::{
+    Mutex,
     mpsc::{self},
-    oneshot, Mutex,
+    oneshot,
 };
-use tracing::{debug, debug_span, info, instrument, warn, Instrument, Span};
+use tracing::{Instrument, Span, debug, debug_span, info, instrument, warn};
 
 use crate::{
+    Connection,
     core::{actors::supervisor::ActorSupervisor, config::ServerConfig, event::GatewayMessage},
-    network::proxy_protocol::{errors::ProxyProtocolError, ProtocolResult},
+    network::proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     protocol::minecraft::java::login::ServerBoundLoginStart,
     proxy_modes::ProxyModeEnum,
-    Connection,
 };
 
-use super::{backend::Server, cache::StatusCache, ServerRequest, ServerRequester, ServerResponse};
+use super::{ServerRequest, ServerRequester, ServerResponse, backend::Server, cache::StatusCache};
 use crate::core::config::service::ConfigurationService;
 use crate::telemetry::TELEMETRY;
 
@@ -23,7 +24,7 @@ pub struct Gateway {
     config_service: Arc<ConfigurationService>,
     status_cache: Arc<Mutex<StatusCache>>,
     _sender: mpsc::Sender<GatewayMessage>,
-    actor_supervisor: Arc<ActorSupervisor>,
+    pub actor_supervisor: Arc<ActorSupervisor>,
 }
 
 impl Gateway {
@@ -98,7 +99,7 @@ impl Gateway {
         {
             Some(server) => server,
             None => {
-                warn!("Server not found for domain: {}", request.domain);
+                warn!("Server not found for domain: '{}' requested by - {}", request.domain, request.client_addr);
                 // Make sure to close the connection to prevent hanging
                 if let Err(e) = client.close().await {
                     warn!("Error closing connection: {:?}", e);
@@ -129,6 +130,8 @@ impl Gateway {
 
         let (oneshot_request_sender, oneshot_request_receiver) = oneshot::channel();
 
+        let connecting_domain = request.domain.clone();
+
         // Create the actors with the parent span
         let actor_pair = gateway
             .actor_supervisor
@@ -139,6 +142,7 @@ impl Gateway {
                 oneshot_request_receiver,
                 is_login,
                 username.clone(),
+                &connecting_domain,
             )
             .instrument(debug_span!(parent: span.clone(), "create_actors",
                 username = %username,
@@ -178,12 +182,16 @@ impl Gateway {
             .instrument(span),
         );
 
-        // Don't track status request tasks - they're short-lived
         if is_login {
-            supervisor
-                .register_task(&server_config_clone.config_id, task_handle)
-                .await;
+            info!(
+                "Player '{}' connected to '{}' ({})",
+                &username, connecting_domain, &server_config_clone.config_id
+            );
         }
+
+        supervisor
+            .register_task(&server_config_clone.config_id, task_handle)
+            .await;
     }
 
     async fn find_server(&self, domain: &str) -> Option<Arc<ServerConfig>> {

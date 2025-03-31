@@ -5,11 +5,12 @@ use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::{SdkTracerProvider, TracerProviderBuilder};
-use tracing::{info, Level};
+use tracing::Level;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::core::config::{LoggingConfig, TelemetryConfig};
+
 use super::infrarust_fmt_formatter::InfrarustMessageFormatter;
 
 pub struct TracerProviderGuard(pub SdkTracerProvider);
@@ -35,10 +36,12 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingGuard {
     };
 
     let formatter = create_formatter_from_config(config);
-    
+
     let fmt_layer = tracing_subscriber::fmt::layer()
         .event_format(formatter)
-        .with_filter(tracing_subscriber::filter::LevelFilter::from_level(log_level));
+        .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
+            log_level,
+        ));
 
     tracing_subscriber::registry()
         .with(
@@ -47,15 +50,18 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingGuard {
         )
         .with(fmt_layer)
         .init();
-        
+
     LoggingGuard {}
 }
 
 /// Initialize OpenTelemetry tracing
 ///
-/// This sets up an OpenTelemetry tracer provider for distributed tracing 
+/// This sets up an OpenTelemetry tracer provider for distributed tracing
 /// and adds a layer to the existing tracing subscriber.
-pub fn init_opentelemetry_tracing(resource: Resource, config: &TelemetryConfig) -> Option<TracerProviderGuard> {
+pub fn init_opentelemetry_tracing(
+    resource: Resource,
+    config: &TelemetryConfig,
+) -> Option<TracerProviderGuard> {
     let export_url = match &config.export_url {
         Some(url) if !url.is_empty() => url.clone(),
         _ => return None,
@@ -64,38 +70,36 @@ pub fn init_opentelemetry_tracing(resource: Resource, config: &TelemetryConfig) 
     let exporter = match opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
         .with_endpoint(export_url)
-        .build() {
-            Ok(exporter) => exporter,
-            Err(e) => {
-                tracing::error!("Failed to create OpenTelemetry exporter: {}", e);
-                return None;
-            }
-        };
+        .build()
+    {
+        Ok(exporter) => exporter,
+        Err(e) => {
+            tracing::error!("Failed to create OpenTelemetry exporter: {}", e);
+            return None;
+        }
+    };
 
     let provider = TracerProviderBuilder::default()
         .with_batch_exporter(exporter)
         .with_resource(resource)
         .build();
-    
+
     let tracer = provider.tracer("infrarust");
     let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-    
+
     // Try to add the telemetry layer to the registry
     // It's ok if this fails - it means a subscriber is already registered
     // and we'll just add the layer to it
     let _ = tracing_subscriber::registry()
         .with(telemetry_layer)
         .try_init();
-        
+
     global::set_tracer_provider(provider.clone());
-    
+
     Some(TracerProviderGuard(provider))
 }
 
 fn create_formatter_from_config(config: &LoggingConfig) -> InfrarustMessageFormatter {
-    println!("Creating formatter with: use_color={}, use_icons={}, template={}",
-        config.use_color, config.use_icons, config.template);
-    
     let mut formatter = InfrarustMessageFormatter::default()
         .with_ansi(config.use_color)
         .with_icons(config.use_icons)
@@ -107,11 +111,10 @@ fn create_formatter_from_config(config: &LoggingConfig) -> InfrarustMessageForma
     if !config.template.is_empty() {
         formatter = formatter.with_template(&config.template);
     }
-        
+
     for (field, prefix) in &config.field_prefixes {
-        println!("Adding prefix for field '{}': '{}'", field, prefix);
         formatter = formatter.before_field(field, prefix);
     }
-    
+
     formatter
 }

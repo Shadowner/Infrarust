@@ -6,6 +6,7 @@
 
 // Core modules
 pub mod core;
+use core::actors::supervisor::ActorSupervisor;
 use core::config::provider::file::FileProvider;
 use core::config::provider::ConfigProvider;
 use core::config::service::ConfigurationService;
@@ -84,6 +85,10 @@ impl Infrarust {
         let (provider_sender, provider_receiver) = tokio::sync::mpsc::channel(100);
 
         let server_gateway = Arc::new(Gateway::new(gateway_sender.clone(), config_service.clone()));
+
+        if let Err(_) = ActorSupervisor::initialize_global(server_gateway.actor_supervisor.clone()) {
+            debug!("Global supervisor was already initialized");
+        }
 
         let mut config_provider = ConfigProvider::new(
             config_service.clone(),

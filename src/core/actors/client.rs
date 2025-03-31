@@ -1,13 +1,14 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
-use tracing::{debug, info, instrument, Instrument};
+use tracing::{Instrument, debug, error, info, instrument};
 
+use crate::core::actors::supervisor::ActorSupervisor;
 use crate::telemetry::TELEMETRY;
 use crate::{
+    Connection,
     core::{config::ServerConfig, event::MinecraftCommunication},
     proxy_modes::ClientProxyModeHandler,
-    Connection,
 };
 
 use super::supervisor::SupervisorMessage;
@@ -99,7 +100,7 @@ async fn start_minecraft_client_actor<T>(
                      shutdown_flag.store(true, Ordering::SeqCst);
                      actor.client_receiver.close();
                      if let Err(e) = actor.conn.close().await {
-                         info!("Error closing client connection during shutdown: {:?}", e);
+                         error!("Error closing client connection during shutdown: {:?}", e);
                      }
                      break;
                 }
@@ -107,7 +108,7 @@ async fn start_minecraft_client_actor<T>(
                 match proxy_mode.handle_internal_client(msg, &mut actor).await {
                     Ok(_) => {}
                     Err(e) => {
-                        info!("Error handling internal client message: {:?}", e);
+                        error!("Error handling internal client message: {:?}", e);
                         shutdown_flag.store(true, Ordering::SeqCst);
                         break;
                     }
@@ -140,16 +141,26 @@ async fn start_minecraft_client_actor<T>(
         }
     }
 
-    // Cleanup
-    debug!("Shutting down client actor");
+    // Enhanced cleanup with more details on disconnect reason
+    debug!("Shutting down client actor for user '{}'", actor.username);
 
-    // Record telemetry for logins
-    if actor.is_login {
-        TELEMETRY.record_connection_end(
-            &peer_address.to_string(),
-            "normal_disconnect",
-            actor.conn.session_id,
-        );
+    // Record telemetry for logins with more context
+    if actor.is_login && !actor.username.is_empty() {
+        let reason = if shutdown_flag.load(Ordering::SeqCst) {
+            "clean_disconnect"
+        } else {
+            "unexpected_disconnect"
+        };
+
+        match ActorSupervisor::global() {
+            supervisor => {
+                supervisor
+                            .log_player_disconnect(actor.conn.session_id, reason)
+                            .await;
+            }
+        }
+
+        TELEMETRY.record_connection_end(&peer_address.to_string(), reason, actor.conn.session_id);
     }
 
     // Close the client connection
@@ -196,7 +207,6 @@ impl MinecraftClientHandler {
 
         if is_login {
             span.in_scope(|| {
-                //We'are sure that in is_login the start_span exist
                 tokio::spawn(
                     start_minecraft_client_actor(actor, proxy_mode, shutdown)
                         .instrument(start_span.unwrap()),

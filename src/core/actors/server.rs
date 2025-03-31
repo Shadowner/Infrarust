@@ -1,9 +1,8 @@
 use std::{
-    io,
-    sync::{
+    fmt::Debug, io, sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    },
+    }
 };
 
 use tokio::sync::{mpsc, oneshot};
@@ -11,6 +10,7 @@ use tracing::{debug, instrument, warn, Instrument};
 
 use crate::{
     core::{
+        actors::supervisor::ActorSupervisor,
         config::ServerConfig,
         event::{GatewayMessage, MinecraftCommunication},
     },
@@ -70,7 +70,7 @@ async fn start_minecraft_server_actor<T>(
     proxy_mode: Box<dyn ServerProxyModeHandler<MinecraftCommunication<T>>>,
     shutdown: Arc<AtomicBool>,
 ) where
-    T: Send + 'static,
+    T: Send + std::fmt::Debug + 'static,
 {
     async fn read_from_server(
         server_request: &mut Option<ServerResponse>,
@@ -94,9 +94,21 @@ async fn start_minecraft_server_actor<T>(
 
     let client_sender = actor.client_sender.clone();
 
-    // Wait for the server request in a separate task to not block message processing
+    debug!("Waiting for server request from oneshot channel");
     let request = match oneshot.await {
-        Ok(req) => req,
+        Ok(req) => {
+            debug!("Received server request");
+            
+            if actor.is_login {
+                if let Some(domain) = &req.proxied_domain {
+                    if let Some(server_conn) = &req.server_conn {
+                        debug!("Server domain for connection {}: {}", server_conn.session_id, domain);
+                    }
+                }
+            }
+            
+            req
+        },
         Err(e) => {
             debug!("Failed to receive server request: {:?}", e);
             if actor.is_login
@@ -108,17 +120,17 @@ async fn start_minecraft_server_actor<T>(
                 debug!("Client channel already closed during server initialization");
             }
             actor.server_receiver.close();
-            debug!("Shutting down Minecraft Server Actor");
+            debug!("Shutting down Minecraft Server Actor due to missing request");
             return;
         }
     };
 
     actor.server_request = Some(request);
 
-    // Just to ensure that the initialize_server has the request
     if actor.server_request.is_some() {
+        debug!("Initializing server proxy mode");
         match proxy_mode.initialize_server(&mut actor).await {
-            Ok(_) => {}
+            Ok(_) => debug!("Server proxy mode initialized successfully"),
             Err(e) => {
                 warn!("Failed to initialize server proxy mode: {:?}", e);
                 if client_sender
@@ -137,7 +149,7 @@ async fn start_minecraft_server_actor<T>(
         warn!("Server request is None");
     }
 
-    debug!("Starting Minecraft Server Actor for ID");
+    debug!("Starting Minecraft Server Actor main loop");
     while !shutdown.load(Ordering::SeqCst) {
         if actor
             .server_request
@@ -160,28 +172,15 @@ async fn start_minecraft_server_actor<T>(
 
         let shutdown_flag = shutdown.clone();
 
-        macro_rules! handle_server_error {
-            ($err:expr) => {{
-                warn!("Server error: {:?}", $err);
-                shutdown_flag.store(true, Ordering::SeqCst);
-                if let Some(server_request) = &mut actor.server_request {
-                    if let Some(server_conn) = &mut server_request.server_conn {
-                        if let Err(close_err) = server_conn.close().await {
-                            debug!(
-                                "Error closing server connection after error: {:?}",
-                                close_err
-                            );
-                        }
-                    }
-                }
-                break;
-            }};
-        }
+        // Add a timeout to each select iteration to avoid getting stuck if it ever happen
+        let timeout = tokio::time::sleep(tokio::time::Duration::from_secs(5));
 
         tokio::select! {
             Some(msg) = actor.gateway_receiver.recv() => {
                 if let Err(e) = actor.handle_gateway_message(msg) {
-                    handle_server_error!(e);
+                    warn!("Error handling gateway message: {:?}", e);
+                    shutdown_flag.store(true, Ordering::SeqCst);
+                    break;
                 }
             }
             Some(msg) = actor.server_receiver.recv() => {
@@ -199,20 +198,30 @@ async fn start_minecraft_server_actor<T>(
                     shutdown_flag.store(true, Ordering::SeqCst);
                     break;
                 } else if let Err(e) = proxy_mode.handle_internal_server(msg, &mut actor).await {
-                    handle_server_error!(e);
+                    warn!("Error handling internal server message: {:?}", e);
+                    shutdown_flag.store(true, Ordering::SeqCst);
+                    break;
                 }
             }
             read_result = read_from_server(&mut actor.server_request) => {
                 match read_result {
                     Ok(read_value) => {
                         if let Err(e) = proxy_mode.handle_external_server(read_value, &mut actor).await {
-                            handle_server_error!(e);
+                            warn!("Error handling external server message: {:?}", e);
+                            shutdown_flag.store(true, Ordering::SeqCst);
+                            break;
                         }
                     }
                     Err(e) => {
-                        handle_server_error!(e);
+                        warn!("Error reading from server: {:?}", e);
+                        shutdown_flag.store(true, Ordering::SeqCst);
+                        break;
                     }
                 }
+            }
+            _ = timeout => {
+                // If we hit the timeout, just continue to the next iteration
+                debug!("Server actor select timeout - continuing");
             }
             else => {
                 debug!("All channels closed");
@@ -222,9 +231,8 @@ async fn start_minecraft_server_actor<T>(
         }
     }
 
-    debug!("Shutting down server actor");
+    debug!("Exiting Minecraft Server Actor main loop");
 
-    // Close the server connection if it exists
     if let Some(server_request) = &mut actor.server_request {
         if let Some(server_conn) = &mut server_request.server_conn {
             if let Err(e) = server_conn.close().await {
@@ -278,7 +286,7 @@ pub struct MinecraftServerHandler {
 }
 
 impl MinecraftServerHandler {
-    pub fn new<T: Send + 'static>(
+    pub fn new<T: Send + Debug + 'static>(
         client_sender: mpsc::Sender<MinecraftCommunication<T>>,
         server_receiver: mpsc::Receiver<MinecraftCommunication<T>>,
         is_login: bool,
