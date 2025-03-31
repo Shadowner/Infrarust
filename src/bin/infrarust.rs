@@ -11,7 +11,6 @@ use infrarust::{
     core::config::provider::file::FileProvider,
     telemetry::{
         self, exporter::resource, init_meter_provider, start_system_metrics_collection,
-        tracing::init_tracer_provider,
     },
     Infrarust,
 };
@@ -44,24 +43,35 @@ async fn main() {
             config
         }
         Err(e) => {
-            error!("Failed to load configuration: {}", e);
             println!("Failed to load configuration: {}", e);
             process::exit(1);
         }
     };
 
+    let _logging_guard = telemetry::tracing::init_logging(&config.logging);
+    
     let mut _meter_guard: Option<telemetry::MeterProviderGuard> = None;
-    let _tracer_guard = init_tracer_provider(resource(), config.telemetry.export_url.clone());
-    if config.telemetry.enabled && config.telemetry.enable_metrics {
-        if config.telemetry.export_url.clone().is_none() {
-            warn!("Metrics enabled but no export URL provided");
-        } else {
-            start_system_metrics_collection();
-            _meter_guard = Some(init_meter_provider(
-                resource(),
-                config.telemetry.export_url.clone().unwrap(),
-                Duration::from_secs(config.telemetry.export_interval_seconds),
-            ));
+    let mut _tracer_guard: Option<telemetry::tracing::TracerProviderGuard> = None;
+    
+    if config.telemetry.enabled {
+        if config.telemetry.enable_tracing {
+            _tracer_guard = telemetry::tracing::init_opentelemetry_tracing(
+                resource(), 
+                &config.telemetry
+            );
+        }
+        
+        if config.telemetry.enable_metrics {
+            if config.telemetry.export_url.clone().is_none() {
+                warn!("Metrics enabled but no export URL provided");
+            } else {
+                start_system_metrics_collection();
+                _meter_guard = Some(init_meter_provider(
+                    resource(),
+                    config.telemetry.export_url.clone().unwrap(),
+                    Duration::from_secs(config.telemetry.export_interval_seconds),
+                ));
+            }
         }
     }
 
