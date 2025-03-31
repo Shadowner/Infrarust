@@ -18,6 +18,7 @@ use super::super::{
 use super::RawPacketIO;
 
 /// Handles packet writing with compression and encryption support
+#[derive(Clone, Debug)]
 pub struct PacketWriter<W> {
     writer: W,
     encryption: Option<Aes128Cfb8Enc>,
@@ -117,7 +118,7 @@ impl<W: AsyncWrite + Unpin + Send> PacketWriter<W> {
         output.extend_from_slice(&final_data);
 
         // Handle encryption if enabled
-        let mut encrypted_data = output.clone();
+        let mut encrypted_data = output;
         if let Some(cipher) = &mut self.encryption {
             cipher.encrypt_with_backend_mut(Cfb8Closure {
                 data: &mut encrypted_data,

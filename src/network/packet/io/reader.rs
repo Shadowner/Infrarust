@@ -18,6 +18,7 @@ use crate::{
 };
 use crate::{protocol::types::VarInt, ProtocolRead};
 
+#[derive(Debug)]
 pub struct PacketReader<R> {
     pub reader: R,
     encryption: Option<Aes128Cfb8Dec>,

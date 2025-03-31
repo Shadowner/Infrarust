@@ -6,7 +6,7 @@ use clap::Parser;
 use std::sync::Arc;
 use std::{process, time::Duration};
 use tracing::{error, info, warn};
-
+use tokio::signal;
 use infrarust::{
     core::config::provider::file::FileProvider,
     telemetry::{
@@ -26,6 +26,37 @@ struct Args {
 
     #[arg(long, default_value = "false")]
     watch: bool,
+}
+
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut term_signal = signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to create SIGTERM signal handler");
+        
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                info!("Received SIGINT (CTRL+C), goodbye :)");
+            }
+            _ = term_signal.recv() => {
+                info!("Received SIGTERM, goodbye :)");
+            }
+        }
+    }
+    
+    #[cfg(windows)]
+    {
+        let mut ctrl_close = signal::windows::ctrl_close().expect("Failed to create CTRL_CLOSE handler");
+        
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                info!("Received CTRL+C, goodbye :)");
+            }
+            _ = ctrl_close.recv() => {
+                info!("Received CTRL_CLOSE, goodbye :)");
+            }
+        }
+    }
 }
 
 #[tokio::main]
@@ -85,8 +116,18 @@ async fn main() {
         }
     };
 
-    if let Err(e) = Arc::clone(&server).run().await {
-        error!("Server error: {}", e);
-        process::exit(1);
+    let server_task = tokio::spawn(async move {
+        if let Err(e) = Arc::clone(&server).run().await {
+            error!("Server error: {}", e);
+            process::exit(1);
+        }
+    });
+
+    tokio::select! {
+        _ = server_task => {
+            info!("Server task completed");
+        }
+        _ = wait_for_shutdown_signal() => {
+        }
     }
 }

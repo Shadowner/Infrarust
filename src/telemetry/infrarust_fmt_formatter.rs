@@ -129,7 +129,7 @@ where
         if self.timestamp {
             let now = chrono::Local::now();
             let timestamp = now.format(&self.time_format);
-            components.insert("timestamp", self.colorize(&timestamp.to_string(), "\x1B[38;5;016m"));
+            components.insert("timestamp", self.colorize(&timestamp.to_string(), "\x1B[38;5;240m"));
         } else {
             components.insert("timestamp", String::new());
         }
@@ -139,11 +139,11 @@ where
         if self.show_level {
             if self.use_icons {
                 match *level {
-                    Level::TRACE => components.insert("level", self.colorize("🔍 TRACE", "\x1B[37m")),
-                    Level::DEBUG => components.insert("level", self.colorize("🔧 DEBUG", "\x1B[36m")),
-                    Level::INFO  => components.insert("level", self.colorize("✅ INFO ", "\x1B[32m")),
+                    Level::TRACE => components.insert("level", self.colorize("🔍  TRACE", "\x1B[37m")),
+                    Level::DEBUG => components.insert("level", self.colorize("🔧  DEBUG", "\x1B[36m")),
+                    Level::INFO  => components.insert("level", self.colorize("✅  INFO ", "\x1B[32m")),
                     Level::WARN  => components.insert("level", self.colorize("⚠️  WARN ", "\x1B[33m")),
-                    Level::ERROR => components.insert("level", self.colorize("❌ ERROR", "\x1B[31m")),
+                    Level::ERROR => components.insert("level", self.colorize("❌  ERROR", "\x1B[31m")),
                 };
             } else {
                 match *level {

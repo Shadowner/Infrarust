@@ -3,10 +3,10 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use tokio::{
-    sync::{mpsc, oneshot, RwLock},
+    sync::{mpsc, oneshot, OnceCell, RwLock},
     task::JoinHandle,
 };
-use tracing::{debug, debug_span, instrument, Instrument};
+use tracing::{debug, debug_span, info, instrument, Instrument};
 
 use crate::{
     core::{
@@ -34,9 +34,15 @@ pub struct ActorPair {
     pub server: MinecraftServerHandler,
     pub shutdown: Arc<AtomicBool>,
     pub created_at: std::time::Instant,
+    pub session_id: uuid::Uuid,
+    pub config_id: String,
+    pub server_name: String,
+    pub disconnect_logged: Arc<AtomicBool>,
 }
 
 type ActorStorage = HashMap<String, Vec<ActorPair>>;
+
+static GLOBAL_SUPERVISOR: OnceCell<Arc<ActorSupervisor>> = OnceCell::const_new();
 
 pub struct ActorSupervisor {
     actors: RwLock<ActorStorage>,
@@ -50,6 +56,22 @@ impl Default for ActorSupervisor {
 }
 
 impl ActorSupervisor {
+    pub fn global() -> Arc<ActorSupervisor> {
+        match GLOBAL_SUPERVISOR.get() {
+            Some(supervisor) => supervisor.clone(),
+            None => {
+                // Fallback to a new instance if not initialized (shouldn't happen in practice)
+                debug!("Warning: Using temporary supervisor instance - global was not initialized");
+                Arc::new(ActorSupervisor::new())
+            }
+        }
+    }
+
+    pub fn initialize_global(supervisor: Arc<ActorSupervisor>) -> Result<(), tokio::sync::SetError<Arc<ActorSupervisor>>> {
+        debug!("Initializing global supervisor instance");
+        GLOBAL_SUPERVISOR.set(supervisor)
+    }
+
     pub fn new() -> Self {
         Self {
             actors: RwLock::new(HashMap::new()),
@@ -71,14 +93,22 @@ impl ActorSupervisor {
         oneshot_request_receiver: oneshot::Receiver<ServerResponse>,
         is_login: bool,
         username: String,
+        domain:&str
     ) -> ActorPair {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let span = debug_span!("actor_pair_setup");
+        let session_id = client_conn.session_id;
+
+        debug!(
+            "Creating actor pair with session_id: {}, is_login: {}, proxy_mode: {:?}",
+            session_id, is_login, proxy_mode
+        );
 
         if is_login {
             TELEMETRY.update_player_count(1, config_id, client_conn.session_id, &username);
         }
 
+        // TODO: Refactor this horror
         let pair = match proxy_mode {
             ProxyModeEnum::Status => {
                 let (client_handler, server_handler) = get_status_mode();
@@ -91,6 +121,8 @@ impl ActorSupervisor {
                     is_login,
                     username,
                     shutdown_flag,
+                    session_id,
+                    domain.to_string(),
                 )
                 .instrument(span)
                 .await
@@ -106,6 +138,8 @@ impl ActorSupervisor {
                     is_login,
                     username,
                     shutdown_flag,
+                    session_id,
+                    domain.to_string(),
                 )
                 .instrument(span)
                 .await
@@ -121,6 +155,8 @@ impl ActorSupervisor {
                     is_login,
                     username,
                     shutdown_flag,
+                    session_id,
+                    domain.to_string(),
                 )
                 .instrument(span)
                 .await
@@ -136,6 +172,8 @@ impl ActorSupervisor {
                     is_login,
                     username,
                     shutdown_flag,
+                    session_id,
+                    domain.to_string(),
                 )
                 .instrument(span)
                 .await
@@ -151,6 +189,8 @@ impl ActorSupervisor {
                     is_login,
                     username,
                     shutdown_flag,
+                    session_id,
+                    domain.to_string(),
                 )
                 .instrument(span)
                 .await
@@ -161,6 +201,7 @@ impl ActorSupervisor {
             .instrument(debug_span!("register_pair"))
             .await;
 
+        debug!("Actor pair created successfully");
         pair
     }
 
@@ -169,7 +210,6 @@ impl ActorSupervisor {
         username = %username,
         is_login = is_login
     ))]
-    //TODO: Refactor to remove the warning
     #[allow(clippy::too_many_arguments)]
     async fn create_actor_pair_with_handlers<T>(
         &self,
@@ -181,9 +221,11 @@ impl ActorSupervisor {
         is_login: bool,
         username: String,
         shutdown_flag: Arc<AtomicBool>,
+        session_id: uuid::Uuid,
+        server_name: String,
     ) -> ActorPair
     where
-        T: ProxyMessage + 'static + Send + Sync,
+        T: ProxyMessage + 'static + Send + Sync + std::fmt::Debug,
     {
         let (server_sender, server_receiver) = mpsc::channel(64);
         let (client_sender, client_receiver) = mpsc::channel(64);
@@ -226,10 +268,33 @@ impl ActorSupervisor {
             server,
             shutdown: shutdown_flag,
             created_at: std::time::Instant::now(),
+            session_id,
+            config_id: config_id.to_string(),
+            server_name,
+            disconnect_logged: Arc::new(AtomicBool::new(false)),
         };
 
         self.register_actor_pair(config_id, pair.clone()).await;
         pair
+    }
+
+    async fn log_disconnect_if_needed(&self, pair: &ActorPair) {
+        if !pair.disconnect_logged.load(std::sync::atomic::Ordering::SeqCst) 
+            && !pair.username.is_empty() 
+            && pair.created_at.elapsed().as_secs() > 5 // Only log meaningful connections
+        {
+            info!(
+                "Player '{}' disconnected from server '{}' ({})",
+                pair.username, pair.server_name, pair.config_id
+            );
+            
+            let duration_secs = pair.created_at.elapsed().as_secs();
+            debug!(
+                "Session duration for '{}': {} seconds",
+                pair.username, duration_secs
+            );
+            pair.disconnect_logged.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     #[instrument(skip(self, pair), fields(config_id = %config_id))]
@@ -270,14 +335,19 @@ impl ActorSupervisor {
             .push(handle);
     }
 
-    // Periodic health check to clear dead actors
-    // TODO: Upgrade to a more sophisticated actor lifecycle management system
     pub async fn health_check(&self) {
         let mut actors = self.actors.write().await;
         let mut tasks = self.tasks.write().await;
 
         for (config_id, pairs) in actors.iter_mut() {
             let before_count = pairs.len();
+
+            // Log any player disconnections before removing them
+            for pair in pairs.iter() {
+                if pair.shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                    self.log_disconnect_if_needed(pair).await;
+                }
+            }
 
             // Remove actors with shutdown flag set
             pairs.retain(|pair| !pair.shutdown.load(std::sync::atomic::Ordering::SeqCst));
@@ -314,5 +384,50 @@ impl ActorSupervisor {
                 true
             }
         });
+    }
+    
+    pub async fn log_player_disconnect(&self, session_id: uuid::Uuid, reason: &str) {
+        let actors = self.actors.read().await;
+        // Find the actor pair with this session ID
+        for (config_id, pairs) in actors.iter() {
+            for pair in pairs {
+                if pair.session_id == session_id && !pair.username.is_empty() {
+                    // Only log if not already logged
+                    if !pair.disconnect_logged.load(std::sync::atomic::Ordering::SeqCst) {
+                        info!(
+                            "Player '{}' disconnected from server '{}' ({}) - reason: {}",
+                            pair.username, pair.server_name, config_id, reason
+                        );
+                        
+                        // Mark as logged to avoid duplicates
+                        pair.disconnect_logged.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    
+                    // Mark this pair for shutdown
+                    pair.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+                    return;
+                }
+            }
+        }
+    }
+
+    pub async fn find_actor_pairs_by_session_id(&self, session_id: uuid::Uuid) -> Option<Vec<Arc<RwLock<ActorPair>>>> {
+        let actors = self.actors.read().await;
+        let mut result = Vec::new();
+        
+        for pairs in actors.values() {
+            for pair in pairs {
+                if pair.session_id == session_id {
+                    let pair_clone = Arc::new(RwLock::new(pair.clone()));
+                    result.push(pair_clone);
+                }
+            }
+        }
+        
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
     }
 }
