@@ -1,6 +1,7 @@
 pub mod exporter;
 pub mod metrics;
 pub mod tracing;
+pub mod infrarust_fmt_formatter;
 
 pub use metrics::{init_meter_provider, MeterProviderGuard};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};

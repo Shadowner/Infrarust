@@ -67,7 +67,7 @@ impl FileProvider {
         // decode the file
         let mut default_config = InfrarustConfig::default();
         let config: InfrarustConfig = serde_yaml::from_str(&content)?;
-        default_config.merge(&config);
+        default_config.merge(config);
 
         Ok(default_config)
     }

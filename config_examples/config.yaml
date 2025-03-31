@@ -10,6 +10,19 @@ file_provider:
     - "./config_examples/proxies"
   watch: true
 
+# Logging configuration for better debugging
+logging:
+  use_color: true
+  use_icons: false
+  show_timestamp: true
+  time_format: "%Y-%m-%d %H:%M:%S"
+  show_target: true
+  show_fields: true
+  template: "{timestamp} {level}: {message} {target} {fields}"
+  field_prefixes:
+    fields: "\n\t\t\t"
+    target: "\n\t\t "
+
 telemetry:
   enabled: true
   export_url: "http://localhost:4317"

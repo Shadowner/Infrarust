@@ -1,94 +1,117 @@
+use std::str::FromStr;
+
 use opentelemetry::global;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::trace::{SdkTracerProvider, TracerProviderBuilder};
 use opentelemetry_sdk::Resource;
-use std::str::FromStr;
-use tracing::Level;
+use opentelemetry_sdk::trace::{SdkTracerProvider, TracerProviderBuilder};
+use tracing::{info, Level};
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-pub struct TracerProviderGuard(pub SdkTracerProvider);
+use crate::core::config::{LoggingConfig, TelemetryConfig};
+use super::infrarust_fmt_formatter::InfrarustMessageFormatter;
 
+pub struct TracerProviderGuard(pub SdkTracerProvider);
 impl Drop for TracerProviderGuard {
     fn drop(&mut self) {
-        if let Err(exporter) = self.0.shutdown() {
-            println!("Failed to shutdown exporter: {:?}", exporter);
+        if let Err(e) = self.0.shutdown() {
+            eprintln!("Failed to shutdown OpenTelemetry exporter: {:?}", e);
         };
     }
 }
 
-pub fn init_tracer_provider(resource: Resource, export_url: Option<String>) -> TracerProviderGuard {
-    let mut provider = TracerProviderBuilder::default();
-    if export_url.clone().is_some() {
-        let exporter = opentelemetry_otlp::SpanExporter::builder()
-            .with_tonic()
-            .with_endpoint(export_url.clone().unwrap().to_string())
-            .build()
-            .unwrap();
+pub struct LoggingGuard;
 
-        provider = provider.with_batch_exporter(exporter);
-    }
-
-    provider = provider.with_resource(resource);
-
-    let provider = provider.build();
-
-    if export_url.is_some() {
-        init_subscriber_with_optl(&provider);
+/// Initialize logging with the provided configuration
+///
+/// This sets up the tracing subscriber with custom formatting based on the config.
+/// It should be called once at application startup before any logging occurs.
+pub fn init_logging(config: &LoggingConfig) -> LoggingGuard {
+    let log_level = if cfg!(debug_assertions) {
+        Level::DEBUG
     } else {
-        init_subscriber();
-    }
+        Level::INFO
+    };
+
+    let formatter = create_formatter_from_config(config);
+    
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .event_format(formatter)
+        .with_filter(tracing_subscriber::filter::LevelFilter::from_level(log_level));
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::from_str(&format!("infrarust={}", log_level))
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::from_default_env()),
+        )
+        .with(fmt_layer)
+        .init();
+        
+    LoggingGuard {}
+}
+
+/// Initialize OpenTelemetry tracing
+///
+/// This sets up an OpenTelemetry tracer provider for distributed tracing 
+/// and adds a layer to the existing tracing subscriber.
+pub fn init_opentelemetry_tracing(resource: Resource, config: &TelemetryConfig) -> Option<TracerProviderGuard> {
+    let export_url = match &config.export_url {
+        Some(url) if !url.is_empty() => url.clone(),
+        _ => return None,
+    };
+
+    let exporter = match opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(export_url)
+        .build() {
+            Ok(exporter) => exporter,
+            Err(e) => {
+                tracing::error!("Failed to create OpenTelemetry exporter: {}", e);
+                return None;
+            }
+        };
+
+    let provider = TracerProviderBuilder::default()
+        .with_batch_exporter(exporter)
+        .with_resource(resource)
+        .build();
+    
+    let tracer = provider.tracer("infrarust");
+    let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+    
+    // Try to add the telemetry layer to the registry
+    // It's ok if this fails - it means a subscriber is already registered
+    // and we'll just add the layer to it
+    let _ = tracing_subscriber::registry()
+        .with(telemetry_layer)
+        .try_init();
+        
     global::set_tracer_provider(provider.clone());
-    TracerProviderGuard(provider)
+    
+    Some(TracerProviderGuard(provider))
 }
 
-pub fn init_subscriber_with_optl(provider: &SdkTracerProvider) {
-    let tracer = provider.tracer("proxy");
-    let layer = tracing_opentelemetry::layer().with_tracer(tracer);
+fn create_formatter_from_config(config: &LoggingConfig) -> InfrarustMessageFormatter {
+    println!("Creating formatter with: use_color={}, use_icons={}, template={}",
+        config.use_color, config.use_icons, config.template);
+    
+    let mut formatter = InfrarustMessageFormatter::default()
+        .with_ansi(config.use_color)
+        .with_icons(config.use_icons)
+        .with_timestamp(config.show_timestamp)
+        .with_time_format(&config.time_format)
+        .with_target(config.show_target)
+        .with_all_fields(config.show_fields);
 
-    let log_level = if cfg!(debug_assertions) {
-        Level::DEBUG
-    } else {
-        Level::INFO
-    };
-
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .compact()
-        .with_level(true) // Garder le niveau de log
-        .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
-            log_level,
-        ));
-
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::from_str(&format!("infrarust={}", log_level))
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::from_default_env()),
-        )
-        .with(layer)
-        .with(fmt_layer)
-        .init();
-}
-
-pub fn init_subscriber() {
-    let log_level = if cfg!(debug_assertions) {
-        Level::DEBUG
-    } else {
-        Level::INFO
-    };
-
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .compact()
-        .with_level(true)
-        .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
-            log_level,
-        ));
-
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::from_str(&format!("infrarust={}", log_level))
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::from_default_env()),
-        )
-        .with(fmt_layer)
-        .init();
+    if !config.template.is_empty() {
+        formatter = formatter.with_template(&config.template);
+    }
+        
+    for (field, prefix) in &config.field_prefixes {
+        println!("Adding prefix for field '{}': '{}'", field, prefix);
+        formatter = formatter.before_field(field, prefix);
+    }
+    
+    formatter
 }

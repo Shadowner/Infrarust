@@ -1,6 +1,7 @@
 pub mod provider;
 pub mod service;
 use std::time::Duration;
+use std::collections::HashMap;
 
 use provider::file::FileProviderConfig;
 use serde::Deserialize;
@@ -35,6 +36,48 @@ pub struct StatusCacheOptions {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CacheConfig {
     pub status: Option<StatusCacheOptions>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct LoggingConfig {
+    #[serde(default)]
+    pub use_color: bool,
+    
+    #[serde(default)]
+    pub use_icons: bool,
+    
+    #[serde(default)]
+    pub show_timestamp: bool,
+    
+    #[serde(default)]
+    pub time_format: String,
+    
+    #[serde(default)]
+    pub show_target: bool,
+    
+    #[serde(default)]
+    pub show_fields: bool,
+    
+    #[serde(default)]
+    pub template: String,
+    
+    #[serde(default)]
+    pub field_prefixes: HashMap<String, String>,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            use_color: true,
+            use_icons: true,
+            show_timestamp: true,
+            time_format: "%Y-%m-%d %H:%M:%S%.3f".to_string(),
+            show_target: false,
+            show_fields: false,
+            template: "{timestamp} {level}: {message}".to_string(),
+            field_prefixes: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -123,6 +166,9 @@ pub struct InfrarustConfig {
     pub telemetry: TelemetryConfig,
 
     #[serde(default)]
+    pub logging: LoggingConfig,
+
+    #[serde(default)]
     pub motds: ServerMotds,
 }
 
@@ -137,7 +183,7 @@ impl InfrarustConfig {
         self.bind.is_none() && self.domains.is_none() && self.addresses.is_none()
     }
 
-    pub fn merge(&mut self, other: &InfrarustConfig) {
+    pub fn merge(&mut self, other: InfrarustConfig) {
         if let Some(bind) = &other.bind {
             self.bind = Some(bind.clone());
         }
@@ -159,16 +205,18 @@ impl InfrarustConfig {
         }
 
         if other.motds.unknown.is_some() {
-            self.motds.unknown = other.motds.unknown.clone();
+            self.motds.unknown = other.motds.unknown;
         }
 
         if other.motds.unreachable.is_some() {
-            self.motds.unreachable = other.motds.unreachable.clone();
+            self.motds.unreachable = other.motds.unreachable;
         }
 
         if other.telemetry.enabled {
-            self.telemetry = other.telemetry.clone();
+            self.telemetry = other.telemetry;
         }
+
+        self.logging = other.logging;
     }
 }
 
