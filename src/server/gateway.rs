@@ -15,6 +15,7 @@ use crate::{
     protocol::minecraft::java::login::ServerBoundLoginStart,
     proxy_modes::ProxyModeEnum,
 };
+use crate::cli::ShutdownController;
 
 use super::{ServerRequest, ServerRequester, ServerResponse, backend::Server, cache::StatusCache};
 use crate::core::config::service::ConfigurationService;
@@ -25,12 +26,14 @@ pub struct Gateway {
     status_cache: Arc<Mutex<StatusCache>>,
     _sender: mpsc::Sender<GatewayMessage>,
     pub actor_supervisor: Arc<ActorSupervisor>,
+    shutdown_controller: Arc<ShutdownController>,
 }
 
 impl Gateway {
     pub fn new(
         sender: mpsc::Sender<GatewayMessage>,
         config_service: Arc<ConfigurationService>,
+        shutdown_controller: Arc<ShutdownController>,
     ) -> Self {
         info!("Initializing ServerGateway");
 
@@ -39,15 +42,26 @@ impl Gateway {
             _sender: sender,
             actor_supervisor: Arc::new(ActorSupervisor::new()),
             status_cache: Arc::new(Mutex::new(StatusCache::new(Duration::from_secs(30)))),
+            shutdown_controller,
         };
 
         // Start a background task for periodic health checks
         let supervisor = gateway.actor_supervisor.clone();
+        let shutdown = gateway.shutdown_controller.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            let mut shutdown_rx = shutdown.subscribe().await;
+            
             loop {
-                interval.tick().await;
-                supervisor.health_check().await;
+                tokio::select! {
+                    _ = shutdown_rx.recv() => {
+                        debug!("Health check task received shutdown signal");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        supervisor.health_check().await;
+                    }
+                }
             }
         });
 

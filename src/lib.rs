@@ -46,7 +46,8 @@ pub use security::{
 
 // Server implementation
 pub mod server;
-
+pub mod cli;
+use cli::ShutdownController;
 use server::gateway::Gateway;
 use server::ServerRequest;
 use tokio::net::TcpListener;
@@ -60,7 +61,7 @@ pub struct Infrarust {
     config: InfrarustConfig,
     filter_chain: FilterChain,
     server_gateway: Arc<Gateway>,
-
+    shutdown_controller: Arc<ShutdownController>,
     _gateway_sender: Sender<GatewayMessage>,
     _provider_sender: Sender<ProviderMessage>,
 }
@@ -71,7 +72,10 @@ lazy_static! {
 }
 
 impl Infrarust {
-    pub fn new(config: InfrarustConfig) -> io::Result<Self> {
+    pub fn new(
+        config: InfrarustConfig, 
+        shutdown_controller: Arc<ShutdownController>
+    ) -> io::Result<Self> {
         let span = debug_span!("infrarust_init");
         let _enter = span.enter();
 
@@ -84,7 +88,11 @@ impl Infrarust {
         let (gateway_sender, gateway_receiver) = tokio::sync::mpsc::channel(100);
         let (provider_sender, provider_receiver) = tokio::sync::mpsc::channel(100);
 
-        let server_gateway = Arc::new(Gateway::new(gateway_sender.clone(), config_service.clone()));
+        let server_gateway = Arc::new(Gateway::new(
+            gateway_sender.clone(), 
+            config_service.clone(),
+            shutdown_controller.clone()
+        ));
 
         if let Err(_) = ActorSupervisor::initialize_global(server_gateway.actor_supervisor.clone()) {
             debug!("Global supervisor was already initialized");
@@ -129,6 +137,7 @@ impl Infrarust {
             config,
             filter_chain: FilterChain::new(),
             server_gateway,
+            shutdown_controller,
             _gateway_sender: gateway_sender,
             _provider_sender: provider_sender,
         })
@@ -137,48 +146,95 @@ impl Infrarust {
     pub async fn run(self: Arc<Self>) -> Result<(), SendError> {
         debug!("Starting Infrarust server");
         let bind_addr = self.config.bind.clone().unwrap_or_default();
-        let listener = TcpListener::bind(&bind_addr).await?;
+        
+        // Create listener
+        let listener = match TcpListener::bind(&bind_addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                error!("Failed to bind to {}: {}", bind_addr, e);
+                self.shutdown_controller.trigger_shutdown(&format!("Failed to bind: {}", e)).await;
+                return Err(SendError::new(e));
+            }
+        };
+        
         info!("Listening on {}", bind_addr);
-
+        
+        // Get a shutdown receiver
+        let mut shutdown_rx = self.shutdown_controller.subscribe().await;
+        
         loop {
-            match listener.accept().await {
-                Ok((stream, addr)) => {
-                    let session_id = Uuid::new_v4();
-                    let span = debug_span!("TCP Connection", %addr, %session_id);
-                    debug!("New TCP connection accepted : ({})[{}]", addr, session_id);
-
-                    let filter_chain = self.filter_chain.clone();
-                    let server_gateway = Arc::clone(&self.server_gateway);
-                    let clone_span = span.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = async move {
-                            debug!("Starting connection processing for ({})[{}]", addr, session_id);
-                            filter_chain.filter(&stream).await?;
-                            debug!("Connection passed filters for ({})[{}]", addr, session_id);
-                            let conn = Connection::new(stream, session_id)
-                                .instrument(debug_span!("New connection"))
-                                .await?;
-                            debug!("Connection established for ({})[{}]", addr, session_id);
-                            Self::handle_connection(conn, server_gateway)
-                                .instrument(clone_span)
-                                .await?;
-
-                            Ok::<_, SendError>(())
-                        }
-                        .instrument(span)
-                        .await
-                        {
-                            error!("Connection error from {}: {}", addr, e);
-                        }
-                    })
-                    .await
-                    .unwrap_or_default();
+            tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    info!("Received shutdown signal, stopping server");
+                    break;
                 }
-                Err(e) => {
-                    error!("Accept error: {}", e);
+                
+                accept_result = listener.accept() => {
+                    match accept_result {
+                        Ok((stream, addr)) => {
+                            let session_id = Uuid::new_v4();
+                            let span = debug_span!("TCP Connection", %addr, %session_id);
+                            debug!("New TCP connection accepted : ({})[{}]", addr, session_id);
+
+                            let filter_chain = self.filter_chain.clone();
+                            let server_gateway = Arc::clone(&self.server_gateway);
+                            let clone_span = span.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = async move {
+                                    debug!("Starting connection processing for ({})[{}]", addr, session_id);
+                                    filter_chain.filter(&stream).await?;
+                                    debug!("Connection passed filters for ({})[{}]", addr, session_id);
+                                    let conn = Connection::new(stream, session_id)
+                                        .instrument(debug_span!("New connection"))
+                                        .await?;
+                                    debug!("Connection established for ({})[{}]", addr, session_id);
+                                    Self::handle_connection(conn, server_gateway)
+                                        .instrument(clone_span)
+                                        .await?;
+
+                                    Ok::<_, SendError>(())
+                                }
+                                .instrument(span)
+                                .await
+                                {
+                                    error!("Connection error from {}: {}", addr, e);
+                                }
+                            })
+                            .await
+                            .unwrap_or_default();
+                        }
+                        Err(e) => {
+                            error!("Accept error: {}", e);
+                            if e.kind() == io::ErrorKind::Interrupted {
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
+        
+        info!("Server stopped accepting new connections");
+        Ok(())
+    }
+    
+    pub async fn shutdown(self: &Arc<Self>) -> tokio::sync::oneshot::Receiver<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        
+        let server_clone = self.clone();
+        tokio::spawn(async move {
+            let config_service = server_clone._config_service.clone();
+            let configs = config_service.get_all_configurations().await;
+            
+            for (config_id, _) in configs {
+                server_clone.server_gateway.actor_supervisor.shutdown_actors(&config_id).await;
+            }
+            
+            // Signal completion
+            let _ = tx.send(());
+        });
+        
+        rx
     }
 
     #[instrument(name = "connection_flow", skip(client, server_gateway), fields(
@@ -224,6 +280,14 @@ impl Infrarust {
 
         Ok(())
     }
+
+    pub fn get_supervisor(&self) -> Arc<ActorSupervisor> {
+        self.server_gateway.actor_supervisor.clone()
+    }
+    
+    pub fn get_config_service(&self) -> Arc<ConfigurationService> {
+        self._config_service.clone()
+    }
 }
 
 #[cfg(test)]
@@ -234,17 +298,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "TODO"]
     async fn test_infrared_basic() {
-        let config = InfrarustConfig {
-            bind: Some("127.0.0.1:25565".to_string()),
-            keepalive_timeout: Some(Duration::from_secs(30)),
-            ..Default::default()
-        };
 
-        let infrared = Arc::new(Infrarust::new(config).unwrap());
-
-        tokio::spawn(async move {
-            infrared.run().await.unwrap();
-        });
 
         // TODO: Add integration tests that simulate client connections
     }

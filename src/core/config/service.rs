@@ -57,6 +57,12 @@ impl ConfigurationService {
         result
     }
 
+    /// Get all configurations
+    pub async fn get_all_configurations(&self) -> HashMap<String, Arc<ServerConfig>> {
+        let configs = self.configurations.read().await;
+        configs.clone()
+    }
+
     pub async fn update_configurations(&self, configs: Vec<ServerConfig>) {
         let span = debug_span!(
             "config_service: update_config_store",

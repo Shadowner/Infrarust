@@ -250,7 +250,7 @@ impl ActorSupervisor {
             username.clone(),
             shutdown_flag.clone(),
             root_span.clone(),
-        );
+        ).await;
 
         let server = MinecraftServerHandler::new(
             client_sender,
@@ -274,7 +274,6 @@ impl ActorSupervisor {
             disconnect_logged: Arc::new(AtomicBool::new(false)),
         };
 
-        self.register_actor_pair(config_id, pair.clone()).await;
         pair
     }
 
@@ -429,5 +428,58 @@ impl ActorSupervisor {
         } else {
             Some(result)
         }
+    }
+
+    /// Get all active actors, used by CLI commands
+    pub async fn get_all_actors(&self) -> HashMap<String, Vec<ActorPair>> {
+        let actors = self.actors.read().await;
+        let mut result = HashMap::new();
+        
+        for (config_id, pairs) in actors.iter() {
+            // Only include pairs that aren't shut down
+            let active_pairs: Vec<ActorPair> = pairs
+                .iter()
+                .filter(|pair| !pair.shutdown.load(std::sync::atomic::Ordering::SeqCst))
+                .cloned()
+                .collect();
+                
+            if !active_pairs.is_empty() {
+                result.insert(config_id.clone(), active_pairs);
+            }
+        }
+        
+        result
+    }
+
+    /// Shutdown all actors across all servers
+    pub async fn shutdown_all_actors(&self) {
+        info!("Shutting down all actors");
+        let mut actors = self.actors.write().await;
+        
+        for (config_id, pairs) in actors.iter_mut() {
+            for pair in pairs.iter() {
+                debug!("Shutting down actor for user {} on {}", pair.username, config_id);
+                pair.shutdown
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        
+        // Give actors time to clean up
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+        
+        // Clear all actors
+        actors.clear();
+        
+        // Also clean up tasks
+        let mut tasks = self.tasks.write().await;
+        for (config_id, handles) in tasks.iter_mut() {
+            debug!("Aborting {} tasks for {}", handles.len(), config_id);
+            for handle in handles.iter() {
+                handle.abort();
+            }
+        }
+        tasks.clear();
+        
+        info!("All actors have been shut down");
     }
 }
