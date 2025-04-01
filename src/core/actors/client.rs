@@ -178,12 +178,13 @@ async fn start_minecraft_client_actor<T>(
 pub struct MinecraftClientHandler {
     //TODO: establish a connection to talk to an actor
     _sender: mpsc::Sender<SupervisorMessage>,
+    peer_addr: Option<std::net::SocketAddr>,
 }
 
 impl MinecraftClientHandler {
     //TODO: Refactor to remove the warning
     #[allow(clippy::too_many_arguments)]
-    pub fn new<T: Send + 'static>(
+    pub async  fn new<T: Send + 'static>(
         server_sender: mpsc::Sender<MinecraftCommunication<T>>,
         client_receiver: mpsc::Receiver<MinecraftCommunication<T>>,
         proxy_mode: Box<dyn ClientProxyModeHandler<MinecraftCommunication<T>>>,
@@ -195,7 +196,7 @@ impl MinecraftClientHandler {
     ) -> Self {
         let span = tracing::Span::current();
         let (sender, receiver) = mpsc::channel(100);
-
+        let peer_addr = conn.peer_addr().await.unwrap_or_else(|_| "unknown".parse().unwrap());
         let actor = MinecraftClient::new(
             receiver,
             server_sender,
@@ -211,17 +212,22 @@ impl MinecraftClientHandler {
                     start_minecraft_client_actor(actor, proxy_mode, shutdown)
                         .instrument(start_span.unwrap()),
                 );
-                Self { _sender: sender }
+                Self { _sender: sender, peer_addr: Some(peer_addr) }
             })
         } else {
             tokio::spawn(
                 start_minecraft_client_actor(actor, proxy_mode, shutdown).instrument(span),
             );
-            Self { _sender: sender }
+            Self { _sender: sender, peer_addr: Some(peer_addr) }
         }
     }
 
     pub async fn send_message(&self, message: SupervisorMessage) {
         let _ = self._sender.send(message).await;
+    }
+
+    /// Get the peer address of the client connection
+    pub async fn get_peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.peer_addr.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "No peer address available"))
     }
 }
