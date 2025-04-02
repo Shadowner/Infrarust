@@ -24,6 +24,7 @@ pub struct StatusCache {
     entries: HashMap<u64, CacheEntry>,
 }
 
+#[derive(Debug)]
 struct CacheEntry {
     expires_at: SystemTime,
     response: Packet,
