@@ -8,18 +8,20 @@ use tokio::sync::{
 };
 use tracing::{Instrument, Span, debug, debug_span, info, instrument, warn};
 
-use crate::cli::ShutdownController;
+use super::{ServerRequest, ServerRequester, ServerResponse, backend::Server, cache::StatusCache};
+use crate::FilterError;
+use crate::core::config::service::ConfigurationService;
+use crate::telemetry::TELEMETRY;
 use crate::{
-    Connection,
+    Connection, FilterRegistry,
+    cli::ShutdownController,
     core::{actors::supervisor::ActorSupervisor, config::ServerConfig, event::GatewayMessage},
     network::proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     protocol::minecraft::java::login::ServerBoundLoginStart,
     proxy_modes::ProxyModeEnum,
+    security::BanSystemAdapter,
+    with_filter_or,
 };
-
-use super::{ServerRequest, ServerRequester, ServerResponse, backend::Server, cache::StatusCache};
-use crate::core::config::service::ConfigurationService;
-use crate::telemetry::TELEMETRY;
 
 pub struct Gateway {
     config_service: Arc<ConfigurationService>,
@@ -27,6 +29,7 @@ pub struct Gateway {
     _sender: mpsc::Sender<GatewayMessage>,
     pub actor_supervisor: Arc<ActorSupervisor>,
     shutdown_controller: Arc<ShutdownController>,
+    filter_registry: Option<Arc<FilterRegistry>>,
 }
 
 impl Gateway {
@@ -34,6 +37,7 @@ impl Gateway {
         sender: mpsc::Sender<GatewayMessage>,
         config_service: Arc<ConfigurationService>,
         shutdown_controller: Arc<ShutdownController>,
+        filter_registry: Option<Arc<FilterRegistry>>,
     ) -> Self {
         info!("Initializing ServerGateway");
 
@@ -43,6 +47,7 @@ impl Gateway {
             actor_supervisor: Arc::new(ActorSupervisor::new()),
             status_cache: Arc::new(Mutex::new(StatusCache::new(Duration::from_secs(30)))),
             shutdown_controller,
+            filter_registry,
         };
 
         // Start a background task for periodic health checks
@@ -93,6 +98,37 @@ impl Gateway {
         self.config_service.remove_configuration(config_id).await;
     }
 
+    async fn is_username_banned(&self, username: &str) -> Option<String> {
+        if let Some(registry) = &self.filter_registry {
+            // First check if username is banned
+            let is_banned = matches!(
+                with_filter_or!(
+                    registry,
+                    "global_ban_system",
+                    BanSystemAdapter,
+                    async |filter: &BanSystemAdapter| { filter.is_username_banned(username).await },
+                    false
+                ),
+                Ok(true)
+            );
+
+            if is_banned {
+                if let Ok(reason) = with_filter_or!(
+                    registry,
+                    "global_ban_system",
+                    BanSystemAdapter,
+                    async |filter: &BanSystemAdapter| {
+                        filter.get_ban_reason_for_username(username).await
+                    },
+                    None
+                ) {
+                    return reason;
+                }
+            }
+        }
+        None
+    }
+
     #[instrument(name = "client_connection_handling", skip(client, request, gateway), fields(
         domain = %request.domain,
         is_login = request.is_login,
@@ -106,6 +142,27 @@ impl Gateway {
     ) {
         let span = Span::current();
 
+        if request.is_login {
+            let login_start = &request.read_packets[1];
+            let username = ServerBoundLoginStart::try_from(login_start)
+                .unwrap()
+                .name
+                .0
+                .clone();
+
+            if let Some(reason) = gateway.is_username_banned(&username).await {
+                warn!(
+                    "Player with banned username '{}' attempted to connect: {}",
+                    username, reason
+                );
+
+                if let Err(e) = client.close().await {
+                    warn!("Error closing connection for banned username: {:?}", e);
+                }
+                return;
+            }
+        }
+
         let server_config = match gateway
             .find_server(&request.domain)
             .instrument(span.clone())
@@ -117,7 +174,6 @@ impl Gateway {
                     "Server not found for domain: '{}' requested by - {}",
                     request.domain, request.client_addr
                 );
-                // Make sure to close the connection to prevent hanging
                 if let Err(e) = client.close().await {
                     warn!("Error closing connection: {:?}", e);
                 }

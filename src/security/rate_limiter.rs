@@ -9,17 +9,30 @@ use async_trait::async_trait;
 use tokio::{io, net::TcpStream, sync::Mutex};
 use xxhash_rust::xxh64::xxh64;
 
-use crate::Filter;
+use crate::security::filter::{ConfigValue, Filter, FilterError, FilterType};
 
 pub struct RateLimiter {
+    name: String,
     request_limit: u32,
     counter: Arc<Mutex<LocalCounter>>,
     key_fn: Box<dyn Fn(&TcpStream) -> String + Send + Sync>,
 }
 
+impl std::fmt::Debug for RateLimiter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RateLimiter")
+            .field("name", &self.name)
+            .field("request_limit", &self.request_limit)
+            .field("counter", &self.counter)
+            .field("key_fn", &"<function>")
+            .finish()
+    }
+}
+
 impl RateLimiter {
-    pub fn new(request_limit: u32, window_length: Duration) -> Self {
+    pub fn new(name: impl Into<String>, request_limit: u32, window_length: Duration) -> Self {
         Self {
+            name: name.into(),
             request_limit,
             counter: Arc::new(Mutex::new(LocalCounter::new(window_length))),
             key_fn: Box::new(key_by_ip),
@@ -44,7 +57,6 @@ impl RateLimiter {
         let rate = counter.get_rate(&key, now);
 
         if rate >= f64::from(self.request_limit) {
-            //TODO : Metrics Filter
             return Err(io::Error::new(io::ErrorKind::Other, "Rate limit exceeded"));
         }
 
@@ -65,7 +77,6 @@ fn canonicalize_ip_addr(addr: SocketAddr) -> String {
     if ip.is_ipv4() {
         ip.to_string()
     } else if let std::net::IpAddr::V6(ipv6) = ip {
-        // For IPv6, use /64 prefix
         let segments = ipv6.segments();
         format!(
             "{}:{}:{}:{}",
@@ -75,13 +86,14 @@ fn canonicalize_ip_addr(addr: SocketAddr) -> String {
         ip.to_string()
     }
 }
-
+#[derive(Debug)]
 struct LocalCounter {
     counters: HashMap<u64, Count>,
     window_length: Duration,
     last_eviction: SystemTime,
 }
 
+#[derive(Debug)]
 struct Count {
     value: u32,
     timestamp: SystemTime,
@@ -148,5 +160,33 @@ impl LocalCounter {
 impl Filter for RateLimiter {
     async fn filter(&self, stream: &TcpStream) -> io::Result<()> {
         self.check_rate(stream).await
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn filter_type(&self) -> FilterType {
+        FilterType::RateLimiter
+    }
+
+    fn is_configurable(&self) -> bool {
+        true
+    }
+
+    async fn apply_config(&self, config: ConfigValue) -> Result<(), FilterError> {
+        if let ConfigValue::Map(_) = config {
+            // We could update request_limit or window_length here
+            // For now, this is a placeholder
+            Ok(())
+        } else {
+            Err(FilterError::InvalidConfig(
+                "Expected a map configuration".to_string(),
+            ))
+        }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
