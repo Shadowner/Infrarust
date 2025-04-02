@@ -8,8 +8,8 @@ use crate::{
     network::{connection::PossibleReadValue, packet::PacketCodec},
     protocol::types::VarInt,
     proxy_modes::{
-        client_only::{prepare_server_handshake, ClientOnlyMessage},
         ServerProxyModeHandler,
+        client_only::{ClientOnlyMessage, prepare_server_handshake},
     },
 };
 

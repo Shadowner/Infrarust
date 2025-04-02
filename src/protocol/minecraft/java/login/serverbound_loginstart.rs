@@ -3,6 +3,7 @@ use std::io::{self, Read};
 use uuid::Uuid;
 
 use crate::{
+    ProtocolRead, ProtocolWrite,
     network::{
         packet::{
             Packet,
@@ -12,7 +13,6 @@ use crate::{
     },
     protocol::types::{Boolean, ByteArray, Long, ProtocolString, ProtocolUUID},
     version::Version,
-    ProtocolRead, ProtocolWrite,
 };
 
 pub const SERVERBOUND_LOGIN_START_ID: i32 = 0x00;

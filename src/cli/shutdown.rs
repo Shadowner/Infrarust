@@ -1,7 +1,7 @@
 //! Shutdown coordination for graceful termination
 
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 use tracing::{debug, info};
 
 pub struct ShutdownController {
@@ -17,26 +17,26 @@ impl ShutdownController {
             shutdown_triggered: Mutex::new(false),
         })
     }
-    
+
     pub async fn subscribe(&self) -> broadcast::Receiver<()> {
         let tx = self.tx.lock().await;
         tx.subscribe()
     }
-    
+
     pub async fn trigger_shutdown(&self, reason: &str) {
         let mut triggered = self.shutdown_triggered.lock().await;
         if *triggered {
             debug!("Shutdown already in progress, ignoring additional request");
             return;
         }
-        
+
         info!("Initiating shutdown: {}", reason);
         *triggered = true;
-        
+
         let tx = self.tx.lock().await;
         let _ = tx.send(());
     }
-    
+
     pub async fn is_shutdown_triggered(&self) -> bool {
         let triggered = self.shutdown_triggered.lock().await;
         *triggered

@@ -6,7 +6,7 @@ pub struct Colors;
 impl Colors {
     pub const RESET: &'static str = "\x1B[0m";
     pub const BOLD: &'static str = "\x1B[1m";
-    
+
     // Regular colors
     pub const BLACK: &'static str = "\x1B[30m";
     pub const RED: &'static str = "\x1B[31m";
@@ -17,7 +17,7 @@ impl Colors {
     pub const CYAN: &'static str = "\x1B[36m";
     pub const WHITE: &'static str = "\x1B[37m";
     pub const GRAY: &'static str = "\x1B[90m";
-    
+
     // Bold colors
     pub const BOLD_RED: &'static str = "\x1B[1;31m";
     pub const BOLD_GREEN: &'static str = "\x1B[1;32m";

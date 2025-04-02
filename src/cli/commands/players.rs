@@ -38,7 +38,7 @@ impl PlayersCommand {
 
                     players_by_config
                         .entry(config_id.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push((pair.username.clone(), addr, pair.session_id));
                 }
             }
@@ -60,7 +60,7 @@ impl PlayersCommand {
                     "  {}. {} - {} {}\n",
                     i + 1,
                     fmt::entity(username),
-                    fmt::secondary(&addr),
+                    fmt::secondary(addr),
                     fmt::id(&format!("(session: {})", session_id))
                 ));
             }

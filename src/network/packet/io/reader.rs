@@ -12,11 +12,11 @@ use super::super::{
 };
 use super::RawPacketIO;
 use crate::version::Version;
+use crate::{ProtocolRead, protocol::types::VarInt};
 use crate::{
     network::packet::MAX_UNCOMPRESSED_LENGTH,
     security::encryption::{Aes128Cfb8Dec, Cfb8Closure},
 };
-use crate::{protocol::types::VarInt, ProtocolRead};
 
 #[derive(Debug)]
 pub struct PacketReader<R> {

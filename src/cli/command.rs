@@ -1,9 +1,9 @@
 use crate::cli::ShutdownController;
 use crate::cli::format as fmt;
+use atty::Stream;
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
-use atty::Stream;
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -54,7 +54,7 @@ impl CommandProcessor {
     }
 
     pub async fn process_command(&self, input: &str) -> CommandResult {
-        let parts: Vec<&str> = input.trim().split_whitespace().collect();
+        let parts: Vec<&str> = input.split_whitespace().collect();
         if parts.is_empty() {
             return "No command entered".to_string();
         }
@@ -104,9 +104,8 @@ impl CommandProcessor {
     }
 
     pub async fn start_input_loop(&self) {
+        let is_tty = atty::is(Stream::Stdin);
 
-        let is_tty = atty::is(Stream::Stdin);      
-          
         if !is_tty {
             debug!("stdin is not a TTY, using simplified input handling");
         }

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::{debug, debug_span, info, instrument, Instrument};
+use tracing::{Instrument, debug, debug_span, info, instrument};
 use wildmatch::WildMatch;
 
 use crate::{core::config::ServerConfig, telemetry::TELEMETRY};
@@ -73,13 +73,13 @@ impl ConfigurationService {
             if configs.is_empty() {
                 return;
             }
-            
+
             let mut added_configs = Vec::new();
             let mut updated_configs = Vec::new();
-            
+
             {
                 let existing_configs = self.configurations.read().await;
-                
+
                 for config in &configs {
                     let config_id = &config.config_id;
                     if existing_configs.contains_key(config_id) {
@@ -89,38 +89,38 @@ impl ConfigurationService {
                     }
                 }
             }
-            
+
             {
                 let mut config_lock = self.configurations.write().await;
-                
+
                 // Add new configurations and update telemetry
                 for config in configs {
                     let config_id = config.config_id.clone();
                     let is_new = !config_lock.contains_key(&config_id);
-                    
+
                     if is_new {
                         TELEMETRY.update_backend_count(1, &config_id);
                     }
-                    
+
                     config_lock.insert(config_id, Arc::new(config));
                 }
             }
-            
+
             if !added_configs.is_empty() {
                 info!(
-                    "Added {} new server configurations: {:?}", 
-                    added_configs.len(), 
+                    "Added {} new server configurations: {:?}",
+                    added_configs.len(),
                     added_configs
                 );
             }
-            
+
             if !updated_configs.is_empty() {
                 if updated_configs.len() == 1 {
                     info!("Updated server configuration: {}", updated_configs[0]);
                 } else {
                     info!(
-                        "Updated {} server configurations: {:?}", 
-                        updated_configs.len(), 
+                        "Updated {} server configurations: {:?}",
+                        updated_configs.len(),
                         updated_configs
                     );
                 }
@@ -133,9 +133,12 @@ impl ConfigurationService {
     #[instrument(skip(self), fields(config_id = %config_id))]
     pub async fn remove_configuration(&self, config_id: &str) {
         let mut config_lock = self.configurations.write().await;
-        
-        info!("Configuration update - Removing server configuration: {}", config_id);
-        
+
+        info!(
+            "Configuration update - Removing server configuration: {}",
+            config_id
+        );
+
         debug!(
             config_id = %config_id,
             "Removing configuration"

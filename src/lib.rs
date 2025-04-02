@@ -7,10 +7,10 @@
 // Core modules
 pub mod core;
 use core::actors::supervisor::ActorSupervisor;
-use core::config::provider::file::FileProvider;
-use core::config::provider::ConfigProvider;
-use core::config::service::ConfigurationService;
 pub use core::config::InfrarustConfig;
+use core::config::provider::ConfigProvider;
+use core::config::provider::file::FileProvider;
+use core::config::service::ConfigurationService;
 pub use core::error::RsaError;
 use core::error::SendError;
 use core::event::{GatewayMessage, ProviderMessage};
@@ -28,14 +28,14 @@ pub use protocol::{
     types::{ProtocolRead, ProtocolWrite},
     version,
 };
-use tracing::{debug, debug_span, error, info, instrument, Instrument, Span}; // Remplacer log par tracing
+use tracing::{Instrument, Span, debug, debug_span, error, info, instrument}; // Remplacer log par tracing
 
 // Network and security modules
 pub mod network;
 pub mod security;
 pub use network::{
     connection::{Connection, ServerConnection},
-    proxy_protocol::{write_proxy_protocol_header, ProxyProtocolConfig},
+    proxy_protocol::{ProxyProtocolConfig, write_proxy_protocol_header},
 };
 pub mod proxy_modes;
 pub use security::{
@@ -45,11 +45,11 @@ pub use security::{
 };
 
 // Server implementation
-pub mod server;
 pub mod cli;
+pub mod server;
 use cli::ShutdownController;
-use server::gateway::Gateway;
 use server::ServerRequest;
+use server::gateway::Gateway;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 use uuid::Uuid;
@@ -73,8 +73,8 @@ lazy_static! {
 
 impl Infrarust {
     pub fn new(
-        config: InfrarustConfig, 
-        shutdown_controller: Arc<ShutdownController>
+        config: InfrarustConfig,
+        shutdown_controller: Arc<ShutdownController>,
     ) -> io::Result<Self> {
         let span = debug_span!("infrarust_init");
         let _enter = span.enter();
@@ -89,12 +89,13 @@ impl Infrarust {
         let (provider_sender, provider_receiver) = tokio::sync::mpsc::channel(100);
 
         let server_gateway = Arc::new(Gateway::new(
-            gateway_sender.clone(), 
+            gateway_sender.clone(),
             config_service.clone(),
-            shutdown_controller.clone()
+            shutdown_controller.clone(),
         ));
 
-        if let Err(_) = ActorSupervisor::initialize_global(server_gateway.actor_supervisor.clone()) {
+        if ActorSupervisor::initialize_global(server_gateway.actor_supervisor.clone()).is_err()
+        {
             debug!("Global supervisor was already initialized");
         }
 
@@ -146,29 +147,31 @@ impl Infrarust {
     pub async fn run(self: Arc<Self>) -> Result<(), SendError> {
         debug!("Starting Infrarust server");
         let bind_addr = self.config.bind.clone().unwrap_or_default();
-        
+
         // Create listener
         let listener = match TcpListener::bind(&bind_addr).await {
             Ok(l) => l,
             Err(e) => {
                 error!("Failed to bind to {}: {}", bind_addr, e);
-                self.shutdown_controller.trigger_shutdown(&format!("Failed to bind: {}", e)).await;
+                self.shutdown_controller
+                    .trigger_shutdown(&format!("Failed to bind: {}", e))
+                    .await;
                 return Err(SendError::new(e));
             }
         };
-        
+
         info!("Listening on {}", bind_addr);
-        
+
         // Get a shutdown receiver
         let mut shutdown_rx = self.shutdown_controller.subscribe().await;
-        
+
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
                     info!("Received shutdown signal, stopping server");
                     break;
                 }
-                
+
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, addr)) => {
@@ -213,27 +216,31 @@ impl Infrarust {
                 }
             }
         }
-        
+
         info!("Server stopped accepting new connections");
         Ok(())
     }
-    
+
     pub async fn shutdown(self: &Arc<Self>) -> tokio::sync::oneshot::Receiver<()> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        
+
         let server_clone = self.clone();
         tokio::spawn(async move {
             let config_service = server_clone._config_service.clone();
             let configs = config_service.get_all_configurations().await;
-            
+
             for (config_id, _) in configs {
-                server_clone.server_gateway.actor_supervisor.shutdown_actors(&config_id).await;
+                server_clone
+                    .server_gateway
+                    .actor_supervisor
+                    .shutdown_actors(&config_id)
+                    .await;
             }
-            
+
             // Signal completion
             let _ = tx.send(());
         });
-        
+
         rx
     }
 
@@ -244,14 +251,13 @@ impl Infrarust {
         mut client: Connection,
         server_gateway: Arc<Gateway>,
     ) -> io::Result<()> {
-
         let handshake_packet = if let Ok(packet) = client.read_packet().await {
             packet
         } else {
             debug!("Failed to read handshake packet");
             return Ok(());
         };
-        
+
         let handshake = ServerBoundHandshake::from_packet(&handshake_packet)?;
         let domain = handshake.parse_server_address();
 
@@ -284,7 +290,7 @@ impl Infrarust {
     pub fn get_supervisor(&self) -> Arc<ActorSupervisor> {
         self.server_gateway.actor_supervisor.clone()
     }
-    
+
     pub fn get_config_service(&self) -> Arc<ConfigurationService> {
         self._config_service.clone()
     }
@@ -292,13 +298,9 @@ impl Infrarust {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::time::Duration;
-
     #[tokio::test]
     #[ignore = "TODO"]
     async fn test_infrared_basic() {
-
 
         // TODO: Add integration tests that simulate client connections
     }

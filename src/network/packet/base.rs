@@ -2,7 +2,7 @@ use bytes::{Buf, BytesMut};
 use std::io::Cursor;
 
 use crate::{
-    network::packet::{PacketBuilder, MAX_PACKET_DATA_LENGTH, MAX_PACKET_LENGTH},
+    network::packet::{MAX_PACKET_DATA_LENGTH, MAX_PACKET_LENGTH, PacketBuilder},
     protocol::{
         types::{ProtocolRead, ProtocolWrite, VarInt, WriteToBytes},
         version::Version,

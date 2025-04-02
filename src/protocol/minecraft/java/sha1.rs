@@ -1,6 +1,6 @@
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use num_bigint::{BigInt, Sign};
-use sha1::{digest::Update, Digest, Sha1};
+use sha1::{Digest, Sha1, digest::Update};
 use tracing::debug;
 
 pub fn calc_hash(input: &str) -> String {
