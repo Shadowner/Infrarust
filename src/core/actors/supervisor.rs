@@ -38,6 +38,7 @@ pub struct ActorPair {
     pub config_id: String,
     pub server_name: String,
     pub disconnect_logged: Arc<AtomicBool>,
+    pub is_login: bool,
 }
 
 type ActorStorage = HashMap<String, Vec<ActorPair>>;
@@ -272,6 +273,7 @@ impl ActorSupervisor {
             config_id: config_id.to_string(),
             server_name,
             disconnect_logged: Arc::new(AtomicBool::new(false)),
+            is_login,
         };
 
         pair
@@ -385,29 +387,91 @@ impl ActorSupervisor {
         });
     }
     
+    #[instrument(skip(self), fields(session_id = %session_id))]
     pub async fn log_player_disconnect(&self, session_id: uuid::Uuid, reason: &str) {
-        let actors = self.actors.read().await;
-        // Find the actor pair with this session ID
-        for (config_id, pairs) in actors.iter() {
-            for pair in pairs {
-                if pair.session_id == session_id && !pair.username.is_empty() {
-                    // Only log if not already logged
-                    if !pair.disconnect_logged.load(std::sync::atomic::Ordering::SeqCst) {
-                        info!(
-                            "Player '{}' disconnected from server '{}' ({}) - reason: {}",
-                            pair.username, pair.server_name, config_id, reason
-                        );
+        let mut actors_to_remove = Vec::new();
+        let mut config_ids_to_clean = Vec::new();
+        
+        {
+            let mut actors = self.actors.write().await;
+            for (config_id, pairs) in actors.iter_mut() {
+                let mut disconnect_indexes = Vec::new();
+                
+                for (idx, pair) in pairs.iter().enumerate() {
+                    if pair.session_id == session_id {
+                        if pair.is_login && !pair.username.is_empty() {
+                            if !pair.disconnect_logged.load(std::sync::atomic::Ordering::SeqCst) {
+                                info!(
+                                    "Player '{}' disconnected from server '{}' ({}) - reason: {}",
+                                    pair.username, pair.server_name, config_id, reason
+                                );
+                                
+                                let duration_secs = pair.created_at.elapsed().as_secs();
+                                debug!(
+                                    "Session duration for '{}': {} seconds",
+                                    pair.username, duration_secs
+                                );
+                                
+                                pair.disconnect_logged.store(true, std::sync::atomic::Ordering::SeqCst);
+                            }
+                        } else {
+                            // For non-login sessions (status requests), just debug log
+                            debug!(
+                                "Status Request connection disconnected from server '{}' ({}) - reason: {}",
+                                pair.server_name, config_id, reason
+                            );
+                        }
                         
-                        // Mark as logged to avoid duplicates
-                        pair.disconnect_logged.store(true, std::sync::atomic::Ordering::SeqCst);
+                        pair.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+                        disconnect_indexes.push(idx);
                     }
-                    
-                    // Mark this pair for shutdown
-                    pair.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
-                    return;
+                }
+                
+                if !disconnect_indexes.is_empty() {
+                    config_ids_to_clean.push(config_id.clone());
+                }
+                
+                disconnect_indexes.sort_unstable_by(|a, b| b.cmp(a));
+                for idx in disconnect_indexes {
+                    if idx < pairs.len() {
+                        // Track session_id and config_id for cleanup
+                        if let Some(removed_pair) = pairs.get(idx) {
+                            // Only track login sessions for telemetry updates
+                            if removed_pair.is_login {
+                                actors_to_remove.push((removed_pair.session_id, config_id.clone()));
+                            }
+                        }
+                        pairs.remove(idx);
+                    }
                 }
             }
         }
+        
+        if !config_ids_to_clean.is_empty() {
+            let mut tasks = self.tasks.write().await;
+            
+            for config_id in config_ids_to_clean {
+                if let Some(task_handles) = tasks.get_mut(&config_id) {
+                    let actors_count = {
+                        let actors = self.actors.read().await;
+                        actors.get(&config_id).map_or(0, |pairs| pairs.len())
+                    };
+                    
+                    while task_handles.len() > actors_count {
+                        if let Some(handle) = task_handles.pop() {
+                            debug!("Aborting task for disconnected session in {}", config_id);
+                            handle.abort();
+                        }
+                    }
+                }
+            }
+        }
+        
+        for (session_id, config_id) in actors_to_remove {
+            TELEMETRY.update_player_count(-1, &config_id, session_id, "");
+        }
+        
+        debug!("Cleanup completed for session {}", session_id);
     }
 
     pub async fn find_actor_pairs_by_session_id(&self, session_id: uuid::Uuid) -> Option<Vec<Arc<RwLock<ActorPair>>>> {

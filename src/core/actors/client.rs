@@ -141,25 +141,25 @@ async fn start_minecraft_client_actor<T>(
         }
     }
 
-    // Enhanced cleanup with more details on disconnect reason
-    debug!("Shutting down client actor for user '{}'", actor.username);
-
-    // Record telemetry for logins with more context
-    if actor.is_login && !actor.username.is_empty() {
-        let reason = if shutdown_flag.load(Ordering::SeqCst) {
-            "clean_disconnect"
+    debug!("Shutting down client actor for {}", 
+        if actor.is_login && !actor.username.is_empty() {
+            format!("user '{}'", actor.username)
         } else {
-            "unexpected_disconnect"
-        };
-
-        match ActorSupervisor::global() {
-            supervisor => {
-                supervisor
-                            .log_player_disconnect(actor.conn.session_id, reason)
-                            .await;
-            }
+            "status request".to_string()
         }
+    );
 
+    let reason = if shutdown_flag.load(Ordering::SeqCst) {
+        "clean_disconnect"
+    } else {
+        "unexpected_disconnect"
+    };
+
+    ActorSupervisor::global()
+        .log_player_disconnect(actor.conn.session_id, reason)
+        .await;
+
+    if actor.is_login && !actor.username.is_empty() {
         TELEMETRY.record_connection_end(&peer_address.to_string(), reason, actor.conn.session_id);
     }
 
