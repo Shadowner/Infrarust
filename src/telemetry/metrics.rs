@@ -1,9 +1,9 @@
 use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
-use opentelemetry::{global, KeyValue};
+use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
-    metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
     Resource,
+    metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
 };
 use std::io::Error;
 use std::time::{Duration, Instant};

@@ -8,11 +8,10 @@ use std::{
 };
 
 use tokio::sync::{mpsc, oneshot};
-use tracing::{Instrument, debug, debug_span, instrument, warn};
+use tracing::{Instrument, debug, debug_span, warn};
 
 use crate::{
     core::{
-        actors::supervisor::ActorSupervisor,
         config::ServerConfig,
         event::{GatewayMessage, MinecraftCommunication},
     },

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use std::io::{self};
-use tracing::{debug, debug_span, error, info, instrument, Instrument};
+use tracing::{Instrument, debug, debug_span, error, info, instrument};
 
 use super::{ClientProxyModeHandler, ProxyMessage, ProxyModeMessageType, ServerProxyModeHandler};
 use crate::{

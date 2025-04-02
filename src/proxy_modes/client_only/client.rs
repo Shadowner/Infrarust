@@ -7,6 +7,7 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::{
+    EncryptionState,
     core::{actors::client::MinecraftClient, event::MinecraftCommunication},
     network::{
         connection::PossibleReadValue,
@@ -14,13 +15,12 @@ use crate::{
     },
     protocol::{
         minecraft::java::login::{
-            clientbound_loginsuccess::{ClientBoundLoginSuccess, Property},
             ClientBoundEncryptionRequest, ServerBoundEncryptionResponse,
+            clientbound_loginsuccess::{ClientBoundLoginSuccess, Property},
         },
         types::{Boolean, ByteArray, ProtocolString, VarInt},
     },
-    proxy_modes::{client_only::ClientOnlyMessage, ClientProxyModeHandler},
-    EncryptionState,
+    proxy_modes::{ClientProxyModeHandler, client_only::ClientOnlyMessage},
 };
 
 use super::ClientOnlyMode;

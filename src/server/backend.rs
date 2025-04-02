@@ -5,10 +5,11 @@ use tracing::debug;
 use uuid::Uuid;
 
 use crate::{
+    ProxyProtocolConfig, ServerConnection,
     core::config::ServerConfig,
-    network::proxy_protocol::{errors::ProxyProtocolError, ProtocolResult},
+    network::proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     telemetry::TELEMETRY,
-    write_proxy_protocol_header, ProxyProtocolConfig, ServerConnection,
+    write_proxy_protocol_header,
 };
 
 #[derive(Clone)]

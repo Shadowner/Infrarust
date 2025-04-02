@@ -1,10 +1,10 @@
 pub mod client;
 pub mod server;
 
+use crate::ProtocolRead;
 use crate::network::packet::Packet;
 use crate::protocol::minecraft::java::handshake::ServerBoundHandshake;
 use crate::protocol::types::{Byte, ProtocolString, UnsignedShort, VarInt};
-use crate::ProtocolRead;
 use std::io::{self};
 
 use super::{ProxyMessage, ProxyModeMessageType};

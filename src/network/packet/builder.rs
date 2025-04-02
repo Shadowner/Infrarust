@@ -3,9 +3,9 @@ use bytes::BytesMut;
 use crate::protocol::version::Version;
 
 use super::{
+    PacketValidation,
     base::{CompressionState, EncryptionState, Packet},
     error::{PacketError, PacketResult},
-    PacketValidation,
 };
 
 /// Builder for creating Minecraft packets with various configurations.

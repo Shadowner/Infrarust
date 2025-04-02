@@ -36,7 +36,7 @@ pub async fn write_proxy_protocol_header(
 
 fn create_v1_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Result<BytesMut> {
     use proxy_protocol::version1::ProxyAddresses;
-    use proxy_protocol::{encode, ProxyHeader};
+    use proxy_protocol::{ProxyHeader, encode};
 
     let addresses = match (client_addr, server_addr) {
         (SocketAddr::V4(source), SocketAddr::V4(destination)) => ProxyAddresses::Ipv4 {
@@ -57,7 +57,7 @@ fn create_v1_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Res
 
 fn create_v2_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Result<BytesMut> {
     use proxy_protocol::version2::{ProxyAddresses, ProxyCommand, ProxyTransportProtocol};
-    use proxy_protocol::{encode, ProxyHeader};
+    use proxy_protocol::{ProxyHeader, encode};
 
     let (addresses, transport_protocol) = match (client_addr, server_addr) {
         (SocketAddr::V4(source), SocketAddr::V4(destination)) => (

@@ -8,6 +8,7 @@ use tokio::sync::{
 };
 use tracing::{Instrument, Span, debug, debug_span, info, instrument, warn};
 
+use crate::cli::ShutdownController;
 use crate::{
     Connection,
     core::{actors::supervisor::ActorSupervisor, config::ServerConfig, event::GatewayMessage},
@@ -15,7 +16,6 @@ use crate::{
     protocol::minecraft::java::login::ServerBoundLoginStart,
     proxy_modes::ProxyModeEnum,
 };
-use crate::cli::ShutdownController;
 
 use super::{ServerRequest, ServerRequester, ServerResponse, backend::Server, cache::StatusCache};
 use crate::core::config::service::ConfigurationService;
@@ -51,7 +51,7 @@ impl Gateway {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
             let mut shutdown_rx = shutdown.subscribe().await;
-            
+
             loop {
                 tokio::select! {
                     _ = shutdown_rx.recv() => {
@@ -113,7 +113,10 @@ impl Gateway {
         {
             Some(server) => server,
             None => {
-                warn!("Server not found for domain: '{}' requested by - {}", request.domain, request.client_addr);
+                warn!(
+                    "Server not found for domain: '{}' requested by - {}",
+                    request.domain, request.client_addr
+                );
                 // Make sure to close the connection to prevent hanging
                 if let Err(e) = client.close().await {
                     warn!("Error closing connection: {:?}", e);

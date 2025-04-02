@@ -7,8 +7,8 @@ use crate::{
     },
     protocol::{
         minecraft::java::status::clientbound_response::{
-            ClientBoundResponse, PlayerSampleJSON, PlayersJSON, ResponseJSON, VersionJSON,
-            CLIENTBOUND_RESPONSE_ID,
+            CLIENTBOUND_RESPONSE_ID, ClientBoundResponse, PlayerSampleJSON, PlayersJSON,
+            ResponseJSON, VersionJSON,
         },
         types::ProtocolString,
     },

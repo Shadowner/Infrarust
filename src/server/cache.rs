@@ -3,21 +3,21 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use tracing::{debug, debug_span, instrument, Instrument};
+use tracing::{Instrument, debug, debug_span, instrument};
 
 use crate::{
+    CONFIG, ServerConnection,
     network::{
         packet::Packet,
-        proxy_protocol::{errors::ProxyProtocolError, ProtocolResult},
+        proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     },
-    server::motd::{generate_motd, MotdConfig},
+    server::motd::{MotdConfig, generate_motd},
     version::Version,
-    ServerConnection, CONFIG,
 };
 
 use crate::telemetry::TELEMETRY;
 
-use super::{backend::Server, ServerRequest};
+use super::{ServerRequest, backend::Server};
 
 pub struct StatusCache {
     ttl: Duration,

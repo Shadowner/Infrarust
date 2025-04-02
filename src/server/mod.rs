@@ -3,12 +3,12 @@ pub mod cache;
 pub mod gateway;
 pub mod motd;
 
+use crate::ServerConnection;
 use crate::core::config::ServerConfig;
 use crate::network::packet::Packet;
 use crate::network::proxy_protocol::ProtocolResult;
 use crate::protocol::version::Version;
 use crate::proxy_modes::ProxyModeEnum;
-use crate::ServerConnection;
 use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::sync::Arc;

@@ -5,12 +5,12 @@ use std::{
 };
 
 use crate::{
+    ProtocolRead, ProtocolWrite,
     network::{
         packet::Packet,
-        proxy_protocol::{errors::ProxyProtocolError, ProtocolResult},
+        proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     },
     protocol::types::{Byte, ProtocolString, UnsignedShort, VarInt},
-    ProtocolRead, ProtocolWrite,
 };
 
 pub const SERVERBOUND_HANDSHAKE_ID: i32 = 0x00;

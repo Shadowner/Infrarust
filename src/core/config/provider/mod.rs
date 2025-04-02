@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::{debug, debug_span, error, info, instrument, warn, Instrument, Span};
+use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::core::{config::service::ConfigurationService, event::ProviderMessage};
@@ -73,7 +73,7 @@ impl ConfigProvider {
 
                 async {
                     debug!("Processing configuration update for: {}", key);
-                    
+
                     if let Some(config) = configuration {
                         self.config_service
                             .update_configurations(vec![*config])

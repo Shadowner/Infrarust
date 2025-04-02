@@ -1,9 +1,9 @@
 pub mod exporter;
+pub mod infrarust_fmt_formatter;
 pub mod metrics;
 pub mod tracing;
-pub mod infrarust_fmt_formatter;
 
-pub use metrics::{init_meter_provider, MeterProviderGuard};
+pub use metrics::{MeterProviderGuard, init_meter_provider};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
 pub use tracing::TracerProviderGuard;
 
