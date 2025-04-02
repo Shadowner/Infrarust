@@ -77,3 +77,8 @@ pub fn label(text: &str) -> String {
 pub fn id(text: &str) -> String {
     colorize(text, Colors::GRAY)
 }
+
+/// Formats an info message with blue
+pub fn info(text: &str) -> String {
+    colorize(text, Colors::BLUE)
+}

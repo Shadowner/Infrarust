@@ -28,7 +28,7 @@ async-trait = "0.1.88"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
 tracing-opentelemetry = "0.30.0"
-opentelemetry = { version = "0.29.0", features = ["metrics"] }
+opentelemetry = { version = "0.29.1", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.29.0", features = ["metrics", "rt-tokio"] }
 opentelemetry-appender-log = { version = "0.29.0" }
 opentelemetry-stdout = "0.29.0"
@@ -63,7 +63,7 @@ generic-array = "1.2.0"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 
 # System & Resource Management
-sysinfo = "0.34.1"
+sysinfo = "0.34.2"
 libdeflater = "1.23.1"
 
 # Utility & Helper Libraries
@@ -79,11 +79,13 @@ thiserror = "2.0.12"
 anyhow = "1.0.97"
 
 # CLI & Configuration
-clap = { version = "4.5.34", features = ["derive"] }
+clap = { version = "4.5.35", features = ["derive"] }
 env_logger = "0.11.7"
 chrono = "0.4.40"
 futures = "0.3.31"
 atty = "0.2.14"
+dashmap = "6.1.0"
+lru = "0.13.0"
 
 [dev-dependencies]
 tempfile = "3.19.1"
@@ -94,6 +96,8 @@ default = []
 telemetry = [] # TODO Permit a build not include any telemtry code at all
 dashboard = [] # Planned amelioration for a web dashboard
 api = []       # Planned amelioration for a REST API
+redis = []       # Planned amelioration for a REST API
+database = []       # Planned amelioration for a REST API
 
 [profile.release]
 opt-level = 3

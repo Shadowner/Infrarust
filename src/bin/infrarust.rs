@@ -160,7 +160,11 @@ async fn main() {
             }
         }
     } else {
-        let commands = commands::get_all_commands(Some(supervisor), Some(config_service));
+        let commands = commands::get_all_commands(
+            Some(supervisor),
+            Some(config_service),
+            Some(server.clone()),
+        );
         let (command_processor, mut command_rx) =
             CommandProcessor::new(commands, Some(shutdown_controller.clone()));
 

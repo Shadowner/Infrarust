@@ -15,6 +15,7 @@ pub use core::error::RsaError;
 use core::error::SendError;
 use core::event::{GatewayMessage, ProviderMessage};
 use std::io;
+use std::net::IpAddr;
 use std::sync::Arc;
 
 pub mod telemetry;
@@ -28,7 +29,8 @@ pub use protocol::{
     types::{ProtocolRead, ProtocolWrite},
     version,
 };
-use tracing::{Instrument, Span, debug, debug_span, error, info, instrument}; // Remplacer log par tracing
+use security::filter::FilterError;
+use tracing::{Instrument, Span, debug, debug_span, error, info, instrument};
 
 // Network and security modules
 pub mod network;
@@ -38,9 +40,11 @@ pub use network::{
     proxy_protocol::{ProxyProtocolConfig, write_proxy_protocol_header},
 };
 pub mod proxy_modes;
+use security::ban_system_adapter::BanSystemAdapter;
 pub use security::{
+    ban::{BanEntry, BanSystem},
     encryption::EncryptionState,
-    filter::{Filter, FilterChain, FilterConfig},
+    filter::{Filter, FilterConfig, FilterRegistry, FilterType},
     rate_limiter::RateLimiter,
 };
 
@@ -59,7 +63,7 @@ use crate::version::Version;
 pub struct Infrarust {
     _config_service: Arc<ConfigurationService>,
     config: InfrarustConfig,
-    filter_chain: FilterChain,
+    filter_registry: Arc<FilterRegistry>,
     server_gateway: Arc<Gateway>,
     shutdown_controller: Arc<ShutdownController>,
     _gateway_sender: Sender<GatewayMessage>,
@@ -88,14 +92,17 @@ impl Infrarust {
         let (gateway_sender, gateway_receiver) = tokio::sync::mpsc::channel(100);
         let (provider_sender, provider_receiver) = tokio::sync::mpsc::channel(100);
 
+        // Initialize filter registry
+        let filter_registry = Arc::new(FilterRegistry::new());
+
         let server_gateway = Arc::new(Gateway::new(
             gateway_sender.clone(),
             config_service.clone(),
             shutdown_controller.clone(),
+            Some(filter_registry.clone()), // Pass filter registry to gateway
         ));
 
-        if ActorSupervisor::initialize_global(server_gateway.actor_supervisor.clone()).is_err()
-        {
+        if ActorSupervisor::initialize_global(server_gateway.actor_supervisor.clone()).is_err() {
             debug!("Global supervisor was already initialized");
         }
 
@@ -133,10 +140,54 @@ impl Infrarust {
                 .await;
         });
 
+        let registry_clone = filter_registry.clone();
+        let config_clone = config.clone();
+        tokio::spawn(async move {
+            if let Some(filter_config) = &config_clone.filters {
+                if let Some(rate_config) = &filter_config.rate_limiter {
+                    let rate_limiter = RateLimiter::new(
+                        "global_rate_limiter",
+                        rate_config.request_limit,
+                        rate_config.window_length,
+                    );
+
+                    if let Err(e) = registry_clone.register(rate_limiter).await {
+                        debug!("Failed to register rate limiter: {}", e);
+                    }
+                }
+
+                if config_clone.filters.as_ref().unwrap().ban.enabled {
+                    match BanSystemAdapter::new(
+                        "global_ban_system",
+                        config_clone
+                            .filters
+                            .as_ref()
+                            .unwrap()
+                            .ban
+                            .file_path
+                            .as_ref()
+                            .unwrap()
+                            .clone(),
+                    )
+                    .await
+                    {
+                        Ok(ban_filter) => {
+                            if let Err(e) = registry_clone.register(ban_filter).await {
+                                debug!("Failed to register ban filter: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to create ban system adapter: {}", e);
+                        }
+                    }
+                }
+            }
+        });
+
         Ok(Self {
             _config_service: config_service.clone(),
             config,
-            filter_chain: FilterChain::new(),
+            filter_registry,
             server_gateway,
             shutdown_controller,
             _gateway_sender: gateway_sender,
@@ -164,7 +215,6 @@ impl Infrarust {
 
         // Get a shutdown receiver
         let mut shutdown_rx = self.shutdown_controller.subscribe().await;
-
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
@@ -179,13 +229,13 @@ impl Infrarust {
                             let span = debug_span!("TCP Connection", %addr, %session_id);
                             debug!("New TCP connection accepted : ({})[{}]", addr, session_id);
 
-                            let filter_chain = self.filter_chain.clone();
+                            let filter_registry = self.filter_registry.clone();
                             let server_gateway = Arc::clone(&self.server_gateway);
                             let clone_span = span.clone();
                             tokio::spawn(async move {
                                 if let Err(e) = async move {
                                     debug!("Starting connection processing for ({})[{}]", addr, session_id);
-                                    filter_chain.filter(&stream).await?;
+                                    filter_registry.filter(&stream).await?;
                                     debug!("Connection passed filters for ({})[{}]", addr, session_id);
                                     let conn = Connection::new(stream, session_id)
                                         .instrument(debug_span!("New connection"))
@@ -244,9 +294,11 @@ impl Infrarust {
         rx
     }
 
-    #[instrument(name = "connection_flow", skip(client, server_gateway), fields(
-        peer_addr = %client.peer_addr().await?,
-    ))]
+    #[instrument(
+        name = "connection_flow",
+        skip(client, server_gateway),
+        fields(peer_addr = %client.peer_addr().await?,)
+    )]
     async fn handle_connection(
         mut client: Connection,
         server_gateway: Arc<Gateway>,
@@ -281,7 +333,11 @@ impl Infrarust {
             },
             server_gateway,
         )
-        .instrument(debug_span!("handle_client_flow", domain = %domain, is_login = %is_login))
+        .instrument(debug_span!(
+            "handle_client_flow",
+            domain = %domain,
+            is_login = %is_login
+        ))
         .await;
 
         Ok(())
@@ -294,6 +350,109 @@ impl Infrarust {
     pub fn get_config_service(&self) -> Arc<ConfigurationService> {
         self._config_service.clone()
     }
+
+    pub fn get_filter_registry(&self) -> Arc<FilterRegistry> {
+        self.filter_registry.clone()
+    }
+
+    pub fn get_config(&self) -> &InfrarustConfig {
+        &self.config
+    }
+
+    pub async fn has_ban_filter(&self) -> Result<bool, FilterError> {
+        let registry = self.get_filter_registry();
+
+        with_filter_or!(
+            registry,
+            "global_ban_system",
+            BanSystemAdapter,
+            async |_: &BanSystemAdapter| { Ok(true) },
+            false
+        )
+    }
+
+    pub async fn add_ban(&self, ban: BanEntry) -> Result<(), FilterError> {
+        let registry = self.get_filter_registry();
+
+        with_filter!(
+            registry,
+            "global_ban_system",
+            BanSystemAdapter,
+            async |filter: &BanSystemAdapter| { filter.add_ban(ban).await }
+        )
+    }
+
+    pub async fn remove_ban_by_ip(&self, ip: IpAddr) -> Result<bool, FilterError> {
+        let registry = self.get_filter_registry();
+        with_filter!(
+            registry,
+            "global_ban_system",
+            BanSystemAdapter,
+            async |filter: &BanSystemAdapter| { filter.remove_ban_by_ip(&ip, "system").await }
+        )
+    }
+
+    pub async fn remove_ban_by_username(&self, username: &str) -> Result<bool, FilterError> {
+        let registry = self.get_filter_registry();
+
+        with_filter!(
+            registry,
+            "global_ban_system",
+            BanSystemAdapter,
+            async |filter: &BanSystemAdapter| {
+                filter.remove_ban_by_username(username, "system").await
+            }
+        )
+    }
+
+    pub async fn remove_ban_by_uuid(&self, uuid: &str) -> Result<bool, FilterError> {
+        let registry = self.get_filter_registry();
+
+        with_filter!(
+            registry,
+            "global_ban_system",
+            BanSystemAdapter,
+            async |filter: &BanSystemAdapter| { filter.remove_ban_by_uuid(uuid, "system").await }
+        )
+    }
+
+    pub async fn get_all_bans(&self) -> Result<Vec<BanEntry>, FilterError> {
+        let registry = self.get_filter_registry();
+
+        with_filter!(
+            registry,
+            "global_ban_system",
+            BanSystemAdapter,
+            async |filter: &BanSystemAdapter| { filter.get_all_bans().await }
+        )
+    }
+
+    pub async fn clear_expired_bans(&self) -> Result<usize, FilterError> {
+        let registry = self.get_filter_registry();
+
+        with_filter!(
+            registry,
+            "global_ban_system",
+            BanSystemAdapter,
+            async |filter: &BanSystemAdapter| { filter.clear_expired_bans().await }
+        )
+    }
+
+    pub async fn get_ban_file_path(&self) -> String {
+        self.config.filters.clone().unwrap().ban.file_path.unwrap()
+    }
+
+    pub async fn has_ban_system_adapter(&self) -> Result<bool, FilterError> {
+        let registry = self.get_filter_registry();
+
+        with_filter_or!(
+            registry,
+            "global_ban_system",
+            BanSystemAdapter,
+            async |_: &BanSystemAdapter| { Ok(true) },
+            false
+        )
+    }
 }
 
 #[cfg(test)]
@@ -301,7 +460,6 @@ mod tests {
     #[tokio::test]
     #[ignore = "TODO"]
     async fn test_infrared_basic() {
-
         // TODO: Add integration tests that simulate client connections
     }
 }
