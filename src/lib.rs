@@ -30,7 +30,7 @@ pub use protocol::{
     version,
 };
 use security::filter::FilterError;
-use tracing::{Instrument, Span, debug, debug_span, error, info, instrument};
+use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
 
 // Network and security modules
 pub mod network;
@@ -99,7 +99,7 @@ impl Infrarust {
             gateway_sender.clone(),
             config_service.clone(),
             shutdown_controller.clone(),
-            Some(filter_registry.clone()), // Pass filter registry to gateway
+            Some(filter_registry.clone()),
         ));
 
         if ActorSupervisor::initialize_global(server_gateway.actor_supervisor.clone()).is_err() {
@@ -231,30 +231,24 @@ impl Infrarust {
 
                             let filter_registry = self.filter_registry.clone();
                             let server_gateway = Arc::clone(&self.server_gateway);
-                            let clone_span = span.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = async move {
-                                    debug!("Starting connection processing for ({})[{}]", addr, session_id);
+                                debug!("Starting connection processing for ({})[{}]", addr, session_id);
+
+                                match async {
                                     filter_registry.filter(&stream).await?;
                                     debug!("Connection passed filters for ({})[{}]", addr, session_id);
+
                                     let conn = Connection::new(stream, session_id)
                                         .instrument(debug_span!("New connection"))
                                         .await?;
                                     debug!("Connection established for ({})[{}]", addr, session_id);
-                                    Self::handle_connection(conn, server_gateway)
-                                        .instrument(clone_span)
-                                        .await?;
 
-                                    Ok::<_, SendError>(())
+                                    Self::handle_connection(conn, server_gateway).await
+                                }.await {
+                                    Ok(_) => debug!("Connection from {} completed successfully", addr),
+                                    Err(e) => error!("Connection error from {}: {}", addr, e),
                                 }
-                                .instrument(span)
-                                .await
-                                {
-                                    error!("Connection error from {}: {}", addr, e);
-                                }
-                            })
-                            .await
-                            .unwrap_or_default();
+                            });
                         }
                         Err(e) => {
                             error!("Accept error: {}", e);
@@ -268,6 +262,113 @@ impl Infrarust {
         }
 
         info!("Server stopped accepting new connections");
+        Ok(())
+    }
+
+    #[instrument(
+        name = "connection_flow",
+        skip(client, server_gateway),
+        fields(peer_addr = %client.peer_addr().await?,)
+    )]
+    async fn handle_connection(
+        mut client: Connection,
+        server_gateway: Arc<Gateway>,
+    ) -> io::Result<()> {
+        debug!(
+            "Starting to process new connection from {}",
+            client.peer_addr().await?
+        );
+
+        debug!("Reading handshake packet (with 10s timeout)");
+        let handshake_packet = match client.read_packet().await {
+            Ok(packet) => {
+                debug!("Successfully read handshake packet");
+                packet
+            }
+            Err(e) => {
+                debug!("Failed to read handshake packet: {}", e);
+                if let Err(close_err) = client.close().await {
+                    warn!("Error closing client connection: {}", close_err);
+                }
+                return Err(e.into());
+            }
+        };
+
+        debug!("Parsing handshake packet");
+        let handshake = match ServerBoundHandshake::from_packet(&handshake_packet) {
+            Ok(handshake) => {
+                debug!("Successfully parsed handshake: {:?}", handshake);
+                handshake
+            }
+            Err(e) => {
+                debug!("Failed to parse handshake packet: {}", e);
+                if let Err(close_err) = client.close().await {
+                    warn!("Error closing client connection: {}", close_err);
+                }
+                return Err(io::Error::new(io::ErrorKind::InvalidData, e));
+            }
+        };
+
+        let domain = handshake.parse_server_address();
+        debug!(domain = %domain, "Processing connection for domain");
+
+        debug!("Reading second packet (with 10s timeout)");
+        let second_packet = match client.read_packet().await {
+            Ok(packet) => {
+                debug!("Successfully read second packet");
+                packet
+            }
+            Err(e) => {
+                debug!("Failed to read second packet: {}", e);
+                if let Err(close_err) = client.close().await {
+                    warn!("Error closing client connection: {}", close_err);
+                }
+                return Err(e.into());
+            }
+        };
+
+        let protocol_version = Version::from(handshake.protocol_version.0);
+        let is_login = handshake.is_login_request();
+
+        debug!(
+            domain = %domain,
+            protocol_version = ?protocol_version,
+            is_login = is_login,
+            "Preparing server request"
+        );
+
+        let client_addr = client.peer_addr().await?;
+        let session_id = client.session_id;
+
+        let handle_client_span = debug_span!(
+            "handle_client_flow",
+            domain = %domain,
+            is_login = %is_login
+        );
+        let domain_clone = domain.clone();
+
+        tokio::spawn(async move {
+            // let _guard = handle_client_span.entered();
+            debug!("Processing client in separate task");
+
+            Gateway::handle_client_connection(
+                client,
+                ServerRequest {
+                    client_addr,
+                    domain: domain.clone(),
+                    is_login,
+                    protocol_version,
+                    read_packets: [handshake_packet, second_packet],
+                    session_id,
+                },
+                server_gateway,
+            )
+            .await;
+
+            debug!(domain = %domain, "Client processing task completed");
+        });
+
+        debug!(domain = %domain_clone, "Connection handler completed");
         Ok(())
     }
 
@@ -287,60 +388,10 @@ impl Infrarust {
                     .await;
             }
 
-            // Signal completion
             let _ = tx.send(());
         });
 
         rx
-    }
-
-    #[instrument(
-        name = "connection_flow",
-        skip(client, server_gateway),
-        fields(peer_addr = %client.peer_addr().await?,)
-    )]
-    async fn handle_connection(
-        mut client: Connection,
-        server_gateway: Arc<Gateway>,
-    ) -> io::Result<()> {
-        let handshake_packet = if let Ok(packet) = client.read_packet().await {
-            packet
-        } else {
-            debug!("Failed to read handshake packet");
-            return Ok(());
-        };
-
-        let handshake = ServerBoundHandshake::from_packet(&handshake_packet)?;
-        let domain = handshake.parse_server_address();
-
-        debug!(domain = %domain, "Received connection request");
-
-        let second_packet = client.read_packet().await?;
-        let protocol_version = Version::from(handshake.protocol_version.0);
-        let is_login = handshake.is_login_request();
-
-        let client_addr = client.peer_addr().await?;
-        let session_id = client.session_id;
-        Gateway::handle_client_connection(
-            client,
-            ServerRequest {
-                client_addr,
-                domain: domain.clone(),
-                is_login,
-                protocol_version,
-                read_packets: [handshake_packet, second_packet],
-                session_id,
-            },
-            server_gateway,
-        )
-        .instrument(debug_span!(
-            "handle_client_flow",
-            domain = %domain,
-            is_login = %is_login
-        ))
-        .await;
-
-        Ok(())
     }
 
     pub fn get_supervisor(&self) -> Arc<ActorSupervisor> {

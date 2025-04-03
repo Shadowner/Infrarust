@@ -30,18 +30,20 @@ impl ConfigurationService {
         debug!("Finding server by domain");
         let domain = domain.to_lowercase();
         let configs = self.configurations.read().await;
-        let result = configs
-            .values()
-            .find(|server| {
-                server
-                    .domains
-                    .iter()
-                    .any(|pattern| WildMatch::new(pattern).matches(&domain))
-            })
-            .cloned();
 
-        debug!(found = result.is_some(), "Domain lookup result");
-        result
+        for config in configs.values() {
+            if config
+                .domains
+                .iter()
+                .any(|pattern| WildMatch::new(pattern).matches(&domain))
+            {
+                debug!(found = true, "Domain lookup result");
+                return Some(Arc::clone(config));
+            }
+        }
+
+        debug!(found = false, "Domain lookup result");
+        None
     }
 
     #[instrument(skip(self), fields(ip = %ip))]

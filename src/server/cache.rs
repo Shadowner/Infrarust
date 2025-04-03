@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use tracing::{Instrument, debug, debug_span, instrument};
@@ -11,20 +11,21 @@ use crate::{
         packet::Packet,
         proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     },
-    server::motd::{MotdConfig, generate_motd},
+    server::{
+        ServerRequest,
+        backend::Server,
+        motd::{MotdConfig, generate_motd},
+    },
     version::Version,
 };
 
-use crate::telemetry::TELEMETRY;
-
-use super::{ServerRequest, backend::Server};
-
+#[derive(Debug)]
 pub struct StatusCache {
     ttl: Duration,
     entries: HashMap<u64, CacheEntry>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CacheEntry {
     expires_at: SystemTime,
     response: Packet,
@@ -47,121 +48,170 @@ impl StatusCache {
         server: &Server,
         req: &ServerRequest,
     ) -> ProtocolResult<Packet> {
-        match self.try_get_status_response(server, req).await {
-            Ok(response) => Ok(response),
+        let key = self.cache_key(server, req.protocol_version);
+        debug!(
+            "Status lookup for domain: {}, cache key: {}",
+            req.domain, key
+        );
+
+        if let Some(cached) = self.check_cache(key) {
+            return Ok(cached);
+        }
+
+        debug!("Cache miss for {}, fetching from server", req.domain);
+        match self.fetch_from_server(server, req).await {
+            Ok(response) => {
+                debug!("Server fetch successful for {}", req.domain);
+                self.update_cache(key, response.clone());
+                Ok(response)
+            }
             Err(e) => {
-                TELEMETRY.record_protocol_error(
-                    "status_fetch_failed",
-                    &e.to_string(),
-                    req.session_id,
-                );
+                debug!("Server fetch failed for {}: {}", req.domain, e);
+                self.handle_server_fetch_error(server, req).await
+            }
+        }
+    }
+
+    fn check_cache(&self, key: u64) -> Option<Packet> {
+        if let Some(entry) = self.entries.get(&key) {
+            if entry.expires_at > SystemTime::now() {
+                debug!("Cache hit for key: {}", key);
+                return Some(entry.response.clone());
+            }
+            debug!("Cache entry expired for key: {}", key);
+        }
+        None
+    }
+
+    fn update_cache(&mut self, key: u64, response: Packet) {
+        self.entries.insert(
+            key,
+            CacheEntry {
+                expires_at: SystemTime::now() + self.ttl,
+                response,
+            },
+        );
+        debug!(
+            "Cache updated for key: {}, cache size: {}",
+            key,
+            self.entries.len()
+        );
+    }
+
+    #[instrument(name = "fetch_from_server", skip(self, server), fields(
+        server_addr = %server.config.addresses.first().unwrap_or(&String::new()),
+        domain = %req.domain
+    ))]
+    async fn fetch_from_server(
+        &self,
+        server: &Server,
+        req: &ServerRequest,
+    ) -> ProtocolResult<Packet> {
+        let use_proxy_protocol = server.config.send_proxy_protocol.unwrap_or(false);
+        let start_time = Instant::now();
+
+        debug!(
+            "Connecting to server for domain: {} (proxy protocol: {})",
+            req.domain, use_proxy_protocol
+        );
+
+        let connect_result = if use_proxy_protocol {
+            server
+                .dial_with_proxy_protocol(req.session_id, req.client_addr)
+                .instrument(debug_span!("connect_with_proxy"))
+                .await
+        } else {
+            server
+                .dial(req.session_id)
+                .instrument(debug_span!("connect_standard"))
+                .await
+        };
+
+        match connect_result {
+            Ok(mut conn) => {
+                debug!("Connected to server after {:?}", start_time.elapsed());
+
+                let fetch_start = Instant::now();
+                match self.fetch_status(&mut conn, req).await {
+                    Ok(packet) => {
+                        debug!("Status fetched in {:?}", fetch_start.elapsed());
+                        Ok(packet)
+                    }
+                    Err(e) => {
+                        debug!("Status fetch failed: {}", e);
+                        Err(e)
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Connection failed: {}", e);
                 Err(e)
             }
         }
     }
 
-    #[instrument(name = "try_get_status_response", skip(self, server), fields(
-        server_addr = %server.config.addresses.first().unwrap_or(&String::new()),
-        protocol_version = ?req.protocol_version
-    ))]
-    pub async fn try_get_status_response(
-        &mut self,
+    async fn handle_server_fetch_error(
+        &self,
         server: &Server,
         req: &ServerRequest,
     ) -> ProtocolResult<Packet> {
-        let key = self.cache_key(server, req.protocol_version);
-
-        if let Some(entry) = self.entries.get(&key) {
-            if entry.expires_at > SystemTime::now() {
-                debug!("Cache hit, returning cached status response");
-                return Ok(entry.response.clone());
-            }
-            debug!("Cache expired");
-        } else {
-            debug!("Cache miss");
-        }
-
-        let use_proxy_protocol = server.config.send_proxy_protocol.unwrap_or(false);
-
-        let response = match if use_proxy_protocol {
-            debug!("Using proxy protocol for status connection");
-            server
-                .dial_with_proxy_protocol(req.session_id, req.client_addr)
-                .instrument(debug_span!("backend_server_connect_with_proxy"))
-                .await
-        } else {
-            debug!("Using standard connection for status");
-            server
-                .dial(req.session_id)
-                .instrument(debug_span!("backend_server_connect"))
-                .await
-        } {
-            Ok(mut conn) => {
-                self.fetch_status(&mut conn, req)
-                    .instrument(debug_span!("fetch_server_status"))
-                    .await?
-            }
-            Err(e) => {
-                let guard = CONFIG.read();
-
-                if guard.motds.unreachable.is_some() {
-                    let motd = guard.motds.unreachable.clone().unwrap();
-
-                    if motd.enabled && !motd.is_empty() {
-                        return generate_motd(&motd, true);
-                    } else if motd.enabled {
-                        return generate_motd(&MotdConfig::default_unreachable(), true);
-                    }
-                }
-
-                debug!("Failed to connect to server: {}", e);
-
-                return Err(ProxyProtocolError::Other(format!(
-                    "Failed to connect to server: {}",
-                    e
-                )));
-            }
-        };
+        debug!("Generating fallback MOTD for {}", req.domain);
 
         if let Some(motd) = &server.config.motd {
-            let response_packet = generate_motd(motd, false)?;
-
-            self.entries.insert(
-                key,
-                CacheEntry {
-                    expires_at: SystemTime::now() + self.ttl,
-                    response: response_packet.clone(),
-                },
-            );
-
-            return Ok(response_packet);
+            debug!("Using server-specific MOTD for {}", req.domain);
+            return generate_motd(motd, false);
         }
 
-        debug!("Caching new status response");
-        self.entries.insert(
-            key,
-            CacheEntry {
-                expires_at: SystemTime::now() + self.ttl,
-                response: response.clone(),
-            },
-        );
+        let guard = CONFIG.read();
+        if let Some(motd) = guard.motds.unreachable.clone() {
+            if motd.enabled {
+                if !motd.is_empty() {
+                    debug!("Using global 'unreachable' MOTD");
+                    return generate_motd(&motd, true);
+                }
+                debug!("Using default 'unreachable' MOTD");
+                return generate_motd(&MotdConfig::default_unreachable(), true);
+            }
+        }
 
-        Ok(response)
+        Err(ProxyProtocolError::Other(format!(
+            "Failed to connect to server for domain: {}",
+            req.domain
+        )))
     }
 
     #[instrument(skip(self, conn), fields(
-        packets_count = %req.read_packets.len()
+        domain = %req.domain,
+        session_id = %req.session_id
     ))]
-    pub async fn fetch_status(
+    async fn fetch_status(
         &self,
         conn: &mut ServerConnection,
         req: &ServerRequest,
     ) -> ProtocolResult<Packet> {
-        debug!("ReadPacket: {:?}", req.read_packets[0]);
-        debug!("ReadPacket: {:?}", req.read_packets[1]);
-        conn.write_packet(&req.read_packets[0].clone()).await?;
-        conn.write_packet(&req.read_packets[1].clone()).await?;
-        conn.read_packet().await
+        if let Err(e) = conn.write_packet(&req.read_packets[0].clone()).await {
+            debug!("Failed to send handshake: {}", e);
+            return Err(e);
+        }
+
+        if let Err(e) = conn.write_packet(&req.read_packets[1].clone()).await {
+            debug!("Failed to send status request: {}", e);
+            return Err(e);
+        }
+
+        let start = Instant::now();
+        let result = conn.read_packet().await;
+        let elapsed = start.elapsed();
+
+        match &result {
+            Ok(_) => debug!("Got status response in {:?}", elapsed),
+            Err(e) => debug!(
+                "Failed to read status response: {} (after {:?})",
+                e, elapsed
+            ),
+        }
+
+        result
     }
 
     fn cache_key(&self, server: &Server, version: Version) -> u64 {
@@ -169,8 +219,35 @@ impl StatusCache {
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
-        server.config.addresses[0].hash(&mut hasher);
+        if !server.config.addresses.is_empty() {
+            server.config.addresses[0].hash(&mut hasher);
+        }
         version.hash(&mut hasher);
         hasher.finish()
+    }
+
+    pub async fn check_cache_only(
+        &mut self,
+        server: &Server,
+        req: &ServerRequest,
+    ) -> ProtocolResult<Option<Packet>> {
+        let key = self.cache_key(server, req.protocol_version);
+        debug!(
+            "Quick cache check for domain: {} (key: {})",
+            req.domain, key
+        );
+
+        Ok(self.check_cache(key))
+    }
+
+    pub async fn update_cache_for(
+        &mut self,
+        server: &Server,
+        req: &ServerRequest,
+        response: Packet,
+    ) {
+        let key = self.cache_key(server, req.protocol_version);
+        debug!("Updating cache for domain: {} (key: {})", req.domain, key);
+        self.update_cache(key, response);
     }
 }
