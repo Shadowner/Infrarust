@@ -1,23 +1,39 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::Infrarust;
 use crate::cli::command::{Command, CommandFuture};
 use crate::cli::format as fmt;
+use crate::core::shared_component::SharedComponent;
+use crate::security::BanSystemAdapter;
 use crate::security::filter::FilterError;
+use crate::with_filter_result;
 use tracing::debug;
 
 pub struct BanListCommand {
-    infrarust: Arc<Infrarust>,
+    shared: Arc<SharedComponent>,
 }
 
 impl BanListCommand {
-    pub fn new(infrarust: Arc<Infrarust>) -> Self {
-        Self { infrarust }
+    pub fn new(shared: Arc<SharedComponent>) -> Self {
+        Self { shared }
     }
 
     async fn list_bans(&self) -> String {
-        match self.infrarust.get_all_bans().await {
+        let registry = self.shared.filter_registry();
+        let result = with_filter_result!(
+            registry,
+            "global_ban_system",
+            BanSystemAdapter,
+            async |filter: &BanSystemAdapter| {
+                match filter.get_all_bans().await {
+                    Ok(bans) => Ok(bans),
+                    Err(e) => Err(e),
+                }
+            },
+            Vec::new()
+        );
+
+        match result {
             Ok(bans) => {
                 if bans.is_empty() {
                     return fmt::info("No active bans found.").to_string();
@@ -117,16 +133,15 @@ impl Command for BanListCommand {
 
     fn execute(&self, _args: Vec<String>) -> CommandFuture {
         debug!("Executing banlist command");
-        let infrarust = self.infrarust.clone();
+        let shared = self.shared.clone();
 
         Box::pin(async move {
-            let cmd = BanListCommand { infrarust };
+            let cmd = BanListCommand { shared };
             cmd.list_bans().await
         })
     }
 }
 
-// Helper functions for time formatting
 fn format_time_ago(now: u64, past_time: u64) -> String {
     if past_time > now {
         return "In the future (time synchronization issue)".to_string();

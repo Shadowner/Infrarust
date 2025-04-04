@@ -3,22 +3,22 @@ use std::sync::atomic::Ordering;
 
 use crate::cli::command::{Command, CommandFuture};
 use crate::cli::format as fmt;
-use crate::core::actors::supervisor::ActorSupervisor;
+use crate::core::shared_component::SharedComponent;
 use tracing::debug;
 
 pub struct KickCommand {
-    supervisor: Arc<ActorSupervisor>,
+    shared: Arc<SharedComponent>,
 }
 
 impl KickCommand {
-    pub fn new(supervisor: Arc<ActorSupervisor>) -> Self {
-        Self { supervisor }
+    pub fn new(shared: Arc<SharedComponent>) -> Self {
+        Self { shared }
     }
 
     async fn find_and_kick(&self, username: &str, config_id: Option<&str>) -> String {
         debug!("Attempting to kick player: {}", username);
-
-        let actors = self.supervisor.get_all_actors().await;
+        let supervisor = self.shared.actor_supervisor();
+        let actors = supervisor.get_all_actors().await;
 
         if actors.is_empty() {
             return fmt::warning("No players are currently connected.").to_string();
@@ -109,7 +109,7 @@ impl Command for KickCommand {
         debug!("Executing kick command with args: {:?}", args);
 
         // Clone what we need for the async block
-        let supervisor = self.supervisor.clone();
+        let shared = self.shared.clone();
 
         Box::pin(async move {
             if args.is_empty() {
@@ -119,7 +119,7 @@ impl Command for KickCommand {
             let username = &args[0];
             let config_id = args.get(1).map(|s| s.as_str());
 
-            let kick_cmd = KickCommand { supervisor };
+            let kick_cmd = KickCommand { shared };
             kick_cmd.find_and_kick(username, config_id).await
         })
     }

@@ -370,8 +370,8 @@ impl Gateway {
         }
 
         debug!("Creating login connection to backend server");
-        let result = self.handle_login_request(&req, &tmp_server, server).await;
-        result
+        
+        self.handle_login_request(&req, &tmp_server, server).await
     }
 
     async fn handle_status_request(
@@ -393,9 +393,8 @@ impl Gateway {
             Ok(packet) => {
                 // Update cache in the background without waiting
                 self.update_cache_in_background(tmp_server, req, packet.clone());
-                let result =
-                    self.create_status_response(req.domain.clone(), server, packet, tmp_server);
-                result
+                
+                self.create_status_response(req.domain.clone(), server, packet, tmp_server)
             }
             Err(e) => {
                 debug!("Status fetch failed: {}. Using unreachable MOTD", e);
@@ -550,11 +549,11 @@ impl ServerRequester for Gateway {
             "Found server for domain: {}, proceeding to wake up",
             req.domain
         );
-        let result = self
+        
+        self
             .wake_up_server_internal(req, server_config)
             .instrument(debug_span!("server_request: wake_up_server"))
-            .await;
-        result
+            .await
     }
 
     async fn wake_up_server(
