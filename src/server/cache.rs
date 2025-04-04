@@ -1,31 +1,25 @@
 use std::{
     collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
-use tracing::{Instrument, debug, debug_span, instrument};
+use tracing::{debug, instrument};
 
 use crate::{
-    ServerConnection,
-    core::shared_component::SharedComponent,
-    network::{
-        packet::Packet,
-        proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
-    },
-    server::{
-        ServerRequest,
-        backend::Server,
-        motd::{MotdConfig, generate_motd},
-    },
+    core::config::InfrarustConfig,
+    network::{packet::Packet, proxy_protocol::ProtocolResult},
+    server::{ServerRequest, backend::Server, motd},
     version::Version,
 };
+
+use super::motd::MotdConfig;
 
 #[derive(Debug)]
 pub struct StatusCache {
     ttl: Duration,
     entries: HashMap<u64, CacheEntry>,
-    shared: Arc<SharedComponent>,
+    max_size: usize,
+    motd_config: MotdConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -35,12 +29,21 @@ struct CacheEntry {
 }
 
 impl StatusCache {
-    pub fn new(ttl: Duration, shared: Arc<SharedComponent>) -> Self {
+    pub fn new(ttl: Duration, max_size: usize, motd_config: MotdConfig) -> Self {
         Self {
             ttl,
             entries: HashMap::new(),
-            shared,
+            max_size,
+            motd_config,
         }
+    }
+
+    pub fn from_shared_config(config: &InfrarustConfig) -> Self {
+        let ttl = Duration::from_secs(config.cache.status_ttl_seconds.unwrap_or(30));
+        let max_size = config.cache.max_status_entries.unwrap_or(1000);
+        let motd_config = config.motds.unreachable.clone().unwrap_or_default();
+
+        Self::new(ttl, max_size, motd_config)
     }
 
     #[instrument(name = "get_status_response", skip(self, server), fields(
@@ -63,7 +66,7 @@ impl StatusCache {
         }
 
         debug!("Cache miss for {}, fetching from server", req.domain);
-        match self.fetch_from_server(server, req).await {
+        match server.fetch_status_directly(req).await {
             Ok(response) => {
                 debug!("Server fetch successful for {}", req.domain);
                 self.update_cache(key, response.clone());
@@ -71,7 +74,9 @@ impl StatusCache {
             }
             Err(e) => {
                 debug!("Server fetch failed for {}: {}", req.domain, e);
-                self.handle_server_fetch_error(server, req).await
+                // Use the dedicated motd function
+                motd::handle_server_fetch_error(&server.config, &req.domain, &self.motd_config)
+                    .await
             }
         }
     }
@@ -88,6 +93,14 @@ impl StatusCache {
     }
 
     fn update_cache(&mut self, key: u64, response: Packet) {
+        // Clean expired entries before adding new ones
+        self.clean_expired_entries();
+
+        // If cache is at max size, remove oldest entries
+        if self.entries.len() >= self.max_size {
+            self.remove_oldest_entries(10); // Remove 10% or at least one entry
+        }
+
         self.entries.insert(
             key,
             CacheEntry {
@@ -95,6 +108,7 @@ impl StatusCache {
                 response,
             },
         );
+
         debug!(
             "Cache updated for key: {}, cache size: {}",
             key,
@@ -102,119 +116,45 @@ impl StatusCache {
         );
     }
 
-    #[instrument(name = "fetch_from_server", skip(self, server), fields(
-        server_addr = %server.config.addresses.first().unwrap_or(&String::new()),
-        domain = %req.domain
-    ))]
-    async fn fetch_from_server(
-        &self,
-        server: &Server,
-        req: &ServerRequest,
-    ) -> ProtocolResult<Packet> {
-        let use_proxy_protocol = server.config.send_proxy_protocol.unwrap_or(false);
-        let start_time = Instant::now();
+    fn clean_expired_entries(&mut self) {
+        let now = SystemTime::now();
+        let expired_keys: Vec<u64> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.expires_at <= now)
+            .map(|(key, _)| *key)
+            .collect();
+
+        if !expired_keys.is_empty() {
+            for key in expired_keys.iter() {
+                self.entries.remove(key);
+            }
+            debug!("Removed {} expired entries from cache", expired_keys.len());
+        }
+    }
+
+    fn remove_oldest_entries(&mut self, count: usize) {
+        // Sort by expiration time to find oldest entries
+        let mut entries_with_keys: Vec<(u64, SystemTime)> = self
+            .entries
+            .iter()
+            .map(|(key, entry)| (*key, entry.expires_at))
+            .collect();
+
+        entries_with_keys.sort_by(|(_, time1), (_, time2)| time1.cmp(time2));
+
+        // Calculate how many to remove (at least one)
+        let remove_count = std::cmp::max(1, std::cmp::min(count, entries_with_keys.len()));
+
+        // Remove the oldest entries
+        for (key, _) in entries_with_keys.iter().take(remove_count) {
+            self.entries.remove(key);
+        }
 
         debug!(
-            "Connecting to server for domain: {} (proxy protocol: {})",
-            req.domain, use_proxy_protocol
+            "Removed {} oldest entries to stay within size limit",
+            remove_count
         );
-
-        let connect_result = if use_proxy_protocol {
-            server
-                .dial_with_proxy_protocol(req.session_id, req.client_addr)
-                .instrument(debug_span!("connect_with_proxy"))
-                .await
-        } else {
-            server
-                .dial(req.session_id)
-                .instrument(debug_span!("connect_standard"))
-                .await
-        };
-
-        match connect_result {
-            Ok(mut conn) => {
-                debug!("Connected to server after {:?}", start_time.elapsed());
-
-                let fetch_start = Instant::now();
-                match self.fetch_status(&mut conn, req).await {
-                    Ok(packet) => {
-                        debug!("Status fetched in {:?}", fetch_start.elapsed());
-                        Ok(packet)
-                    }
-                    Err(e) => {
-                        debug!("Status fetch failed: {}", e);
-                        Err(e)
-                    }
-                }
-            }
-            Err(e) => {
-                debug!("Connection failed: {}", e);
-                Err(e)
-            }
-        }
-    }
-
-    async fn handle_server_fetch_error(
-        &self,
-        server: &Server,
-        req: &ServerRequest,
-    ) -> ProtocolResult<Packet> {
-        debug!("Generating fallback MOTD for {}", req.domain);
-
-        if let Some(motd) = &server.config.motd {
-            debug!("Using server-specific MOTD for {}", req.domain);
-            return generate_motd(motd, false);
-        }
-
-        if let Some(motd) = self.shared.config().motds.unreachable.clone() {
-            if motd.enabled {
-                if !motd.is_empty() {
-                    debug!("Using global 'unreachable' MOTD");
-                    return generate_motd(&motd, true);
-                }
-                debug!("Using default 'unreachable' MOTD");
-                return generate_motd(&MotdConfig::default_unreachable(), true);
-            }
-        }
-
-        Err(ProxyProtocolError::Other(format!(
-            "Failed to connect to server for domain: {}",
-            req.domain
-        )))
-    }
-
-    #[instrument(skip(self, conn), fields(
-        domain = %req.domain,
-        session_id = %req.session_id
-    ))]
-    async fn fetch_status(
-        &self,
-        conn: &mut ServerConnection,
-        req: &ServerRequest,
-    ) -> ProtocolResult<Packet> {
-        if let Err(e) = conn.write_packet(&req.read_packets[0].clone()).await {
-            debug!("Failed to send handshake: {}", e);
-            return Err(e);
-        }
-
-        if let Err(e) = conn.write_packet(&req.read_packets[1].clone()).await {
-            debug!("Failed to send status request: {}", e);
-            return Err(e);
-        }
-
-        let start = Instant::now();
-        let result = conn.read_packet().await;
-        let elapsed = start.elapsed();
-
-        match &result {
-            Ok(_) => debug!("Got status response in {:?}", elapsed),
-            Err(e) => debug!(
-                "Failed to read status response: {} (after {:?})",
-                e, elapsed
-            ),
-        }
-
-        result
     }
 
     fn cache_key(&self, server: &Server, version: Version) -> u64 {

@@ -8,8 +8,8 @@
 pub mod core;
 use core::actors::supervisor::ActorSupervisor;
 pub use core::config::InfrarustConfig;
+use core::config::provider::ConfigProvider;
 use core::config::provider::file::FileProvider;
-use core::config::provider::{ConfigProvider, docker};
 use core::config::service::ConfigurationService;
 pub use core::error::RsaError;
 use core::error::SendError;
