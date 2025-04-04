@@ -17,10 +17,10 @@ use tokio::{
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::{
-    EncryptionState,
-    telemetry::{Direction, TELEMETRY},
-};
+use crate::EncryptionState;
+
+#[cfg(feature = "telemetry")]
+use crate::telemetry::{Direction, TELEMETRY};
 
 use super::{
     packet::{Packet, PacketError, PacketReader, PacketResult, PacketWriter, io::RawPacketIO},
@@ -135,7 +135,9 @@ impl Connection {
                 self.writer.enable_encryption(encrypt);
             }
             None => {
+                #[cfg(feature = "telemetry")]
                 TELEMETRY.record_protocol_error("encryption_failed", "", self.session_id);
+
                 warn!("Failed to enable encryption");
             }
         }
@@ -160,18 +162,23 @@ impl Connection {
     }
 
     pub async fn write_packet(&mut self, packet: &Packet) -> ProtocolResult<()> {
+        #[cfg(feature = "telemetry")]
         TELEMETRY.record_bytes_transferred(
             Direction::Outgoing,
             packet.data.len() as u64,
             self.session_id,
         );
+
+        #[cfg(feature = "telemetry")]
         TELEMETRY.record_packet_processing(&format!("0x{:02x}", &packet.id), 0., self.session_id);
 
         self.writer.write_packet(packet).await
     }
 
     pub async fn write_raw(&mut self, data: &[u8]) -> ProtocolResult<()> {
+        #[cfg(feature = "telemetry")]
         TELEMETRY.record_bytes_transferred(Direction::Outgoing, data.len() as u64, self.session_id);
+
         Ok(self.writer.write_raw(data).await?)
     }
 

@@ -3,13 +3,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tracing::{Instrument, debug, error, info, instrument};
 
+use crate::Connection;
 use crate::core::actors::supervisor::ActorSupervisor;
+use crate::core::{config::ServerConfig, event::MinecraftCommunication};
+use crate::proxy_modes::ClientProxyModeHandler;
+
+#[cfg(feature = "telemetry")]
 use crate::telemetry::TELEMETRY;
-use crate::{
-    Connection,
-    core::{config::ServerConfig, event::MinecraftCommunication},
-    proxy_modes::ClientProxyModeHandler,
-};
 
 use super::supervisor::SupervisorMessage;
 
@@ -65,6 +65,7 @@ async fn start_minecraft_client_actor<T>(
 ) {
     debug!("Starting Minecraft Client Actor for ID");
 
+    #[cfg(feature = "telemetry")]
     let peer_address = match actor.conn.peer_addr().await {
         Ok(addr) => addr,
         Err(e) => {
@@ -86,6 +87,7 @@ async fn start_minecraft_client_actor<T>(
             return;
         }
     };
+
     // drop the span because it would be too long just for the connection processing
     drop(tracing::Span::current());
 
@@ -160,6 +162,7 @@ async fn start_minecraft_client_actor<T>(
         .log_player_disconnect(actor.conn.session_id, reason)
         .await;
 
+    #[cfg(feature = "telemetry")]
     if actor.is_login && !actor.username.is_empty() {
         TELEMETRY.record_connection_end(&peer_address.to_string(), reason, actor.conn.session_id);
     }

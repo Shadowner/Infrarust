@@ -1,10 +1,5 @@
 use std::str::FromStr;
 
-use opentelemetry::global;
-use opentelemetry::trace::TracerProvider;
-use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::trace::{SdkTracerProvider, TracerProviderBuilder};
 use tracing::Level;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -13,7 +8,21 @@ use crate::core::config::{LoggingConfig, TelemetryConfig};
 
 use super::infrarust_fmt_formatter::InfrarustMessageFormatter;
 
+#[cfg(feature = "telemetry")]
+use opentelemetry::global;
+#[cfg(feature = "telemetry")]
+use opentelemetry::trace::TracerProvider;
+#[cfg(feature = "telemetry")]
+use opentelemetry_otlp::WithExportConfig;
+#[cfg(feature = "telemetry")]
+use opentelemetry_sdk::Resource;
+#[cfg(feature = "telemetry")]
+use opentelemetry_sdk::trace::{SdkTracerProvider, TracerProviderBuilder};
+
+#[cfg(feature = "telemetry")]
 pub struct TracerProviderGuard(pub SdkTracerProvider);
+
+#[cfg(feature = "telemetry")]
 impl Drop for TracerProviderGuard {
     fn drop(&mut self) {
         if let Err(e) = self.0.shutdown() {
@@ -58,6 +67,7 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingGuard {
 ///
 /// This sets up an OpenTelemetry tracer provider for distributed tracing
 /// and adds a layer to the existing tracing subscriber.
+#[cfg(feature = "telemetry")]
 pub fn init_opentelemetry_tracing(
     resource: Resource,
     config: &TelemetryConfig,
@@ -97,6 +107,11 @@ pub fn init_opentelemetry_tracing(
     global::set_tracer_provider(provider.clone());
 
     Some(TracerProviderGuard(provider))
+}
+
+#[cfg(not(feature = "telemetry"))]
+pub fn init_opentelemetry_tracing(_resource: (), _config: &TelemetryConfig) -> Option<()> {
+    None
 }
 
 fn create_formatter_from_config(config: &LoggingConfig) -> InfrarustMessageFormatter {

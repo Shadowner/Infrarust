@@ -18,8 +18,10 @@ use crate::{
     network::connection::PossibleReadValue,
     proxy_modes::ServerProxyModeHandler,
     server::ServerResponse,
-    telemetry::TELEMETRY,
 };
+
+#[cfg(feature = "telemetry")]
+use crate::telemetry::TELEMETRY;
 
 pub enum ServerEvent {
     ConfigurationUpdate {
@@ -228,6 +230,7 @@ async fn start_minecraft_server_actor<T>(
 
         actor.server_receiver.close();
 
+        #[cfg(feature = "telemetry")]
         if actor.is_login
             && actor.server_request.is_some()
             && actor.server_request.as_ref().unwrap().server_conn.is_some()

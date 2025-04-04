@@ -19,8 +19,10 @@ use crate::{
         get_client_only_mode, get_offline_mode, get_passthrough_mode, get_status_mode,
     },
     server::ServerResponse,
-    telemetry::TELEMETRY,
 };
+
+#[cfg(feature = "telemetry")]
+use crate::telemetry::TELEMETRY;
 
 pub enum SupervisorMessage {
     Shutdown,
@@ -110,6 +112,7 @@ impl ActorSupervisor {
         );
 
         if is_login {
+            #[cfg(feature = "telemetry")]
             TELEMETRY.update_player_count(1, config_id, client_conn.session_id, &username);
         }
 
@@ -479,6 +482,7 @@ impl ActorSupervisor {
             }
         }
 
+        #[cfg(feature = "telemetry")]
         for (session_id, config_id) in actors_to_remove {
             TELEMETRY.update_player_count(-1, &config_id, session_id, "");
         }

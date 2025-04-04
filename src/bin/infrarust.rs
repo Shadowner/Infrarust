@@ -12,7 +12,13 @@ use infrarust::{
     Infrarust,
     cli::{CommandProcessor, ShutdownController, command::CommandMessage, commands},
     core::config::provider::file::FileProvider,
-    telemetry::{self, exporter::resource, init_meter_provider, start_system_metrics_collection},
+    telemetry::tracing::init_logging,
+};
+
+#[cfg(feature = "telemetry")]
+use infrarust::telemetry::{
+    exporter::resource, init_meter_provider, start_system_metrics_collection,
+    tracing::init_opentelemetry_tracing,
 };
 
 #[derive(Parser)]
@@ -90,28 +96,42 @@ async fn main() {
         }
     };
 
-    let _logging_guard = telemetry::tracing::init_logging(&config.logging);
+    let _logging_guard = init_logging(&config.logging);
 
-    let mut _meter_guard: Option<telemetry::MeterProviderGuard> = None;
-    let mut _tracer_guard: Option<telemetry::tracing::TracerProviderGuard> = None;
+    #[cfg(feature = "telemetry")]
+    let mut _meter_guard = None;
+
+    #[cfg(feature = "telemetry")]
+    let mut _tracer_guard = None;
 
     if config.telemetry.enabled {
-        if config.telemetry.enable_tracing {
-            _tracer_guard =
-                telemetry::tracing::init_opentelemetry_tracing(resource(), &config.telemetry);
-        }
-
-        if config.telemetry.enable_metrics {
-            if config.telemetry.export_url.clone().is_none() {
-                warn!("Metrics enabled but no export URL provided");
-            } else {
-                start_system_metrics_collection();
-                _meter_guard = Some(init_meter_provider(
-                    resource(),
-                    config.telemetry.export_url.clone().unwrap(),
-                    Duration::from_secs(config.telemetry.export_interval_seconds),
-                ));
+        #[cfg(feature = "telemetry")]
+        {
+            if config.telemetry.enable_tracing {
+                _tracer_guard = init_opentelemetry_tracing(resource(), &config.telemetry);
             }
+
+            if config.telemetry.enable_metrics {
+                if config.telemetry.export_url.clone().is_none() {
+                    warn!("Metrics enabled but no export URL provided");
+                } else {
+                    start_system_metrics_collection();
+                    _meter_guard = Some(init_meter_provider(
+                        resource(),
+                        config.telemetry.export_url.clone().unwrap(),
+                        Duration::from_secs(config.telemetry.export_interval_seconds),
+                    ));
+                }
+            }
+        }
+        #[cfg(not(feature = "telemetry"))]
+        {
+            warn!(
+                "Telemetry feature is enabled. However this build does NOT include the Telemtry system."
+            );
+            warn!(
+                "Please go to https://infrarust.dev/features/telemetry/ to learn how to enable telemetry."
+            );
         }
     }
 

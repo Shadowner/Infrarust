@@ -1,18 +1,28 @@
+#[cfg(feature = "telemetry")]
 use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
+#[cfg(feature = "telemetry")]
 use opentelemetry::{KeyValue, global};
+#[cfg(feature = "telemetry")]
 use opentelemetry_otlp::WithExportConfig;
+#[cfg(feature = "telemetry")]
 use opentelemetry_sdk::{
     Resource,
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
 };
+#[cfg(feature = "telemetry")]
 use std::io::Error;
+#[cfg(feature = "telemetry")]
 use std::time::{Duration, Instant};
+#[cfg(feature = "telemetry")]
 use uuid::Uuid;
 
+#[cfg(feature = "telemetry")]
 use super::Direction;
 
+#[cfg(feature = "telemetry")]
 pub struct MeterProviderGuard(pub SdkMeterProvider);
 
+#[cfg(feature = "telemetry")]
 pub fn init_meter_provider(
     resource: Resource,
     endpoint: String,
@@ -38,6 +48,7 @@ pub fn init_meter_provider(
     MeterProviderGuard(provider)
 }
 
+#[cfg(feature = "telemetry")]
 pub struct InfrarustMetrics {
     // Connexions
     pub active_connections: UpDownCounter<i64>,
@@ -66,12 +77,14 @@ pub struct InfrarustMetrics {
     pub packet_processing_time: Histogram<f64>,
 }
 
+#[cfg(feature = "telemetry")]
 impl Default for InfrarustMetrics {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "telemetry")]
 impl InfrarustMetrics {
     pub fn new() -> Self {
         let meter = global::meter("infrarust");

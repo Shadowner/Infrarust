@@ -11,9 +11,11 @@ use crate::{
         packet::Packet,
         proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     },
-    telemetry::TELEMETRY,
     write_proxy_protocol_header,
 };
+
+#[cfg(feature = "telemetry")]
+use crate::telemetry::TELEMETRY;
 
 use super::ServerRequest;
 
@@ -52,6 +54,8 @@ impl Server {
         for (i, addr) in self.config.addresses.iter().enumerate() {
             debug!("Attempt {} - Connecting to {}", i + 1, addr);
             let now = std::time::Instant::now();
+
+            #[cfg(feature = "telemetry")]
             TELEMETRY.record_backend_request_start(&self.config.config_id, addr, &session_id);
 
             match tokio::time::timeout(std::time::Duration::from_secs(5), TcpStream::connect(addr))
@@ -68,6 +72,7 @@ impl Server {
                         Err(e) => debug!("Failed to set TCP_NODELAY: {}", e),
                     }
 
+                    #[cfg(feature = "telemetry")]
                     TELEMETRY.record_backend_request_end(
                         &self.config.config_id,
                         addr,
@@ -92,6 +97,8 @@ impl Server {
                         now.elapsed(),
                         e
                     );
+
+                    #[cfg(feature = "telemetry")]
                     TELEMETRY.record_backend_request_end(
                         &self.config.config_id,
                         addr,
@@ -100,6 +107,7 @@ impl Server {
                         &session_id,
                         Some(&e),
                     );
+
                     last_error = Some(e);
                 }
                 Err(_) => {
@@ -108,6 +116,8 @@ impl Server {
                         std::io::ErrorKind::TimedOut,
                         format!("Connection to {} timed out", addr),
                     );
+
+                    #[cfg(feature = "telemetry")]
                     TELEMETRY.record_backend_request_end(
                         &self.config.config_id,
                         addr,
@@ -116,6 +126,7 @@ impl Server {
                         &session_id,
                         Some(&e),
                     );
+
                     last_error = Some(e);
                 }
             }
@@ -146,7 +157,9 @@ impl Server {
         );
 
         for addr in &self.config.addresses {
+            #[cfg(feature = "telemetry")]
             let now = std::time::Instant::now();
+            #[cfg(feature = "telemetry")]
             TELEMETRY.record_backend_request_start(&self.config.config_id, addr, &session_id);
 
             match TcpStream::connect(addr).await {
@@ -173,6 +186,8 @@ impl Server {
                             Ok(_) => debug!("Proxy protocol header sent"),
                             Err(e) => {
                                 debug!("Failed to write proxy protocol header: {}", e);
+
+                                #[cfg(feature = "telemetry")]
                                 TELEMETRY.record_backend_request_end(
                                     &self.config.config_id,
                                     addr,
@@ -181,12 +196,14 @@ impl Server {
                                     &session_id,
                                     Some(&e),
                                 );
+
                                 last_error = Some(e);
                                 continue;
                             }
                         }
                     }
 
+                    #[cfg(feature = "telemetry")]
                     TELEMETRY.record_backend_request_end(
                         &self.config.config_id,
                         addr,
@@ -200,6 +217,8 @@ impl Server {
                 }
                 Err(e) => {
                     debug!("Failed to connect to {}: {}", addr, e);
+
+                    #[cfg(feature = "telemetry")]
                     TELEMETRY.record_backend_request_end(
                         &self.config.config_id,
                         addr,
@@ -208,6 +227,7 @@ impl Server {
                         &session_id,
                         Some(&e),
                     );
+
                     last_error = Some(e);
                 }
             }
