@@ -184,6 +184,9 @@ impl Infrarust {
             }
         });
 
+        #[cfg(feature = "telemetry")]
+        telemetry::start_system_metrics_collection();
+
         Ok(Self {
             _config_service: config_service.clone(),
             config,

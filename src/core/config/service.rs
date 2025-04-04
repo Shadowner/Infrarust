@@ -3,7 +3,10 @@ use tokio::sync::RwLock;
 use tracing::{Instrument, debug, debug_span, info, instrument};
 use wildmatch::WildMatch;
 
-use crate::{core::config::ServerConfig, telemetry::TELEMETRY};
+use crate::core::config::ServerConfig;
+
+#[cfg(feature = "telemetry")]
+use crate::telemetry::TELEMETRY;
 
 #[derive(Clone)]
 pub struct ConfigurationService {
@@ -101,6 +104,7 @@ impl ConfigurationService {
                     let is_new = !config_lock.contains_key(&config_id);
 
                     if is_new {
+                        #[cfg(feature = "telemetry")]
                         TELEMETRY.update_backend_count(1, &config_id);
                     }
 
@@ -146,7 +150,9 @@ impl ConfigurationService {
             "Removing configuration"
         );
 
+        #[cfg(feature = "telemetry")]
         TELEMETRY.update_backend_count(-1, config_id);
+
         if config_lock.remove(config_id).is_some() {
             debug!("Configuration removed successfully");
         } else {

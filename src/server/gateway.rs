@@ -10,6 +10,7 @@ use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn
 
 use super::{ServerRequest, ServerRequester, ServerResponse, backend::Server, cache::StatusCache};
 use crate::core::config::service::ConfigurationService;
+#[cfg(feature = "telemetry")]
 use crate::telemetry::TELEMETRY;
 use crate::{
     Connection, FilterRegistry,
@@ -320,10 +321,12 @@ impl Gateway {
     ) -> ProxyModeEnum {
         if !request.is_login {
             debug!("Processing status request for domain: {}", request.domain);
+            #[cfg(feature = "telemetry")]
             TELEMETRY.record_request();
             ProxyModeEnum::Status
         } else {
             debug!("Processing login request for domain: {}", request.domain);
+            #[cfg(feature = "telemetry")]
             TELEMETRY.record_new_connection(
                 &request.client_addr.to_string(),
                 &request.domain,

@@ -1,18 +1,27 @@
-pub mod exporter;
 pub mod infrarust_fmt_formatter;
-pub mod metrics;
 pub mod tracing;
 
+#[cfg(feature = "telemetry")]
+pub mod exporter;
+#[cfg(feature = "telemetry")]
+pub mod metrics;
+
+#[cfg(feature = "telemetry")]
 pub use metrics::{MeterProviderGuard, init_meter_provider};
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
+#[cfg(feature = "telemetry")]
 pub use tracing::TracerProviderGuard;
 
+#[cfg(feature = "telemetry")]
 pub use opentelemetry::global;
 
+#[cfg(feature = "telemetry")]
 use lazy_static::lazy_static;
+#[cfg(feature = "telemetry")]
 use metrics::InfrarustMetrics;
+#[cfg(feature = "telemetry")]
 use std::collections::HashSet;
 
+#[cfg(feature = "telemetry")]
 lazy_static! {
     pub static ref TELEMETRY: InfrarustMetrics = InfrarustMetrics::new();
 }
@@ -24,6 +33,7 @@ pub enum Direction {
     Internal,
 }
 
+#[cfg(feature = "telemetry")]
 pub fn start_system_metrics_collection() {
     tokio::spawn(async move {
         let mut sys = sysinfo::System::new_all();
@@ -48,4 +58,9 @@ pub fn start_system_metrics_collection() {
             }
         }
     });
+}
+
+#[cfg(not(feature = "telemetry"))]
+pub fn start_system_metrics_collection() {
+    // No-op when telemetry is disabled
 }
