@@ -21,7 +21,7 @@ impl UnbanCommand {
 
     async fn unban_username(&self, username: &str) -> Result<bool, FilterError> {
         let registry = self.shared.filter_registry();
-        let result = match with_filter_result!(
+        let result = with_filter_result!(
             registry,
             "global_ban_system",
             BanSystemAdapter,
@@ -33,10 +33,8 @@ impl UnbanCommand {
                 }
             },
             false
-        ) {
-            Ok(result) => Some(result),
-            Err(_) => None,
-        };
+        )
+        .ok();
 
         match result {
             Some(true) => return Ok(true),

@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::{
@@ -32,11 +32,9 @@ impl Gateway {
     pub fn new(shared: Arc<SharedComponent>) -> Self {
         info!("Initializing ServerGateway");
 
+        let config = shared.config();
         let gateway = Self {
-            status_cache: Arc::new(Mutex::new(StatusCache::new(
-                Duration::from_secs(30),
-                shared.clone(),
-            ))),
+            status_cache: Arc::new(Mutex::new(StatusCache::from_shared_config(config))),
             shared,
         };
 
@@ -163,7 +161,6 @@ impl Gateway {
             }
         };
 
-
         let proxy_mode = self.determine_proxy_mode(&request, &server_config);
         let connecting_domain = request.domain.clone();
 
@@ -271,7 +268,6 @@ impl Gateway {
             .await;
 
         debug!("Client connection handling complete");
-
     }
 
     #[instrument(skip(self), fields(domain = %domain), level = "debug")]
@@ -370,7 +366,7 @@ impl Gateway {
         }
 
         debug!("Creating login connection to backend server");
-        
+
         self.handle_login_request(&req, &tmp_server, server).await
     }
 
@@ -393,7 +389,7 @@ impl Gateway {
             Ok(packet) => {
                 // Update cache in the background without waiting
                 self.update_cache_in_background(tmp_server, req, packet.clone());
-                
+
                 self.create_status_response(req.domain.clone(), server, packet, tmp_server)
             }
             Err(e) => {
@@ -549,9 +545,8 @@ impl ServerRequester for Gateway {
             "Found server for domain: {}, proceeding to wake up",
             req.domain
         );
-        
-        self
-            .wake_up_server_internal(req, server_config)
+
+        self.wake_up_server_internal(req, server_config)
             .instrument(debug_span!("server_request: wake_up_server"))
             .await
     }

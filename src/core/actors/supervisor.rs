@@ -47,6 +47,35 @@ type ActorStorage = HashMap<String, Vec<ActorPair>>;
 
 static GLOBAL_SUPERVISOR: OnceCell<Arc<ActorSupervisor>> = OnceCell::const_new();
 
+#[derive(Debug, Clone)]
+pub struct TaskStats {
+    /// Configuration ID these tasks belong to
+    pub config_id: String,
+    /// Number of active actors for this configuration
+    pub active_actor_count: usize,
+    /// Total number of tasks registered
+    pub task_count: usize,
+    /// Number of tasks that are still running
+    pub running_count: usize,
+    /// Number of tasks that have completed
+    pub completed_count: usize,
+    /// Number of tasks that don't have associated actors (potential leak)
+    pub orphaned_count: usize,
+    /// Detailed information about individual tasks
+    pub task_handles: Vec<TaskInfo>,
+}
+
+/// Information about an individual task
+#[derive(Debug, Clone)]
+pub struct TaskInfo {
+    /// Task index in the handles array
+    pub id: usize,
+    /// Whether the task has finished execution
+    pub is_finished: bool,
+    /// Whether the task was aborted
+    pub is_aborted: bool,
+}
+
 #[derive(Debug)]
 pub struct ActorSupervisor {
     actors: RwLock<ActorStorage>,
@@ -69,6 +98,50 @@ impl ActorSupervisor {
                 Arc::new(ActorSupervisor::new())
             }
         }
+    }
+
+    pub async fn get_task_statistics(&self) -> HashMap<String, TaskStats> {
+        let tasks = self.tasks.read().await;
+        let actors = self.actors.read().await;
+        let mut stats = HashMap::new();
+
+        for (config_id, handles) in tasks.iter() {
+            let actor_count = actors.get(config_id).map_or(0, |pairs| {
+                pairs
+                    .iter()
+                    .filter(|p| !p.shutdown.load(std::sync::atomic::Ordering::SeqCst))
+                    .count()
+            });
+
+            let running_count = handles.iter().filter(|h| !h.is_finished()).count();
+
+            let completed_count = handles.iter().filter(|h| h.is_finished()).count();
+
+            let handles_info: Vec<TaskInfo> = handles
+                .iter()
+                .enumerate()
+                .map(|(idx, handle)| TaskInfo {
+                    id: idx,
+                    is_finished: handle.is_finished(),
+                    is_aborted: handle.is_finished(),
+                })
+                .collect();
+
+            stats.insert(
+                config_id.clone(),
+                TaskStats {
+                    config_id: config_id.clone(),
+                    active_actor_count: actor_count,
+                    task_count: handles.len(),
+                    running_count,
+                    completed_count,
+                    orphaned_count: if actor_count == 0 { handles.len() } else { 0 },
+                    task_handles: handles_info,
+                },
+            );
+        }
+
+        stats
     }
 
     pub fn initialize_global() -> Result<(), tokio::sync::SetError<Arc<ActorSupervisor>>> {

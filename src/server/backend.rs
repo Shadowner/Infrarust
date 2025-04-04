@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use tokio::net::TcpStream;
-use tracing::{debug, instrument};
+use tracing::{Instrument, debug, debug_span, instrument};
 use uuid::Uuid;
 
 use crate::{
@@ -239,68 +239,83 @@ impl Server {
         })
     }
 
+    #[instrument(name = "fetch_status_directly", skip(self), fields(
+        server_addr = %self.config.addresses.first().unwrap_or(&String::new()),
+        domain = %req.domain
+    ))]
     pub async fn fetch_status_directly(&self, req: &ServerRequest) -> ProtocolResult<Packet> {
-        debug!("Directly fetching status for {}", req.domain);
-
         let use_proxy_protocol = self.config.send_proxy_protocol.unwrap_or(false);
-        let conn = if use_proxy_protocol {
-            debug!("Using proxy protocol for direct status connection");
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                self.dial_with_proxy_protocol(req.session_id, req.client_addr),
-            )
-            .await
-            {
-                Ok(Ok(conn)) => conn,
-                Ok(Err(e)) => return Err(e),
-                Err(_) => return Err(ProxyProtocolError::Other("Connection timeout".to_string())),
-            }
-        } else {
-            debug!("Using standard connection for direct status");
-            match tokio::time::timeout(std::time::Duration::from_secs(5), self.dial(req.session_id))
+        let start_time = std::time::Instant::now();
+
+        debug!(
+            "Connecting to server for domain: {} (proxy protocol: {})",
+            req.domain, use_proxy_protocol
+        );
+
+        let connect_result = if use_proxy_protocol {
+            self.dial_with_proxy_protocol(req.session_id, req.client_addr)
+                .instrument(debug_span!("connect_with_proxy"))
                 .await
-            {
-                Ok(Ok(conn)) => conn,
-                Ok(Err(e)) => return Err(e),
-                Err(_) => return Err(ProxyProtocolError::Other("Connection timeout".to_string())),
-            }
+        } else {
+            self.dial(req.session_id)
+                .instrument(debug_span!("connect_standard"))
+                .await
         };
 
-        let mut conn = conn;
-        debug!("Sending handshake packet for direct status");
-        if let Err(e) = conn.write_packet(&req.read_packets[0].clone()).await {
-            debug!("Failed to send handshake packet: {}", e);
-            return Err(e);
-        }
+        match connect_result {
+            Ok(mut conn) => {
+                debug!("Connected to server after {:?}", start_time.elapsed());
 
-        debug!("Sending status request packet for direct status");
-        if let Err(e) = conn.write_packet(&req.read_packets[1].clone()).await {
-            debug!("Failed to send status request packet: {}", e);
-            return Err(e);
-        }
-
-        debug!("Waiting for direct status response");
-        match tokio::time::timeout(std::time::Duration::from_secs(5), conn.read_packet()).await {
-            Ok(Ok(packet)) => {
-                debug!("Received direct status response");
-
-                if let Some(motd) = &self.config.motd {
-                    debug!("Using custom MOTD for direct status");
-                    return crate::server::motd::generate_motd(motd, false);
+                let fetch_start = std::time::Instant::now();
+                match self.fetch_status_from_connection(&mut conn, req).await {
+                    Ok(packet) => {
+                        debug!("Status fetched in {:?}", fetch_start.elapsed());
+                        Ok(packet)
+                    }
+                    Err(e) => {
+                        debug!("Status fetch failed: {}", e);
+                        Err(e)
+                    }
                 }
-
-                Ok(packet)
             }
-            Ok(Err(e)) => {
-                debug!("Error reading direct status response: {}", e);
+            Err(e) => {
+                debug!("Connection failed: {}", e);
                 Err(e)
             }
-            Err(_) => {
-                debug!("Timeout reading direct status response");
-                Err(ProxyProtocolError::Other(
-                    "Status response timeout".to_string(),
-                ))
-            }
         }
+    }
+
+    #[instrument(skip(self, conn), fields(
+        domain = %req.domain,
+        session_id = %req.session_id
+    ))]
+    async fn fetch_status_from_connection(
+        &self,
+        conn: &mut ServerConnection,
+        req: &ServerRequest,
+    ) -> ProtocolResult<Packet> {
+        if let Err(e) = conn.write_packet(&req.read_packets[0].clone()).await {
+            debug!("Failed to send handshake: {}", e);
+            return Err(e);
+        }
+
+        if let Err(e) = conn.write_packet(&req.read_packets[1].clone()).await {
+            debug!("Failed to send status request: {}", e);
+            return Err(e);
+        }
+
+        let start = std::time::Instant::now();
+        let result = conn.read_packet().await;
+        let elapsed = start.elapsed();
+
+        match &result {
+            Ok(_) => debug!("Got status response in {:?}", elapsed),
+            Err(e) => debug!(
+                "Failed to read status response: {} (after {:?})",
+                e, elapsed
+            ),
+        }
+
+        result
     }
 }
