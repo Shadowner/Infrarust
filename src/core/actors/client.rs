@@ -178,7 +178,7 @@ async fn start_minecraft_client_actor<T>(
         .await;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MinecraftClientHandler {
     //TODO: establish a connection to talk to an actor
     _sender: mpsc::Sender<SupervisorMessage>,

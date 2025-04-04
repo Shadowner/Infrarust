@@ -9,51 +9,40 @@ use tokio::sync::{
 use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
 
 use super::{ServerRequest, ServerRequester, ServerResponse, backend::Server, cache::StatusCache};
-use crate::core::config::service::ConfigurationService;
+use crate::core::shared_component::SharedComponent;
+use crate::network::packet::Packet;
 #[cfg(feature = "telemetry")]
 use crate::telemetry::TELEMETRY;
 use crate::{
-    Connection, FilterRegistry,
-    cli::ShutdownController,
-    core::{actors::supervisor::ActorSupervisor, config::ServerConfig, event::GatewayMessage},
+    Connection,
+    core::{config::ServerConfig, event::GatewayMessage},
     network::proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     protocol::minecraft::java::login::ServerBoundLoginStart,
     proxy_modes::ProxyModeEnum,
-    security::BanSystemAdapter,
-    with_filter_or,
 };
-use crate::{FilterError, network::packet::Packet};
+use crate::{security::BanHelper, server::motd};
 
+#[derive(Debug, Clone)]
 pub struct Gateway {
-    config_service: Arc<ConfigurationService>,
     status_cache: Arc<Mutex<StatusCache>>,
-    _sender: mpsc::Sender<GatewayMessage>,
-    pub actor_supervisor: Arc<ActorSupervisor>,
-    shutdown_controller: Arc<ShutdownController>,
-    filter_registry: Option<Arc<FilterRegistry>>,
+    shared: Arc<SharedComponent>,
 }
 
 impl Gateway {
-    pub fn new(
-        sender: mpsc::Sender<GatewayMessage>,
-        config_service: Arc<ConfigurationService>,
-        shutdown_controller: Arc<ShutdownController>,
-        filter_registry: Option<Arc<FilterRegistry>>,
-    ) -> Self {
+    pub fn new(shared: Arc<SharedComponent>) -> Self {
         info!("Initializing ServerGateway");
 
         let gateway = Self {
-            config_service,
-            _sender: sender,
-            actor_supervisor: Arc::new(ActorSupervisor::new()),
-            status_cache: Arc::new(Mutex::new(StatusCache::new(Duration::from_secs(30)))),
-            shutdown_controller,
-            filter_registry,
+            status_cache: Arc::new(Mutex::new(StatusCache::new(
+                Duration::from_secs(30),
+                shared.clone(),
+            ))),
+            shared,
         };
 
         // Start a background task for periodic health checks
-        let supervisor = gateway.actor_supervisor.clone();
-        let shutdown = gateway.shutdown_controller.clone();
+        let supervisor = gateway.shared.actor_supervisor();
+        let shutdown = gateway.shared.shutdown_controller();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
             let mut shutdown_rx = shutdown.subscribe().await;
@@ -90,57 +79,31 @@ impl Gateway {
     }
 
     pub async fn update_configurations(&self, configurations: Vec<ServerConfig>) {
-        self.config_service
+        self.shared
+            .configuration_service()
             .update_configurations(configurations)
             .await;
     }
 
     pub async fn remove_configuration(&self, config_id: &str) {
-        self.config_service.remove_configuration(config_id).await;
+        self.shared
+            .configuration_service()
+            .remove_configuration(config_id)
+            .await;
     }
 
     async fn is_username_banned(&self, username: &str) -> Option<String> {
-        if let Some(registry) = &self.filter_registry {
-            let is_banned = matches!(
-                with_filter_or!(
-                    registry,
-                    "global_ban_system",
-                    BanSystemAdapter,
-                    async |filter: &BanSystemAdapter| { filter.is_username_banned(username).await },
-                    false
-                ),
-                Ok(true)
-            );
-
-            if is_banned {
-                if let Ok(reason) = with_filter_or!(
-                    registry,
-                    "global_ban_system",
-                    BanSystemAdapter,
-                    async |filter: &BanSystemAdapter| {
-                        filter.get_ban_reason_for_username(username).await
-                    },
-                    None
-                ) {
-                    return reason;
-                }
-            }
-        }
-        None
+        BanHelper::is_username_banned(&self.shared.filter_registry(), username).await
     }
 
-    #[instrument(name = "client_connection_handling", skip(client, request, gateway), fields(
+    #[instrument(name = "client_connection_handling", skip(client, request), fields(
         domain = %request.domain,
         is_login = request.is_login,
         protocol_version = ?request.protocol_version,
         client_addr = %request.client_addr,
         session_id = %request.session_id
     ))]
-    pub async fn handle_client_connection(
-        mut client: Connection,
-        request: ServerRequest,
-        gateway: Arc<Gateway>,
-    ) {
+    pub async fn handle_client_connection(&self, mut client: Connection, request: ServerRequest) {
         let span = Span::current();
         debug!(
             "Starting client connection handling for domain: {}",
@@ -153,7 +116,7 @@ impl Gateway {
                 Ok(name) => {
                     debug!("Parsed login packet for user: {}", name);
 
-                    if let Some(reason) = gateway.is_username_banned(&name).await {
+                    if let Some(reason) = self.is_username_banned(&name).await {
                         warn!(
                             "Player with banned username '{}' attempted to connect: {}",
                             name, reason
@@ -179,7 +142,7 @@ impl Gateway {
         };
 
         debug!("Looking up server for domain: {}", request.domain);
-        let server_config = match gateway
+        let server_config = match self
             .find_server(&request.domain)
             .instrument(span.clone())
             .await
@@ -200,15 +163,17 @@ impl Gateway {
             }
         };
 
-        let proxy_mode = gateway.determine_proxy_mode(&request, &server_config);
+
+        let proxy_mode = self.determine_proxy_mode(&request, &server_config);
         let connecting_domain = request.domain.clone();
 
         debug!("Creating oneshot channel for server response");
         let (oneshot_request_sender, oneshot_request_receiver) = oneshot::channel();
 
         debug!("Creating actor pair");
-        let actor_pair = gateway
-            .actor_supervisor
+        let actor_pair = self
+            .shared
+            .actor_supervisor()
             .create_actor_pair(
                 &server_config.config_id,
                 client,
@@ -231,19 +196,20 @@ impl Gateway {
             std::time::Duration::from_secs(5) // Short timeout for status requests
         };
 
-        let supervisor = gateway.actor_supervisor.clone();
+        let supervisor = self.shared.actor_supervisor().clone();
         let server_config_clone = server_config.clone();
 
         debug!("Spawning task to wake up server");
         let is_login = request.is_login;
 
+        let self_guard = self.clone();
         let task_handle = tokio::spawn(
             async move {
                 debug!("About to call wake_up_server");
 
                 match tokio::time::timeout(
                     timeout_duration,
-                    gateway.wake_up_server(request, server_config),
+                    self_guard.wake_up_server(request, server_config),
                 )
                 .await
                 {
@@ -305,6 +271,45 @@ impl Gateway {
             .await;
 
         debug!("Client connection handling complete");
+
+    }
+
+    #[instrument(skip(self), fields(domain = %domain), level = "debug")]
+    async fn find_server(&self, domain: &str) -> Option<Arc<ServerConfig>> {
+        debug!("Finding server by domain: {}", domain);
+        let configs = self
+            .shared
+            .configuration_service()
+            .get_all_configurations()
+            .await;
+        debug!("Got {} total server configurations", configs.len());
+
+        let result = self
+            .shared
+            .configuration_service()
+            .find_server_by_domain(domain)
+            .await;
+
+        debug!(
+            domain = %domain,
+            found = result.is_some(),
+            "Domain lookup result"
+        );
+
+        if result.is_some() {
+            debug!("Found server for domain {}", domain);
+        } else {
+            debug!("No server found for domain {}", domain);
+        }
+
+        result
+    }
+
+    pub async fn get_server_from_ip(&self, ip: &str) -> Option<Arc<ServerConfig>> {
+        self.shared
+            .configuration_service()
+            .find_server_by_ip(ip)
+            .await
     }
 
     fn extract_username_from_request(request: &ServerRequest) -> Result<String, String> {
@@ -336,33 +341,6 @@ impl Gateway {
         }
     }
 
-    #[instrument(skip(self), fields(domain = %domain), level = "debug")]
-    async fn find_server(&self, domain: &str) -> Option<Arc<ServerConfig>> {
-        debug!("Finding server by domain: {}", domain);
-        let configs = self.config_service.get_all_configurations().await;
-        debug!("Got {} total server configurations", configs.len());
-
-        let result = self.config_service.find_server_by_domain(domain).await;
-
-        debug!(
-            domain = %domain,
-            found = result.is_some(),
-            "Domain lookup result"
-        );
-
-        if result.is_some() {
-            debug!("Found server for domain {}", domain);
-        } else {
-            debug!("No server found for domain {}", domain);
-        }
-
-        result
-    }
-
-    pub async fn get_server_from_ip(&self, ip: &str) -> Option<Arc<ServerConfig>> {
-        self.config_service.find_server_by_ip(ip).await
-    }
-
     #[instrument(name = "wake_up_server_internal", skip(self, req, server), fields(
         domain = %req.domain,
         is_login = %req.is_login,
@@ -386,13 +364,14 @@ impl Gateway {
             }
         };
 
-        // For status requests, use a fast-path that doesn't block on mutex acquisition
         if !req.is_login {
-            return self.handle_status_request(&req, &tmp_server, server).await;
+            let result = self.handle_status_request(&req, &tmp_server, server).await;
+            return result;
         }
 
         debug!("Creating login connection to backend server");
-        self.handle_login_request(&req, &tmp_server, server).await
+        let result = self.handle_login_request(&req, &tmp_server, server).await;
+        result
     }
 
     async fn handle_status_request(
@@ -404,7 +383,9 @@ impl Gateway {
         debug!("Fast-path for status request to {}", req.domain);
 
         if let Some(response) = self.try_quick_cache_lookup(tmp_server, req).await {
-            return self.create_status_response(req.domain.clone(), server, response, tmp_server);
+            let result =
+                self.create_status_response(req.domain.clone(), server, response, tmp_server);
+            return result;
         }
 
         debug!("No quick cache hit, fetching status directly from server");
@@ -412,7 +393,9 @@ impl Gateway {
             Ok(packet) => {
                 // Update cache in the background without waiting
                 self.update_cache_in_background(tmp_server, req, packet.clone());
-                self.create_status_response(req.domain.clone(), server, packet, tmp_server)
+                let result =
+                    self.create_status_response(req.domain.clone(), server, packet, tmp_server);
+                result
             }
             Err(e) => {
                 debug!("Status fetch failed: {}. Using unreachable MOTD", e);
@@ -518,65 +501,12 @@ impl Gateway {
         server: Arc<ServerConfig>,
     ) -> ProtocolResult<ServerResponse> {
         debug!("Generating unreachable MOTD response for {}", domain);
-
-        let guard = crate::CONFIG.read();
-
-        let motd_packet = if let Some(motd) = &server.motd {
-            debug!("Using server-specific MOTD for unreachable status");
-            crate::server::motd::generate_motd(motd, false)?
-        } else if let Some(motd) = guard.motds.unreachable.clone() {
-            debug!("Using global unreachable MOTD");
-            crate::server::motd::generate_motd(&motd, true)?
-        } else {
-            debug!("Using default unreachable MOTD");
-            crate::server::motd::generate_motd(
-                &crate::server::motd::MotdConfig::default_unreachable(),
-                true,
-            )?
-        };
-
-        Ok(ServerResponse {
-            server_conn: None,
-            status_response: Some(motd_packet),
-            send_proxy_protocol: false,
-            read_packets: vec![],
-            server_addr: None,
-            proxy_mode: ProxyModeEnum::Status,
-            proxied_domain: Some(domain),
-            initial_config: server,
-        })
+        motd::generate_unreachable_motd_response(domain, server, self.shared.config())
     }
 
     async fn handle_unknown_server(&self, req: &ServerRequest) -> ProtocolResult<ServerResponse> {
-        let guard = crate::CONFIG.read();
-
-        let fake_config = Arc::new(ServerConfig {
-            domains: vec![req.domain.clone()],
-            addresses: vec![],
-            config_id: format!("unknown_{}", req.domain),
-            ..ServerConfig::default()
-        });
-
-        if let Some(motd) = guard.motds.unknown.clone() {
-            debug!("Generating unknown server MOTD for {}", req.domain);
-            let motd_packet = crate::server::motd::generate_motd(&motd, true)?;
-
-            return Ok(ServerResponse {
-                server_conn: None,
-                status_response: Some(motd_packet),
-                send_proxy_protocol: false,
-                read_packets: vec![],
-                server_addr: None,
-                proxy_mode: ProxyModeEnum::Status,
-                proxied_domain: Some(req.domain.clone()),
-                initial_config: fake_config,
-            });
-        }
-
-        Err(ProxyProtocolError::Other(format!(
-            "Server not found for domain: {}",
-            req.domain
-        )))
+        debug!("Handling unknown server for {}", req.domain);
+        motd::generate_unknown_server_response(req.domain.clone(), self.shared.config())
     }
 }
 
@@ -611,7 +541,8 @@ impl ServerRequester for Gateway {
                     )));
                 }
 
-                return self.handle_unknown_server(&req).await;
+                let result = self.handle_unknown_server(&req).await;
+                return result;
             }
         };
 
@@ -619,9 +550,11 @@ impl ServerRequester for Gateway {
             "Found server for domain: {}, proceeding to wake up",
             req.domain
         );
-        self.wake_up_server_internal(req, server_config)
+        let result = self
+            .wake_up_server_internal(req, server_config)
             .instrument(debug_span!("server_request: wake_up_server"))
-            .await
+            .await;
+        result
     }
 
     async fn wake_up_server(

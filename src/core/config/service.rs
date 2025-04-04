@@ -8,7 +8,7 @@ use crate::core::config::ServerConfig;
 #[cfg(feature = "telemetry")]
 use crate::telemetry::TELEMETRY;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConfigurationService {
     configurations: Arc<RwLock<HashMap<String, Arc<ServerConfig>>>>,
 }

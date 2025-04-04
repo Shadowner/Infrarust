@@ -8,12 +8,12 @@
 pub mod core;
 use core::actors::supervisor::ActorSupervisor;
 pub use core::config::InfrarustConfig;
-use core::config::provider::ConfigProvider;
 use core::config::provider::file::FileProvider;
+use core::config::provider::{ConfigProvider, docker};
 use core::config::service::ConfigurationService;
 pub use core::error::RsaError;
 use core::error::SendError;
-use core::event::{GatewayMessage, ProviderMessage};
+use core::shared_component::SharedComponent;
 use std::io;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -22,8 +22,6 @@ pub mod telemetry;
 
 // Protocol modules
 pub mod protocol;
-use lazy_static::lazy_static;
-use parking_lot::RwLock;
 use protocol::minecraft::java::handshake::ServerBoundHandshake;
 pub use protocol::{
     types::{ProtocolRead, ProtocolWrite},
@@ -55,24 +53,13 @@ use cli::ShutdownController;
 use server::ServerRequest;
 use server::gateway::Gateway;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc::Sender;
 use uuid::Uuid;
 
 use crate::version::Version;
-
+#[derive(Debug)]
 pub struct Infrarust {
-    _config_service: Arc<ConfigurationService>,
-    config: InfrarustConfig,
-    filter_registry: Arc<FilterRegistry>,
-    server_gateway: Arc<Gateway>,
-    shutdown_controller: Arc<ShutdownController>,
-    _gateway_sender: Sender<GatewayMessage>,
-    _provider_sender: Sender<ProviderMessage>,
-}
-
-lazy_static! {
-    pub static ref CONFIG: RwLock<Arc<InfrarustConfig>> =
-        RwLock::new(Arc::new(InfrarustConfig::default()));
+    shared: Arc<SharedComponent>,
+    gateway: Arc<Gateway>,
 }
 
 impl Infrarust {
@@ -82,29 +69,25 @@ impl Infrarust {
     ) -> io::Result<Self> {
         let span = debug_span!("infrarust_init");
         let _enter = span.enter();
+        let config = Arc::new(config);
 
         debug!("Initializing Infrarust server with config: {:?}", config);
         let config_service = Arc::new(ConfigurationService::new());
-        {
-            let mut guard = CONFIG.write();
-            *guard = Arc::new(config.clone());
-        }
+
         let (gateway_sender, gateway_receiver) = tokio::sync::mpsc::channel(100);
         let (provider_sender, provider_receiver) = tokio::sync::mpsc::channel(100);
 
         // Initialize filter registry
         let filter_registry = Arc::new(FilterRegistry::new());
-
-        let server_gateway = Arc::new(Gateway::new(
-            gateway_sender.clone(),
-            config_service.clone(),
-            shutdown_controller.clone(),
-            Some(filter_registry.clone()),
-        ));
-
-        if ActorSupervisor::initialize_global(server_gateway.actor_supervisor.clone()).is_err() {
-            debug!("Global supervisor was already initialized");
+        if ActorSupervisor::initialize_global().is_err() {
+            error!("Failed to initialize ActorSupervisor");
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Failed to initialize ActorSupervisor",
+            ));
         }
+
+        let supervisor = ActorSupervisor::global();
 
         let mut config_provider = ConfigProvider::new(
             config_service.clone(),
@@ -112,12 +95,23 @@ impl Infrarust {
             provider_sender.clone(),
         );
 
-        if let Some(file_config) = config.file_provider.clone() {
+        let shared = Arc::new(SharedComponent::new(
+            config,
+            supervisor,
+            config_service,
+            filter_registry,
+            shutdown_controller,
+            gateway_sender,
+            provider_sender,
+        ));
+
+        let server_gateway = Arc::new(Gateway::new(shared.clone()));
+        if let Some(file_config) = shared.config().file_provider.clone() {
             let file_provider = FileProvider::new(
                 file_config.proxies_path,
                 file_config.file_type,
                 file_config.watch,
-                provider_sender.clone(),
+                shared.provider_sender().clone(),
             );
 
             config_provider.register_provider(Box::new(file_provider));
@@ -139,10 +133,11 @@ impl Infrarust {
                 .instrument(gateway_span)
                 .await;
         });
+        let shared_clone = shared.clone();
+        let registry_clone = shared_clone.filter_registry();
 
-        let registry_clone = filter_registry.clone();
-        let config_clone = config.clone();
         tokio::spawn(async move {
+            let config_clone = shared_clone.config();
             if let Some(filter_config) = &config_clone.filters {
                 if let Some(rate_config) = &filter_config.rate_limiter {
                     let rate_limiter = RateLimiter::new(
@@ -184,30 +179,27 @@ impl Infrarust {
             }
         });
 
+        // Initialize system metrics collection if telemetry is enabled
         #[cfg(feature = "telemetry")]
         telemetry::start_system_metrics_collection();
 
         Ok(Self {
-            _config_service: config_service.clone(),
-            config,
-            filter_registry,
-            server_gateway,
-            shutdown_controller,
-            _gateway_sender: gateway_sender,
-            _provider_sender: provider_sender,
+            shared,
+            gateway: server_gateway,
         })
     }
 
     pub async fn run(self: Arc<Self>) -> Result<(), SendError> {
         debug!("Starting Infrarust server");
-        let bind_addr = self.config.bind.clone().unwrap_or_default();
+        let bind_addr = self.shared.config().bind.clone().unwrap_or_default();
 
         // Create listener
         let listener = match TcpListener::bind(&bind_addr).await {
             Ok(l) => l,
             Err(e) => {
                 error!("Failed to bind to {}: {}", bind_addr, e);
-                self.shutdown_controller
+                self.shared
+                    .shutdown_controller()
                     .trigger_shutdown(&format!("Failed to bind: {}", e))
                     .await;
                 return Err(SendError::new(e));
@@ -217,7 +209,7 @@ impl Infrarust {
         info!("Listening on {}", bind_addr);
 
         // Get a shutdown receiver
-        let mut shutdown_rx = self.shutdown_controller.subscribe().await;
+        let mut shutdown_rx = self.shared.shutdown_controller().subscribe().await;
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
@@ -228,17 +220,19 @@ impl Infrarust {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, addr)) => {
+                            let self_guard = Arc::clone(&self);
                             let session_id = Uuid::new_v4();
-                            let span = debug_span!("TCP Connection", %addr, %session_id);
+                            let _span = debug_span!("TCP Connection", %addr, %session_id);
                             debug!("New TCP connection accepted : ({})[{}]", addr, session_id);
 
-                            let filter_registry = self.filter_registry.clone();
-                            let server_gateway = Arc::clone(&self.server_gateway);
                             tokio::spawn(async move {
                                 debug!("Starting connection processing for ({})[{}]", addr, session_id);
 
                                 match async {
-                                    filter_registry.filter(&stream).await?;
+
+                                    self_guard.shared.filter_registry().filter(&stream).await?;
+
+
                                     debug!("Connection passed filters for ({})[{}]", addr, session_id);
 
                                     let conn = Connection::new(stream, session_id)
@@ -246,7 +240,7 @@ impl Infrarust {
                                         .await?;
                                     debug!("Connection established for ({})[{}]", addr, session_id);
 
-                                    Self::handle_connection(conn, server_gateway).await
+                                    self_guard.handle_connection(conn).await
                                 }.await {
                                     Ok(_) => debug!("Connection from {} completed successfully", addr),
                                     Err(e) => error!("Connection error from {}: {}", addr, e),
@@ -268,15 +262,11 @@ impl Infrarust {
         Ok(())
     }
 
-    #[instrument(
-        name = "connection_flow",
-        skip(client, server_gateway),
-        fields(peer_addr = %client.peer_addr().await?,)
-    )]
-    async fn handle_connection(
-        mut client: Connection,
-        server_gateway: Arc<Gateway>,
-    ) -> io::Result<()> {
+    #[instrument(name = "connection_flow", skip(client))]
+    async fn handle_connection(&self, mut client: Connection) -> io::Result<()> {
+        let peer_addr = client.peer_addr().await?;
+        Span::current().record("peer_addr", format!("{}", peer_addr));
+
         debug!(
             "Starting to process new connection from {}",
             client.peer_addr().await?
@@ -343,30 +333,31 @@ impl Infrarust {
         let client_addr = client.peer_addr().await?;
         let session_id = client.session_id;
 
-        let handle_client_span = debug_span!(
+        let _handle_client_span = debug_span!(
             "handle_client_flow",
             domain = %domain,
             is_login = %is_login
         );
         let domain_clone = domain.clone();
 
+        let gateway_ref = self.gateway.clone();
         tokio::spawn(async move {
             // let _guard = handle_client_span.entered();
             debug!("Processing client in separate task");
 
-            Gateway::handle_client_connection(
-                client,
-                ServerRequest {
-                    client_addr,
-                    domain: domain.clone(),
-                    is_login,
-                    protocol_version,
-                    read_packets: [handshake_packet, second_packet],
-                    session_id,
-                },
-                server_gateway,
-            )
-            .await;
+            gateway_ref
+                .handle_client_connection(
+                    client,
+                    ServerRequest {
+                        client_addr,
+                        domain: domain.clone(),
+                        is_login,
+                        protocol_version,
+                        read_packets: [handshake_packet, second_packet],
+                        session_id,
+                    },
+                )
+                .await;
 
             debug!(domain = %domain, "Client processing task completed");
         });
@@ -378,15 +369,15 @@ impl Infrarust {
     pub async fn shutdown(self: &Arc<Self>) -> tokio::sync::oneshot::Receiver<()> {
         let (tx, rx) = tokio::sync::oneshot::channel();
 
-        let server_clone = self.clone();
+        let self_guard = self.clone();
         tokio::spawn(async move {
-            let config_service = server_clone._config_service.clone();
+            let config_service = self_guard.shared.configuration_service().clone();
             let configs = config_service.get_all_configurations().await;
 
             for (config_id, _) in configs {
-                server_clone
-                    .server_gateway
-                    .actor_supervisor
+                self_guard
+                    .shared
+                    .actor_supervisor()
                     .shutdown_actors(&config_id)
                     .await;
             }
@@ -397,24 +388,12 @@ impl Infrarust {
         rx
     }
 
-    pub fn get_supervisor(&self) -> Arc<ActorSupervisor> {
-        self.server_gateway.actor_supervisor.clone()
-    }
-
-    pub fn get_config_service(&self) -> Arc<ConfigurationService> {
-        self._config_service.clone()
-    }
-
-    pub fn get_filter_registry(&self) -> Arc<FilterRegistry> {
-        self.filter_registry.clone()
-    }
-
-    pub fn get_config(&self) -> &InfrarustConfig {
-        &self.config
+    pub fn get_shared(&self) -> Arc<SharedComponent> {
+        self.shared.clone()
     }
 
     pub async fn has_ban_filter(&self) -> Result<bool, FilterError> {
-        let registry = self.get_filter_registry();
+        let registry = self.shared.filter_registry();
 
         with_filter_or!(
             registry,
@@ -426,7 +405,7 @@ impl Infrarust {
     }
 
     pub async fn add_ban(&self, ban: BanEntry) -> Result<(), FilterError> {
-        let registry = self.get_filter_registry();
+        let registry = self.shared.filter_registry();
 
         with_filter!(
             registry,
@@ -437,7 +416,7 @@ impl Infrarust {
     }
 
     pub async fn remove_ban_by_ip(&self, ip: IpAddr) -> Result<bool, FilterError> {
-        let registry = self.get_filter_registry();
+        let registry = self.shared.filter_registry();
         with_filter!(
             registry,
             "global_ban_system",
@@ -447,7 +426,7 @@ impl Infrarust {
     }
 
     pub async fn remove_ban_by_username(&self, username: &str) -> Result<bool, FilterError> {
-        let registry = self.get_filter_registry();
+        let registry = self.shared.filter_registry();
 
         with_filter!(
             registry,
@@ -460,7 +439,7 @@ impl Infrarust {
     }
 
     pub async fn remove_ban_by_uuid(&self, uuid: &str) -> Result<bool, FilterError> {
-        let registry = self.get_filter_registry();
+        let registry = self.shared.filter_registry();
 
         with_filter!(
             registry,
@@ -471,7 +450,7 @@ impl Infrarust {
     }
 
     pub async fn get_all_bans(&self) -> Result<Vec<BanEntry>, FilterError> {
-        let registry = self.get_filter_registry();
+        let registry = self.shared.filter_registry();
 
         with_filter!(
             registry,
@@ -482,7 +461,7 @@ impl Infrarust {
     }
 
     pub async fn clear_expired_bans(&self) -> Result<usize, FilterError> {
-        let registry = self.get_filter_registry();
+        let registry = self.shared.filter_registry();
 
         with_filter!(
             registry,
@@ -493,11 +472,18 @@ impl Infrarust {
     }
 
     pub async fn get_ban_file_path(&self) -> String {
-        self.config.filters.clone().unwrap().ban.file_path.unwrap()
+        self.shared
+            .config()
+            .filters
+            .clone()
+            .unwrap()
+            .ban
+            .file_path
+            .unwrap()
     }
 
     pub async fn has_ban_system_adapter(&self) -> Result<bool, FilterError> {
-        let registry = self.get_filter_registry();
+        let registry = self.shared.filter_registry();
 
         with_filter_or!(
             registry,

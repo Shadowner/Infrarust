@@ -1,12 +1,14 @@
 use std::{
     collections::HashMap,
+    sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
 
 use tracing::{Instrument, debug, debug_span, instrument};
 
 use crate::{
-    CONFIG, ServerConnection,
+    ServerConnection,
+    core::shared_component::SharedComponent,
     network::{
         packet::Packet,
         proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
@@ -23,6 +25,7 @@ use crate::{
 pub struct StatusCache {
     ttl: Duration,
     entries: HashMap<u64, CacheEntry>,
+    shared: Arc<SharedComponent>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,10 +35,11 @@ struct CacheEntry {
 }
 
 impl StatusCache {
-    pub fn new(ttl: Duration) -> Self {
+    pub fn new(ttl: Duration, shared: Arc<SharedComponent>) -> Self {
         Self {
             ttl,
             entries: HashMap::new(),
+            shared,
         }
     }
 
@@ -162,8 +166,7 @@ impl StatusCache {
             return generate_motd(motd, false);
         }
 
-        let guard = CONFIG.read();
-        if let Some(motd) = guard.motds.unreachable.clone() {
+        if let Some(motd) = self.shared.config().motds.unreachable.clone() {
             if motd.enabled {
                 if !motd.is_empty() {
                     debug!("Using global 'unreachable' MOTD");
