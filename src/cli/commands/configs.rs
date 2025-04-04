@@ -2,22 +2,22 @@ use std::sync::Arc;
 
 use crate::cli::command::{Command, CommandFuture};
 use crate::cli::format as fmt;
-use crate::core::config::service::ConfigurationService;
+use crate::core::shared_component::SharedComponent;
 use tracing::debug;
 
 pub struct ConfigsCommand {
-    config_service: Arc<ConfigurationService>,
+    shared: Arc<SharedComponent>,
 }
 
 impl ConfigsCommand {
-    pub fn new(config_service: Arc<ConfigurationService>) -> Self {
-        Self { config_service }
+    pub fn new(shared: Arc<SharedComponent>) -> Self {
+        Self { shared }
     }
 
     async fn list_configs(&self) -> String {
         debug!("Listing server configurations");
-
-        let configs = self.config_service.get_all_configurations().await;
+        let config_service = self.shared.configuration_service();
+        let configs = config_service.get_all_configurations().await;
 
         if configs.is_empty() {
             return fmt::warning("No server configurations found.").to_string();
@@ -95,10 +95,10 @@ impl Command for ConfigsCommand {
 
     fn execute(&self, _args: Vec<String>) -> CommandFuture {
         debug!("Executing configs command");
-        let config_service = self.config_service.clone();
+        let shared = self.shared.clone();
 
         Box::pin(async move {
-            let cmd = ConfigsCommand { config_service };
+            let cmd = ConfigsCommand { shared };
             cmd.list_configs().await
         })
     }

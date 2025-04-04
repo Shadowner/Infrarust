@@ -145,9 +145,7 @@ async fn main() {
         }
     };
 
-    // Get the actor supervisor and config service from the server
-    let supervisor = server.get_supervisor();
-    let config_service = server.get_config_service();
+    let shared = server.get_shared();
 
     let signal_task = {
         let shutdown = shutdown_controller.clone();
@@ -180,11 +178,7 @@ async fn main() {
             }
         }
     } else {
-        let commands = commands::get_all_commands(
-            Some(supervisor),
-            Some(config_service),
-            Some(server.clone()),
-        );
+        let commands = commands::get_all_commands(Some(shared.clone()));
         let (command_processor, mut command_rx) =
             CommandProcessor::new(commands, Some(shutdown_controller.clone()));
 

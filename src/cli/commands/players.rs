@@ -3,21 +3,22 @@ use std::sync::Arc;
 
 use crate::cli::command::{Command, CommandFuture};
 use crate::cli::format as fmt;
-use crate::core::actors::supervisor::ActorSupervisor;
+use crate::core::shared_component::SharedComponent;
 use tracing::debug;
 
 pub struct PlayersCommand {
-    supervisor: Arc<ActorSupervisor>,
+    shared: Arc<SharedComponent>,
 }
 
 impl PlayersCommand {
-    pub fn new(supervisor: Arc<ActorSupervisor>) -> Self {
-        Self { supervisor }
+    pub fn new(shared: Arc<SharedComponent>) -> Self {
+        Self { shared }
     }
 
     async fn format_player_list(&self) -> String {
         let mut result = String::new();
-        let actors = self.supervisor.get_all_actors().await;
+        let supervisor = self.shared.actor_supervisor();
+        let actors = supervisor.get_all_actors().await;
 
         if actors.is_empty() {
             return fmt::warning("No players connected.").to_string();
@@ -85,10 +86,10 @@ impl Command for PlayersCommand {
 
     fn execute(&self, _args: Vec<String>) -> CommandFuture {
         debug!("Executing players command");
-        let supervisor = self.supervisor.clone();
+        let shared = self.shared.clone();
 
         Box::pin(async move {
-            let players_cmd = PlayersCommand { supervisor };
+            let players_cmd = PlayersCommand { shared };
             players_cmd.format_player_list().await
         })
     }

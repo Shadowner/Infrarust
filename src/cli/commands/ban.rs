@@ -3,20 +3,21 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::Infrarust;
 use crate::cli::command::{Command, CommandFuture};
 use crate::cli::format as fmt;
+use crate::core::shared_component::SharedComponent;
 use crate::security::BanEntry;
 use crate::security::filter::FilterError;
+use crate::with_filter;
 use tracing::debug;
 
 pub struct BanCommand {
-    infrarust: Arc<Infrarust>,
+    shared: Arc<SharedComponent>,
 }
 
 impl BanCommand {
-    pub fn new(infrarust: Arc<Infrarust>) -> Self {
-        Self { infrarust }
+    pub fn new(shared: Arc<SharedComponent>) -> Self {
+        Self { shared }
     }
 
     async fn ban_player(&self, args: Vec<String>) -> String {
@@ -107,7 +108,15 @@ impl BanCommand {
             "console".to_string(),
         );
 
-        match self.infrarust.add_ban(ban_entry).await {
+        let registry = self.shared.filter_registry();
+        let result = with_filter!(
+            registry,
+            "global_ban_system",
+            crate::security::BanSystemAdapter,
+            async |filter: &crate::security::BanSystemAdapter| { filter.add_ban(ban_entry).await }
+        );
+
+        match result {
             Ok(_) => {
                 let mut result = String::new();
                 result.push_str(&fmt::success("Ban applied successfully:").to_string());
@@ -173,10 +182,10 @@ impl Command for BanCommand {
 
     fn execute(&self, args: Vec<String>) -> CommandFuture {
         debug!("Executing ban command with args: {:?}", args);
-        let infrarust = self.infrarust.clone();
+        let shared = self.shared.clone();
 
         Box::pin(async move {
-            let ban_cmd = BanCommand { infrarust };
+            let ban_cmd = BanCommand { shared };
             ban_cmd.ban_player(args).await
         })
     }
@@ -221,6 +230,7 @@ fn parse_duration(duration_str: &str) -> Result<Duration, String> {
 
 // Helper function to format duration for display
 fn format_duration(duration: Duration) -> String {
+    // Implementation remains the same
     let secs = duration.as_secs();
 
     if secs < 60 {

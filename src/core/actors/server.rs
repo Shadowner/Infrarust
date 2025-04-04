@@ -186,12 +186,6 @@ async fn start_minecraft_server_actor<T>(
                         warn!("Error handling internal server message: {:?}", e);
                         shutdown_flag.store(true, Ordering::SeqCst);
                         break;
-                    } else {
-                        if let Err(e) = proxy_mode.handle_internal_server(msg, &mut actor).await {
-                            warn!("Error handling internal server message: {:?}", e);
-                            shutdown_flag.store(true, Ordering::SeqCst);
-                            break;
-                        }
                     }
                 }
                 read_result = read_from_server(&mut actor.server_request) => {

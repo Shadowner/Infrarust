@@ -4,22 +4,23 @@ use std::sync::Arc;
 
 use crate::cli::command::{Command, CommandFuture};
 use crate::cli::format as fmt;
+use crate::core::shared_component::SharedComponent;
 use crate::security::BanSystemAdapter;
 use crate::security::filter::FilterError;
-use crate::{Filter, Infrarust, with_filter_result, with_filter_void};
+use crate::{Filter, with_filter_result, with_filter_void};
 use tracing::debug;
 
 pub struct UnbanCommand {
-    infrarust: Arc<Infrarust>,
+    shared: Arc<SharedComponent>,
 }
 
 impl UnbanCommand {
-    pub fn new(infrarust: Arc<Infrarust>) -> Self {
-        Self { infrarust }
+    pub fn new(shared: Arc<SharedComponent>) -> Self {
+        Self { shared }
     }
 
     async fn unban_username(&self, username: &str) -> Result<bool, FilterError> {
-        let registry = &self.infrarust.filter_registry;
+        let registry = self.shared.filter_registry();
         let result = match with_filter_result!(
             registry,
             "global_ban_system",
@@ -117,8 +118,23 @@ impl UnbanCommand {
                 .to_string();
         }
 
+        let registry = self.shared.filter_registry();
+
         if let Some(ip) = ip {
-            match self.infrarust.remove_ban_by_ip(ip).await {
+            let result = with_filter_result!(
+                registry,
+                "global_ban_system",
+                BanSystemAdapter,
+                async |filter: &BanSystemAdapter| {
+                    match filter.remove_ban_by_ip(&ip, "system").await {
+                        Ok(removed) => Ok(removed),
+                        Err(e) => Err(e),
+                    }
+                },
+                false
+            );
+
+            match result {
                 Ok(removed) => {
                     if removed {
                         fmt::success(&format!(
@@ -146,7 +162,7 @@ impl UnbanCommand {
             match self.unban_username(&username).await {
                 Ok(removed) => {
                     if removed {
-                        let registry = &self.infrarust.filter_registry;
+                        // Refresh ban filter
                         with_filter_void!(
                             registry,
                             "global_ban_system",
@@ -178,7 +194,20 @@ impl UnbanCommand {
                 },
             }
         } else if let Some(uuid) = uuid {
-            match self.infrarust.remove_ban_by_uuid(&uuid).await {
+            let result = with_filter_result!(
+                registry,
+                "global_ban_system",
+                BanSystemAdapter,
+                async |filter: &BanSystemAdapter| {
+                    match filter.remove_ban_by_uuid(&uuid, "system").await {
+                        Ok(removed) => Ok(removed),
+                        Err(e) => Err(e),
+                    }
+                },
+                false
+            );
+
+            match result {
                 Ok(removed) => {
                     if removed {
                         fmt::success(&format!(
@@ -217,10 +246,10 @@ impl Command for UnbanCommand {
 
     fn execute(&self, args: Vec<String>) -> CommandFuture {
         debug!("Executing unban command with args: {:?}", args);
-        let infrarust = self.infrarust.clone();
+        let shared = self.shared.clone();
 
         Box::pin(async move {
-            let unban_cmd = UnbanCommand { infrarust };
+            let unban_cmd = UnbanCommand { shared };
             unban_cmd.unban_player(args).await
         })
     }
