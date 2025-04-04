@@ -24,6 +24,7 @@ pub struct PacketReader<R> {
     encryption: Option<Aes128Cfb8Dec>,
     compression: CompressionState,
     protocol_version: Version,
+    buffer: BytesMut,
 }
 
 impl<R: AsyncRead + Unpin> PacketReader<R> {
@@ -33,6 +34,7 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
             encryption: None,
             compression: CompressionState::Disabled,
             protocol_version: Version::new(0),
+            buffer: BytesMut::with_capacity(8192),
         }
     }
 
@@ -167,10 +169,6 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
     pub fn get_mut(&mut self) -> &mut R {
         &mut self.reader
     }
-
-    pub fn into_inner(self) -> R {
-        self.reader
-    }
 }
 
 #[async_trait]
@@ -179,10 +177,15 @@ where
     R: AsyncRead + Unpin + Send,
 {
     async fn read_raw(&mut self) -> PacketResult<Option<BytesMut>> {
-        let mut buffer = BytesMut::with_capacity(8192);
-        match self.reader.read_buf(&mut buffer).await {
+        self.buffer.clear();
+
+        match self.reader.read_buf(&mut self.buffer).await {
             Ok(0) => Ok(None), // EOF
-            Ok(_) => Ok(Some(buffer)),
+            Ok(_) => {
+                // Return a clone of our buffer's contents (doesn't copy memory)
+                let result = self.buffer.clone();
+                Ok(Some(result))
+            }
             Err(e) => Err(PacketError::Io(e)),
         }
     }
