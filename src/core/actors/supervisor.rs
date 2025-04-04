@@ -29,7 +29,7 @@ pub enum SupervisorMessage {
     Disconnect,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ActorPair {
     pub username: String,
     pub client: MinecraftClientHandler,
@@ -47,6 +47,7 @@ type ActorStorage = HashMap<String, Vec<ActorPair>>;
 
 static GLOBAL_SUPERVISOR: OnceCell<Arc<ActorSupervisor>> = OnceCell::const_new();
 
+#[derive(Debug)]
 pub struct ActorSupervisor {
     actors: RwLock<ActorStorage>,
     tasks: RwLock<HashMap<String, Vec<JoinHandle<()>>>>,
@@ -70,11 +71,9 @@ impl ActorSupervisor {
         }
     }
 
-    pub fn initialize_global(
-        supervisor: Arc<ActorSupervisor>,
-    ) -> Result<(), tokio::sync::SetError<Arc<ActorSupervisor>>> {
+    pub fn initialize_global() -> Result<(), tokio::sync::SetError<Arc<ActorSupervisor>>> {
         debug!("Initializing global supervisor instance");
-        GLOBAL_SUPERVISOR.set(supervisor)
+        GLOBAL_SUPERVISOR.set(Arc::new(ActorSupervisor::new()))
     }
 
     pub fn new() -> Self {

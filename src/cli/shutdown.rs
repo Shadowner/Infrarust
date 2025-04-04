@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast};
 use tracing::{debug, info};
 
+#[derive(Debug)]
 pub struct ShutdownController {
     tx: Mutex<broadcast::Sender<()>>,
     shutdown_triggered: Mutex<bool>,

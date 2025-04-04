@@ -1,9 +1,12 @@
 use serde::Deserialize;
+use std::sync::Arc;
 
 use crate::{
+    InfrarustConfig,
+    core::config::ServerConfig,
     network::{
         packet::{Packet, PacketCodec},
-        proxy_protocol::errors::ProxyProtocolError,
+        proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     },
     protocol::{
         minecraft::java::status::clientbound_response::{
@@ -12,6 +15,8 @@ use crate::{
         },
         types::ProtocolString,
     },
+    proxy_modes::ProxyModeEnum,
+    server::ServerResponse,
 };
 
 #[cfg(feature = "telemetry")]
@@ -32,7 +37,7 @@ pub fn generate_motd(
             sample: motd.samples.clone().unwrap_or_default(),
         },
         description: serde_json::json!({
-            "text":  motd.text.clone(),
+            "text":  motd.text.clone().unwrap_or_default(),
         }),
         favicon: motd.favicon.clone().or_else(|| {
             if include_infrarust_favicon {
@@ -66,6 +71,63 @@ pub fn generate_motd(
     })?;
 
     Ok(response_packet)
+}
+
+pub fn generate_unreachable_motd_response(
+    domain: String,
+    server: Arc<ServerConfig>,
+    config: &InfrarustConfig,
+) -> ProtocolResult<ServerResponse> {
+    let motd_packet = if let Some(motd) = &server.motd {
+        generate_motd(motd, false)?
+    } else if let Some(motd) = config.motds.unreachable.clone() {
+        generate_motd(&motd, true)?
+    } else {
+        generate_motd(&MotdConfig::default_unreachable(), true)?
+    };
+
+    Ok(ServerResponse {
+        server_conn: None,
+        status_response: Some(motd_packet),
+        send_proxy_protocol: false,
+        read_packets: vec![],
+        server_addr: None,
+        proxy_mode: ProxyModeEnum::Status,
+        proxied_domain: Some(domain),
+        initial_config: server,
+    })
+}
+
+pub fn generate_unknown_server_response(
+    domain: String,
+    config: &InfrarustConfig,
+) -> ProtocolResult<ServerResponse> {
+    let fake_config = Arc::new(ServerConfig {
+        domains: vec![domain.clone()],
+        addresses: vec![],
+        config_id: format!("unknown_{}", domain),
+        ..ServerConfig::default()
+    });
+
+    if let Some(motd) = config.motds.unknown.clone() {
+        let motd_packet = generate_motd(&motd, true)?;
+
+        Ok(ServerResponse {
+            server_conn: None,
+            status_response: Some(motd_packet),
+            send_proxy_protocol: false,
+            read_packets: vec![],
+            server_addr: None,
+            proxy_mode: ProxyModeEnum::Status,
+            proxied_domain: Some(domain),
+            initial_config: fake_config,
+        })
+    } else {
+        Err(ProxyProtocolError::Other(format!(
+            "Server not found for domain: {}",
+            domain
+        )))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
