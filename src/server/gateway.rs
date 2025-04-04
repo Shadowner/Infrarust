@@ -32,11 +32,9 @@ impl Gateway {
     pub fn new(shared: Arc<SharedComponent>) -> Self {
         info!("Initializing ServerGateway");
 
+        let config = shared.config();
         let gateway = Self {
-            status_cache: Arc::new(Mutex::new(StatusCache::new(
-                Duration::from_secs(30),
-                shared.clone(),
-            ))),
+            status_cache: Arc::new(Mutex::new(StatusCache::from_shared_config(config))),
             shared,
         };
 

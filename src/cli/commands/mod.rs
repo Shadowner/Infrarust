@@ -3,15 +3,19 @@
 mod ban;
 mod banlist;
 mod configs;
+mod debug;
 mod kick;
 mod players;
+mod tracker;
 mod unban;
 
 pub use ban::BanCommand;
 pub use banlist::BanListCommand;
 pub use configs::ConfigsCommand;
+pub use debug::DebugCommand;
 pub use kick::KickCommand;
 pub use players::PlayersCommand;
+pub use tracker::TasksCommand;
 pub use unban::UnbanCommand;
 
 use crate::cli::command::Command;
@@ -28,6 +32,8 @@ pub fn get_all_commands(shared_component: Option<Arc<SharedComponent>>) -> Vec<A
         commands.push(Arc::new(BanCommand::new(shared.clone())));
         commands.push(Arc::new(UnbanCommand::new(shared.clone())));
         commands.push(Arc::new(BanListCommand::new(shared.clone())));
+        commands.push(Arc::new(DebugCommand::new(shared.clone())));
+        commands.push(Arc::new(TasksCommand::new(shared.clone())));
     }
 
     commands
