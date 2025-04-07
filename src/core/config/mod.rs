@@ -3,7 +3,7 @@ pub mod service;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use provider::file::FileProviderConfig;
+use provider::{docker::DockerProviderConfig, file::FileProviderConfig};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -221,6 +221,7 @@ pub struct InfrarustConfig {
     pub addresses: Option<Vec<String>>,
     pub keepalive_timeout: Option<Duration>,
     pub file_provider: Option<FileProviderConfig>,
+    pub docker_provider: Option<DockerProviderConfig>,
 
     #[serde(default)]
     pub cache: CacheConfig,
@@ -268,6 +269,10 @@ impl InfrarustConfig {
 
         if let Some(file_provider) = &other.file_provider {
             self.file_provider = Some(file_provider.clone());
+        }
+
+        if let Some(docker_provider) = &other.docker_provider {
+            self.docker_provider = Some(docker_provider.clone());
         }
 
         if other.motds.unknown.is_some() {
