@@ -6,7 +6,6 @@
 
 // Core modules
 pub mod core;
-use core::actors::supervisor::ActorSupervisor;
 pub use core::config::InfrarustConfig;
 use core::config::provider::ConfigProvider;
 use core::config::provider::file::FileProvider;
@@ -14,6 +13,7 @@ use core::config::service::ConfigurationService;
 pub use core::error::RsaError;
 use core::error::SendError;
 use core::shared_component::SharedComponent;
+use core::{actors::supervisor::ActorSupervisor, config::provider::docker};
 use std::io;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -115,6 +115,15 @@ impl Infrarust {
             );
 
             config_provider.register_provider(Box::new(file_provider));
+        }
+
+        if let Some(docker_config) = shared.config().docker_provider.clone() {
+            let docker_provider = Box::new(docker::DockerProvider::new(
+                docker_config,
+                shared.provider_sender().clone(),
+            ));
+            config_provider.register_provider(docker_provider);
+            info!("Docker provider registered");
         }
 
         let provider_span = Span::current();
