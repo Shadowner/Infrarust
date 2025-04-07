@@ -1,10 +1,12 @@
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::core::{config::service::ConfigurationService, event::ProviderMessage};
 
+use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+pub mod docker;
 pub mod file;
 
 #[async_trait::async_trait]

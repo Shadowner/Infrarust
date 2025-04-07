@@ -117,6 +117,15 @@ impl Infrarust {
             config_provider.register_provider(Box::new(file_provider));
         }
 
+        if let Some(docker_config) = shared.config().docker_provider.clone() {
+            let docker_provider = Box::new(docker::DockerProvider::new(
+                docker_config,
+                shared.provider_sender().clone(),
+            ));
+            config_provider.register_provider(docker_provider);
+            info!("Docker provider registered");
+        }
+
         let provider_span = Span::current();
         tokio::spawn(async move {
             debug!("Starting ConfigProvider");
