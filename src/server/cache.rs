@@ -157,7 +157,7 @@ impl StatusCache {
         );
     }
 
-    fn cache_key(&self, server: &Server, version: Version) -> u64 {
+    pub fn cache_key(&self, server: &Server, version: Version) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
