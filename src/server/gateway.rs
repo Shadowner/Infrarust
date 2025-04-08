@@ -27,6 +27,7 @@ use crate::{security::BanHelper, server::motd};
 pub struct Gateway {
     status_cache: Arc<Mutex<StatusCache>>,
     shared: Arc<SharedComponent>,
+    #[allow(clippy::type_complexity)]
     pending_status_requests:
         Arc<Mutex<HashMap<u64, Receiver<Option<Result<Packet, ProxyProtocolError>>>>>>,
 }

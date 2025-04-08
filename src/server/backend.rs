@@ -27,10 +27,9 @@ pub struct Server {
 impl Server {
     pub fn new(config: Arc<ServerConfig>) -> ProtocolResult<Self> {
         if config.addresses.is_empty() {
-            return Err(ProxyProtocolError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "No server addresses configured",
-            )));
+            return Err(ProxyProtocolError::Io(
+                "No server addresses configured".into(),
+            ));
         }
         Ok(Self { config })
     }

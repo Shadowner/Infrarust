@@ -3,12 +3,12 @@ use std::io;
 
 use crate::network::packet::PacketError;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ProxyProtocolError {
     NoTrustedCIDRs,
     UpstreamNotTrusted,
     InvalidHeader(String),
-    Io(io::Error),
+    Io(String),
     InvalidLength(usize),
     VarIntTooLong(Option<String>),
     Other(String),
@@ -36,7 +36,7 @@ impl std::error::Error for ProxyProtocolError {}
 
 impl From<io::Error> for ProxyProtocolError {
     fn from(e: io::Error) -> Self {
-        ProxyProtocolError::Io(e)
+        ProxyProtocolError::Io(e.to_string())
     }
 }
 
@@ -55,7 +55,7 @@ impl From<ProxyProtocolError> for io::Error {
 impl From<PacketError> for ProxyProtocolError {
     fn from(err: PacketError) -> Self {
         match err {
-            PacketError::Io(e) => ProxyProtocolError::Io(e),
+            PacketError::Io(e) => ProxyProtocolError::Io(e.to_string()),
             PacketError::Compression(e) => {
                 ProxyProtocolError::Other(format!("Compression error: {}", e))
             }
