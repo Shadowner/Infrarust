@@ -1,15 +1,15 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use tokio::sync::{
     Mutex,
     mpsc::{self},
     oneshot,
+    watch::{self, Receiver},
 };
 use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
 
 use super::{ServerRequest, ServerRequester, ServerResponse, backend::Server, cache::StatusCache};
-use crate::core::shared_component::SharedComponent;
 use crate::network::packet::Packet;
 #[cfg(feature = "telemetry")]
 use crate::telemetry::TELEMETRY;
@@ -20,12 +20,15 @@ use crate::{
     protocol::minecraft::java::login::ServerBoundLoginStart,
     proxy_modes::ProxyModeEnum,
 };
+use crate::{core::shared_component::SharedComponent, network::connection::PossibleReadValue};
 use crate::{security::BanHelper, server::motd};
 
 #[derive(Debug, Clone)]
 pub struct Gateway {
     status_cache: Arc<Mutex<StatusCache>>,
     shared: Arc<SharedComponent>,
+    pending_status_requests:
+        Arc<Mutex<HashMap<u64, Receiver<Option<Result<Packet, ProxyProtocolError>>>>>>,
 }
 
 impl Gateway {
@@ -35,6 +38,7 @@ impl Gateway {
         let config = shared.config();
         let gateway = Self {
             status_cache: Arc::new(Mutex::new(StatusCache::from_shared_config(config))),
+            pending_status_requests: Arc::new(Mutex::new(HashMap::new())),
             shared,
         };
 
@@ -162,6 +166,13 @@ impl Gateway {
         };
 
         let proxy_mode = self.determine_proxy_mode(&request, &server_config);
+
+        if proxy_mode == ProxyModeEnum::Status {
+            debug!("Handling status request directly without creating actors");
+            self.handle_status_request_directly(client, request).await;
+            return;
+        }
+
         let connecting_domain = request.domain.clone();
 
         debug!("Creating oneshot channel for server response");
@@ -268,6 +279,202 @@ impl Gateway {
             .await;
 
         debug!("Client connection handling complete");
+    }
+    #[instrument(name = "handle_status_request_directly", skip(self, client, request), fields(
+        domain = %request.domain,
+        client_addr = %request.client_addr,
+        session_id = %request.session_id
+    ))]
+    pub async fn handle_status_request_directly(
+        &self,
+        mut client: Connection,
+        request: ServerRequest,
+    ) {
+        debug!(
+            "Handling status request directly for domain: {}",
+            request.domain
+        );
+
+        let server_config = match self.find_server(&request.domain).await {
+            Some(config) => config,
+            None => {
+                warn!(
+                    "Server not found for domain: '{}' requested by - {}",
+                    request.domain, request.client_addr
+                );
+                if let Err(e) = client.close().await {
+                    warn!("Error closing connection: {:?}", e);
+                }
+                return;
+            }
+        };
+
+        // Use a non-blocking task to handle the status request
+        let self_clone = self.clone();
+        tokio::spawn(async move {
+            // Get or create a status response
+            match self_clone
+                .get_or_fetch_status_response(request.clone(), server_config)
+                .await
+            {
+                Ok(response) => {
+                    if let Some(status_packet) = response.status_response {
+                        debug!("Sending status packet directly to client");
+                        if let Err(e) = client.write_packet(&status_packet).await {
+                            warn!("Failed to send status packet to client: {:?}", e);
+                        }
+
+                        // Wait briefly for potential ping packet
+                        match tokio::time::timeout(
+                            tokio::time::Duration::from_secs(2),
+                            client.read(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(PossibleReadValue::Packet(ping_packet))) => {
+                                // If we got a ping packet, echo it back
+                                debug!("Received ping packet, echoing back");
+                                if let Err(e) = client.write_packet(&ping_packet).await {
+                                    debug!("Failed to send ping response: {:?}", e);
+                                }
+                            }
+                            _ => {
+                                debug!("No ping packet received or connection closed");
+                            }
+                        }
+                    } else {
+                        warn!("No status response available for the request");
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to get status response: {:?}", e);
+                }
+            }
+
+            // Always close the connection when done
+            if let Err(e) = client.close().await {
+                warn!("Error closing connection after status response: {:?}", e);
+            }
+        });
+    }
+
+    // New method to get or fetch status response with request coalescing
+    async fn get_or_fetch_status_response(
+        &self,
+        req: ServerRequest,
+        server_config: Arc<ServerConfig>,
+    ) -> ProtocolResult<ServerResponse> {
+        let tmp_server = match Server::new(server_config.clone()) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Failed to create server instance: {}", e);
+                return self.generate_unreachable_motd_response(req.domain, server_config);
+            }
+        };
+
+        // Use consistent key for request deduplication
+        let cache = self.status_cache.lock().await;
+        let key = cache.cache_key(&tmp_server, req.protocol_version);
+        drop(cache);
+
+        // Check if there's already a cached entry
+        if let Some(packet) = self.try_quick_cache_lookup(&tmp_server, &req).await {
+            return self.create_status_response(
+                req.domain.clone(),
+                server_config,
+                packet,
+                &tmp_server,
+            );
+        }
+
+        // Check for pending requests - if one exists, wait for it instead of making a new request
+        let pending_receiver = {
+            let mut pending_requests = self.pending_status_requests.lock().await;
+
+            if let Some(receiver) = pending_requests.get(&key).cloned() {
+                // Another request is already in progress, wait for it
+                debug!(
+                    "Waiting for in-progress status request for {} (key: {})",
+                    req.domain, key
+                );
+                Some(receiver)
+            } else {
+                // No pending request, create a new sender/receiver pair
+                let (sender, receiver) = watch::channel(None);
+                pending_requests.insert(key, receiver.clone());
+
+                // Spawn a task to fetch the status
+                let self_clone = self.clone();
+                let tmp_server_clone = tmp_server.clone();
+                let req_clone = req.clone();
+                let server_config_clone = server_config.clone();
+
+                tokio::spawn(async move {
+                    let result = match tmp_server_clone.fetch_status_directly(&req_clone).await {
+                        Ok(packet) => {
+                            // Update cache
+                            let mut cache = self_clone.status_cache.lock().await;
+                            cache
+                                .update_cache_for(&tmp_server_clone, &req_clone, packet.clone())
+                                .await;
+
+                            Ok(packet)
+                        }
+                        Err(e) => {
+                            debug!("Status fetch failed: {}. Using unreachable MOTD", e);
+                            // Get the error MOTD packet
+                            let motd_response = self_clone.generate_unreachable_motd_response(
+                                req_clone.domain.clone(),
+                                server_config_clone,
+                            );
+
+                            match motd_response {
+                                Ok(resp) => {
+                                    if let Some(packet) = resp.status_response {
+                                        Ok(packet)
+                                    } else {
+                                        Err(e)
+                                    }
+                                }
+                                Err(_) => Err(e),
+                            }
+                        }
+                    };
+
+                    // Send the result to all waiters
+                    let _ = sender.send(Some(result));
+
+                    // Clean up the pending request
+                    let mut pending_requests = self_clone.pending_status_requests.lock().await;
+                    pending_requests.remove(&key);
+                });
+
+                Some(receiver)
+            }
+        };
+
+        // Wait for the pending request to complete
+        if let Some(mut receiver) = pending_receiver {
+            // Wait for the result to be available
+            let mut result = None;
+            while result.is_none() {
+                let _ = receiver.changed().await;
+                result = receiver.borrow().clone();
+            }
+
+            // Unwrap the result
+            match result.unwrap() {
+                Ok(packet) => {
+                    self.create_status_response(req.domain, server_config, packet, &tmp_server)
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            // This should never happen, but if it does, fall back to the original implementation
+            debug!("No receiver found for pending request - falling back to direct fetch");
+            self.handle_status_request(&req, &tmp_server, server_config)
+                .await
+        }
     }
 
     #[instrument(skip(self), fields(domain = %domain), level = "debug")]
