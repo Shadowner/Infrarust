@@ -1,9 +1,9 @@
 [package]
 name = "infrarust"
-version = "1.1.2"
+version = "1.2.0"
 edition = "2024"
 authors = ["Shadowner"]
-description = "A Rust adaptation of the Infrared Minecraft proxy"
+description = "A Rust universal Minecraft proxy"
 license = "AGPL-3.0-only"
 homepage = "https://infrarust.dev"
 repository = "https://github.com/shadowner/infrarust"
@@ -64,7 +64,7 @@ aes = "0.8.4"
 cfb8 = "0.8.1"
 rsa = "0.9.8"
 rsa-der = "0.3.0"
-rand = "0.8.5"    ### Cannot update to > 0.8.5 because crate rsa is on 0.6.4 
+rand = "0.8.5"    ### Cannot update to > 0.8.5 because crate rsa is on 0.6.4
 sha1 = "0.10"
 hex = "0.4"
 

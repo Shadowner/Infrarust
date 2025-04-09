@@ -28,19 +28,29 @@ A blazing fast Minecraft reverse proxy that allows you to expose multiple Minecr
   - [x] ClientOnly Mode (only works with vanilla < 1.20)
   - [x] Passthrough Mode
   - [x] Offline Mode
+  - [x] ServerOnly Mode
 - [x] Performance Optimizations
   - [x] Connection Pooling
   - [x] Zero-copy packet forwarding
+  - [x] Status Caching
 - [x] Security Features
   - [x] Rate Limiting
   - [x] Basic DDoS Protection
-- [x] Basic Telemetry
+  - [x] Advanced Ban System (IP, UUID, Username)
+- [x] Container Integration
+  - [x] Docker Auto-Discovery
+  - [x] Real-time Container Monitoring
+- [x] Command Line Interface
+  - [x] Player Management
+  - [x] Ban Management
+  - [x] Status Monitoring
+- [x] Basic Telemetry and Monitoring
 
 ## Quick Start
 
 ### Prerequisites
 
-- Rust 1.80+ and Cargo
+- Rust 1.84+ and Cargo
 
 ### Installation
 
@@ -56,31 +66,52 @@ cargo install infrarust
 
 ### Basic Configuration
 
-Create a `config.yaml` file, known as the Proxy Configuration File:
+Create a `config.yaml` file:
 
 ```yaml
 bind: "0.0.0.0:25565"
-domains:
-  - "minecraft.example.com"
+file_provider:
+  proxies_path: ["./proxies"]
+  watch: true  # Enable hot-reload
 ```
 
-And create your server configurations in the `proxies` directory known as the Server Configuration File:
+And create your server configurations in the `proxies` directory:
 
 ```yaml
+# proxies/my-server.yml
 domains:
   - "hub.minecraft.example.com"
 addresses:
   - "localhost:25566"
-proxyMode: "passthrough" # Options: passthrough, client-only, offline
+proxyMode: "passthrough" # Options: passthrough, client_only, offline, server_only
 ```
 
 ## Documentation
 
 Visit [infrarust.dev](https://infrarust.dev) for complete documentation:
 
-- [Installation Guide](https://infrarust.dev/docs/installation)
-- [Configuration Reference](https://infrarust.dev/docs/configuration)
-- [Proxy Modes](https://infrarust.dev/docs/proxy-modes)
+- [Quick Start Guide](https://infrarust.dev/quickstart/)
+- [Configuration Reference](https://infrarust.dev/quickstart/configuration)
+- [Docker Integration](https://infrarust.dev/features/docker)
+- [Ban System](https://infrarust.dev/features/ban-system)
+- [CLI Commands](https://infrarust.dev/features/cli/)
+
+## Docker Integration
+
+Infrarust can automatically detect and proxy Minecraft servers running in Docker containers:
+
+```yaml
+docker_provider:
+  docker_host: "unix:///var/run/docker.sock"
+  label_prefix: "infrarust"
+  watch: true
+```
+
+Container configuration is done through Docker labels:
+```
+infrarust.enable=true
+infrarust.domains=mc.example.com
+```
 
 ## Telemetry & Monitoring
 
@@ -115,7 +146,7 @@ This will start:
 
 Infrarust leverages Rust's performance capabilities:
 
-- Minimal memory footprint
+- Minimal memory footprint (~10MB base)
 - Low CPU utilization
 - Efficient async I/O handling
 - Zero-copy packet forwarding when possible
