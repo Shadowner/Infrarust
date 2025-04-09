@@ -1,46 +1,20 @@
+
 # Guide de Démarrage Rapide
 
 Ce guide vous aidera à installer et configurer Infrarust pour votre première utilisation.
 
-## Prérequis
+## Installation Rapide
 
-Avant de commencer, assurez-vous d'avoir :
+### Télécharger le Binaire Précompilé
 
-> Ces prérequis s'applique seulement si vous ne téléchargez pas la version Précompilés
+1. Téléchargez la dernière version depuis la [page des releases](https://github.com/shadowner/infrarust/releases)
+2. Extrayez l'archive à l'emplacement souhaité
 
-- Rust 1.80 ou supérieur
-- Cargo (gestionnaire de paquets Rust)
-- Un serveur Minecraft existant
-- Un domaine (optionnel, pour le routage basé sur les domaines)
+## Configuration de Base
 
-## Installation
+### 1. Créer les Fichiers de Configuration
 
-### Méthode 1 : Binaires Précompilés
-
-Téléchargez la dernière version depuis la [page des releases](https://github.com/shadowner/infrarust/releases).
-
-### Méthode 2 : Via Cargo (Recommandée)
-
-```bash
-cargo install infrarust
-```
-
-### Méthode 2 : Depuis les Sources
-
-```bash
-# Cloner le dépôt
-git clone https://github.com/shadowner/infrarust
-cd infrarust
-
-# Compiler le projet
-cargo build --release
-
-# L'exécutable se trouve dans target/release/infrarust
-```
-
-## Configuration Rapide
-
-1. Créez un fichier `config.yaml` dans votre répertoire de travail :
+Créez un fichier `config.yaml` dans votre répertoire de travail :
 
 ```yaml
 # Configuration minimale
@@ -50,10 +24,9 @@ filters:
   rateLimiter:
     requestLimit: 10
     windowLength: 1s
-keepalive_timeout: 30s  # Timeout de keepalive
 ```
 
-2. Créez un dossier `proxies` et ajoutez un fichier de configuration pour votre serveur :
+Créez un dossier `proxies` et ajoutez un fichier de configuration pour votre serveur :
 
 ```yaml
 # proxies/my-server.yml
@@ -64,6 +37,18 @@ addresses:
 proxyMode: "passthrough"  # Mode de proxy
 ```
 
+### 2. Démarrer Infrarust
+
+```bash
+./infrarust
+```
+
+### 3. Se Connecter et Vérifier
+
+1. Lancez votre client Minecraft
+2. Connectez-vous à votre domaine configuré
+3. Vérifiez les logs pour confirmer la connexion
+
 ## Structure des Dossiers
 
 ```
@@ -71,9 +56,38 @@ infrarust/
 ├── config.yaml          # Configuration principale
 ├── proxies/            # Configurations des serveurs
 │   ├── hub.yml
-│   ├── survival.yml
-│   └── creative.yml
-└── logs/               # Journaux (créé automatiquement) //TODO: Not implemented yet
+│   └── survival.yml
+├── infrarust[.exe]
+└── logs/               # Journaux (créé automatiquement)
+```
+
+## Compilation depuis les Sources
+
+Si vous préférez compiler depuis les sources, vous aurez besoin de :
+
+- Rust 1.84 ou supérieur
+- Cargo (gestionnaire de paquets Rust)
+
+### Méthodes d'Installation
+
+#### Via Cargo
+
+```bash
+cargo install infrarust
+```
+
+#### Depuis les Sources
+
+```bash
+git clone https://github.com/shadowner/infrarust
+cd infrarust
+cargo build --release
+```
+
+Pour inclure la Télémétrie, vous pouvez utiliser l'option `--features` lors de la compilation :
+
+```bash
+cargo build --release --features telemetry
 ```
 
 ## Premiers Pas
@@ -82,15 +96,14 @@ infrarust/
 
 ```bash
 # Si installé via cargo
-infrarust --config-path "./custom_config_path/config.yaml" --proxies-path "./custom_proxies_path/" 
+infrarust --config-path "./custom_config_path/config.yaml" --proxies-path "./custom_proxies_path/"
 
 # Si compilé depuis les sources
-./target/release/infrarust --config-path "./custom_config_path/config.yaml" --proxies-path "./custom_proxies_path/" 
+./target/release/infrarust --config-path "./custom_config_path/config.yaml" --proxies-path "./custom_proxies_path/"
 ```
 
 :::note
-:::note
-Les arguments --config-path et --proxies-path sont nécessaires uniquement si l'exécutable n'est pas dans le même répertoire que la structure de dossiers présentée ci-dessus
+Les arguments sont nécessaires uniquement si l'exécutable n'est pas dans le même répertoire que la structure de dossiers présentée ci-dessus
 :::
 
 ### 2. Vérifier le Fonctionnement
@@ -105,8 +118,8 @@ Infrarust propose plusieurs modes de proxy pour différents cas d'utilisation :
 
 | Mode | Description | Cas d'Utilisation |
 |------|-------------|-------------------|
-| `passthrough` | Transmission directe | Pas de fonction de plugin, juste un proxy |
-| `client_only` | Auth côté client | Serveurs en `online_mode=false`, mais client prenium |
+| `passthrough` | Transmission directe | Pas de fonction de plugin, juste un proxy compatible avec toutes les versions de Minecraft |
+| `client_only` | Auth côté client | Serveurs en `online_mode=false`, mais client premium |
 | `offline` | Sans authentification | Serveurs `online_mode=false` et client cracké |
 
 > D'autres modes sont en cours de développement
@@ -123,21 +136,13 @@ filters:
     windowLength: 1s
 ```
 
-### Cache de Status
-
-```yaml
-# Dans config.yaml
-statusCache:
-  enabled: true
-  ttl: 30s
-```
-
 ## Prochaines Étapes
 
 Une fois la configuration de base terminée, vous pouvez :
 
-1. [Configurer les différents modes de proxy](../proxy/)
-2. [Configurer le monitoring](../quickstart/deployment)
+1. [Configurer les différents modes de proxy](../proxy/modes/)
+2. [Optimiser les performances](../proxy/performance)
+3. [Configurer le monitoring](../quickstart/deployment.md)
 
 ## Résolution des Problèmes Courants
 

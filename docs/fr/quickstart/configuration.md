@@ -1,10 +1,7 @@
+
 # Configuration d'Infrarust
 
-Ce guide détaille toutes les options de configuration disponibles dans Infrarust.
-
-:::warning
-**Note:** Cette documentation peut ne pas refléter toutes les fonctionnalités actuellement implémentées. Les fonctionnalités non disponibles seront clairement indiquées comme telles dans la documentation.
-:::
+Ce document détaille toutes les options de configuration disponibles dans Infrarust.
 
 ## Structure des Fichiers de Configuration
 
@@ -19,211 +16,271 @@ infrarust/
     └── creative.yml
 ```
 
-## Configuration Globale
+## Configuration Principale (config.yaml)
 
-Le fichier `config.yaml` contient la configuration principale d'Infrarust.
-
-### Configuration Minimale
+Le fichier de configuration principal prend en charge les options suivantes :
 
 ```yaml
-bind: "0.0.0.0:25565"
-domains: ### NOT IMPLEMENTED YET ###
-  - "*.minecraft.example.com"
-keepalive_timeout: 30s
+# Configuration de Base
+bind: "0.0.0.0:25565"           # Adresse d'écoute du proxy
+keepalive_timeout: 30s          # Délai d'expiration de la connexion
+domains: ["example.com"]        # Domaines par défaut (optionnel)
+addresses: ["localhost:25566"]  # Adresses cibles par défaut (optionnel)
+
+# Configuration du Fournisseur de Fichiers
+file_provider:
+  proxies_path: ["./proxies"]   # Chemin vers les configurations de proxy
+  file_type: "yaml"            # Type de fichier (seul yaml est supporté actuellement)
+  watch: true                  # Activer le rechargement à chaud des configurations
+
+# Configuration du Fournisseur Docker
+docker_provider:
+  docker_host: "unix:///var/run/docker.sock"  # Socket du démon Docker
+  label_prefix: "infrarust"                   # Préfixe des étiquettes pour les conteneurs
+  polling_interval: 10                        # Intervalle de sondage en secondes
+  watch: true                                 # Surveiller les changements de conteneurs
+  default_domains: []                         # Domaines par défaut pour les conteneurs
+
+# Configuration du Cache
+cache:
+  status_ttl_seconds: 30        # Durée de vie des entrées du cache de statut
+  max_status_entries: 1000      # Nombre maximal d'entrées dans le cache de statut
+
+# Configuration de la Télémétrie
+telemetry:
+  enabled: false               # Activer la collecte de télémétrie
+  export_interval_seconds: 30  # Intervalle d'exportation
+  export_url: "http://..."    # Destination d'exportation (optionnel)
+  enable_metrics: false       # Activer la collecte de métriques
+  enable_tracing: false      # Activer le traçage distribué
+
+# Configuration des Journaux
+logging:
+  use_color: true              # Utiliser des couleurs dans la sortie console
+  use_icons: true              # Utiliser des icônes dans la sortie console
+  show_timestamp: true         # Afficher l'horodatage dans les journaux
+  time_format: "%Y-%m-%d %H:%M:%S%.3f"  # Format d'horodatage
+  show_target: false           # Afficher la cible du journal
+  show_fields: false           # Afficher les champs du journal
+  template: "{timestamp} {level}: {message}"  # Modèle de journal
+  field_prefixes: {}           # Mappages des préfixes de champs
+
+# Configuration MOTD par défaut
+motds:
+  unknown:                    # MOTD pour les serveurs inconnus
+    version: "1.20.1"        # Version Minecraft à afficher
+    max_players: 100         # Nombre maximal de joueurs à afficher
+    online_players: 0        # Nombre de joueurs en ligne à afficher
+    description: "Unknown server" # Description du serveur
+    favicon: "data:image/png;base64,..." # Icône du serveur (optionnel)
+  unreachable:              # MOTD pour les serveurs inaccessibles
+    # Mêmes options que 'unknown'
 ```
 
-### Configuration Complète
-
-```yaml
-# Adresse d'écoute du proxy
-bind: "0.0.0.0:25565"
-
-# Liste des domaines acceptés
-domains:
-  - "*.minecraft.example.com"
-  - "play.example.com"
-
-# Paramètres de timeout
-keepalive_timeout: 30s
-read_timeout: 30s ### NOT IMPLEMENTED YET ###
-write_timeout: 30s ### NOT IMPLEMENTED YET ###
-
-# Configuration du cache
-status_cache: ### NOT IMPLEMENTED YET ###
-  enabled: true
-  ttl: 30s
-  max_size: 1000
-
-# Sécurité
-security: ### NOT IMPLEMENTED YET (only for proxy leve not server level) ###
-  # Protection DDoS
-  rate_limiter:
-    enabled: true
-    requests: 10
-    window: "1s"
-  
-  # Filtrage IP
-  ip_filter: ### NOT IMPLEMENTED YET ###
-    enabled: true
-    blacklist:
-      - "1.2.3.4"
-      - "10.0.0.0/8"
-    whitelist:
-      - "192.168.1.0/24"
-
-# Configuration des logs
-logging: ### NOT IMPLEMENTED YET ###
-  level: "info"  # debug, info, warn, error
-  file: "logs/infrarust.log"
-  format: "json"  # json, text
-
-# Configuration de la performance
-performance: ### NOT IMPLEMENTED YET ###
-  workers: 4
-  connection_pool_size: 100
-  buffer_size: 8192
-```
-
-## Configuration des Serveurs Proxy
+## Configuration des Serveurs (proxies/*.yml)
 
 Chaque fichier dans le dossier `proxies/` représente un serveur Minecraft.
 
-### Configuration Simple
-
 ```yaml
-# proxies/hub.yml
 domains:
-  - "hub.minecraft.example.com"
+  - "play.example.com"      # Noms de domaine pour ce serveur
 addresses:
-  - "localhost:25566"
-proxy_mode: "passthrough"
-```
+  - "localhost:25566"       # Adresses des serveurs cibles
 
-### Configuration Avancée
+sendProxyProtocol: false    # Activer le support du protocole PROXY
+proxy_protocol_version: 2   # Version du protocole PROXY à utiliser (1 ou 2)
 
-:::warning
- **Note:** Toutes les fonctionnalitées ne sont pas encore implémenté mais ce fichier de configuration représente un des objectifs de développement
- [#1 Roadmap](https://github.com/Shadowner/Infrarust/issues/1)
-:::
+proxyMode: "passthrough"    # Mode proxy (passthrough/client_only/offline/server_only)
 
-```yaml
-# Configuration complète d'un serveur
-name: "Hub Principal"
+# Configuration MOTD (remplace le MOTD par défaut / du serveur)
+motd:
+  version: "1.20.1"       # Peut être défini comme n'importe quel texte
+  max_players: 100
+  online_players: 0
+  description: "Bienvenue sur mon serveur !"
+  favicon: "data:image/png;base64,..."
 
-# Domaines acceptés
-domains:
-  - "hub.minecraft.example.com"
-  - "*.hub.minecraft.example.com"
+### FONCTIONNALITÉS CI-DESSOUS IMPLÉMENTÉES MAIS PAS ENCORE SUPPORTÉES ###
 
-# Adresses des serveurs backend
-addresses:
-  - "localhost:25566"
-  - "localhost:25567"  # Failover 
+# Configuration du Cache
+caches:
+  status_ttl_seconds: 30    # Durée de vie des entrées du cache de statut
+  max_status_entries: 1000  # Nombre maximal d'entrées dans le cache de statut
 
-# Mode de proxy
-proxy_mode: "clientOnly"  # passthrough, clientOnly, offline
-
-# Configuration de l'authentification
-authentication: ### NOT IMPLEMENTED YET ###
-  enabled: true
-  timeout: 30s
-  cache_time: 300s
-
-# Configuration du protocole proxy
-proxy_protocol: ### NOT IMPLEMENTED YET ###
-  enabled: true
-  version: 2
-  trusted_proxies:
-    - "10.0.0.0/8"
-
-# Équilibrage de charge
-load_balancing: ### NOT IMPLEMENTED YET ###
-  method: "round_robin"  # round_robin, least_conn, random
-  health_check:
+# Configuration des Filtres
+filters:
+  rate_limiter:
+    requestLimit: 10        # Nombre maximal de requêtes par fenêtre
+    windowLength: 1s        # Fenêtre temporelle pour la limitation de débit
+  ip_filter:
     enabled: true
-    interval: 10s
-    timeout: 5s
-    unhealthy_threshold: 3
-
-# Limites par serveur
-limits: ### NOT IMPLEMENTED YET ###
-  max_players: 1000
-  max_connections_per_ip: 3
-
-# Configuration du motd
-motd: ### NOT IMPLEMENTED YET ###
-  enabled: true
-  custom_text: "§6§lHub Principal §r- §aEn ligne"
-  max_players: 1000
-  
-# Compression
-compression: ### NOT IMPLEMENTED YET ###
-  threshold: 256
-  level: 6
+    whitelist: ["127.0.0.1"]
+    blacklist: []
+  id_filter:
+    enabled: true
+    whitelist: ["uuid1", "uuid2"]
+    blacklist: []
+  name_filter:
+    enabled: true
+    whitelist: ["player1"]
+    blacklist: []
+  ban:
+    enabled: true
+    storage_type: "file"    # Type de stockage (file/redis/database)
+    file_path: "bans.json"  # Chemin vers le fichier de stockage des bannissements
+    enable_audit_log: true  # Activer la journalisation des audits de bannissement
+    audit_log_path: "bans_audit.log"  # Chemin vers le journal d'audit
+    audit_log_rotation:     # Paramètres de rotation des journaux
+      max_size: 10485760    # Taille maximale du journal (10Mo)
+      max_files: 5          # Nombre maximal de fichiers journaux
+      compress: true        # Compresser les journaux pivotés
+    auto_cleanup_interval: 3600  # Intervalle de nettoyage automatique en secondes
+    cache_size: 10000      # Taille du cache de bannissement
 ```
 
-## Variables d'Environnement - Non implémenté
+## Référence des Fonctionnalités
 
-Infrarust supporte la configuration via variables d'environnement :
-
-| Variable | Description | Défaut |
-|----------|-------------|---------|
-| `INFRARUST_CONFIG` | Chemin du fichier config | `config.yaml` |
-| `INFRARUST_PROXIES_DIR` | Dossier des proxies | `proxies` |
-| `INFRARUST_LOG_LEVEL` | Niveau de log | `info` |
-| `INFRARUST_BIND` | Adresse d'écoute | `0.0.0.0:25565` |
-
-## Modes de Proxy
-
-Infrarust prend en charge différents modes de proxy qui peuvent être configurés pour chaque serveur. Voir [Modes de Proxy](/proxy/) pour plus d'informations.
+### Modes de Proxy
 
 | Mode | Description |
 |------|-------------|
-| `passthrough` | Transmission directe de la connexion |
-| `clientOnly` | Validation côté client uniquement |
-| `offline` | Fonctionnement en mode hors ligne |
+| `passthrough` | Proxy direct, compatible avec toutes les versions de Minecraft |
+| `client_only` | Pour les clients premium se connectant à des serveurs offline |
+| `server_only` | Pour les scénarios où l'authentification du serveur nécessite une gestion |
+| `offline` | Pour les clients et serveurs offline |
 
-## Options Avancées
+### Intégration Docker
 
-### Configuration du TLS
+Infrarust peut automatiquement faire proxy des conteneurs Minecraft :
 
 ```yaml
-tls:
+docker_provider:
+  docker_host: "unix:///var/run/docker.sock"
+  label_prefix: "infrarust"
+  polling_interval: 10
+  watch: true
+  default_domains: ["docker.local"]
+```
+
+Configuration des conteneurs via les étiquettes Docker :
+- `infrarust.enable=true` - Activer le proxy pour le conteneur
+- `infrarust.domains=mc.example.com,mc2.example.com` - Domaines pour le conteneur
+- `infrarust.port=25565` - Port Minecraft à l'intérieur du conteneur
+- `infrarust.proxy_mode=passthrough` - Mode proxy
+- `infrarust.proxy_protocol=true` - Activer le protocole PROXY
+
+### Télémétrie
+
+La configuration de télémétrie permet la surveillance du proxy :
+
+```yaml
+telemetry:
+  enabled: false
+  export_interval_seconds: 30
+  export_url: "http://..."
+  enable_metrics: false
+  enable_tracing: false
+```
+
+### Configuration MOTD
+
+Configure l'affichage de la liste des serveurs :
+
+```yaml
+motd:
+  version: "1.20.1"        # Version du protocole à afficher
+  max_players: 100         # Nombre maximal de joueurs
+  online_players: 0        # Nombre actuel de joueurs
+  description: "Texte"     # Description du serveur
+  favicon: "base64..."     # Icône du serveur (PNG encodé en base64)
+```
+
+### Configuration du Cache
+
+Configure le cache de statut :
+
+```yaml
+cache:
+  status_ttl_seconds: 30    # Durée de vie des entrées du cache de statut
+  max_status_entries: 1000  # Nombre maximal d'entrées dans le cache de statut
+```
+
+### Configuration des Filtres
+
+#### Limiteur de Débit
+
+Contrôle le nombre de connexions depuis une source unique :
+
+```yaml
+rate_limiter:
+  requestLimit: 10    # Requêtes maximales
+  windowLength: 1s    # Fenêtre temporelle
+```
+
+#### Listes d'Accès
+
+Disponibles pour les adresses IP, UUIDs, et noms de joueurs :
+
+```yaml
+ip_filter:  # ou id_filter / name_filter
   enabled: true
-  cert_file: "cert.pem"
-  key_file: "key.pem"
-  min_version: "1.2"
+  whitelist: ["valeur1", "valeur2"]
+  blacklist: ["valeur3"]
 ```
 
-### Métriques et Monitoring - Non implémenté
+#### Système de Bannissement
+
+Configure les bannissements persistants des joueurs :
 
 ```yaml
-metrics:
+ban:
   enabled: true
-  bind: "127.0.0.1:9100"
-  path: "/metrics"
-  type: prometheus
+  storage_type: "file"  # file, redis, ou database
+  file_path: "bans.json"
+  enable_audit_log: true
+  audit_log_path: "bans_audit.log"
+  audit_log_rotation:
+    max_size: 10485760  # 10Mo
+    max_files: 5
+    compress: true
+  auto_cleanup_interval: 3600  # 1 heure
+  cache_size: 10000
 ```
 
-## Validation de la Configuration - Non implémenté
+### Configuration des Journaux
 
-Pour valider votre configuration :
-
-```bash
-infrarust validate --config config.yaml
-```
-
-::: tip
-Les valeurs de timeout acceptent des suffixes : "s" (secondes), "m" (minutes), "h" (heures).
+Affine la sortie des journaux :
 
 ```yaml
-keepalive_timeout: 30s
-read_timeout: 1m 
-write_timeout: 2h
+logging:
+  use_color: true
+  use_icons: true
+  show_timestamp: true
+  time_format: "%Y-%m-%d %H:%M:%S%.3f"
+  show_target: false
+  show_fields: false
+  template: "{timestamp} {level}: {message}"
+  field_prefixes: {}
 ```
 
-:::
+## Fonctionnalités Avancées
 
-::: warning
-Les changements de configuration nécessitent un redémarrage du proxy sauf si le rechargement à chaud est activé.
-:::
+### Rechargement à Chaud
+
+Lorsque `file_provider.watch` est activé, les changements de configuration sont automatiquement détectés et appliqués sans redémarrage.
+
+> Actif par défaut
+
+### Intégration Docker
+
+Lorsque `docker_provider.watch` est activé, les changements de conteneurs sont automatiquement détectés et les proxies sont mis à jour en conséquence.
+
+### Système de Bannissement
+
+Le système de bannissement fournit des bannissements persistants avec des options de stockage flexibles et une journalisation d'audit.
+
+## Besoin d'Aide ?
+
+- 🐛 Signalez les problèmes sur [GitHub](https://github.com/shadowner/infrarust/issues)
+- 💬 Rejoignez notre [Discord](https://discord.gg/sqbJhZVSgG)
+- 📚 Consultez la [documentation](https://infrarust.dev)
