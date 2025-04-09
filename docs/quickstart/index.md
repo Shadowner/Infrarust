@@ -64,7 +64,7 @@ infrarust/
 
 If you prefer to build from source, you'll need:
 
-- Rust 1.80 or higher
+- Rust 1.84 or higher
 - Cargo (Rust package manager)
 
 ### Installation Methods
@@ -83,16 +83,22 @@ cd infrarust
 cargo build --release
 ```
 
+To include Telemetry, you can use the `--features` flag when building:
+
+```bash
+cargo build --release --features telemetry
+```
+
 ## First Steps
 
 ### 1. Start Infrarust
 
 ```bash
 # If installed via cargo
-infrarust --config-path "./custom_config_path/config.yaml" --proxies-path "./custom_proxies_path/" 
+infrarust --config-path "./custom_config_path/config.yaml" --proxies-path "./custom_proxies_path/"
 
 # If built from source
-./target/release/infrarust --config-path "./custom_config_path/config.yaml" --proxies-path "./custom_proxies_path/" 
+./target/release/infrarust --config-path "./custom_config_path/config.yaml" --proxies-path "./custom_proxies_path/"
 ```
 
 :::note

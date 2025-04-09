@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitepress'
+import { defineConfig } from "vitepress";
 import { withMermaid } from "vitepress-plugin-mermaid";
 
 export default withMermaid({
@@ -7,220 +7,266 @@ export default withMermaid({
 
   locales: {
     root: {
-      label: 'English',
-      lang: 'en'
+      label: "English",
+      lang: "en",
     },
     fr: {
-      label: 'Français',
-      lang: 'fr', 
-      link: '/fr/',
-    }
+      label: "Français",
+      lang: "fr",
+      link: "/fr/",
+    },
   },
 
   head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/img/logo.svg' }],
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/img/logo.svg" }],
   ],
 
   themeConfig: {
-    logo: { src: '/img/logo.svg', width: 24, height: 24 },
+    logo: { src: "/img/logo.svg", width: 24, height: 24 },
 
     nav: [
-      { text: 'Home', link: '/' },
-      { text: 'Getting Started', link: '/quickstart/' },
-      { text: 'Documentation', link: '/proxy/' },
-      { text: 'Contributing', link: '/contributing/' }
+      { text: "Home", link: "/" },
+      { text: "Getting Started", link: "/quickstart/" },
+      { text: "Documentation", link: "/proxy/" },
+      { text: "Contributing", link: "/contributing/" },
     ],
 
     sidebar: {
-      '/fr/': [
+      "/fr/": [
         {
-          text: 'Pour Commencer',
+          text: "Pour Commencer",
           items: [
-            { text: 'Introduction', link: '/fr/quickstart/' },
-            { text: 'Installation', link: '/fr/quickstart/installation' },
+            { text: "Introduction", link: "/fr/quickstart/" },
+            { text: "Installation", link: "/fr/quickstart/installation" },
             {
-              text: 'Configuration',
-              link: '/fr/quickstart/configuration/',
+              text: "Configuration",
+              link: "/fr/quickstart/configuration/",
             },
             {
-              text: 'Déploiement',
-              link: '/fr/quickstart/deployment/',
+              text: "Déploiement",
+              link: "/fr/quickstart/deployment/",
             },
-          ]
+          ],
         },
         {
-          text: 'Proxy',
-          link: '/fr/proxy/',
+          text: "Proxy",
+          link: "/fr/proxy/",
           items: [
-            { text: 'Performance', link: '/fr/proxy/performance' },
+            { text: "Performance", link: "/fr/proxy/performance" },
             {
-              text: 'Modes de Proxy', link: '/fr/proxy/modes', items: [
-                { text: 'Passthrough', link: '/fr/proxy/modes/passthrough' },
-                { text: 'ClientOnly', link: '/fr/proxy/modes/client-only' },
-                { text: 'Hors-ligne', link: '/fr/proxy/modes/offline' },
+              text: "Modes de Proxy",
+              link: "/fr/proxy/modes",
+              items: [
+                { text: "Passthrough", link: "/fr/proxy/modes/passthrough" },
+                { text: "ClientOnly", link: "/fr/proxy/modes/client-only" },
+                { text: "Hors-ligne", link: "/fr/proxy/modes/offline" },
                 {
                   collapsed: true,
-                  text: 'Non fonctionnel', items: [
-                    { text: 'Complet', link: '/fr/proxy/modes/full' },
-                  ]
+                  text: "Non fonctionnel",
+                  items: [{ text: "Complet", link: "/fr/proxy/modes/full" }],
                 },
-              ]
+              ],
             },
-          ]
+          ],
         },
         {
-          text: 'Fonctionnalités',
+          text: "Fonctionnalités",
           items: [
-            { text: 'Mise en Cache', link: '/fr/features/caching' },
-            { text: 'Rate Limiting', link: '/fr/features/rate-limiting' },
-            { text: 'Télémétrie', link: '/fr/features/telemetry' },
             {
-              text: 'Feuille de Route', link: "/fr/roadmap/", collapsed: true, items: [
-                { text: 'Authentification', link: '/fr/roadmap/authentication' },
-                { text: 'Système de Plugins', link: '/fr/roadmap/plugins' },
-                { text: 'Api', link: '/fr/roadmap/api' },
-                { text: 'Tableau de bord', link: '/fr/roadmap/dashboard' },
-              ]
+              text: "Commandes",
+              link: "/fr/features/cli",
+              items: [
+                { text: "Common", link: "/fr/features/cli/common" },
+                { text: "Debug", link: "/fr/features/cli/debug" },
+                { text: "Ban", link: "/fr/features/cli/ban" },
+              ],
             },
-          ]
+            { text: "Docker", link: "/fr/features/docker" },
+            { text: "Mise en Cache", link: "/fr/features/caching" },
+            { text: "Rate Limiting", link: "/fr/features/rate-limiting" },
+            { text: "Système de Ban", link: "/fr/features/ban-system" },
+            { text: "Télémétrie", link: "/fr/features/telemetry" },
+            {
+              text: "Feuille de Route",
+              link: "/fr/roadmap/",
+              collapsed: true,
+              items: [
+                {
+                  text: "Authentification",
+                  link: "/fr/roadmap/authentication",
+                },
+                { text: "Système de Plugins", link: "/fr/roadmap/plugins" },
+                { text: "Api", link: "/fr/roadmap/api" },
+                { text: "Tableau de bord", link: "/fr/roadmap/dashboard" },
+              ],
+            },
+          ],
         },
         {
           text: "Développement",
-          link: '/fr/development/',
+          link: "/fr/development/",
           collapsed: true,
           items: [
             {
-              text: 'Architecture',
-              link: '/fr/development/architecture/',
+              text: "Architecture",
+              link: "/fr/development/architecture/",
               items: [
-                { text: 'Réseau', link: '/fr/development/architecture/network' },
-                { text: 'Protocole', link: '/fr/development/architecture/protocol' },
-                { text: 'Sécurité', link: '/fr/development/architecture/security' }
-              ]
+                {
+                  text: "Réseau",
+                  link: "/fr/development/architecture/network",
+                },
+                {
+                  text: "Protocole",
+                  link: "/fr/development/architecture/protocol",
+                },
+                {
+                  text: "Sécurité",
+                  link: "/fr/development/architecture/security",
+                },
+              ],
             },
             {
-              text: 'API',
-              link: '/fr/development/api/',
+              text: "API",
+              link: "/fr/development/api/",
               items: [
-                { text: 'Référence', link: '/fr/development/api/reference' }
-              ]
+                { text: "Référence", link: "/fr/development/api/reference" },
+              ],
             },
-
-          ]
+          ],
         },
         {
-          text: 'Contribuer',
+          text: "Contribuer",
           items: [],
-          link: '/fr/contributing',
+          link: "/fr/contributing",
         },
       ],
-      '/': [
+      "/": [
         {
-          text: 'Getting Started',
+          text: "Getting Started",
           items: [
-            { text: 'Introduction', link: '/quickstart/' },
-            { text: 'Installation', link: '/quickstart/installation' },
+            { text: "Introduction", link: "/quickstart/" },
+            { text: "Installation", link: "/quickstart/installation" },
             {
-              text: 'Configuration',
-              link: '/quickstart/configuration/',
+              text: "Configuration",
+              link: "/quickstart/configuration/",
             },
             {
-              text: 'Deployment',
-              link: '/quickstart/deployment/',
+              text: "Deployment",
+              link: "/quickstart/deployment/",
             },
-          ]
+          ],
         },
         {
-          text: 'Proxy',
-          link: '/proxy/',
+          text: "Proxy",
+          link: "/proxy/",
           items: [
-            { text: 'Performance', link: '/proxy/performance' },
+            { text: "Performance", link: "/proxy/performance" },
             {
-              text: 'Proxy Modes', link: '/proxy/modes', items: [
-                { text: 'Passthrough', link: '/proxy/modes/passthrough' },
-                { text: 'ClientOnly', link: '/proxy/modes/client-only' },
-                { text: 'Offline', link: '/proxy/modes/offline' },
+              text: "Proxy Modes",
+              link: "/proxy/modes",
+              items: [
+                { text: "Passthrough", link: "/proxy/modes/passthrough" },
+                { text: "ClientOnly", link: "/proxy/modes/client-only" },
+                { text: "Offline", link: "/proxy/modes/offline" },
                 {
                   collapsed: true,
-                  text: 'Not working', items: [
-                    { text: 'Full', link: '/proxy/modes/full' },
-                  ]
+                  text: "Not working",
+                  items: [{ text: "Full", link: "/proxy/modes/full" }],
                 },
-              ]
+              ],
             },
-          ]
+          ],
         },
         {
-          text: 'Features',
+          text: "Features",
           items: [
-            { text: 'Caching', link: '/features/caching' },
-            { text: 'Rate Limiting', link: '/features/rate-limiting' },
-            { text: 'Telemetry', link: '/features/telemetry' },
             {
-              text: 'Roadmap', link: "/roadmap/", collapsed: true, items: [
-                { text: 'Authentication', link: '/roadmap/authentication' },
-                { text: 'Plugin System', link: '/roadmap/plugins' },
-                { text: 'Api', link: '/roadmap/api' },
-                { text: 'Dashboard web', link: '/roadmap/dashboard' },
-              ]
+              text: "Commands",
+              link: "/features/cli",
+              items: [
+                { text: "Standard", link: "/features/cli/common" },
+                { text: "Diagnostic", link: "/features/cli/debug" },
+                { text: "Ban", link: "/features/cli/ban" },
+              ],
             },
-          ]
+            { text: "Docker", link: "/features/docker" },
+            { text: "Caching", link: "/features/caching" },
+            { text: "Rate Limiting", link: "/features/rate-limiting" },
+            { text: "Ban System", link: "/features/ban-system" },
+            { text: "Telemetry", link: "/features/telemetry" },
+            {
+              text: "Roadmap",
+              link: "/roadmap/",
+              collapsed: true,
+              items: [
+                { text: "Authentication", link: "/roadmap/authentication" },
+                { text: "Plugin System", link: "/roadmap/plugins" },
+                { text: "Api", link: "/roadmap/api" },
+                { text: "Dashboard web", link: "/roadmap/dashboard" },
+              ],
+            },
+          ],
         },
         {
           text: "Development",
-          link: '/development/',
+          link: "/development/",
           collapsed: true,
           items: [
             {
-              text: 'Architecture',
-              link: '/development/architecture/',
+              text: "Architecture",
+              link: "/development/architecture/",
               items: [
-                { text: 'Network', link: '/development/architecture/network' },
-                { text: 'Protocol', link: '/development/architecture/protocol' },
-                { text: 'Security', link: '/development/architecture/security' }
-              ]
+                { text: "Network", link: "/development/architecture/network" },
+                {
+                  text: "Protocol",
+                  link: "/development/architecture/protocol",
+                },
+                {
+                  text: "Security",
+                  link: "/development/architecture/security",
+                },
+              ],
             },
             {
-              text: 'API',
-              link: '/development/api/',
+              text: "API",
+              link: "/development/api/",
               items: [
-                { text: 'Reference', link: '/development/api/reference' }
-              ]
+                { text: "Reference", link: "/development/api/reference" },
+              ],
             },
-
-          ]
+          ],
         },
         {
-          text: 'Contributing',
-          link: '/contributing',
-          items: []
+          text: "Contributing",
+          link: "/contributing",
+          items: [],
         },
       ],
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/shadowner/infrarust' },
+      { icon: "github", link: "https://github.com/shadowner/infrarust" },
       {
-        icon: 'discord',
-        link: 'https://discord.gg/sqbJhZVSgG',
-      }
+        icon: "discord",
+        link: "https://discord.gg/sqbJhZVSgG",
+      },
     ],
 
     footer: {
-      message: 'Released under the AGPL-3.0 License.',
-      copyright: `Copyright © ${new Date().getFullYear()} Infrarust Contributors`
+      message: "Released under the AGPL-3.0 License.",
+      copyright: `Copyright © ${new Date().getFullYear()} Infrarust Contributors`,
     },
 
     search: {
-      provider: 'local'
-    }
+      provider: "local",
+    },
   },
 
   markdown: {
     theme: {
-      light: 'github-light',
-      dark: 'github-dark'
+      light: "github-light",
+      dark: "github-dark",
     },
     lineNumbers: true,
-  }
-})
+  },
+});
