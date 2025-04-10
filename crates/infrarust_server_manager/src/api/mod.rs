@@ -1,9 +1,10 @@
 pub mod client;
+pub mod local;
 pub mod mock;
 pub mod models;
 pub mod pterodactyl;
 
-use crate::{error::ServerManagerError, ServerState};
+use crate::{ServerState, error::ServerManagerError};
 use async_trait::async_trait;
 
 #[async_trait]
@@ -34,6 +35,7 @@ pub struct ApiServerStatus {
 
 // Re-export useful items
 pub use client::ApiClient;
+pub use local::LocalProvider;
 pub use mock::MockApiProvider;
 pub use models::*;
 pub use pterodactyl::PterodactylClient;

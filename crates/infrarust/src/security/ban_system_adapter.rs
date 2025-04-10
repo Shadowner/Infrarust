@@ -7,13 +7,9 @@ use async_trait::async_trait;
 use tokio::net::TcpStream;
 use tracing::{debug, error, warn};
 
-use crate::security::{
-    filter::{ConfigValue, Filter, FilterError, FilterType},
-};
+use crate::security::filter::{ConfigValue, Filter, FilterError, FilterType};
 
-use infrarust_ban_system::{
-    BanConfig, BanEntry, BanError, BanStorageType, BanSystem,
-};
+use infrarust_ban_system::{BanConfig, BanEntry, BanError, BanStorageType, BanSystem};
 
 #[derive(Debug)]
 pub struct BanSystemAdapter {

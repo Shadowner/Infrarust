@@ -1,6 +1,6 @@
+use crate::ServerState;
 use crate::api::{ApiProvider, ApiServerStatus};
 use crate::error::ServerManagerError;
-use crate::ServerState;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;

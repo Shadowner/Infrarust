@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use crate::ServerState;
 use crate::api::{ApiProvider, ApiServerStatus};
 use crate::error::ServerManagerError;
-use crate::ServerState;
 
 #[derive(Clone)]
 pub struct MockApiProvider {

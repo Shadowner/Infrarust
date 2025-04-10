@@ -1,19 +1,21 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use tokio::time;
 
 pub use crate::ServerState;
 use crate::api::ApiProvider;
 use crate::error::ServerManagerError;
 pub use crate::monitor::{CrashDetector, ServerStatus};
+use crate::process::ProcessProvider;
 use crate::terminal::execute_command;
 
 pub struct ServerManager<T: ApiProvider> {
     api_client: Arc<T>,
     crash_detector: CrashDetector,
     status_check_interval: Duration,
+    process_provider: Option<Arc<dyn ProcessProvider>>,
 }
 
 impl<T: ApiProvider> ServerManager<T> {
@@ -21,7 +23,8 @@ impl<T: ApiProvider> ServerManager<T> {
         Self {
             api_client: Arc::new(api_client),
             crash_detector: CrashDetector::default(),
-            status_check_interval: Duration::from_secs(30), 
+            status_check_interval: Duration::from_secs(30),
+            process_provider: None,
         }
     }
 
@@ -32,6 +35,11 @@ impl<T: ApiProvider> ServerManager<T> {
 
     pub fn with_crash_detector(mut self, detector: CrashDetector) -> Self {
         self.crash_detector = detector;
+        self
+    }
+
+    pub fn with_process_provider<P: ProcessProvider + 'static>(mut self, provider: P) -> Self {
+        self.process_provider = Some(Arc::new(provider));
         self
     }
 
@@ -90,8 +98,53 @@ impl<T: ApiProvider> ServerManager<T> {
         execute_command(command)
     }
 
-    pub async fn get_server_status(&self, server_id: &str) -> Result<ServerStatus, ServerManagerError> {
+    pub async fn get_server_status(
+        &self,
+        server_id: &str,
+    ) -> Result<ServerStatus, ServerManagerError> {
         let status = self.api_client.get_server_status(server_id).await?;
         Ok(status.into())
+    }
+
+    // ------ Methods for process interaction ------
+
+    fn ensure_process_provider(&self) -> Result<(), ServerManagerError> {
+        if self.process_provider.is_none() {
+            return Err(ServerManagerError::ProcessError(
+                "No process provider configured".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn write_stdin(
+        &self,
+        server_id: &str,
+        input: &str,
+    ) -> Result<(), ServerManagerError> {
+        self.ensure_process_provider()?;
+        let provider = self.process_provider.as_ref().unwrap();
+        provider.write_stdin(server_id, input).await
+    }
+
+    pub fn get_stdout_stream(
+        &self,
+        server_id: &str,
+    ) -> Result<mpsc::Receiver<String>, ServerManagerError> {
+        self.ensure_process_provider()?;
+        let provider = self.process_provider.as_ref().unwrap();
+        provider.get_stdout_stream(server_id)
+    }
+
+    pub fn is_process_running(&self, server_id: &str) -> Result<bool, ServerManagerError> {
+        self.ensure_process_provider()?;
+        let provider = self.process_provider.as_ref().unwrap();
+        provider.is_process_running(server_id)
+    }
+
+    pub async fn force_stop_process(&self, server_id: &str) -> Result<(), ServerManagerError> {
+        self.ensure_process_provider()?;
+        let provider = self.process_provider.as_ref().unwrap();
+        provider.stop_process(server_id).await
     }
 }

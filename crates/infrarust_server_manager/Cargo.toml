@@ -10,7 +10,10 @@ description = "A Minecraft server manager that handles API monitoring and system
 tokio = { version = "1.28", features = ["full"] }
 
 # Networking and API
-reqwest = { version = "0.12.15", features = ["json"] }
+reqwest = { version = "0.12.15", features = [
+    "json",
+    "rustls-tls",
+], default-features = false }
 async-trait = "0.1.68"
 
 # Serialization
@@ -22,8 +25,14 @@ thiserror = "2.0.12"
 
 # Logging
 env_logger = "0.11.8"
-tracing = "0.1.41"
-pterodactyl_api = "0.2.0"
 
 [dev-dependencies]
 tokio-test = "0.4"
+
+[[bin]]
+path = "examples/pterodactyl_usage.rs"
+name = "example-pterodactyl"
+
+[[bin]]
+name = "example-process"
+path = "examples/process_provider.rs"
