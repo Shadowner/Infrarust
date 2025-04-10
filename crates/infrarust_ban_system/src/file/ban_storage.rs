@@ -7,12 +7,9 @@ use tokio::{
 };
 
 use crate::{
-    BanEntry,
-    security::ban::{
-        BanAuditLogEntry, BanError,
-        file::{AuditLogFileStorage, BanFileStorage},
-        index::BanIndex,
-    },
+    BanAuditLogEntry, BanEntry, BanError,
+    file::{AuditLogFileStorage, BanFileStorage},
+    index::BanIndex,
 };
 use tracing::{debug, error, info};
 

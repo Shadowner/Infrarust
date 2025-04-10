@@ -1,0 +1,136 @@
+[package]
+name = "infrarust"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+description = "A Rust universal Minecraft proxy"
+default-run = "infrarust"
+readme = "README.md"
+categories = ["network-programming", "command-line-utilities"]
+keywords = ["networking", "proxy", "minecraft", "gameserver", "protocol"]
+exclude = [
+    "docs/*",
+    "!docs/public/img/logo.svg",
+    "docker/*",
+    "config_examples/*",
+    ".github/*",
+    ".vscode/*",
+]
+
+[features]
+telemetry = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-appender-log",
+    "dep:opentelemetry-stdout",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-semantic-conventions",
+]
+system-info = ["dep:sysinfo"]
+
+[dependencies]
+
+# Infrarust Libraries
+infrarust_ban_system = { path = "../infrarust_ban_system" }
+
+
+# Async & Runtime
+tokio = { version = "1.44.1", features = ["full"] }
+async-trait = "0.1.88"
+
+# Logging & Telemetry
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
+tracing-opentelemetry = "0.30.0"
+opentelemetry = { version = "0.29.1", features = ["metrics"], optional = true }
+opentelemetry_sdk = { version = "0.29.0", features = [
+    "metrics",
+    "rt-tokio",
+], optional = true }
+opentelemetry-appender-log = { version = "0.29.0", optional = true }
+opentelemetry-stdout = { version = "0.29.0", optional = true }
+opentelemetry-otlp = { version = "0.29.0", features = [
+    "grpc-tonic",
+    "trace",
+    "metrics",
+    "logs",
+    "tokio",
+], optional = true }
+opentelemetry-semantic-conventions = { version = "0.29.0", optional = true }
+
+# Serialization & Data Formats
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+serde_yaml = "0.9"
+base64 = "0.22.1"
+bytes = "1.10.1"
+
+# Networking & Protocol
+proxy-protocol = "0.5"
+ipnetwork = "0.21.0"
+reqwest = { version = "0.12.15", features = [
+    "json",
+    "rustls-tls",
+], default-features = false }
+
+# Cryptography & Security
+aes = "0.8.4"
+cfb8 = "0.8.1"
+rsa = "0.9.8"
+rsa-der = "0.3.0"
+rand = "0.8.5"    ### Cannot update to > 0.8.5 because crate rsa is on 0.6.4
+sha1 = "0.10"
+hex = "0.4"
+
+# Data Structures & Algorithms
+num-bigint = "0.4.6"
+num-traits = "0.2.19"
+generic-array = "1.2.0"
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+
+# System & Resource Management
+sysinfo = { version = "0.34.2", optional = true }
+libdeflater = "1.23.1"
+
+# Utility & Helper Libraries
+uuid = { version = "1.16.0", features = ["v4", "serde"] }
+parking_lot = "0.12.3"
+lazy_static = "1.5.0"
+walkdir = "2.3"
+wildmatch = "2.1"
+notify = "8.0.0"
+once_cell = "1.18.0"
+
+# Error Handling
+thiserror = "2.0.12"
+anyhow = "1.0.97"
+
+# CLI & Configuration
+clap = { version = "4.5.35", features = ["derive"] }
+env_logger = "0.11.8"
+chrono = "0.4.40"
+futures = "0.3.31"
+atty = "0.2.14"
+bollard = "0.18.1"
+
+[dev-dependencies]
+tempfile = "3.19.1"
+env_logger = "0.11.6"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[[bin]]
+name = "infrarust"
+path = "src/bin/infrarust.rs"

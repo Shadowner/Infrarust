@@ -22,6 +22,7 @@ pub mod telemetry;
 
 // Protocol modules
 pub mod protocol;
+use infrarust_ban_system::BanEntry;
 use protocol::minecraft::java::handshake::ServerBoundHandshake;
 pub use protocol::{
     types::{ProtocolRead, ProtocolWrite},
@@ -40,7 +41,6 @@ pub use network::{
 pub mod proxy_modes;
 use security::ban_system_adapter::BanSystemAdapter;
 pub use security::{
-    ban::{BanEntry, BanSystem},
     encryption::EncryptionState,
     filter::{Filter, FilterConfig, FilterRegistry, FilterType},
     rate_limiter::RateLimiter,

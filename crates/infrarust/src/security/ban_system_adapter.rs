@@ -8,8 +8,11 @@ use tokio::net::TcpStream;
 use tracing::{debug, error, warn};
 
 use crate::security::{
-    ban::{BanConfig, BanEntry, BanError, BanStorageType, BanSystem},
     filter::{ConfigValue, Filter, FilterError, FilterType},
+};
+
+use infrarust_ban_system::{
+    BanConfig, BanEntry, BanError, BanStorageType, BanSystem,
 };
 
 #[derive(Debug)]

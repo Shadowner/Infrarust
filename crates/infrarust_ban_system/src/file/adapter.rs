@@ -1,9 +1,6 @@
 use std::{net::IpAddr, sync::Arc};
 
-use crate::{
-    BanEntry,
-    security::ban::{BanAuditLogEntry, BanError, BanStatistics, BanStorageBackend},
-};
+use crate::{BanAuditLogEntry, BanEntry, BanError, BanStatistics, BanStorageBackend};
 use async_trait::async_trait;
 use tracing::{debug, warn};
 

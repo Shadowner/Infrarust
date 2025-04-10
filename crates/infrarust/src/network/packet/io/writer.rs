@@ -169,7 +169,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::BufMut;
     use tokio::io::BufWriter;
 
     // #[tokio::test]

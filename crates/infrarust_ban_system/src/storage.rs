@@ -6,7 +6,7 @@ use std::{fmt::Debug, net::IpAddr};
 use async_trait::async_trait;
 use tracing::{info, warn};
 
-use crate::security::ban::file::ban_storage::FileBanStorage;
+use crate::file::ban_storage::FileBanStorage;
 
 use super::{
     BanAuditLogEntry, BanConfig, BanEntry, BanError, BanStatistics, BanStorageType,

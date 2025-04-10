@@ -6,9 +6,9 @@ use std::time::Duration;
 use crate::cli::command::{Command, CommandFuture};
 use crate::cli::format as fmt;
 use crate::core::shared_component::SharedComponent;
-use crate::security::BanEntry;
 use crate::security::filter::FilterError;
 use crate::with_filter;
+use infrarust_ban_system::BanEntry;
 use tracing::debug;
 
 pub struct BanCommand {
