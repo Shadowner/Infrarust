@@ -1,13 +1,17 @@
 use serde::Deserialize;
 
-use crate::{proxy_modes::ProxyModeEnum, server::motd::MotdConfig};
 use super::{cache::CacheConfig, filter::FilterConfig};
+use crate::{
+    proxy_modes::ProxyModeEnum,
+    server::{manager::ManagerType, motd::MotdConfig},
+};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerManagerConfig {
-    pub provider_name: String,
-    pub empty_timeout: Option<u64>,
-    pub launch_command: Option<String>
+    pub provider_name: ManagerType,
+    pub server_id: String,
+    pub empty_shutdown_time: Option<u64>,
+    pub launch_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

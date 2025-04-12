@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep};
 
 /// Example of a custom process provider that doesn't rely on the default ProcessManager
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct CustomProcessProvider {
     // In reality, this might be a client for a remote system
     local_provider: LocalProvider,

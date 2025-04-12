@@ -4,11 +4,13 @@ pub mod mock;
 pub mod models;
 pub mod pterodactyl;
 
+use std::fmt::Debug;
+
 use crate::{ServerState, error::ServerManagerError};
 use async_trait::async_trait;
 
 #[async_trait]
-pub trait ApiProvider: Send + Sync {
+pub trait ApiProvider: Send + Sync + Debug {
     async fn get_server_status(
         &self,
         server_id: &str,

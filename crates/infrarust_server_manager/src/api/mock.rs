@@ -6,7 +6,7 @@ use crate::ServerState;
 use crate::api::{ApiProvider, ApiServerStatus};
 use crate::error::ServerManagerError;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MockApiProvider {
     server_states: Arc<RwLock<HashMap<String, ApiServerStatus>>>,
 }

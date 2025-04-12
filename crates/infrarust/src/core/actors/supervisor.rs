@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, atomic::AtomicBool},
+    time::Duration,
 };
 use tokio::{
     sync::{OnceCell, RwLock, mpsc, oneshot},
@@ -12,13 +13,14 @@ use crate::{
     Connection,
     core::{
         actors::{client::MinecraftClientHandler, server::MinecraftServerHandler},
+        config::ServerManagerConfig,
         event::MinecraftCommunication,
     },
     proxy_modes::{
         ClientProxyModeHandler, ProxyMessage, ProxyModeEnum, ServerProxyModeHandler,
         get_client_only_mode, get_offline_mode, get_passthrough_mode, get_status_mode,
     },
-    server::ServerResponse,
+    server::{ServerResponse, manager::Manager},
 };
 
 #[cfg(feature = "telemetry")]
@@ -80,11 +82,12 @@ pub struct TaskInfo {
 pub struct ActorSupervisor {
     actors: RwLock<ActorStorage>,
     tasks: RwLock<HashMap<String, Vec<JoinHandle<()>>>>,
+    server_manager: Option<Arc<Manager>>,
 }
 
 impl Default for ActorSupervisor {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
@@ -95,7 +98,7 @@ impl ActorSupervisor {
             None => {
                 // Fallback to a new instance if not initialized (shouldn't happen in practice)
                 debug!("Warning: Using temporary supervisor instance - global was not initialized");
-                Arc::new(ActorSupervisor::new())
+                Arc::new(ActorSupervisor::new(None))
             }
         }
     }
@@ -144,15 +147,18 @@ impl ActorSupervisor {
         stats
     }
 
-    pub fn initialize_global() -> Result<(), tokio::sync::SetError<Arc<ActorSupervisor>>> {
+    pub fn initialize_global(
+        server_manager: Option<Arc<Manager>>,
+    ) -> Result<(), tokio::sync::SetError<Arc<ActorSupervisor>>> {
         debug!("Initializing global supervisor instance");
-        GLOBAL_SUPERVISOR.set(Arc::new(ActorSupervisor::new()))
+        GLOBAL_SUPERVISOR.set(Arc::new(ActorSupervisor::new(server_manager)))
     }
 
-    pub fn new() -> Self {
+    pub fn new(server_manager: Option<Arc<Manager>>) -> Self {
         Self {
             actors: RwLock::new(HashMap::new()),
             tasks: RwLock::new(HashMap::new()),
+            server_manager,
         }
     }
 
@@ -559,6 +565,7 @@ impl ActorSupervisor {
             TELEMETRY.update_player_count(-1, &config_id, session_id, "");
         }
 
+        self.check_and_mark_empty_servers().await;
         debug!("Cleanup completed for session {}", session_id);
     }
 
@@ -639,5 +646,119 @@ impl ActorSupervisor {
         tasks.clear();
 
         info!("All actors have been shut down");
+    }
+
+    pub async fn check_and_mark_empty_servers(&self) {
+        if let Some(server_manager) = &self.server_manager {
+            debug!("Checking for empty servers");
+            let actors = self.actors.read().await;
+
+            let configs_with_manager = self.get_configs_with_manager_settings().await;
+
+            if configs_with_manager.is_empty() {
+                debug!("No servers with manager settings found");
+                return;
+            }
+
+            let mut server_counts: HashMap<String, usize> = HashMap::new();
+            for (config_id, pairs) in actors.iter() {
+                let active_count = pairs
+                    .iter()
+                    .filter(|pair| {
+                        !pair.shutdown.load(std::sync::atomic::Ordering::SeqCst) && pair.is_login
+                    })
+                    .count();
+
+                server_counts.insert(config_id.clone(), active_count);
+                debug!(
+                    "Server {} has {} active login connections",
+                    config_id, active_count
+                );
+            }
+
+            for (config_id, manager_config) in configs_with_manager {
+                let count = server_counts.get(&config_id).copied().unwrap_or(0);
+                if count == 0 {
+                    debug!("Server {} has no active connections", config_id);
+                    if let Some(empty_shutdown_time) = manager_config.empty_shutdown_time {
+                        match server_manager
+                            .get_status_for_server(
+                                &manager_config.server_id,
+                                manager_config.provider_name.clone(),
+                            )
+                            .await
+                        {
+                            Ok(status) => {
+                                if status.state == infrarust_server_manager::ServerState::Running {
+                                    debug!(
+                                        "Auto-shutdown enabled for {}@{:?} with timeout of {} seconds",
+                                        config_id,
+                                        manager_config.provider_name,
+                                        empty_shutdown_time
+                                    );
+
+                                    if let Err(e) = server_manager
+                                        .mark_server_as_empty(
+                                            &manager_config.server_id,
+                                            manager_config.provider_name.clone(),
+                                            Duration::from_secs(empty_shutdown_time),
+                                        )
+                                        .await
+                                    {
+                                        debug!(
+                                            "Error marking server {} as empty: {}",
+                                            config_id, e
+                                        );
+                                    } else {
+                                        debug!(
+                                            "Server {} marked as empty, shutdown scheduled in {} seconds",
+                                            config_id, empty_shutdown_time
+                                        );
+                                    }
+                                } else {
+                                    debug!(
+                                        "Server {} is not running (state: {:?}), not marking as empty",
+                                        config_id, status.state
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                debug!("Error getting status for server {}: {}", config_id, e);
+                            }
+                        }
+                    }
+                } else {
+                    debug!(
+                        "Server {} has {} active connections, not marking as empty",
+                        config_id, count
+                    );
+
+                    let _ = server_manager
+                        .remove_server_from_empty(
+                            &manager_config.server_id,
+                            manager_config.provider_name.clone(),
+                        )
+                        .await;
+                }
+            }
+        }
+    }
+
+    async fn get_configs_with_manager_settings(&self) -> Vec<(String, ServerManagerConfig)> {
+        let mut result = Vec::new();
+        if let Some(shared) = crate::server::gateway::Gateway::get_shared_component() {
+            let configs = shared
+                .configuration_service()
+                .get_all_configurations()
+                .await;
+
+            for (config_id, config) in configs {
+                if let Some(manager_config) = &config.server_manager {
+                    result.push((config_id.clone(), manager_config.clone()));
+                }
+            }
+        }
+
+        result
     }
 }

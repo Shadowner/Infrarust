@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc::Sender;
 
-use crate::{FilterRegistry, InfrarustConfig, cli::ShutdownController};
+use crate::{FilterRegistry, InfrarustConfig, cli::ShutdownController, server::manager::Manager};
 
 use super::{
     actors::supervisor::ActorSupervisor,
@@ -17,6 +17,7 @@ pub struct SharedComponent {
     actor_supervisor: Arc<ActorSupervisor>,
     configuration_service: Arc<ConfigurationService>,
     filter_registry: Arc<FilterRegistry>,
+    server_managers: Arc<Manager>,
 
     shutdown_controller: Arc<ShutdownController>,
 
@@ -24,6 +25,7 @@ pub struct SharedComponent {
     provider_sender: Sender<ProviderMessage>,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl SharedComponent {
     pub fn new(
         config: Arc<InfrarustConfig>,
@@ -33,6 +35,7 @@ impl SharedComponent {
         shutdown_controller: Arc<ShutdownController>,
         gateway_sender: Sender<GatewayMessage>,
         provider_sender: Sender<ProviderMessage>,
+        server_managers: Arc<Manager>,
     ) -> Self {
         Self {
             config,
@@ -42,6 +45,7 @@ impl SharedComponent {
             shutdown_controller,
             _gateway_sender: gateway_sender,
             provider_sender,
+            server_managers,
         }
     }
 
@@ -71,5 +75,9 @@ impl SharedComponent {
 
     pub(crate) fn provider_sender(&self) -> &Sender<ProviderMessage> {
         &self.provider_sender
+    }
+
+    pub(crate) fn server_managers(&self) -> Arc<Manager> {
+        self.server_managers.clone()
     }
 }

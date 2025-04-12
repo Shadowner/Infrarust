@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 
+#[derive(Clone, Debug)]
 pub struct ApiClient {
     client: Client,
     base_url: String,

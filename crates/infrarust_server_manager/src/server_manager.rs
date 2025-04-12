@@ -11,6 +11,7 @@ pub use crate::monitor::{CrashDetector, ServerStatus};
 use crate::process::ProcessProvider;
 use crate::terminal::execute_command;
 
+#[derive(Debug, Clone)]
 pub struct ServerManager<T: ApiProvider> {
     api_client: Arc<T>,
     crash_detector: CrashDetector,

@@ -36,7 +36,7 @@ system-info = ["dep:sysinfo"]
 
 # Infrarust Libraries
 infrarust_ban_system = { path = "../infrarust_ban_system" }
-
+infrarust_server_manager = { path = "../infrarust_server_manager" }
 
 # Async & Runtime
 tokio = { version = "1.44.1", features = ["full"] }

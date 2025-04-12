@@ -7,6 +7,7 @@
 // Core modules
 pub mod core;
 pub use core::config::InfrarustConfig;
+use core::config::models::manager::{ManagerConfig, PterodactylManagerConfig};
 use core::config::provider::ConfigProvider;
 use core::config::provider::file::FileProvider;
 use core::config::service::ConfigurationService;
@@ -23,12 +24,14 @@ pub mod telemetry;
 // Protocol modules
 pub mod protocol;
 use infrarust_ban_system::BanEntry;
+use infrarust_server_manager::{LocalProvider, PterodactylClient};
 use protocol::minecraft::java::handshake::ServerBoundHandshake;
 pub use protocol::{
     types::{ProtocolRead, ProtocolWrite},
     version,
 };
 use security::filter::FilterError;
+use server::manager::Manager;
 use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
 
 // Network and security modules
@@ -79,15 +82,6 @@ impl Infrarust {
 
         // Initialize filter registry
         let filter_registry = Arc::new(FilterRegistry::new());
-        if ActorSupervisor::initialize_global().is_err() {
-            error!("Failed to initialize ActorSupervisor");
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Failed to initialize ActorSupervisor",
-            ));
-        }
-
-        let supervisor = ActorSupervisor::global();
 
         let mut config_provider = ConfigProvider::new(
             config_service.clone(),
@@ -95,14 +89,52 @@ impl Infrarust {
             provider_sender.clone(),
         );
 
+        let manager_config = config
+            .managers_config
+            .clone()
+            .unwrap_or(ManagerConfig { pterodactyl: None });
+
+        let pterodactyl_config = match manager_config.pterodactyl {
+            Some(ref config) => config.clone(),
+            None => {
+                error!("Pterodactyl manager configuration is missing");
+                PterodactylManagerConfig {
+                    enabled: false,
+                    api_key: String::new(),
+                    base_url: String::new(),
+                }
+            }
+        };
+
+        debug!(
+            "Pterodactyl manager configuration: enabled = {}, api_key = {}, base_url = {}",
+            pterodactyl_config.enabled, pterodactyl_config.api_key, pterodactyl_config.base_url
+        );
+
+        let pterodactyl_provider =
+            PterodactylClient::new(pterodactyl_config.api_key, pterodactyl_config.base_url);
+        let local_provider = LocalProvider::new();
+
+        let managers = Arc::new(Manager::new(pterodactyl_provider, local_provider));
+
+        if ActorSupervisor::initialize_global(Some(managers.clone())).is_err() {
+            error!("Failed to initialize ActorSupervisor");
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Failed to initialize ActorSupervisor",
+            ));
+        }
+        let supervisor = ActorSupervisor::global();
+
         let shared = Arc::new(SharedComponent::new(
             config,
-            supervisor,
+            supervisor.clone(),
             config_service,
             filter_registry,
             shutdown_controller,
             gateway_sender,
             provider_sender,
+            managers.clone(),
         ));
 
         let server_gateway = Arc::new(Gateway::new(shared.clone()));

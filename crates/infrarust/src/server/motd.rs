@@ -131,6 +131,191 @@ pub fn generate_unknown_server_response(
     }
 }
 
+pub fn generate_starting_motd_response(
+    domain: String,
+    server: Arc<ServerConfig>,
+) -> ProtocolResult<ServerResponse> {
+    let motd = MotdConfig {
+        text: Some("§6Server is starting...§r\n§8§oPlease wait a moment".to_string()),
+        version_name: Some("Infrarust".to_string()),
+        max_players: Some(0),
+        online_players: Some(0),
+        protocol_version: Some(0),
+        samples: Some(Vec::new()),
+        ..Default::default()
+    };
+
+    let motd_packet = generate_motd(&motd, true)?;
+
+    Ok(ServerResponse {
+        server_conn: None,
+        status_response: Some(motd_packet),
+        send_proxy_protocol: false,
+        read_packets: vec![],
+        server_addr: None,
+        proxy_mode: ProxyModeEnum::Status,
+        proxied_domain: Some(domain),
+        initial_config: server,
+    })
+}
+
+pub fn generate_not_started_motd_response(
+    domain: String,
+    server: Arc<ServerConfig>,
+) -> ProtocolResult<ServerResponse> {
+    let motd = MotdConfig {
+        text: Some("§e§oServer is sleeping. §8§o\nConnect to it to wake it up.".to_string()),
+        version_name: Some("Infrarust".to_string()),
+        max_players: Some(0),
+        online_players: Some(0),
+        protocol_version: Some(0),
+        samples: Some(Vec::new()),
+        ..Default::default()
+    };
+    let motd_packet = generate_motd(&motd, true)?;
+
+    Ok(ServerResponse {
+        server_conn: None,
+        status_response: Some(motd_packet),
+        send_proxy_protocol: false,
+        read_packets: vec![],
+        server_addr: None,
+        proxy_mode: ProxyModeEnum::Status,
+        proxied_domain: Some(domain),
+        initial_config: server,
+    })
+}
+
+pub fn generate_crashing_motd_response(
+    domain: String,
+    server: Arc<ServerConfig>,
+) -> ProtocolResult<ServerResponse> {
+    let motd = MotdConfig {
+        text: Some(
+            "§4Server is in a crashing state...§r\n§8§o -> Contact an admin if the issue persist."
+                .to_string(),
+        ),
+        version_name: Some("Infrarust".to_string()),
+        max_players: Some(0),
+        online_players: Some(0),
+        protocol_version: Some(0),
+        samples: Some(Vec::new()),
+        ..Default::default()
+    };
+
+    let motd_packet = generate_motd(&motd, true)?;
+
+    Ok(ServerResponse {
+        server_conn: None,
+        status_response: Some(motd_packet),
+        send_proxy_protocol: false,
+        read_packets: vec![],
+        server_addr: None,
+        proxy_mode: ProxyModeEnum::Status,
+        proxied_domain: Some(domain),
+        initial_config: server,
+    })
+}
+
+pub fn generate_unknown_status_server_response(
+    domain: String,
+    server: Arc<ServerConfig>,
+) -> ProtocolResult<ServerResponse> {
+    let motd = MotdConfig {
+        text: Some(
+            "§cUnknown server status...§r\n§8§o -> Contact an admin if the issue persist."
+                .to_string(),
+        ),
+        version_name: Some("Infrarust".to_string()),
+        max_players: Some(0),
+        online_players: Some(0),
+        protocol_version: Some(0),
+        samples: Some(Vec::new()),
+        ..Default::default()
+    };
+
+    let motd_packet = generate_motd(&motd, true)?;
+
+    Ok(ServerResponse {
+        server_conn: None,
+        status_response: Some(motd_packet),
+        send_proxy_protocol: false,
+        read_packets: vec![],
+        server_addr: None,
+        proxy_mode: ProxyModeEnum::Status,
+        proxied_domain: Some(domain),
+        initial_config: server,
+    })
+}
+
+pub fn generate_stopping_motd_response(
+    domain: String,
+    server: Arc<ServerConfig>,
+) -> ProtocolResult<ServerResponse> {
+    let motd = MotdConfig {
+        text: Some(
+            "§6Server is marked to shutdown...\n§8§o Connect to it to cancel it !".to_string(),
+        ),
+        version_name: Some("Infrarust".to_string()),
+        max_players: Some(0),
+        online_players: Some(0),
+        protocol_version: Some(0),
+        samples: Some(Vec::new()),
+        ..Default::default()
+    };
+
+    let motd_packet = generate_motd(&motd, true)?;
+
+    Ok(ServerResponse {
+        server_conn: None,
+        status_response: Some(motd_packet),
+        send_proxy_protocol: false,
+        read_packets: vec![],
+        server_addr: None,
+        proxy_mode: ProxyModeEnum::Status,
+        proxied_domain: Some(domain),
+        initial_config: server,
+    })
+}
+
+pub fn generate_imminent_shutdown_motd_response(
+    domain: String,
+    server: Arc<ServerConfig>,
+    seconds_remaining: u64,
+) -> ProtocolResult<ServerResponse> {
+    let time_str = if seconds_remaining <= 60 {
+        format!("{} seconds", seconds_remaining)
+    } else {
+        format!("{:.1} minutes", seconds_remaining as f64 / 60.0)
+    };
+
+    let motd = MotdConfig {
+        text: Some(format!(
+            "§c§lServer shutting down in {}!§r\n§e§oConnect now to keep it online!",
+            time_str
+        )),
+        version_name: Some("Infrarust".to_string()),
+        max_players: Some(0),
+        online_players: Some(0),
+        protocol_version: Some(0),
+        samples: Some(Vec::new()),
+        ..Default::default()
+    };
+
+    let motd_packet = generate_motd(&motd, true)?;
+
+    Ok(ServerResponse {
+        server_conn: None,
+        status_response: Some(motd_packet),
+        send_proxy_protocol: false,
+        read_packets: vec![],
+        server_addr: None,
+        proxy_mode: ProxyModeEnum::Status,
+        proxied_domain: Some(domain),
+        initial_config: server,
+    })
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct MotdConfig {
     #[serde(default)]

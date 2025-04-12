@@ -1,8 +1,11 @@
-use std::time::Duration;
 use serde::Deserialize;
+use std::time::Duration;
 
+use super::{
+    cache::CacheConfig, filter::FilterConfig, logging::LoggingConfig, manager::ManagerConfig,
+    server::ServerMotds, telemetry::TelemetryConfig,
+};
 use crate::core::config::provider::{docker::DockerProviderConfig, file::FileProviderConfig};
-use super::{cache::CacheConfig, filter::FilterConfig, logging::LoggingConfig, manager::ManagerConfig, server::ServerMotds, telemetry::TelemetryConfig};
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct InfrarustConfig {
@@ -13,7 +16,7 @@ pub struct InfrarustConfig {
     pub file_provider: Option<FileProviderConfig>,
     pub docker_provider: Option<DockerProviderConfig>,
 
-    pub manager_config: Option<ManagerConfig>,
+    pub managers_config: Option<ManagerConfig>,
 
     #[serde(default)]
     pub cache: CacheConfig,
@@ -59,6 +62,10 @@ impl InfrarustConfig {
 
         if let Some(docker_provider) = &other.docker_provider {
             self.docker_provider = Some(docker_provider.clone());
+        }
+
+        if let Some(manager_config) = &other.managers_config {
+            self.managers_config = Some(manager_config.clone());
         }
 
         if other.motds.unknown.is_some() {

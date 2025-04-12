@@ -28,75 +28,17 @@ struct PterodactylStatus {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ServerLimits {
-    pub memory: u64,
-    pub swap: u64,
-    pub disk: u64,
-    pub io: u64,
-    pub cpu: u64,
-    pub threads: Option<u64>,
-    pub oom_disabled: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct FeatureLimits {
-    pub databases: u64,
-    pub allocations: u64,
-    pub backups: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AllocationAttributes {
-    pub id: u64,
-    pub ip: String,
-    pub ip_alias: String,
-    pub port: u64,
-    pub notes: Option<String>,
-    pub is_default: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Allocation {
-    pub object: String,
-    pub attributes: AllocationAttributes,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Allocations {
-    pub object: String,
-    pub data: Vec<Allocation>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Relationships {
-    pub allocations: Allocations,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ServerInfoAttributes {
-    pub server_owner: bool,
-    pub identifier: String,
-    pub internal_id: u64,
-    pub uuid: String,
+struct MinimalAttributes {
     pub name: String,
-    pub node: String,
-    pub is_node_under_maintenance: bool,
     pub description: String,
-    pub limits: ServerLimits,
-    pub feature_limits: FeatureLimits,
-    pub status: Option<String>,
-    pub is_suspended: bool,
-    pub is_installing: bool,
-    pub is_transferring: bool,
-    pub relationships: Relationships,
+    pub identifier: String,
 }
-
 #[derive(Debug, Serialize, Deserialize)]
-struct PterodactylServerInfo {
+struct MinimalServerInfo {
     pub object: String,
-    pub attributes: ServerInfoAttributes,
+    pub attributes: MinimalAttributes,
 }
-
+#[derive(Debug, Clone)]
 pub struct PterodactylClient {
     client: Client,
     api_key: String,
@@ -120,7 +62,7 @@ impl PterodactylClient {
     async fn get_server_info(
         &self,
         server_id: &str,
-    ) -> Result<ServerInfoAttributes, ServerManagerError> {
+    ) -> Result<MinimalServerInfo, ServerManagerError> {
         let url = format!("{}/api/client/servers/{}", self.base_url, server_id);
 
         let response = self
@@ -147,11 +89,11 @@ impl PterodactylClient {
             )));
         }
 
-        let info: PterodactylServerInfo = response.json().await.map_err(|e| {
+        let info: MinimalServerInfo = response.json().await.map_err(|e| {
             ServerManagerError::ApiError(format!("Failed to parse response: {}", e))
         })?;
 
-        Ok(info.attributes)
+        Ok(info)
     }
 }
 
@@ -208,7 +150,7 @@ impl ApiProvider for PterodactylClient {
 
         Ok(ApiServerStatus {
             id: server_id.to_string(),
-            name: server_info.name,
+            name: server_info.attributes.name,
             status: ServerState::from(status.attributes.current_state.as_str()),
             is_running,
             is_crashed,

@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod cache;
 pub mod gateway;
+pub mod manager;
 pub mod motd;
 
 use crate::ServerConnection;

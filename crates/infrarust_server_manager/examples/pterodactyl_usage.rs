@@ -9,8 +9,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a Pterodactyl API client
     let api_key = std::env::var("PTERODACTYL_API_KEY")
         .expect("PTERODACTYL_API_KEY environment variable must be set");
-    let base_url =
-        std::env::var("PTERODACTYL_URL").unwrap_or_else(|_| "https://ptero.oulieu.fr".to_string());
+    let base_url = std::env::var("PTERODACTYL_URL")
+        .unwrap_or_else(|_| "https://ptero.example.com".to_string());
     let server_id = std::env::var("SERVER_ID").unwrap_or_else(|_| "3dafa09d".to_string());
 
     // Create the API client

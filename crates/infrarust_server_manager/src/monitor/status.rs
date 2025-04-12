@@ -19,6 +19,7 @@ impl From<&str> for ServerState {
             "running" => ServerState::Running,
             "stopping" => ServerState::Stopping,
             "stopped" => ServerState::Stopped,
+            "offline" => ServerState::Stopped,
             "crashed" => ServerState::Crashed,
             _ => ServerState::Unknown,
         }
@@ -77,21 +78,8 @@ impl ServerStatus {
 
 impl From<ApiServerStatus> for ServerStatus {
     fn from(api_status: ApiServerStatus) -> Self {
-        let mut status = ServerStatus::new("");
-
-        let state = if api_status.is_running {
-            ServerState::Running
-        } else if let Some(error) = &api_status.error {
-            if error.to_lowercase().contains("crash") {
-                ServerState::Crashed
-            } else {
-                ServerState::Stopped
-            }
-        } else {
-            ServerState::Stopped
-        };
-
-        status.update_state(state);
+        let mut status = ServerStatus::new(&api_status.id);
+        status.update_state(api_status.status);
         status
     }
 }

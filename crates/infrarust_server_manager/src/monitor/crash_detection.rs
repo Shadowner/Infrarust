@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 const DEFAULT_CRASH_THRESHOLD: u32 = 3;
 const DEFAULT_CRASH_WINDOW: Duration = Duration::from_secs(300); // 5 minutes
 
+#[derive(Debug, Clone)]
 pub struct CrashDetector {
     crash_threshold: u32,
     crash_window: Duration,

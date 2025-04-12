@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
+use infrarust_server_manager::ServerState;
 use tokio::sync::{
     Mutex,
     mpsc::{self},
@@ -10,7 +11,6 @@ use tokio::sync::{
 use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
 
 use super::{ServerRequest, ServerRequester, ServerResponse, backend::Server, cache::StatusCache};
-use crate::network::packet::Packet;
 #[cfg(feature = "telemetry")]
 use crate::telemetry::TELEMETRY;
 use crate::{
@@ -19,10 +19,16 @@ use crate::{
     network::proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     protocol::minecraft::java::login::ServerBoundLoginStart,
     proxy_modes::ProxyModeEnum,
+    server::motd::{
+        generate_not_started_motd_response, generate_starting_motd_response,
+        generate_stopping_motd_response,
+    },
 };
 use crate::{core::shared_component::SharedComponent, network::connection::PossibleReadValue};
+use crate::{network::packet::Packet, server::motd::generate_crashing_motd_response};
 use crate::{security::BanHelper, server::motd};
 
+static SHARED_COMPONENT: std::sync::OnceLock<Arc<SharedComponent>> = std::sync::OnceLock::new();
 #[derive(Debug, Clone)]
 pub struct Gateway {
     status_cache: Arc<Mutex<StatusCache>>,
@@ -35,6 +41,8 @@ pub struct Gateway {
 impl Gateway {
     pub fn new(shared: Arc<SharedComponent>) -> Self {
         info!("Initializing ServerGateway");
+
+        let _ = SHARED_COMPONENT.set(shared.clone());
 
         let config = shared.config();
         let gateway = Self {
@@ -58,12 +66,17 @@ impl Gateway {
                     }
                     _ = interval.tick() => {
                         supervisor.health_check().await;
+                        supervisor.check_and_mark_empty_servers().await;
                     }
                 }
             }
         });
 
         gateway
+    }
+
+    pub fn get_shared_component() -> Option<Arc<SharedComponent>> {
+        SHARED_COMPONENT.get().cloned()
     }
 
     pub async fn run(&self, mut receiver: mpsc::Receiver<GatewayMessage>) {
@@ -170,8 +183,79 @@ impl Gateway {
 
         if proxy_mode == ProxyModeEnum::Status {
             debug!("Handling status request directly without creating actors");
-            self.handle_status_request_directly(client, request).await;
+            self.handle_status_request_directly(client, request, server_config)
+                .await;
             return;
+        }
+
+        if server_config.server_manager.is_some() {
+            debug!("Server manager is present, checking status");
+            let server_manager = self
+                .shared
+                .server_managers()
+                .get_status_for_server(
+                    &server_config.server_manager.as_ref().unwrap().server_id,
+                    server_config
+                        .server_manager
+                        .as_ref()
+                        .unwrap()
+                        .provider_name
+                        .clone(),
+                )
+                .await;
+
+            if let Ok(manager) = server_manager {
+                let server_id = server_config
+                    .server_manager
+                    .as_ref()
+                    .unwrap()
+                    .server_id
+                    .clone();
+                let manager_type = server_config
+                    .server_manager
+                    .as_ref()
+                    .unwrap()
+                    .provider_name
+                    .clone();
+
+                if manager.state == ServerState::Crashed {
+                    warn!(
+                        "Server {} is crashed, using unreachable MOTD",
+                        server_config.config_id
+                    );
+                }
+
+                if manager.state == ServerState::Stopped {
+                    warn!("Trying to start Server {}", server_config.config_id);
+                    let start_server = self
+                        .shared
+                        .server_managers()
+                        .start_server(&server_id, manager_type.clone())
+                        .await;
+
+                    if let Err(e) = start_server {
+                        warn!(
+                            "Failed to start server {}: {:?}",
+                            server_config.config_id, e
+                        );
+                    }
+                }
+
+                if manager.state != ServerState::Running {
+                    if let Err(e) = client.close().await {
+                        warn!("Error closing connection: {:?}", e);
+                    }
+                    return;
+                }
+
+                if manager.state == ServerState::Running {
+                    let _ = self
+                        .shared
+                        .server_managers()
+                        .remove_server_from_empty(&server_id, manager_type)
+                        .await;
+                }
+            }
         }
 
         let connecting_domain = request.domain.clone();
@@ -290,34 +374,97 @@ impl Gateway {
         &self,
         mut client: Connection,
         request: ServerRequest,
+        server_config: Arc<ServerConfig>,
     ) {
         debug!(
             "Handling status request directly for domain: {}",
             request.domain
         );
 
-        let server_config = match self.find_server(&request.domain).await {
-            Some(config) => config,
-            None => {
-                warn!(
-                    "Server not found for domain: '{}' requested by - {}",
-                    request.domain, request.client_addr
-                );
-                if let Err(e) = client.close().await {
-                    warn!("Error closing connection: {:?}", e);
-                }
-                return;
-            }
-        };
-
-        // Use a non-blocking task to handle the status request
         let self_clone = self.clone();
         tokio::spawn(async move {
-            // Get or create a status response
-            match self_clone
-                .get_or_fetch_status_response(request.clone(), server_config)
-                .await
+            let near_shutdown_threshold = 60; // Increased to 300 seconds (5 minutes) to show shutdown MOTD earlier
+
+            let response: Result<ServerResponse, ProxyProtocolError> = match &server_config
+                .server_manager
             {
+                Some(config) => {
+                    // Check if this server is near shutdown
+                    let server_managers = self_clone.shared.server_managers();
+                    let near_shutdown_servers = server_managers
+                        .get_servers_near_shutdown(near_shutdown_threshold)
+                        .await;
+
+                    // Check if this specific server is in the near-shutdown list
+                    let mut is_near_shutdown = false;
+                    let mut remaining_seconds = 0;
+
+                    for (server_id, manager_type, seconds) in near_shutdown_servers {
+                        if server_id == config.server_id && manager_type == config.provider_name {
+                            is_near_shutdown = true;
+                            remaining_seconds = seconds;
+                            break;
+                        }
+                    }
+
+                    if is_near_shutdown {
+                        debug!(
+                            "Server {} is scheduled to shut down in {} seconds",
+                            server_config.config_id, remaining_seconds
+                        );
+                        motd::generate_imminent_shutdown_motd_response(
+                            request.domain,
+                            server_config.clone(),
+                            remaining_seconds,
+                        )
+                    } else {
+                        let status = self_clone
+                            .shared
+                            .server_managers()
+                            .get_status_for_server(&config.server_id, config.provider_name.clone())
+                            .await;
+
+                        match status.unwrap().state {
+                            ServerState::Crashed => {
+                                warn!(
+                                    "Server {} is crashed, using unreachable MOTD",
+                                    server_config.config_id
+                                );
+                                generate_crashing_motd_response(request.domain, server_config)
+                            }
+                            ServerState::Running => {
+                                debug!("Server {} is running", server_config.config_id);
+                                self_clone
+                                    .get_or_fetch_status_response(request.clone(), server_config)
+                                    .await
+                            }
+                            ServerState::Starting => {
+                                debug!("Server {} is starting", server_config.config_id);
+                                generate_starting_motd_response(request.domain, server_config)
+                            }
+                            ServerState::Stopped => {
+                                debug!("Server {} is stopped", server_config.config_id);
+                                generate_not_started_motd_response(request.domain, server_config)
+                            }
+                            ServerState::Unknown => {
+                                error!("Server {} is in unknown state", server_config.config_id);
+                                generate_crashing_motd_response(request.domain, server_config)
+                            }
+                            ServerState::Stopping => {
+                                debug!("Server {} is stopping", server_config.config_id);
+                                generate_stopping_motd_response(request.domain, server_config)
+                            }
+                        }
+                    }
+                }
+                None => {
+                    self_clone
+                        .get_or_fetch_status_response(request.clone(), server_config)
+                        .await
+                }
+            };
+
+            match response {
                 Ok(response) => {
                     if let Some(status_packet) = response.status_response {
                         debug!("Sending status packet directly to client");
@@ -350,7 +497,7 @@ impl Gateway {
                 Err(e) => {
                     warn!("Failed to get status response: {:?}", e);
                 }
-            }
+            };
 
             // Always close the connection when done
             if let Err(e) = client.close().await {

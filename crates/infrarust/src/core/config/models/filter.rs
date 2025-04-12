@@ -1,8 +1,8 @@
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::security::filter::RateLimiterConfig;
 use super::{access_list::AccessListConfig, ban::BanConfig};
+use crate::security::filter::RateLimiterConfig;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FilterConfig {

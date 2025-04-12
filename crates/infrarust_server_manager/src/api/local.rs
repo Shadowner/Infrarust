@@ -22,7 +22,7 @@ pub struct LocalServerConfig {
 }
 
 /// Provider for managing local server processes
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LocalProvider {
     process_manager: Arc<ProcessManager>,
     configs: Arc<Mutex<HashMap<String, LocalServerConfig>>>,
