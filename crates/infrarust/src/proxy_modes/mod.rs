@@ -9,7 +9,6 @@ use crate::network::connection::PossibleReadValue;
 use client_only::{ClientOnlyMessage, ClientOnlyMode};
 use offline::{OfflineMessage, OfflineMode};
 use passthrough::{PassthroughMessage, PassthroughMode};
-use serde::{Deserialize, Serialize};
 use status::StatusMessage;
 use std::io;
 use tracing::{debug, instrument};
@@ -93,22 +92,4 @@ pub fn get_status_mode() -> (
 ) {
     debug!("Creating new status mode handler pair");
     (Box::new(status::StatusMode), Box::new(status::StatusMode))
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
-pub enum ProxyModeEnum {
-    #[serde(rename = "passthrough")]
-    #[default]
-    Passthrough,
-    // #[serde(rename = "full")]
-    // Full,
-    #[serde(rename = "client_only")]
-    ClientOnly,
-    #[serde(rename = "offline")]
-    Offline,
-    #[serde(rename = "server_only")]
-    ServerOnly,
-
-    #[serde(skip)]
-    Status,
 }

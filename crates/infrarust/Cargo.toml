@@ -37,9 +37,11 @@ system-info = ["dep:sysinfo"]
 # Infrarust Libraries
 infrarust_ban_system = { path = "../infrarust_ban_system" }
 infrarust_server_manager = { path = "../infrarust_server_manager" }
+infrarust_config = { path = "../infrarust_config" }
+infrarust_protocol = { path = "../infrarust_protocol" }
 
 # Async & Runtime
-tokio = { version = "1.44.1", features = ["full"] }
+tokio = { version = "1.44.2", features = ["full"] }
 async-trait = "0.1.88"
 
 # Logging & Telemetry
@@ -119,17 +121,7 @@ bollard = "0.18.1"
 
 [dev-dependencies]
 tempfile = "3.19.1"
-env_logger = "0.11.6"
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-panic = "abort"
-
-[profile.dev]
-opt-level = 0
-debug = true
+env_logger = "0.11.8"
 
 [[bin]]
 name = "infrarust"

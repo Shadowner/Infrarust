@@ -1,3 +1,4 @@
+use infrarust_config::models::server::ProxyModeEnum;
 use std::{
     collections::HashMap,
     sync::{Arc, atomic::AtomicBool},
@@ -17,8 +18,8 @@ use crate::{
         event::MinecraftCommunication,
     },
     proxy_modes::{
-        ClientProxyModeHandler, ProxyMessage, ProxyModeEnum, ServerProxyModeHandler,
-        get_client_only_mode, get_offline_mode, get_passthrough_mode, get_status_mode,
+        ClientProxyModeHandler, ProxyMessage, ServerProxyModeHandler, get_client_only_mode,
+        get_offline_mode, get_passthrough_mode, get_status_mode,
     },
     server::{ServerResponse, manager::Manager},
 };
@@ -684,7 +685,7 @@ impl ActorSupervisor {
                         match server_manager
                             .get_status_for_server(
                                 &manager_config.server_id,
-                                manager_config.provider_name.clone(),
+                                manager_config.provider_name,
                             )
                             .await
                         {
@@ -700,7 +701,7 @@ impl ActorSupervisor {
                                     if let Err(e) = server_manager
                                         .mark_server_as_empty(
                                             &manager_config.server_id,
-                                            manager_config.provider_name.clone(),
+                                            manager_config.provider_name,
                                             Duration::from_secs(empty_shutdown_time),
                                         )
                                         .await
@@ -736,7 +737,7 @@ impl ActorSupervisor {
                     let _ = server_manager
                         .remove_server_from_empty(
                             &manager_config.server_id,
-                            manager_config.provider_name.clone(),
+                            manager_config.provider_name,
                         )
                         .await;
                 }

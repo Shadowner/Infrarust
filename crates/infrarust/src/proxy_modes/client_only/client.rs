@@ -1,6 +1,16 @@
-use std::{error::Error, io};
+use std::{
+    error::Error,
+    io::{self},
+};
 
 use async_trait::async_trait;
+use infrarust_protocol::{
+    minecraft::java::login::{
+        ClientBoundEncryptionRequest, ServerBoundEncryptionResponse,
+        clientbound_loginsuccess::{ClientBoundLoginSuccess, Property},
+    },
+    types::{Boolean, ByteArray, ProtocolString, VarInt},
+};
 use reqwest::Client;
 use serde::Deserialize;
 use tracing::{debug, error, info};
@@ -12,13 +22,6 @@ use crate::{
     network::{
         connection::PossibleReadValue,
         packet::{Packet, PacketCodec},
-    },
-    protocol::{
-        minecraft::java::login::{
-            ClientBoundEncryptionRequest, ServerBoundEncryptionResponse,
-            clientbound_loginsuccess::{ClientBoundLoginSuccess, Property},
-        },
-        types::{Boolean, ByteArray, ProtocolString, VarInt},
     },
     proxy_modes::{ClientProxyModeHandler, client_only::ClientOnlyMessage},
 };
@@ -100,13 +103,13 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
             requires_authentication: Boolean(true),
         };
 
-        request_packet.encode(&enc_request)?;
+        let _ = request_packet.encode(&enc_request);
         debug!("P -> C: Sending encryption request");
         debug!("Public key length: {}", enc_request.public_key.0.len());
         debug!("Verify token length: {}", enc_request.verify_token.0.len());
 
         let mut compression_packet: Packet = Packet::new(0x03);
-        compression_packet.encode(&threshold)?;
+        let _ = compression_packet.encode(&threshold);
         actor.conn.write_packet(&compression_packet).await?;
 
         // Configure compression for all connections
@@ -249,12 +252,12 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
             .collect();
 
         for prop in filtered_properties {
-            success_packet.encode(&prop.name)?;
+            let _ = success_packet.encode(&prop.name);
             // Limit value length if necessary
-            success_packet.encode(&prop.value)?;
-            success_packet.encode(&Boolean(prop.signature.is_some()))?;
+            let _ = success_packet.encode(&prop.value);
+            let _ = success_packet.encode(&Boolean(prop.signature.is_some()));
             if let Some(sig) = prop.signature {
-                success_packet.encode(&sig)?;
+                let _ = success_packet.encode(&sig);
             }
         }
 

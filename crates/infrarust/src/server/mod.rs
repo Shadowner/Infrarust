@@ -8,9 +8,9 @@ use crate::ServerConnection;
 use crate::core::config::ServerConfig;
 use crate::network::packet::Packet;
 use crate::network::proxy_protocol::ProtocolResult;
-use crate::protocol::version::Version;
-use crate::proxy_modes::ProxyModeEnum;
 use async_trait::async_trait;
+use infrarust_config::models::server::ProxyModeEnum;
+use infrarust_protocol::version::Version;
 use std::net::SocketAddr;
 use std::sync::Arc;
 

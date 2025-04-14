@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
+use infrarust_config::provider::ProviderMessage;
 use tokio::sync::mpsc::Sender;
 
 use crate::{FilterRegistry, InfrarustConfig, cli::ShutdownController, server::manager::Manager};
 
 use super::{
-    actors::supervisor::ActorSupervisor,
-    config::service::ConfigurationService,
-    event::{GatewayMessage, ProviderMessage},
+    actors::supervisor::ActorSupervisor, config::service::ConfigurationService,
+    event::GatewayMessage,
 };
 
 #[derive(Debug)]

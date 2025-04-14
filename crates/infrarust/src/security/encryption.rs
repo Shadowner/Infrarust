@@ -1,4 +1,5 @@
 use aes::cipher::KeyIvInit;
+use infrarust_protocol::minecraft::java::sha1::generate_server_hash;
 use rand::RngCore;
 use rsa::{
     Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey,
@@ -8,7 +9,6 @@ use rsa::{
 };
 use tracing::{debug, error};
 
-use crate::{RsaError, protocol::minecraft::java::sha1::generate_server_hash};
 pub type Aes128Cfb8Enc = cfb8::Encryptor<aes::Aes128>;
 pub type Aes128Cfb8Dec = cfb8::Decryptor<aes::Aes128>;
 
@@ -16,6 +16,8 @@ use aes::cipher::{
     BlockBackend, BlockClosure, BlockSizeUser, generic_array::GenericArray, inout::InOut,
 };
 use generic_array::typenum::U1;
+
+use crate::RsaError;
 
 pub struct Cfb8Closure<'a> {
     pub data: &'a mut [u8],

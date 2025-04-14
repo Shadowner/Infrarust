@@ -18,18 +18,14 @@ use core::{actors::supervisor::ActorSupervisor, config::provider::docker};
 use std::io;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub mod telemetry;
 
-// Protocol modules
-pub mod protocol;
 use infrarust_ban_system::BanEntry;
+use infrarust_protocol::minecraft::java::handshake::ServerBoundHandshake;
+use infrarust_protocol::version::Version;
 use infrarust_server_manager::{LocalProvider, PterodactylClient};
-use protocol::minecraft::java::handshake::ServerBoundHandshake;
-pub use protocol::{
-    types::{ProtocolRead, ProtocolWrite},
-    version,
-};
 use security::filter::FilterError;
 use server::manager::Manager;
 use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
@@ -58,7 +54,6 @@ use server::gateway::Gateway;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
-use crate::version::Version;
 #[derive(Debug)]
 pub struct Infrarust {
     shared: Arc<SharedComponent>,
@@ -181,10 +176,11 @@ impl Infrarust {
             let config_clone = shared_clone.config();
             if let Some(filter_config) = &config_clone.filters {
                 if let Some(rate_config) = &filter_config.rate_limiter {
+                    // REFACTO : Fix this
                     let rate_limiter = RateLimiter::new(
                         "global_rate_limiter",
-                        rate_config.request_limit,
-                        rate_config.window_length,
+                        rate_config.burst_size,
+                        Duration::from_secs(60),
                     );
 
                     if let Err(e) = registry_clone.register(rate_limiter).await {

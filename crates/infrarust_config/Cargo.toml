@@ -1,0 +1,32 @@
+[package]
+name = "infrarust_config"
+version = "0.1.0"
+edition = "2021"
+description = "Configuration management for Infrarust"
+
+[dependencies]
+infrarust_protocol = { path = "../infrarust_protocol" }
+serde = { version = "1.0.219", features = ["derive"] }
+async-trait = "0.1.88"
+tokio = { version = "1.44.2", features = ["full"] }
+tracing = "0.1.41"
+wildmatch = "2.1"
+serde_yaml = "0.9"
+uuid = { version = "1.16.0", features = ["v4", "serde"] }
+notify = "8.0.0"
+walkdir = "2.3"
+tempfile = { version = "3.19.1", optional = true }
+lazy_static = "1.5.0"
+futures = "0.3.31"
+bollard = { version = "0.18.1", optional = true }
+tracing-opentelemetry = { version = "0.30.0", optional = true }
+
+
+
+[features]
+default = ["docker"]
+telemetry = ["tracing-opentelemetry"]
+docker = ["bollard"]
+
+[dev-dependencies]
+tempfile = "3.19.1"

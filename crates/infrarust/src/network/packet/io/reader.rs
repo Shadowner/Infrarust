@@ -3,16 +3,20 @@ use std::io::Cursor;
 use aes::cipher::BlockDecryptMut;
 use async_trait::async_trait;
 use bytes::BytesMut;
+use infrarust_protocol::{
+    ProtocolRead,
+    packet::{CompressionState, EncryptionState},
+    types::VarInt,
+    version::Version,
+};
 use libdeflater::Decompressor;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::super::{
-    base::{CompressionState, EncryptionState, Packet},
+    base::Packet,
     error::{PacketError, PacketResult},
 };
 use super::RawPacketIO;
-use crate::version::Version;
-use crate::{ProtocolRead, protocol::types::VarInt};
 use crate::{
     network::packet::MAX_UNCOMPRESSED_LENGTH,
     security::encryption::{Aes128Cfb8Dec, Cfb8Closure},
@@ -134,7 +138,9 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
                     .unwrap();
 
                 if outbuf.len() != data_length as usize {
-                    return Err(PacketError::compression("Decompressed length mismatch"));
+                    return Err(PacketError::Compression(
+                        "Decompressed length mismatch".to_string(),
+                    ));
                 }
 
                 BytesMut::from(&outbuf[..])
@@ -191,7 +197,9 @@ where
     }
 
     async fn write_raw(&mut self, _data: &[u8]) -> PacketResult<()> {
-        Err(PacketError::invalid_format("Readers cannot write"))
+        Err(PacketError::InvalidFormat(
+            "Readers cannot write".to_string(),
+        ))
     }
 }
 

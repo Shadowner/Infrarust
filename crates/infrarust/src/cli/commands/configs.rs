@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::cli::command::{Command, CommandFuture};
 use crate::cli::format as fmt;
 use crate::core::shared_component::SharedComponent;
+use infrarust_config::models::server::ProxyModeEnum;
 use tracing::debug;
 
 pub struct ConfigsCommand {
@@ -55,11 +56,11 @@ impl ConfigsCommand {
                 .proxy_mode
                 .as_ref()
                 .map_or("Default", |mode| match mode {
-                    crate::proxy_modes::ProxyModeEnum::Passthrough => "Passthrough",
-                    crate::proxy_modes::ProxyModeEnum::Offline => "Offline",
-                    crate::proxy_modes::ProxyModeEnum::Status => "Status Only",
-                    crate::proxy_modes::ProxyModeEnum::ClientOnly => "Client Only",
-                    crate::proxy_modes::ProxyModeEnum::ServerOnly => "Server Only",
+                    ProxyModeEnum::Passthrough => "Passthrough",
+                    ProxyModeEnum::Offline => "Offline",
+                    ProxyModeEnum::Status => "Status Only",
+                    ProxyModeEnum::ClientOnly => "Client Only",
+                    ProxyModeEnum::ServerOnly => "Server Only",
                 });
 
             result.push_str(&format!(

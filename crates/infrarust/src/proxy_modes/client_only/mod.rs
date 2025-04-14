@@ -1,10 +1,13 @@
 pub mod client;
 pub mod server;
 
-use crate::ProtocolRead;
+use infrarust_protocol::{
+    ProtocolRead, ProtocolWrite,
+    minecraft::java::handshake::{SERVERBOUND_HANDSHAKE_ID, ServerBoundHandshake},
+    types::{Byte, ProtocolString, UnsignedShort, VarInt},
+};
+
 use crate::network::packet::Packet;
-use crate::protocol::minecraft::java::handshake::ServerBoundHandshake;
-use crate::protocol::types::{Byte, ProtocolString, UnsignedShort, VarInt};
 use std::io::{self};
 
 use super::{ProxyMessage, ProxyModeMessageType};
@@ -47,4 +50,28 @@ fn prepare_server_handshake(
         )
     })?;
     Ok(handshake)
+}
+
+impl TryFrom<&Packet> for ServerBoundHandshake {
+    type Error = io::Error;
+
+    fn try_from(packet: &Packet) -> Result<Self, Self::Error> {
+        Self::from_packet(packet)
+    }
+}
+
+impl TryFrom<&ServerBoundHandshake> for Packet {
+    type Error = io::Error;
+
+    fn try_from(handshake: &ServerBoundHandshake) -> Result<Self, Self::Error> {
+        let mut handshake_packet = Packet::new(SERVERBOUND_HANDSHAKE_ID);
+        let mut data = Vec::new();
+        handshake.protocol_version.write_to(&mut data)?;
+        handshake.server_address.write_to(&mut data)?;
+        handshake.server_port.write_to(&mut data)?;
+        VarInt(2).write_to(&mut data)?;
+        handshake_packet.data = bytes::BytesMut::from(&data[..]);
+
+        Ok(handshake_packet)
+    }
 }

@@ -1,6 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
+use infrarust_config::models::server::ProxyModeEnum;
+use infrarust_protocol::minecraft::java::login::ServerBoundLoginStart;
 use infrarust_server_manager::ServerState;
 use tokio::sync::{
     Mutex,
@@ -17,11 +19,9 @@ use crate::{
     Connection,
     core::{config::ServerConfig, event::GatewayMessage},
     network::proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
-    protocol::minecraft::java::login::ServerBoundLoginStart,
-    proxy_modes::ProxyModeEnum,
     server::motd::{
         generate_not_started_motd_response, generate_starting_motd_response,
-        generate_stopping_motd_response,
+        generate_stopping_motd_response, generate_unable_status_motd_response,
     },
 };
 use crate::{core::shared_component::SharedComponent, network::connection::PossibleReadValue};
@@ -195,12 +195,7 @@ impl Gateway {
                 .server_managers()
                 .get_status_for_server(
                     &server_config.server_manager.as_ref().unwrap().server_id,
-                    server_config
-                        .server_manager
-                        .as_ref()
-                        .unwrap()
-                        .provider_name
-                        .clone(),
+                    server_config.server_manager.as_ref().unwrap().provider_name,
                 )
                 .await;
 
@@ -211,12 +206,7 @@ impl Gateway {
                     .unwrap()
                     .server_id
                     .clone();
-                let manager_type = server_config
-                    .server_manager
-                    .as_ref()
-                    .unwrap()
-                    .provider_name
-                    .clone();
+                let manager_type = server_config.server_manager.as_ref().unwrap().provider_name;
 
                 if manager.state == ServerState::Crashed {
                     warn!(
@@ -230,7 +220,7 @@ impl Gateway {
                     let start_server = self
                         .shared
                         .server_managers()
-                        .start_server(&server_id, manager_type.clone())
+                        .start_server(&server_id, manager_type)
                         .await;
 
                     if let Err(e) = start_server {
@@ -270,7 +260,7 @@ impl Gateway {
             .create_actor_pair(
                 &server_config.config_id,
                 client,
-                proxy_mode.clone(),
+                proxy_mode,
                 oneshot_request_receiver,
                 request.is_login,
                 username.clone(),
@@ -421,38 +411,57 @@ impl Gateway {
                         let status = self_clone
                             .shared
                             .server_managers()
-                            .get_status_for_server(&config.server_id, config.provider_name.clone())
+                            .get_status_for_server(&config.server_id, config.provider_name)
                             .await;
 
-                        match status.unwrap().state {
-                            ServerState::Crashed => {
-                                warn!(
-                                    "Server {} is crashed, using unreachable MOTD",
-                                    server_config.config_id
-                                );
-                                generate_crashing_motd_response(request.domain, server_config)
-                            }
-                            ServerState::Running => {
-                                debug!("Server {} is running", server_config.config_id);
-                                self_clone
-                                    .get_or_fetch_status_response(request.clone(), server_config)
-                                    .await
-                            }
-                            ServerState::Starting => {
-                                debug!("Server {} is starting", server_config.config_id);
-                                generate_starting_motd_response(request.domain, server_config)
-                            }
-                            ServerState::Stopped => {
-                                debug!("Server {} is stopped", server_config.config_id);
-                                generate_not_started_motd_response(request.domain, server_config)
-                            }
-                            ServerState::Unknown => {
-                                error!("Server {} is in unknown state", server_config.config_id);
-                                generate_crashing_motd_response(request.domain, server_config)
-                            }
-                            ServerState::Stopping => {
-                                debug!("Server {} is stopping", server_config.config_id);
-                                generate_stopping_motd_response(request.domain, server_config)
+                        if status.is_err() {
+                            error!(
+                                "Failed to get status for server {} from manager {:?}: {}",
+                                config.server_id,
+                                config.provider_name,
+                                status.err().unwrap()
+                            );
+                            generate_unable_status_motd_response(request.domain, server_config)
+                        } else {
+                            match status.unwrap().state {
+                                ServerState::Crashed => {
+                                    warn!(
+                                        "Server {} is crashed, using unreachable MOTD",
+                                        server_config.config_id
+                                    );
+                                    generate_crashing_motd_response(request.domain, server_config)
+                                }
+                                ServerState::Running => {
+                                    debug!("Server {} is running", server_config.config_id);
+                                    self_clone
+                                        .get_or_fetch_status_response(
+                                            request.clone(),
+                                            server_config,
+                                        )
+                                        .await
+                                }
+                                ServerState::Starting => {
+                                    debug!("Server {} is starting", server_config.config_id);
+                                    generate_starting_motd_response(request.domain, server_config)
+                                }
+                                ServerState::Stopped => {
+                                    debug!("Server {} is stopped", server_config.config_id);
+                                    generate_not_started_motd_response(
+                                        request.domain,
+                                        server_config,
+                                    )
+                                }
+                                ServerState::Unknown => {
+                                    error!(
+                                        "Server {} is in unknown state",
+                                        server_config.config_id
+                                    );
+                                    generate_crashing_motd_response(request.domain, server_config)
+                                }
+                                ServerState::Stopping => {
+                                    debug!("Server {} is stopping", server_config.config_id);
+                                    generate_stopping_motd_response(request.domain, server_config)
+                                }
                             }
                         }
                     }
@@ -688,7 +697,7 @@ impl Gateway {
                 &request.domain,
                 request.session_id,
             );
-            server_config.proxy_mode.clone().unwrap_or_default()
+            server_config.proxy_mode.unwrap_or_default()
         }
     }
 
@@ -801,7 +810,7 @@ impl Gateway {
             send_proxy_protocol: tmp_server.config.send_proxy_protocol.unwrap_or_default(),
             read_packets: vec![],
             server_addr: None,
-            proxy_mode: tmp_server.config.proxy_mode.clone().unwrap_or_default(),
+            proxy_mode: tmp_server.config.proxy_mode.unwrap_or_default(),
             proxied_domain: Some(domain),
             initial_config: server,
         })
@@ -833,7 +842,7 @@ impl Gateway {
                     send_proxy_protocol: use_proxy_protocol,
                     read_packets: req.read_packets.to_vec(),
                     server_addr: Some(req.client_addr),
-                    proxy_mode: tmp_server.config.proxy_mode.clone().unwrap_or_default(),
+                    proxy_mode: tmp_server.config.proxy_mode.unwrap_or_default(),
                     proxied_domain: Some(req.domain.clone()),
                     initial_config: server,
                 })

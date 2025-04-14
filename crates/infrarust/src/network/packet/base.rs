@@ -1,27 +1,21 @@
 use bytes::{Buf, BytesMut};
 use std::io::Cursor;
 
-use crate::{
-    network::packet::{MAX_PACKET_DATA_LENGTH, MAX_PACKET_LENGTH, PacketBuilder},
-    protocol::{
-        types::{ProtocolRead, ProtocolWrite, VarInt, WriteToBytes},
-        version::Version,
+use infrarust_protocol::{
+    packet::{
+        CompressionControl, CompressionState, EncryptionControl, EncryptionState, PacketCodec,
+        PacketDataAccess, PacketError, PacketSerialization, PacketValidation, Result,
     },
+    types::{ProtocolRead, ProtocolWrite, VarInt, WriteToBytes},
+    version::Version,
 };
 
-use super::error::{PacketError, PacketResult};
+use super::PacketBuilder;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CompressionState {
-    Disabled,
-    Enabled { threshold: i32 },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum EncryptionState {
-    Disabled,
-    Enabled { encrypted_data: bool },
-}
+// Constants
+pub const MAX_PACKET_LENGTH: usize = 2097151; // 2^21 - 1 (3-byte VarInt max)
+pub const MAX_PACKET_DATA_LENGTH: usize = 0x200000; // 2MB
+pub const MAX_UNCOMPRESSED_LENGTH: usize = 8388608; // 2^23
 
 #[derive(Clone)]
 pub struct Packet {
@@ -44,17 +38,6 @@ impl std::fmt::Debug for Packet {
     }
 }
 
-pub trait PacketValidation {
-    fn validate_length(&self) -> PacketResult<()>;
-    fn validate_encryption(&self) -> PacketResult<()>;
-    fn validate_compression(&self) -> PacketResult<()>;
-}
-
-pub trait PacketCodec {
-    fn encode<T: ProtocolWrite>(&mut self, value: &T) -> PacketResult<()>;
-    fn decode<T: ProtocolRead>(&self) -> PacketResult<T>;
-}
-
 impl Packet {
     pub fn new(id: i32) -> Self {
         Self {
@@ -75,30 +58,60 @@ impl Packet {
             protocol_version: Version::V1_20_2,
         }
     }
+}
 
-    pub fn set_protocol_version(&mut self, version: Version) {
-        self.protocol_version = version;
+impl PacketDataAccess for Packet {
+    fn id(&self) -> i32 {
+        self.id
     }
 
-    pub fn enable_compression(&mut self, threshold: i32) {
+    fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    fn protocol_version(&self) -> Version {
+        self.protocol_version
+    }
+
+    fn set_protocol_version(&mut self, version: Version) {
+        self.protocol_version = version;
+    }
+}
+
+impl CompressionControl for Packet {
+    fn compression_state(&self) -> CompressionState {
+        self.compression
+    }
+
+    fn enable_compression(&mut self, threshold: i32) {
         self.compression = CompressionState::Enabled { threshold };
     }
 
-    pub fn disable_compression(&mut self) {
+    fn disable_compression(&mut self) {
         self.compression = CompressionState::Disabled;
     }
 
-    pub fn enable_encryption(&mut self) {
+    fn is_compressing(&self) -> bool {
+        matches!(self.compression, CompressionState::Enabled { .. })
+    }
+}
+
+impl EncryptionControl for Packet {
+    fn encryption_state(&self) -> EncryptionState {
+        self.encryption.clone()
+    }
+
+    fn enable_encryption(&mut self) {
         self.encryption = EncryptionState::Enabled {
             encrypted_data: false,
         };
     }
 
-    pub fn disable_encryption(&mut self) {
+    fn disable_encryption(&mut self) {
         self.encryption = EncryptionState::Disabled;
     }
 
-    pub fn mark_as_encrypted(&mut self) {
+    fn mark_as_encrypted(&mut self) {
         if let EncryptionState::Enabled {
             ref mut encrypted_data,
         } = self.encryption
@@ -107,12 +120,90 @@ impl Packet {
         }
     }
 
-    pub fn from_bytes(mut bytes: BytesMut) -> PacketResult<Self> {
-        use std::io::Cursor;
+    fn is_encrypted(&self) -> bool {
+        matches!(self.encryption, EncryptionState::Enabled { .. })
+    }
+}
 
+impl PacketValidation for Packet {
+    fn validate_length(&self) -> Result<()> {
+        if let EncryptionState::Enabled { encrypted_data: _ } = self.encryption {
+            return Ok(());
+        }
+
+        if self.data.len() > MAX_PACKET_LENGTH {
+            return Err(PacketError::InvalidLength {
+                length: self.data.len(),
+                max: MAX_PACKET_LENGTH,
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_encryption(&self) -> Result<()> {
+        match self.encryption {
+            EncryptionState::Enabled {
+                encrypted_data: false,
+            } => {
+                if self.data.is_empty() {
+                    Ok(())
+                } else {
+                    Err(PacketError::Encryption(
+                        "Non-encrypted data when encryption is enabled".to_string(),
+                    ))
+                }
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn validate_compression(&self) -> Result<()> {
+        if let CompressionState::Enabled { threshold } = self.compression {
+            if threshold < 0 {
+                return Err(PacketError::Compression(
+                    "Invalid compression threshold".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl PacketCodec for Packet {
+    fn encode<T: ProtocolWrite>(&mut self, value: &T) -> Result<()> {
+        let mut cursor = Cursor::new(Vec::new());
+        value.write_to(&mut cursor).map_err(PacketError::Io)?;
+        self.data.extend_from_slice(&cursor.into_inner());
+        Ok(())
+    }
+
+    fn decode<T: ProtocolRead>(&self) -> Result<T> {
+        let mut cursor = Cursor::new(&self.data[..]);
+        let (value, _) = T::read_from(&mut cursor).map_err(PacketError::Io)?;
+        Ok(value)
+    }
+}
+
+impl PacketSerialization for Packet {
+    fn into_raw_bytes(self) -> Result<BytesMut> {
+        let mut output = BytesMut::new();
+
+        let mut packet_content = BytesMut::new();
+        VarInt(self.id).write_to_bytes(&mut packet_content)?;
+        packet_content.extend_from_slice(&self.data);
+
+        let total_length = VarInt(packet_content.len() as i32);
+        total_length.write_to_bytes(&mut output)?;
+
+        output.extend_from_slice(&packet_content);
+
+        Ok(output)
+    }
+
+    fn from_raw_bytes(mut bytes: BytesMut) -> Result<Self> {
         // Read and validate packet length
         let (VarInt(length), length_size) = VarInt::read_from(&mut Cursor::new(&bytes[..]))
-            .map_err(|_| PacketError::invalid_format("Invalid packet length VarInt"))?;
+            .map_err(|_| PacketError::InvalidFormat("Invalid packet length VarInt".to_string()))?;
 
         if length <= 0 || length as usize > MAX_PACKET_LENGTH {
             return Err(PacketError::InvalidLength {
@@ -124,7 +215,7 @@ impl Packet {
         bytes.advance(length_size);
 
         let (VarInt(id), id_size) = VarInt::read_from(&mut Cursor::new(&bytes[..]))
-            .map_err(|_| PacketError::invalid_format("Invalid packet ID VarInt"))?;
+            .map_err(|_| PacketError::InvalidFormat("Invalid packet ID VarInt".to_string()))?;
 
         bytes.advance(id_size);
 
@@ -139,145 +230,5 @@ impl Packet {
         packet.validate_length()?;
 
         Ok(packet)
-    }
-
-    pub fn into_raw(self) -> PacketResult<BytesMut> {
-        let mut output = BytesMut::new();
-
-        let mut packet_content = BytesMut::new();
-        VarInt(self.id).write_to_bytes(&mut packet_content)?;
-        packet_content.extend_from_slice(&self.data);
-
-        let total_length = VarInt(packet_content.len() as i32);
-        total_length.write_to_bytes(&mut output)?;
-
-        output.extend_from_slice(&packet_content);
-
-        Ok(output)
-    }
-}
-
-impl PacketValidation for Packet {
-    fn validate_length(&self) -> PacketResult<()> {
-        if let EncryptionState::Enabled { encrypted_data: _ } = self.encryption {
-            return Ok(());
-        }
-        const MAX_PACKET_LENGTH: usize = 2097151;
-
-        if self.data.len() > MAX_PACKET_LENGTH {
-            return Err(PacketError::InvalidLength {
-                length: self.data.len(),
-                max: MAX_PACKET_LENGTH,
-            });
-        }
-        Ok(())
-    }
-
-    fn validate_encryption(&self) -> PacketResult<()> {
-        match self.encryption {
-            EncryptionState::Enabled {
-                encrypted_data: false,
-            } => {
-                if self.data.is_empty() {
-                    Ok(())
-                } else {
-                    Err(PacketError::encryption(
-                        "Données non chiffrées alors que le chiffrement est activé",
-                    ))
-                }
-            }
-            _ => Ok(()),
-        }
-    }
-
-    fn validate_compression(&self) -> PacketResult<()> {
-        if let CompressionState::Enabled { threshold } = self.compression {
-            if threshold < 0 {
-                return Err(PacketError::compression("Seuil de compression invalide"));
-            }
-        }
-        Ok(())
-    }
-}
-
-impl PacketCodec for Packet {
-    fn encode<T: ProtocolWrite>(&mut self, value: &T) -> PacketResult<()> {
-        let mut cursor = Cursor::new(Vec::new());
-        value.write_to(&mut cursor).map_err(PacketError::Io)?;
-        self.data.extend_from_slice(&cursor.into_inner());
-        Ok(())
-    }
-
-    fn decode<T: ProtocolRead>(&self) -> PacketResult<T> {
-        let mut cursor = Cursor::new(&self.data[..]);
-        let (value, _) = T::read_from(&mut cursor).map_err(PacketError::Io)?;
-        Ok(value)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocol::types::ProtocolString;
-
-    #[test]
-    fn test_packet_creation() {
-        let packet = Packet::new(0x00);
-        assert_eq!(packet.id, 0x00);
-        assert_eq!(packet.data.len(), 0);
-        assert_eq!(packet.compression, CompressionState::Disabled);
-        assert_eq!(packet.encryption, EncryptionState::Disabled);
-    }
-
-    #[test]
-    fn test_packet_compression_state() {
-        let mut packet = Packet::new(0x00);
-        packet.enable_compression(256);
-        assert_eq!(
-            packet.compression,
-            CompressionState::Enabled { threshold: 256 }
-        );
-        packet.disable_compression();
-        assert_eq!(packet.compression, CompressionState::Disabled);
-    }
-
-    #[test]
-    fn test_packet_encryption_state() {
-        let mut packet = Packet::new(0x00);
-        packet.enable_encryption();
-        assert_eq!(
-            packet.encryption,
-            EncryptionState::Enabled {
-                encrypted_data: false
-            }
-        );
-        packet.mark_as_encrypted();
-        assert_eq!(
-            packet.encryption,
-            EncryptionState::Enabled {
-                encrypted_data: true
-            }
-        );
-    }
-
-    #[test]
-    fn test_packet_validation() {
-        let mut packet = Packet::with_capacity(0x00, 10);
-        packet.data.extend_from_slice(&[0; 2097151]);
-        assert!(packet.validate_length().is_ok());
-
-        packet.data.extend_from_slice(&[0; 1]);
-        assert!(packet.validate_length().is_err());
-    }
-
-    #[test]
-    fn test_packet_codec() {
-        let mut packet = Packet::new(0x00);
-
-        let test_string = ProtocolString("Hello".to_string());
-        assert!(packet.encode(&test_string).is_ok());
-
-        let decoded: ProtocolString = packet.decode().unwrap();
-        assert_eq!(decoded.0, "Hello");
     }
 }

@@ -177,7 +177,6 @@ impl Filter for RateLimiter {
     async fn apply_config(&self, config: ConfigValue) -> Result<(), FilterError> {
         if let ConfigValue::Map(_) = config {
             // We could update request_limit or window_length here
-            // For now, this is a placeholder
             Ok(())
         } else {
             Err(FilterError::InvalidConfig(

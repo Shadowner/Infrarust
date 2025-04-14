@@ -113,7 +113,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
             }
             MinecraftCommunication::Shutdown => {
                 debug!("Shutting down server (Received Shutdown message)");
-                actor
+                let _ = actor
                     .server_request
                     .as_mut()
                     .unwrap()
@@ -121,7 +121,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                     .as_mut()
                     .unwrap()
                     .close()
-                    .await?;
+                    .await;
             }
             _ => {}
         }

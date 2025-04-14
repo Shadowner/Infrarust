@@ -1,0 +1,20 @@
+[package]
+name = "infrarust_protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Minecraft protocol implementation for Infrarust"
+authors = ["Shado"]
+license = "AGPL-3.0"
+repository = "https://github.com/shadowner/infrarust"
+
+[dependencies]
+bytes = "1.10.1"
+serde_json = "1.0.140"
+serde = { version = "1.0.219", features = ["derive"] }
+uuid = { version = "1.16.0", features = ["v4", "serde"] }
+sha1 = "0.10"
+base64 = "0.22.1"
+num-bigint = "0.4.6"
+tokio = { version = "1.44.2", features = ["io-util"] }
+async-trait = "0.1.88"
+thiserror = "2.0.12"

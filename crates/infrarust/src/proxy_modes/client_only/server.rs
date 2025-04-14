@@ -1,12 +1,12 @@
 use std::io;
 
 use async_trait::async_trait;
+use infrarust_protocol::types::VarInt;
 use tracing::{debug, error};
 
 use crate::{
     core::{actors::server::MinecraftServer, event::MinecraftCommunication},
     network::{connection::PossibleReadValue, packet::PacketCodec},
-    protocol::types::VarInt,
     proxy_modes::{
         ServerProxyModeHandler,
         client_only::{ClientOnlyMessage, prepare_server_handshake},
@@ -52,7 +52,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
             }
             MinecraftCommunication::Shutdown => {
                 debug!("Shutting down server (Received Shutdown message)");
-                actor
+                let _ = actor
                     .server_request
                     .as_mut()
                     .unwrap()
@@ -60,7 +60,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                     .as_mut()
                     .unwrap()
                     .close()
-                    .await?;
+                    .await;
             }
             _ => {}
         }
@@ -77,10 +77,12 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         if let Some(request) = actor.server_request.as_mut() {
             if let Some(conn) = request.server_conn.as_mut() {
                 let client_handshake = &request.read_packets[0];
-                let server_addr = conn.peer_addr().await?;
+                let server_addr = conn.peer_addr().await;
                 let login_start = &request.read_packets[1];
 
-                let server_handshake = prepare_server_handshake(client_handshake, &server_addr)?;
+                // REFACTO : unwrapped it but might do something better
+                let server_handshake =
+                    prepare_server_handshake(client_handshake, &server_addr.unwrap())?;
                 conn.write_packet(&server_handshake).await?;
                 conn.write_packet(login_start).await?;
 
@@ -88,7 +90,16 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                     match conn.read_packet().await? {
                         packet if packet.id == 0x03 => {
                             // Set Compression
-                            let threshold = packet.decode::<VarInt>()?;
+                            let threshold = packet.decode::<VarInt>();
+                            if threshold.is_err() {
+                                error!("Failed to decode compression threshold");
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "Failed to decode compression threshold",
+                                ));
+                            }
+                            let threshold = threshold.unwrap();
+
                             if threshold.0 >= 0 {
                                 debug!(
                                     "Received compression config from server, threshold: {}",

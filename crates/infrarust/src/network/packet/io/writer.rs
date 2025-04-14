@@ -1,17 +1,19 @@
 use aes::cipher::BlockEncryptMut;
 use async_trait::async_trait;
 use bytes::BytesMut;
+use infrarust_protocol::packet::CompressionState;
+use infrarust_protocol::types::VarInt;
+use infrarust_protocol::types::WriteToBytes;
 use libdeflater::CompressionLvl;
 use libdeflater::Compressor;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::network::proxy_protocol::ProtocolResult;
-use crate::protocol::types::{VarInt, WriteToBytes};
 use crate::security::encryption::Aes128Cfb8Enc;
 use crate::security::encryption::Cfb8Closure;
 
 use super::super::{
-    base::{CompressionState, Packet},
+    base::Packet,
     error::{PacketError, PacketResult},
 };
 
@@ -156,7 +158,9 @@ where
     W: AsyncWrite + Unpin + Send,
 {
     async fn read_raw(&mut self) -> PacketResult<Option<BytesMut>> {
-        Err(PacketError::invalid_format("Writers cannot read"))
+        Err(PacketError::InvalidFormat(
+            "Writers cannot read".to_string(),
+        ))
     }
 
     async fn write_raw(&mut self, data: &[u8]) -> PacketResult<()> {

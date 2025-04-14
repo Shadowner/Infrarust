@@ -149,7 +149,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
             }
             MinecraftCommunication::Shutdown => {
                 debug!("Shutting down server (Received Shutdown message)");
-                actor
+                let _ = actor
                     .server_request
                     .as_mut()
                     .unwrap()
@@ -157,7 +157,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
                     .as_mut()
                     .unwrap()
                     .close()
-                    .await?;
+                    .await;
             }
             _ => {}
         }
