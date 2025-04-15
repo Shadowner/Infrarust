@@ -1,4 +1,5 @@
 use infrarust_protocol::minecraft::java::status::clientbound_response::PlayerSampleJSON;
+use infrarust_server_manager::LocalServerConfig;
 use serde::Deserialize;
 
 use super::{cache::CacheConfig, filter::FilterConfig};
@@ -114,7 +115,7 @@ pub struct ServerManagerConfig {
     pub provider_name: ManagerType,
     pub server_id: String,
     pub empty_shutdown_time: Option<u64>,
-    pub launch_command: Option<String>,
+    pub local_provider: Option<LocalServerConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

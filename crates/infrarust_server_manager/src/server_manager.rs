@@ -7,6 +7,7 @@ use tokio::time;
 pub use crate::ServerState;
 use crate::api::ApiProvider;
 use crate::error::ServerManagerError;
+pub use crate::local::LocalServerConfig;
 pub use crate::monitor::{CrashDetector, ServerStatus};
 use crate::process::ProcessProvider;
 use crate::terminal::execute_command;
@@ -42,6 +43,10 @@ impl<T: ApiProvider> ServerManager<T> {
     pub fn with_process_provider<P: ProcessProvider + 'static>(mut self, provider: P) -> Self {
         self.process_provider = Some(Arc::new(provider));
         self
+    }
+
+    pub fn api_client(&self) -> &Arc<T> {
+        &self.api_client
     }
 
     pub async fn monitor_server(&self, server_id: &str) -> Result<(), ServerManagerError> {

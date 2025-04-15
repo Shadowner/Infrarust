@@ -1,3 +1,4 @@
+use infrarust_config::ServerConfig;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
@@ -5,7 +6,7 @@ use tracing::{Instrument, debug, error, info, instrument};
 
 use crate::Connection;
 use crate::core::actors::supervisor::ActorSupervisor;
-use crate::core::{config::ServerConfig, event::MinecraftCommunication};
+use crate::core::event::MinecraftCommunication;
 use crate::proxy_modes::ClientProxyModeHandler;
 
 #[cfg(feature = "telemetry")]

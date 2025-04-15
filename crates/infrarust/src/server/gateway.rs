@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use infrarust_config::models::server::ProxyModeEnum;
+use infrarust_config::{ServerConfig, models::server::ProxyModeEnum};
 use infrarust_protocol::minecraft::java::login::ServerBoundLoginStart;
 use infrarust_server_manager::ServerState;
 use tokio::sync::{
@@ -17,7 +17,7 @@ use super::{ServerRequest, ServerRequester, ServerResponse, backend::Server, cac
 use crate::telemetry::TELEMETRY;
 use crate::{
     Connection,
-    core::{config::ServerConfig, event::GatewayMessage},
+    core::event::GatewayMessage,
     network::proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     server::motd::{
         generate_not_started_motd_response, generate_starting_motd_response,

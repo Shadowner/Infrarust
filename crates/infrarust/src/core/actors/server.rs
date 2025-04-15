@@ -7,14 +7,12 @@ use std::{
     },
 };
 
+use infrarust_config::ServerConfig;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{Instrument, debug, debug_span, warn};
 
 use crate::{
-    core::{
-        config::ServerConfig,
-        event::{GatewayMessage, MinecraftCommunication},
-    },
+    core::event::{GatewayMessage, MinecraftCommunication},
     network::connection::PossibleReadValue,
     proxy_modes::ServerProxyModeHandler,
     server::ServerResponse,

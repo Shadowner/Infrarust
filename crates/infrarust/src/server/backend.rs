@@ -1,12 +1,12 @@
 use std::{net::SocketAddr, sync::Arc};
 
+use infrarust_config::ServerConfig;
 use tokio::net::TcpStream;
 use tracing::{Instrument, debug, debug_span, instrument};
 use uuid::Uuid;
 
 use crate::{
     ProxyProtocolConfig, ServerConnection,
-    core::config::ServerConfig,
     network::{
         packet::Packet,
         proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},

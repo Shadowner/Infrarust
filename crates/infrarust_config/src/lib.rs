@@ -1,6 +1,5 @@
 pub mod models;
 pub mod provider;
-pub mod service;
 
 pub use models::access_list::AccessListConfig;
 pub use models::ban::{AuditLogRotation, BanConfig};

@@ -3,12 +3,11 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use infrarust_config::models::server::MotdConfig;
+use infrarust_config::{InfrarustConfig, models::server::MotdConfig};
 use infrarust_protocol::version::Version;
 use tracing::{debug, instrument};
 
 use crate::{
-    core::config::InfrarustConfig,
     network::{packet::Packet, proxy_protocol::ProtocolResult},
     server::{ServerRequest, backend::Server, motd},
 };

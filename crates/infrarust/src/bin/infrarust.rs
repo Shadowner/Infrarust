@@ -3,6 +3,7 @@
 //! Command-line interface for the InfraRust proxy server.
 
 use clap::Parser;
+use infrarust_config::provider::file::FileProvider;
 use std::sync::Arc;
 use std::{process, time::Duration};
 use tokio::signal;
@@ -11,7 +12,6 @@ use tracing::{error, info, warn};
 use infrarust::{
     Infrarust,
     cli::{CommandProcessor, ShutdownController, command::CommandMessage, commands},
-    core::config::provider::file::FileProvider,
     telemetry::tracing::init_logging,
 };
 

@@ -1,4 +1,4 @@
-use infrarust_config::models::server::ProxyModeEnum;
+use infrarust_config::{ServerManagerConfig, models::server::ProxyModeEnum};
 use std::{
     collections::HashMap,
     sync::{Arc, atomic::AtomicBool},
@@ -14,7 +14,6 @@ use crate::{
     Connection,
     core::{
         actors::{client::MinecraftClientHandler, server::MinecraftServerHandler},
-        config::ServerManagerConfig,
         event::MinecraftCommunication,
     },
     proxy_modes::{

@@ -1,13 +1,14 @@
+use infrarust_config::ServerConfig;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::{debug, debug_span, info, instrument, Instrument};
+use tracing::{Instrument, debug, debug_span, info, instrument};
 use wildmatch::WildMatch;
-
-use crate::models::server::ServerConfig;
 
 // Placeholder for telemetry
 #[cfg(feature = "telemetry")]
 use tracing_opentelemetry;
+
+use crate::server::gateway::Gateway;
 
 #[derive(Clone, Debug)]
 pub struct ConfigurationService {
@@ -93,6 +94,25 @@ impl ConfigurationService {
                     } else {
                         added_configs.push(config_id.clone());
                     }
+                    debug!("Config ID: {:?}", config);
+                    if let Some(manager_config) = &config.server_manager {
+                        if let Some(local_config_provider) = &manager_config.local_provider {
+                            if let Some(shared) = Gateway::get_shared_component() {
+                                debug!(
+                                    "Registering server with ID to the Local Provider {}",
+                                    manager_config.server_id
+                                );
+                                shared
+                                    .server_managers()
+                                    .local_provider()
+                                    .api_client()
+                                    .register_server(
+                                        &manager_config.server_id,
+                                        local_config_provider.clone(),
+                                    );
+                            }
+                        }
+                    }
                 }
             }
 
@@ -160,10 +180,55 @@ impl ConfigurationService {
             // Would be implemented when telemetry feature is enabled
         }
 
+        let config = config_lock.get(config_id).cloned();
+        if let Some(config) = config {
+            if let Some(manager_config) = &config.server_manager {
+                if let Some(shared) = Gateway::get_shared_component() {
+                    shared
+                        .server_managers()
+                        .local_provider()
+                        .api_client()
+                        .unregister_server(&manager_config.server_id);
+                }
+            }
+        }
+
         if config_lock.remove(config_id).is_some() {
             debug!("Configuration removed successfully");
         } else {
             debug!("Configuration not found for removal");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_file_provider() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.yml");
+        let proxies_path = temp_dir.path().join("proxies");
+
+        fs::create_dir(&proxies_path).unwrap();
+
+        fs::write(&config_path, "bind: ':25565'\n").unwrap();
+        fs::write(
+            proxies_path.join("server1.yml"),
+            "domains: ['example.com']\naddresses: ['127.0.0.1:25566']\n",
+        )
+        .unwrap();
+
+        // let provider = FileProvider::new(
+        //     config_path.to_str().unwrap().to_string(),
+        //     proxies_path.to_str().unwrap().to_string(),
+        //     FileType::Yaml,
+        // );
+
+        // let config = provider.load_config().unwrap();
+        // assert!(!config.server_configs.is_empty());
     }
 }

@@ -407,4 +407,8 @@ impl Manager {
             );
         }
     }
+
+    pub(crate) fn local_provider(&self) -> Arc<ServerManager<LocalProvider>> {
+        self.local_manager.clone()
+    }
 }

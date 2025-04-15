@@ -5,10 +5,10 @@ pub mod manager;
 pub mod motd;
 
 use crate::ServerConnection;
-use crate::core::config::ServerConfig;
 use crate::network::packet::Packet;
 use crate::network::proxy_protocol::ProtocolResult;
 use async_trait::async_trait;
+use infrarust_config::ServerConfig;
 use infrarust_config::models::server::ProxyModeEnum;
 use infrarust_protocol::version::Version;
 use std::net::SocketAddr;

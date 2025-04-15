@@ -1,0 +1,17 @@
+domains:
+  - "localhost"
+addresses:
+  - "127.0.0.1:25566"
+sendProxyProtocol: false
+proxyMode: client_only
+
+server_manager:
+  provider_name: Local
+  server_id: "local_server"
+  empty_shutdown_time: 10000
+  local_provider:
+    executable: "java"
+    working_dir: "/home/shado/Documents/GitHub/Infrarust/server"
+    args:
+      - "-jar"
+      - "/home/shado/Documents/GitHub/Infrarust/server/server.jar"

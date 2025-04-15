@@ -6,15 +6,12 @@
 
 // Core modules
 pub mod core;
-pub use core::config::InfrarustConfig;
-use core::config::models::manager::{ManagerConfig, PterodactylManagerConfig};
+use core::actors::supervisor::ActorSupervisor;
 use core::config::provider::ConfigProvider;
-use core::config::provider::file::FileProvider;
 use core::config::service::ConfigurationService;
 pub use core::error::RsaError;
 use core::error::SendError;
 use core::shared_component::SharedComponent;
-use core::{actors::supervisor::ActorSupervisor, config::provider::docker};
 use std::io;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -23,6 +20,11 @@ use std::time::Duration;
 pub mod telemetry;
 
 use infrarust_ban_system::BanEntry;
+use infrarust_config::{
+    InfrarustConfig,
+    models::manager::{ManagerConfig, PterodactylManagerConfig},
+    provider::{docker::DockerProvider, file::FileProvider},
+};
 use infrarust_protocol::minecraft::java::handshake::ServerBoundHandshake;
 use infrarust_protocol::version::Version;
 use infrarust_server_manager::{LocalProvider, PterodactylClient};
@@ -145,7 +147,7 @@ impl Infrarust {
         }
 
         if let Some(docker_config) = shared.config().docker_provider.clone() {
-            let docker_provider = Box::new(docker::DockerProvider::new(
+            let docker_provider = Box::new(DockerProvider::new(
                 docker_config,
                 shared.provider_sender().clone(),
             ));

@@ -1170,6 +1170,7 @@ dependencies = [
  "bollard",
  "futures",
  "infrarust_protocol",
+ "infrarust_server_manager",
  "notify",
  "once_cell",
  "serde",

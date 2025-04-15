@@ -1,10 +1,10 @@
 use std::str::FromStr;
 
+use infrarust_config::LoggingConfig;
+use infrarust_config::TelemetryConfig;
 use tracing::Level;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-use crate::core::config::{LoggingConfig, TelemetryConfig};
 
 use super::infrarust_fmt_formatter::InfrarustMessageFormatter;
 
