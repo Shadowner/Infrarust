@@ -6,13 +6,16 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
+use tracing::debug;
 
 use crate::error::ServerManagerError;
+use crate::monitor::ServerState;
 use crate::process::provider::ProcessProvider;
 
 #[derive(Clone, Debug)]
 pub struct ProcessManager {
     processes: Arc<Mutex<HashMap<String, ManagedProcess>>>,
+    server_states: Arc<Mutex<HashMap<String, ServerState>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -21,6 +24,8 @@ pub struct ManagedProcess {
     pub stdout_tx: broadcast::Sender<String>,
     pub stdin_tx: Sender<String>,
     pub _handle: Arc<JoinHandle<Result<(), ServerManagerError>>>,
+    pub startup_string: Option<String>,
+    pub server_state: Arc<Mutex<ServerState>>,
 }
 
 pub struct ProcessOutput {
@@ -32,7 +37,24 @@ impl ProcessManager {
     pub fn new() -> Self {
         Self {
             processes: Arc::new(Mutex::new(HashMap::new())),
+            server_states: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub fn get_server_state(&self, server_id: &str) -> Result<ServerState, ServerManagerError> {
+        let processes = self.processes.lock().unwrap();
+        if let Some(process) = processes.get(server_id) {
+            let state = process.server_state.lock().unwrap();
+            return Ok(state.clone());
+        }
+        drop(processes);
+
+        let server_states = self.server_states.lock().unwrap();
+        if let Some(state) = server_states.get(server_id) {
+            return Ok(state.clone());
+        }
+
+        Ok(ServerState::Stopped)
     }
 
     pub fn start_process(
@@ -40,6 +62,8 @@ impl ProcessManager {
         server_id: &str,
         command: &str,
         args: &[&str],
+        working_dir: Option<&str>,
+        startup_string: Option<&str>,
     ) -> Result<ProcessOutput, ServerManagerError> {
         {
             let processes = self.processes.lock().unwrap();
@@ -58,36 +82,87 @@ impl ProcessManager {
 
         let stdout_tx_clone = stdout_tx.clone();
         let caller_tx_clone = caller_tx.clone();
-        let _server_id_string = server_id.to_string();
+        let server_id_string = server_id.to_string();
+        let startup_string_clone = startup_string.map(|s| s.to_string());
+        {
+            let mut server_states = self.server_states.lock().unwrap();
+            server_states.insert(server_id.to_string(), ServerState::Starting);
+            debug!(
+                "Set server state for '{}' to Starting in server_states map",
+                server_id
+            );
+        }
+        let server_state = Arc::new(Mutex::new(ServerState::Starting));
+        debug!(
+            "Created server_state Arc with initial value Starting for '{}'",
+            server_id
+        );
 
-        let mut child = Command::new(command)
+        let mut command_builder = Command::new(command);
+        command_builder
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                ServerManagerError::ProcessError(format!("Failed to start process: {}", e))
-            })?;
+            .stderr(Stdio::piped());
+
+        if let Some(dir) = working_dir {
+            command_builder.current_dir(dir);
+        }
+
+        let mut child = match command_builder.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                // Update state to Stopped on spawn failure
+                debug!("Failed to spawn process for '{}': {}", server_id, e);
+                let mut server_states = self.server_states.lock().unwrap();
+                server_states.insert(server_id.to_string(), ServerState::Stopped);
+                debug!(
+                    "Set server state for '{}' back to Stopped due to spawn failure",
+                    server_id
+                );
+
+                return Err(ServerManagerError::ProcessError(format!(
+                    "Failed to start process: {}",
+                    e
+                )));
+            }
+        };
+
+        debug!("Process for '{}' spawned successfully", server_id);
 
         let mut stdin = child.stdin.take().expect("Failed to open stdin");
         let stdout = child.stdout.take().expect("Failed to open stdout");
         let stderr = child.stderr.take().expect("Failed to open stderr");
 
+        let server_state_clone = server_state.clone();
         let stdout_handle = tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
             let mut buffer = [0; 1024];
+            let mut started = false;
 
             loop {
                 match std::io::Read::read(&mut reader, &mut buffer) {
                     Ok(0) => break, // EOF
                     Ok(n) => {
                         let output = String::from_utf8_lossy(&buffer[0..n]).to_string();
-                        // Send to both the broadcast channel and the initial caller's channel
-                        let _ = stdout_tx_clone.send(output.clone());
-                        if (caller_tx_clone.send(output).await).is_err() {
-                            // The caller's receiver was dropped, but that's okay
+
+                        if !started {
+                            if let Some(ref startup_str) = startup_string_clone {
+                                if output.contains(startup_str) {
+                                    // Server has started
+                                    let mut state = server_state_clone.lock().unwrap();
+                                    *state = ServerState::Running;
+                                    debug!(
+                                        "Detected startup string, set server_state to Running for '{}'",
+                                        server_id_string
+                                    );
+                                    started = true;
+                                }
+                            }
                         }
+
+                        let _ = stdout_tx_clone.send(output.clone());
+                        if (caller_tx_clone.send(output).await).is_err() {}
                     }
                     Err(e) => {
                         eprintln!("Error reading stdout: {}", e);
@@ -95,11 +170,13 @@ impl ProcessManager {
                     }
                 }
             }
+            debug!("stdout reader task for '{}' exited", server_id_string);
             Ok::<(), ServerManagerError>(())
         });
 
         let stdout_tx_stderr = stdout_tx.clone();
         let caller_tx_stderr = caller_tx.clone();
+        let server_id_stderr = server_id.to_string();
 
         // Read stderr and redirect to the same channel
         let stderr_handle = tokio::spawn(async move {
@@ -123,9 +200,11 @@ impl ProcessManager {
                     }
                 }
             }
+            debug!("stderr reader task for '{}' exited", server_id_stderr);
             Ok::<(), ServerManagerError>(())
         });
 
+        let server_id_stdin = server_id.to_string();
         let stdin_handle = tokio::spawn(async move {
             while let Some(input) = stdin_rx.recv().await {
                 if let Err(e) = stdin.write_all(input.as_bytes()) {
@@ -137,31 +216,152 @@ impl ProcessManager {
                     break;
                 }
             }
+            debug!("stdin writer task for '{}' exited", server_id_stdin);
             Ok::<(), ServerManagerError>(())
         });
 
         let server_id_clone = server_id.to_string();
         let processes_clone = self.processes.clone();
+        let server_state_clone = server_state.clone();
+        let server_states_clone = self.server_states.clone();
 
         let handle = tokio::spawn(async move {
-            let status = child.wait().map_err(|e| {
-                ServerManagerError::ProcessError(format!("Failed to wait for process: {}", e))
-            })?;
+            debug!("Process monitor task started for '{}'", server_id_clone);
+
+            // Don't immediately set the state to Running - we'll wait for either:
+            // 1. The startup string to be detected in stdout
+            // 2. A reasonable timeout to occur
+            debug!(
+                "Process '{}' maintaining Starting state after spawn",
+                server_id_clone
+            );
+
+            let timeout_duration = tokio::time::Duration::from_secs(5);
+            debug!(
+                "Setting up timeout of {:?} for '{}' startup",
+                timeout_duration, server_id_clone
+            );
+            tokio::time::sleep(timeout_duration).await;
+
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    // Process exited during startup phase
+                    debug!(
+                        "Process '{}' exited during startup phase with status: {:?}",
+                        server_id_clone, status
+                    );
+
+                    {
+                        let mut state = server_state_clone.lock().unwrap();
+                        *state = ServerState::Stopped;
+
+                        let mut states = server_states_clone.lock().unwrap();
+                        states.insert(server_id_clone.clone(), ServerState::Stopped);
+                        debug!(
+                            "Updated state to Stopped for '{}' due to early exit",
+                            server_id_clone
+                        );
+                    }
+
+                    let _ = stdout_handle.await;
+                    let _ = stderr_handle.await;
+                    let _ = stdin_handle.await;
+
+                    // Remove process from tracking
+                    {
+                        let mut processes = processes_clone.lock().unwrap();
+                        processes.remove(&server_id_clone);
+                        debug!(
+                            "Removed process '{}' from processes map due to early exit",
+                            server_id_clone
+                        );
+                    }
+
+                    if !status.success() {
+                        return Err(ServerManagerError::ProcessError(format!(
+                            "Process for server {} exited with status: {}",
+                            server_id_clone, status
+                        )));
+                    }
+
+                    return Ok(());
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    debug!("Error checking process status: {}", e);
+                    return Err(ServerManagerError::ProcessError(format!(
+                        "Failed to check process status: {}",
+                        e
+                    )));
+                }
+            };
+
+            // Wait for the child process to exit
+            debug!("Waiting for child process '{}' to exit", server_id_clone);
+            let status = match child.wait() {
+                Ok(status) => {
+                    debug!(
+                        "Process '{}' exited with status: {:?}",
+                        server_id_clone, status
+                    );
+                    status
+                }
+                Err(e) => {
+                    debug!("Error waiting for '{}': {}", server_id_clone, e);
+                    return Err(ServerManagerError::ProcessError(format!(
+                        "Failed to wait for process: {}",
+                        e
+                    )));
+                }
+            };
+
+            debug!(
+                "Process '{}' exited, setting state to Stopped",
+                server_id_clone
+            );
 
             let _ = stdout_handle.await;
             let _ = stderr_handle.await;
             let _ = stdin_handle.await;
 
-            let mut processes = processes_clone.lock().unwrap();
-            processes.remove(&server_id_clone);
+            {
+                debug!(
+                    "Updating process state for '{}' to Stopped after exit",
+                    server_id_clone
+                );
+                let mut state = server_state_clone.lock().unwrap();
+                *state = ServerState::Stopped;
+
+                let mut states = server_states_clone.lock().unwrap();
+                debug!(
+                    "Updating server_states map for '{}' to Stopped after exit",
+                    server_id_clone
+                );
+                states.insert(server_id_clone.clone(), ServerState::Stopped);
+            }
+
+            // Remove the process from our tracking map
+            {
+                debug!(
+                    "Removing process '{}' from processes map after exit",
+                    server_id_clone
+                );
+                let mut processes = processes_clone.lock().unwrap();
+                processes.remove(&server_id_clone);
+            }
 
             if !status.success() {
+                debug!("Process '{}' exited with non-zero status", server_id_clone);
                 return Err(ServerManagerError::ProcessError(format!(
                     "Process for server {} exited with status: {}",
                     server_id_clone, status
                 )));
             }
 
+            debug!(
+                "Process monitor task for '{}' completed successfully",
+                server_id_clone
+            );
             Ok(())
         });
 
@@ -170,11 +370,14 @@ impl ProcessManager {
             stdout_tx,
             stdin_tx,
             _handle: Arc::new(handle),
+            startup_string: startup_string.map(|s| s.to_string()),
+            server_state,
         };
 
         {
             let mut processes = self.processes.lock().unwrap();
             processes.insert(server_id.to_string(), process);
+            debug!("Added process '{}' to processes map", server_id);
         }
 
         Ok(ProcessOutput {
@@ -239,24 +442,133 @@ impl ProcessProvider for ProcessManager {
     }
 
     fn is_process_running(&self, server_id: &str) -> Result<bool, ServerManagerError> {
-        Ok(self.processes.lock().unwrap().contains_key(server_id))
+        // First check if we have the process in our map
+        let processes = self.processes.lock().unwrap();
+        let process_exists = processes.contains_key(server_id);
+
+        debug!(
+            "is_process_running check for '{}': exists in map: {}",
+            server_id, process_exists
+        );
+
+        // If the process entry doesn't exist, it's definitely not running
+        if !process_exists {
+            debug!("Process '{}' not found in processes map", server_id);
+            return Ok(false);
+        }
+
+        // Get what we need while holding the lock, then drop it to avoid deadlocks
+        let (handle_arc, server_state_arc) = if let Some(process) = processes.get(server_id) {
+            (process._handle.clone(), process.server_state.clone())
+        } else {
+            // Should never happen since we already checked contains_key above
+            return Ok(false);
+        };
+
+        // Release the lock before doing more checks
+        drop(processes);
+
+        // Check if the tokio task is finished
+        let finished = handle_arc.is_finished();
+        debug!("Process '{}' task is_finished: {}", server_id, finished);
+
+        if finished {
+            debug!(
+                "Process '{}' confirmed terminated via handle.is_finished()",
+                server_id
+            );
+            // Use the helper function to handle the terminated process
+            handle_terminated_process(self, server_id);
+            return Ok(false);
+        }
+
+        // Even if the handle isn't finished, check the process state
+        // It's possible the child process exited but the task is still running
+        let server_state = { server_state_arc.lock().unwrap().clone() };
+
+        if server_state == ServerState::Stopped {
+            debug!(
+                "Process '{}' marked as Stopped in internal state, considering terminated",
+                server_id
+            );
+            handle_terminated_process(self, server_id);
+            return Ok(false);
+        }
+
+        // If we made it this far, process should be running
+        // But let's double-check if the process directory exists in /proc
+        // This is a Linux-specific check that can detect zombie processes
+        #[cfg(target_os = "linux")]
+        {
+            let _process_id: Option<u32> = {
+                let processes = self.processes.lock().unwrap();
+                if let Some(_process) = processes.get(server_id) {
+                    // We don't store the OS Process ID currently, so we can't check
+                    // Adding this framework for future implementation
+                    None
+                } else {
+                    None
+                }
+            };
+
+        }
+
+        debug!("Process '{}' is confirmed running", server_id);
+        Ok(true)
     }
 
     async fn stop_process(&self, server_id: &str) -> Result<(), ServerManagerError> {
         {
+            let mut server_states = self.server_states.lock().unwrap();
+            server_states.insert(server_id.to_string(), ServerState::Stopped);
+        }
+
+        {
             let mut processes = self.processes.lock().unwrap();
-            match processes.remove(server_id) {
-                Some(process) => process,
-                None => {
-                    return Err(ServerManagerError::ProcessError(format!(
-                        "No process found for server {}",
-                        server_id
-                    )));
-                }
+            if let Some(process) = processes.get(server_id) {
+                let mut state = process.server_state.lock().unwrap();
+                *state = ServerState::Stopped;
             }
-        };
+
+            if !processes.contains_key(server_id) {
+                return Err(ServerManagerError::ProcessError(format!(
+                    "No process found for server {}",
+                    server_id
+                )));
+            }
+
+            processes.remove(server_id);
+        }
 
         Ok(())
+    }
+}
+
+// Helper function to handle terminated processes
+fn handle_terminated_process(pm: &ProcessManager, server_id: &str) {
+    debug!("Process '{}' has terminated, updating state", server_id);
+
+    // First update the global state map
+    {
+        let mut states = pm.server_states.lock().unwrap();
+        states.insert(server_id.to_string(), ServerState::Stopped);
+        debug!("Updated server_states map for '{}' to Stopped", server_id);
+    }
+
+    // Then update the process's internal state and remove it from the processes map
+    {
+        let mut processes = pm.processes.lock().unwrap();
+        if let Some(process) = processes.get(server_id) {
+            // Update the process's internal state
+            let mut state = process.server_state.lock().unwrap();
+            *state = ServerState::Stopped;
+            debug!(
+                "Updated process internal state for '{}' to Stopped",
+                server_id
+            );
+        }
+        processes.remove(server_id);
+        debug!("Removed process '{}' from processes map", server_id);
     }
 }
 

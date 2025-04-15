@@ -83,6 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect(),
 
             working_dir: None,
+            startup_string: Some("Server starting...".to_string()),
         };
 
         // Register the server with an ID
@@ -142,6 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect(),
 
         working_dir: None,
+        startup_string: Some("Custom server starting...".to_string()),
     };
 
         let local_provider = LocalProvider::new();
