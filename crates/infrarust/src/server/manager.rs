@@ -3,7 +3,7 @@ use infrarust_server_manager::{
     LocalProvider, PterodactylClient, ServerManager, ServerState, ServerStatus,
 };
 use std::{
-    collections::{HashMap, hash_map},
+    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -109,11 +109,15 @@ impl Manager {
         server_id: &str,
         manager_type: ManagerType,
     ) -> Result<(), String> {
-        self.mark_server_as_starting(server_id, manager_type).await;
-        self.remove_server_from_empty(server_id, manager_type)
-            .await?;
+        debug!("Preparing to start server: {}", server_id);
 
-        debug!("Starting server: {}", server_id);
+        self.mark_server_as_starting(server_id, manager_type).await;
+
+        if let Err(e) = self.remove_server_from_empty(server_id, manager_type).await {
+            debug!("Error removing server from empty list: {}", e);
+        }
+
+        debug!("Starting server process: {}", server_id);
         match manager_type {
             ManagerType::Pterodactyl => self
                 .pterodactyl_manager
@@ -206,29 +210,27 @@ impl Manager {
 
     pub async fn mark_server_as_starting(&self, server_id: &str, manager_type: ManagerType) {
         debug!("Marking server {} as starting", server_id);
-        let mut starting_servers = self.starting_servers.lock().await;
-        // Only update the timestamp if it's not already marked as starting
-        if let hash_map::Entry::Vacant(e) =
-            starting_servers.entry((manager_type, server_id.to_string()))
         {
-            debug!(
-                "Server {} was already marked as starting : {:?}",
-                server_id, e
-            );
-        } else {
-            debug!("Server {} marked as starting with timestamp", server_id);
+            let mut starting_servers = self.starting_servers.lock().await;
+            starting_servers.insert((manager_type, server_id.to_string()), Instant::now());
         }
+        debug!("Server {} marked as starting with timestamp", server_id);
     }
 
     pub async fn remove_server_from_starting(&self, server_id: &str, manager_type: &ManagerType) {
         debug!("Removing server {} from starting servers", server_id);
-        let mut starting_servers = self.starting_servers.lock().await;
-        starting_servers.remove(&(*manager_type, server_id.to_string()));
+        // Use a separate scope to ensure the lock is released quickly
+        {
+            let mut starting_servers = self.starting_servers.lock().await;
+            starting_servers.remove(&(*manager_type, server_id.to_string()));
+        }
     }
 
     pub async fn is_server_starting(&self, server_id: &str, manager_type: &ManagerType) -> bool {
-        let starting_servers = self.starting_servers.lock().await;
-        starting_servers.contains_key(&(*manager_type, server_id.to_string()))
+        // Get the result and release the lock immediately
+        let key = (*manager_type, server_id.to_string());
+
+        self.starting_servers.lock().await.contains_key(&key)
     }
 
     pub async fn mark_server_as_empty(
@@ -245,25 +247,34 @@ impl Manager {
             return Ok(());
         }
 
-        let mut shutdown_timers = self.shutdown_timers.lock().await;
-        if shutdown_timers.contains_key(&(manager_type, server_id.to_string())) {
+        let already_marked_for_shutdown = {
+            let shutdown_timers = self.shutdown_timers.lock().await;
+            shutdown_timers.contains_key(&(manager_type, server_id.to_string()))
+        };
+
+        if already_marked_for_shutdown {
             debug!("Server {} is already marked for shutdown", server_id);
             return Ok(());
         }
 
-        let mut time_since_empty = self.time_since_empty.lock().await;
-        let manager_map = time_since_empty
-            .entry(manager_type)
-            .or_insert_with(HashMap::new);
-        manager_map.insert(server_id.to_string(), 0);
-        shutdown_timers.insert(
-            (manager_type, server_id.to_string()),
-            ServerShutdownInfo {
-                scheduled_at: Instant::now(),
-                shutdown_time: timeout,
-            },
-        );
-        drop(shutdown_timers);
+        {
+            let mut time_since_empty = self.time_since_empty.lock().await;
+            let manager_map = time_since_empty
+                .entry(manager_type)
+                .or_insert_with(HashMap::new);
+            manager_map.insert(server_id.to_string(), 0);
+        }
+
+        {
+            let mut shutdown_timers = self.shutdown_timers.lock().await;
+            shutdown_timers.insert(
+                (manager_type, server_id.to_string()),
+                ServerShutdownInfo {
+                    scheduled_at: Instant::now(),
+                    shutdown_time: timeout,
+                },
+            );
+        }
 
         self.schedule_shutdown(server_id.to_string(), manager_type, timeout)
             .await;
@@ -278,13 +289,18 @@ impl Manager {
         manager_type: ManagerType,
     ) -> Result<(), String> {
         debug!("Removing server {} from empty", server_id);
-        let mut time_since_empty = self.time_since_empty.lock().await;
-        if let Some(manager_map) = time_since_empty.get_mut(&manager_type) {
-            manager_map.remove(server_id);
+
+        {
+            let mut time_since_empty = self.time_since_empty.lock().await;
+            if let Some(manager_map) = time_since_empty.get_mut(&manager_type) {
+                manager_map.remove(server_id);
+            }
         }
 
-        let mut shutdown_timers = self.shutdown_timers.lock().await;
-        shutdown_timers.remove(&(manager_type, server_id.to_string()));
+        {
+            let mut shutdown_timers = self.shutdown_timers.lock().await;
+            shutdown_timers.remove(&(manager_type, server_id.to_string()));
+        }
 
         self.cancel_shutdown(server_id, &manager_type).await;
         Ok(())

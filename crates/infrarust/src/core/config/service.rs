@@ -34,9 +34,11 @@ impl ConfigurationService {
     pub async fn find_server_by_domain(&self, domain: &str) -> Option<Arc<ServerConfig>> {
         debug!("Finding server by domain");
         let domain = domain.to_lowercase();
-        let configs = self.configurations.read().await;
-
-        for config in configs.values() {
+        let configs_snapshot = {
+            let configs = self.configurations.read().await;
+            configs.clone()
+        };
+        for config in configs_snapshot.values() {
             if config
                 .domains
                 .iter()
@@ -54,8 +56,11 @@ impl ConfigurationService {
     #[instrument(skip(self), fields(ip = %ip))]
     pub async fn find_server_by_ip(&self, ip: &str) -> Option<Arc<ServerConfig>> {
         debug!("Finding server by IP");
-        let configs = self.configurations.read().await;
-        let result = configs
+        let configs_snapshot = {
+            let configs = self.configurations.read().await;
+            configs.clone()
+        };
+        let result = configs_snapshot
             .iter()
             .find(|(_, server)| server.addresses.contains(&ip.to_string()))
             .map(|(_, server)| Arc::clone(server));

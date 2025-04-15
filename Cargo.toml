@@ -30,7 +30,7 @@ sha1 = "0.10.6"
 # CLI & Configuration
 atty = "0.2.14"
 chrono = "0.4.40"
-clap = { version = "4.5.36", features = ["derive"] }
+clap = { version = "4.5.37", features = ["derive"] }
 
 # Data Structures & Algorithms
 dashmap = "6.1.0"

@@ -7,14 +7,14 @@ mod docker_enabled {
     use tracing::{debug, debug_span, error, info, instrument, warn};
 
     use bollard::{
+        Docker,
         container::ListContainersOptions,
         models::{ContainerStateStatusEnum, EventMessage},
         secret::ContainerSummary,
         system::EventsOptions,
-        Docker,
     };
     use futures::StreamExt;
-    use tokio::sync::{mpsc::Sender, RwLock};
+    use tokio::sync::{RwLock, mpsc::Sender};
 
     use crate::{
         models::{
@@ -603,8 +603,8 @@ use std::{
 use async_trait::async_trait;
 #[cfg(feature = "docker")]
 pub use docker_enabled::DockerProvider;
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, debug_span, error, info, instrument, Instrument};
+use tokio::sync::{RwLock, mpsc};
+use tracing::{Instrument, debug, debug_span, error, info, instrument};
 
 use crate::{models::infrarust::DockerProviderConfig, provider::ProviderMessage};
 

@@ -21,6 +21,8 @@ pub struct LocalServerConfig {
     pub args: Vec<String>,
     /// Working directory for the server
     pub working_dir: Option<String>,
+    /// String to detect in stdout that marks the server as started
+    pub startup_string: Option<String>,
 }
 
 /// Provider for managing local server processes
@@ -28,6 +30,7 @@ pub struct LocalServerConfig {
 pub struct LocalProvider {
     process_manager: Arc<ProcessManager>,
     configs: Arc<Mutex<HashMap<String, LocalServerConfig>>>,
+    server_states: Arc<Mutex<HashMap<String, ServerState>>>,
 }
 
 impl LocalProvider {
@@ -36,6 +39,7 @@ impl LocalProvider {
         Self {
             process_manager: Arc::new(ProcessManager::new()),
             configs: Arc::new(Mutex::new(HashMap::new())),
+            server_states: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -79,9 +83,32 @@ impl ApiProvider for LocalProvider {
         };
 
         let state = if is_running {
-            ServerState::Running
+            match self.process_manager.get_server_state(server_id) {
+                Ok(state) => {
+                    let mut server_states = self.server_states.lock().unwrap();
+                    server_states.insert(server_id.to_string(), state.clone());
+                    state
+                }
+                Err(_) => {
+                    let server_states = self.server_states.lock().unwrap();
+                    let state = server_states
+                        .get(server_id)
+                        .cloned()
+                        .unwrap_or(ServerState::Running);
+                    state
+                }
+            }
         } else {
+            let mut server_states = self.server_states.lock().unwrap();
+            server_states.insert(server_id.to_string(), ServerState::Stopped);
             ServerState::Stopped
+        };
+
+        let is_crashed = state == ServerState::Crashed;
+        let error = if is_crashed {
+            Some("Server has crashed".to_string())
+        } else {
+            None
         };
 
         debug!("Server {} status: {:?}", server_id, state);
@@ -90,8 +117,8 @@ impl ApiProvider for LocalProvider {
             name,
             status: state.clone(),
             is_running,
-            is_crashed: false, // Not supported yet
-            error: None,
+            is_crashed,
+            error,
         })
     }
 
@@ -103,6 +130,12 @@ impl ApiProvider for LocalProvider {
             return Ok(());
         }
 
+        // Update server state to Starting
+        {
+            let mut server_states = self.server_states.lock().unwrap();
+            server_states.insert(server_id.to_string(), ServerState::Starting);
+        }
+
         // Get server config
         let config = {
             let configs = self.configs.lock().unwrap();
@@ -110,6 +143,10 @@ impl ApiProvider for LocalProvider {
                 Some(config) => config.clone(),
                 None => {
                     debug!("No configuration found for server {}", server_id);
+                    // Revert state back to Stopped on error
+                    let mut server_states = self.server_states.lock().unwrap();
+                    server_states.insert(server_id.to_string(), ServerState::Stopped);
+
                     return Err(ServerManagerError::ProcessError(format!(
                         "No configuration found for server {}",
                         server_id
@@ -121,21 +158,52 @@ impl ApiProvider for LocalProvider {
         // Convert args to a slice of &str
         let args: Vec<&str> = config.args.iter().map(|s| s.as_str()).collect();
 
-        debug!("Starting server {} with executable: {}", server_id, config.executable);
-        // Start the process
-        let _ = self
-            .process_manager
-            .start_process(server_id, &config.executable, &args)?;
+        debug!(
+            "Starting server {} with executable: {}",
+            server_id, config.executable
+        );
 
-        debug!("Server {} started successfully", server_id);
-        Ok(())
+        // Start the process
+        match self.process_manager.start_process(
+            server_id,
+            &config.executable,
+            &args,
+            config.working_dir.as_deref(),
+            config.startup_string.as_deref(),
+        ) {
+            Ok(_) => {
+                debug!("Server {} started successfully", server_id);
+                Ok(())
+            }
+            Err(e) => {
+                debug!("Failed to start server {}: {}", server_id, e);
+                // Revert state back to Stopped on error
+                let mut server_states = self.server_states.lock().unwrap();
+                server_states.insert(server_id.to_string(), ServerState::Stopped);
+                Err(e)
+            }
+        }
     }
 
     async fn stop_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
         debug!("Attempting to stop server: {}", server_id);
         // First try to send a graceful shutdown command (like "stop" or "exit")
         // This may not work for all server types, so we'll also force stop if needed
-        debug!("Sending graceful shutdown commands to server: {}", server_id);
+        debug!(
+            "Sending graceful shutdown commands to server: {}",
+            server_id
+        );
+
+        // Update server state to Stopping
+        {
+            let mut server_states = self.server_states.lock().unwrap();
+            server_states.insert(server_id.to_string(), ServerState::Stopping);
+            debug!(
+                "Set server state for '{}' to Stopping during shutdown",
+                server_id
+            );
+        }
+
         let _ = self.process_manager.write_stdin(server_id, "stop").await;
         let _ = self.process_manager.write_stdin(server_id, "exit").await;
 
@@ -145,8 +213,21 @@ impl ApiProvider for LocalProvider {
 
         // If still running, force stop it
         if self.process_manager.is_process_running(server_id)? {
-            debug!("Server {} still running after graceful shutdown attempt, forcing stop", server_id);
+            debug!(
+                "Server {} still running after graceful shutdown attempt, forcing stop",
+                server_id
+            );
             self.process_manager.stop_process(server_id).await?;
+        }
+
+        // Update server state to Stopped
+        {
+            let mut server_states = self.server_states.lock().unwrap();
+            server_states.insert(server_id.to_string(), ServerState::Stopped);
+            debug!(
+                "Set server state for '{}' to Stopped after shutdown",
+                server_id
+            );
         }
 
         debug!("Server {} stopped successfully", server_id);

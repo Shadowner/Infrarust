@@ -4,8 +4,8 @@ use std::{
     io::{self, Read},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         RwLock,
+        atomic::{AtomicUsize, Ordering},
     },
     thread::sleep,
     time::{Duration, Instant},
@@ -13,15 +13,15 @@ use std::{
 
 use async_trait::async_trait;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use serde::{de::DeserializeOwned, Deserialize};
-use tokio::sync::mpsc::{self, channel, Sender};
-use tracing::{debug, debug_span, error, info, instrument, warn, Instrument};
+use serde::{Deserialize, de::DeserializeOwned};
+use tokio::sync::mpsc::{self, Sender, channel};
+use tracing::{Instrument, debug, debug_span, error, info, instrument, warn};
 use walkdir::WalkDir;
 
 use crate::{
+    InfrarustConfig,
     models::{infrarust::FileType, server::ServerConfig},
     provider::{Provider, ProviderMessage},
-    InfrarustConfig,
 };
 
 use once_cell::sync::{Lazy, OnceCell};

@@ -157,26 +157,14 @@ impl Gateway {
             String::new()
         };
 
-        debug!("Looking up server for domain: {}", request.domain);
-        let server_config = match self
-            .find_server(&request.domain)
-            .instrument(span.clone())
-            .await
-        {
-            Some(server) => {
-                debug!("Found server config for domain: {}", request.domain);
-                server
-            }
-            None => {
-                warn!(
-                    "Server not found for domain: '{}' requested by - {}",
-                    request.domain, request.client_addr
-                );
-                if let Err(e) = client.close().await {
-                    warn!("Error closing connection: {:?}", e);
-                }
-                return;
-            }
+        debug!("Looseking up server for domain: {}", request.domain);
+        let server_config = {
+            let domain = request.domain.clone();
+            self.find_server(&domain).await
+        };
+        let server_config = match server_config {
+            Some(config) => config,
+            None => return,
         };
 
         let proxy_mode = self.determine_proxy_mode(&request, &server_config);
