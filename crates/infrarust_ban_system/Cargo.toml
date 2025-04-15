@@ -8,16 +8,15 @@ license.workspace = true
 homepage.workspace = true
 
 [dependencies]
-async-trait = "0.1.88"
-dashmap = "6.1.0"
-lru = "0.14.0"
-serde = "1.0.219"
-serde_json = "1.0.140"
-thiserror = "2.0.12"
-tokio = "1.44.2"
-tracing = "0.1.41"
-uuid = { version = "1.16.0", features = ["v4", "serde"] }
-
+async-trait = { workspace = true }
+dashmap = { workspace = true }
+lru = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
 
 [features]
 redis = []

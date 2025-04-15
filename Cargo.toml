@@ -9,3 +9,80 @@ authors = ["Shadowner"]
 repository = "https://github.com/shadowner/infrarust"
 license = "AGPL-3.0-only"
 homepage = "https://infrarust.dev"
+
+[workspace.dependencies]
+# Async & Runtime
+async-trait = "0.1.88"
+futures = "0.3.31"
+tokio = { version = "1.44.2", features = ["full"] }
+tokio-test = "0.4.4"
+
+# Cryptography & Security
+aes = "0.8.4"
+base64 = "0.22.1"
+cfb8 = "0.8.1"
+hex = "0.4.3"
+rand = "0.8.5"
+rsa = "0.9.8"
+rsa-der = "0.3.0"
+sha1 = "0.10.6"
+
+# CLI & Configuration
+atty = "0.2.14"
+chrono = "0.4.40"
+clap = { version = "4.5.36", features = ["derive"] }
+
+# Data Structures & Algorithms
+dashmap = "6.1.0"
+generic-array = "1.2.0"
+lru = "0.14.0"
+num-bigint = "0.4.6"
+num-traits = "0.2.19"
+once_cell = "1.21.3"
+parking_lot = "0.12.3"
+xxhash-rust = { version = "0.8.15", features = ["xxh64"] }
+
+# Error Handling
+anyhow = "1.0.98"
+thiserror = "2.0.12"
+
+# Logging & Telemetry
+opentelemetry = { version = "0.29.1", features = ["metrics"] }
+opentelemetry_sdk = { version = "0.29.0", features = ["metrics", "rt-tokio"] }
+opentelemetry-appender-log = { version = "0.29.0" }
+opentelemetry-otlp = { version = "0.29.0", features = [
+    "grpc-tonic",
+    "trace",
+    "metrics",
+    "logs",
+    "tokio",
+] }
+opentelemetry-semantic-conventions = { version = "0.29.0" }
+opentelemetry-stdout = { version = "0.29.0" }
+tracing = "0.1.41"
+tracing-opentelemetry = "0.30.0"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
+
+# Networking & Protocol
+bollard = "0.18.1"
+bytes = "1.10.1"
+ipnetwork = "0.21.0"
+proxy-protocol = "0.5"
+reqwest = { version = "0.12.15", features = [
+    "json",
+    "rustls-tls",
+], default-features = false }
+
+# Serialization & Data Formats
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+serde_yaml = "0.9.33"
+uuid = { version = "1.16.0", features = ["v4", "serde"] }
+
+# System & Resource Management
+libdeflater = "1.23.1"
+notify = "8.0.0"
+sysinfo = { version = "0.34.2" }
+tempfile = "3.19.1"
+walkdir = "2.5.0"
+wildmatch = "2.4.0"

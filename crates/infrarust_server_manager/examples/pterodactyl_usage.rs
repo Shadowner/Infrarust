@@ -3,9 +3,6 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    env_logger::init();
-
     // Create a Pterodactyl API client
     let api_key = std::env::var("PTERODACTYL_API_KEY")
         .expect("PTERODACTYL_API_KEY environment variable must be set");

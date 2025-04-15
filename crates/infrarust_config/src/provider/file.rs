@@ -12,7 +12,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use lazy_static::lazy_static;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{de::DeserializeOwned, Deserialize};
 use tokio::sync::mpsc::{self, channel, Sender};
@@ -25,10 +24,10 @@ use crate::{
     InfrarustConfig,
 };
 
-lazy_static! {
-    static ref WATCHED_PATHS: RwLock<HashSet<String>> = RwLock::new(HashSet::new());
-    static ref WATCHER_COUNT: AtomicUsize = AtomicUsize::new(0);
-}
+use once_cell::sync::{Lazy, OnceCell};
+
+static WATCHED_PATHS: Lazy<RwLock<HashSet<String>>> = Lazy::new(|| RwLock::new(HashSet::new()));
+static WATCHER_COUNT: OnceCell<AtomicUsize> = OnceCell::new();
 
 // Configuration structure pour FileProvider
 #[derive(Debug, Deserialize, Clone)]
@@ -88,7 +87,9 @@ impl FileProvider {
             }
         }
 
-        let instance_id = WATCHER_COUNT.fetch_add(1, Ordering::SeqCst);
+        let instance_id = WATCHER_COUNT
+            .get_or_init(|| AtomicUsize::new(0))
+            .fetch_add(1, Ordering::SeqCst);
         debug!("Initialized file provider instance {}", instance_id);
 
         Self {
@@ -449,7 +450,9 @@ impl Provider for FileProvider {
             file_type: FileType::Yaml,
             watch: false,
             sender,
-            instance_id: WATCHER_COUNT.fetch_add(1, Ordering::SeqCst),
+            instance_id: WATCHER_COUNT
+                .get_or_init(|| AtomicUsize::new(0))
+                .fetch_add(1, Ordering::SeqCst),
         }
     }
 }

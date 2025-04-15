@@ -1,27 +1,26 @@
 [package]
 name = "infrarust_config"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "Configuration management for Infrarust"
 
 [dependencies]
 infrarust_protocol = { path = "../infrarust_protocol" }
-serde = { version = "1.0.219", features = ["derive"] }
-async-trait = "0.1.88"
-tokio = { version = "1.44.2", features = ["full"] }
-tracing = "0.1.41"
-wildmatch = "2.1"
-serde_yaml = "0.9"
-uuid = { version = "1.16.0", features = ["v4", "serde"] }
-notify = "8.0.0"
-walkdir = "2.3"
-tempfile = { version = "3.19.1", optional = true }
-lazy_static = "1.5.0"
-futures = "0.3.31"
-bollard = { version = "0.18.1", optional = true }
-tracing-opentelemetry = { version = "0.30.0", optional = true }
-
-
+serde = { workspace = true, features = ["derive"] }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+wildmatch = { workspace = true }
+serde_yaml = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+notify = { workspace = true }
+walkdir = { workspace = true }
+tempfile = { workspace = true, optional = true }
+futures = { workspace = true }
+bollard = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+once_cell = { workspace = true }
 
 [features]
 default = ["docker"]
@@ -29,4 +28,4 @@ telemetry = ["tracing-opentelemetry"]
 docker = ["bollard"]
 
 [dev-dependencies]
-tempfile = "3.19.1"
+tempfile = { workspace = true }

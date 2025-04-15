@@ -8,13 +8,13 @@ license = "AGPL-3.0"
 repository = "https://github.com/shadowner/infrarust"
 
 [dependencies]
-bytes = "1.10.1"
-serde_json = "1.0.140"
-serde = { version = "1.0.219", features = ["derive"] }
-uuid = { version = "1.16.0", features = ["v4", "serde"] }
-sha1 = "0.10"
-base64 = "0.22.1"
-num-bigint = "0.4.6"
-tokio = { version = "1.44.2", features = ["io-util"] }
-async-trait = "0.1.88"
-thiserror = "2.0.12"
+bytes = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
+sha1 = { workspace = true }
+base64 = { workspace = true }
+num-bigint = { workspace = true }
+tokio = { workspace = true, features = ["io-util"] }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
