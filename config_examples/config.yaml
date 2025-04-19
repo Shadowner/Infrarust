@@ -1,4 +1,4 @@
-bind: "127.0.0.1:25565"
+bind: "0.0.0.0:25565"
 keepAliveTimeout: 30s
 filters:
   rateLimiter:
@@ -6,7 +6,7 @@ filters:
     windowLength: 1s
 
 file_provider:
-  proxies_path: 
+  proxies_path:
     - "./config_examples/proxies"
   watch: true
 
@@ -29,3 +29,9 @@ telemetry:
   export_interval_seconds: 10
   enable_metrics: true
   enable_tracing: true
+
+proxy_protocol:
+  enabled: true
+  receive_enabled: true
+  receive_timeout_secs: 5
+  receive_allowed_versions: [1, 2]

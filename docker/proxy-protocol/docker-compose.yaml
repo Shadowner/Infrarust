@@ -1,0 +1,40 @@
+services:
+  haproxy:
+    image: haproxy:latest
+    ports:
+      - "25570:25570"
+    volumes:
+      - ./haproxy-test.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - minecraft_net
+
+  minecraft-server:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "TRUE"
+      VERSION: "1.19"
+      TYPE: "PAPER"
+      MODE: "survival"
+    ports:
+      - "25566:25565"
+      - "25567:25565"
+    volumes:
+      - ./mc-data:/data
+    networks:
+      - minecraft_net
+
+  infrarust:
+    image: infrarust:latest
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: infrarust
+    volumes:
+      - ../../config_examples:/app/config
+    ports:
+      - "25565:25565"
+    networks:
+      - minecraft_net
+
+networks:
+  minecraft_net:

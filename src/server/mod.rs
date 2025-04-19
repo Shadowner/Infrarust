@@ -16,6 +16,8 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct ServerRequest {
     pub client_addr: SocketAddr,
+    /// if received via proxy protocol
+    pub original_client_addr: Option<SocketAddr>,
     pub domain: String,
     pub is_login: bool,
     pub protocol_version: Version,

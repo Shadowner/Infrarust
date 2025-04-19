@@ -670,7 +670,7 @@ impl Gateway {
         let conn = if use_proxy_protocol {
             debug!("Using proxy protocol for connection");
             tmp_server
-                .dial_with_proxy_protocol(req.session_id, req.client_addr)
+                .dial_with_proxy_protocol(req.session_id, req.client_addr, req.original_client_addr)
                 .await
         } else {
             debug!("Using standard connection");

@@ -33,6 +33,7 @@ use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn
 // Network and security modules
 pub mod network;
 pub mod security;
+pub use network::proxy_protocol::reader::ProxyProtocolReader;
 pub use network::{
     connection::{Connection, ServerConnection},
     proxy_protocol::{ProxyProtocolConfig, write_proxy_protocol_header},
@@ -244,9 +245,23 @@ impl Infrarust {
 
                                     debug!("Connection passed filters for ({})[{}]", addr, session_id);
 
-                                    let conn = Connection::new(stream, session_id)
-                                        .instrument(debug_span!("New connection"))
-                                        .await?;
+                                    // Use proxy protocol if configured
+                                    let conn = if self_guard.shared.config().proxy_protocol.is_some() {
+                                        debug!("Using proxy protocol sent by client");
+                                        Connection::with_proxy_protocol(
+                                            stream,
+                                            session_id,
+                                            self_guard.shared.config().proxy_protocol.as_ref()
+                                        )
+                                        .instrument(debug_span!("New connection with proxy protocol"))
+                                        .await?
+                                    } else {
+                                        debug!("Not using proxy protocol");
+                                        Connection::new(stream, session_id)
+                                            .instrument(debug_span!("New connection"))
+                                            .await?
+                                    };
+
                                     debug!("Connection established for ({})[{}]", addr, session_id);
 
                                     self_guard.handle_connection(conn).await
@@ -341,6 +356,7 @@ impl Infrarust {
 
         let client_addr = client.peer_addr().await?;
         let session_id = client.session_id;
+        let original_client_addr = client.original_client_addr;
 
         let _handle_client_span = debug_span!(
             "handle_client_flow",
@@ -354,11 +370,19 @@ impl Infrarust {
             // let _guard = handle_client_span.entered();
             debug!("Processing client in separate task");
 
+            if let Some(original_addr) = &original_client_addr {
+                debug!(
+                    "Using original client address from proxy protocol: {}",
+                    original_addr
+                );
+            }
+
             gateway_ref
                 .handle_client_connection(
                     client,
                     ServerRequest {
                         client_addr,
+                        original_client_addr,
                         domain: domain.clone(),
                         is_login,
                         protocol_version,

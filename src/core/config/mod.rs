@@ -8,7 +8,8 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
-    proxy_modes::ProxyModeEnum, security::filter::RateLimiterConfig, server::motd::MotdConfig,
+    ProxyProtocolConfig, proxy_modes::ProxyModeEnum, security::filter::RateLimiterConfig,
+    server::motd::MotdConfig,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -237,6 +238,9 @@ pub struct InfrarustConfig {
 
     #[serde(default)]
     pub motds: ServerMotds,
+
+    #[serde(default)]
+    pub proxy_protocol: Option<ProxyProtocolConfig>,
 }
 
 impl ServerConfig {
@@ -289,6 +293,10 @@ impl InfrarustConfig {
 
         if other.filters.is_some() {
             self.filters = other.filters;
+        }
+
+        if other.proxy_protocol.is_some() {
+            self.proxy_protocol = other.proxy_protocol;
         }
 
         self.logging = other.logging;

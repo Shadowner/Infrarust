@@ -1,6 +1,6 @@
 domains:
-  - "passthrough-online.local"
+  - "localhost"
 addresses:
-  - "127.0.0.1:25567"
+  - "172.19.0.4:25565"
 sendProxyProtocol: true
 proxyMode: passthrough
