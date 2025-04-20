@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use infrarust_config::models::infrarust::ProxyProtocolConfig;
 use tokio::{
     io::{AsyncWriteExt, BufReader, BufWriter},
     net::{
@@ -60,6 +61,8 @@ pub struct Connection {
     mode: ConnectionMode,
     closed: Arc<AtomicBool>,
     timeout: Duration,
+    /// if received via proxy protocol
+    pub original_client_addr: Option<std::net::SocketAddr>,
 }
 
 impl Connection {
@@ -73,6 +76,51 @@ impl Connection {
             mode: ConnectionMode::Protocol,
             closed: Arc::new(AtomicBool::new(false)),
             timeout: Duration::from_secs(30),
+            original_client_addr: None,
+        })
+    }
+
+    pub async fn with_proxy_protocol(
+        mut stream: TcpStream,
+        session_id: Uuid,
+        proxy_config: Option<&ProxyProtocolConfig>,
+    ) -> io::Result<Self> {
+        use crate::network::proxy_protocol::reader::ProxyProtocolReader;
+
+        let mut original_client_addr = None;
+
+        if let Some(config) = proxy_config {
+            if config.receive_enabled {
+                let reader = ProxyProtocolReader::new(
+                    config.receive_enabled,
+                    config.receive_timeout_secs.unwrap_or(5),
+                    config.receive_allowed_versions.clone(),
+                );
+
+                match reader.read_header(&mut stream).await {
+                    Ok(addr) => {
+                        original_client_addr = addr;
+                    }
+                    Err(e) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Failed to read proxy protocol header: {}", e),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let (read_half, write_half) = stream.into_split();
+
+        Ok(Self {
+            reader: PacketReader::new(BufReader::new(read_half)),
+            writer: PacketWriter::new(BufWriter::new(write_half)),
+            session_id,
+            mode: ConnectionMode::Protocol,
+            closed: Arc::new(AtomicBool::new(false)),
+            timeout: Duration::from_secs(30),
+            original_client_addr,
         })
     }
 
@@ -252,6 +300,17 @@ impl ServerConnection {
     pub async fn new(stream: TcpStream, session_id: Uuid) -> io::Result<Self> {
         Ok(Self {
             connection: Connection::new(stream, session_id).await?,
+            session_id,
+        })
+    }
+
+    pub async fn with_proxy_protocol(
+        stream: TcpStream,
+        session_id: Uuid,
+        proxy_config: Option<&ProxyProtocolConfig>,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            connection: Connection::with_proxy_protocol(stream, session_id, proxy_config).await?,
             session_id,
         })
     }

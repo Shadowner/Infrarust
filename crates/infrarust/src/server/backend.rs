@@ -1,12 +1,12 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use infrarust_config::ServerConfig;
+use infrarust_config::{models::infrarust::ProxyProtocolConfig, ServerConfig};
 use tokio::net::TcpStream;
 use tracing::{Instrument, debug, debug_span, instrument};
 use uuid::Uuid;
 
 use crate::{
-    ProxyProtocolConfig, ServerConnection,
+    ServerConnection,
     network::{
         packet::Packet,
         proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
@@ -148,6 +148,7 @@ impl Server {
         &self,
         session_id: Uuid,
         client_addr: SocketAddr,
+        original_client_addr: Option<SocketAddr>,
     ) -> ProtocolResult<ServerConnection> {
         let mut last_error = None;
         debug!(
@@ -171,12 +172,16 @@ impl Server {
 
                         let proxy_config = ProxyProtocolConfig {
                             enabled: true,
-                            version: self.config.proxy_protocol_version, //TODO: ServerConfig
+                            version: self.config.proxy_protocol_version,
+                            receive_enabled: false,
+                            receive_timeout_secs: None,
+                            receive_allowed_versions: None,
                         };
 
+                        let effective_client_addr = original_client_addr.unwrap_or(client_addr);
                         match write_proxy_protocol_header(
                             &mut stream,
-                            client_addr,
+                            effective_client_addr,
                             server_sock_addr,
                             &proxy_config,
                         )
@@ -252,7 +257,7 @@ impl Server {
         );
 
         let connect_result = if use_proxy_protocol {
-            self.dial_with_proxy_protocol(req.session_id, req.client_addr)
+            self.dial_with_proxy_protocol(req.session_id, req.client_addr, req.original_client_addr)
                 .instrument(debug_span!("connect_with_proxy"))
                 .await
         } else {

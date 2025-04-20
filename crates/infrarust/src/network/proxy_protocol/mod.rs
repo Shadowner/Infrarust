@@ -2,17 +2,14 @@ use std::{io, net::SocketAddr};
 
 use bytes::BytesMut;
 use errors::ProxyProtocolError;
+use infrarust_config::models::infrarust::ProxyProtocolConfig;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 
 pub mod errors;
+pub mod reader;
 
 pub type ProtocolResult<T> = Result<T, ProxyProtocolError>;
 
-#[derive(Clone, Debug, Default)]
-pub struct ProxyProtocolConfig {
-    pub enabled: bool,
-    pub version: Option<u8>, // 1 pour v1, 2 pour v2
-}
 pub async fn write_proxy_protocol_header(
     stream: &mut TcpStream,
     client_addr: SocketAddr,
@@ -35,8 +32,8 @@ pub async fn write_proxy_protocol_header(
 }
 
 fn create_v1_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Result<BytesMut> {
+    use proxy_protocol::ProxyHeader;
     use proxy_protocol::version1::ProxyAddresses;
-    use proxy_protocol::{ProxyHeader, encode};
 
     let addresses = match (client_addr, server_addr) {
         (SocketAddr::V4(source), SocketAddr::V4(destination)) => ProxyAddresses::Ipv4 {
@@ -52,12 +49,12 @@ fn create_v1_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Res
 
     let header = ProxyHeader::Version1 { addresses };
 
-    encode(header).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+    proxy_protocol::encode(header).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
 }
 
 fn create_v2_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Result<BytesMut> {
+    use proxy_protocol::ProxyHeader;
     use proxy_protocol::version2::{ProxyAddresses, ProxyCommand, ProxyTransportProtocol};
-    use proxy_protocol::{ProxyHeader, encode};
 
     let (addresses, transport_protocol) = match (client_addr, server_addr) {
         (SocketAddr::V4(source), SocketAddr::V4(destination)) => (
@@ -83,5 +80,5 @@ fn create_v2_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Res
         addresses,
     };
 
-    encode(header).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+    proxy_protocol::encode(header).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
 }

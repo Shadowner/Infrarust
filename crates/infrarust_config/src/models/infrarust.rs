@@ -75,6 +75,22 @@ pub struct InfrarustConfig {
 
     #[serde(default)]
     pub motds: ServerMotds,
+
+    #[serde(default)]
+    pub proxy_protocol: Option<ProxyProtocolConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct ProxyProtocolConfig {
+    pub enabled: bool,
+    /// Version to use for outgoing proxy protocol (1 or 2)
+    pub version: Option<u8>,
+    /// Enable receiving proxy protocol headers from clients
+    pub receive_enabled: bool,
+    /// Timeout in seconds for receiving proxy protocol headers
+    pub receive_timeout_secs: Option<u64>,
+    /// Allowed proxy protocol versions for incoming connections (1, 2, or both)
+    pub receive_allowed_versions: Option<Vec<u8>>,
 }
 
 impl InfrarustConfig {
@@ -125,6 +141,10 @@ impl InfrarustConfig {
 
         if other.filters.is_some() {
             self.filters = other.filters;
+        }
+
+        if other.proxy_protocol.is_some() {
+            self.proxy_protocol = other.proxy_protocol;
         }
 
         self.logging = other.logging;
