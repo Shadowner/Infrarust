@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/infrarust*"]
 
 [workspace.package]
-version = "1.2.1"
+version = "1.3.0"
 edition = "2024"
 authors = ["Shadowner"]
 repository = "https://github.com/shadowner/infrarust"
