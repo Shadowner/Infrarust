@@ -35,6 +35,7 @@ use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn
 // Network and security modules
 pub mod network;
 pub mod security;
+pub use network::proxy_protocol::reader::ProxyProtocolReader;
 pub use network::{
     connection::{Connection, ServerConnection},
     proxy_protocol::write_proxy_protocol_header,
@@ -409,8 +410,8 @@ impl Infrarust {
                     client,
                     ServerRequest {
                         client_addr,
-                        domain: domain.clone(),
                         original_client_addr,
+                        domain: domain.clone(),
                         is_login,
                         protocol_version,
                         read_packets: [handshake_packet, second_packet],

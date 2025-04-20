@@ -1,4 +1,4 @@
-bind: "127.0.0.1:25565"
+bind: "0.0.0.0:25565"
 keepAliveTimeout: 30s
 filters:
   rateLimiter:
@@ -35,3 +35,9 @@ managers_config:
     enabled: true
     base_url: "https://pterodactyl.example.com"
     api_key: "api_key_here"
+
+proxy_protocol:
+  enabled: true
+  receive_enabled: true
+  receive_timeout_secs: 5
+  receive_allowed_versions: [1, 2]

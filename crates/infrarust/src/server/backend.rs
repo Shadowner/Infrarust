@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use infrarust_config::{models::infrarust::ProxyProtocolConfig, ServerConfig};
+use infrarust_config::{ServerConfig, models::infrarust::ProxyProtocolConfig};
 use tokio::net::TcpStream;
 use tracing::{Instrument, debug, debug_span, instrument};
 use uuid::Uuid;
