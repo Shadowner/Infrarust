@@ -31,14 +31,18 @@
                 "args": [
                     "build",
                     "--bin=infrarust",
-                    "--package=infrarust"
+                    "--package=infrarust",
+                    "--",
                 ],
                 "filter": {
                     "name": "infrarust",
                     "kind": "bin"
                 }
             },
-            "args": [],
+            "args": [
+                "--config-path",
+                "./config_examples/config.yaml"
+            ],
             "cwd": "${workspaceFolder}"
         },
         {

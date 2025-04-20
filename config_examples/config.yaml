@@ -30,6 +30,12 @@ telemetry:
   enable_metrics: true
   enable_tracing: true
 
+managers_config:
+  pterodactyl:
+    enabled: true
+    base_url: "https://pterodactyl.example.com"
+    api_key: "api_key_here"
+
 proxy_protocol:
   enabled: true
   receive_enabled: true

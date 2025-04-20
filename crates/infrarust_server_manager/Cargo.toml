@@ -1,0 +1,38 @@
+[package]
+name = "infrarust_server_manager"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "A Minecraft server manager that handles API monitoring and system commands"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+
+# Networking and API
+reqwest = { workspace = true, features = [
+    "json",
+    "rustls-tls",
+], default-features = false }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+
+[[example]]
+path = "examples/pterodactyl_usage.rs"
+name = "example-pterodactyl"
+
+[[example]]
+name = "example-process"
+path = "examples/process_provider.rs"

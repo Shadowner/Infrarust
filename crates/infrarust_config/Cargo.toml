@@ -1,0 +1,32 @@
+[package]
+name = "infrarust_config"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Configuration management for Infrarust"
+
+[dependencies]
+infrarust_protocol = { path = "../infrarust_protocol" }
+infrarust_server_manager = { path = "../infrarust_server_manager" }
+serde = { workspace = true, features = ["derive"] }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+wildmatch = { workspace = true }
+serde_yaml = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+notify = { workspace = true }
+walkdir = { workspace = true }
+tempfile = { workspace = true, optional = true }
+futures = { workspace = true }
+bollard = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+once_cell = { workspace = true }
+
+[features]
+default = ["docker"]
+telemetry = ["tracing-opentelemetry"]
+docker = ["bollard"]
+
+[dev-dependencies]
+tempfile = { workspace = true }
