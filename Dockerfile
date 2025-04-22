@@ -3,7 +3,7 @@ ARG DEBIAN_VERSION=bookworm
 ARG DEBIAN_VERSION_NUMBER=12
 
 FROM rust:${RUST_VERSION}-slim-${DEBIAN_VERSION} AS builder
-WORKDIR /usr/src/infrarust
+WORKDIR /usr/crates/infrarust
 
 # Prevent deletion of apt cache
 RUN rm -f /etc/apt/apt.conf.d/docker-clean
@@ -16,12 +16,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN mkdir -p /rootfs/app/config
 
 COPY Cargo.toml Cargo.lock ./
-COPY src/ ./src/
+COPY crates/ ./crates/
 RUN mkdir sbin
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git/db \
-    --mount=type=cache,target=/usr/src/infrarust/target \
+    --mount=type=cache,target=/usr/crates/infrarust/target \
     cargo build --release ; \
     cp target/release/infrarust sbin/
 
@@ -31,7 +31,7 @@ FROM gcr.io/distroless/cc-debian${DEBIAN_VERSION_NUMBER}
 WORKDIR /app
 
 COPY --from=builder /rootfs/ /
-COPY --from=builder /usr/src/infrarust/sbin /sbin
+COPY --from=builder /usr/crates/infrarust/sbin /sbin
 
 VOLUME ["/app/config"]
 EXPOSE 25565
