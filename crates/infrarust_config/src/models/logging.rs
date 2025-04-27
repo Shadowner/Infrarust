@@ -7,6 +7,9 @@ pub struct LoggingConfig {
     pub use_color: bool,
 
     #[serde(default)]
+    pub debug: bool,
+
+    #[serde(default)]
     pub use_icons: bool,
 
     #[serde(default)]
@@ -31,6 +34,7 @@ pub struct LoggingConfig {
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
+            debug: false,
             use_color: true,
             use_icons: true,
             show_timestamp: true,

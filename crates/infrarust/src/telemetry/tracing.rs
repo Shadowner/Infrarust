@@ -38,7 +38,7 @@ pub struct LoggingGuard;
 /// This sets up the tracing subscriber with custom formatting based on the config.
 /// It should be called once at application startup before any logging occurs.
 pub fn init_logging(config: &LoggingConfig) -> LoggingGuard {
-    let log_level = if cfg!(debug_assertions) {
+    let log_level = if cfg!(debug_assertions) || config.debug {
         Level::DEBUG
     } else {
         Level::INFO

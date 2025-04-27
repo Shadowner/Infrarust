@@ -1,10 +1,12 @@
 domains:
-  - "passthrough-crack.local"
+  - "nomi.mc.shadowner.fr"
+  - "nomi2.mc.shadowner.fr"
 addresses:
-  - "127.0.0.1:25567"
-sendProxyProtocol: true
+  - "192.168.1.235:25571"
+sendProxyProtocol: false
 proxyMode: passthrough
-server_manager :
+
+server_manager: 
   provider_name: Pterodactyl
-  server_id: de0d8f2d
-  empty_shutdown_time: 75
+  empty_shutdown_time: 30
+  server_id: "de0d8f2d"

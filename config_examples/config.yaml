@@ -12,6 +12,7 @@ file_provider:
 
 # Logging configuration for better debugging
 logging:
+  debug: true
   use_color: true
   use_icons: false
   show_timestamp: true
