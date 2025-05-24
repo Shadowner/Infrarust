@@ -9,17 +9,10 @@ homepage.workspace = true
 
 description = "A Rust universal Minecraft proxy"
 default-run = "infrarust"
-readme = "README.md"
+readme = "../../README.md"
 categories = ["network-programming", "command-line-utilities"]
 keywords = ["networking", "proxy", "minecraft", "gameserver", "protocol"]
-exclude = [
-    "docs/*",
-    "!docs/public/img/logo.svg",
-    "docker/*",
-    "config_examples/*",
-    ".github/*",
-    ".vscode/*",
-]
+
 
 [features]
 telemetry = [
@@ -34,10 +27,10 @@ system-info = ["dep:sysinfo"]
 
 [dependencies]
 # Infrarust Libraries
-infrarust_ban_system = { path = "../infrarust_ban_system" }
-infrarust_server_manager = { path = "../infrarust_server_manager" }
-infrarust_config = { path = "../infrarust_config" }
-infrarust_protocol = { path = "../infrarust_protocol" }
+infrarust_ban_system = { path = "../infrarust_ban_system", version = "1.3.1" }
+infrarust_server_manager = { path = "../infrarust_server_manager", version = "1.3.1" }
+infrarust_config = { path = "../infrarust_config", version = "1.3.1" }
+infrarust_protocol = { path = "../infrarust_protocol", version = "1.3.1" }
 
 # Async & Runtime
 tokio = { workspace = true, features = ["full"] }

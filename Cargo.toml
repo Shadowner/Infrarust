@@ -9,6 +9,14 @@ authors = ["Shadowner"]
 repository = "https://github.com/shadowner/infrarust"
 license = "AGPL-3.0-only"
 homepage = "https://infrarust.dev"
+exclude = [
+    "docs/*",
+    "!docs/public/img/logo.svg",
+    "docker/*",
+    "config_examples/*",
+    ".github/*",
+    ".vscode/*",
+]
 
 [workspace.dependencies]
 # Async & Runtime
