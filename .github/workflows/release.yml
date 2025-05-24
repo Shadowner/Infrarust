@@ -38,7 +38,7 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux builds with musl
+          # Linux builds - using musl for all Linux targets
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             arch: x86_64
@@ -90,11 +90,15 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config musl-tools
+          sudo apt-get install -y pkg-config libssl-dev
           
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            # ARM64 musl build
-            sudo apt-get install -y gcc-aarch64-linux-gnu
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+            sudo apt-get install -y musl-tools
+          elif [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            sudo apt-get install -y musl-tools gcc-aarch64-linux-gnu
+            # Set up cross-compilation environment for musl
+            echo "CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           fi
           
       - name: Build
@@ -130,10 +134,9 @@ jobs:
   docker:
     needs: check-release
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-
+        
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         
@@ -146,15 +149,18 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           
-      - name: Build and push
+      - name: Build and push multi-arch Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/infrarust:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/infrarust:${{ needs.check-release.outputs.version }}
+          build-args: |
+            RUST_VERSION=1.87
+            ALPINE_VERSION=3.21
 
   crate-publish:
     continue-on-error: true
