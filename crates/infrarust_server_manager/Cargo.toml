@@ -3,6 +3,7 @@ name = "infrarust_server_manager"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 description = "A Minecraft server manager that handles API monitoring and system commands"
 
 [dependencies]

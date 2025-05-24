@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 description = "Minecraft protocol implementation for Infrarust"
 authors = ["Shado"]
-license = "AGPL-3.0"
+license.workspace = true
 repository = "https://github.com/shadowner/infrarust"
 
 [dependencies]
