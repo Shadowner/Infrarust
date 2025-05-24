@@ -183,3 +183,14 @@ jobs:
           env:
             CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           run: cargo workspaces publish --from-git --yes
+    
+  pterodactyl-egg:
+    needs: check-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository Dispatch
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.INFRARUST_EGG_REPO_PAT }}
+          repository: shadowner/infrarust-egg
+          event-type: infrarust-released
