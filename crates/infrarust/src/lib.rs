@@ -21,9 +21,7 @@ pub mod telemetry;
 
 use infrarust_ban_system::BanEntry;
 use infrarust_config::{
-    InfrarustConfig,
-    models::manager::{ManagerConfig, PterodactylManagerConfig},
-    provider::{docker::DockerProvider, file::FileProvider},
+    models::{logging::LogType, manager::{ManagerConfig, PterodactylManagerConfig}}, provider::{docker::DockerProvider, file::FileProvider}, InfrarustConfig
 };
 use infrarust_protocol::minecraft::java::handshake::ServerBoundHandshake;
 use infrarust_protocol::version::Version;
@@ -68,11 +66,11 @@ impl Infrarust {
         config: InfrarustConfig,
         shutdown_controller: Arc<ShutdownController>,
     ) -> io::Result<Self> {
-        let span = debug_span!("infrarust_init");
+        let span = debug_span!("infrarust_init", log_type = LogType::Supervisor.as_str());
         let _enter = span.enter();
         let config = Arc::new(config);
 
-        debug!("Initializing Infrarust server with config: {:?}", config);
+        debug!(log_type = LogType::Supervisor.as_str(), "Initializing Infrarust server with config: {:?}", config);
         let config_service = Arc::new(ConfigurationService::new());
 
         let (gateway_sender, gateway_receiver) = tokio::sync::mpsc::channel(100);
@@ -95,7 +93,7 @@ impl Infrarust {
         let pterodactyl_config = match manager_config.pterodactyl {
             Some(ref config) => config.clone(),
             None => {
-                error!("Pterodactyl manager configuration is missing");
+                error!(log_type = LogType::Supervisor.as_str(), "Pterodactyl manager configuration is missing");
                 PterodactylManagerConfig {
                     enabled: false,
                     api_key: String::new(),
@@ -105,6 +103,7 @@ impl Infrarust {
         };
 
         debug!(
+            log_type = LogType::ServerManager.as_str(),
             "Pterodactyl manager configuration: enabled = {}, api_key = {}, base_url = {}",
             pterodactyl_config.enabled, pterodactyl_config.api_key, pterodactyl_config.base_url
         );
@@ -116,7 +115,7 @@ impl Infrarust {
         let managers = Arc::new(Manager::new(pterodactyl_provider, local_provider));
 
         if ActorSupervisor::initialize_global(Some(managers.clone())).is_err() {
-            error!("Failed to initialize ActorSupervisor");
+            error!(log_type = LogType::Supervisor.as_str(), "Failed to initialize ActorSupervisor");
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "Failed to initialize ActorSupervisor",
@@ -158,14 +157,14 @@ impl Infrarust {
 
         let provider_span = Span::current();
         tokio::spawn(async move {
-            debug!("Starting ConfigProvider");
+            debug!(log_type = LogType::ConfigProvider.as_str(), "Starting ConfigProvider");
             config_provider.run().instrument(provider_span).await;
         });
 
         let guard = server_gateway.clone();
         let gateway_span = Span::current();
         tokio::spawn(async move {
-            debug!("Starting Gateway");
+            debug!(log_type = LogType::Supervisor.as_str(), "Starting Gateway");
             guard
                 .clone()
                 .run(gateway_receiver)
@@ -187,7 +186,7 @@ impl Infrarust {
                     );
 
                     if let Err(e) = registry_clone.register(rate_limiter).await {
-                        debug!("Failed to register rate limiter: {}", e);
+                        debug!(log_type = LogType::Filter.as_str(), "Failed to register rate limiter: {}", e);
                     }
                 }
 
@@ -208,11 +207,11 @@ impl Infrarust {
                     {
                         Ok(ban_filter) => {
                             if let Err(e) = registry_clone.register(ban_filter).await {
-                                debug!("Failed to register ban filter: {}", e);
+                                debug!(log_type = LogType::BanSystem.as_str(), "Failed to register ban filter: {}", e);
                             }
                         }
                         Err(e) => {
-                            error!("Failed to create ban system adapter: {}", e);
+                            error!(log_type = LogType::BanSystem.as_str(), "Failed to create ban system adapter: {}", e);
                         }
                     }
                 }
@@ -230,14 +229,14 @@ impl Infrarust {
     }
 
     pub async fn run(self: Arc<Self>) -> Result<(), SendError> {
-        debug!("Starting Infrarust server");
+        debug!(log_type = LogType::Supervisor.as_str(), "Starting Infrarust server");
         let bind_addr = self.shared.config().bind.clone().unwrap_or_default();
 
         // Create listener
         let listener = match TcpListener::bind(&bind_addr).await {
             Ok(l) => l,
             Err(e) => {
-                error!("Failed to bind to {}: {}", bind_addr, e);
+                error!(log_type = LogType::TcpConnection.as_str(), "Failed to bind to {}: {}", bind_addr, e);
                 self.shared
                     .shutdown_controller()
                     .trigger_shutdown(&format!("Failed to bind: {}", e))
@@ -246,14 +245,14 @@ impl Infrarust {
             }
         };
 
-        info!("Listening on {}", bind_addr);
+        info!(log_type = LogType::TcpConnection.as_str(), "Listening on {}", bind_addr);
 
         // Get a shutdown receiver
         let mut shutdown_rx = self.shared.shutdown_controller().subscribe().await;
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
-                    info!("Received shutdown signal, stopping server");
+                    info!(log_type = LogType::Supervisor.as_str(), "Received shutdown signal, stopping server");
                     break;
                 }
 
@@ -262,45 +261,45 @@ impl Infrarust {
                         Ok((stream, addr)) => {
                             let self_guard = Arc::clone(&self);
                             let session_id = Uuid::new_v4();
-                            let _span = debug_span!("TCP Connection", %addr, %session_id);
-                            debug!("New TCP connection accepted : ({})[{}]", addr, session_id);
+                            let _span = debug_span!("TCP Connection", %addr, %session_id, log_type = LogType::TcpConnection.as_str());
+                            debug!(log_type = LogType::TcpConnection.as_str(), "New TCP connection accepted : ({})[{}]", addr, session_id);
 
                             tokio::spawn(async move {
-                                debug!("Starting connection processing for ({})[{}]", addr, session_id);
+                                debug!(log_type = LogType::TcpConnection.as_str(), "Starting connection processing for ({})[{}]", addr, session_id);
 
                                 match async {
 
                                     self_guard.shared.filter_registry().filter(&stream).await?;
 
 
-                                    debug!("Connection passed filters for ({})[{}]", addr, session_id);
+                                    debug!(log_type = LogType::Filter.as_str(), "Connection passed filters for ({})[{}]", addr, session_id);
 
                                  let conn = if self_guard.shared.config().proxy_protocol.is_some() {
-                                        debug!("Using proxy protocol sent by client");
+                                        debug!(log_type = LogType::ProxyProtocol.as_str(), "Using proxy protocol sent by client");
                                         Connection::with_proxy_protocol(
                                             stream,
                                             session_id,
                                             self_guard.shared.config().proxy_protocol.as_ref()
                                         )
-                                        .instrument(debug_span!("New connection with proxy protocol"))
+                                        .instrument(debug_span!("New connection with proxy protocol", log_type = LogType::ProxyProtocol.as_str()))
                                         .await?
                                     } else {
-                                        debug!("Not using proxy protocol");
+                                        debug!(log_type = LogType::TcpConnection.as_str(), "Not using proxy protocol");
                                         Connection::new(stream, session_id)
-                                            .instrument(debug_span!("New connection"))
+                                            .instrument(debug_span!("New connection", log_type = LogType::TcpConnection.as_str()))
                                             .await?
                                     };
-                                    debug!("Connection established for ({})[{}]", addr, session_id);
+                                    debug!(log_type = LogType::TcpConnection.as_str(), "Connection established for ({})[{}]", addr, session_id);
 
                                     self_guard.handle_connection(conn).await
                                 }.await {
-                                    Ok(_) => debug!("Connection from {} completed successfully", addr),
-                                    Err(e) => error!("Connection error from {}: {}", addr, e),
+                                    Ok(_) => debug!(log_type = LogType::TcpConnection.as_str(), "Connection from {} completed successfully", addr),
+                                    Err(e) => error!(log_type = LogType::TcpConnection.as_str(), "Connection error from {}: {}", addr, e),
                                 }
                             });
                         }
                         Err(e) => {
-                            error!("Accept error: {}", e);
+                            error!(log_type = LogType::TcpConnection.as_str(), "Accept error: {}", e);
                             if e.kind() == io::ErrorKind::Interrupted {
                                 break;
                             }
@@ -310,63 +309,64 @@ impl Infrarust {
             }
         }
 
-        info!("Server stopped accepting new connections");
+        info!(log_type = LogType::Supervisor.as_str(), "Server stopped accepting new connections");
         Ok(())
     }
 
-    #[instrument(name = "connection_flow", skip(client))]
+    #[instrument(name = "connection_flow", skip(client), fields(log_type = LogType::TcpConnection.as_str()))]
     async fn handle_connection(&self, mut client: Connection) -> io::Result<()> {
         let peer_addr = client.peer_addr().await?;
         Span::current().record("peer_addr", format!("{}", peer_addr));
 
         debug!(
+            log_type = LogType::TcpConnection.as_str(),
             "Starting to process new connection from {}",
             client.peer_addr().await?
         );
 
-        debug!("Reading handshake packet (with 10s timeout)");
+        debug!(log_type = LogType::PacketProcessing.as_str(), "Reading handshake packet (with 10s timeout)");
         let handshake_packet = match client.read_packet().await {
             Ok(packet) => {
-                debug!("Successfully read handshake packet");
+                debug!(log_type = LogType::PacketProcessing.as_str(), "Successfully read handshake packet");
                 packet
             }
             Err(e) => {
-                debug!("Failed to read handshake packet: {}", e);
+                debug!(log_type = LogType::PacketProcessing.as_str(), "Failed to read handshake packet: {}", e);
                 if let Err(close_err) = client.close().await {
-                    warn!("Error closing client connection: {}", close_err);
+                    warn!(log_type = LogType::TcpConnection.as_str(), "Error closing client connection: {}", close_err);
                 }
                 return Err(e.into());
             }
         };
 
-        debug!("Parsing handshake packet");
+        debug!(log_type = LogType::PacketProcessing.as_str(), "Parsing handshake packet");
         let handshake = match ServerBoundHandshake::from_packet(&handshake_packet) {
             Ok(handshake) => {
-                debug!("Successfully parsed handshake: {:?}", handshake);
+                debug!(log_type = LogType::PacketProcessing.as_str(), "Successfully parsed handshake: {:?}", handshake);
                 handshake
             }
             Err(e) => {
-                debug!("Failed to parse handshake packet: {}", e);
+                debug!(log_type = LogType::PacketProcessing.as_str(), "Failed to parse handshake packet: {}", e);
                 if let Err(close_err) = client.close().await {
-                    warn!("Error closing client connection: {}", close_err);
+                    warn!(log_type = LogType::TcpConnection.as_str(), "Error closing client connection: {}", close_err);
                 }
                 return Err(io::Error::new(io::ErrorKind::InvalidData, e));
             }
         };
 
         let domain = handshake.parse_server_address();
-        debug!(domain = %domain, "Processing connection for domain");
+        debug!(domain = %domain, log_type = LogType::PacketProcessing.as_str(), "Processing connection for domain");
 
-        debug!("Reading second packet (with 10s timeout)");
+        debug!(log_type = LogType::PacketProcessing.as_str(), "Reading second packet (with 10s timeout)");
         let second_packet = match client.read_packet().await {
             Ok(packet) => {
-                debug!("Successfully read second packet");
+                debug!(log_type = LogType::PacketProcessing.as_str(), "Successfully read second packet");
                 packet
             }
             Err(e) => {
-                debug!("Failed to read second packet: {}", e);
+                debug!(log_type = LogType::PacketProcessing.as_str(), "Failed to read second packet: {}", e);
                 if let Err(close_err) = client.close().await {
-                    warn!("Error closing client connection: {}", close_err);
+                    warn!(log_type = LogType::TcpConnection.as_str(), "Error closing client connection: {}", close_err);
                 }
                 return Err(e.into());
             }
@@ -379,6 +379,7 @@ impl Infrarust {
             domain = %domain,
             protocol_version = ?protocol_version,
             is_login = is_login,
+            log_type = LogType::ServerManager.as_str(),
             "Preparing server request"
         );
 
@@ -389,17 +390,19 @@ impl Infrarust {
         let _handle_client_span = debug_span!(
             "handle_client_flow",
             domain = %domain,
-            is_login = %is_login
+            is_login = %is_login,
+            log_type = LogType::ServerManager.as_str()
         );
         let domain_clone = domain.clone();
 
         let gateway_ref = self.gateway.clone();
         tokio::spawn(async move {
             // let _guard = handle_client_span.entered();
-            debug!("Processing client in separate task");
+            debug!(log_type = LogType::ServerManager.as_str(), "Processing client in separate task");
 
             if let Some(original_addr) = &original_client_addr {
                 debug!(
+                    log_type = LogType::ProxyProtocol.as_str(),
                     "Using original client address from proxy protocol: {}",
                     original_addr
                 );
@@ -421,10 +424,10 @@ impl Infrarust {
                 )
                 .await;
 
-            debug!(domain = %domain, "Client processing task completed");
+            debug!(domain = %domain, log_type = LogType::ServerManager.as_str(), "Client processing task completed");
         });
 
-        debug!(domain = %domain_clone, "Connection handler completed");
+        debug!(domain = %domain_clone, log_type = LogType::TcpConnection.as_str(), "Connection handler completed");
         Ok(())
     }
 

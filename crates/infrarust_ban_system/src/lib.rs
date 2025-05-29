@@ -272,7 +272,7 @@ impl BanSystem {
                 BanAuditLogEntry::new(BanOperation::Add, ban.clone(), ban.banned_by.clone());
 
             if let Err(e) = self.storage.add_audit_log(audit_entry).await {
-                warn!("Failed to add audit log entry: {}", e);
+                warn!(log_type = "ban_system", "Failed to add audit log entry: {}", e);
             }
         }
 
@@ -294,7 +294,7 @@ impl BanSystem {
                 .collect::<Vec<_>>();
 
             if let Err(e) = self.storage.add_audit_logs_batch(audit_entries).await {
-                warn!("Failed to add audit log entries in batch: {}", e);
+                warn!(log_type = "ban_system", "Failed to add audit log entries in batch: {}", e);
             }
         }
 
@@ -310,7 +310,7 @@ impl BanSystem {
                 BanAuditLogEntry::new(BanOperation::Remove, ban.clone(), removed_by.to_string());
 
             if let Err(e) = self.storage.add_audit_log(audit_entry).await {
-                warn!("Failed to add audit log entry: {}", e);
+                warn!(log_type = "ban_system", "Failed to add audit log entry: {}", e);
             }
         }
 
@@ -338,13 +338,13 @@ impl BanSystem {
                 .collect::<Vec<_>>();
 
             if let Err(e) = self.storage.add_audit_logs_batch(audit_entries).await {
-                warn!("Failed to add audit log entries in batch: {}", e);
+                warn!(log_type = "ban_system", "Failed to add audit log entries in batch: {}", e);
             }
         }
 
         for ban in &bans {
             if let Err(e) = self.storage.remove_ban(&ban.id).await {
-                warn!("Failed to remove ban {}: {}", ban.id, e);
+                warn!(log_type = "ban_system", "Failed to remove ban {}: {}", ban.id, e);
             }
         }
 
@@ -373,13 +373,13 @@ impl BanSystem {
                 .collect::<Vec<_>>();
 
             if let Err(e) = self.storage.add_audit_logs_batch(audit_entries).await {
-                warn!("Failed to add audit log entries in batch: {}", e);
+                warn!(log_type = "ban_system", "Failed to add audit log entries in batch: {}", e);
             }
         }
 
         for ban in &bans {
             if let Err(e) = self.storage.remove_ban(&ban.id).await {
-                warn!("Failed to remove ban {}: {}", ban.id, e);
+                warn!(log_type = "ban_system", "Failed to remove ban {}: {}", ban.id, e);
             }
         }
 
@@ -407,13 +407,13 @@ impl BanSystem {
                 .collect::<Vec<_>>();
 
             if let Err(e) = self.storage.add_audit_logs_batch(audit_entries).await {
-                warn!("Failed to add audit log entries in batch: {}", e);
+                warn!(log_type = "ban_system", "Failed to add audit log entries in batch: {}", e);
             }
         }
 
         for ban in &bans {
             if let Err(e) = self.storage.remove_ban(&ban.id).await {
-                warn!("Failed to remove ban {}: {}", ban.id, e);
+                warn!(log_type = "ban_system", "Failed to remove ban {}: {}", ban.id, e);
             }
         }
 
@@ -430,9 +430,10 @@ impl BanSystem {
     ) {
         if let Some(ip_val) = ip {
             match self.storage.is_ip_banned(ip_val).await {
-                Ok(false) => debug!("Successfully verified IP {} is no longer banned", ip_val),
-                Ok(true) => warn!("IP {} still appears as banned after removal!", ip_val),
+                Ok(false) => debug!(log_type = "ban_system", "Successfully verified IP {} is no longer banned", ip_val),
+                Ok(true) => warn!(log_type = "ban_system", "IP {} still appears as banned after removal!", ip_val),
                 Err(e) => warn!(
+                    log_type = "ban_system",
                     "Failed to verify ban removal status for IP {}: {}",
                     ip_val, e
                 ),
@@ -442,11 +443,13 @@ impl BanSystem {
         if let Some(uuid_val) = uuid {
             match self.storage.is_uuid_banned(uuid_val).await {
                 Ok(false) => debug!(
+                    log_type = "ban_system",
                     "Successfully verified UUID {} is no longer banned",
                     uuid_val
                 ),
-                Ok(true) => warn!("UUID {} still appears as banned after removal!", uuid_val),
+                Ok(true) => warn!(log_type = "ban_system", "UUID {} still appears as banned after removal!", uuid_val),
                 Err(e) => warn!(
+                    log_type = "ban_system",
                     "Failed to verify ban removal status for UUID {}: {}",
                     uuid_val, e
                 ),
@@ -456,14 +459,17 @@ impl BanSystem {
         if let Some(username_val) = username {
             match self.storage.is_username_banned(username_val).await {
                 Ok(false) => debug!(
+                    log_type = "ban_system",
                     "Successfully verified username {} is no longer banned",
                     username_val
                 ),
                 Ok(true) => warn!(
+                    log_type = "ban_system",
                     "Username {} still appears as banned after removal!",
                     username_val
                 ),
                 Err(e) => warn!(
+                    log_type = "ban_system",
                     "Failed to verify ban removal status for username {}: {}",
                     username_val, e
                 ),
@@ -534,7 +540,7 @@ impl BanSystem {
                 .collect::<Vec<_>>();
 
             if let Err(e) = self.storage.add_audit_logs_batch(audit_entries).await {
-                warn!("Failed to add audit log entries in batch: {}", e);
+                warn!(log_type = "ban_system", "Failed to add audit log entries in batch: {}", e);
             }
         }
 

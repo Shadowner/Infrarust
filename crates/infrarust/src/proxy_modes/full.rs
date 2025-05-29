@@ -64,7 +64,7 @@ impl ProxyModeHandler for FullMode {
                                     0x03 => {  // Set Compression
                                         if let Ok(threshold) = packet.decode::<VarInt>() {
                                             if threshold.0 >= 0 {
-                                                debug!("Enabling compression with threshold {}", threshold.0);
+                                                debug!(log_type = "proxy_mode", "Enabling compression with threshold {}", threshold.0);
                                                 client_write.enable_compression(threshold.0);
                                                 client_read.enable_compression(threshold.0);
                                             }
@@ -72,11 +72,11 @@ impl ProxyModeHandler for FullMode {
                                     }
                                     _ => {}
                                 }
-                                debug!("Server -> Client: Packet ID: 0x{:02x}", packet.id);
+                                debug!(log_type = "proxy_mode", "Server -> Client: Packet ID: 0x{:02x}", packet.id);
                                 client_write.write_packet(&packet).await?;
                             }
                             Err(e) => {
-                                error!("Server read error: {}", e);
+                                error!(log_type = "proxy_mode", "Server read error: {}", e);
                                 break;
                             }
                         }

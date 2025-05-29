@@ -1,25 +1,60 @@
 bind: "0.0.0.0:25565"
 keepAliveTimeout: 30s
+
 filters:
   rateLimiter:
     requestLimit: 10
     windowLength: 1s
+
 
 file_provider:
   proxies_path:
     - "./config_examples/proxies"
   watch: true
 
-# Logging configuration for better debugging
+# Full logging configuration
 logging:
   debug: true
   use_color: true
-  use_icons: false
+  use_icons: true
   show_timestamp: true
   time_format: "%Y-%m-%d %H:%M:%S"
   show_target: true
   show_fields: true
-  template: "{timestamp} {level}: {message} {target} {fields}"
+  template: "{timestamp} [{level}] {message}"
+  
+  # Configure different log levels for each type 
+  log_types:
+    # Core system logs - keep these visible
+    supervisor: "info"
+    server_manager: "info"
+    
+    # Protocol and packet handling - detailed for debugging
+    packet_processing: "debug"
+    proxy_protocol: "debug"
+    
+    # Security and filtering
+    ban_system: "info"
+    authentication: "info"
+    filter: "info"
+    
+    # Configuration and caching
+    config_provider: "info"
+    cache: "debug"
+    
+    # MOTD and telemetry - less verbose
+    motd: "warn"
+    telemetry: "error"
+  
+  # Exclude very noisy log types 
+  exclude_types:
+    - "tcp_connection"
+    - "packet_processing"
+    - "cache"
+  
+  # Global minimum level - will override type-specific levels if higher
+  min_level: "info"
+  
   field_prefixes:
     fields: "\n\t\t\t"
     target: "\n\t\t "
@@ -34,7 +69,6 @@ telemetry:
 managers_config:
   pterodactyl:
     enabled: true
-    base_url: "https://pterodactyl.example.com"
     api_key: "api_key_here"
 
 proxy_protocol:
@@ -42,3 +76,18 @@ proxy_protocol:
   receive_enabled: true
   receive_timeout_secs: 5
   receive_allowed_versions: [1, 2]
+
+# Cache configuration 
+cache:
+  status_ttl_seconds: 30
+  max_status_entries: 1000
+
+# Global MOTD configuration
+motds:
+  unreachable:
+    version_name: "Infrarust Unreachable"
+    protocol_version: 760
+    max_players: 100
+    online_players: 0
+    description: "§c§lServer Unreachable§r\n§7 Please try again later"
+    favicon: ""

@@ -90,7 +90,7 @@ impl FileProvider {
         let instance_id = WATCHER_COUNT
             .get_or_init(|| AtomicUsize::new(0))
             .fetch_add(1, Ordering::SeqCst);
-        debug!("Initialized file provider instance {}", instance_id);
+        debug!(log_type = "config_provider", "Initialized file provider instance {}", instance_id);
 
         Self {
             paths: unique_paths,
@@ -133,7 +133,7 @@ impl FileProvider {
                     },
                 };
                 if let Err(e) = sender.send(message).instrument(span).await {
-                    error!("Failed to send update message: {}", e);
+                    error!(log_type = "config_provider", "Failed to send update message: {}", e);
                 }
             }
             Ok(())
@@ -144,7 +144,7 @@ impl FileProvider {
 
     #[instrument(skip(self), fields(path = %path), name = "file_provider: load_configs")]
     fn load_configs(&self, path: &str) -> io::Result<HashMap<String, ServerConfig>> {
-        debug!("Loading configurations from directory");
+        debug!(log_type = "config_provider", "Loading configurations from directory");
         let proxies_path = fs::canonicalize(path)?;
         let mut configs = HashMap::new();
 
@@ -172,12 +172,12 @@ impl FileProvider {
         file_type: FileType,
         provider_name: String,
     ) -> io::Result<ServerConfig> {
-        debug!("Loading server configuration from file");
+        debug!(log_type = "config_provider", "Loading server configuration from file");
         let path = path.as_ref();
         let metadata = fs::metadata(path)?;
 
         if metadata.len() == 0 {
-            debug!("File is empty: {:?}", path);
+            debug!(log_type = "config_provider", "File is empty: {:?}", path);
             return Err(io::Error::new(io::ErrorKind::InvalidData, "File is empty"));
         }
 
@@ -198,7 +198,7 @@ impl FileProvider {
     async fn setup_file_watcher(&self) -> io::Result<RecommendedWatcher> {
         let span = debug_span!("setup_watcher", instance_id = self.instance_id);
         async {
-            debug!("Setting up file watcher for instance {}", self.instance_id);
+            debug!(log_type = "config_provider", "Setting up file watcher for instance {}", self.instance_id);
 
             let (file_event_tx, mut file_event_rx) = channel::<FileEvent>(100);
 
@@ -253,14 +253,14 @@ impl FileProvider {
             let config_id = Self::generate_config_id(&event.path, provider_name);
 
             if notify::EventKind::is_remove(&event.kind) {
-                debug!("File removed: {}", event.path.display());
+                debug!(log_type = "config_provider", "File removed: {}", event.path.display());
                 let message = ProviderMessage::Update {
                     span: span_clone,
                     key: config_id,
                     configuration: None,
                 };
                 if let Err(e) = provider_sender.send(message).await {
-                    error!("Failed to send update message: {}", e);
+                    error!(log_type = "config_provider", "Failed to send update message: {}", e);
                 }
                 return;
             }
@@ -279,7 +279,7 @@ impl FileProvider {
                 .get(&config_id)
                 .is_some_and(|last_time| now.duration_since(*last_time) < debounce_duration)
             {
-                debug!("Skipping recently processed config ID: {}", config_id);
+                debug!(log_type = "config_provider", "Skipping recently processed config ID: {}", config_id);
                 return;
             }
 
@@ -294,7 +294,7 @@ impl FileProvider {
                     .instrument(debug_span!("process_file_change"))
                     .await
             {
-                error!("Failed to handle config update: {}", e);
+                error!(log_type = "config_provider", "Failed to handle config update: {}", e);
             }
         }
         .instrument(root_span)
@@ -353,7 +353,7 @@ impl FileProvider {
             let canonical_path = match fs::canonicalize(path) {
                 Ok(p) => p,
                 Err(e) => {
-                    warn!("Could not canonicalize path {}: {}", path, e);
+                    warn!(log_type = "config_provider", "Could not canonicalize path {}: {}", path, e);
                     continue;
                 }
             };
@@ -361,7 +361,7 @@ impl FileProvider {
             let path_str = canonical_path.to_string_lossy().to_string();
 
             if watched_paths.contains(&path_str) {
-                debug!("Path {} is already being watched, skipping", path_str);
+                debug!(log_type = "config_provider", "Path {} is already being watched, skipping", path_str);
                 continue;
             }
 

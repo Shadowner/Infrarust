@@ -6,7 +6,7 @@ pub use models::ban::{AuditLogRotation, BanConfig};
 pub use models::cache::{CacheConfig, StatusCacheOptions};
 pub use models::filter::FilterConfig;
 pub use models::infrarust::InfrarustConfig;
-pub use models::logging::LoggingConfig;
+pub use models::logging::{LoggingConfig, LogType};
 pub use models::server::{ServerConfig, ServerManagerConfig, ServerMotds};
 pub use models::telemetry::TelemetryConfig;
 

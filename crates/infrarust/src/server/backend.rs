@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use infrarust_config::{ServerConfig, models::infrarust::ProxyProtocolConfig};
+use infrarust_config::{ServerConfig, models::infrarust::ProxyProtocolConfig, LogType};
 use tokio::net::TcpStream;
 use tracing::{Instrument, debug, debug_span, instrument};
 use uuid::Uuid;
@@ -41,17 +41,17 @@ impl Server {
     ))]
     pub async fn dial(&self, session_id: Uuid) -> ProtocolResult<ServerConnection> {
         let mut last_error = None;
-        debug!("Dialing server with addresses: {:?}", self.config.addresses);
+        debug!(log_type = LogType::ServerManager.as_str(), "Dialing server with addresses: {:?}", self.config.addresses);
 
         if self.config.addresses.is_empty() {
-            debug!("No addresses to connect to!");
+            debug!(log_type = LogType::ServerManager.as_str(), "No addresses to connect to!");
             return Err(ProxyProtocolError::Other(
                 "No server addresses configured".to_string(),
             ));
         }
 
         for (i, addr) in self.config.addresses.iter().enumerate() {
-            debug!("Attempt {} - Connecting to {}", i + 1, addr);
+            debug!(log_type = LogType::ServerManager.as_str(), "Attempt {} - Connecting to {}", i + 1, addr);
             let now = std::time::Instant::now();
 
             #[cfg(feature = "telemetry")]
@@ -62,13 +62,14 @@ impl Server {
             {
                 Ok(Ok(stream)) => {
                     debug!(
+                        log_type = LogType::ServerManager.as_str(),
                         "Connected to {} successfully after {:?}",
                         addr,
                         now.elapsed()
                     );
                     match stream.set_nodelay(true) {
-                        Ok(_) => debug!("Set TCP_NODELAY successfully"),
-                        Err(e) => debug!("Failed to set TCP_NODELAY: {}", e),
+                        Ok(_) => debug!(log_type = LogType::TcpConnection.as_str(), "Set TCP_NODELAY successfully"),
+                        Err(e) => debug!(log_type = LogType::TcpConnection.as_str(), "Failed to set TCP_NODELAY: {}", e),
                     }
 
                     #[cfg(feature = "telemetry")]
@@ -81,16 +82,17 @@ impl Server {
                         None,
                     );
 
-                    debug!("Creating server connection");
+                    debug!(log_type = LogType::ServerManager.as_str(), "Creating server connection");
                     let conn_result = ServerConnection::new(stream, session_id).await;
                     match &conn_result {
-                        Ok(_) => debug!("Server connection created successfully"),
-                        Err(e) => debug!("Failed to create server connection: {}", e),
+                        Ok(_) => debug!(log_type = LogType::ServerManager.as_str(), "Server connection created successfully"),
+                        Err(e) => debug!(log_type = LogType::ServerManager.as_str(), "Failed to create server connection: {}", e),
                     }
                     return conn_result.map_err(|e| e.into());
                 }
                 Ok(Err(e)) => {
                     debug!(
+                        log_type = LogType::ServerManager.as_str(),
                         "Failed to connect to {} after {:?}: {}",
                         addr,
                         now.elapsed(),
@@ -110,7 +112,7 @@ impl Server {
                     last_error = Some(e);
                 }
                 Err(_) => {
-                    debug!("Connection to {} timed out after 5 seconds", addr);
+                    debug!(log_type = LogType::ServerManager.as_str(), "Connection to {} timed out after 5 seconds", addr);
                     let e = std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         format!("Connection to {} timed out", addr),
@@ -131,14 +133,14 @@ impl Server {
             }
         }
 
-        debug!("Failed to connect to any server addresses");
+        debug!(log_type = LogType::ServerManager.as_str(), "Failed to connect to any server addresses");
         Err(match last_error {
             Some(e) => {
-                debug!("Last error: {}", e);
+                debug!(log_type = LogType::ServerManager.as_str(), "Last error: {}", e);
                 e.into()
             }
             None => {
-                debug!("No error details available");
+                debug!(log_type = LogType::ServerManager.as_str(), "No error details available");
                 ProxyProtocolError::Other("Failed to connect to any server".to_string())
             }
         })
@@ -152,6 +154,7 @@ impl Server {
     ) -> ProtocolResult<ServerConnection> {
         let mut last_error = None;
         debug!(
+            log_type = LogType::ProxyProtocol.as_str(),
             "Dialing server with proxy protocol: {:?}",
             self.config.addresses
         );
@@ -164,7 +167,7 @@ impl Server {
 
             match TcpStream::connect(addr).await {
                 Ok(mut stream) => {
-                    debug!("Connected to {}", addr);
+                    debug!(log_type = LogType::ServerManager.as_str(), "Connected to {}", addr);
                     stream.set_nodelay(true)?;
 
                     if self.config.send_proxy_protocol.unwrap_or(false) {
@@ -187,9 +190,9 @@ impl Server {
                         )
                         .await
                         {
-                            Ok(_) => debug!("Proxy protocol header sent"),
+                            Ok(_) => debug!(log_type = LogType::ProxyProtocol.as_str(), "Proxy protocol header sent"),
                             Err(e) => {
-                                debug!("Failed to write proxy protocol header: {}", e);
+                                debug!(log_type = LogType::ProxyProtocol.as_str(), "Failed to write proxy protocol header: {}", e);
 
                                 #[cfg(feature = "telemetry")]
                                 TELEMETRY.record_backend_request_end(
@@ -220,7 +223,7 @@ impl Server {
                     return Ok(ServerConnection::new(stream, session_id).await?);
                 }
                 Err(e) => {
-                    debug!("Failed to connect to {}: {}", addr, e);
+                    debug!(log_type = LogType::ServerManager.as_str(), "Failed to connect to {}: {}", addr, e);
 
                     #[cfg(feature = "telemetry")]
                     TELEMETRY.record_backend_request_end(
@@ -252,6 +255,7 @@ impl Server {
         let start_time = std::time::Instant::now();
 
         debug!(
+            log_type = LogType::ServerManager.as_str(),
             "Connecting to server for domain: {} (proxy protocol: {})",
             req.domain, use_proxy_protocol
         );
@@ -268,22 +272,22 @@ impl Server {
 
         match connect_result {
             Ok(mut conn) => {
-                debug!("Connected to server after {:?}", start_time.elapsed());
+                debug!(log_type = LogType::ServerManager.as_str(), "Connected to server after {:?}", start_time.elapsed());
 
                 let fetch_start = std::time::Instant::now();
                 match self.fetch_status_from_connection(&mut conn, req).await {
                     Ok(packet) => {
-                        debug!("Status fetched in {:?}", fetch_start.elapsed());
+                        debug!(log_type = LogType::ServerManager.as_str(), "Status fetched in {:?}", fetch_start.elapsed());
                         Ok(packet)
                     }
                     Err(e) => {
-                        debug!("Status fetch failed: {}", e);
+                        debug!(log_type = LogType::ServerManager.as_str(), "Status fetch failed: {}", e);
                         Err(e)
                     }
                 }
             }
             Err(e) => {
-                debug!("Connection failed: {}", e);
+                debug!(log_type = LogType::ServerManager.as_str(), "Connection failed: {}", e);
                 Err(e)
             }
         }
@@ -299,12 +303,12 @@ impl Server {
         req: &ServerRequest,
     ) -> ProtocolResult<Packet> {
         if let Err(e) = conn.write_packet(&req.read_packets[0].clone()).await {
-            debug!("Failed to send handshake: {}", e);
+            debug!(log_type = LogType::PacketProcessing.as_str(), "Failed to send handshake: {}", e);
             return Err(e);
         }
 
         if let Err(e) = conn.write_packet(&req.read_packets[1].clone()).await {
-            debug!("Failed to send status request: {}", e);
+            debug!(log_type = LogType::PacketProcessing.as_str(), "Failed to send status request: {}", e);
             return Err(e);
         }
 
@@ -313,8 +317,9 @@ impl Server {
         let elapsed = start.elapsed();
 
         match &result {
-            Ok(_) => debug!("Got status response in {:?}", elapsed),
+            Ok(_) => debug!(log_type = LogType::PacketProcessing.as_str(), "Got status response in {:?}", elapsed),
             Err(e) => debug!(
+                log_type = LogType::PacketProcessing.as_str(),
                 "Failed to read status response: {} (after {:?})",
                 e, elapsed
             ),

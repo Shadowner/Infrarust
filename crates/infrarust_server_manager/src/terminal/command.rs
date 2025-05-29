@@ -1,9 +1,9 @@
 use crate::error::ServerManagerError;
 
-#[cfg(target_os = "windows")]
-use super::windows;
 #[cfg(target_os = "linux")]
 use super::unix;
+#[cfg(target_os = "windows")]
+use super::windows;
 
 #[cfg(target_os = "windows")]
 fn execute_platform_command(command: &str) -> std::io::Result<String> {

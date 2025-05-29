@@ -1,5 +1,5 @@
 use num_bigint::{BigInt, Sign};
-use sha1::{digest::Update, Digest, Sha1};
+use sha1::{Digest, Sha1, digest::Update};
 
 pub fn calc_hash(input: &str) -> String {
     let hash = Sha1::new().chain(input).finalize();

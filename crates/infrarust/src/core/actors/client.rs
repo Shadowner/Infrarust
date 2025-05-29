@@ -1,4 +1,4 @@
-use infrarust_config::ServerConfig;
+use infrarust_config::{LogType, ServerConfig};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
@@ -123,21 +123,21 @@ async fn start_minecraft_client_actor<T>(
                         match proxy_mode.handle_external_client(read_value, &mut actor).await {
                             Ok(_) => {}
                             Err(e) => {
-                                debug!("Error handling external client message: {:?}", e);
+                                debug!(log_type = LogType::TcpConnection.as_str(), "Error handling external client message: {:?}", e);
                                 shutdown_flag.store(true, Ordering::SeqCst);
                                 break;
                             }
                         }
                     }
                     Err(e) => {
-                        debug!("Client connection read error: {:?}", e);
+                        debug!(log_type = LogType::TcpConnection.as_str(), "Client connection read error: {:?}", e);
                         shutdown_flag.store(true, Ordering::SeqCst);
                         break;
                     }
                 }
             }
             else => {
-                debug!("All channels closed");
+                debug!(log_type = LogType::TcpConnection.as_str(), "All channels closed");
                 shutdown_flag.store(true, Ordering::SeqCst);
                 break;
             }
@@ -145,6 +145,7 @@ async fn start_minecraft_client_actor<T>(
     }
 
     debug!(
+        log_type = LogType::TcpConnection.as_str(),
         "Shutting down client actor for {}",
         if actor.is_login && !actor.username.is_empty() {
             format!("user '{}'", actor.username)

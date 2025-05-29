@@ -66,7 +66,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
         &self,
         actor: &mut MinecraftClient<MinecraftCommunication<PassthroughMessage>>,
     ) -> io::Result<()> {
-        debug!("Initializing client passthrough proxy mode");
+        debug!(log_type = "proxy_mode", "Initializing client passthrough proxy mode");
 
         actor.conn.enable_raw_mode();
         Ok(())
@@ -168,7 +168,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
         &self,
         actor: &mut MinecraftServer<MinecraftCommunication<PassthroughMessage>>,
     ) -> io::Result<()> {
-        debug!("Initializing server passthrough proxy mode");
+        debug!(log_type = "proxy_mode", "Initializing server passthrough proxy mode");
         if let Some(server_request) = &mut actor.server_request {
             if let Some(server_conn) = &mut server_request.server_conn {
                 for packet in server_request.read_packets.iter() {
@@ -176,10 +176,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
                 }
                 server_conn.enable_raw_mode();
             } else {
-                error!("Server connection is None");
+                error!(log_type = "proxy_mode", "Server connection is None");
             }
         } else {
-            error!("Server request is None");
+            error!(log_type = "proxy_mode", "Server request is None");
         }
         Ok(())
     }

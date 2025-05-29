@@ -1,4 +1,6 @@
 pub mod infrarust_fmt_formatter;
+pub mod log_filter;
+pub mod log_type_layer;
 pub mod tracing;
 
 #[cfg(feature = "telemetry")]

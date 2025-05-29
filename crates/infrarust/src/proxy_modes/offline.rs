@@ -26,7 +26,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         match message {
             MinecraftCommunication::Packet(data) => {
                 if data.id == 0x03 && !actor.conn.is_compressing() {
-                    debug!("Received Compression packet");
+                    debug!(log_type = "proxy_mode", "Received Compression packet");
                     actor.conn.write_packet(&data).await?;
                     actor.conn.enable_compression(256);
                     return Ok(());
@@ -34,11 +34,11 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                 actor.conn.write_packet(&data).await?;
             }
             MinecraftCommunication::Shutdown => {
-                debug!("Shutting down client (Received Shutdown message)");
+                debug!(log_type = "proxy_mode", "Shutting down client (Received Shutdown message)");
                 actor.conn.close().await?;
             }
             _ => {
-                info!("Unhandled message");
+                info!(log_type = "proxy_mode", "Unhandled message");
             }
         }
         Ok(())
@@ -63,7 +63,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         &self,
         _actor: &mut MinecraftClient<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
-        debug!("Initializing client offline proxy mode");
+        debug!(log_type = "proxy_mode", "Initializing client offline proxy mode");
         Ok(())
     }
 }
@@ -79,7 +79,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
             if let Some(server_conn) = &mut request.server_conn {
                 if let PossibleReadValue::Packet(data) = data {
                     if data.id == 0x03 && !server_conn.is_compressing() {
-                        debug!("Received Compression packet srv");
+                        debug!(log_type = "proxy_mode", "Received Compression packet srv");
                         server_conn.enable_compression(256);
                     }
 
@@ -100,7 +100,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
     ) -> io::Result<()> {
         match message {
             MinecraftCommunication::Packet(data) => {
-                debug!("Received packet from server");
+                debug!(log_type = "proxy_mode", "Received packet from server");
                 actor
                     .server_request
                     .as_mut()
@@ -112,7 +112,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                     .await?;
             }
             MinecraftCommunication::Shutdown => {
-                debug!("Shutting down server (Received Shutdown message)");
+                debug!(log_type = "proxy_mode", "Shutting down server (Received Shutdown message)");
                 let _ = actor
                     .server_request
                     .as_mut()
@@ -135,7 +135,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         &self,
         actor: &mut MinecraftServer<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
-        debug!("Initializing server offline proxy mode");
+        debug!(log_type = "proxy_mode", "Initializing server offline proxy mode");
 
         if let Some(server_request) = &mut actor.server_request {
             if let Some(server_conn) = &mut server_request.server_conn {
@@ -149,10 +149,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                 .instrument(span)
                 .await?;
             } else {
-                error!("Server connection is None");
+                error!(log_type = "proxy_mode", "Server connection is None");
             }
         } else {
-            error!("Server request is None");
+            error!(log_type = "proxy_mode", "Server request is None");
         }
         Ok(())
     }

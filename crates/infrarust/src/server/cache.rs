@@ -3,7 +3,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use infrarust_config::{InfrarustConfig, models::server::MotdConfig};
+use infrarust_config::{InfrarustConfig, models::server::MotdConfig, LogType};
 use infrarust_protocol::version::Version;
 use tracing::{debug, instrument};
 
@@ -55,6 +55,7 @@ impl StatusCache {
     ) -> ProtocolResult<Packet> {
         let key = self.cache_key(server, req.protocol_version);
         debug!(
+            log_type = LogType::Cache.as_str(),
             "Status lookup for domain: {}, cache key: {}",
             req.domain, key
         );
@@ -63,15 +64,15 @@ impl StatusCache {
             return Ok(cached);
         }
 
-        debug!("Cache miss for {}, fetching from server", req.domain);
+        debug!(log_type = LogType::Cache.as_str(), "Cache miss for {}, fetching from server", req.domain);
         match server.fetch_status_directly(req).await {
             Ok(response) => {
-                debug!("Server fetch successful for {}", req.domain);
+                debug!(log_type = LogType::Cache.as_str(), "Server fetch successful for {}", req.domain);
                 self.update_cache(key, response.clone());
                 Ok(response)
             }
             Err(e) => {
-                debug!("Server fetch failed for {}: {}", req.domain, e);
+                debug!(log_type = LogType::Cache.as_str(), "Server fetch failed for {}: {}", req.domain, e);
                 // Use the dedicated motd function
                 motd::handle_server_fetch_error(&server.config, &req.domain, &self.motd_config)
                     .await
@@ -82,10 +83,10 @@ impl StatusCache {
     fn check_cache(&self, key: u64) -> Option<Packet> {
         if let Some(entry) = self.entries.get(&key) {
             if entry.expires_at > SystemTime::now() {
-                debug!("Cache hit for key: {}", key);
+                debug!(log_type = LogType::Cache.as_str(), "Cache hit for key: {}", key);
                 return Some(entry.response.clone());
             }
-            debug!("Cache entry expired for key: {}", key);
+            debug!(log_type = LogType::Cache.as_str(), "Cache entry expired for key: {}", key);
         }
         None
     }
@@ -108,6 +109,7 @@ impl StatusCache {
         );
 
         debug!(
+            log_type = LogType::Cache.as_str(),
             "Cache updated for key: {}, cache size: {}",
             key,
             self.entries.len()
@@ -127,7 +129,7 @@ impl StatusCache {
             for key in expired_keys.iter() {
                 self.entries.remove(key);
             }
-            debug!("Removed {} expired entries from cache", expired_keys.len());
+            debug!(log_type = LogType::Cache.as_str(), "Removed {} expired entries from cache", expired_keys.len());
         }
     }
 
@@ -150,6 +152,7 @@ impl StatusCache {
         }
 
         debug!(
+            log_type = LogType::Cache.as_str(),
             "Removed {} oldest entries to stay within size limit",
             remove_count
         );
@@ -174,6 +177,7 @@ impl StatusCache {
     ) -> ProtocolResult<Option<Packet>> {
         let key = self.cache_key(server, req.protocol_version);
         debug!(
+            log_type = LogType::Cache.as_str(),
             "Quick cache check for domain: {} (key: {})",
             req.domain, key
         );
@@ -188,7 +192,7 @@ impl StatusCache {
         response: Packet,
     ) {
         let key = self.cache_key(server, req.protocol_version);
-        debug!("Updating cache for domain: {} (key: {})", req.domain, key);
+        debug!(log_type = LogType::Cache.as_str(), "Updating cache for domain: {} (key: {})", req.domain, key);
         self.update_cache(key, response);
     }
 }
