@@ -161,7 +161,7 @@ impl ServerConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct ServerMotds {
     pub unknown: Option<MotdConfig>,
     pub unreachable: Option<MotdConfig>,
@@ -172,22 +172,6 @@ pub struct ServerMotds {
     pub crashed: Option<MotdConfig>,
     pub shutting_down: Option<MotdConfig>,
     pub unable_status: Option<MotdConfig>,
-}
-
-impl Default for ServerMotds {
-    fn default() -> Self {
-        ServerMotds {
-            unknown: None,
-            unreachable: None,
-            online: None,
-            offline: None,
-            starting: None,
-            stopping: None,
-            crashed: None,
-            shutting_down: None,
-            unable_status: None,
-        }
-    }
 }
 
 //TODO: Move this in a motd_Crate

@@ -16,3 +16,92 @@ server_manager:
       - "-jar"
       - "/home/shado/Documents/GitHub/Infrarust/server/server.jar"
     startup_string: 'For help, type "help"'
+
+motds: 
+  # Server is unreachable/offline
+  unreachable:
+    enabled: true
+    text: "§c§lServer Online but -> \n§7The server is currently unreachable"
+    version_name: "Offline Mode"
+    max_players: 100
+    online_players: 0
+    protocol_version: 763
+    # Uses embedded favicon in base64
+    favicon: "data:image/png;base64,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"
+    samples:
+      - name: "§7Server is offline"
+        id: "00000000-0000-0000-0000-000000000000"
+
+  # Server is online and running
+  online:
+    enabled: true
+    text: "§a§lMy Minecraft Server§r\n§7Welcome to our community!"
+    version_name: "Paper 1.20.4"
+    max_players: 100
+    online_players: 42
+    protocol_version: 765
+    favicon: "./config_examples/proxies/icons/heart.png"  # Relative path from infrarust working directory
+    samples:
+      - name: "§aSteve"
+        id: "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+      - name: "§bAlex"
+        id: "c06f8906-4c8a-4911-9c29-ea1dbd1aab82"
+
+  # Server is starting up
+  starting:
+    enabled: true
+    text: "§6§lServer Starting...§r\n§e Please wait a moment"
+    version_name: "Starting Up"
+    max_players: 100
+    online_players: 0
+    protocol_version: 765
+    # No favicon specified - will use default Infrarust favicon
+
+  # Server is offline/sleeping
+  offline:
+    enabled: true
+    text: "§e§lServer Sleeping :(§r\n§7 Connect to wake it up!"
+    version_name: "Auto-Start"
+    max_players: 100
+    online_players: 0
+    protocol_version: 765
+    favicon: "/home/shado/Documents/GitHub/Infrarust/config_examples/proxies/icons/steve.png"  # Absolute path example
+
+  # Server is shutting down with countdown
+  shutting_down:
+    enabled: true
+    text: "§c§lShutting down in ${seconds_remaining}s!§r\n§e Connect now to keep it online!" # ${seconds_remaining} will be replaced with the actual countdown
+    version_name: "Shutdown Warning"
+    max_players: 100
+    online_players: 5
+    protocol_version: 765
+
+  # Server crashed
+  crashed:
+    enabled: true
+    text: "§4§lServer Crashed!§r\n§c Contact an admin for help"
+    version_name: "Error State"
+    max_players: 100
+    online_players: 0
+    protocol_version: 765
+    favicon: "./icons/error-icon.png"  # Relative path example
+
+  # Server is stopping gracefully
+  stopping:
+    enabled: true
+    text: "§6§lServer Stopping...§r\n§7 Connect to cancel shutdown!"
+    version_name: "Graceful Stop"
+    max_players: 100
+    online_players: 2
+    protocol_version: 765
+
+  # Unable to get server status
+  unable_status:
+    enabled: true
+    text: "§c§lStatus Unknown§r\n§7 Cannot retrieve server info"
+    version_name: "Status Error"
+    max_players: 100
+    online_players: 0
+    protocol_version: 765
+
+

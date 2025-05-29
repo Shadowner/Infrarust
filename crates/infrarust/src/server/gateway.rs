@@ -532,6 +532,11 @@ impl Gateway {
             );
         }
 
+        if server_config.motds.online.is_some() {
+            debug!("Using online MOTD for {}", req.domain);
+            return motd::generate_online_motd_response(req.domain, server_config);
+        }
+
         // Check for pending requests - if one exists, wait for it instead of making a new request
         let pending_receiver = {
             let mut pending_requests = self.pending_status_requests.lock().await;
