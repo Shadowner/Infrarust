@@ -1,5 +1,6 @@
 [package]
 name = "infrarust_ban_system"
+description = "A ban system for Infrarust"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

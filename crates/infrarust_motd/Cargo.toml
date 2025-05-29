@@ -1,5 +1,6 @@
 [package]
 name = "infrarust_motd"
+description = "A Minecraft MOTD (Message of the Day) generator for Infrarust"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

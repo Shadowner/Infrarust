@@ -171,7 +171,7 @@ jobs:
           run: cargo workspaces publish --from-git --yes
     
   pterodactyl-egg:
-    needs: check-release
+    needs: build-and-release
     runs-on: ubuntu-latest
     steps:
       - name: Repository Dispatch

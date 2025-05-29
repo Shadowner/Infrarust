@@ -3,6 +3,7 @@ name = "infrarust_config"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 description = "Configuration management for Infrarust"
 
 [dependencies]
