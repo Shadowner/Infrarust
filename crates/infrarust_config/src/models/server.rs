@@ -129,7 +129,8 @@ pub struct ServerConfig {
     pub filters: Option<FilterConfig>,
     pub caches: Option<CacheConfig>,
 
-    pub motd: Option<MotdConfig>,
+    #[serde(default)]
+    pub motds: ServerMotds,
     pub server_manager: Option<ServerManagerConfig>,
 
     #[serde(rename = "configId", default)]
@@ -147,7 +148,7 @@ impl Default for ServerConfig {
             config_id: String::new(),
             filters: None,
             caches: None,
-            motd: None,
+            motds: ServerMotds::default(),
             server_manager: None,
             proxy_protocol_version: Some(2),
         }
@@ -164,13 +165,27 @@ impl ServerConfig {
 pub struct ServerMotds {
     pub unknown: Option<MotdConfig>,
     pub unreachable: Option<MotdConfig>,
+    pub online: Option<MotdConfig>,
+    pub offline: Option<MotdConfig>,
+    pub starting: Option<MotdConfig>,
+    pub stopping: Option<MotdConfig>,
+    pub crashed: Option<MotdConfig>,
+    pub shutting_down: Option<MotdConfig>,
+    pub unable_status: Option<MotdConfig>,
 }
 
 impl Default for ServerMotds {
     fn default() -> Self {
         ServerMotds {
-            unknown: Some(MotdConfig::default()),
-            unreachable: Some(MotdConfig::default_unreachable()),
+            unknown: None,
+            unreachable: None,
+            online: None,
+            offline: None,
+            starting: None,
+            stopping: None,
+            crashed: None,
+            shutting_down: None,
+            unable_status: None,
         }
     }
 }
