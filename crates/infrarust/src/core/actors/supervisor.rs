@@ -1,4 +1,4 @@
-use infrarust_config::{ServerManagerConfig, models::server::ProxyModeEnum};
+use infrarust_config::{LogType, ServerManagerConfig, models::server::ProxyModeEnum};
 use std::{
     collections::HashMap,
     sync::{Arc, atomic::AtomicBool},
@@ -97,7 +97,7 @@ impl ActorSupervisor {
             Some(supervisor) => supervisor.clone(),
             None => {
                 // Fallback to a new instance if not initialized (shouldn't happen in practice)
-                debug!("Warning: Using temporary supervisor instance - global was not initialized");
+                debug!(log_type = LogType::Supervisor.as_str(), "Warning: Using temporary supervisor instance - global was not initialized");
                 Arc::new(ActorSupervisor::new(None))
             }
         }
@@ -150,7 +150,7 @@ impl ActorSupervisor {
     pub fn initialize_global(
         server_manager: Option<Arc<Manager>>,
     ) -> Result<(), tokio::sync::SetError<Arc<ActorSupervisor>>> {
-        debug!("Initializing global supervisor instance");
+        debug!(log_type = LogType::Supervisor.as_str(), "Initializing global supervisor instance");
         GLOBAL_SUPERVISOR.set(Arc::new(ActorSupervisor::new(server_manager)))
     }
 
@@ -181,10 +181,11 @@ impl ActorSupervisor {
         domain: &str,
     ) -> ActorPair {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
-        let span = debug_span!("actor_pair_setup");
+        let span = debug_span!("actor_pair_setup", log_type = LogType::Supervisor.as_str());
         let session_id = client_conn.session_id;
 
         debug!(
+            log_type = LogType::Supervisor.as_str(),
             "Creating actor pair with session_id: {}, is_login: {}, proxy_mode: {:?}",
             session_id, is_login, proxy_mode
         );
@@ -287,7 +288,7 @@ impl ActorSupervisor {
             .instrument(debug_span!("register_pair"))
             .await;
 
-        debug!("Actor pair created successfully");
+        debug!(log_type = LogType::Supervisor.as_str(), "Actor pair created successfully");
         pair
     }
 
@@ -372,12 +373,14 @@ impl ActorSupervisor {
         // Only log meaningful connections
         {
             info!(
+                log_type = LogType::Supervisor.as_str(),
                 "Player '{}' disconnected from server '{}' ({})",
                 pair.username, pair.server_name, pair.config_id
             );
 
             let duration_secs = pair.created_at.elapsed().as_secs();
             debug!(
+                log_type = LogType::Supervisor.as_str(),
                 "Session duration for '{}': {} seconds",
                 pair.username, duration_secs
             );
@@ -399,7 +402,7 @@ impl ActorSupervisor {
         let mut actors = self.actors.write().await;
         if let Some(pairs) = actors.get_mut(config_id) {
             for pair in pairs.iter() {
-                debug!("Shutting down actor for user {}", pair.username);
+                debug!(log_type = LogType::Supervisor.as_str(), "Shutting down actor for user {}", pair.username);
                 pair.shutdown
                     .store(true, std::sync::atomic::Ordering::SeqCst);
             }
@@ -444,6 +447,7 @@ impl ActorSupervisor {
             let after_count = pairs.len();
             if before_count != after_count {
                 debug!(
+                    log_type = LogType::Supervisor.as_str(),
                     "Cleaned up {} dead actors for config {}",
                     before_count - after_count,
                     config_id
@@ -453,7 +457,7 @@ impl ActorSupervisor {
                 if let Some(task_handles) = tasks.get_mut(config_id) {
                     while task_handles.len() > pairs.len() {
                         if let Some(handle) = task_handles.pop() {
-                            debug!("Aborting orphaned task for {}", config_id);
+                            debug!(log_type = LogType::Supervisor.as_str(), "Aborting orphaned task for {}", config_id);
                             handle.abort();
                         }
                     }
@@ -465,7 +469,7 @@ impl ActorSupervisor {
         tasks.retain(|config_id, handles| {
             if !actors.contains_key(config_id) || actors[config_id].is_empty() {
                 for handle in handles.iter() {
-                    debug!("Aborting orphaned task for {}", config_id);
+                    debug!(log_type = LogType::Supervisor.as_str(), "Aborting orphaned task for {}", config_id);
                     handle.abort();
                 }
                 false
@@ -493,12 +497,14 @@ impl ActorSupervisor {
                                 .load(std::sync::atomic::Ordering::SeqCst)
                             {
                                 info!(
+                                    log_type = LogType::Supervisor.as_str(),
                                     "Player '{}' disconnected from server '{}' ({}) - reason: {}",
                                     pair.username, pair.server_name, config_id, reason
                                 );
 
                                 let duration_secs = pair.created_at.elapsed().as_secs();
                                 debug!(
+                                    log_type = LogType::Supervisor.as_str(),
                                     "Session duration for '{}': {} seconds",
                                     pair.username, duration_secs
                                 );
@@ -509,6 +515,7 @@ impl ActorSupervisor {
                         } else {
                             // For non-login sessions (status requests), just debug log
                             debug!(
+                                log_type = LogType::Supervisor.as_str(),
                                 "Status Request connection disconnected from server '{}' ({}) - reason: {}",
                                 pair.server_name, config_id, reason
                             );
@@ -552,7 +559,7 @@ impl ActorSupervisor {
 
                     while task_handles.len() > actors_count {
                         if let Some(handle) = task_handles.pop() {
-                            debug!("Aborting task for disconnected session in {}", config_id);
+                            debug!(log_type = LogType::Supervisor.as_str(), "Aborting task for disconnected session in {}", config_id);
                             handle.abort();
                         }
                     }
@@ -566,7 +573,7 @@ impl ActorSupervisor {
         }
 
         self.check_and_mark_empty_servers().await;
-        debug!("Cleanup completed for session {}", session_id);
+        debug!(log_type = LogType::Supervisor.as_str(), "Cleanup completed for session {}", session_id);
     }
 
     pub async fn find_actor_pairs_by_session_id(
@@ -615,12 +622,13 @@ impl ActorSupervisor {
 
     /// Shutdown all actors across all servers
     pub async fn shutdown_all_actors(&self) {
-        info!("Shutting down all actors");
+        info!(log_type = LogType::Supervisor.as_str(), "Shutting down all actors");
         let mut actors = self.actors.write().await;
 
         for (config_id, pairs) in actors.iter_mut() {
             for pair in pairs.iter() {
                 debug!(
+                    log_type = LogType::Supervisor.as_str(),
                     "Shutting down actor for user {} on {}",
                     pair.username, config_id
                 );
@@ -638,25 +646,25 @@ impl ActorSupervisor {
         // Also clean up tasks
         let mut tasks = self.tasks.write().await;
         for (config_id, handles) in tasks.iter_mut() {
-            debug!("Aborting {} tasks for {}", handles.len(), config_id);
+            debug!(log_type = LogType::Supervisor.as_str(), "Aborting {} tasks for {}", handles.len(), config_id);
             for handle in handles.iter() {
                 handle.abort();
             }
         }
         tasks.clear();
 
-        info!("All actors have been shut down");
+        info!(log_type = LogType::Supervisor.as_str(), "All actors have been shut down");
     }
 
     pub async fn check_and_mark_empty_servers(&self) {
         if let Some(server_manager) = &self.server_manager {
-            debug!("Checking for empty servers");
+            debug!(log_type = LogType::ServerManager.as_str(), "Checking for empty servers");
             let actors = self.actors.read().await;
 
             let configs_with_manager = self.get_configs_with_manager_settings().await;
 
             if configs_with_manager.is_empty() {
-                debug!("No servers with manager settings found");
+                debug!(log_type = LogType::ServerManager.as_str(), "No servers with manager settings found");
                 return;
             }
 
@@ -671,6 +679,7 @@ impl ActorSupervisor {
 
                 server_counts.insert(config_id.clone(), active_count);
                 debug!(
+                    log_type = LogType::ServerManager.as_str(),
                     "Server {} has {} active login connections",
                     config_id, active_count
                 );
@@ -679,7 +688,7 @@ impl ActorSupervisor {
             for (config_id, manager_config) in configs_with_manager {
                 let count = server_counts.get(&config_id).copied().unwrap_or(0);
                 if count == 0 {
-                    debug!("Server {} has no active connections", config_id);
+                    debug!(log_type = LogType::ServerManager.as_str(), "Server {} has no active connections", config_id);
                     if let Some(empty_shutdown_time) = manager_config.empty_shutdown_time {
                         match server_manager
                             .get_status_for_server(
@@ -691,6 +700,7 @@ impl ActorSupervisor {
                             Ok(status) => {
                                 if status.state == infrarust_server_manager::ServerState::Running {
                                     debug!(
+                                        log_type = LogType::ServerManager.as_str(),
                                         "Auto-shutdown enabled for {}@{:?} with timeout of {} seconds",
                                         config_id,
                                         manager_config.provider_name,
@@ -706,29 +716,33 @@ impl ActorSupervisor {
                                         .await
                                     {
                                         debug!(
+                                            log_type = LogType::ServerManager.as_str(),
                                             "Error marking server {} as empty: {}",
                                             config_id, e
                                         );
                                     } else {
                                         debug!(
+                                            log_type = LogType::ServerManager.as_str(),
                                             "Server {} marked as empty, shutdown scheduled in {} seconds",
                                             config_id, empty_shutdown_time
                                         );
                                     }
                                 } else {
                                     debug!(
+                                        log_type = LogType::ServerManager.as_str(),
                                         "Server {} is not running (state: {:?}), not marking as empty",
                                         config_id, status.state
                                     );
                                 }
                             }
                             Err(e) => {
-                                debug!("Error getting status for server {}: {}", config_id, e);
+                                debug!(log_type = LogType::ServerManager.as_str(), "Error getting status for server {}: {}", config_id, e);
                             }
                         }
                     }
                 } else {
                     debug!(
+                        log_type = LogType::ServerManager.as_str(),
                         "Server {} has {} active connections, not marking as empty",
                         config_id, count
                     );

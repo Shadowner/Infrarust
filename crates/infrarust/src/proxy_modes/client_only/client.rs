@@ -47,11 +47,11 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                 actor.conn.write_packet(&data).await?;
             }
             MinecraftCommunication::Shutdown => {
-                debug!("Shutting down client (Received Shutdown message)");
+                debug!(log_type = "proxy_mode", "Shutting down client (Received Shutdown message)");
                 actor.conn.close().await?;
             }
             _ => {
-                info!("Unhandled message: {:?}", message);
+                info!(log_type = "proxy_mode", "Unhandled message: {:?}", message);
             }
         }
         Ok(())
@@ -81,7 +81,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
             if let Some(msg) = actor.client_receiver.recv().await {
                 match msg {
                     MinecraftCommunication::CustomData(ClientOnlyMessage::ServerReady()) => {
-                        debug!("Server Ready, waiting for Server Threshold");
+                        debug!(log_type = "proxy_mode", "Server Ready, waiting for Server Threshold");
                         server_initialised = true;
                     }
                     MinecraftCommunication::CustomData(ClientOnlyMessage::ServerThreshold(th)) => {
@@ -91,7 +91,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                 }
             }
         }
-        debug!("Server Initialised, Threshold: {}", threshold.0);
+        debug!(log_type = "proxy_mode", "Server Initialised, Threshold: {}", threshold.0);
 
         let mut encryption = EncryptionState::new();
 
@@ -104,9 +104,9 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         };
 
         let _ = request_packet.encode(&enc_request);
-        debug!("P -> C: Sending encryption request");
-        debug!("Public key length: {}", enc_request.public_key.0.len());
-        debug!("Verify token length: {}", enc_request.verify_token.0.len());
+        debug!(log_type = "proxy_mode", "P -> C: Sending encryption request");
+        debug!(log_type = "proxy_mode", "Public key length: {}", enc_request.public_key.0.len());
+        debug!(log_type = "proxy_mode", "Verify token length: {}", enc_request.verify_token.0.len());
 
         let mut compression_packet: Packet = Packet::new(0x03);
         let _ = compression_packet.encode(&threshold);
@@ -116,8 +116,8 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         actor.conn.enable_compression(threshold.0);
 
         // 2. Wait and process client response
-        debug!("Waiting for client encryption response");
-        debug!("Sending packet: {:?}", request_packet);
+        debug!(log_type = "proxy_mode", "Waiting for client encryption response");
+        debug!(log_type = "proxy_mode", "Sending packet: {:?}", request_packet);
         actor.conn.write_packet(&request_packet).await?;
 
         let response = actor.conn.read_packet().await?;
@@ -132,11 +132,11 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         }
 
         let enc_response = ServerBoundEncryptionResponse::try_from(&response)?;
-        debug!("Received encryption response from client");
+        debug!(log_type = "proxy_mode", "Received encryption response from client");
 
         // 3. Decrypt and verify shared secret and token
         let shared_secret = encryption.decrypt_shared_secret(&enc_response.shared_secret.0)?;
-        debug!(
+        debug!(log_type = "proxy_mode",
             "Decrypted shared secret length: {}, Raw Data: {:?}",
             shared_secret.len(),
             shared_secret
@@ -144,7 +144,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
 
         // Verify shared secret length
         if shared_secret.len() != 16 {
-            error!("Invalid shared secret length: {}", shared_secret.len());
+            error!(log_type = "proxy_mode", "Invalid shared secret length: {}", shared_secret.len());
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Invalid shared secret length",
@@ -161,20 +161,20 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         }
 
         // Enable encryption immediately after token verification
-        debug!("Setting up encryption with shared secret");
+        debug!(log_type = "proxy_mode", "Setting up encryption with shared secret");
         encryption.set_shared_secret(shared_secret.clone());
         actor.conn.enable_encryption(&encryption);
 
         // 5. Verify authentication with Mojang
         let server_hash = encryption.compute_server_id_hash("");
-        debug!("Generated server hash: {}", server_hash);
+        debug!(log_type = "proxy_mode", "Generated server hash: {}", server_hash);
 
         let url = format!(
             "https://sessionserver.mojang.com/session/minecraft/hasJoined?serverId={}&username={}",
             server_hash, actor.username
         );
 
-        debug!("Verifying with Mojang API (URL: {})", url);
+        debug!(log_type = "proxy_mode", "Verifying with Mojang API (URL: {})", url);
         let client = Client::new();
 
         let auth_response = client.get(&url).send().await.map_err(|e| {
@@ -185,11 +185,11 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         })?;
 
         let status = auth_response.status();
-        debug!("Mojang API response status: {}", status);
+        debug!(log_type = "proxy_mode", "Mojang API response status: {}", status);
 
         let response = match status.is_success() && status.as_u16() == 200 {
             true => {
-                debug!("Authentication successful (200 OK)");
+                debug!(log_type = "proxy_mode", "Authentication successful (200 OK)");
                 let response_body = auth_response.json::<MojangResponse>().await.map_err(|e| {
                     io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -203,7 +203,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                     .text()
                     .await
                     .unwrap_or_else(|_| "Unknown error".to_string());
-                error!("Authentication failed: {} - {}", status, error_text);
+                error!(log_type = "proxy_mode", "Authentication failed: {} - {}", status, error_text);
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     format!("Authentication failed: {} - {}", status, error_text),
@@ -211,13 +211,13 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
             }
         };
 
-        debug!(
+        debug!(log_type = "proxy_mode",
             "Successfully authenticated user: {} ({})",
             actor.username, response.id
         );
 
         if response.name != actor.username {
-            error!("Username mismatch: {} != {}", response.name, actor.username);
+            error!(log_type = "proxy_mode", "Username mismatch: {} != {}", response.name, actor.username);
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "Username mismatch",
@@ -283,12 +283,12 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
             .unwrap();
 
         // Prepare Login Success packet but do not send it now
-        info!(
+        info!(log_type = "proxy_mode",
             "Succes Packet prepared for authenticated user: {}",
             actor.username
         );
 
-        debug!("Initializing client offline proxy mode");
+        debug!(log_type = "proxy_mode", "Initializing client offline proxy mode");
         Ok(())
     }
 }

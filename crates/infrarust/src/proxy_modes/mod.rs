@@ -60,7 +60,7 @@ pub fn get_passthrough_mode() -> (
     Box<dyn ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>>>,
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>>>,
 ) {
-    debug!("Creating new passthrough mode handler pair");
+    debug!(log_type = "proxy_mode", "Creating new passthrough mode handler pair");
     (Box::new(PassthroughMode), Box::new(PassthroughMode))
 }
 
@@ -70,7 +70,7 @@ pub fn get_offline_mode() -> (
     Box<dyn ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>>>,
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>>>,
 ) {
-    debug!("Creating new offline mode handler pair");
+    debug!(log_type = "proxy_mode", "Creating new offline mode handler pair");
     (Box::new(OfflineMode), Box::new(OfflineMode))
 }
 
@@ -80,7 +80,7 @@ pub fn get_client_only_mode() -> (
     Box<dyn ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>>>,
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>>>,
 ) {
-    debug!("Creating new client-only mode handler pair");
+    debug!(log_type = "proxy_mode", "Creating new client-only mode handler pair");
     (Box::new(ClientOnlyMode), Box::new(ClientOnlyMode))
 }
 
@@ -90,6 +90,6 @@ pub fn get_status_mode() -> (
     Box<dyn ClientProxyModeHandler<MinecraftCommunication<StatusMessage>>>,
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<StatusMessage>>>,
 ) {
-    debug!("Creating new status mode handler pair");
+    debug!(log_type = "proxy_mode", "Creating new status mode handler pair");
     (Box::new(status::StatusMode), Box::new(status::StatusMode))
 }

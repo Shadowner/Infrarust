@@ -1,4 +1,4 @@
-use infrarust_config::models::server::ManagerType;
+use infrarust_config::models::{logging::LogType, server::ManagerType};
 use infrarust_server_manager::{
     LocalProvider, PterodactylClient, ServerManager, ServerState, ServerStatus,
 };
@@ -66,11 +66,11 @@ impl Manager {
                 // Update tracking state based on actual server state
                 match status.state {
                     ServerState::Starting => {
-                        debug!("Server {} is in starting state", server_id);
+                        debug!(log_type = LogType::ServerManager.as_str(), "Server {} is in starting state", server_id);
                         self.mark_server_as_starting(server_id, manager_type).await;
                     }
                     _ => {
-                        debug!("Server {} is in state : {:?}", server_id, &manager_type);
+                        debug!(log_type = LogType::ServerManager.as_str(), "Server {} is in state : {:?}", server_id, &manager_type);
                         self.remove_server_from_starting(server_id, &manager_type)
                             .await;
                     }
@@ -88,11 +88,11 @@ impl Manager {
                 // Update tracking state based on actual server state
                 match status.state {
                     ServerState::Starting => {
-                        debug!("Server {} is in starting state", server_id);
+                        debug!(log_type = LogType::ServerManager.as_str(), "Server {} is in starting state", server_id);
                         self.mark_server_as_starting(server_id, manager_type).await;
                     }
                     _ => {
-                        debug!("Server {} is in state : {:?}", server_id, &manager_type);
+                        debug!(log_type = LogType::ServerManager.as_str(), "Server {} is in state : {:?}", server_id, &manager_type);
                         self.remove_server_from_starting(server_id, &manager_type)
                             .await;
                     }
@@ -109,15 +109,15 @@ impl Manager {
         server_id: &str,
         manager_type: ManagerType,
     ) -> Result<(), String> {
-        debug!("Preparing to start server: {}", server_id);
+        debug!(log_type = LogType::ServerManager.as_str(), "Preparing to start server: {}", server_id);
 
         self.mark_server_as_starting(server_id, manager_type).await;
 
         if let Err(e) = self.remove_server_from_empty(server_id, manager_type).await {
-            debug!("Error removing server from empty list: {}", e);
+            debug!(log_type = LogType::ServerManager.as_str(), "Error removing server from empty list: {}", e);
         }
 
-        debug!("Starting server process: {}", server_id);
+        debug!(log_type = LogType::ServerManager.as_str(), "Starting server process: {}", server_id);
         match manager_type {
             ManagerType::Pterodactyl => self
                 .pterodactyl_manager
@@ -138,7 +138,7 @@ impl Manager {
         server_id: &str,
         manager_type: ManagerType,
     ) -> Result<(), String> {
-        debug!("Stopping server: {}", server_id);
+        debug!(log_type = LogType::ServerManager.as_str(), "Stopping server: {}", server_id);
 
         //TODO: In the future let it being Dyn !
         let result = match manager_type {
@@ -177,7 +177,7 @@ impl Manager {
             let mut tasks = self.shutdown_tasks.lock().await;
             if let Some(tx) = tasks.remove(&(manager_type, server_id.to_string())) {
                 let _ = tx.send(());
-                debug!("Cancelled shutdown task for server: {}", server_id);
+                debug!(log_type = LogType::ServerManager.as_str(), "Cancelled shutdown task for server: {}", server_id);
             }
         }
 
@@ -209,16 +209,16 @@ impl Manager {
     }
 
     pub async fn mark_server_as_starting(&self, server_id: &str, manager_type: ManagerType) {
-        debug!("Marking server {} as starting", server_id);
+        debug!(log_type = LogType::ServerManager.as_str(), "Marking server {} as starting", server_id);
         {
             let mut starting_servers = self.starting_servers.lock().await;
             starting_servers.insert((manager_type, server_id.to_string()), Instant::now());
         }
-        debug!("Server {} marked as starting with timestamp", server_id);
+        debug!(log_type = LogType::ServerManager.as_str(), "Server {} marked as starting with timestamp", server_id);
     }
 
     pub async fn remove_server_from_starting(&self, server_id: &str, manager_type: &ManagerType) {
-        debug!("Removing server {} from starting servers", server_id);
+        debug!(log_type = LogType::ServerManager.as_str(), "Removing server {} from starting servers", server_id);
         // Use a separate scope to ensure the lock is released quickly
         {
             let mut starting_servers = self.starting_servers.lock().await;
@@ -241,6 +241,7 @@ impl Manager {
     ) -> Result<(), String> {
         if self.is_server_starting(server_id, &manager_type).await {
             debug!(
+                log_type = LogType::ServerManager.as_str(),
                 "Server {} is still starting, not marking as empty",
                 server_id
             );
@@ -253,7 +254,7 @@ impl Manager {
         };
 
         if already_marked_for_shutdown {
-            debug!("Server {} is already marked for shutdown", server_id);
+            debug!(log_type = LogType::ServerManager.as_str(), "Server {} is already marked for shutdown", server_id);
             return Ok(());
         }
 
@@ -279,7 +280,7 @@ impl Manager {
         self.schedule_shutdown(server_id.to_string(), manager_type, timeout)
             .await;
 
-        debug!("Marking server {} as empty", server_id);
+        debug!(log_type = LogType::ServerManager.as_str(), "Marking server {} as empty", server_id);
         Ok(())
     }
 
@@ -288,7 +289,7 @@ impl Manager {
         server_id: &str,
         manager_type: ManagerType,
     ) -> Result<(), String> {
-        debug!("Removing server {} from empty", server_id);
+        debug!(log_type = LogType::ServerManager.as_str(), "Removing server {} from empty", server_id);
 
         {
             let mut time_since_empty = self.time_since_empty.lock().await;
@@ -356,6 +357,7 @@ impl Manager {
             let self_clone = Arc::new(self.clone());
 
             debug!(
+                log_type = LogType::ServerManager.as_str(),
                 "Scheduling shutdown for {} in {} seconds",
                 server_id,
                 timeout.as_secs()
@@ -372,7 +374,7 @@ impl Manager {
 
                         // Check again if the server is still starting before shutting down
                         if shutdown_scheduled && !self_clone.is_server_starting(&server_id_clone, &manager_type_clone).await {
-                            debug!("From Shutdown Task : Auto-shutdown timer expired for empty server {}", server_id_clone);
+                            debug!(log_type = LogType::ServerManager.as_str(), "From Shutdown Task : Auto-shutdown timer expired for empty server {}", server_id_clone);
                             match self_clone.stop_server(&server_id_clone, manager_type_clone).await {
                                 Ok(_) => info!("Auto-shutting down empty server: {}", server_id_clone),
                                 Err(e) => error!("From Shutdown Task : Failed to auto-shutdown server {}: {}", server_id_clone, e),

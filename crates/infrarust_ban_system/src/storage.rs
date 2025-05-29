@@ -79,7 +79,7 @@ impl BanStorage {
         let backend: Arc<dyn BanStorageBackend> = match config.storage_type {
             BanStorageType::Memory => {
                 info!("Initializing in-memory ban storage");
-                warn!("In-memory ban storage is not persistent and will be lost on restart");
+                warn!(log_type = "ban_system", "In-memory ban storage is not persistent and will be lost on restart");
                 Arc::new(MemoryBanStorage::new())
             }
             BanStorageType::File => {
@@ -92,17 +92,16 @@ impl BanStorage {
                 info!("Initializing file-based ban storage at {}", path);
 
                 if let Some(audit_path_str) = &audit_path {
-                    if audit_path_str.is_empty() {
-                        info!(
-                            "Audit logs will be stored alongside ban file with '.audit.json' extension"
-                        );
-                    } else {
-                        info!("Audit logs will be stored at {}", audit_path_str);
-                    }
-                } else {
-                    info!(
+                    if audit_path_str.is_empty() {                    info!(log_type = "ban_system",
                         "Audit logs will be stored alongside ban file with '.audit.json' extension"
                     );
+                } else {
+                    info!(log_type = "ban_system", "Audit logs will be stored at {}", audit_path_str);
+                }
+            } else {
+                info!(log_type = "ban_system",
+                    "Audit logs will be stored alongside ban file with '.audit.json' extension"
+                );
                 }
 
                 Arc::new(
@@ -115,7 +114,7 @@ impl BanStorage {
                 let url = config.redis_url.clone().ok_or_else(|| {
                     BanError::Storage("Redis URL not provided in config".to_string())
                 })?;
-                info!("Initializing Redis ban storage");
+                info!(log_type = "ban_system", "Initializing Redis ban storage");
                 Arc::new(RedisBanStorage::new(&url, config.cache_size).await?)
             }
             //TODO
@@ -124,7 +123,7 @@ impl BanStorage {
                 let url = config.database_url.clone().ok_or_else(|| {
                     BanError::Storage("Database URL not provided in config".to_string())
                 })?;
-                info!("Initializing database ban storage");
+                info!(log_type = "ban_system", "Initializing database ban storage");
                 Arc::new(DatabaseBanStorage::new(&url, config.cache_size).await?)
             }
         };

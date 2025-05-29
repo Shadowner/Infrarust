@@ -8,6 +8,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use infrarust_config::LogType;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{net::TcpStream, sync::RwLock};
@@ -156,7 +157,7 @@ impl FilterRegistry {
             )));
         }
 
-        info!("Registering filter '{}' of type {}", name, filter_type);
+        info!(log_type = LogType::Filter.as_str(), "Registering filter '{}' of type {}", name, filter_type);
         filters.insert(
             name,
             FilterRegistryEntry {
@@ -172,7 +173,7 @@ impl FilterRegistry {
         if filters.remove(name).is_none() {
             return Err(FilterError::NotFound(name.to_string()));
         }
-        info!("Unregistered filter '{}'", name);
+        info!(log_type = LogType::Filter.as_str(), "Unregistered filter '{}'", name);
         Ok(())
     }
 
@@ -180,7 +181,7 @@ impl FilterRegistry {
         let mut filters = self.filters.write().await;
         if let Some(entry) = filters.get_mut(name) {
             entry.enabled = true;
-            info!("Enabled filter '{}'", name);
+            info!(log_type = LogType::Filter.as_str(), "Enabled filter '{}'", name);
             Ok(())
         } else {
             Err(FilterError::NotFound(name.to_string()))
@@ -191,7 +192,7 @@ impl FilterRegistry {
         let mut filters = self.filters.write().await;
         if let Some(entry) = filters.get_mut(name) {
             entry.enabled = false;
-            info!("Disabled filter '{}'", name);
+            info!(log_type = LogType::Filter.as_str(), "Disabled filter '{}'", name);
             Ok(())
         } else {
             Err(FilterError::NotFound(name.to_string()))
@@ -286,9 +287,9 @@ impl FilterRegistry {
             }
 
             match entry.filter.filter(stream).await {
-                Ok(_) => debug!("Filter '{}' passed", name),
+                Ok(_) => debug!(log_type = LogType::Filter.as_str(), "Filter '{}' passed", name),
                 Err(e) => {
-                    debug!("Filter '{}' rejected connection: {}", name, e);
+                    debug!(log_type = LogType::Filter.as_str(), "Filter '{}' rejected connection: {}", name, e);
                     return Err(e);
                 }
             }

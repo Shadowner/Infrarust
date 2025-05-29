@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::Arc;
 
 use infrarust_config::LoggingConfig;
 use infrarust_config::TelemetryConfig;
@@ -7,6 +8,8 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use super::infrarust_fmt_formatter::InfrarustMessageFormatter;
+use super::log_filter::InfrarustLogFilter;
+use super::log_type_layer::LogTypeLayer;
 
 #[cfg(feature = "telemetry")]
 use opentelemetry::global;
@@ -35,7 +38,7 @@ pub struct LoggingGuard;
 
 /// Initialize logging with the provided configuration
 ///
-/// This sets up the tracing subscriber with custom formatting based on the config.
+/// This sets up the tracing subscriber with custom formatting and log type extraction.
 /// It should be called once at application startup before any logging occurs.
 pub fn init_logging(config: &LoggingConfig) -> LoggingGuard {
     let log_level = if cfg!(debug_assertions) || config.debug {
@@ -45,18 +48,26 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingGuard {
     };
 
     let formatter = create_formatter_from_config(config);
+    
+    let log_type_layer = LogTypeLayer::new();
+    let storage = log_type_layer.storage().clone();
+    
+    let infrarust_filter = InfrarustLogFilter::from_config(config)
+        .with_log_type_storage(storage);
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .event_format(formatter)
         .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
             log_level,
-        ));
+        ))
+        .with_filter(infrarust_filter.create_filter_fn());
 
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::from_str(&format!("infrarust={}", log_level))
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::from_default_env()),
         )
+        .with(log_type_layer) // Add the layer directly
         .with(fmt_layer)
         .init();
 

@@ -1,4 +1,4 @@
-use infrarust_config::provider::{Provider, ProviderMessage};
+use infrarust_config::{LogType, provider::{Provider, ProviderMessage}};
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
@@ -22,7 +22,7 @@ impl ConfigProvider {
         provider_receiver: Receiver<ProviderMessage>,
         provider_sender: Sender<ProviderMessage>,
     ) -> Self {
-        debug!("Creating new configuration provider");
+        debug!(log_type = LogType::ConfigProvider.as_str(), "Creating new configuration provider");
         Self {
             _providers: vec![],
             config_service,
@@ -33,9 +33,9 @@ impl ConfigProvider {
 
     #[instrument(skip(self))]
     pub async fn run(&mut self) {
-        let span = debug_span!("config_provider_run");
+        let span = debug_span!("config_provider_run", log_type = LogType::ConfigProvider.as_str());
         async {
-            info!("Starting configuration provider");
+            info!(log_type = LogType::ConfigProvider.as_str(), "Starting configuration provider");
             while let Some(message) = self.provider_receiver.recv().await {
                 self.handle_message(message).await;
             }
@@ -56,18 +56,19 @@ impl ConfigProvider {
                     "config_provider: config_update",
                     key = %key,
                     has_config = configuration.is_some(),
+                    log_type = LogType::ConfigProvider.as_str()
                 );
 
                 #[cfg(feature = "telemetry")]
                 new_span.set_parent(_span.context());
 
                 async {
-                    debug!("Processing configuration update for: {}", key);
+                    debug!(log_type = LogType::ConfigProvider.as_str(), "Processing configuration update for: {}", key);
 
                     if let Some(config) = configuration {
                         self.config_service
                             .update_configurations(vec![*config])
-                            .instrument(debug_span!("config_provider: apply_config_update"))
+                            .instrument(debug_span!("config_provider: apply_config_update", log_type = LogType::ConfigProvider.as_str()))
                             .await;
                     } else {
                         self.config_service.remove_configuration(&key).await;
@@ -78,6 +79,7 @@ impl ConfigProvider {
             }
             ProviderMessage::FirstInit(configs) => {
                 debug!(
+                    log_type = LogType::ConfigProvider.as_str(),
                     config_count = configs.len(),
                     "First initialization received"
                 );
@@ -85,10 +87,10 @@ impl ConfigProvider {
                 self.config_service.update_configurations(config_vec).await;
             }
             ProviderMessage::Error(err) => {
-                error!(error = %err, "Provider error received");
+                error!(log_type = LogType::ConfigProvider.as_str(), error = %err, "Provider error received");
             }
             ProviderMessage::Shutdown => {
-                info!("Shutdown message received");
+                info!(log_type = LogType::ConfigProvider.as_str(), "Shutdown message received");
             }
         }
     }
@@ -99,15 +101,15 @@ impl ConfigProvider {
         let sender = self.provider_sender.clone();
         tokio::spawn(
             async move {
-                provider.run().instrument(debug_span!("provider_run")).await;
-                warn!("Provider stopped unexpectedly");
+                provider.run().instrument(debug_span!("provider_run", log_type = LogType::ConfigProvider.as_str())).await;
+                warn!(log_type = LogType::ConfigProvider.as_str(), "Provider stopped unexpectedly");
                 if let Err(e) = sender
                     .send(ProviderMessage::Error(
                         "Unexpected provider termination".into(),
                     ))
                     .await
                 {
-                    error!(error = %e, "Failed to send provider error");
+                    error!(log_type = LogType::ConfigProvider.as_str(), error = %e, "Failed to send provider error");
                 }
             }
             .instrument(current_span),

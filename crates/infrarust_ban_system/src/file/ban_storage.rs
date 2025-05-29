@@ -190,7 +190,7 @@ impl FileBanStorage {
         self.write_json_file(path, &data, &format!("audit logs file {}", path.display()))
             .await?;
 
-        debug!("Successfully created empty audit logs file");
+        debug!(log_type = "ban_system", "Successfully created empty audit logs file");
         Ok(())
     }
 
@@ -284,7 +284,7 @@ impl FileBanStorage {
         self.write_json_file(path, &data, &format!("audit logs file {}", path.display()))
             .await?;
 
-        debug!("Successfully appended batch of audit log entries");
+        debug!(log_type = "ban_system", "Successfully appended batch of audit log entries");
         Ok(())
     }
 
@@ -324,7 +324,7 @@ impl FileBanStorage {
         )
         .await?;
 
-        debug!("Successfully appended batch of audit log entries to combined storage");
+        debug!(log_type = "ban_system", "Successfully appended batch of audit log entries to combined storage");
         Ok(())
     }
 
