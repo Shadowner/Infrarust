@@ -16,3 +16,5 @@ target/
 #.idea/
 
 /server/
+bans.audit.json
+bans.json
