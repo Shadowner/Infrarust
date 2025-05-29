@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::error::ServerManagerError;
 use crate::monitor::ServerState;
@@ -23,7 +23,7 @@ pub struct ManagedProcess {
     pub _server_id: String,
     pub stdout_tx: broadcast::Sender<String>,
     pub stdin_tx: Sender<String>,
-    pub _handle: Arc<JoinHandle<Result<(), ServerManagerError>>>,
+    pub handle: Arc<JoinHandle<Result<(), ServerManagerError>>>,
     pub server_state: Arc<Mutex<ServerState>>,
 }
 
@@ -41,19 +41,51 @@ impl ProcessManager {
     }
 
     pub fn get_server_state(&self, server_id: &str) -> Result<ServerState, ServerManagerError> {
-        let processes = self.processes.lock().unwrap();
-        if let Some(process) = processes.get(server_id) {
-            let state = process.server_state.lock().unwrap();
-            return Ok(state.clone());
+        // Check running processes first
+        if let Ok(processes) = self.processes.lock() {
+            if let Some(process) = processes.get(server_id) {
+                if let Ok(state) = process.server_state.lock() {
+                    return Ok(state.clone());
+                }
+            }
         }
-        drop(processes);
 
-        let server_states = self.server_states.lock().unwrap();
-        if let Some(state) = server_states.get(server_id) {
-            return Ok(state.clone());
+        // Fall back to server states map
+        if let Ok(server_states) = self.server_states.lock() {
+            if let Some(state) = server_states.get(server_id) {
+                return Ok(state.clone());
+            }
         }
 
         Ok(ServerState::Stopped)
+    }
+
+    fn set_server_state(&self, server_id: &str, state: ServerState) {
+        // Update both the process state and the global state map
+        if let Ok(processes) = self.processes.lock() {
+            if let Some(process) = processes.get(server_id) {
+                if let Ok(mut process_state) = process.server_state.lock() {
+                    *process_state = state.clone();
+                    debug!("Updated process state for '{}' to {:?}", server_id, state);
+                }
+            }
+        }
+
+        if let Ok(mut server_states) = self.server_states.lock() {
+            server_states.insert(server_id.to_string(), state.clone());
+            debug!("Updated global state for '{}' to {:?}", server_id, state);
+        }
+    }
+
+    fn cleanup_process(&self, server_id: &str) {
+        debug!("Cleaning up process '{}'", server_id);
+
+        if let Ok(mut processes) = self.processes.lock() {
+            processes.remove(server_id);
+            debug!("Removed process '{}' from processes map", server_id);
+        }
+
+        self.set_server_state(server_id, ServerState::Stopped);
     }
 
     pub fn start_process(
@@ -64,8 +96,8 @@ impl ProcessManager {
         working_dir: Option<&str>,
         startup_string: Option<&str>,
     ) -> Result<ProcessOutput, ServerManagerError> {
-        {
-            let processes = self.processes.lock().unwrap();
+        // Check if process already exists
+        if let Ok(processes) = self.processes.lock() {
             if processes.contains_key(server_id) {
                 return Err(ServerManagerError::ProcessError(format!(
                     "Process for server {} is already running",
@@ -74,29 +106,15 @@ impl ProcessManager {
             }
         }
 
-        let (stdout_tx, _) = broadcast::channel::<String>(100); // Using broadcast instead of mpsc
+        // Create channels
+        let (stdout_tx, _) = broadcast::channel::<String>(100);
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(100);
-
         let (caller_tx, caller_rx) = mpsc::channel::<String>(100);
 
-        let stdout_tx_clone = stdout_tx.clone();
-        let caller_tx_clone = caller_tx.clone();
-        let server_id_string = server_id.to_string();
-        let startup_string_clone = startup_string.map(|s| s.to_string());
-        {
-            let mut server_states = self.server_states.lock().unwrap();
-            server_states.insert(server_id.to_string(), ServerState::Starting);
-            debug!(
-                "Set server state for '{}' to Starting in server_states map",
-                server_id
-            );
-        }
-        let server_state = Arc::new(Mutex::new(ServerState::Starting));
-        debug!(
-            "Created server_state Arc with initial value Starting for '{}'",
-            server_id
-        );
+        // Set initial state
+        self.set_server_state(server_id, ServerState::Starting);
 
+        // Build and spawn command
         let mut command_builder = Command::new(command);
         command_builder
             .args(args)
@@ -108,32 +126,29 @@ impl ProcessManager {
             command_builder.current_dir(dir);
         }
 
-        let mut child = match command_builder.spawn() {
-            Ok(child) => child,
-            Err(e) => {
-                // Update state to Stopped on spawn failure
-                debug!("Failed to spawn process for '{}': {}", server_id, e);
-                let mut server_states = self.server_states.lock().unwrap();
-                server_states.insert(server_id.to_string(), ServerState::Stopped);
-                debug!(
-                    "Set server state for '{}' back to Stopped due to spawn failure",
-                    server_id
-                );
-
-                return Err(ServerManagerError::ProcessError(format!(
-                    "Failed to start process: {}",
-                    e
-                )));
-            }
-        };
+        let mut child = command_builder.spawn().map_err(|e| {
+            self.set_server_state(server_id, ServerState::Stopped);
+            ServerManagerError::ProcessError(format!("Failed to start process: {}", e))
+        })?;
 
         debug!("Process for '{}' spawned successfully", server_id);
 
+        // Take stdio handles
         let mut stdin = child.stdin.take().expect("Failed to open stdin");
         let stdout = child.stdout.take().expect("Failed to open stdout");
         let stderr = child.stderr.take().expect("Failed to open stderr");
 
+        // Create shared state
+        let server_state = Arc::new(Mutex::new(ServerState::Starting));
+        let server_id_string = server_id.to_string();
+        let startup_string_clone = startup_string.map(|s| s.to_string());
+
+        // Stdout reader task
+        let stdout_tx_clone = stdout_tx.clone();
+        let caller_tx_clone = caller_tx.clone();
         let server_state_clone = server_state.clone();
+        let server_id_stdout = server_id_string.clone();
+
         let stdout_handle = tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
             let mut buffer = [0; 1024];
@@ -141,155 +156,137 @@ impl ProcessManager {
 
             loop {
                 match std::io::Read::read(&mut reader, &mut buffer) {
-                    Ok(0) => break, // EOF
+                    Ok(0) => {
+                        debug!("stdout EOF for '{}'", server_id_stdout);
+                        break;
+                    }
                     Ok(n) => {
                         let output = String::from_utf8_lossy(&buffer[0..n]).to_string();
 
+                        // Check for startup string
                         if !started {
                             if let Some(ref startup_str) = startup_string_clone {
                                 if output.contains(startup_str) {
-                                    // Server has started
-                                    let mut state = server_state_clone.lock().unwrap();
-                                    *state = ServerState::Running;
-                                    debug!(
-                                        "Detected startup string, set server_state to Running for '{}'",
-                                        server_id_string
-                                    );
-                                    started = true;
+                                    if let Ok(mut state) = server_state_clone.lock() {
+                                        *state = ServerState::Running;
+                                        debug!(
+                                            "Server '{}' started successfully",
+                                            server_id_stdout
+                                        );
+                                        started = true;
+                                    }
                                 }
                             }
                         }
 
+                        // Send output to channels (ignore errors if receivers are dropped)
                         let _ = stdout_tx_clone.send(output.clone());
-                        if (caller_tx_clone.send(output).await).is_err() {}
+                        let _ = caller_tx_clone.send(output).await;
                     }
                     Err(e) => {
-                        eprintln!("Error reading stdout: {}", e);
+                        error!("Error reading stdout for '{}': {}", server_id_stdout, e);
                         break;
                     }
                 }
             }
-            debug!("stdout reader task for '{}' exited", server_id_string);
-            Ok::<(), ServerManagerError>(())
+            debug!("stdout reader task for '{}' exited", server_id_stdout);
         });
 
+        // Stderr reader task
         let stdout_tx_stderr = stdout_tx.clone();
         let caller_tx_stderr = caller_tx.clone();
-        let server_id_stderr = server_id.to_string();
+        let server_id_stderr = server_id_string.clone();
 
-        // Read stderr and redirect to the same channel
         let stderr_handle = tokio::spawn(async move {
             let mut reader = BufReader::new(stderr);
             let mut buffer = [0; 1024];
 
             loop {
                 match std::io::Read::read(&mut reader, &mut buffer) {
-                    Ok(0) => break, // EOF
+                    Ok(0) => {
+                        debug!("stderr EOF for '{}'", server_id_stderr);
+                        break;
+                    }
                     Ok(n) => {
                         let output = String::from_utf8_lossy(&buffer[0..n]).to_string();
-                        // Send to both the broadcast channel and the initial caller's channel
                         let _ = stdout_tx_stderr.send(output.clone());
-                        if (caller_tx_stderr.send(output).await).is_err() {
-                            // The caller's receiver was dropped, but that's okay
-                        }
+                        let _ = caller_tx_stderr.send(output).await;
                     }
                     Err(e) => {
-                        eprintln!("Error reading stderr: {}", e);
+                        error!("Error reading stderr for '{}': {}", server_id_stderr, e);
                         break;
                     }
                 }
             }
             debug!("stderr reader task for '{}' exited", server_id_stderr);
-            Ok::<(), ServerManagerError>(())
         });
 
-        let server_id_stdin = server_id.to_string();
+        // Stdin writer task
+        let server_id_stdin = server_id_string.clone();
         let stdin_handle = tokio::spawn(async move {
             while let Some(input) = stdin_rx.recv().await {
                 if let Err(e) = stdin.write_all(input.as_bytes()) {
-                    eprintln!("Failed to write to stdin: {}", e);
+                    error!("Failed to write to stdin for '{}': {}", server_id_stdin, e);
                     break;
                 }
                 if let Err(e) = stdin.flush() {
-                    eprintln!("Failed to flush stdin: {}", e);
+                    error!("Failed to flush stdin for '{}': {}", server_id_stdin, e);
                     break;
                 }
             }
             debug!("stdin writer task for '{}' exited", server_id_stdin);
-            Ok::<(), ServerManagerError>(())
         });
 
-        let server_id_clone = server_id.to_string();
+        // Main process monitor task
         let processes_clone = self.processes.clone();
-        let server_state_clone = server_state.clone();
         let server_states_clone = self.server_states.clone();
+        let server_state_clone = server_state.clone();
+        let server_id_monitor = server_id_string.clone();
 
         let handle = tokio::spawn(async move {
-            debug!("Process monitor task started for '{}'", server_id_clone);
+            debug!("Process monitor started for '{}'", server_id_monitor);
 
+            // Wait for the child process to exit
+            let exit_status = child.wait();
             debug!(
-                "Process '{}' maintaining Starting state after spawn",
-                server_id_clone
+                "Process '{}' exited with status: {:?}",
+                server_id_monitor, exit_status
             );
 
-            let timeout_duration = tokio::time::Duration::from_secs(5);
-            debug!(
-                "Setting up timeout of {:?} for '{}' startup",
-                timeout_duration, server_id_clone
-            );
-            tokio::time::sleep(timeout_duration).await;
+            // Don't wait for the IO tasks - just abort them to prevent hanging
+            stdout_handle.abort();
+            stderr_handle.abort();
+            stdin_handle.abort();
 
-            debug!(
-                "Process '{}' exited, setting state to Stopped",
-                server_id_clone
-            );
-
-            let _ = stdout_handle.await;
-            let _ = stderr_handle.await;
-            let _ = stdin_handle.await;
-
-            {
-                debug!(
-                    "Updating process state for '{}' to Stopped after exit",
-                    server_id_clone
-                );
-                let mut state = server_state_clone.lock().unwrap();
+            // Update states immediately
+            if let Ok(mut state) = server_state_clone.lock() {
                 *state = ServerState::Stopped;
-
-                let mut states = server_states_clone.lock().unwrap();
-                debug!(
-                    "Updating server_states map for '{}' to Stopped after exit",
-                    server_id_clone
-                );
-                states.insert(server_id_clone.clone(), ServerState::Stopped);
             }
 
-            {
-                debug!(
-                    "Removing process '{}' from processes map after exit",
-                    server_id_clone
-                );
-                let mut processes = processes_clone.lock().unwrap();
-                processes.remove(&server_id_clone);
+            if let Ok(mut states) = server_states_clone.lock() {
+                states.insert(server_id_monitor.clone(), ServerState::Stopped);
             }
 
-            debug!(
-                "Process monitor task for '{}' completed successfully",
-                server_id_clone
-            );
+            // Remove from processes map
+            if let Ok(mut processes) = processes_clone.lock() {
+                processes.remove(&server_id_monitor);
+            }
+
+            debug!("Process monitor for '{}' completed", server_id_monitor);
             Ok(())
         });
 
+        // Create managed process
         let process = ManagedProcess {
-            _server_id: server_id.to_string(),
+            _server_id: server_id_string,
             stdout_tx,
             stdin_tx,
-            _handle: Arc::new(handle),
+            handle: Arc::new(handle),
             server_state,
         };
 
-        {
-            let mut processes = self.processes.lock().unwrap();
+        // Add to processes map
+        if let Ok(mut processes) = self.processes.lock() {
             processes.insert(server_id.to_string(), process);
             debug!("Added process '{}' to processes map", server_id);
         }
@@ -305,15 +302,20 @@ impl ProcessManager {
 impl ProcessProvider for ProcessManager {
     async fn write_stdin(&self, server_id: &str, input: &str) -> Result<(), ServerManagerError> {
         let stdin_tx = {
-            let processes = self.processes.lock().unwrap();
-            match processes.get(server_id) {
-                Some(process) => process.stdin_tx.clone(),
-                None => {
-                    return Err(ServerManagerError::ProcessError(format!(
-                        "No process found for server {}",
-                        server_id
-                    )));
+            if let Ok(processes) = self.processes.lock() {
+                match processes.get(server_id) {
+                    Some(process) => process.stdin_tx.clone(),
+                    None => {
+                        return Err(ServerManagerError::ProcessError(format!(
+                            "No process found for server {}",
+                            server_id
+                        )));
+                    }
                 }
+            } else {
+                return Err(ServerManagerError::ProcessError(
+                    "Failed to access processes map".to_string(),
+                ));
             }
         };
 
@@ -331,142 +333,83 @@ impl ProcessProvider for ProcessManager {
     }
 
     fn get_stdout_stream(&self, server_id: &str) -> Result<Receiver<String>, ServerManagerError> {
-        let processes = self.processes.lock().unwrap();
-        match processes.get(server_id) {
-            Some(process) => {
-                let (tx, rx) = mpsc::channel::<String>(100);
-                let mut broadcast_rx = process.stdout_tx.subscribe();
+        if let Ok(processes) = self.processes.lock() {
+            match processes.get(server_id) {
+                Some(process) => {
+                    let (tx, rx) = mpsc::channel::<String>(100);
+                    let mut broadcast_rx = process.stdout_tx.subscribe();
 
-                // Spawn a task to forward messages from the broadcast to the mpsc channel
-                tokio::spawn(async move {
-                    while let Ok(msg) = broadcast_rx.recv().await {
-                        if tx.send(msg).await.is_err() {
-                            break;
+                    tokio::spawn(async move {
+                        while let Ok(msg) = broadcast_rx.recv().await {
+                            if tx.send(msg).await.is_err() {
+                                break;
+                            }
                         }
-                    }
-                });
+                    });
 
-                Ok(rx)
+                    Ok(rx)
+                }
+                None => Err(ServerManagerError::ProcessError(format!(
+                    "No process found for server {}",
+                    server_id
+                ))),
             }
-            None => Err(ServerManagerError::ProcessError(format!(
-                "No process found for server {}",
-                server_id
-            ))),
+        } else {
+            Err(ServerManagerError::ProcessError(
+                "Failed to access processes map".to_string(),
+            ))
         }
     }
 
     fn is_process_running(&self, server_id: &str) -> Result<bool, ServerManagerError> {
-        let processes = self.processes.lock().unwrap();
-        let process_exists = processes.contains_key(server_id);
-
-        debug!(
-            "is_process_running check for '{}': exists in map: {}",
-            server_id, process_exists
-        );
-
-        if !process_exists {
-            debug!("Process '{}' not found in processes map", server_id);
-            return Ok(false);
-        }
-
-        let (handle_arc, server_state_arc) = if let Some(process) = processes.get(server_id) {
-            (process._handle.clone(), process.server_state.clone())
-        } else {
-            return Ok(false);
-        };
-
-        drop(processes);
-
-        let finished = handle_arc.is_finished();
-        debug!("Process '{}' task is_finished: {}", server_id, finished);
-
-        if finished {
-            debug!(
-                "Process '{}' confirmed terminated via handle.is_finished()",
-                server_id
-            );
-            // Use the helper function to handle the terminated process
-            handle_terminated_process(self, server_id);
-            return Ok(false);
-        }
-
-        let server_state = { server_state_arc.lock().unwrap().clone() };
-
-        if server_state == ServerState::Stopped {
-            debug!(
-                "Process '{}' marked as Stopped in internal state, considering terminated",
-                server_id
-            );
-            handle_terminated_process(self, server_id);
-            return Ok(false);
-        }
-
-        // This is a Linux-specific check that can detect zombie processes
-        #[cfg(target_os = "linux")]
-        {
-            let _process_id: Option<u32> = {
-                let processes = self.processes.lock().unwrap();
-                if let Some(_process) = processes.get(server_id) {
-                    // We don't store the OS Process ID currently, so we can't check
-                    // Adding this framework for future implementation
-                    None
-                } else {
-                    None
+        if let Ok(processes) = self.processes.lock() {
+            if let Some(process) = processes.get(server_id) {
+                // Check if the monitor task is still running
+                if process.handle.is_finished() {
+                    debug!("Process '{}' monitor task finished, cleaning up", server_id);
+                    drop(processes);
+                    self.cleanup_process(server_id);
+                    return Ok(false);
                 }
-            };
+
+                // Check the internal state
+                if let Ok(state) = process.server_state.lock() {
+                    let is_running = *state != ServerState::Stopped;
+                    debug!(
+                        "Process '{}' state check: {:?} (running: {})",
+                        server_id, *state, is_running
+                    );
+                    return Ok(is_running);
+                }
+            }
         }
 
-        debug!("Process '{}' is confirmed running", server_id);
-        Ok(true)
+        debug!("Process '{}' not found or not running", server_id);
+        Ok(false)
     }
 
     async fn stop_process(&self, server_id: &str) -> Result<(), ServerManagerError> {
-        {
-            let mut server_states = self.server_states.lock().unwrap();
-            server_states.insert(server_id.to_string(), ServerState::Stopped);
+        debug!("Stopping process '{}'", server_id);
+
+        // Get the handle to abort the monitor task
+        let handle_arc = {
+            if let Ok(processes) = self.processes.lock() {
+                processes.get(server_id).map(|p| p.handle.clone())
+            } else {
+                None
+            }
+        };
+
+        // Abort the monitor task if it exists
+        if let Some(handle) = handle_arc {
+            handle.abort();
+            debug!("Aborted monitor task for '{}'", server_id);
         }
 
-        {
-            let mut processes = self.processes.lock().unwrap();
-            if let Some(process) = processes.get(server_id) {
-                let mut state = process.server_state.lock().unwrap();
-                *state = ServerState::Stopped;
-            }
-
-            if !processes.contains_key(server_id) {
-                return Err(ServerManagerError::ProcessError(format!(
-                    "No process found for server {}",
-                    server_id
-                )));
-            }
-
-            processes.remove(server_id);
-        }
+        // Clean up the process
+        self.cleanup_process(server_id);
 
         Ok(())
-    }
-}
-
-fn handle_terminated_process(pm: &ProcessManager, server_id: &str) {
-    debug!("Process '{}' has terminated, updating state", server_id);
-    {
-        let mut states = pm.server_states.lock().unwrap();
-        states.insert(server_id.to_string(), ServerState::Stopped);
-        debug!("Updated server_states map for '{}' to Stopped", server_id);
-    }
-
-    {
-        let mut processes = pm.processes.lock().unwrap();
-        if let Some(process) = processes.get(server_id) {
-            let mut state = process.server_state.lock().unwrap();
-            *state = ServerState::Stopped;
-            debug!(
-                "Updated process internal state for '{}' to Stopped",
-                server_id
-            );
-        }
-        processes.remove(server_id);
-        debug!("Removed process '{}' from processes map", server_id);
     }
 }
 
