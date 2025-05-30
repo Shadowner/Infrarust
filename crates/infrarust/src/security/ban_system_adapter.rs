@@ -155,6 +155,16 @@ impl BanSystemAdapter {
         }
     }
 
+    pub async fn is_uuid_banned(&self, uuid: &str) -> Result<bool, FilterError> {
+        match self.ban_system.is_uuid_banned(uuid).await {
+            Ok(banned) => Ok(banned),
+            Err(e) => Err(FilterError::Other(format!(
+                "Failed to check if UUID is banned: {}",
+                e
+            ))),
+        }
+    }
+
     pub async fn get_ban_reason_for_ip(&self, ip: &IpAddr) -> Result<Option<String>, FilterError> {
         match self.ban_system.get_ban_reason_for_ip(ip).await {
             Ok(reason) => Ok(reason),
