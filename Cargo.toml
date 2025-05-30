@@ -48,6 +48,7 @@ num-bigint = "0.4.6"
 num-traits = "0.2.19"
 once_cell = "1.21.3"
 parking_lot = "0.12.3"
+regex = "1.11.1"
 xxhash-rust = { version = "0.8.15", features = ["xxh64"] }
 
 # Error Handling
