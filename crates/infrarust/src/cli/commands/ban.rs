@@ -99,6 +99,50 @@ impl BanCommand {
                 .to_string();
         }
 
+        let registry = self.shared.filter_registry();
+        let existing_ban_check = with_filter!(
+            registry,
+            "global_ban_system",
+            crate::security::BanSystemAdapter,
+            async |filter: &crate::security::BanSystemAdapter| {
+                if let Some(ip_addr) = ip {
+                    if filter.is_ip_banned(&ip_addr).await.unwrap_or(false) {
+                        return Ok(Some(format!("IP address {} is already banned", ip_addr)));
+                    }
+                }
+
+                if let Some(ref username_str) = username {
+                    if filter.is_username_banned(username_str).await.unwrap_or(false) {
+                        return Ok(Some(format!("Username {} is already banned", username_str)));
+                    }
+                }
+
+                if let Some(ref uuid_str) = uuid {
+                    if filter.is_uuid_banned(uuid_str).await.unwrap_or(false) {
+                        return Ok(Some(format!("UUID {} is already banned", uuid_str)));
+                    }
+                }
+
+                Ok(None)
+            }
+        );
+
+        match existing_ban_check {
+            Ok(Some(error_msg)) => {
+                return fmt::error(&error_msg).to_string();
+            }
+            Ok(None) => {
+                // No existing ban found, proceed with creating new ban
+            }
+            Err(FilterError::NotFound(_)) => {
+                return fmt::error("Ban filter is not registered. Enable ban filter in configuration.")
+                    .to_string();
+            }
+            Err(e) => {
+                return fmt::error(&format!("Failed to check existing bans: {}", e)).to_string();
+            }
+        }
+
         let ban_entry = BanEntry::new(
             ip,
             uuid.clone(),
@@ -108,7 +152,6 @@ impl BanCommand {
             "console".to_string(),
         );
 
-        let registry = self.shared.filter_registry();
         let result = with_filter!(
             registry,
             "global_ban_system",

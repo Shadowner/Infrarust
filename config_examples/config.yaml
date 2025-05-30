@@ -22,7 +22,9 @@ logging:
   show_target: true
   show_fields: true
   template: "{timestamp} [{level}] {message}"
-  
+
+  regex_filter: "^(Starting Infrarust proxy)" # Example regex to filter out the startup message
+
   # Configure different log levels for each type 
   log_types:
     # Core system logs - keep these visible
