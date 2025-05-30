@@ -1,5 +1,4 @@
 use std::str::FromStr;
-use std::sync::Arc;
 
 use infrarust_config::LoggingConfig;
 use infrarust_config::TelemetryConfig;
@@ -55,21 +54,34 @@ pub fn init_logging(config: &LoggingConfig) -> LoggingGuard {
     let infrarust_filter = InfrarustLogFilter::from_config(config)
         .with_log_type_storage(storage);
 
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .event_format(formatter)
-        .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
-            log_level,
-        ))
-        .with_filter(infrarust_filter.create_filter_fn());
+    let env_filter = tracing_subscriber::EnvFilter::from_str(&format!("infrarust={}", log_level))
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::from_default_env());
 
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::from_str(&format!("infrarust={}", log_level))
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::from_default_env()),
-        )
-        .with(log_type_layer) // Add the layer directly
-        .with(fmt_layer)
-        .init();
+    let has_regex_filter = infrarust_filter.get_regex_filter().is_some();
+
+    if has_regex_filter {
+        let regex_layer = infrarust_filter.create_regex_layer().unwrap();
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .event_format(formatter);
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(log_type_layer)
+            .with(regex_layer)
+            .with(fmt_layer)
+            .init();
+    } else {
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .event_format(formatter)
+            .with_filter(tracing_subscriber::filter::LevelFilter::from_level(log_level))
+            .with_filter(infrarust_filter.create_filter_fn());
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(log_type_layer)
+            .with(fmt_layer)
+            .init();
+    }
 
     LoggingGuard {}
 }

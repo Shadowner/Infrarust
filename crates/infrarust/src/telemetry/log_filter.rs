@@ -1,7 +1,12 @@
 use std::collections::HashMap;
-use tracing::{Level, Metadata};
-use tracing_subscriber::filter::FilterFn;
+use tracing::{Level, Metadata, Event, Subscriber};
+use tracing_subscriber::{
+    filter::FilterFn,
+    layer::{Context, Layer},
+    registry::LookupSpan,
+};
 use infrarust_config::{LoggingConfig, LogType};
+use regex::Regex;
 
 use super::log_type_layer::LogTypeStorage;
 
@@ -11,6 +16,7 @@ pub struct InfrarustLogFilter {
     min_level: Level,
     default_level: Level,
     log_type_storage: Option<LogTypeStorage>,
+    regex_filter: Option<Regex>,
 }
 
 impl InfrarustLogFilter {
@@ -33,12 +39,16 @@ impl InfrarustLogFilter {
 
         let default_level = min_level;
 
+        let regex_filter = config.regex_filter.as_ref()
+            .and_then(|pattern| Regex::new(pattern).ok());
+
         Self {
             type_levels,
             excluded_types: config.exclude_types.clone(),
             min_level,
             default_level,
             log_type_storage: None,
+            regex_filter,
         }
     }
 
@@ -65,6 +75,18 @@ impl InfrarustLogFilter {
         metadata.level() <= &std::cmp::max(self.default_level, self.min_level)
     }
 
+    pub fn should_log_with_message(&self, metadata: &Metadata<'_>, message: &str) -> bool {
+        if !self.should_log(metadata) {
+            return false;
+        }
+
+        if let Some(ref regex) = self.regex_filter {
+            return !regex.is_match(message);
+        }
+
+        true
+    }
+
     fn extract_log_type_from_storage(&self) -> Option<String> {
         if let Some(ref storage) = self.log_type_storage {
             storage.get_current_log_type()
@@ -77,6 +99,144 @@ impl InfrarustLogFilter {
         tracing_subscriber::filter::filter_fn(move |metadata| {
             self.should_log(metadata)
         })
+    }
+
+    pub fn create_regex_layer(self) -> Option<InfrarustRegexLayer> {
+        if self.regex_filter.is_some() {
+            Some(InfrarustRegexLayer::new(self))
+        } else {
+            None
+        }
+    }
+
+    pub fn get_regex_filter(&self) -> Option<&Regex> {
+        self.regex_filter.as_ref()
+    }
+
+    pub fn message_matches_regex(&self, message: &str) -> bool {
+        if let Some(ref regex) = self.regex_filter {
+            regex.is_match(message)
+        } else {
+            true
+        }
+    }
+}
+
+pub struct InfrarustRegexLayer {
+    filter: InfrarustLogFilter,
+}
+
+impl InfrarustRegexLayer {
+    pub fn new(filter: InfrarustLogFilter) -> Self {
+        Self { filter }
+    }
+
+    fn extract_event_message(&self, event: &Event<'_>) -> String {
+        use std::fmt::Write;
+        use tracing::field::{Field, Visit};
+
+        struct MessageCollector {
+            message: String,
+            fields: Vec<(String, String)>,
+        }
+
+        impl Visit for MessageCollector {
+            fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                let value_str = format!("{:?}", value);
+                if field.name() == "message" {
+                    self.message = value_str.trim_matches('"').to_string();
+                } else {
+                    self.fields.push((field.name().to_string(), value_str));
+                }
+            }
+
+            fn record_str(&mut self, field: &Field, value: &str) {
+                if field.name() == "message" {
+                    self.message = value.to_string();
+                } else {
+                    self.fields.push((field.name().to_string(), value.to_string()));
+                }
+            }
+
+            fn record_i64(&mut self, field: &Field, value: i64) {
+                let value_str = value.to_string();
+                if field.name() == "message" {
+                    self.message = value_str;
+                } else {
+                    self.fields.push((field.name().to_string(), value_str));
+                }
+            }
+
+            fn record_u64(&mut self, field: &Field, value: u64) {
+                let value_str = value.to_string();
+                if field.name() == "message" {
+                    self.message = value_str;
+                } else {
+                    self.fields.push((field.name().to_string(), value_str));
+                }
+            }
+
+            fn record_bool(&mut self, field: &Field, value: bool) {
+                let value_str = value.to_string();
+                if field.name() == "message" {
+                    self.message = value_str;
+                } else {
+                    self.fields.push((field.name().to_string(), value_str));
+                }
+            }
+
+            fn record_f64(&mut self, field: &Field, value: f64) {
+                let value_str = value.to_string();
+                if field.name() == "message" {
+                    self.message = value_str;
+                } else {
+                    self.fields.push((field.name().to_string(), value_str));
+                }
+            }
+        }
+
+        let mut collector = MessageCollector {
+            message: String::new(),
+            fields: Vec::new(),
+        };
+        
+        event.record(&mut collector);
+
+        // If we have a message field, use it, otherwise construct from all fields
+        if !collector.message.is_empty() {
+            collector.message
+        } else {
+            let mut full_message = String::new();
+            for (key, value) in collector.fields {
+                if !full_message.is_empty() {
+                    full_message.push(' ');
+                }
+                let _ = write!(full_message, "{}={}", key, value);
+            }
+            full_message
+        }
+    }
+}
+
+impl<S> Layer<S> for InfrarustRegexLayer
+where
+    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+{
+    fn enabled(&self, metadata: &Metadata<'_>, _ctx: Context<'_, S>) -> bool {
+        self.filter.should_log(metadata)
+    }
+
+    fn event_enabled(&self, event: &Event<'_>, ctx: Context<'_, S>) -> bool {
+        if !self.enabled(event.metadata(), ctx) {
+            return false;
+        }
+
+        if self.filter.regex_filter.is_some() {
+            let message = self.extract_event_message(event);
+            return self.filter.should_log_with_message(event.metadata(), &message);
+        }
+
+        true
     }
 }
 
@@ -215,4 +375,72 @@ mod tests {
         assert!(filter.excluded_types.contains(&"cache".to_string()));
     }
 
+    #[test]
+    fn test_regex_filter_compilation() {
+        let mut config = LoggingConfig::default();
+        
+        // Test valid regex
+        config.regex_filter = Some("error|warn".to_string());
+        let filter = InfrarustLogFilter::from_config(&config);
+        assert!(filter.regex_filter.is_some());
+        
+        // Test invalid regex
+        config.regex_filter = Some("[invalid regex".to_string());
+        let filter = InfrarustLogFilter::from_config(&config);
+        assert!(filter.regex_filter.is_none());
+        
+        // Test no regex
+        config.regex_filter = None;
+        let filter = InfrarustLogFilter::from_config(&config);
+        assert!(filter.regex_filter.is_none());
+    }
+
+
+    #[test]
+    fn test_regex_filtering_logic() {
+        let mut config = LoggingConfig::default();
+        config.regex_filter = Some("connection|error".to_string());
+        
+        let filter = InfrarustLogFilter::from_config(&config);
+        
+        // Test that regex filter exists
+        assert!(filter.regex_filter.is_some());
+        let regex = filter.regex_filter.as_ref().unwrap();
+        
+        // Test regex pattern matching
+        assert!(regex.is_match("new connection established"));
+        assert!(regex.is_match("fatal error occurred"));
+        assert!(!regex.is_match("debug message"));
+        assert!(!regex.is_match("info message"));
+    }
+
+    #[test]
+    fn test_regex_filter_edge_cases() {
+        let mut config = LoggingConfig::default();
+        
+        // Test empty regex pattern
+        config.regex_filter = Some("".to_string());
+        let filter = InfrarustLogFilter::from_config(&config);
+        assert!(filter.regex_filter.is_some());
+        let regex = filter.regex_filter.as_ref().unwrap();
+        assert!(regex.is_match("any message")); // Empty regex matches everything
+        
+        // Test regex with special characters
+        config.regex_filter = Some(r"\berror\b".to_string());
+        let filter = InfrarustLogFilter::from_config(&config);
+        assert!(filter.regex_filter.is_some());
+        let regex = filter.regex_filter.as_ref().unwrap();
+        assert!(regex.is_match("an error occurred"));
+        assert!(!regex.is_match("errorcode"));
+        
+        // Test case-insensitive regex
+        config.regex_filter = Some("(?i)ERROR|WARN".to_string());
+        let filter = InfrarustLogFilter::from_config(&config);
+        assert!(filter.regex_filter.is_some());
+        let regex = filter.regex_filter.as_ref().unwrap();
+        assert!(regex.is_match("error message"));
+        assert!(regex.is_match("ERROR MESSAGE"));
+        assert!(regex.is_match("Warning"));
+        assert!(!regex.is_match("info"));
+    }
 }

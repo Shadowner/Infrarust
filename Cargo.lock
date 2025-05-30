@@ -1132,6 +1132,7 @@ dependencies = [
  "parking_lot",
  "proxy-protocol",
  "rand 0.8.5",
+ "regex",
  "reqwest",
  "rsa",
  "rsa-der",
