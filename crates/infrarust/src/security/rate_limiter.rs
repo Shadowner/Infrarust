@@ -34,7 +34,10 @@ impl std::fmt::Debug for RateLimiter {
 impl RateLimiter {
     pub fn new(name: impl Into<String>, request_limit: u32, window_length: Duration) -> Self {
         let name_str = name.into();
-        debug!(log_type = LogType::Filter.as_str(), "Creating new rate limiter: {}", name_str);
+        debug!(
+            log_type = LogType::Filter.as_str(),
+            "Creating new rate limiter: {}", name_str
+        );
         Self {
             name: name_str,
             request_limit,
@@ -61,17 +64,17 @@ impl RateLimiter {
         let rate = counter.get_rate(&key, now);
 
         if rate >= f64::from(self.request_limit) {
-            debug!(log_type = LogType::Filter.as_str(), "Rate limit exceeded for key: {}", key);
+            debug!(
+                log_type = LogType::Filter.as_str(),
+                "Rate limit exceeded for key: {}", key
+            );
             return Err(io::Error::new(io::ErrorKind::Other, "Rate limit exceeded"));
         }
 
         counter.increment(&key, now);
         debug!(
             log_type = LogType::Filter.as_str(),
-            "Rate check passed for key: {} (current rate: {}/{})",
-            key,
-            rate,
-            self.request_limit
+            "Rate check passed for key: {} (current rate: {}/{})", key, rate, self.request_limit
         );
         Ok(())
     }

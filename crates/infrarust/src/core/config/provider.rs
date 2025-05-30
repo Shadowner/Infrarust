@@ -1,4 +1,7 @@
-use infrarust_config::{LogType, provider::{Provider, ProviderMessage}};
+use infrarust_config::{
+    LogType,
+    provider::{Provider, ProviderMessage},
+};
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
@@ -22,7 +25,10 @@ impl ConfigProvider {
         provider_receiver: Receiver<ProviderMessage>,
         provider_sender: Sender<ProviderMessage>,
     ) -> Self {
-        debug!(log_type = LogType::ConfigProvider.as_str(), "Creating new configuration provider");
+        debug!(
+            log_type = LogType::ConfigProvider.as_str(),
+            "Creating new configuration provider"
+        );
         Self {
             _providers: vec![],
             config_service,
@@ -33,9 +39,15 @@ impl ConfigProvider {
 
     #[instrument(skip(self))]
     pub async fn run(&mut self) {
-        let span = debug_span!("config_provider_run", log_type = LogType::ConfigProvider.as_str());
+        let span = debug_span!(
+            "config_provider_run",
+            log_type = LogType::ConfigProvider.as_str()
+        );
         async {
-            info!(log_type = LogType::ConfigProvider.as_str(), "Starting configuration provider");
+            info!(
+                log_type = LogType::ConfigProvider.as_str(),
+                "Starting configuration provider"
+            );
             while let Some(message) = self.provider_receiver.recv().await {
                 self.handle_message(message).await;
             }
@@ -63,12 +75,18 @@ impl ConfigProvider {
                 new_span.set_parent(_span.context());
 
                 async {
-                    debug!(log_type = LogType::ConfigProvider.as_str(), "Processing configuration update for: {}", key);
+                    debug!(
+                        log_type = LogType::ConfigProvider.as_str(),
+                        "Processing configuration update for: {}", key
+                    );
 
                     if let Some(config) = configuration {
                         self.config_service
                             .update_configurations(vec![*config])
-                            .instrument(debug_span!("config_provider: apply_config_update", log_type = LogType::ConfigProvider.as_str()))
+                            .instrument(debug_span!(
+                                "config_provider: apply_config_update",
+                                log_type = LogType::ConfigProvider.as_str()
+                            ))
                             .await;
                     } else {
                         self.config_service.remove_configuration(&key).await;
@@ -90,7 +108,10 @@ impl ConfigProvider {
                 error!(log_type = LogType::ConfigProvider.as_str(), error = %err, "Provider error received");
             }
             ProviderMessage::Shutdown => {
-                info!(log_type = LogType::ConfigProvider.as_str(), "Shutdown message received");
+                info!(
+                    log_type = LogType::ConfigProvider.as_str(),
+                    "Shutdown message received"
+                );
             }
         }
     }

@@ -35,21 +35,30 @@ impl BanStorageBackend for FileBanStorage {
                 if let Some(ip) = ban.ip {
                     let still_banned = self.index.is_ip_banned(&ip).await;
                     if still_banned {
-                        warn!(log_type = "ban_system", "IP {} still appears banned after removal!", ip);
+                        warn!(
+                            log_type = "ban_system",
+                            "IP {} still appears banned after removal!", ip
+                        );
                     }
                 }
 
                 if let Some(uuid) = &ban.uuid {
                     let still_banned = self.index.is_uuid_banned(uuid).await;
                     if still_banned {
-                        warn!(log_type = "ban_system", "UUID {} still appears banned after removal!", uuid);
+                        warn!(
+                            log_type = "ban_system",
+                            "UUID {} still appears banned after removal!", uuid
+                        );
                     }
                 }
 
                 if let Some(username) = &ban.username {
                     let still_banned = self.index.is_username_banned(username).await;
                     if still_banned {
-                        warn!(log_type = "ban_system", "Username {} still appears banned after removal!", username);
+                        warn!(
+                            log_type = "ban_system",
+                            "Username {} still appears banned after removal!", username
+                        );
                     }
                 }
 

@@ -79,7 +79,10 @@ impl BanStorage {
         let backend: Arc<dyn BanStorageBackend> = match config.storage_type {
             BanStorageType::Memory => {
                 info!("Initializing in-memory ban storage");
-                warn!(log_type = "ban_system", "In-memory ban storage is not persistent and will be lost on restart");
+                warn!(
+                    log_type = "ban_system",
+                    "In-memory ban storage is not persistent and will be lost on restart"
+                );
                 Arc::new(MemoryBanStorage::new())
             }
             BanStorageType::File => {
@@ -92,16 +95,22 @@ impl BanStorage {
                 info!("Initializing file-based ban storage at {}", path);
 
                 if let Some(audit_path_str) = &audit_path {
-                    if audit_path_str.is_empty() {                    info!(log_type = "ban_system",
+                    if audit_path_str.is_empty() {
+                        info!(
+                            log_type = "ban_system",
+                            "Audit logs will be stored alongside ban file with '.audit.json' extension"
+                        );
+                    } else {
+                        info!(
+                            log_type = "ban_system",
+                            "Audit logs will be stored at {}", audit_path_str
+                        );
+                    }
+                } else {
+                    info!(
+                        log_type = "ban_system",
                         "Audit logs will be stored alongside ban file with '.audit.json' extension"
                     );
-                } else {
-                    info!(log_type = "ban_system", "Audit logs will be stored at {}", audit_path_str);
-                }
-            } else {
-                info!(log_type = "ban_system",
-                    "Audit logs will be stored alongside ban file with '.audit.json' extension"
-                );
                 }
 
                 Arc::new(

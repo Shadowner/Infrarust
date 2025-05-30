@@ -28,18 +28,26 @@ impl BanSystemAdapter {
 
         debug!(
             log_type = LogType::BanSystem.as_str(),
-            "Creating BanSystemAdapter with file storage: {}",
-            file_path_str
+            "Creating BanSystemAdapter with file storage: {}", file_path_str
         );
 
         let path_obj = Path::new(&file_path_str);
         if let Some(parent) = path_obj.parent() {
             if !parent.exists() {
                 if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    error!(log_type = LogType::BanSystem.as_str(), "Failed to create ban directory {}: {}", parent.display(), e);
+                    error!(
+                        log_type = LogType::BanSystem.as_str(),
+                        "Failed to create ban directory {}: {}",
+                        parent.display(),
+                        e
+                    );
                     return Err(FilterError::IoError(e));
                 } else {
-                    debug!(log_type = LogType::BanSystem.as_str(), "Created ban directory: {}", parent.display());
+                    debug!(
+                        log_type = LogType::BanSystem.as_str(),
+                        "Created ban directory: {}",
+                        parent.display()
+                    );
                 }
             }
         }
@@ -56,7 +64,10 @@ impl BanSystemAdapter {
         let ban_system = match BanSystem::new(config).await {
             Ok(system) => Arc::new(system),
             Err(e) => {
-                error!(log_type = LogType::BanSystem.as_str(), "Failed to initialize ban system: {}", e);
+                error!(
+                    log_type = LogType::BanSystem.as_str(),
+                    "Failed to initialize ban system: {}", e
+                );
                 return Err(FilterError::Other(format!(
                     "Failed to initialize ban system: {}",
                     e
@@ -72,10 +83,18 @@ impl BanSystemAdapter {
         ip: &IpAddr,
         removed_by: &str,
     ) -> Result<bool, FilterError> {
-        debug!(log_type = LogType::BanSystem.as_str(), "Attempting to remove ban for IP: {}", ip);
+        debug!(
+            log_type = LogType::BanSystem.as_str(),
+            "Attempting to remove ban for IP: {}", ip
+        );
         match self.ban_system.remove_ban_by_ip(ip, removed_by).await {
             Ok(bans) => {
-                debug!(log_type = LogType::BanSystem.as_str(), "Successfully removed {} bans for IP: {}", bans.len(), ip);
+                debug!(
+                    log_type = LogType::BanSystem.as_str(),
+                    "Successfully removed {} bans for IP: {}",
+                    bans.len(),
+                    ip
+                );
                 // Force a refresh to ensure all cache entries are cleared
                 let _ = self.refresh().await;
                 Ok(!bans.is_empty())
@@ -90,7 +109,10 @@ impl BanSystemAdapter {
         uuid: &str,
         removed_by: &str,
     ) -> Result<bool, FilterError> {
-        debug!(log_type = LogType::BanSystem.as_str(), "Attempting to remove ban for UUID: {}", uuid);
+        debug!(
+            log_type = LogType::BanSystem.as_str(),
+            "Attempting to remove ban for UUID: {}", uuid
+        );
         match self.ban_system.remove_ban_by_uuid(uuid, removed_by).await {
             Ok(bans) => {
                 debug!(
@@ -113,7 +135,10 @@ impl BanSystemAdapter {
         username: &str,
         removed_by: &str,
     ) -> Result<bool, FilterError> {
-        debug!(log_type = LogType::BanSystem.as_str(), "Attempting to remove ban for username: {}", username);
+        debug!(
+            log_type = LogType::BanSystem.as_str(),
+            "Attempting to remove ban for username: {}", username
+        );
         match self
             .ban_system
             .remove_ban_by_username(username, removed_by)
@@ -216,7 +241,10 @@ impl BanSystemAdapter {
     }
 
     async fn refresh(&self) -> Result<(), FilterError> {
-        debug!(log_type = LogType::BanSystem.as_str(), "Refreshing ban system");
+        debug!(
+            log_type = LogType::BanSystem.as_str(),
+            "Refreshing ban system"
+        );
         match self.ban_system.clear_expired_bans().await {
             Ok(_) => Ok(()),
             Err(e) => Err(FilterError::Other(format!("Failed to refresh bans: {}", e))),
@@ -244,7 +272,10 @@ impl Filter for BanSystemAdapter {
                 }
                 Ok(false) => {}
                 Err(e) => {
-                    warn!(log_type = LogType::BanSystem.as_str(), "Error checking ban status: {}", e);
+                    warn!(
+                        log_type = LogType::BanSystem.as_str(),
+                        "Error checking ban status: {}", e
+                    );
                     // We want to continue processing even if there's an error
                 }
             }
@@ -291,7 +322,10 @@ impl Filter for BanSystemAdapter {
     }
 
     async fn refresh(&self) -> Result<(), FilterError> {
-        debug!(log_type = LogType::BanSystem.as_str(), "Refreshing ban system");
+        debug!(
+            log_type = LogType::BanSystem.as_str(),
+            "Refreshing ban system"
+        );
         match self.ban_system.clear_expired_bans().await {
             Ok(_) => Ok(()),
             Err(e) => Err(FilterError::Other(format!("Failed to refresh bans: {}", e))),

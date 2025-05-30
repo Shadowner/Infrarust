@@ -3,7 +3,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use infrarust_config::{InfrarustConfig, models::server::MotdConfig, LogType};
+use infrarust_config::{InfrarustConfig, LogType, models::server::MotdConfig};
 use infrarust_protocol::version::Version;
 use tracing::{debug, instrument};
 
@@ -56,23 +56,31 @@ impl StatusCache {
         let key = self.cache_key(server, req.protocol_version);
         debug!(
             log_type = LogType::Cache.as_str(),
-            "Status lookup for domain: {}, cache key: {}",
-            req.domain, key
+            "Status lookup for domain: {}, cache key: {}", req.domain, key
         );
 
         if let Some(cached) = self.check_cache(key) {
             return Ok(cached);
         }
 
-        debug!(log_type = LogType::Cache.as_str(), "Cache miss for {}, fetching from server", req.domain);
+        debug!(
+            log_type = LogType::Cache.as_str(),
+            "Cache miss for {}, fetching from server", req.domain
+        );
         match server.fetch_status_directly(req).await {
             Ok(response) => {
-                debug!(log_type = LogType::Cache.as_str(), "Server fetch successful for {}", req.domain);
+                debug!(
+                    log_type = LogType::Cache.as_str(),
+                    "Server fetch successful for {}", req.domain
+                );
                 self.update_cache(key, response.clone());
                 Ok(response)
             }
             Err(e) => {
-                debug!(log_type = LogType::Cache.as_str(), "Server fetch failed for {}: {}", req.domain, e);
+                debug!(
+                    log_type = LogType::Cache.as_str(),
+                    "Server fetch failed for {}: {}", req.domain, e
+                );
                 // Use the dedicated motd function
                 motd::handle_server_fetch_error(&server.config, &req.domain, &self.motd_config)
                     .await
@@ -83,10 +91,16 @@ impl StatusCache {
     fn check_cache(&self, key: u64) -> Option<Packet> {
         if let Some(entry) = self.entries.get(&key) {
             if entry.expires_at > SystemTime::now() {
-                debug!(log_type = LogType::Cache.as_str(), "Cache hit for key: {}", key);
+                debug!(
+                    log_type = LogType::Cache.as_str(),
+                    "Cache hit for key: {}", key
+                );
                 return Some(entry.response.clone());
             }
-            debug!(log_type = LogType::Cache.as_str(), "Cache entry expired for key: {}", key);
+            debug!(
+                log_type = LogType::Cache.as_str(),
+                "Cache entry expired for key: {}", key
+            );
         }
         None
     }
@@ -129,7 +143,11 @@ impl StatusCache {
             for key in expired_keys.iter() {
                 self.entries.remove(key);
             }
-            debug!(log_type = LogType::Cache.as_str(), "Removed {} expired entries from cache", expired_keys.len());
+            debug!(
+                log_type = LogType::Cache.as_str(),
+                "Removed {} expired entries from cache",
+                expired_keys.len()
+            );
         }
     }
 
@@ -153,8 +171,7 @@ impl StatusCache {
 
         debug!(
             log_type = LogType::Cache.as_str(),
-            "Removed {} oldest entries to stay within size limit",
-            remove_count
+            "Removed {} oldest entries to stay within size limit", remove_count
         );
     }
 
@@ -178,8 +195,7 @@ impl StatusCache {
         let key = self.cache_key(server, req.protocol_version);
         debug!(
             log_type = LogType::Cache.as_str(),
-            "Quick cache check for domain: {} (key: {})",
-            req.domain, key
+            "Quick cache check for domain: {} (key: {})", req.domain, key
         );
 
         Ok(self.check_cache(key))
@@ -192,7 +208,10 @@ impl StatusCache {
         response: Packet,
     ) {
         let key = self.cache_key(server, req.protocol_version);
-        debug!(log_type = LogType::Cache.as_str(), "Updating cache for domain: {} (key: {})", req.domain, key);
+        debug!(
+            log_type = LogType::Cache.as_str(),
+            "Updating cache for domain: {} (key: {})", req.domain, key
+        );
         self.update_cache(key, response);
     }
 }

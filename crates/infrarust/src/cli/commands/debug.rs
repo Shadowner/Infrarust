@@ -89,7 +89,8 @@ impl Command for DebugCommand {
 
     fn description(&self) -> &'static str {
         "Shows detailed debug information about active actors and tasks"
-    }    fn execute(&self, _args: Vec<String>) -> CommandFuture {
+    }
+    fn execute(&self, _args: Vec<String>) -> CommandFuture {
         debug!(log_type = "supervisor", "Executing debug command");
         let shared = self.shared.clone();
 

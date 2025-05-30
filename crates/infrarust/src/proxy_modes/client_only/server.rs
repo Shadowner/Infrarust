@@ -39,7 +39,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
     ) -> io::Result<()> {
         match message {
             MinecraftCommunication::Packet(data) => {
-                debug!(log_type = "proxy_mode", "Received packet from server: {:?}", data);
+                debug!(
+                    log_type = "proxy_mode",
+                    "Received packet from server: {:?}", data
+                );
                 actor
                     .server_request
                     .as_mut()
@@ -51,7 +54,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                     .await?;
             }
             MinecraftCommunication::Shutdown => {
-                debug!(log_type = "proxy_mode", "Shutting down server (Received Shutdown message)");
+                debug!(
+                    log_type = "proxy_mode",
+                    "Shutting down server (Received Shutdown message)"
+                );
                 let _ = actor
                     .server_request
                     .as_mut()
@@ -71,7 +77,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         &self,
         actor: &mut MinecraftServer<MinecraftCommunication<ClientOnlyMessage>>,
     ) -> io::Result<()> {
-        debug!(log_type = "proxy_mode", "Initializing server offline proxy mode");
+        debug!(
+            log_type = "proxy_mode",
+            "Initializing server offline proxy mode"
+        );
         let mut server_initialised = false;
 
         if let Some(request) = actor.server_request.as_mut() {
@@ -92,7 +101,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                             // Set Compression
                             let threshold = packet.decode::<VarInt>();
                             if threshold.is_err() {
-                                error!(log_type = "proxy_mode", "Failed to decode compression threshold");
+                                error!(
+                                    log_type = "proxy_mode",
+                                    "Failed to decode compression threshold"
+                                );
                                 return Err(io::Error::new(
                                     io::ErrorKind::InvalidData,
                                     "Failed to decode compression threshold",
@@ -101,7 +113,8 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                             let threshold = threshold.unwrap();
 
                             if threshold.0 >= 0 {
-                                debug!(log_type = "proxy_mode",
+                                debug!(
+                                    log_type = "proxy_mode",
                                     "Received compression config from server, threshold: {}",
                                     threshold.0
                                 );
@@ -116,7 +129,8 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                                 {
                                     Ok(_) => {}
                                     Err(e) => {
-                                        error!(log_type = "proxy_mode",
+                                        error!(
+                                            log_type = "proxy_mode",
                                             "Failed to send ServerThreshold message to client: {}",
                                             e
                                         );
@@ -126,11 +140,17 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                         }
                         packet if packet.id == 0x02 => {
                             // Ignore server's Login Success, we'll use ours
-                            debug!(log_type = "proxy_mode", "Received Login Success from server, Server Initialised");
+                            debug!(
+                                log_type = "proxy_mode",
+                                "Received Login Success from server, Server Initialised"
+                            );
                             server_initialised = true;
                         }
                         packet => {
-                            debug!(log_type = "proxy_mode", "Received packet {:?} from server", packet);
+                            debug!(
+                                log_type = "proxy_mode",
+                                "Received packet {:?} from server", packet
+                            );
                         }
                     }
                 }
@@ -144,7 +164,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                 {
                     Ok(_) => {}
                     Err(e) => {
-                        error!(log_type = "proxy_mode", "Failed to send ServerReady message to client: {}", e);
+                        error!(
+                            log_type = "proxy_mode",
+                            "Failed to send ServerReady message to client: {}", e
+                        );
                     }
                 };
 
@@ -153,11 +176,17 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                         MinecraftCommunication::CustomData(
                             ClientOnlyMessage::ClientLoginAknowledged(packet),
                         ) => {
-                            debug!(log_type = "proxy_mode", "Server received ClientLoginAknowledged message");
+                            debug!(
+                                log_type = "proxy_mode",
+                                "Server received ClientLoginAknowledged message"
+                            );
                             conn.write_packet(&packet).await?;
                         }
                         _ => {
-                            error!(log_type = "proxy_mode", "Unexpected message waited Aknowledge got : {:?}", msg);
+                            error!(
+                                log_type = "proxy_mode",
+                                "Unexpected message waited Aknowledge got : {:?}", msg
+                            );
                         }
                     }
                 }

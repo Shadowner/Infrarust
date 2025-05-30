@@ -1,4 +1,5 @@
 use aes::cipher::KeyIvInit;
+use infrarust_config::LogType;
 use infrarust_protocol::minecraft::java::sha1::generate_server_hash;
 use rand::RngCore;
 use rsa::{
@@ -8,7 +9,6 @@ use rsa::{
     traits::PublicKeyParts,
 };
 use tracing::{debug, error};
-use infrarust_config::LogType;
 
 pub type Aes128Cfb8Enc = cfb8::Encryptor<aes::Aes128>;
 pub type Aes128Cfb8Dec = cfb8::Decryptor<aes::Aes128>;
@@ -87,10 +87,24 @@ impl EncryptionState {
         public_key_bytes: Vec<u8>,
         verify_token: Vec<u8>,
     ) -> Self {
-        debug!(log_type = LogType::Authentication.as_str(), "Creating new encryption state with server data");
-        debug!(log_type = LogType::Authentication.as_str(), "Server ID: {}", server_id);
-        debug!(log_type = LogType::Authentication.as_str(), "Public key length: {}", public_key_bytes.len());
-        debug!(log_type = LogType::Authentication.as_str(), "Verify token length: {}", verify_token.len());
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Creating new encryption state with server data"
+        );
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Server ID: {}", server_id
+        );
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Public key length: {}",
+            public_key_bytes.len()
+        );
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Verify token length: {}",
+            verify_token.len()
+        );
 
         // Parse la clé publique du serveur
         let server_public_key = RsaPublicKey::from_public_key_der(&public_key_bytes)
@@ -209,7 +223,10 @@ impl EncryptionState {
 
     pub fn create_cipher(&self) -> Option<(Aes128Cfb8Enc, Aes128Cfb8Dec)> {
         if !self.has_shared_secret() || self.shared_secret.len() != 16 {
-            debug!(log_type = LogType::Authentication.as_str(), "Cannot create cipher: invalid shared secret");
+            debug!(
+                log_type = LogType::Authentication.as_str(),
+                "Cannot create cipher: invalid shared secret"
+            );
             return None;
         }
 
@@ -220,7 +237,10 @@ impl EncryptionState {
         let encrypt = Aes128Cfb8Enc::new(key.into(), iv.into());
         let decrypt = Aes128Cfb8Dec::new(key.into(), iv.into());
 
-        debug!(log_type = LogType::Authentication.as_str(), "Created AES-128-CFB8 ciphers with 16-byte key/IV");
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Created AES-128-CFB8 ciphers with 16-byte key/IV"
+        );
         Some((encrypt, decrypt))
     }
 
@@ -258,7 +278,10 @@ impl EncryptionState {
             return Err(RsaError::InvalidKeyLength(decrypted.len()));
         }
 
-        debug!(log_type = LogType::Authentication.as_str(), "Decrypted shared secret with correct length: 16 bytes");
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Decrypted shared secret with correct length: 16 bytes"
+        );
         Ok(decrypted)
     }
 
@@ -293,7 +316,10 @@ impl EncryptionState {
             );
             return;
         }
-        debug!(log_type = LogType::Authentication.as_str(), "Setting shared secret (16 bytes)");
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Setting shared secret (16 bytes)"
+        );
         self.shared_secret = secret;
     }
 }
