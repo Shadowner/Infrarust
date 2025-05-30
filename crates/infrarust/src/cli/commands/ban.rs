@@ -112,7 +112,11 @@ impl BanCommand {
                 }
 
                 if let Some(ref username_str) = username {
-                    if filter.is_username_banned(username_str).await.unwrap_or(false) {
+                    if filter
+                        .is_username_banned(username_str)
+                        .await
+                        .unwrap_or(false)
+                    {
                         return Ok(Some(format!("Username {} is already banned", username_str)));
                     }
                 }
@@ -135,8 +139,10 @@ impl BanCommand {
                 // No existing ban found, proceed with creating new ban
             }
             Err(FilterError::NotFound(_)) => {
-                return fmt::error("Ban filter is not registered. Enable ban filter in configuration.")
-                    .to_string();
+                return fmt::error(
+                    "Ban filter is not registered. Enable ban filter in configuration.",
+                )
+                .to_string();
             }
             Err(e) => {
                 return fmt::error(&format!("Failed to check existing bans: {}", e)).to_string();

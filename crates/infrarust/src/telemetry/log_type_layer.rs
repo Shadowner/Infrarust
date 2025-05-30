@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use tracing::{
-    field::{Field, Visit},
     Event, Id, Metadata, Subscriber,
+    field::{Field, Visit},
 };
 use tracing_subscriber::{
     layer::{Context, Layer},
@@ -14,6 +14,12 @@ use tracing_subscriber::{
 pub struct LogTypeStorage {
     span_log_types: Arc<RwLock<HashMap<Id, String>>>,
     current_event_log_type: Arc<RwLock<Option<String>>>,
+}
+
+impl Default for LogTypeStorage {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LogTypeStorage {
@@ -95,7 +101,8 @@ where
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         let mut visitor = LogTypeVisitor::new();
         event.record(&mut visitor);
-        self.storage.set_current_event_log_type(visitor.log_type.clone());
+        self.storage
+            .set_current_event_log_type(visitor.log_type.clone());
     }
 
     fn event_enabled(&self, event: &Event<'_>, _ctx: Context<'_, S>) -> bool {
@@ -164,7 +171,7 @@ impl Visit for LogTypeVisitor {
 mod tests {
     use super::*;
     use tracing::{debug, info_span};
-    use tracing_subscriber::{layer::SubscriberExt};
+    use tracing_subscriber::layer::SubscriberExt;
 
     #[test]
     fn test_log_type_layer_span() {
@@ -181,7 +188,12 @@ mod tests {
 
         // Check that the log_type was captured
         assert_eq!(
-            layer_clone.storage().span_log_types.read().unwrap().get(&span_id),
+            layer_clone
+                .storage()
+                .span_log_types
+                .read()
+                .unwrap()
+                .get(&span_id),
             Some(&"test_log_type".to_string())
         );
     }

@@ -66,11 +66,17 @@ impl Manager {
                 // Update tracking state based on actual server state
                 match status.state {
                     ServerState::Starting => {
-                        debug!(log_type = LogType::ServerManager.as_str(), "Server {} is in starting state", server_id);
+                        debug!(
+                            log_type = LogType::ServerManager.as_str(),
+                            "Server {} is in starting state", server_id
+                        );
                         self.mark_server_as_starting(server_id, manager_type).await;
                     }
                     _ => {
-                        debug!(log_type = LogType::ServerManager.as_str(), "Server {} is in state : {:?}", server_id, &manager_type);
+                        debug!(
+                            log_type = LogType::ServerManager.as_str(),
+                            "Server {} is in state : {:?}", server_id, &manager_type
+                        );
                         self.remove_server_from_starting(server_id, &manager_type)
                             .await;
                     }
@@ -88,11 +94,17 @@ impl Manager {
                 // Update tracking state based on actual server state
                 match status.state {
                     ServerState::Starting => {
-                        debug!(log_type = LogType::ServerManager.as_str(), "Server {} is in starting state", server_id);
+                        debug!(
+                            log_type = LogType::ServerManager.as_str(),
+                            "Server {} is in starting state", server_id
+                        );
                         self.mark_server_as_starting(server_id, manager_type).await;
                     }
                     _ => {
-                        debug!(log_type = LogType::ServerManager.as_str(), "Server {} is in state : {:?}", server_id, &manager_type);
+                        debug!(
+                            log_type = LogType::ServerManager.as_str(),
+                            "Server {} is in state : {:?}", server_id, &manager_type
+                        );
                         self.remove_server_from_starting(server_id, &manager_type)
                             .await;
                     }
@@ -109,15 +121,24 @@ impl Manager {
         server_id: &str,
         manager_type: ManagerType,
     ) -> Result<(), String> {
-        debug!(log_type = LogType::ServerManager.as_str(), "Preparing to start server: {}", server_id);
+        debug!(
+            log_type = LogType::ServerManager.as_str(),
+            "Preparing to start server: {}", server_id
+        );
 
         self.mark_server_as_starting(server_id, manager_type).await;
 
         if let Err(e) = self.remove_server_from_empty(server_id, manager_type).await {
-            debug!(log_type = LogType::ServerManager.as_str(), "Error removing server from empty list: {}", e);
+            debug!(
+                log_type = LogType::ServerManager.as_str(),
+                "Error removing server from empty list: {}", e
+            );
         }
 
-        debug!(log_type = LogType::ServerManager.as_str(), "Starting server process: {}", server_id);
+        debug!(
+            log_type = LogType::ServerManager.as_str(),
+            "Starting server process: {}", server_id
+        );
         match manager_type {
             ManagerType::Pterodactyl => self
                 .pterodactyl_manager
@@ -138,7 +159,10 @@ impl Manager {
         server_id: &str,
         manager_type: ManagerType,
     ) -> Result<(), String> {
-        debug!(log_type = LogType::ServerManager.as_str(), "Stopping server: {}", server_id);
+        debug!(
+            log_type = LogType::ServerManager.as_str(),
+            "Stopping server: {}", server_id
+        );
 
         //TODO: In the future let it being Dyn !
         let result = match manager_type {
@@ -177,7 +201,10 @@ impl Manager {
             let mut tasks = self.shutdown_tasks.lock().await;
             if let Some(tx) = tasks.remove(&(manager_type, server_id.to_string())) {
                 let _ = tx.send(());
-                debug!(log_type = LogType::ServerManager.as_str(), "Cancelled shutdown task for server: {}", server_id);
+                debug!(
+                    log_type = LogType::ServerManager.as_str(),
+                    "Cancelled shutdown task for server: {}", server_id
+                );
             }
         }
 
@@ -209,16 +236,25 @@ impl Manager {
     }
 
     pub async fn mark_server_as_starting(&self, server_id: &str, manager_type: ManagerType) {
-        debug!(log_type = LogType::ServerManager.as_str(), "Marking server {} as starting", server_id);
+        debug!(
+            log_type = LogType::ServerManager.as_str(),
+            "Marking server {} as starting", server_id
+        );
         {
             let mut starting_servers = self.starting_servers.lock().await;
             starting_servers.insert((manager_type, server_id.to_string()), Instant::now());
         }
-        debug!(log_type = LogType::ServerManager.as_str(), "Server {} marked as starting with timestamp", server_id);
+        debug!(
+            log_type = LogType::ServerManager.as_str(),
+            "Server {} marked as starting with timestamp", server_id
+        );
     }
 
     pub async fn remove_server_from_starting(&self, server_id: &str, manager_type: &ManagerType) {
-        debug!(log_type = LogType::ServerManager.as_str(), "Removing server {} from starting servers", server_id);
+        debug!(
+            log_type = LogType::ServerManager.as_str(),
+            "Removing server {} from starting servers", server_id
+        );
         // Use a separate scope to ensure the lock is released quickly
         {
             let mut starting_servers = self.starting_servers.lock().await;
@@ -242,8 +278,7 @@ impl Manager {
         if self.is_server_starting(server_id, &manager_type).await {
             debug!(
                 log_type = LogType::ServerManager.as_str(),
-                "Server {} is still starting, not marking as empty",
-                server_id
+                "Server {} is still starting, not marking as empty", server_id
             );
             return Ok(());
         }
@@ -254,7 +289,10 @@ impl Manager {
         };
 
         if already_marked_for_shutdown {
-            debug!(log_type = LogType::ServerManager.as_str(), "Server {} is already marked for shutdown", server_id);
+            debug!(
+                log_type = LogType::ServerManager.as_str(),
+                "Server {} is already marked for shutdown", server_id
+            );
             return Ok(());
         }
 
@@ -280,7 +318,10 @@ impl Manager {
         self.schedule_shutdown(server_id.to_string(), manager_type, timeout)
             .await;
 
-        debug!(log_type = LogType::ServerManager.as_str(), "Marking server {} as empty", server_id);
+        debug!(
+            log_type = LogType::ServerManager.as_str(),
+            "Marking server {} as empty", server_id
+        );
         Ok(())
     }
 
@@ -289,7 +330,10 @@ impl Manager {
         server_id: &str,
         manager_type: ManagerType,
     ) -> Result<(), String> {
-        debug!(log_type = LogType::ServerManager.as_str(), "Removing server {} from empty", server_id);
+        debug!(
+            log_type = LogType::ServerManager.as_str(),
+            "Removing server {} from empty", server_id
+        );
 
         {
             let mut time_since_empty = self.time_since_empty.lock().await;

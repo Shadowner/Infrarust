@@ -27,7 +27,10 @@ impl ShutdownController {
     pub async fn trigger_shutdown(&self, reason: &str) {
         let mut triggered = self.shutdown_triggered.lock().await;
         if *triggered {
-            debug!(log_type = "supervisor", "Shutdown already in progress, ignoring additional request");
+            debug!(
+                log_type = "supervisor",
+                "Shutdown already in progress, ignoring additional request"
+            );
             return;
         }
 

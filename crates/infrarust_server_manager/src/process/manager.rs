@@ -66,23 +66,35 @@ impl ProcessManager {
             if let Some(process) = processes.get(server_id) {
                 if let Ok(mut process_state) = process.server_state.lock() {
                     *process_state = state.clone();
-                    debug!(log_type = "server_manager", "Updated process state for '{}' to {:?}", server_id, state);
+                    debug!(
+                        log_type = "server_manager",
+                        "Updated process state for '{}' to {:?}", server_id, state
+                    );
                 }
             }
         }
 
         if let Ok(mut server_states) = self.server_states.lock() {
             server_states.insert(server_id.to_string(), state.clone());
-            debug!(log_type = "server_manager", "Updated global state for '{}' to {:?}", server_id, state);
+            debug!(
+                log_type = "server_manager",
+                "Updated global state for '{}' to {:?}", server_id, state
+            );
         }
     }
 
     fn cleanup_process(&self, server_id: &str) {
-        debug!(log_type = "server_manager", "Cleaning up process '{}'", server_id);
+        debug!(
+            log_type = "server_manager",
+            "Cleaning up process '{}'", server_id
+        );
 
         if let Ok(mut processes) = self.processes.lock() {
             processes.remove(server_id);
-            debug!(log_type = "server_manager", "Removed process '{}' from processes map", server_id);
+            debug!(
+                log_type = "server_manager",
+                "Removed process '{}' from processes map", server_id
+            );
         }
 
         self.set_server_state(server_id, ServerState::Stopped);
@@ -131,7 +143,10 @@ impl ProcessManager {
             ServerManagerError::ProcessError(format!("Failed to start process: {}", e))
         })?;
 
-        debug!(log_type = "server_manager", "Process for '{}' spawned successfully", server_id);
+        debug!(
+            log_type = "server_manager",
+            "Process for '{}' spawned successfully", server_id
+        );
 
         // Take stdio handles
         let mut stdin = child.stdin.take().expect("Failed to open stdin");
@@ -157,7 +172,10 @@ impl ProcessManager {
             loop {
                 match std::io::Read::read(&mut reader, &mut buffer) {
                     Ok(0) => {
-                        debug!(log_type = "server_manager", "stdout EOF for '{}'", server_id_stdout);
+                        debug!(
+                            log_type = "server_manager",
+                            "stdout EOF for '{}'", server_id_stdout
+                        );
                         break;
                     }
                     Ok(n) => {
@@ -184,12 +202,18 @@ impl ProcessManager {
                         let _ = caller_tx_clone.send(output).await;
                     }
                     Err(e) => {
-                        error!(log_type = "server_manager", "Error reading stdout for '{}': {}", server_id_stdout, e);
+                        error!(
+                            log_type = "server_manager",
+                            "Error reading stdout for '{}': {}", server_id_stdout, e
+                        );
                         break;
                     }
                 }
             }
-            debug!(log_type = "server_manager", "stdout reader task for '{}' exited", server_id_stdout);
+            debug!(
+                log_type = "server_manager",
+                "stdout reader task for '{}' exited", server_id_stdout
+            );
         });
 
         // Stderr reader task
@@ -204,7 +228,10 @@ impl ProcessManager {
             loop {
                 match std::io::Read::read(&mut reader, &mut buffer) {
                     Ok(0) => {
-                        debug!(log_type = "server_manager", "stderr EOF for '{}'", server_id_stderr);
+                        debug!(
+                            log_type = "server_manager",
+                            "stderr EOF for '{}'", server_id_stderr
+                        );
                         break;
                     }
                     Ok(n) => {
@@ -213,12 +240,18 @@ impl ProcessManager {
                         let _ = caller_tx_stderr.send(output).await;
                     }
                     Err(e) => {
-                        error!(log_type = "server_manager", "Error reading stderr for '{}': {}", server_id_stderr, e);
+                        error!(
+                            log_type = "server_manager",
+                            "Error reading stderr for '{}': {}", server_id_stderr, e
+                        );
                         break;
                     }
                 }
             }
-            debug!(log_type = "server_manager", "stderr reader task for '{}' exited", server_id_stderr);
+            debug!(
+                log_type = "server_manager",
+                "stderr reader task for '{}' exited", server_id_stderr
+            );
         });
 
         // Stdin writer task
@@ -226,15 +259,24 @@ impl ProcessManager {
         let stdin_handle = tokio::spawn(async move {
             while let Some(input) = stdin_rx.recv().await {
                 if let Err(e) = stdin.write_all(input.as_bytes()) {
-                    error!(log_type = "server_manager", "Failed to write to stdin for '{}': {}", server_id_stdin, e);
+                    error!(
+                        log_type = "server_manager",
+                        "Failed to write to stdin for '{}': {}", server_id_stdin, e
+                    );
                     break;
                 }
                 if let Err(e) = stdin.flush() {
-                    error!(log_type = "server_manager", "Failed to flush stdin for '{}': {}", server_id_stdin, e);
+                    error!(
+                        log_type = "server_manager",
+                        "Failed to flush stdin for '{}': {}", server_id_stdin, e
+                    );
                     break;
                 }
             }
-            debug!(log_type = "server_manager", "stdin writer task for '{}' exited", server_id_stdin);
+            debug!(
+                log_type = "server_manager",
+                "stdin writer task for '{}' exited", server_id_stdin
+            );
         });
 
         // Main process monitor task
@@ -244,7 +286,10 @@ impl ProcessManager {
         let server_id_monitor = server_id_string.clone();
 
         let handle = tokio::spawn(async move {
-            debug!(log_type = "server_manager", "Process monitor started for '{}'", server_id_monitor);
+            debug!(
+                log_type = "server_manager",
+                "Process monitor started for '{}'", server_id_monitor
+            );
 
             // Wait for the child process to exit
             let exit_status = child.wait();
@@ -272,7 +317,10 @@ impl ProcessManager {
                 processes.remove(&server_id_monitor);
             }
 
-            debug!(log_type = "server_manager", "Process monitor for '{}' completed", server_id_monitor);
+            debug!(
+                log_type = "server_manager",
+                "Process monitor for '{}' completed", server_id_monitor
+            );
             Ok(())
         });
 
@@ -288,7 +336,10 @@ impl ProcessManager {
         // Add to processes map
         if let Ok(mut processes) = self.processes.lock() {
             processes.insert(server_id.to_string(), process);
-            debug!(log_type = "server_manager", "Added process '{}' to processes map", server_id);
+            debug!(
+                log_type = "server_manager",
+                "Added process '{}' to processes map", server_id
+            );
         }
 
         Ok(ProcessOutput {
@@ -366,7 +417,10 @@ impl ProcessProvider for ProcessManager {
             if let Some(process) = processes.get(server_id) {
                 // Check if the monitor task is still running
                 if process.handle.is_finished() {
-                    debug!(log_type = "server_manager", "Process '{}' monitor task finished, cleaning up", server_id);
+                    debug!(
+                        log_type = "server_manager",
+                        "Process '{}' monitor task finished, cleaning up", server_id
+                    );
                     drop(processes);
                     self.cleanup_process(server_id);
                     return Ok(false);
@@ -384,7 +438,10 @@ impl ProcessProvider for ProcessManager {
             }
         }
 
-        debug!(log_type = "server_manager", "Process '{}' not found or not running", server_id);
+        debug!(
+            log_type = "server_manager",
+            "Process '{}' not found or not running", server_id
+        );
         Ok(false)
     }
 

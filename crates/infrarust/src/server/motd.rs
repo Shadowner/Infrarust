@@ -1,6 +1,10 @@
 use base64::{Engine as _, engine::general_purpose};
 use infrarust_config::{
-    models::{logging::LogType, server::{MotdConfig, ProxyModeEnum}}, ServerConfig
+    ServerConfig,
+    models::{
+        logging::LogType,
+        server::{MotdConfig, ProxyModeEnum},
+    },
 };
 use infrarust_protocol::{
     minecraft::java::status::clientbound_response::{
@@ -27,28 +31,43 @@ use crate::telemetry::TELEMETRY;
 
 pub fn parse_favicon(favicon: &str) -> Option<String> {
     if favicon.is_empty() {
-        debug!(log_type = LogType::Motd.as_str(), "Favicon is empty, returning None");
+        debug!(
+            log_type = LogType::Motd.as_str(),
+            "Favicon is empty, returning None"
+        );
         return None;
     }
 
     if favicon.starts_with("data:image/png;base64,") {
-        debug!(log_type = LogType::Motd.as_str(), "Favicon is already a base64 data URL");
+        debug!(
+            log_type = LogType::Motd.as_str(),
+            "Favicon is already a base64 data URL"
+        );
         return Some(favicon.to_string());
     }
 
     let image_data = if Path::new(favicon).is_absolute() {
-        debug!(log_type = LogType::Motd.as_str(), "Trying absolute path: {}", favicon);
+        debug!(
+            log_type = LogType::Motd.as_str(),
+            "Trying absolute path: {}", favicon
+        );
         fs::read(favicon).ok()
     } else {
         // relative path from current working directory
-        debug!(log_type = LogType::Motd.as_str(), "Trying relative path: {}", favicon);
+        debug!(
+            log_type = LogType::Motd.as_str(),
+            "Trying relative path: {}", favicon
+        );
         fs::read(favicon)
             .or_else(|_| {
                 // try from executable directory
                 if let Ok(exe_path) = std::env::current_exe() {
                     if let Some(exe_dir) = exe_path.parent() {
                         let absolute_path = exe_dir.join(favicon);
-                        debug!(log_type = LogType::Motd.as_str(), "Trying path relative to executable: {:?}", absolute_path);
+                        debug!(
+                            log_type = LogType::Motd.as_str(),
+                            "Trying path relative to executable: {:?}", absolute_path
+                        );
                         fs::read(absolute_path)
                     } else {
                         Err(std::io::Error::new(
@@ -68,11 +87,17 @@ pub fn parse_favicon(favicon: &str) -> Option<String> {
 
     if let Some(data) = image_data {
         let base64_data = general_purpose::STANDARD.encode(&data);
-        debug!(log_type = LogType::Motd.as_str(), "Loaded favicon from path: {}", favicon);
+        debug!(
+            log_type = LogType::Motd.as_str(),
+            "Loaded favicon from path: {}", favicon
+        );
         return Some(format!("data:image/png;base64,{}", base64_data));
     }
 
-    debug!(log_type = LogType::Motd.as_str(), "Could not load favicon from any path: {}", favicon);
+    debug!(
+        log_type = LogType::Motd.as_str(),
+        "Could not load favicon from any path: {}", favicon
+    );
     None
 }
 
@@ -99,7 +124,10 @@ pub fn generate_motd(
             .and_then(|f| parse_favicon(f))
             .or_else(|| {
                 if include_infrarust_favicon {
-                    debug!(log_type = LogType::Motd.as_str(), "Using default Infrarust favicon");
+                    debug!(
+                        log_type = LogType::Motd.as_str(),
+                        "Using default Infrarust favicon"
+                    );
                     Some(FAVICON.to_string())
                 } else {
                     None
@@ -351,19 +379,31 @@ pub async fn handle_server_fetch_error(
     domain: &str,
     motd_config: &MotdConfig,
 ) -> ProtocolResult<Packet> {
-    debug!(log_type = LogType::Motd.as_str(), "Generating fallback MOTD for {}", domain);
+    debug!(
+        log_type = LogType::Motd.as_str(),
+        "Generating fallback MOTD for {}", domain
+    );
 
     if let Some(motd) = &server_config.motds.online {
-        debug!(log_type = LogType::Motd.as_str(), "Using server-specific MOTD for {}", domain);
+        debug!(
+            log_type = LogType::Motd.as_str(),
+            "Using server-specific MOTD for {}", domain
+        );
         return generate_motd(motd, false);
     }
 
     if motd_config.enabled {
         if !motd_config.is_empty() {
-            debug!(log_type = LogType::Motd.as_str(), "Using global 'unreachable' MOTD");
+            debug!(
+                log_type = LogType::Motd.as_str(),
+                "Using global 'unreachable' MOTD"
+            );
             return generate_motd(motd_config, true);
         }
-        debug!(log_type = LogType::Motd.as_str(), "Using default 'unreachable' MOTD");
+        debug!(
+            log_type = LogType::Motd.as_str(),
+            "Using default 'unreachable' MOTD"
+        );
         return generate_motd(&MotdConfig::default_unreachable(), true);
     }
 

@@ -35,7 +35,10 @@ mod docker_enabled {
     impl DockerProvider {
         #[instrument(skip(sender), fields(docker_host = %config.docker_host), name = "docker_provider: new")]
         pub fn new(config: DockerProviderConfig, sender: Sender<ProviderMessage>) -> Self {
-            debug!(log_type = "config_provider", "Initializing Docker provider with config: {:?}", config);
+            debug!(
+                log_type = "config_provider",
+                "Initializing Docker provider with config: {:?}", config
+            );
             Self {
                 config,
                 docker: None,
@@ -47,7 +50,10 @@ mod docker_enabled {
 
         #[instrument(skip(self), name = "docker_provider: connect")]
         pub(super) async fn connect(&mut self) -> Result<(), bollard::errors::Error> {
-            debug!(log_type = "config_provider", "Connecting to Docker daemon: {}", self.config.docker_host);
+            debug!(
+                log_type = "config_provider",
+                "Connecting to Docker daemon: {}", self.config.docker_host
+            );
 
             let docker = if self.config.docker_host.starts_with("unix://") {
                 Docker::connect_with_socket_defaults()?
@@ -58,7 +64,10 @@ mod docker_enabled {
             };
 
             docker.ping().await?;
-            info!(log_type = "config_provider", "Successfully connected to Docker daemon");
+            info!(
+                log_type = "config_provider",
+                "Successfully connected to Docker daemon"
+            );
 
             self.docker = Some(docker);
             Ok(())
@@ -79,7 +88,11 @@ mod docker_enabled {
                 }))
                 .await?;
 
-            debug!(log_type = "config_provider", "Found {} running containers", containers.len());
+            debug!(
+                log_type = "config_provider",
+                "Found {} running containers",
+                containers.len()
+            );
 
             for container in containers {
                 if let Some(config) = self.process_container(&container).await {
@@ -289,7 +302,10 @@ mod docker_enabled {
             );
 
             let mut event_stream = docker.events(Some(options));
-            info!(log_type = "config_provider", "Watching Docker events for container lifecycle changes");
+            info!(
+                log_type = "config_provider",
+                "Watching Docker events for container lifecycle changes"
+            );
 
             while let Some(event) = event_stream.next().await {
                 match event {
@@ -307,7 +323,10 @@ mod docker_enabled {
                         }
                     }
                     Err(e) => {
-                        error!(log_type = "config_provider", "Error watching Docker events: {}", e);
+                        error!(
+                            log_type = "config_provider",
+                            "Error watching Docker events: {}", e
+                        );
                         return Err(e);
                     }
                 }
@@ -371,7 +390,10 @@ mod docker_enabled {
                                     }
                                 }
                             }
-                            Err(e) => error!(log_type = "config_provider", "Failed to inspect container {}: {}", container_id, e),
+                            Err(e) => error!(
+                                log_type = "config_provider",
+                                "Failed to inspect container {}: {}", container_id, e
+                            ),
                         }
                     }
                 }
@@ -414,7 +436,10 @@ mod docker_enabled {
             };
 
             if !should_send {
-                debug!(log_type = "config_provider", "Skipping update for {} (no changes)", key);
+                debug!(
+                    log_type = "config_provider",
+                    "Skipping update for {} (no changes)", key
+                );
                 return;
             }
 
@@ -431,7 +456,10 @@ mod docker_enabled {
             }
 
             if let Some(config) = config {
-                debug!(log_type = "config_provider", "Sending config update for {}", key);
+                debug!(
+                    log_type = "config_provider",
+                    "Sending config update for {}", key
+                );
                 if let Err(e) = self
                     .sender
                     .send(ProviderMessage::Update {
@@ -441,7 +469,10 @@ mod docker_enabled {
                     })
                     .await
                 {
-                    error!(log_type = "config_provider", "Failed to send container update: {}", e);
+                    error!(
+                        log_type = "config_provider",
+                        "Failed to send container update: {}", e
+                    );
                 }
             } else {
                 debug!(log_type = "config_provider", "Removing config for {}", key);
@@ -454,7 +485,10 @@ mod docker_enabled {
                     })
                     .await
                 {
-                    error!(log_type = "config_provider", "Failed to send container removal: {}", e);
+                    error!(
+                        log_type = "config_provider",
+                        "Failed to send container removal: {}", e
+                    );
                 }
             }
         }
@@ -503,13 +537,20 @@ impl Provider for DockerProvider {
 
         async {
             if let Err(e) = self.connect().await {
-                error!(log_type = "config_provider", "Failed to connect to Docker daemon: {}", e);
+                error!(
+                    log_type = "config_provider",
+                    "Failed to connect to Docker daemon: {}", e
+                );
                 return;
             }
 
             match self.load_containers().await {
                 Ok(configs) => {
-                    info!(log_type = "config_provider", "Loaded {} container configurations", configs.len());
+                    info!(
+                        log_type = "config_provider",
+                        "Loaded {} container configurations",
+                        configs.len()
+                    );
 
                     // Send initial configurations
                     let mut server_configs = HashMap::new();
@@ -523,12 +564,18 @@ impl Provider for DockerProvider {
                             .send(ProviderMessage::FirstInit(server_configs))
                             .await
                         {
-                            error!(log_type = "config_provider", "Failed to send initial configurations: {}", e);
+                            error!(
+                                log_type = "config_provider",
+                                "Failed to send initial configurations: {}", e
+                            );
                         }
                     }
                 }
                 Err(e) => {
-                    error!(log_type = "config_provider", "Failed to load containers: {}", e);
+                    error!(
+                        log_type = "config_provider",
+                        "Failed to load containers: {}", e
+                    );
                 }
             }
 
@@ -550,7 +597,10 @@ impl Provider for DockerProvider {
                         };
 
                         if let Err(e) = event_provider.watch_events().await {
-                            error!(log_type = "config_provider", "Docker event watcher failed: {}", e);
+                            error!(
+                                log_type = "config_provider",
+                                "Docker event watcher failed: {}", e
+                            );
                         }
                     }
                     .instrument(event_span),
@@ -627,7 +677,10 @@ impl DockerProvider {
 #[async_trait::async_trait]
 impl crate::provider::Provider for DockerProvider {
     async fn run(&mut self) {
-        tracing::error!(log_type = "config_provider", "Docker provider is not enabled. Enable the 'docker' feature to use it.");
+        tracing::error!(
+            log_type = "config_provider",
+            "Docker provider is not enabled. Enable the 'docker' feature to use it."
+        );
     }
 
     fn get_name(&self) -> String {

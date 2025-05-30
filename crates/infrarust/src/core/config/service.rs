@@ -20,7 +20,10 @@ impl Default for ConfigurationService {
 impl ConfigurationService {
     #[instrument(name = "create_config_service")]
     pub fn new() -> Self {
-        debug!(log_type = LogType::ConfigProvider.as_str(), "Creating new configuration service");
+        debug!(
+            log_type = LogType::ConfigProvider.as_str(),
+            "Creating new configuration service"
+        );
         Self {
             configurations: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -28,7 +31,10 @@ impl ConfigurationService {
 
     #[instrument(skip(self), fields(domain = %domain))]
     pub async fn find_server_by_domain(&self, domain: &str) -> Option<Arc<ServerConfig>> {
-        debug!(log_type = LogType::ConfigProvider.as_str(), "Finding server by domain");
+        debug!(
+            log_type = LogType::ConfigProvider.as_str(),
+            "Finding server by domain"
+        );
         let domain = domain.to_lowercase();
         let configs_snapshot = {
             let configs = self.configurations.read().await;
@@ -40,18 +46,29 @@ impl ConfigurationService {
                 .iter()
                 .any(|pattern| WildMatch::new(pattern).matches(&domain))
             {
-                debug!(log_type = LogType::ConfigProvider.as_str(), found = true, "Domain lookup result");
+                debug!(
+                    log_type = LogType::ConfigProvider.as_str(),
+                    found = true,
+                    "Domain lookup result"
+                );
                 return Some(Arc::clone(config));
             }
         }
 
-        debug!(log_type = LogType::ConfigProvider.as_str(), found = false, "Domain lookup result");
+        debug!(
+            log_type = LogType::ConfigProvider.as_str(),
+            found = false,
+            "Domain lookup result"
+        );
         None
     }
 
     #[instrument(skip(self), fields(ip = %ip))]
     pub async fn find_server_by_ip(&self, ip: &str) -> Option<Arc<ServerConfig>> {
-        debug!(log_type = LogType::ConfigProvider.as_str(), "Finding server by IP");
+        debug!(
+            log_type = LogType::ConfigProvider.as_str(),
+            "Finding server by IP"
+        );
         let configs_snapshot = {
             let configs = self.configurations.read().await;
             configs.clone()
@@ -61,7 +78,11 @@ impl ConfigurationService {
             .find(|(_, server)| server.addresses.contains(&ip.to_string()))
             .map(|(_, server)| Arc::clone(server));
 
-        debug!(log_type = LogType::ConfigProvider.as_str(), found = result.is_some(), "IP lookup result");
+        debug!(
+            log_type = LogType::ConfigProvider.as_str(),
+            found = result.is_some(),
+            "IP lookup result"
+        );
         result
     }
 
@@ -96,7 +117,10 @@ impl ConfigurationService {
                     } else {
                         added_configs.push(config_id.clone());
                     }
-                    debug!(log_type = LogType::ConfigProvider.as_str(), "Config ID: {:?}", config);
+                    debug!(
+                        log_type = LogType::ConfigProvider.as_str(),
+                        "Config ID: {:?}", config
+                    );
                     if let Some(manager_config) = &config.server_manager {
                         if let Some(local_config_provider) = &manager_config.local_provider {
                             if let Some(shared) = Gateway::get_shared_component() {
@@ -150,7 +174,10 @@ impl ConfigurationService {
 
             if !updated_configs.is_empty() {
                 if updated_configs.len() == 1 {
-                    info!(log_type = LogType::ConfigProvider.as_str(), "Updated server configuration: {}", updated_configs[0]);
+                    info!(
+                        log_type = LogType::ConfigProvider.as_str(),
+                        "Updated server configuration: {}", updated_configs[0]
+                    );
                 } else {
                     info!(
                         log_type = LogType::ConfigProvider.as_str(),
@@ -171,8 +198,7 @@ impl ConfigurationService {
 
         info!(
             log_type = LogType::ConfigProvider.as_str(),
-            "Configuration update - Removing server configuration: {}",
-            config_id
+            "Configuration update - Removing server configuration: {}", config_id
         );
 
         debug!(
@@ -201,9 +227,15 @@ impl ConfigurationService {
         }
 
         if config_lock.remove(config_id).is_some() {
-            debug!(log_type = LogType::ConfigProvider.as_str(), "Configuration removed successfully");
+            debug!(
+                log_type = LogType::ConfigProvider.as_str(),
+                "Configuration removed successfully"
+            );
         } else {
-            debug!(log_type = LogType::ConfigProvider.as_str(), "Configuration not found for removal");
+            debug!(
+                log_type = LogType::ConfigProvider.as_str(),
+                "Configuration not found for removal"
+            );
         }
     }
 }

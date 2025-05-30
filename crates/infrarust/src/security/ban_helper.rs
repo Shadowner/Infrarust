@@ -11,7 +11,10 @@ impl BanHelper {
         registry: &Arc<FilterRegistry>,
         username: &str,
     ) -> Option<String> {
-        debug!(log_type = LogType::BanSystem.as_str(), "Checking if username '{}' is banned", username);
+        debug!(
+            log_type = LogType::BanSystem.as_str(),
+            "Checking if username '{}' is banned", username
+        );
 
         let is_banned = matches!(
             with_filter_or!(

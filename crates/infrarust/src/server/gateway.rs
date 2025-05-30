@@ -1,7 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use infrarust_config::{models::{logging::LogType, server::ProxyModeEnum}, ServerConfig};
+use infrarust_config::{
+    ServerConfig,
+    models::{logging::LogType, server::ProxyModeEnum},
+};
 use infrarust_protocol::minecraft::java::login::ServerBoundLoginStart;
 use infrarust_server_manager::ServerState;
 use tokio::sync::{
@@ -40,7 +43,10 @@ pub struct Gateway {
 
 impl Gateway {
     pub fn new(shared: Arc<SharedComponent>) -> Self {
-        info!(log_type = LogType::Authentication.as_str(), "Initializing ServerGateway");
+        info!(
+            log_type = LogType::Authentication.as_str(),
+            "Initializing ServerGateway"
+        );
 
         let _ = SHARED_COMPONENT.set(shared.clone());
 
@@ -86,12 +92,18 @@ impl Gateway {
         while let Some(message) = receiver.recv().await {
             match message {
                 GatewayMessage::Shutdown => {
-                    debug!(log_type = LogType::Authentication.as_str(), "Gateway received shutdown message");
+                    debug!(
+                        log_type = LogType::Authentication.as_str(),
+                        "Gateway received shutdown message"
+                    );
                     break;
                 }
             }
         }
-        debug!(log_type = LogType::Authentication.as_str(), "Gateway run loop exited");
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Gateway run loop exited"
+        );
     }
 
     pub async fn update_configurations(&self, configurations: Vec<ServerConfig>) {
@@ -127,28 +139,45 @@ impl Gateway {
         );
 
         let username = if request.is_login {
-            debug!(log_type = LogType::Authentication.as_str(), "Processing login request");
+            debug!(
+                log_type = LogType::Authentication.as_str(),
+                "Processing login request"
+            );
             match Self::extract_username_from_request(&request) {
                 Ok(name) => {
-                    debug!(log_type = LogType::Authentication.as_str(), "Parsed login packet for user: {}", name);
-
-                    if let Some(reason) = self.is_username_banned(&name).await {                    warn!(
-                        log_type = "ban_system",
-                        "Player with banned username '{}' attempted to connect: {}",
-                        name, reason
+                    debug!(
+                        log_type = LogType::Authentication.as_str(),
+                        "Parsed login packet for user: {}", name
                     );
-                    if let Err(e) = client.close().await {
-                        warn!(log_type = LogType::TcpConnection.as_str(), "Error closing connection for banned username: {:?}", e);
-                    }
+
+                    if let Some(reason) = self.is_username_banned(&name).await {
+                        warn!(
+                            log_type = "ban_system",
+                            "Player with banned username '{}' attempted to connect: {}",
+                            name,
+                            reason
+                        );
+                        if let Err(e) = client.close().await {
+                            warn!(
+                                log_type = LogType::TcpConnection.as_str(),
+                                "Error closing connection for banned username: {:?}", e
+                            );
+                        }
                         return;
                     }
 
                     name
                 }
                 Err(e) => {
-                    warn!(log_type = LogType::TcpConnection.as_str(), "Failed to parse login packet: {:?}", e);
+                    warn!(
+                        log_type = LogType::TcpConnection.as_str(),
+                        "Failed to parse login packet: {:?}", e
+                    );
                     if let Err(e) = client.close().await {
-                        warn!(log_type = LogType::TcpConnection.as_str(), "Error closing connection: {:?}", e);
+                        warn!(
+                            log_type = LogType::TcpConnection.as_str(),
+                            "Error closing connection: {:?}", e
+                        );
                     }
                     return;
                 }
@@ -157,7 +186,10 @@ impl Gateway {
             String::new()
         };
 
-        debug!(log_type = LogType::TcpConnection.as_str(), "Looseking up server for domain: {}", request.domain);
+        debug!(
+            log_type = LogType::TcpConnection.as_str(),
+            "Looseking up server for domain: {}", request.domain
+        );
         let server_config = {
             let domain = request.domain.clone();
             self.find_server(&domain).await
@@ -170,14 +202,20 @@ impl Gateway {
         let proxy_mode = self.determine_proxy_mode(&request, &server_config);
 
         if proxy_mode == ProxyModeEnum::Status {
-            debug!(log_type = LogType::TcpConnection.as_str(), "Handling status request directly without creating actors");
+            debug!(
+                log_type = LogType::TcpConnection.as_str(),
+                "Handling status request directly without creating actors"
+            );
             self.handle_status_request_directly(client, request, server_config)
                 .await;
             return;
         }
 
         if server_config.server_manager.is_some() {
-            debug!(log_type = LogType::ServerManager.as_str(), "Server manager is present, checking status");
+            debug!(
+                log_type = LogType::ServerManager.as_str(),
+                "Server manager is present, checking status"
+            );
             let server_manager = self
                 .shared
                 .server_managers()
@@ -199,13 +237,15 @@ impl Gateway {
                 if manager.state == ServerState::Crashed {
                     warn!(
                         log_type = LogType::ServerManager.as_str(),
-                        "Server {} is crashed, using unreachable MOTD",
-                        server_config.config_id
+                        "Server {} is crashed, using unreachable MOTD", server_config.config_id
                     );
                 }
 
                 if manager.state == ServerState::Stopped {
-                    warn!(log_type = LogType::ServerManager.as_str(), "Trying to start Server {}", server_config.config_id);
+                    warn!(
+                        log_type = LogType::ServerManager.as_str(),
+                        "Trying to start Server {}", server_config.config_id
+                    );
                     let start_server = self
                         .shared
                         .server_managers()
@@ -215,15 +255,17 @@ impl Gateway {
                     if let Err(e) = start_server {
                         warn!(
                             log_type = LogType::ServerManager.as_str(),
-                            "Failed to start server {}: {:?}",
-                            server_config.config_id, e
+                            "Failed to start server {}: {:?}", server_config.config_id, e
                         );
                     }
                 }
 
                 if manager.state != ServerState::Running {
                     if let Err(e) = client.close().await {
-                        warn!(log_type = LogType::TcpConnection.as_str(), "Error closing connection: {:?}", e);
+                        warn!(
+                            log_type = LogType::TcpConnection.as_str(),
+                            "Error closing connection: {:?}", e
+                        );
                     }
                     return;
                 }
@@ -240,10 +282,16 @@ impl Gateway {
 
         let connecting_domain = request.domain.clone();
 
-        debug!(log_type = LogType::Authentication.as_str(), "Creating oneshot channel for server response");
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Creating oneshot channel for server response"
+        );
         let (oneshot_request_sender, oneshot_request_receiver) = oneshot::channel();
 
-        debug!(log_type = LogType::Authentication.as_str(), "Creating actor pair");
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Creating actor pair"
+        );
         let actor_pair = self
             .shared
             .actor_supervisor()
@@ -272,13 +320,19 @@ impl Gateway {
         let supervisor = self.shared.actor_supervisor().clone();
         let server_config_clone = server_config.clone();
 
-        debug!(log_type = LogType::Authentication.as_str(), "Spawning task to wake up server");
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Spawning task to wake up server"
+        );
         let is_login = request.is_login;
 
         let self_guard = self.clone();
         let task_handle = tokio::spawn(
             async move {
-                debug!(log_type = LogType::Authentication.as_str(), "About to call wake_up_server");
+                debug!(
+                    log_type = LogType::Authentication.as_str(),
+                    "About to call wake_up_server"
+                );
 
                 match tokio::time::timeout(
                     timeout_duration,
@@ -288,22 +342,37 @@ impl Gateway {
                 {
                     Ok(result) => match result {
                         Ok(response) => {
-                            debug!(log_type = LogType::ServerManager.as_str(), "Successfully received server response");
+                            debug!(
+                                log_type = LogType::ServerManager.as_str(),
+                                "Successfully received server response"
+                            );
                             if oneshot_request_sender.send(response).is_err() {
                                 if is_login {
-                                    warn!(log_type = LogType::ServerManager.as_str(), "Failed to send server response: receiver dropped");
+                                    warn!(
+                                        log_type = LogType::ServerManager.as_str(),
+                                        "Failed to send server response: receiver dropped"
+                                    );
                                     actor_pair
                                         .shutdown
                                         .store(true, std::sync::atomic::Ordering::SeqCst);
                                 } else {
-                                    debug!(log_type = LogType::ServerManager.as_str(), "Oneshot channel closed, normal for status requests");
+                                    debug!(
+                                        log_type = LogType::ServerManager.as_str(),
+                                        "Oneshot channel closed, normal for status requests"
+                                    );
                                 }
                             } else {
-                                debug!(log_type = LogType::Authentication.as_str(), "Successfully sent server response to channel");
+                                debug!(
+                                    log_type = LogType::Authentication.as_str(),
+                                    "Successfully sent server response to channel"
+                                );
                             }
                         }
                         Err(e) => {
-                            warn!(log_type = LogType::Authentication.as_str(), "Failed to request server: {:?}", e);
+                            warn!(
+                                log_type = LogType::Authentication.as_str(),
+                                "Failed to request server: {:?}", e
+                            );
                             if is_login {
                                 actor_pair
                                     .shutdown
@@ -312,7 +381,10 @@ impl Gateway {
                         }
                     },
                     Err(_) => {
-                        warn!(log_type = LogType::Authentication.as_str(), "Timeout while waiting for server wake-up");
+                        warn!(
+                            log_type = LogType::Authentication.as_str(),
+                            "Timeout while waiting for server wake-up"
+                        );
                         if is_login {
                             actor_pair
                                 .shutdown
@@ -321,7 +393,10 @@ impl Gateway {
                     }
                 }
 
-                debug!(log_type = LogType::Authentication.as_str(), "Server wake-up task completed");
+                debug!(
+                    log_type = LogType::Authentication.as_str(),
+                    "Server wake-up task completed"
+                );
             }
             .instrument(span),
         );
@@ -338,12 +413,18 @@ impl Gateway {
             );
         }
 
-        debug!(log_type = LogType::Authentication.as_str(), "Registering task with supervisor");
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Registering task with supervisor"
+        );
         supervisor
             .register_task(&server_config_clone.config_id, task_handle)
             .await;
 
-        debug!(log_type = LogType::Authentication.as_str(), "Client connection handling complete");
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Client connection handling complete"
+        );
     }
     #[instrument(name = "handle_status_request_directly", skip(self, client, request), fields(
         domain = %request.domain,
@@ -422,7 +503,10 @@ impl Gateway {
                                     generate_crashing_motd_response(request.domain, server_config)
                                 }
                                 ServerState::Running => {
-                                    debug!(log_type = LogType::Authentication.as_str(), "Server {} is running", server_config.config_id);
+                                    debug!(
+                                        log_type = LogType::Authentication.as_str(),
+                                        "Server {} is running", server_config.config_id
+                                    );
                                     self_clone
                                         .get_or_fetch_status_response(
                                             request.clone(),
@@ -431,11 +515,17 @@ impl Gateway {
                                         .await
                                 }
                                 ServerState::Starting => {
-                                    debug!(log_type = LogType::Authentication.as_str(), "Server {} is starting", server_config.config_id);
+                                    debug!(
+                                        log_type = LogType::Authentication.as_str(),
+                                        "Server {} is starting", server_config.config_id
+                                    );
                                     generate_starting_motd_response(request.domain, server_config)
                                 }
                                 ServerState::Stopped => {
-                                    debug!(log_type = LogType::Authentication.as_str(), "Server {} is stopped", server_config.config_id);
+                                    debug!(
+                                        log_type = LogType::Authentication.as_str(),
+                                        "Server {} is stopped", server_config.config_id
+                                    );
                                     generate_not_started_motd_response(
                                         request.domain,
                                         server_config,
@@ -449,7 +539,10 @@ impl Gateway {
                                     generate_crashing_motd_response(request.domain, server_config)
                                 }
                                 ServerState::Stopping => {
-                                    debug!(log_type = LogType::Authentication.as_str(), "Server {} is stopping", server_config.config_id);
+                                    debug!(
+                                        log_type = LogType::Authentication.as_str(),
+                                        "Server {} is stopping", server_config.config_id
+                                    );
                                     generate_stopping_motd_response(request.domain, server_config)
                                 }
                             }
@@ -466,9 +559,15 @@ impl Gateway {
             match response {
                 Ok(response) => {
                     if let Some(status_packet) = response.status_response {
-                        debug!(log_type = LogType::Authentication.as_str(), "Sending status packet directly to client");
+                        debug!(
+                            log_type = LogType::Authentication.as_str(),
+                            "Sending status packet directly to client"
+                        );
                         if let Err(e) = client.write_packet(&status_packet).await {
-                            warn!(log_type = LogType::Authentication.as_str(), "Failed to send status packet to client: {:?}", e);
+                            warn!(
+                                log_type = LogType::Authentication.as_str(),
+                                "Failed to send status packet to client: {:?}", e
+                            );
                         }
 
                         // Wait briefly for potential ping packet
@@ -480,27 +579,45 @@ impl Gateway {
                         {
                             Ok(Ok(PossibleReadValue::Packet(ping_packet))) => {
                                 // If we got a ping packet, echo it back
-                                debug!(log_type = LogType::Authentication.as_str(), "Received ping packet, echoing back");
+                                debug!(
+                                    log_type = LogType::Authentication.as_str(),
+                                    "Received ping packet, echoing back"
+                                );
                                 if let Err(e) = client.write_packet(&ping_packet).await {
-                                    debug!(log_type = LogType::Authentication.as_str(), "Failed to send ping response: {:?}", e);
+                                    debug!(
+                                        log_type = LogType::Authentication.as_str(),
+                                        "Failed to send ping response: {:?}", e
+                                    );
                                 }
                             }
                             _ => {
-                                debug!(log_type = LogType::Authentication.as_str(), "No ping packet received or connection closed");
+                                debug!(
+                                    log_type = LogType::Authentication.as_str(),
+                                    "No ping packet received or connection closed"
+                                );
                             }
                         }
                     } else {
-                        warn!(log_type = LogType::Authentication.as_str(), "No status response available for the request");
+                        warn!(
+                            log_type = LogType::Authentication.as_str(),
+                            "No status response available for the request"
+                        );
                     }
                 }
                 Err(e) => {
-                    warn!(log_type = LogType::Authentication.as_str(), "Failed to get status response: {:?}", e);
+                    warn!(
+                        log_type = LogType::Authentication.as_str(),
+                        "Failed to get status response: {:?}", e
+                    );
                 }
             };
 
             // Always close the connection when done
             if let Err(e) = client.close().await {
-                warn!(log_type = LogType::Authentication.as_str(), "Error closing connection after status response: {:?}", e);
+                warn!(
+                    log_type = LogType::Authentication.as_str(),
+                    "Error closing connection after status response: {:?}", e
+                );
             }
         });
     }
@@ -514,7 +631,10 @@ impl Gateway {
         let tmp_server = match Server::new(server_config.clone()) {
             Ok(s) => s,
             Err(e) => {
-                error!(log_type = LogType::Authentication.as_str(), "Failed to create server instance: {}", e);
+                error!(
+                    log_type = LogType::Authentication.as_str(),
+                    "Failed to create server instance: {}", e
+                );
                 return self.generate_unreachable_motd_response(req.domain, server_config);
             }
         };
@@ -535,7 +655,10 @@ impl Gateway {
         }
 
         if server_config.motds.online.is_some() {
-            debug!(log_type = LogType::Authentication.as_str(), "Using online MOTD for {}", req.domain);
+            debug!(
+                log_type = LogType::Authentication.as_str(),
+                "Using online MOTD for {}", req.domain
+            );
             return motd::generate_online_motd_response(req.domain, server_config);
         }
 
@@ -573,7 +696,10 @@ impl Gateway {
                             Ok(packet)
                         }
                         Err(e) => {
-                            debug!(log_type = LogType::Authentication.as_str(), "Status fetch failed: {}. Using unreachable MOTD", e);
+                            debug!(
+                                log_type = LogType::Authentication.as_str(),
+                                "Status fetch failed: {}. Using unreachable MOTD", e
+                            );
                             // Get the error MOTD packet
                             let motd_response = self_clone.generate_unreachable_motd_response(
                                 req_clone.domain.clone(),
@@ -623,7 +749,10 @@ impl Gateway {
             }
         } else {
             // This should never happen, but if it does, fall back to the original implementation
-            debug!(log_type = LogType::Authentication.as_str(), "No receiver found for pending request - falling back to direct fetch");
+            debug!(
+                log_type = LogType::Authentication.as_str(),
+                "No receiver found for pending request - falling back to direct fetch"
+            );
             self.handle_status_request(&req, &tmp_server, server_config)
                 .await
         }
@@ -631,13 +760,20 @@ impl Gateway {
 
     #[instrument(skip(self), fields(domain = %domain), level = "debug")]
     async fn find_server(&self, domain: &str) -> Option<Arc<ServerConfig>> {
-        debug!(log_type = LogType::Authentication.as_str(), "Finding server by domain: {}", domain);
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Finding server by domain: {}", domain
+        );
         let configs = self
             .shared
             .configuration_service()
             .get_all_configurations()
             .await;
-        debug!(log_type = LogType::Authentication.as_str(), "Got {} total server configurations", configs.len());
+        debug!(
+            log_type = LogType::Authentication.as_str(),
+            "Got {} total server configurations",
+            configs.len()
+        );
 
         let result = self
             .shared
@@ -652,9 +788,15 @@ impl Gateway {
         );
 
         if result.is_some() {
-            debug!(log_type = LogType::Authentication.as_str(), "Found server for domain {}", domain);
+            debug!(
+                log_type = LogType::Authentication.as_str(),
+                "Found server for domain {}", domain
+            );
         } else {
-            debug!(log_type = LogType::Authentication.as_str(), "No server found for domain {}", domain);
+            debug!(
+                log_type = LogType::Authentication.as_str(),
+                "No server found for domain {}", domain
+            );
         }
 
         result

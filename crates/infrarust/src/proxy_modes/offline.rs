@@ -34,7 +34,10 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                 actor.conn.write_packet(&data).await?;
             }
             MinecraftCommunication::Shutdown => {
-                debug!(log_type = "proxy_mode", "Shutting down client (Received Shutdown message)");
+                debug!(
+                    log_type = "proxy_mode",
+                    "Shutting down client (Received Shutdown message)"
+                );
                 actor.conn.close().await?;
             }
             _ => {
@@ -63,7 +66,10 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         &self,
         _actor: &mut MinecraftClient<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
-        debug!(log_type = "proxy_mode", "Initializing client offline proxy mode");
+        debug!(
+            log_type = "proxy_mode",
+            "Initializing client offline proxy mode"
+        );
         Ok(())
     }
 }
@@ -112,7 +118,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                     .await?;
             }
             MinecraftCommunication::Shutdown => {
-                debug!(log_type = "proxy_mode", "Shutting down server (Received Shutdown message)");
+                debug!(
+                    log_type = "proxy_mode",
+                    "Shutting down server (Received Shutdown message)"
+                );
                 let _ = actor
                     .server_request
                     .as_mut()
@@ -135,7 +144,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         &self,
         actor: &mut MinecraftServer<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
-        debug!(log_type = "proxy_mode", "Initializing server offline proxy mode");
+        debug!(
+            log_type = "proxy_mode",
+            "Initializing server offline proxy mode"
+        );
 
         if let Some(server_request) = &mut actor.server_request {
             if let Some(server_conn) = &mut server_request.server_conn {
