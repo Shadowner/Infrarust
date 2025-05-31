@@ -71,7 +71,7 @@ motds:
     version: "1.20.1"        # Version Minecraft à afficher
     max_players: 100         # Nombre maximal de joueurs à afficher
     online_players: 0        # Nombre de joueurs en ligne à afficher
-    description: "Unknown server" # Description du serveur
+    text: "Unknown server" # Description du serveur
     favicon: "data:image/png;base64,..." # Icône du serveur (optionnel)
   unreachable:              # MOTD pour les serveurs inaccessibles
     # Mêmes options que 'unknown'
@@ -97,7 +97,7 @@ motd:
   version: "1.20.1"       # Peut être défini comme n'importe quel texte
   max_players: 100
   online_players: 0
-  description: "Bienvenue sur mon serveur !"
+  text: "Bienvenue sur mon serveur !"
   favicon: "data:image/png;base64,..."
 
 ### FONCTIONNALITÉS CI-DESSOUS IMPLÉMENTÉES MAIS PAS ENCORE SUPPORTÉES ###
@@ -191,7 +191,7 @@ motd:
   version: "1.20.1"        # Version du protocole à afficher
   max_players: 100         # Nombre maximal de joueurs
   online_players: 0        # Nombre actuel de joueurs
-  description: "Texte"     # Description du serveur
+  text: "Texte"     # Description du serveur
   favicon: "base64..."     # Icône du serveur (PNG encodé en base64)
 ```
 
