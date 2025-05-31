@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/infrarust*"]
 
 [workspace.package]
-version = "1.3.3"
+version = "1.4.0"
 edition = "2024"
 authors = ["Shadowner"]
 repository = "https://github.com/shadowner/infrarust"
@@ -47,7 +47,7 @@ lru = "0.14.0"
 num-bigint = "0.4.6"
 num-traits = "0.2.19"
 once_cell = "1.21.3"
-parking_lot = "0.12.3"
+parking_lot = "0.12.4"
 regex = "1.11.1"
 xxhash-rust = { version = "0.8.15", features = ["xxh64"] }
 
