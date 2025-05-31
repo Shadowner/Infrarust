@@ -18,7 +18,7 @@ pub struct ClientOnlyMode;
 pub enum ClientOnlyMessage {
     ClientReady(),
     ServerReady(),
-    ClientLoginAknowledged(Packet),
+    ClientLoginAcknowledged(Packet),
 
     ServerThreshold(VarInt),
 }

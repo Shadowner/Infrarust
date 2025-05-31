@@ -175,18 +175,18 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                 if let Some(msg) = actor.server_receiver.recv().await {
                     match msg {
                         MinecraftCommunication::CustomData(
-                            ClientOnlyMessage::ClientLoginAknowledged(packet),
+                            ClientOnlyMessage::ClientLoginAcknowledged(packet),
                         ) => {
                             debug!(
                                 log_type = LogType::ProxyMode.as_str(),
-                                "Server received ClientLoginAknowledged message"
+                                "Server received ClientLoginAcknowledged message"
                             );
                             conn.write_packet(&packet).await?;
                         }
                         _ => {
                             error!(
                                 log_type = LogType::ProxyMode.as_str(),
-                                "Unexpected message waited Aknowledge got : {:?}", msg
+                                "Unexpected message waited Acknowledged got : {:?}", msg
                             );
                         }
                     }
