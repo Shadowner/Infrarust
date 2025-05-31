@@ -336,7 +336,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         actor
             .server_sender
             .send(MinecraftCommunication::CustomData(
-                ClientOnlyMessage::ClientLoginAknowledged(login_aknowledged),
+                ClientOnlyMessage::ClientLoginAcknowledged(login_aknowledged),
             ))
             .await
             .unwrap();
