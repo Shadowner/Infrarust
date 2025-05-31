@@ -4,6 +4,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use infrarust_config::LogType;
 use infrarust_protocol::{
     minecraft::java::login::{
         ClientBoundEncryptionRequest, ServerBoundEncryptionResponse,
@@ -48,13 +49,16 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
             }
             MinecraftCommunication::Shutdown => {
                 debug!(
-                    log_type = "proxy_mode",
+                    log_type = LogType::ProxyMode.as_str(),
                     "Shutting down client (Received Shutdown message)"
                 );
                 actor.conn.close().await?;
             }
             _ => {
-                info!(log_type = "proxy_mode", "Unhandled message: {:?}", message);
+                info!(
+                    log_type = LogType::ProxyMode.as_str(),
+                    "Unhandled message: {:?}", message
+                );
             }
         }
         Ok(())
@@ -85,7 +89,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                 match msg {
                     MinecraftCommunication::CustomData(ClientOnlyMessage::ServerReady()) => {
                         debug!(
-                            log_type = "proxy_mode",
+                            log_type = LogType::ProxyMode.as_str(),
                             "Server Ready, waiting for Server Threshold"
                         );
                         server_initialised = true;
@@ -98,7 +102,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
             }
         }
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Server Initialised, Threshold: {}", threshold.0
         );
 
@@ -114,16 +118,16 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
 
         let _ = request_packet.encode(&enc_request);
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "P -> C: Sending encryption request"
         );
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Public key length: {}",
             enc_request.public_key.0.len()
         );
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Verify token length: {}",
             enc_request.verify_token.0.len()
         );
@@ -137,11 +141,11 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
 
         // 2. Wait and process client response
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Waiting for client encryption response"
         );
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Sending packet: {:?}", request_packet
         );
         actor.conn.write_packet(&request_packet).await?;
@@ -159,14 +163,14 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
 
         let enc_response = ServerBoundEncryptionResponse::try_from(&response)?;
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Received encryption response from client"
         );
 
         // 3. Decrypt and verify shared secret and token
         let shared_secret = encryption.decrypt_shared_secret(&enc_response.shared_secret.0)?;
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Decrypted shared secret length: {}, Raw Data: {:?}",
             shared_secret.len(),
             shared_secret
@@ -175,7 +179,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         // Verify shared secret length
         if shared_secret.len() != 16 {
             error!(
-                log_type = "proxy_mode",
+                log_type = LogType::ProxyMode.as_str(),
                 "Invalid shared secret length: {}",
                 shared_secret.len()
             );
@@ -196,7 +200,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
 
         // Enable encryption immediately after token verification
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Setting up encryption with shared secret"
         );
         encryption.set_shared_secret(shared_secret.clone());
@@ -205,7 +209,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         // 5. Verify authentication with Mojang
         let server_hash = encryption.compute_server_id_hash("");
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Generated server hash: {}", server_hash
         );
 
@@ -215,7 +219,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         );
 
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Verifying with Mojang API (URL: {})", url
         );
         let client = Client::new();
@@ -229,14 +233,14 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
 
         let status = auth_response.status();
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Mojang API response status: {}", status
         );
 
         let response = match status.is_success() && status.as_u16() == 200 {
             true => {
                 debug!(
-                    log_type = "proxy_mode",
+                    log_type = LogType::ProxyMode.as_str(),
                     "Authentication successful (200 OK)"
                 );
                 let response_body = auth_response.json::<MojangResponse>().await.map_err(|e| {
@@ -253,7 +257,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                     .await
                     .unwrap_or_else(|_| "Unknown error".to_string());
                 error!(
-                    log_type = "proxy_mode",
+                    log_type = LogType::ProxyMode.as_str(),
                     "Authentication failed: {} - {}", status, error_text
                 );
                 return Err(io::Error::new(
@@ -264,13 +268,13 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         };
 
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Successfully authenticated user: {} ({})", actor.username, response.id
         );
 
         if response.name != actor.username {
             error!(
-                log_type = "proxy_mode",
+                log_type = LogType::ProxyMode.as_str(),
                 "Username mismatch: {} != {}", response.name, actor.username
             );
             return Err(io::Error::new(
@@ -339,12 +343,12 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
 
         // Prepare Login Success packet but do not send it now
         info!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Succes Packet prepared for authenticated user: {}", actor.username
         );
 
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Initializing client offline proxy mode"
         );
         Ok(())

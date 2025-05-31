@@ -7,6 +7,7 @@ use crate::core::actors::server::MinecraftServer;
 use crate::core::{actors::client::MinecraftClient, event::MinecraftCommunication};
 use crate::network::connection::PossibleReadValue;
 use client_only::{ClientOnlyMessage, ClientOnlyMode};
+use infrarust_config::LogType;
 use offline::{OfflineMessage, OfflineMode};
 use passthrough::{PassthroughMessage, PassthroughMode};
 use status::StatusMessage;
@@ -61,7 +62,7 @@ pub fn get_passthrough_mode() -> (
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>>>,
 ) {
     debug!(
-        log_type = "proxy_mode",
+        log_type = LogType::ProxyMode.as_str(),
         "Creating new passthrough mode handler pair"
     );
     (Box::new(PassthroughMode), Box::new(PassthroughMode))
@@ -74,7 +75,7 @@ pub fn get_offline_mode() -> (
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>>>,
 ) {
     debug!(
-        log_type = "proxy_mode",
+        log_type = LogType::ProxyMode.as_str(),
         "Creating new offline mode handler pair"
     );
     (Box::new(OfflineMode), Box::new(OfflineMode))
@@ -87,7 +88,7 @@ pub fn get_client_only_mode() -> (
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>>>,
 ) {
     debug!(
-        log_type = "proxy_mode",
+        log_type = LogType::ProxyMode.as_str(),
         "Creating new client-only mode handler pair"
     );
     (Box::new(ClientOnlyMode), Box::new(ClientOnlyMode))
@@ -100,7 +101,7 @@ pub fn get_status_mode() -> (
     Box<dyn ServerProxyModeHandler<MinecraftCommunication<StatusMessage>>>,
 ) {
     debug!(
-        log_type = "proxy_mode",
+        log_type = LogType::ProxyMode.as_str(),
         "Creating new status mode handler pair"
     );
     (Box::new(status::StatusMode), Box::new(status::StatusMode))

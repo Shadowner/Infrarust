@@ -54,6 +54,7 @@ pub enum LogType {
     Telemetry,
     ConfigProvider,
     ProxyProtocol,
+    ProxyMode,
     Cache,
     Filter,
     Motd,
@@ -75,6 +76,7 @@ impl LogType {
             LogType::Cache => "cache",
             LogType::Filter => "filter",
             LogType::Motd => "motd",
+            LogType::ProxyMode => "proxy_mode",
             LogType::Custom(name) => name,
         }
     }
@@ -95,6 +97,7 @@ impl From<&str> for LogType {
             "cache" => LogType::Cache,
             "filter" => LogType::Filter,
             "motd" => LogType::Motd,
+            "proxy_mode" => LogType::ProxyMode,
             other => LogType::Custom(other.to_string()),
         }
     }
@@ -114,6 +117,7 @@ impl Default for LoggingConfig {
         default_log_types.insert("proxy_protocol".to_string(), "debug".to_string());
         default_log_types.insert("cache".to_string(), "debug".to_string());
         default_log_types.insert("filter".to_string(), "info".to_string());
+        default_log_types.insert("proxy_mode".to_string(), "info".to_string());
         default_log_types.insert("motd".to_string(), "debug".to_string());
 
         Self {

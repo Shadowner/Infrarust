@@ -4,6 +4,7 @@ use crate::core::actors::server::MinecraftServer;
 use crate::core::event::MinecraftCommunication;
 use crate::network::connection::PossibleReadValue;
 use async_trait::async_trait;
+use infrarust_config::LogType;
 use std::io::{self};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -27,10 +28,13 @@ impl ClientProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
                 actor.conn.write_packet(&data).await?;
             }
             MinecraftCommunication::Shutdown => {
-                debug!(log_type = "proxy_mode", "Status client received shutdown");
+                debug!(
+                    log_type = LogType::ProxyMode.as_str(),
+                    "Status client received shutdown"
+                );
                 if let Err(e) = actor.conn.close().await {
                     debug!(
-                        log_type = "proxy_mode",
+                        log_type = LogType::ProxyMode.as_str(),
                         "Error closing client connection: {:?}", e
                     );
                 }
@@ -55,7 +59,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
             }
             _ => {
                 debug!(
-                    log_type = "proxy_mode",
+                    log_type = LogType::ProxyMode.as_str(),
                     "Client disconnected in status mode"
                 );
                 // Gracefully handle disconnection - don't try to notify server
@@ -70,7 +74,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
         actor: &mut MinecraftClient<MinecraftCommunication<StatusMessage>>,
     ) -> io::Result<()> {
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Initializing status client handler"
         );
         Ok(())
@@ -120,7 +124,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
     ) -> io::Result<()> {
         if let Some(request) = &actor.server_request {
             debug!(
-                log_type = "proxy_mode",
+                log_type = LogType::ProxyMode.as_str(),
                 "Starting status mode for server request"
             );
 
@@ -133,13 +137,16 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
                     .is_err()
                 {
                     debug!(
-                        log_type = "proxy_mode",
+                        log_type = LogType::ProxyMode.as_str(),
                         "Client disconnected, cannot send status response"
                     );
                     return Ok(());
                 }
             } else {
-                warn!(log_type = "proxy_mode", "No status response available");
+                warn!(
+                    log_type = LogType::ProxyMode.as_str(),
+                    "No status response available"
+                );
                 return Ok(());
             }
 
@@ -149,7 +156,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
             match ping_result {
                 Ok(Some(MinecraftCommunication::Packet(packet))) => {
                     debug!(
-                        log_type = "proxy_mode",
+                        log_type = LogType::ProxyMode.as_str(),
                         "Received ping packet, sending back to client"
                     );
                     // Ignore error if client already disconnected
@@ -160,15 +167,21 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
                 }
                 Ok(Some(_)) => {
                     debug!(
-                        log_type = "proxy_mode",
+                        log_type = LogType::ProxyMode.as_str(),
                         "Received non-packet message from client"
                     );
                 }
                 Ok(None) => {
-                    debug!(log_type = "proxy_mode", "Server receiver channel closed");
+                    debug!(
+                        log_type = LogType::ProxyMode.as_str(),
+                        "Server receiver channel closed"
+                    );
                 }
                 Err(_) => {
-                    debug!(log_type = "proxy_mode", "Timeout waiting for ping packet");
+                    debug!(
+                        log_type = LogType::ProxyMode.as_str(),
+                        "Timeout waiting for ping packet"
+                    );
                 }
             }
 
@@ -178,12 +191,12 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
                 .send(MinecraftCommunication::Shutdown)
                 .await;
             debug!(
-                log_type = "proxy_mode",
+                log_type = LogType::ProxyMode.as_str(),
                 "Status response complete, status server actor shutting down"
             );
         } else {
             warn!(
-                log_type = "proxy_mode",
+                log_type = LogType::ProxyMode.as_str(),
                 "No server request available for status mode"
             );
         }
