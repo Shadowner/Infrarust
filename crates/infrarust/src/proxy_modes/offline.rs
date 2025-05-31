@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use infrarust_config::LogType;
 use std::io::{self};
 use tracing::{Instrument, debug, debug_span, error, info, instrument};
 
@@ -26,7 +27,10 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         match message {
             MinecraftCommunication::Packet(data) => {
                 if data.id == 0x03 && !actor.conn.is_compressing() {
-                    debug!(log_type = "proxy_mode", "Received Compression packet");
+                    debug!(
+                        log_type = LogType::ProxyMode.as_str(),
+                        "Received Compression packet"
+                    );
                     actor.conn.write_packet(&data).await?;
                     actor.conn.enable_compression(256);
                     return Ok(());
@@ -35,13 +39,13 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
             }
             MinecraftCommunication::Shutdown => {
                 debug!(
-                    log_type = "proxy_mode",
+                    log_type = LogType::ProxyMode.as_str(),
                     "Shutting down client (Received Shutdown message)"
                 );
                 actor.conn.close().await?;
             }
             _ => {
-                info!(log_type = "proxy_mode", "Unhandled message");
+                info!(log_type = LogType::ProxyMode.as_str(), "Unhandled message");
             }
         }
         Ok(())
@@ -67,7 +71,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         _actor: &mut MinecraftClient<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Initializing client offline proxy mode"
         );
         Ok(())
@@ -85,7 +89,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
             if let Some(server_conn) = &mut request.server_conn {
                 if let PossibleReadValue::Packet(data) = data {
                     if data.id == 0x03 && !server_conn.is_compressing() {
-                        debug!(log_type = "proxy_mode", "Received Compression packet srv");
+                        debug!(
+                            log_type = LogType::ProxyMode.as_str(),
+                            "Received Compression packet srv"
+                        );
                         server_conn.enable_compression(256);
                     }
 
@@ -106,7 +113,10 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
     ) -> io::Result<()> {
         match message {
             MinecraftCommunication::Packet(data) => {
-                debug!(log_type = "proxy_mode", "Received packet from server");
+                debug!(
+                    log_type = LogType::ProxyMode.as_str(),
+                    "Received packet from server"
+                );
                 actor
                     .server_request
                     .as_mut()
@@ -119,7 +129,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
             }
             MinecraftCommunication::Shutdown => {
                 debug!(
-                    log_type = "proxy_mode",
+                    log_type = LogType::ProxyMode.as_str(),
                     "Shutting down server (Received Shutdown message)"
                 );
                 let _ = actor
@@ -145,7 +155,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         actor: &mut MinecraftServer<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Initializing server offline proxy mode"
         );
 
@@ -161,10 +171,16 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                 .instrument(span)
                 .await?;
             } else {
-                error!(log_type = "proxy_mode", "Server connection is None");
+                error!(
+                    log_type = LogType::ProxyMode.as_str(),
+                    "Server connection is None"
+                );
             }
         } else {
-            error!(log_type = "proxy_mode", "Server request is None");
+            error!(
+                log_type = LogType::ProxyMode.as_str(),
+                "Server request is None"
+            );
         }
         Ok(())
     }

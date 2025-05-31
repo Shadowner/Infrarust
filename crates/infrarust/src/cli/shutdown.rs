@@ -1,5 +1,6 @@
 //! Shutdown coordination for graceful termination
 
+use infrarust_config::LogType;
 use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast};
 use tracing::{debug, info};
@@ -28,13 +29,16 @@ impl ShutdownController {
         let mut triggered = self.shutdown_triggered.lock().await;
         if *triggered {
             debug!(
-                log_type = "supervisor",
+                log_type = LogType::Supervisor.as_str(),
                 "Shutdown already in progress, ignoring additional request"
             );
             return;
         }
 
-        info!(log_type = "supervisor", "Initiating shutdown: {}", reason);
+        info!(
+            log_type = LogType::Supervisor.as_str(),
+            "Initiating shutdown: {}", reason
+        );
         *triggered = true;
 
         let tx = self.tx.lock().await;

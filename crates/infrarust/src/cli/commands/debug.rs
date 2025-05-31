@@ -4,6 +4,7 @@ use std::time::Duration;
 use crate::cli::command::{Command, CommandFuture};
 use crate::cli::format as fmt;
 use crate::core::shared_component::SharedComponent;
+use infrarust_config::LogType;
 use tracing::debug;
 
 pub struct DebugCommand {
@@ -91,7 +92,10 @@ impl Command for DebugCommand {
         "Shows detailed debug information about active actors and tasks"
     }
     fn execute(&self, _args: Vec<String>) -> CommandFuture {
-        debug!(log_type = "supervisor", "Executing debug command");
+        debug!(
+            log_type = LogType::Supervisor.as_str(),
+            "Executing debug command"
+        );
         let shared = self.shared.clone();
 
         Box::pin(async move {

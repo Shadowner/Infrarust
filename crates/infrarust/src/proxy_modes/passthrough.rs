@@ -4,6 +4,7 @@ use crate::core::actors::server::MinecraftServer;
 use crate::core::event::MinecraftCommunication;
 use crate::network::connection::PossibleReadValue;
 use async_trait::async_trait;
+use infrarust_config::LogType;
 use std::io::{self};
 use tracing::{debug, error};
 
@@ -67,7 +68,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
         actor: &mut MinecraftClient<MinecraftCommunication<PassthroughMessage>>,
     ) -> io::Result<()> {
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Initializing client passthrough proxy mode"
         );
 
@@ -172,7 +173,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
         actor: &mut MinecraftServer<MinecraftCommunication<PassthroughMessage>>,
     ) -> io::Result<()> {
         debug!(
-            log_type = "proxy_mode",
+            log_type = LogType::ProxyMode.as_str(),
             "Initializing server passthrough proxy mode"
         );
         if let Some(server_request) = &mut actor.server_request {
@@ -182,10 +183,16 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
                 }
                 server_conn.enable_raw_mode();
             } else {
-                error!(log_type = "proxy_mode", "Server connection is None");
+                error!(
+                    log_type = LogType::ProxyMode.as_str(),
+                    "Server connection is None"
+                );
             }
         } else {
-            error!(log_type = "proxy_mode", "Server request is None");
+            error!(
+                log_type = LogType::ProxyMode.as_str(),
+                "Server request is None"
+            );
         }
         Ok(())
     }
