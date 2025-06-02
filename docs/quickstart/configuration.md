@@ -22,15 +22,15 @@ The main configuration file supports the following options:
 ```yaml
 # Basic Configuration
 bind: "0.0.0.0:25565"           # Address to bind the proxy to
-keepalive_timeout: 30s          # Connection keepalive timeout
+keepAliveTimeout: 30s           # Connection keepalive timeout
 domains: ["example.com"]        # Default domains (optional)
 addresses: ["localhost:25566"]  # Default target addresses (optional)
 
 # File Provider Configuration
 file_provider:
   proxies_path: ["./proxies"]   # Path to proxy configurations
-  file_type: "yaml"            # File type (currently only yaml supported)
-  watch: true                  # Enable hot-reload of configurations
+  file_type: "yaml"             # File type (currently only yaml supported)
+  watch: true                   # Enable hot-reload of configurations
 
 # Docker Provider Configuration
 docker_provider:
@@ -49,9 +49,9 @@ cache:
 telemetry:
   enabled: false               # Enable telemetry collection
   export_interval_seconds: 30  # Export interval
-  export_url: "http://..."    # Export destination (optional)
-  enable_metrics: false       # Enable metrics collection
-  enable_tracing: false      # Enable distributed tracing
+  export_url: "http://..."     # Export destination (optional)
+  enable_metrics: false        # Enable metrics collection
+  enable_tracing: false        # Enable distributed tracing
 
 # Logging Configuration
 logging:
