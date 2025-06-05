@@ -1,0 +1,14 @@
+[package]
+name = "valence_math"
+description = "Math for Valence"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+license.workspace = true
+
+
+
+[dependencies]
+glam.workspace = true
