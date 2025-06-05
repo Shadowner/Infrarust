@@ -17,8 +17,12 @@ keywords = ["networking", "proxy", "minecraft", "gameserver", "protocol"]
 [features]
 
 [dependencies]
+macro_rules_attribute = "0.2.2"
+smol = "2.0.2"
+smol-macros = "0.1.1"
+bytes.workspace = true
 
-
+valence_protocol.workspace = true
 [[bin]]
 name = "infrarust"
 path = "src/bin/infrarust.rs"
