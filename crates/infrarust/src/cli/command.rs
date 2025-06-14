@@ -150,9 +150,10 @@ impl CommandProcessor {
                 }
 
                 buffer.clear();
-                if reader.read_line(&mut buffer).is_err() {
+                let read_line_result = reader.read_line(&mut buffer);
+                if read_line_result.is_err() || read_line_result.is_ok_and(|x| x == 0) {
                     if !is_tty {
-                        // HACK: In non-TTY mode, don't spin at 100% CPU on errors
+                        // HACK: In non-TTY mode, don't spin at 100% CPU on empty read or on errors
                         std::thread::sleep(std::time::Duration::from_millis(100));
                     }
                     continue;
