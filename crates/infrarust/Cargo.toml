@@ -107,7 +107,6 @@ anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 chrono = { workspace = true }
 futures = { workspace = true }
-atty = { workspace = true }
 bollard = { workspace = true }
 
 [dev-dependencies]

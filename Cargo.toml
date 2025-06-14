@@ -36,7 +36,6 @@ rsa-der = "0.3.0"
 sha1 = "0.10.6"
 
 # CLI & Configuration
-atty = "0.2.14"
 chrono = "0.4.41"
 clap = { version = "4.5.39", features = ["derive"] }
 
@@ -85,7 +84,7 @@ reqwest = { version = "0.12.18", features = [
 # Serialization & Data Formats
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
-serde_yaml = "0.9.33" # Being deprecated, might look into other options
+serde_yaml = "0.9.33"                                     # Being deprecated, might look into other options
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
 
 # System & Resource Management
