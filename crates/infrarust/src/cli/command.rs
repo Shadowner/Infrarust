@@ -1,7 +1,7 @@
 use crate::cli::ShutdownController;
 use crate::cli::format as fmt;
-use atty::Stream;
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -104,7 +104,7 @@ impl CommandProcessor {
     }
 
     pub async fn start_input_loop(&self) {
-        let is_tty = atty::is(Stream::Stdin);
+        let is_tty = io::stdin().is_terminal();
 
         if !is_tty {
             debug!("stdin is not a TTY, using simplified input handling");
