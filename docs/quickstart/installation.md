@@ -125,8 +125,8 @@ services:
     ports:
       - "25565:25565"
     volumes:
-      - ./config.yaml:/etc/infrarust/config.yaml
-      - ./proxies:/etc/infrarust/proxies
+      - ./config.yaml:/app/config/config.yaml
+      - ./proxies:/app/config/proxies
 ```
 
 ## Development Installation
