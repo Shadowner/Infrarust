@@ -104,11 +104,11 @@ services:
       infrarust.proxy_mode: "passthrough"
 
   infrarust:
-    image: shadowner/infrarust
+    image: shadowner/infrarust:latest
     ports:
       - "25565:25565"
     volumes:
-      - ./config:/config
+      - ./config:/app/config
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       - minecraft
