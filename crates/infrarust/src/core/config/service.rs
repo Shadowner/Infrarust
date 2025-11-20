@@ -40,27 +40,67 @@ impl ConfigurationService {
             let configs = self.configurations.read().await;
             configs.clone()
         };
+        
+        // Collect all matching configurations with their specificity scores
+        let mut matches: Vec<(Arc<ServerConfig>, &str, i32)> = Vec::new();
+        
         for config in configs_snapshot.values() {
-            if config
-                .domains
-                .iter()
-                .any(|pattern| WildMatch::new(pattern).matches(&domain))
-            {
-                debug!(
-                    log_type = LogType::ConfigProvider.as_str(),
-                    found = true,
-                    "Domain lookup result"
-                );
-                return Some(Arc::clone(config));
+            for pattern in &config.domains {
+                if WildMatch::new(pattern).matches(&domain) {
+                    let specificity = Self::calculate_domain_specificity(pattern, &domain);
+                    matches.push((Arc::clone(config), pattern.as_str(), specificity));
+                }
             }
         }
-
+        
+        if matches.is_empty() {
+            debug!(
+                log_type = LogType::ConfigProvider.as_str(),
+                found = false,
+                "Domain lookup result"
+            );
+            return None;
+        }
+        
+        // Sort by specificity (higher = more specific)
+        // In case of tie, maintain stable order
+        matches.sort_by(|a, b| b.2.cmp(&a.2));
+        
         debug!(
             log_type = LogType::ConfigProvider.as_str(),
-            found = false,
+            found = true,
             "Domain lookup result"
         );
-        None
+        
+        Some(Arc::clone(&matches[0].0))
+    }
+    
+    /// Calculate domain specificity score for sorting
+    /// Higher score = more specific = should be checked first
+    fn calculate_domain_specificity(pattern: &str, _domain: &str) -> i32 {
+        let pattern_lower = pattern.to_lowercase();
+        
+        // Exact matches (no wildcards) get highest priority
+        if !pattern_lower.contains('*') && !pattern_lower.contains('?') {
+            return 10000;
+        }
+        
+        // For wildcard patterns, count the number of non-wildcard segments
+        // More segments = more specific
+        let segments: Vec<&str> = pattern_lower.split('.').collect();
+        let mut score = 0;
+        
+        // Count non-wildcard segments
+        for segment in &segments {
+            if !segment.contains('*') && !segment.contains('?') {
+                score += 100;
+            }
+        }
+        
+        // Add bonus for total number of segments (more dots = more specific)
+        score += segments.len() as i32;
+        
+        score
     }
 
     #[instrument(skip(self), fields(ip = %ip))]
@@ -242,8 +282,8 @@ impl ConfigurationService {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::fs;
-
     use tempfile::TempDir;
 
     #[test]
@@ -269,5 +309,122 @@ mod tests {
 
         // let config = provider.load_config().unwrap();
         // assert!(!config.server_configs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_wildcard_domain_priority() {
+        let service = ConfigurationService::new();
+
+        // Create configurations with different specificity levels
+        let configs = vec![
+            ServerConfig {
+                config_id: "wildcard-base".to_string(),
+                domains: vec!["*.example.com".to_string()],
+                addresses: vec!["127.0.0.1:25566".to_string()],
+                ..Default::default()
+            },
+            ServerConfig {
+                config_id: "wildcard-subdomain".to_string(),
+                domains: vec!["*.sub.example.com".to_string()],
+                addresses: vec!["127.0.0.1:25567".to_string()],
+                ..Default::default()
+            },
+            ServerConfig {
+                config_id: "exact-match".to_string(),
+                domains: vec!["test.sub.example.com".to_string()],
+                addresses: vec!["127.0.0.1:25568".to_string()],
+                ..Default::default()
+            },
+        ];
+
+        service.update_configurations(configs).await;
+
+        // Test 1: Exact match should be found first
+        let result = service.find_server_by_domain("test.sub.example.com").await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().config_id, "exact-match");
+
+        // Test 2: More specific wildcard should match before less specific
+        let result = service.find_server_by_domain("other.sub.example.com").await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().config_id, "wildcard-subdomain");
+
+        // Test 3: Less specific wildcard should match when more specific doesn't
+        let result = service.find_server_by_domain("something.example.com").await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().config_id, "wildcard-base");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_wildcards_same_level() {
+        let service = ConfigurationService::new();
+
+        let configs = vec![
+            ServerConfig {
+                config_id: "wildcard-1".to_string(),
+                domains: vec!["*.server1.example.com".to_string()],
+                addresses: vec!["127.0.0.1:25566".to_string()],
+                ..Default::default()
+            },
+            ServerConfig {
+                config_id: "wildcard-2".to_string(),
+                domains: vec!["*.server2.example.com".to_string()],
+                addresses: vec!["127.0.0.1:25567".to_string()],
+                ..Default::default()
+            },
+        ];
+
+        service.update_configurations(configs).await;
+
+        let result1 = service.find_server_by_domain("test.server1.example.com").await;
+        assert!(result1.is_some());
+        assert_eq!(result1.unwrap().config_id, "wildcard-1");
+
+        let result2 = service.find_server_by_domain("test.server2.example.com").await;
+        assert!(result2.is_some());
+        assert_eq!(result2.unwrap().config_id, "wildcard-2");
+    }
+
+    #[tokio::test]
+    async fn test_deeply_nested_wildcards() {
+        let service = ConfigurationService::new();
+
+        let configs = vec![
+            ServerConfig {
+                config_id: "level-1".to_string(),
+                domains: vec!["*.example.com".to_string()],
+                addresses: vec!["127.0.0.1:25566".to_string()],
+                ..Default::default()
+            },
+            ServerConfig {
+                config_id: "level-2".to_string(),
+                domains: vec!["*.sub.example.com".to_string()],
+                addresses: vec!["127.0.0.1:25567".to_string()],
+                ..Default::default()
+            },
+            ServerConfig {
+                config_id: "level-3".to_string(),
+                domains: vec!["*.deep.sub.example.com".to_string()],
+                addresses: vec!["127.0.0.1:25568".to_string()],
+                ..Default::default()
+            },
+        ];
+
+        service.update_configurations(configs).await;
+
+        // Most specific should match first
+        let result = service.find_server_by_domain("test.deep.sub.example.com").await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().config_id, "level-3");
+
+        // Medium specificity
+        let result = service.find_server_by_domain("test.sub.example.com").await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().config_id, "level-2");
+
+        // Least specific
+        let result = service.find_server_by_domain("test.example.com").await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().config_id, "level-1");
     }
 }
