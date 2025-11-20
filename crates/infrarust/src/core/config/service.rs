@@ -319,19 +319,19 @@ mod tests {
         let configs = vec![
             ServerConfig {
                 config_id: "wildcard-base".to_string(),
-                domains: vec!["*.elyrion.fr".to_string()],
+                domains: vec!["*.example.com".to_string()],
                 addresses: vec!["127.0.0.1:25566".to_string()],
                 ..Default::default()
             },
             ServerConfig {
                 config_id: "wildcard-subdomain".to_string(),
-                domains: vec!["*.truc.elyrion.fr".to_string()],
+                domains: vec!["*.sub.example.com".to_string()],
                 addresses: vec!["127.0.0.1:25567".to_string()],
                 ..Default::default()
             },
             ServerConfig {
                 config_id: "exact-match".to_string(),
-                domains: vec!["test.truc.elyrion.fr".to_string()],
+                domains: vec!["test.sub.example.com".to_string()],
                 addresses: vec!["127.0.0.1:25568".to_string()],
                 ..Default::default()
             },
@@ -340,17 +340,17 @@ mod tests {
         service.update_configurations(configs).await;
 
         // Test 1: Exact match should be found first
-        let result = service.find_server_by_domain("test.truc.elyrion.fr").await;
+        let result = service.find_server_by_domain("test.sub.example.com").await;
         assert!(result.is_some());
         assert_eq!(result.unwrap().config_id, "exact-match");
 
         // Test 2: More specific wildcard should match before less specific
-        let result = service.find_server_by_domain("other.truc.elyrion.fr").await;
+        let result = service.find_server_by_domain("other.sub.example.com").await;
         assert!(result.is_some());
         assert_eq!(result.unwrap().config_id, "wildcard-subdomain");
 
         // Test 3: Less specific wildcard should match when more specific doesn't
-        let result = service.find_server_by_domain("something.elyrion.fr").await;
+        let result = service.find_server_by_domain("something.example.com").await;
         assert!(result.is_some());
         assert_eq!(result.unwrap().config_id, "wildcard-base");
     }
