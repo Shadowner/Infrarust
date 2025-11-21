@@ -42,20 +42,19 @@ impl ConfigurationService {
         };
         
         // Collects all server configurations whose domain patterns match the given `domain`.
-        // For each match we push a tuple (Arc<ServerConfig>, &str, i32) containing:
+        // For each match we push a tuple (Arc<ServerConfig>, i32) containing:
         //  - Arc<ServerConfig>: a cheap, reference-counted clone referencing the matched config
-        //  - &str: the slice of the pattern that matched (a view into the String stored in config.domains)
         //  - i32: a computed "specificity" score used to prefer more specific matches
         //
         // The `matches` vector can then be used to sort or pick the most specific configuration
         // (for example, by sorting on `specificity` in descending order).
-        let mut matches: Vec<(Arc<ServerConfig>, &str, i32)> = Vec::new();
+        let mut matches: Vec<(Arc<ServerConfig>, i32)> = Vec::new();
         
         for config in configs_snapshot.values() {
             for pattern in &config.domains {
                 if WildMatch::new(pattern).matches(&domain) {
                     let specificity = Self::calculate_pattern_specificity(pattern);
-                    matches.push((Arc::clone(config), pattern.as_str(), specificity));
+                    matches.push((Arc::clone(config), specificity));
                 }
             }
         }
@@ -71,7 +70,7 @@ impl ConfigurationService {
         
         // Sort by specificity (higher = more specific)
         // In case of tie, maintain stable order
-        matches.sort_by(|a, b| b.2.cmp(&a.2));
+        matches.sort_by(|a, b| b.1.cmp(&a.1));
         
         debug!(
             log_type = LogType::ConfigProvider.as_str(),
