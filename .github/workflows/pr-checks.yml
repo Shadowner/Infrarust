@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [ main ]
     paths:
-      - 'src/**'
+      - 'crates/**'
 
 env:
   CARGO_TERM_COLOR: always
@@ -30,4 +30,5 @@ jobs:
         run: cargo clippy -- -D warnings
         
       - name: Run tests
+
         run: cargo test
