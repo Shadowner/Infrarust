@@ -41,25 +41,30 @@ impl ConfigurationService {
             configs.clone()
         };
         
-        // Collects all server configurations whose domain patterns match the given `domain`.
-        // For each match we push a tuple (Arc<ServerConfig>, i32) containing:
-        //  - Arc<ServerConfig>: a cheap, reference-counted clone referencing the matched config
-        //  - i32: a computed "specificity" score used to prefer more specific matches
-        //
-        // The `matches` vector can then be used to sort or pick the most specific configuration
-        // (for example, by sorting on `specificity` in descending order).
-        let mut matches: Vec<(Arc<ServerConfig>, i32)> = Vec::new();
+        // Track the best (highest specificity) match per config.
+        // Uses a HashMap keyed by config_id to ensure each config appears at most once,
+        // storing only the highest specificity score when multiple patterns match.
+        let mut best_matches: HashMap<String, (Arc<ServerConfig>, i32)> = HashMap::new();
         
         for config in configs_snapshot.values() {
             for pattern in &config.domains {
                 if WildMatch::new(pattern).matches(&domain) {
                     let specificity = Self::calculate_pattern_specificity(pattern);
-                    matches.push((Arc::clone(config), specificity));
+                    
+                    // Only keep this match if it's the first or has higher specificity
+                    best_matches
+                        .entry(config.config_id.clone())
+                        .and_modify(|(_, existing_score)| {
+                            if specificity > *existing_score {
+                                *existing_score = specificity;
+                            }
+                        })
+                        .or_insert_with(|| (Arc::clone(config), specificity));
                 }
             }
         }
         
-        if matches.is_empty() {
+        if best_matches.is_empty() {
             debug!(
                 log_type = LogType::ConfigProvider.as_str(),
                 found = false,
@@ -68,9 +73,11 @@ impl ConfigurationService {
             return None;
         }
         
-        // Sort by specificity (higher = more specific)
-        // In case of tie, maintain stable order
-        matches.sort_by(|a, b| b.1.cmp(&a.1));
+        // Find the config with the highest specificity score
+        let best_match = best_matches
+            .values()
+            .max_by_key(|(_, specificity)| specificity)
+            .map(|(config, _)| Arc::clone(config));
         
         debug!(
             log_type = LogType::ConfigProvider.as_str(),
@@ -78,7 +85,7 @@ impl ConfigurationService {
             "Domain lookup result"
         );
         
-        Some(Arc::clone(&matches[0].0))
+        best_match
     }
     
     /// Calculate domain specificity score for sorting
