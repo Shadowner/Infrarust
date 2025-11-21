@@ -54,7 +54,7 @@ impl ConfigurationService {
         for config in configs_snapshot.values() {
             for pattern in &config.domains {
                 if WildMatch::new(pattern).matches(&domain) {
-                    let specificity = Self::calculate_domain_specificity(pattern, &domain);
+                    let specificity = Self::calculate_pattern_specificity(pattern);
                     matches.push((Arc::clone(config), pattern.as_str(), specificity));
                 }
             }
@@ -84,7 +84,7 @@ impl ConfigurationService {
     
     /// Calculate domain specificity score for sorting
     /// Higher score = more specific = should be checked first
-    fn calculate_domain_specificity(pattern: &str, _domain: &str) -> i32 {
+    fn calculate_pattern_specificity(pattern: &str) -> i32 {
         let pattern_lower = pattern.to_lowercase();
         
         // Exact matches (no wildcards) get highest priority
