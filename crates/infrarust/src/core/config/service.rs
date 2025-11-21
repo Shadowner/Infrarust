@@ -40,17 +40,17 @@ impl ConfigurationService {
             let configs = self.configurations.read().await;
             configs.clone()
         };
-        
+
         // Track the best (highest specificity) match per config.
         // Uses a HashMap keyed by config_id to ensure each config appears at most once,
         // storing only the highest specificity score when multiple patterns match.
         let mut best_matches: HashMap<String, (Arc<ServerConfig>, i32)> = HashMap::new();
-        
+
         for config in configs_snapshot.values() {
             for pattern in &config.domains {
                 if WildMatch::new(pattern).matches(&domain) {
                     let specificity = Self::calculate_pattern_specificity(pattern);
-                    
+
                     // Only keep this match if it's the first or has higher specificity
                     best_matches
                         .entry(config.config_id.clone())
@@ -63,7 +63,7 @@ impl ConfigurationService {
                 }
             }
         }
-        
+
         if best_matches.is_empty() {
             debug!(
                 log_type = LogType::ConfigProvider.as_str(),
@@ -72,7 +72,7 @@ impl ConfigurationService {
             );
             return None;
         }
-        
+
         // Find the config with the highest specificity score
         let best_match = best_matches
             .values()
@@ -389,11 +389,15 @@ mod tests {
 
         service.update_configurations(configs).await;
 
-        let result1 = service.find_server_by_domain("test.server1.example.com").await;
+        let result1 = service
+            .find_server_by_domain("test.server1.example.com")
+            .await;
         assert!(result1.is_some());
         assert_eq!(result1.unwrap().config_id, "wildcard-1");
 
-        let result2 = service.find_server_by_domain("test.server2.example.com").await;
+        let result2 = service
+            .find_server_by_domain("test.server2.example.com")
+            .await;
         assert!(result2.is_some());
         assert_eq!(result2.unwrap().config_id, "wildcard-2");
     }
@@ -426,7 +430,9 @@ mod tests {
         service.update_configurations(configs).await;
 
         // Most specific should match first
-        let result = service.find_server_by_domain("test.deep.sub.example.com").await;
+        let result = service
+            .find_server_by_domain("test.deep.sub.example.com")
+            .await;
         assert!(result.is_some());
         assert_eq!(result.unwrap().config_id, "level-3");
 
