@@ -88,8 +88,8 @@ impl ConfigurationService {
         best_match
     }
     
-    /// Calculate domain specificity score for sorting
-    /// Higher score = more specific = should be checked first
+    /// Calculates the domain specificity score for sorting.
+    /// Higher scores indicate more specific patterns, which should be checked first.
     fn calculate_pattern_specificity(pattern: &str) -> i32 {
         let pattern_lower = pattern.to_lowercase();
         
