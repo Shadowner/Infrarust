@@ -3,6 +3,7 @@ pub mod local;
 pub mod mock;
 pub mod models;
 pub mod pterodactyl;
+pub mod craftycontroller;
 
 use std::fmt::Debug;
 
