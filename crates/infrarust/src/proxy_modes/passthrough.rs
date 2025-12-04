@@ -107,12 +107,11 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
                     .await;
 
                 // Close our end of the connection to the server too
-                if let Some(server_request) = &mut actor.server_request {
-                    if let Some(server_conn) = &mut server_request.server_conn {
-                        if let Err(e) = server_conn.close().await {
-                            debug!("Error closing server connection after EOF: {:?}", e);
-                        }
-                    }
+                if let Some(server_request) = &mut actor.server_request
+                    && let Some(server_conn) = &mut server_request.server_conn
+                    && let Err(e) = server_conn.close().await
+                {
+                    debug!("Error closing server connection after EOF: {:?}", e);
                 }
 
                 // Return error to break the server actor loop

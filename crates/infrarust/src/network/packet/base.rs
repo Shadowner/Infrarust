@@ -158,12 +158,12 @@ impl PacketValidation for Packet {
     }
 
     fn validate_compression(&self) -> Result<()> {
-        if let CompressionState::Enabled { threshold } = self.compression {
-            if threshold < 0 {
-                return Err(PacketError::Compression(
-                    "Invalid compression threshold".to_string(),
-                ));
-            }
+        if let CompressionState::Enabled { threshold } = self.compression
+            && threshold < 0
+        {
+            return Err(PacketError::Compression(
+                "Invalid compression threshold".to_string(),
+            ));
         }
         Ok(())
     }

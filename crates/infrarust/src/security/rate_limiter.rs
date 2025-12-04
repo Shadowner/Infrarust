@@ -68,7 +68,7 @@ impl RateLimiter {
                 log_type = LogType::Filter.as_str(),
                 "Rate limit exceeded for key: {}", key
             );
-            return Err(io::Error::new(io::ErrorKind::Other, "Rate limit exceeded"));
+            return Err(io::Error::other("Rate limit exceeded"));
         }
 
         counter.increment(&key, now);

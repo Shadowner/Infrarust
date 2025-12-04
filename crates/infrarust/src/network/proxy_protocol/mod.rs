@@ -49,7 +49,7 @@ fn create_v1_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Res
 
     let header = ProxyHeader::Version1 { addresses };
 
-    proxy_protocol::encode(header).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+    proxy_protocol::encode(header).map_err(|e| io::Error::other(e.to_string()))
 }
 
 fn create_v2_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Result<BytesMut> {
@@ -80,5 +80,5 @@ fn create_v2_header(client_addr: SocketAddr, server_addr: SocketAddr) -> io::Res
         addresses,
     };
 
-    proxy_protocol::encode(header).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+    proxy_protocol::encode(header).map_err(|e| io::Error::other(e.to_string()))
 }

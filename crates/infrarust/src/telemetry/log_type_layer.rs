@@ -31,10 +31,10 @@ impl LogTypeStorage {
     }
 
     pub fn get_current_log_type(&self) -> Option<String> {
-        if let Ok(guard) = self.current_event_log_type.read() {
-            if let Some(ref log_type) = *guard {
-                return Some(log_type.clone());
-            }
+        if let Ok(guard) = self.current_event_log_type.read()
+            && let Some(ref log_type) = *guard
+        {
+            return Some(log_type.clone());
         }
         None
     }
@@ -85,10 +85,10 @@ where
         let mut visitor = LogTypeVisitor::new();
         attrs.record(&mut visitor);
 
-        if let Some(log_type) = visitor.log_type {
-            if let Ok(mut guard) = self.storage.span_log_types.write() {
-                guard.insert(id.clone(), log_type);
-            }
+        if let Some(log_type) = visitor.log_type
+            && let Ok(mut guard) = self.storage.span_log_types.write()
+        {
+            guard.insert(id.clone(), log_type);
         }
     }
 

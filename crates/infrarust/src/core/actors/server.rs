@@ -79,16 +79,15 @@ async fn start_minecraft_server_actor<T>(
             Ok(req) => {
                 debug!("Received server request");
 
-                if actor.is_login {
-                    if let Some(domain) = &req.proxied_domain {
-                        if let Some(server_conn) = &req.server_conn {
-                            debug!(
-                                log_type = LogType::TcpConnection.as_str(),
-                                "Server domain for connection {}: {}",
-                                server_conn.session_id, domain
-                            );
-                        }
-                    }
+                if actor.is_login
+                    && let Some(domain) = &req.proxied_domain
+                    && let Some(server_conn) = &req.server_conn
+                {
+                    debug!(
+                        log_type = LogType::TcpConnection.as_str(),
+                        "Server domain for connection {}: {}",
+                        server_conn.session_id, domain
+                    );
                 }
 
                 req
@@ -171,12 +170,11 @@ async fn start_minecraft_server_actor<T>(
                     if let MinecraftCommunication::Shutdown = &msg {
                         debug!("Shutting down server (Received Shutdown message)");
                         // Close the server connection
-                        if let Some(server_request) = &mut actor.server_request {
-                            if let Some(server_conn) = &mut server_request.server_conn {
-                                if let Err(e) = server_conn.close().await {
-                                    warn!("Error closing server connection: {:?}", e);
-                                }
-                            }
+                        if let Some(server_request) = &mut actor.server_request
+                            && let Some(server_conn) = &mut server_request.server_conn
+                            && let Err(e) = server_conn.close().await
+                        {
+                            warn!("Error closing server connection: {:?}", e);
                         }
                         actor.server_receiver.close();
                         shutdown_flag.store(true, Ordering::SeqCst);
@@ -217,12 +215,11 @@ async fn start_minecraft_server_actor<T>(
 
         debug!(log_type = LogType::TcpConnection.as_str(), "Exiting Minecraft Server Actor main loop");
 
-        if let Some(server_request) = &mut actor.server_request {
-            if let Some(server_conn) = &mut server_request.server_conn {
-                if let Err(e) = server_conn.close().await {
-                    debug!("Error during final server connection close: {:?}", e);
-                }
-            }
+        if let Some(server_request) = &mut actor.server_request
+            && let Some(server_conn) = &mut server_request.server_conn
+            && let Err(e) = server_conn.close().await
+        {
+            debug!("Error during final server connection close: {:?}", e);
         }
 
         let _ = client_sender.send(MinecraftCommunication::Shutdown).await;

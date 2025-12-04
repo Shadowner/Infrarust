@@ -103,11 +103,10 @@ impl ApiProvider for LocalProvider {
                 }
                 Err(_) => {
                     let server_states = self.server_states.lock().unwrap();
-                    let state = server_states
+                    server_states
                         .get(server_id)
                         .cloned()
-                        .unwrap_or(ServerState::Running);
-                    state
+                        .unwrap_or(ServerState::Running)
                 }
             }
         } else {

@@ -1,6 +1,7 @@
 use bytes::BytesMut;
 use std::io::{self, Write};
 
+#[allow(dead_code)]
 pub struct BytesMutWriter<'a>(pub &'a mut BytesMut);
 
 impl Write for BytesMutWriter<'_> {

@@ -64,10 +64,10 @@ impl ProtocolWrite for ServerBoundLoginStart {
             if self.has_player_uuid.0 {
                 written += self.player_uuid.as_ref().unwrap().write_to(writer)?;
             }
-        } else if Version::V1_20_2.protocol_number() <= self.protocol_version.protocol_number() {
-            if let Some(uuid) = &self.player_uuid {
-                written += uuid.write_to(writer)?;
-            }
+        } else if Version::V1_20_2.protocol_number() <= self.protocol_version.protocol_number()
+            && let Some(uuid) = &self.player_uuid
+        {
+            written += uuid.write_to(writer)?;
         }
 
         if Version::V1_19.protocol_number() <= self.protocol_version.protocol_number()

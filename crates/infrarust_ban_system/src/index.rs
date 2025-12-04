@@ -89,13 +89,13 @@ impl BanIndex {
         };
 
         // Remove from IP index
-        if let Some(ip) = ban.1.ip {
-            if let Some(mut entry) = self.by_ip.get_mut(&ip) {
-                entry.remove(ban_id);
-                if entry.is_empty() {
-                    drop(entry);
-                    self.by_ip.remove(&ip);
-                }
+        if let Some(ip) = ban.1.ip
+            && let Some(mut entry) = self.by_ip.get_mut(&ip)
+        {
+            entry.remove(ban_id);
+            if entry.is_empty() {
+                drop(entry);
+                self.by_ip.remove(&ip);
             }
         }
 
@@ -177,12 +177,12 @@ impl BanIndex {
         let mut result = Vec::new();
 
         for (expires_at, ids) in expiry_index.iter() {
-            if let Some(exp) = expires_at {
-                if *exp <= now {
-                    for id in ids {
-                        if let Some(ban) = self.by_id.get(id) {
-                            result.push(ban.clone());
-                        }
+            if let Some(exp) = expires_at
+                && *exp <= now
+            {
+                for id in ids {
+                    if let Some(ban) = self.by_id.get(id) {
+                        result.push(ban.clone());
                     }
                 }
             }

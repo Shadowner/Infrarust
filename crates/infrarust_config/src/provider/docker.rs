@@ -160,52 +160,55 @@ mod docker_enabled {
             let mut found_container_ips = false;
             if let Some(networks) = &container.network_settings.as_ref()?.networks {
                 for (network_name, network) in networks {
-                    if let Some(ip) = &network.ip_address {
-                        if !ip.is_empty() && ip != "0.0.0.0" {
-                            debug!(
-                                container_id = %container_id,
-                                network = %network_name,
-                                ip = %ip,
-                                port = %target_port,
-                                "Using container network IP address"
-                            );
-                            addresses.push(format!("{}:{}", ip, target_port));
-                            found_container_ips = true;
-                        }
+                    if let Some(ip) = &network.ip_address
+                        && !ip.is_empty()
+                        && ip != "0.0.0.0"
+                    {
+                        debug!(
+                            container_id = %container_id,
+                            network = %network_name,
+                            ip = %ip,
+                            port = %target_port,
+                            "Using container network IP address"
+                        );
+                        addresses.push(format!("{}:{}", ip, target_port));
+                        found_container_ips = true;
                     }
                 }
             }
 
-            if !found_container_ips && self.docker.is_some() {
-                if let Some(docker) = &self.docker {
-                    match docker.inspect_container(container_id, None).await {
-                        Ok(container_info) => {
-                            if let Some(network_settings) = container_info.network_settings {
-                                if let Some(networks) = network_settings.networks {
-                                    for (network_name, network) in networks {
-                                        if let Some(ip) = network.ip_address {
-                                            if !ip.is_empty() && ip != "0.0.0.0" {
-                                                debug!(
-                                                    container_id = %container_id,
-                                                    network = %network_name,
-                                                    ip = %ip,
-                                                    port = %target_port,
-                                                    "Using container IP from detailed inspection"
-                                                );
-                                                addresses.push(format!("{}:{}", ip, target_port));
-                                                found_container_ips = true;
-                                            }
-                                        }
-                                    }
+            if !found_container_ips
+                && self.docker.is_some()
+                && let Some(docker) = &self.docker
+            {
+                match docker.inspect_container(container_id, None).await {
+                    Ok(container_info) => {
+                        if let Some(network_settings) = container_info.network_settings
+                            && let Some(networks) = network_settings.networks
+                        {
+                            for (network_name, network) in networks {
+                                if let Some(ip) = network.ip_address
+                                    && !ip.is_empty()
+                                    && ip != "0.0.0.0"
+                                {
+                                    debug!(
+                                        container_id = %container_id,
+                                        network = %network_name,
+                                        ip = %ip,
+                                        port = %target_port,
+                                        "Using container IP from detailed inspection"
+                                    );
+                                    addresses.push(format!("{}:{}", ip, target_port));
+                                    found_container_ips = true;
                                 }
                             }
                         }
-                        Err(e) => {
-                            error!(
-                                "Failed to inspect container for network info {}: {}",
-                                container_id, e
-                            );
-                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to inspect container for network info {}: {}",
+                            container_id, e
+                        );
                     }
                 }
             }
@@ -374,19 +377,15 @@ mod docker_enabled {
 
                                     if let Ok(containers) =
                                         docker.list_containers(Some(options)).await
+                                        && let Some(container) = containers.first()
+                                        && let Some(config) =
+                                            self.process_container(container).await
                                     {
-                                        if let Some(container) = containers.first() {
-                                            if let Some(config) =
-                                                self.process_container(container).await
-                                            {
-                                                let key = self.generate_config_id(container_id);
-                                                self.send_update(key, Some(config)).await;
+                                        let key = self.generate_config_id(container_id);
+                                        self.send_update(key, Some(config)).await;
 
-                                                let mut tracked =
-                                                    self.tracked_containers.write().await;
-                                                tracked.insert(container_id.to_string());
-                                            }
-                                        }
+                                        let mut tracked = self.tracked_containers.write().await;
+                                        tracked.insert(container_id.to_string());
                                     }
                                 }
                             }
@@ -558,17 +557,16 @@ impl Provider for DockerProvider {
                         server_configs.insert(key, config);
                     }
 
-                    if !server_configs.is_empty() {
-                        if let Err(e) = self
+                    if !server_configs.is_empty()
+                        && let Err(e) = self
                             .sender
                             .send(ProviderMessage::FirstInit(server_configs))
                             .await
-                        {
-                            error!(
-                                log_type = "config_provider",
-                                "Failed to send initial configurations: {}", e
-                            );
-                        }
+                    {
+                        error!(
+                            log_type = "config_provider",
+                            "Failed to send initial configurations: {}", e
+                        );
                     }
                 }
                 Err(e) => {

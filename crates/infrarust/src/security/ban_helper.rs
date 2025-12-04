@@ -27,8 +27,8 @@ impl BanHelper {
             Ok(true)
         );
 
-        if is_banned {
-            if let Ok(reason) = with_filter_or!(
+        if is_banned
+            && let Ok(reason) = with_filter_or!(
                 registry,
                 "global_ban_system",
                 BanSystemAdapter,
@@ -36,9 +36,9 @@ impl BanHelper {
                     filter.get_ban_reason_for_username(username).await
                 },
                 None
-            ) {
-                return reason;
-            }
+            )
+        {
+            return reason;
         }
         None
     }

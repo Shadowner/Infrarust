@@ -58,10 +58,10 @@ impl FileBanStorage {
 
         // Create parent directories if they don't exist
         for path in [&bans_path, &audit_logs_path] {
-            if let Some(parent) = path.parent() {
-                if !parent.exists() {
-                    Self::create_directory(parent).await?;
-                }
+            if let Some(parent) = path.parent()
+                && !parent.exists()
+            {
+                Self::create_directory(parent).await?;
             }
         }
 
@@ -129,10 +129,10 @@ impl FileBanStorage {
 
         let temp_path = path.with_extension("tmp");
 
-        if let Some(parent) = temp_path.parent() {
-            if !parent.exists() {
-                Self::create_directory(parent).await?;
-            }
+        if let Some(parent) = temp_path.parent()
+            && !parent.exists()
+        {
+            Self::create_directory(parent).await?;
         }
 
         fs::write(&temp_path, content).await.map_err(|e| {
@@ -410,17 +410,13 @@ impl FileBanStorage {
                         })?;
 
                         let temp_path = path.with_extension("tmp");
-                        if let Some(parent) = temp_path.parent() {
-                            if !parent.exists() {
-                                fs::create_dir_all(parent).await.map_err(|e| {
-                                    error!(
-                                        "Failed to create directories {}: {}",
-                                        parent.display(),
-                                        e
-                                    );
-                                    BanError::Io(e)
-                                })?;
-                            }
+                        if let Some(parent) = temp_path.parent()
+                            && !parent.exists()
+                        {
+                            fs::create_dir_all(parent).await.map_err(|e| {
+                                error!("Failed to create directories {}: {}", parent.display(), e);
+                                BanError::Io(e)
+                            })?;
                         }
 
                         fs::write(&temp_path, content).await.map_err(|e| {

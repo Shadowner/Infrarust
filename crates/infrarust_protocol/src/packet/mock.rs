@@ -113,23 +113,22 @@ impl PacketValidation for MockPacket {
         if let EncryptionState::Enabled {
             encrypted_data: false,
         } = self.encryption
+            && !self.data.is_empty()
         {
-            if !self.data.is_empty() {
-                return Err(PacketError::Encryption(
-                    "Data not encrypted when encryption is enabled".to_string(),
-                ));
-            }
+            return Err(PacketError::Encryption(
+                "Data not encrypted when encryption is enabled".to_string(),
+            ));
         }
         Ok(())
     }
 
     fn validate_compression(&self) -> Result<()> {
-        if let CompressionState::Enabled { threshold } = self.compression {
-            if threshold < 0 {
-                return Err(PacketError::Compression(
-                    "Invalid compression threshold".to_string(),
-                ));
-            }
+        if let CompressionState::Enabled { threshold } = self.compression
+            && threshold < 0
+        {
+            return Err(PacketError::Compression(
+                "Invalid compression threshold".to_string(),
+            ));
         }
         Ok(())
     }

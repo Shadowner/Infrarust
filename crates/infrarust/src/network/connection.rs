@@ -89,24 +89,24 @@ impl Connection {
 
         let mut original_client_addr = None;
 
-        if let Some(config) = proxy_config {
-            if config.receive_enabled {
-                let reader = ProxyProtocolReader::new(
-                    config.receive_enabled,
-                    config.receive_timeout_secs.unwrap_or(5),
-                    config.receive_allowed_versions.clone(),
-                );
+        if let Some(config) = proxy_config
+            && config.receive_enabled
+        {
+            let reader = ProxyProtocolReader::new(
+                config.receive_enabled,
+                config.receive_timeout_secs.unwrap_or(5),
+                config.receive_allowed_versions.clone(),
+            );
 
-                match reader.read_header(&mut stream).await {
-                    Ok(addr) => {
-                        original_client_addr = addr;
-                    }
-                    Err(e) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Failed to read proxy protocol header: {}", e),
-                        ));
-                    }
+            match reader.read_header(&mut stream).await {
+                Ok(addr) => {
+                    original_client_addr = addr;
+                }
+                Err(e) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Failed to read proxy protocol header: {}", e),
+                    ));
                 }
             }
         }

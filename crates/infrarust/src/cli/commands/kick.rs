@@ -27,10 +27,10 @@ impl KickCommand {
         let mut matches = Vec::new();
 
         for (server_id, pairs) in actors {
-            if let Some(config) = config_id {
-                if server_id != config {
-                    continue;
-                }
+            if let Some(config) = config_id
+                && server_id != config
+            {
+                continue;
             }
 
             for pair in pairs {

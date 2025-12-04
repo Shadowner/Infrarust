@@ -56,7 +56,7 @@ impl From<PacketError> for io::Error {
             PacketError::InvalidPacketType { .. } => {
                 io::Error::new(io::ErrorKind::InvalidInput, err.to_string())
             }
-            PacketError::Other(msg) => io::Error::new(io::ErrorKind::Other, msg),
+            PacketError::Other(msg) => io::Error::other(msg),
         }
     }
 }

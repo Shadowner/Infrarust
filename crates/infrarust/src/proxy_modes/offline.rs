@@ -85,23 +85,22 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
         data: PossibleReadValue,
         actor: &mut MinecraftServer<MinecraftCommunication<OfflineMessage>>,
     ) -> io::Result<()> {
-        if let Some(request) = &mut actor.server_request {
-            if let Some(server_conn) = &mut request.server_conn {
-                if let PossibleReadValue::Packet(data) = data {
-                    if data.id == 0x03 && !server_conn.is_compressing() {
-                        debug!(
-                            log_type = LogType::ProxyMode.as_str(),
-                            "Received Compression packet srv"
-                        );
-                        server_conn.enable_compression(256);
-                    }
-
-                    let _ = actor
-                        .client_sender
-                        .send(MinecraftCommunication::Packet(data))
-                        .await;
-                }
+        if let Some(request) = &mut actor.server_request
+            && let Some(server_conn) = &mut request.server_conn
+            && let PossibleReadValue::Packet(data) = data
+        {
+            if data.id == 0x03 && !server_conn.is_compressing() {
+                debug!(
+                    log_type = LogType::ProxyMode.as_str(),
+                    "Received Compression packet srv"
+                );
+                server_conn.enable_compression(256);
             }
+
+            let _ = actor
+                .client_sender
+                .send(MinecraftCommunication::Packet(data))
+                .await;
         }
         Ok(())
     }

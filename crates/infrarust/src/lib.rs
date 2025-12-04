@@ -101,9 +101,9 @@ impl Infrarust {
         let pterodactyl_config = match manager_config.pterodactyl {
             Some(ref config) => config.clone(),
             None => {
-                error!(
+                warn!(
                     log_type = LogType::Supervisor.as_str(),
-                    "Pterodactyl manager configuration is missing"
+                    "Pterodactyl manager configuration is missing and will be disabled"
                 );
                 PterodactylManagerConfig {
                     enabled: false,
@@ -116,9 +116,9 @@ impl Infrarust {
         let crafty_config = match manager_config.crafty {
             Some(ref config) => config.clone(),
             None => {
-                error!(
+                warn!(
                     log_type = LogType::Supervisor.as_str(),
-                    "Crafty Controller manager configuration is missing"
+                    "Crafty Controller manager configuration is missing and will be disabled"
                 );
                 CraftyControllerManagerConfig {
                     enabled: false,
@@ -160,10 +160,7 @@ impl Infrarust {
                 log_type = LogType::Supervisor.as_str(),
                 "Failed to initialize ActorSupervisor"
             );
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Failed to initialize ActorSupervisor",
-            ));
+            return Err(io::Error::other("Failed to initialize ActorSupervisor"));
         }
         let supervisor = ActorSupervisor::global();
 
