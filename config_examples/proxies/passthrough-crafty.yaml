@@ -1,0 +1,15 @@
+domains:
+  - "passthrough.crafty.example.com"  # Specific domain
+addresses:
+  - "127.0.0.1:25565"  # Minecraft server address
+proxyMode: "passthrough"  # Proxy mode
+
+server_manager:
+  provider_name: Crafty
+  server_id: "DEADBEEF" # put server UUID here
+
+motds:
+  online:
+    text: "An Online Crafty Server"
+  offline:
+    text: "An Offline Crafty Server"

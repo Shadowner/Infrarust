@@ -1,6 +1,6 @@
 use infrarust_config::models::{logging::LogType, server::ManagerType};
 use infrarust_server_manager::{
-    LocalProvider, PterodactylClient, ServerManager, ServerState, ServerStatus,
+    CraftyClient, LocalProvider, PterodactylClient, ServerManager, ServerState, ServerStatus,
 };
 use std::{
     collections::HashMap,
@@ -23,6 +23,7 @@ type ShutdownTask = oneshot::Sender<()>;
 pub struct Manager {
     pterodactyl_manager: Arc<ServerManager<PterodactylClient>>,
     local_manager: Arc<ServerManager<LocalProvider>>,
+    crafty_manager: Arc<ServerManager<CraftyClient>>,
 
     time_since_empty: Arc<Mutex<HashMap<ManagerType, HashMap<String, u64>>>>,
     shutdown_tasks: Arc<Mutex<HashMap<(ManagerType, String), ShutdownTask>>>,
@@ -31,10 +32,14 @@ pub struct Manager {
 }
 
 impl Manager {
-    pub fn new(pterodactyl_client: PterodactylClient, local_client: LocalProvider) -> Self {
+    pub fn new(
+        pterodactyl_client: PterodactylClient,
+        local_client: LocalProvider,
+        crafty_client: CraftyClient,
+    ) -> Self {
         let pterodactyl_manager = ServerManager::new(pterodactyl_client.clone());
         let local_manager = ServerManager::new(local_client.clone());
-
+        let crafty_manager = ServerManager::new(crafty_client);
         // TODO: In the future
         // pterodactyl_manager.with_process_provider(pterodactyl_client);
         let local_manager = local_manager.with_process_provider(local_client);
@@ -42,6 +47,7 @@ impl Manager {
         Self {
             pterodactyl_manager: Arc::new(pterodactyl_manager),
             local_manager: Arc::new(local_manager),
+            crafty_manager: Arc::new(crafty_manager),
             time_since_empty: Arc::new(Mutex::new(HashMap::new())),
             shutdown_tasks: Arc::new(Mutex::new(HashMap::new())),
             shutdown_timers: Arc::new(Mutex::new(HashMap::new())),
@@ -56,6 +62,28 @@ impl Manager {
     ) -> Result<ServerStatus, String> {
         //TODO: In the future let it being Dyn !
         match manager_type {
+            ManagerType::Crafty => {
+                let status = self
+                    .crafty_manager
+                    .get_server_status(server_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                match status.state {
+                    ServerState::Starting => {
+                        self.mark_server_as_starting(server_id, manager_type).await;
+                    }
+                    _ => {
+                        debug!(
+                            log_type = LogType::ServerManager.as_str(),
+                            "Server {} is in state : {:?}", server_id, &manager_type
+                        );
+                        self.remove_server_from_starting(server_id, &manager_type)
+                            .await;
+                    }
+                }
+                Ok(status)
+            }
             ManagerType::Pterodactyl => {
                 let status = self
                     .pterodactyl_manager

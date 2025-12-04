@@ -1,4 +1,5 @@
 pub mod client;
+pub mod craftycontroller;
 pub mod local;
 pub mod mock;
 pub mod models;
@@ -37,6 +38,7 @@ pub struct ApiServerStatus {
 
 // Re-export useful items
 pub use client::ApiClient;
+pub use craftycontroller::CraftyClient;
 pub use local::LocalProvider;
 pub use mock::MockApiProvider;
 pub use models::*;

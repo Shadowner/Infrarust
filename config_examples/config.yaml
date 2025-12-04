@@ -69,6 +69,10 @@ telemetry:
   enable_tracing: true
 
 managers_config:
+  crafty:
+    enabled: true
+    api_key: "api_key_here"
+    base_url: "https://crafty.example.com"
   pterodactyl:
     enabled: true
     api_key: "api_key_here"

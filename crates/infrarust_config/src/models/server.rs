@@ -30,6 +30,7 @@ impl Default for ProxyModeEnum {
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Hash, Eq)]
 pub enum ManagerType {
     Pterodactyl,
+    Crafty,
     //TODO
     Docker,
     Local,
