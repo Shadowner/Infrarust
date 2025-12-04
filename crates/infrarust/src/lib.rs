@@ -149,7 +149,11 @@ impl Infrarust {
         let local_provider = LocalProvider::new();
         let crafty_provider = CraftyClient::new(crafty_config.api_key, crafty_config.base_url);
 
-        let managers = Arc::new(Manager::new(pterodactyl_provider, local_provider, crafty_provider));
+        let managers = Arc::new(Manager::new(
+            pterodactyl_provider,
+            local_provider,
+            crafty_provider,
+        ));
 
         if ActorSupervisor::initialize_global(Some(managers.clone())).is_err() {
             error!(

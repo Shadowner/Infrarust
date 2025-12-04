@@ -1,9 +1,9 @@
 pub mod client;
+pub mod craftycontroller;
 pub mod local;
 pub mod mock;
 pub mod models;
 pub mod pterodactyl;
-pub mod craftycontroller;
 
 use std::fmt::Debug;
 
@@ -38,8 +38,8 @@ pub struct ApiServerStatus {
 
 // Re-export useful items
 pub use client::ApiClient;
+pub use craftycontroller::CraftyClient;
 pub use local::LocalProvider;
 pub use mock::MockApiProvider;
 pub use models::*;
 pub use pterodactyl::PterodactylClient;
-pub use craftycontroller::CraftyClient;
