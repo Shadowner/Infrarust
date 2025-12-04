@@ -56,7 +56,8 @@ impl ServerStatus {
 
         if self.state != ServerState::Running && new_state == ServerState::Running {
             self.uptime = Some(Duration::from_secs(0));
-        } else if self.state == ServerState::Running && new_state == ServerState::Running
+        } else if self.state == ServerState::Running
+            && new_state == ServerState::Running
             && let Some(current_uptime) = self.uptime
         {
             let elapsed = self.last_checked.elapsed();

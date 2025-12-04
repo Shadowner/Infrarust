@@ -132,7 +132,6 @@ impl CraftyClient {
     //     })
     // }
     ///////
-
 }
 
 #[async_trait]
@@ -197,7 +196,7 @@ impl ApiProvider for CraftyClient {
             status: server_state,
             is_running,
             is_crashed,
-            
+
             error,
         })
     }

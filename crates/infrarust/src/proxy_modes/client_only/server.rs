@@ -133,8 +133,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                                 Err(e) => {
                                     error!(
                                         log_type = LogType::ProxyMode.as_str(),
-                                        "Failed to send ServerThreshold message to client: {}",
-                                        e
+                                        "Failed to send ServerThreshold message to client: {}", e
                                     );
                                 }
                             }

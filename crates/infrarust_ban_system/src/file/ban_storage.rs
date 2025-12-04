@@ -414,11 +414,7 @@ impl FileBanStorage {
                             && !parent.exists()
                         {
                             fs::create_dir_all(parent).await.map_err(|e| {
-                                error!(
-                                    "Failed to create directories {}: {}",
-                                    parent.display(),
-                                    e
-                                );
+                                error!("Failed to create directories {}: {}", parent.display(), e);
                                 BanError::Io(e)
                             })?;
                         }

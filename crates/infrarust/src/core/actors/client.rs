@@ -243,8 +243,7 @@ impl MinecraftClientHandler {
 
     /// Get the peer address of the client connection
     pub async fn get_peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
-        self.peer_addr.ok_or_else(|| {
-            std::io::Error::other("No peer address available")
-        })
+        self.peer_addr
+            .ok_or_else(|| std::io::Error::other("No peer address available"))
     }
 }

@@ -186,10 +186,7 @@ impl ProcessManager {
                             && let Ok(mut state) = server_state_clone.lock()
                         {
                             *state = ServerState::Running;
-                            debug!(
-                                "Server '{}' started successfully",
-                                server_id_stdout
-                            );
+                            debug!("Server '{}' started successfully", server_id_stdout);
                             started = true;
                         }
 

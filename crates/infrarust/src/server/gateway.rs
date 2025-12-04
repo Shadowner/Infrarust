@@ -489,9 +489,7 @@ impl Gateway {
                             Err(e) => {
                                 error!(
                                     "Failed to get status for server {} from manager {:?}: {}",
-                                    config.server_id,
-                                    config.provider_name,
-                                    e
+                                    config.server_id, config.provider_name, e
                                 );
                                 generate_unable_status_motd_response(request.domain, server_config)
                             }
@@ -546,7 +544,7 @@ impl Gateway {
                                     );
                                     generate_stopping_motd_response(request.domain, server_config)
                                 }
-                            }
+                            },
                         }
                     }
                 }

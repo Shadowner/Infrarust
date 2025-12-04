@@ -161,7 +161,8 @@ mod docker_enabled {
             if let Some(networks) = &container.network_settings.as_ref()?.networks {
                 for (network_name, network) in networks {
                     if let Some(ip) = &network.ip_address
-                        && !ip.is_empty() && ip != "0.0.0.0"
+                        && !ip.is_empty()
+                        && ip != "0.0.0.0"
                     {
                         debug!(
                             container_id = %container_id,
@@ -176,7 +177,8 @@ mod docker_enabled {
                 }
             }
 
-            if !found_container_ips && self.docker.is_some()
+            if !found_container_ips
+                && self.docker.is_some()
                 && let Some(docker) = &self.docker
             {
                 match docker.inspect_container(container_id, None).await {
@@ -186,7 +188,8 @@ mod docker_enabled {
                         {
                             for (network_name, network) in networks {
                                 if let Some(ip) = network.ip_address
-                                    && !ip.is_empty() && ip != "0.0.0.0"
+                                    && !ip.is_empty()
+                                    && ip != "0.0.0.0"
                                 {
                                     debug!(
                                         container_id = %container_id,
@@ -381,8 +384,7 @@ mod docker_enabled {
                                         let key = self.generate_config_id(container_id);
                                         self.send_update(key, Some(config)).await;
 
-                                        let mut tracked =
-                                            self.tracked_containers.write().await;
+                                        let mut tracked = self.tracked_containers.write().await;
                                         tracked.insert(container_id.to_string());
                                     }
                                 }
