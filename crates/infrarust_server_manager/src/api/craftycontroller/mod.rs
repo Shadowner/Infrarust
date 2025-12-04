@@ -186,7 +186,7 @@ impl ApiProvider for CraftyClient {
 
         let is_running = status.data.running;
         let is_crashed = status.data.crashed;
-        let error = if !is_crashed && !is_crashed {
+        let error = if !is_running && !is_crashed {
             Some("Server is offline".to_string())
         } else if is_crashed {
             Some("Server has crashed".to_string())
