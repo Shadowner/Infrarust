@@ -56,7 +56,7 @@ struct CraftyServerStats {
     pub server_id: CraftyServerInfo,
 
     // pub stats_id: u64,
-    // pub sever_port: u64,
+    // pub server_port: u64,
     // pub online: u64,
     // pub max: u64,
 
@@ -66,7 +66,7 @@ struct CraftyServerStats {
 
     // pub created: String,
     // pub started: String,
-    // // pub mem: String,
+    // pub mem: String,
     // pub world_name: String,
     // pub world_size: String,
     // pub int_ping_results: String,
@@ -257,7 +257,7 @@ impl ApiProvider for CraftyClient {
             .send()
             .await
             .map_err(|e| {
-                ServerManagerError::ApiError(format!("Failed to post start server action: {}", e))
+                ServerManagerError::ApiError(format!("Failed to post stop server action: {}", e))
             })?;
         if !response.status().is_success() {
             error!("Bad status code on response: {}", response.status());
@@ -288,7 +288,7 @@ impl ApiProvider for CraftyClient {
             .send()
             .await
             .map_err(|e| {
-                ServerManagerError::ApiError(format!("Failed to post start server action: {}", e))
+                ServerManagerError::ApiError(format!("Failed to post restart server action: {}", e))
             })?;
 
         if !response.status().is_success() {
