@@ -67,7 +67,7 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           build-args: |
-            RUST_VERSION=1.87
+            RUST_VERSION=1.91.1
             ALPINE_VERSION=3.21
           outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/infrarust,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/infrarust:buildcache-${{ matrix.arch }}

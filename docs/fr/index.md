@@ -22,7 +22,7 @@ hero:
 features:
   - icon: 🌈
     title: Compatibilité Universelle
-    details: Fonctionne avec toutes les versions de Minecraft (1.7.10 à 1.20.4) et tous les mod loaders (Forge, Fabric, Quilt, etc.)
+    details: Fonctionne avec toutes les versions de Minecraft (1.8 à la dernière) et tous les mod loaders (Forge, Fabric, Quilt, etc.)
 
   - icon: 🚀
     title: Performance Native
@@ -46,7 +46,7 @@ features:
 ---
 
 ::: tip VERSION ACTUELLE
-<span class="version-tag">v1.2.0</span> - CLI, Docker & Ban update
+<span class="version-tag">v1.5.0</span> - Crafty integration Update update
 :::
 
 ## 🎯 Pourquoi Infrarust ?
@@ -55,7 +55,7 @@ Infrarust est un proxy inverse moderne pour Minecraft qui fonctionne vraiment av
 
 ### Compatibilité Universelle - Mode Passthrough
 
-- ✅ Toutes les versions de Minecraft (1.7.10 à la plus récente)
+- ✅ Toutes les versions de Minecraft (1.8 à la plus récente)
 - ✅ Tous les mod loaders (Forge, Fabric, Quilt)
 - ✅ Serveurs vanilla et moddés
 - ✅ Modes premium et offline

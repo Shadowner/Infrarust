@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.87
+ARG RUST_VERSION=1.91.1
 ARG ALPINE_VERSION=3.21
 
 # Build stage - builds natively for the target platform
