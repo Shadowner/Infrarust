@@ -105,26 +105,25 @@ impl BanCommand {
             "global_ban_system",
             crate::security::BanSystemAdapter,
             async |filter: &crate::security::BanSystemAdapter| {
-                if let Some(ip_addr) = ip {
-                    if filter.is_ip_banned(&ip_addr).await.unwrap_or(false) {
-                        return Ok(Some(format!("IP address {} is already banned", ip_addr)));
-                    }
+                if let Some(ip_addr) = ip
+                    && filter.is_ip_banned(&ip_addr).await.unwrap_or(false)
+                {
+                    return Ok(Some(format!("IP address {} is already banned", ip_addr)));
                 }
 
-                if let Some(ref username_str) = username {
-                    if filter
+                if let Some(ref username_str) = username
+                    && filter
                         .is_username_banned(username_str)
                         .await
                         .unwrap_or(false)
-                    {
-                        return Ok(Some(format!("Username {} is already banned", username_str)));
-                    }
+                {
+                    return Ok(Some(format!("Username {} is already banned", username_str)));
                 }
 
-                if let Some(ref uuid_str) = uuid {
-                    if filter.is_uuid_banned(uuid_str).await.unwrap_or(false) {
-                        return Ok(Some(format!("UUID {} is already banned", uuid_str)));
-                    }
+                if let Some(ref uuid_str) = uuid
+                    && filter.is_uuid_banned(uuid_str).await.unwrap_or(false)
+                {
+                    return Ok(Some(format!("UUID {} is already banned", uuid_str)));
                 }
 
                 Ok(None)

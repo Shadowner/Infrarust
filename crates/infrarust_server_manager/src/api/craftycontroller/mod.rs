@@ -33,17 +33,6 @@ struct CraftyServerInfo {
     pub ignored_exits: String,
     pub count_players: bool,
 }
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct MinimalServerInfo {
-    pub server_id: String,
-    pub server_name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct CraftyServerResponse {
-    pub status: String,
-    pub data: CraftyServerInfo,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CraftyServerStatsResponse {
@@ -102,45 +91,48 @@ impl CraftyClient {
         format!("Bearer {}", self.api_key)
     }
 
-    async fn get_server_info(
-        &self,
-        server_id: &str,
-    ) -> Result<MinimalServerInfo, ServerManagerError> {
-        let url = format!("{}/api/v2/servers/{}", self.base_url, server_id);
+    ////// Crafty returns minimal server info in the status response, so this is unused.
+    // async fn get_server_info(
+    //     &self,
+    //     server_id: &str,
+    // ) -> Result<MinimalServerInfo, ServerManagerError> {
+    //     let url = format!("{}/api/v2/servers/{}", self.base_url, server_id);
 
-        let response = self
-            .client
-            .get(&url)
-            .header("Authorization", self.auth_header())
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/json")
-            .send()
-            .await
-            .map_err(|e| {
-                ServerManagerError::ApiError(format!("Failed to get server info: {}", e))
-            })?;
+    //     let response = self
+    //         .client
+    //         .get(&url)
+    //         .header("Authorization", self.auth_header())
+    //         .header("Accept", "application/json")
+    //         .header("Content-Type", "application/json")
+    //         .send()
+    //         .await
+    //         .map_err(|e| {
+    //             ServerManagerError::ApiError(format!("Failed to get server info: {}", e))
+    //         })?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(ServerManagerError::ApiError(format!(
-                "API error ({}): {}",
-                status, text
-            )));
-        }
+    //     if !response.status().is_success() {
+    //         let status = response.status();
+    //         let text = response
+    //             .text()
+    //             .await
+    //             .unwrap_or_else(|_| "Unknown error".to_string());
+    //         return Err(ServerManagerError::ApiError(format!(
+    //             "API error ({}): {}",
+    //             status, text
+    //         )));
+    //     }
 
-        let info: CraftyServerResponse = response.json().await.map_err(|e| {
-            ServerManagerError::ApiError(format!("Failed to parse response: {}", e))
-        })?;
+    //     let info: CraftyServerResponse = response.json().await.map_err(|e| {
+    //         ServerManagerError::ApiError(format!("Failed to parse response: {}", e))
+    //     })?;
 
-        Ok(MinimalServerInfo {
-            server_id: info.data.server_id,
-            server_name: info.data.server_name,
-        })
-    }
+    //     Ok(MinimalServerInfo {
+    //         server_id: info.data.server_id,
+    //         server_name: info.data.server_name,
+    //     })
+    // }
+    ///////
+
 }
 
 #[async_trait]
@@ -152,8 +144,6 @@ impl ApiProvider for CraftyClient {
         // Ok(())
 
         let url = format!("{}/api/v2/servers/{}/stats", self.base_url, server_id);
-
-        // let server_info = self.get_server_info(server_id).await?;
 
         let response = self
             .client
@@ -207,6 +197,7 @@ impl ApiProvider for CraftyClient {
             status: server_state,
             is_running,
             is_crashed,
+            
             error,
         })
     }

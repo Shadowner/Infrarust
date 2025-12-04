@@ -109,7 +109,6 @@ impl ApiProvider for PterodactylClient {
         );
 
         let server_info = self.get_server_info(server_id).await?;
-
         let response = self
             .client
             .get(&url)

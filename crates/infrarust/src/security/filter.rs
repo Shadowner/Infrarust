@@ -371,7 +371,7 @@ mod tests {
     impl Filter for TestFilter {
         async fn filter(&self, _: &TcpStream) -> io::Result<()> {
             if self.should_fail {
-                Err(io::Error::new(io::ErrorKind::Other, "filter failed"))
+                Err(io::Error::other("filter failed"))
             } else {
                 Ok(())
             }

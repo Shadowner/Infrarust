@@ -32,23 +32,23 @@ impl BanSystemAdapter {
         );
 
         let path_obj = Path::new(&file_path_str);
-        if let Some(parent) = path_obj.parent() {
-            if !parent.exists() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    error!(
-                        log_type = LogType::BanSystem.as_str(),
-                        "Failed to create ban directory {}: {}",
-                        parent.display(),
-                        e
-                    );
-                    return Err(FilterError::IoError(e));
-                } else {
-                    debug!(
-                        log_type = LogType::BanSystem.as_str(),
-                        "Created ban directory: {}",
-                        parent.display()
-                    );
-                }
+        if let Some(parent) = path_obj.parent()
+            && !parent.exists()
+        {
+            if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                error!(
+                    log_type = LogType::BanSystem.as_str(),
+                    "Failed to create ban directory {}: {}",
+                    parent.display(),
+                    e
+                );
+                return Err(FilterError::IoError(e));
+            } else {
+                debug!(
+                    log_type = LogType::BanSystem.as_str(),
+                    "Created ban directory: {}",
+                    parent.display()
+                );
             }
         }
 

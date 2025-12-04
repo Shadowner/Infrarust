@@ -105,12 +105,11 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
         actor: &mut MinecraftServer<MinecraftCommunication<StatusMessage>>,
     ) -> io::Result<()> {
         // This is primarily for passthrough mode, less relevant for status
-        if let MinecraftCommunication::Packet(data) = message {
-            if let Some(server_request) = actor.server_request.as_mut() {
-                if let Some(server_conn) = server_request.server_conn.as_mut() {
-                    server_conn.write_packet(&data).await?;
-                }
-            }
+        if let MinecraftCommunication::Packet(data) = message
+            && let Some(server_request) = actor.server_request.as_mut()
+            && let Some(server_conn) = server_request.server_conn.as_mut()
+        {
+            server_conn.write_packet(&data).await?;
         }
         Ok(())
     }

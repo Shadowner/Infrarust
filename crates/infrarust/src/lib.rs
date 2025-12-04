@@ -160,10 +160,7 @@ impl Infrarust {
                 log_type = LogType::Supervisor.as_str(),
                 "Failed to initialize ActorSupervisor"
             );
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Failed to initialize ActorSupervisor",
-            ));
+            return Err(io::Error::other("Failed to initialize ActorSupervisor"));
         }
         let supervisor = ActorSupervisor::global();
 

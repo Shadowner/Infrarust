@@ -48,7 +48,7 @@ impl From<proxy_protocol::ParseError> for ProxyProtocolError {
 
 impl From<ProxyProtocolError> for io::Error {
     fn from(err: ProxyProtocolError) -> Self {
-        io::Error::new(io::ErrorKind::Other, err.to_string())
+        io::Error::other(err.to_string())
     }
 }
 

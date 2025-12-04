@@ -165,10 +165,9 @@ impl FileProvider {
         {
             if let Ok(config) =
                 Self::load_server_config(entry.path(), self.file_type, self.get_name())
+                && !config.is_empty()
             {
-                if !config.is_empty() {
-                    configs.insert(config.config_id.clone(), config);
-                }
+                configs.insert(config.config_id.clone(), config);
             }
         }
 
@@ -378,7 +377,7 @@ impl FileProvider {
             }) {
                 Ok(watcher) => watcher,
                 Err(e) => {
-                    return Err(io::Error::new(io::ErrorKind::Other, e));
+                    return Err(io::Error::other(e));
                 }
             };
 

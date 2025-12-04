@@ -56,11 +56,11 @@ impl ServerStatus {
 
         if self.state != ServerState::Running && new_state == ServerState::Running {
             self.uptime = Some(Duration::from_secs(0));
-        } else if self.state == ServerState::Running && new_state == ServerState::Running {
-            if let Some(current_uptime) = self.uptime {
-                let elapsed = self.last_checked.elapsed();
-                self.uptime = Some(current_uptime + elapsed);
-            }
+        } else if self.state == ServerState::Running && new_state == ServerState::Running
+            && let Some(current_uptime) = self.uptime
+        {
+            let elapsed = self.last_checked.elapsed();
+            self.uptime = Some(current_uptime + elapsed);
         }
 
         self.state = new_state;

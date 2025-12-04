@@ -485,16 +485,17 @@ impl Gateway {
                             .get_status_for_server(&config.server_id, config.provider_name)
                             .await;
 
-                        if status.is_err() {
-                            error!(
-                                "Failed to get status for server {} from manager {:?}: {}",
-                                config.server_id,
-                                config.provider_name,
-                                status.err().unwrap()
-                            );
-                            generate_unable_status_motd_response(request.domain, server_config)
-                        } else {
-                            match status.unwrap().state {
+                        match status {
+                            Err(e) => {
+                                error!(
+                                    "Failed to get status for server {} from manager {:?}: {}",
+                                    config.server_id,
+                                    config.provider_name,
+                                    e
+                                );
+                                generate_unable_status_motd_response(request.domain, server_config)
+                            }
+                            Ok(server_status) => match server_status.state {
                                 ServerState::Crashed => {
                                     warn!(
                                         "Server {} is crashed, using unreachable MOTD",

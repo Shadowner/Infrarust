@@ -121,24 +121,23 @@ impl ConfigurationService {
                         log_type = LogType::ConfigProvider.as_str(),
                         "Config ID: {:?}", config
                     );
-                    if let Some(manager_config) = &config.server_manager {
-                        if let Some(local_config_provider) = &manager_config.local_provider {
-                            if let Some(shared) = Gateway::get_shared_component() {
-                                debug!(
-                                    log_type = LogType::ServerManager.as_str(),
-                                    "Registering server with ID to the Local Provider {}",
-                                    manager_config.server_id
-                                );
-                                shared
-                                    .server_managers()
-                                    .local_provider()
-                                    .api_client()
-                                    .register_server(
-                                        &manager_config.server_id,
-                                        local_config_provider.clone(),
-                                    );
-                            }
-                        }
+                    if let Some(manager_config) = &config.server_manager
+                        && let Some(local_config_provider) = &manager_config.local_provider
+                        && let Some(shared) = Gateway::get_shared_component()
+                    {
+                        debug!(
+                            log_type = LogType::ServerManager.as_str(),
+                            "Registering server with ID to the Local Provider {}",
+                            manager_config.server_id
+                        );
+                        shared
+                            .server_managers()
+                            .local_provider()
+                            .api_client()
+                            .register_server(
+                                &manager_config.server_id,
+                                local_config_provider.clone(),
+                            );
                     }
                 }
             }
@@ -214,16 +213,15 @@ impl ConfigurationService {
         }
 
         let config = config_lock.get(config_id).cloned();
-        if let Some(config) = config {
-            if let Some(manager_config) = &config.server_manager {
-                if let Some(shared) = Gateway::get_shared_component() {
-                    shared
-                        .server_managers()
-                        .local_provider()
-                        .api_client()
-                        .unregister_server(&manager_config.server_id);
-                }
-            }
+        if let Some(config) = config
+            && let Some(manager_config) = &config.server_manager
+            && let Some(shared) = Gateway::get_shared_component()
+        {
+            shared
+                .server_managers()
+                .local_provider()
+                .api_client()
+                .unregister_server(&manager_config.server_id);
         }
 
         if config_lock.remove(config_id).is_some() {

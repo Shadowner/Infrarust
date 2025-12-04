@@ -225,10 +225,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         let client = Client::new();
 
         let auth_response = client.get(&url).send().await.map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Mojang API request failed: {:?}", e.source()),
-            )
+            io::Error::other(format!("Mojang API request failed: {:?}", e.source()))
         })?;
 
         let status = auth_response.status();

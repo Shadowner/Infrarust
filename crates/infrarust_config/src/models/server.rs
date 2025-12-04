@@ -4,9 +4,10 @@ use serde::Deserialize;
 
 use super::{cache::CacheConfig, filter::FilterConfig};
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Default)]
 pub enum ProxyModeEnum {
     #[serde(rename = "passthrough")]
+    #[default]
     Passthrough,
     // #[serde(rename = "full")]
     // Full,
@@ -19,12 +20,6 @@ pub enum ProxyModeEnum {
 
     #[serde(skip)]
     Status,
-}
-
-impl Default for ProxyModeEnum {
-    fn default() -> Self {
-        Self::Passthrough
-    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Hash, Eq)]

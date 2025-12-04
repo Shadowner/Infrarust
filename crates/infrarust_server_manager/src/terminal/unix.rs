@@ -12,7 +12,7 @@ impl UnixTerminal {
             Ok(result)
         } else {
             let error = String::from_utf8_lossy(&output.stderr).to_string();
-            Err(IoError::new(std::io::ErrorKind::Other, error))
+            Err(IoError::other(error))
         }
     }
 }

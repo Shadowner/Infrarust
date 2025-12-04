@@ -389,10 +389,11 @@ mod tests {
 
     #[test]
     fn test_regex_filter_compilation() {
-        let mut config = LoggingConfig::default();
-
         // Test valid regex
-        config.regex_filter = Some("error|warn".to_string());
+        let mut config = LoggingConfig {
+            regex_filter: Some("error|warn".to_string()),
+            ..Default::default()
+        };
         let filter = InfrarustLogFilter::from_config(&config);
         assert!(filter.regex_filter.is_some());
 
@@ -409,8 +410,10 @@ mod tests {
 
     #[test]
     fn test_regex_filtering_logic() {
-        let mut config = LoggingConfig::default();
-        config.regex_filter = Some("connection|error".to_string());
+        let config = LoggingConfig {
+            regex_filter: Some("connection|error".to_string()),
+            ..Default::default()
+        };
 
         let filter = InfrarustLogFilter::from_config(&config);
 
@@ -427,10 +430,11 @@ mod tests {
 
     #[test]
     fn test_regex_filter_edge_cases() {
-        let mut config = LoggingConfig::default();
-
         // Test empty regex pattern
-        config.regex_filter = Some("".to_string());
+        let mut config = LoggingConfig {
+            regex_filter: Some("".to_string()),
+            ..Default::default()
+        };
         let filter = InfrarustLogFilter::from_config(&config);
         assert!(filter.regex_filter.is_some());
         let regex = filter.regex_filter.as_ref().unwrap();

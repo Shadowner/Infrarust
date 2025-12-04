@@ -33,11 +33,11 @@ impl CrashDetector {
     }
 
     pub fn is_in_crash_loop(&self, status: &ServerStatus) -> bool {
-        if status.crash_count >= self.crash_threshold {
-            if let Some(last_crash) = status.last_crash_time {
-                let elapsed_since_crash = last_crash.elapsed();
-                return elapsed_since_crash <= self.crash_window;
-            }
+        if status.crash_count >= self.crash_threshold
+            && let Some(last_crash) = status.last_crash_time
+        {
+            let elapsed_since_crash = last_crash.elapsed();
+            return elapsed_since_crash <= self.crash_window;
         }
         false
     }

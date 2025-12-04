@@ -42,19 +42,18 @@ impl ProcessManager {
 
     pub fn get_server_state(&self, server_id: &str) -> Result<ServerState, ServerManagerError> {
         // Check running processes first
-        if let Ok(processes) = self.processes.lock() {
-            if let Some(process) = processes.get(server_id) {
-                if let Ok(state) = process.server_state.lock() {
-                    return Ok(state.clone());
-                }
-            }
+        if let Ok(processes) = self.processes.lock()
+            && let Some(process) = processes.get(server_id)
+            && let Ok(state) = process.server_state.lock()
+        {
+            return Ok(state.clone());
         }
 
         // Fall back to server states map
-        if let Ok(server_states) = self.server_states.lock() {
-            if let Some(state) = server_states.get(server_id) {
-                return Ok(state.clone());
-            }
+        if let Ok(server_states) = self.server_states.lock()
+            && let Some(state) = server_states.get(server_id)
+        {
+            return Ok(state.clone());
         }
 
         Ok(ServerState::Stopped)
@@ -62,16 +61,15 @@ impl ProcessManager {
 
     fn set_server_state(&self, server_id: &str, state: ServerState) {
         // Update both the process state and the global state map
-        if let Ok(processes) = self.processes.lock() {
-            if let Some(process) = processes.get(server_id) {
-                if let Ok(mut process_state) = process.server_state.lock() {
-                    *process_state = state.clone();
-                    debug!(
-                        log_type = "server_manager",
-                        "Updated process state for '{}' to {:?}", server_id, state
-                    );
-                }
-            }
+        if let Ok(processes) = self.processes.lock()
+            && let Some(process) = processes.get(server_id)
+            && let Ok(mut process_state) = process.server_state.lock()
+        {
+            *process_state = state.clone();
+            debug!(
+                log_type = "server_manager",
+                "Updated process state for '{}' to {:?}", server_id, state
+            );
         }
 
         if let Ok(mut server_states) = self.server_states.lock() {
@@ -109,13 +107,13 @@ impl ProcessManager {
         startup_string: Option<&str>,
     ) -> Result<ProcessOutput, ServerManagerError> {
         // Check if process already exists
-        if let Ok(processes) = self.processes.lock() {
-            if processes.contains_key(server_id) {
-                return Err(ServerManagerError::ProcessError(format!(
-                    "Process for server {} is already running",
-                    server_id
-                )));
-            }
+        if let Ok(processes) = self.processes.lock()
+            && processes.contains_key(server_id)
+        {
+            return Err(ServerManagerError::ProcessError(format!(
+                "Process for server {} is already running",
+                server_id
+            )));
         }
 
         // Create channels
@@ -182,19 +180,17 @@ impl ProcessManager {
                         let output = String::from_utf8_lossy(&buffer[0..n]).to_string();
 
                         // Check for startup string
-                        if !started {
-                            if let Some(ref startup_str) = startup_string_clone {
-                                if output.contains(startup_str) {
-                                    if let Ok(mut state) = server_state_clone.lock() {
-                                        *state = ServerState::Running;
-                                        debug!(
-                                            "Server '{}' started successfully",
-                                            server_id_stdout
-                                        );
-                                        started = true;
-                                    }
-                                }
-                            }
+                        if !started
+                            && let Some(ref startup_str) = startup_string_clone
+                            && output.contains(startup_str)
+                            && let Ok(mut state) = server_state_clone.lock()
+                        {
+                            *state = ServerState::Running;
+                            debug!(
+                                "Server '{}' started successfully",
+                                server_id_stdout
+                            );
+                            started = true;
                         }
 
                         // Send output to channels (ignore errors if receivers are dropped)
@@ -413,28 +409,28 @@ impl ProcessProvider for ProcessManager {
     }
 
     fn is_process_running(&self, server_id: &str) -> Result<bool, ServerManagerError> {
-        if let Ok(processes) = self.processes.lock() {
-            if let Some(process) = processes.get(server_id) {
-                // Check if the monitor task is still running
-                if process.handle.is_finished() {
-                    debug!(
-                        log_type = "server_manager",
-                        "Process '{}' monitor task finished, cleaning up", server_id
-                    );
-                    drop(processes);
-                    self.cleanup_process(server_id);
-                    return Ok(false);
-                }
+        if let Ok(processes) = self.processes.lock()
+            && let Some(process) = processes.get(server_id)
+        {
+            // Check if the monitor task is still running
+            if process.handle.is_finished() {
+                debug!(
+                    log_type = "server_manager",
+                    "Process '{}' monitor task finished, cleaning up", server_id
+                );
+                drop(processes);
+                self.cleanup_process(server_id);
+                return Ok(false);
+            }
 
-                // Check the internal state
-                if let Ok(state) = process.server_state.lock() {
-                    let is_running = *state != ServerState::Stopped;
-                    debug!(
-                        "Process '{}' state check: {:?} (running: {})",
-                        server_id, *state, is_running
-                    );
-                    return Ok(is_running);
-                }
+            // Check the internal state
+            if let Ok(state) = process.server_state.lock() {
+                let is_running = *state != ServerState::Stopped;
+                debug!(
+                    "Process '{}' state check: {:?} (running: {})",
+                    server_id, *state, is_running
+                );
+                return Ok(is_running);
             }
         }
 
