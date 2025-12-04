@@ -42,3 +42,4 @@ pub use local::LocalProvider;
 pub use mock::MockApiProvider;
 pub use models::*;
 pub use pterodactyl::PterodactylClient;
+pub use craftycontroller::CraftyClient;

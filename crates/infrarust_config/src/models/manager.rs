@@ -8,6 +8,14 @@ pub struct PterodactylManagerConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CraftyControllerManagerConfig {
+    pub enabled: bool,
+    pub base_url: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ManagerConfig {
     pub pterodactyl: Option<PterodactylManagerConfig>,
+    pub crafty: Option<CraftyControllerManagerConfig>,
 }

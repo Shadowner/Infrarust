@@ -24,13 +24,13 @@ use infrarust_config::{
     InfrarustConfig,
     models::{
         logging::LogType,
-        manager::{ManagerConfig, PterodactylManagerConfig},
+        manager::{CraftyControllerManagerConfig, ManagerConfig, PterodactylManagerConfig},
     },
     provider::{docker::DockerProvider, file::FileProvider},
 };
 use infrarust_protocol::minecraft::java::handshake::ServerBoundHandshake;
 use infrarust_protocol::version::Version;
-use infrarust_server_manager::{LocalProvider, PterodactylClient};
+use infrarust_server_manager::{CraftyClient, LocalProvider, PterodactylClient};
 use security::filter::FilterError;
 use server::manager::Manager;
 use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
@@ -93,10 +93,10 @@ impl Infrarust {
             provider_sender.clone(),
         );
 
-        let manager_config = config
-            .managers_config
-            .clone()
-            .unwrap_or(ManagerConfig { pterodactyl: None });
+        let manager_config = config.managers_config.clone().unwrap_or(ManagerConfig {
+            pterodactyl: None,
+            crafty: None,
+        });
 
         let pterodactyl_config = match manager_config.pterodactyl {
             Some(ref config) => config.clone(),
@@ -113,6 +113,21 @@ impl Infrarust {
             }
         };
 
+        let crafty_config = match manager_config.crafty {
+            Some(ref config) => config.clone(),
+            None => {
+                error!(
+                    log_type = LogType::Supervisor.as_str(),
+                    "Crafty Controller manager configuration is missing"
+                );
+                CraftyControllerManagerConfig {
+                    enabled: false,
+                    api_key: String::new(),
+                    base_url: String::new(),
+                }
+            }
+        };
+
         debug!(
             log_type = LogType::ServerManager.as_str(),
             "Pterodactyl manager configuration: enabled = {}, api_key = {}, base_url = {}",
@@ -121,11 +136,20 @@ impl Infrarust {
             pterodactyl_config.base_url
         );
 
+        debug!(
+            log_type = LogType::ServerManager.as_str(),
+            "Crafty Controller manager configuration: enabled = {}, api_key = {}, base_url = {}",
+            crafty_config.enabled,
+            crafty_config.api_key,
+            crafty_config.base_url
+        );
+
         let pterodactyl_provider =
             PterodactylClient::new(pterodactyl_config.api_key, pterodactyl_config.base_url);
         let local_provider = LocalProvider::new();
+        let crafty_provider = CraftyClient::new(crafty_config.api_key, crafty_config.base_url);
 
-        let managers = Arc::new(Manager::new(pterodactyl_provider, local_provider));
+        let managers = Arc::new(Manager::new(pterodactyl_provider, local_provider, crafty_provider));
 
         if ActorSupervisor::initialize_global(Some(managers.clone())).is_err() {
             error!(

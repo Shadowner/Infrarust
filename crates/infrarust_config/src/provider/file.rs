@@ -197,9 +197,16 @@ impl FileProvider {
         fs::File::open(path)?.read_to_string(&mut content)?;
 
         let mut config: ServerConfig = match file_type {
-            FileType::Yaml => {
-                yaml_decoder(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
-            }
+            FileType::Yaml => match yaml_decoder(&content) {
+                Ok(srv_config) => srv_config,
+                Err(e) => {
+                    error!(
+                        log_type = "config_provider",
+                        "Failed to decode server config {}", e
+                    );
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, e));
+                }
+            },
         };
 
         config.config_id = Self::generate_config_id(path, &provider_name);
