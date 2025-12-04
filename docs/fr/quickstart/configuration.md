@@ -1,9 +1,8 @@
-
-# Configuration d'Infrarust
+# Référence de Configuration
 
 Ce document détaille toutes les options de configuration disponibles dans Infrarust.
 
-## Structure des Fichiers de Configuration
+## Structure de Configuration
 
 Infrarust utilise deux types de fichiers de configuration :
 
@@ -23,15 +22,13 @@ Le fichier de configuration principal prend en charge les options suivantes :
 ```yaml
 # Configuration de Base
 bind: "0.0.0.0:25565"           # Adresse d'écoute du proxy
-keepalive_timeout: 30s          # Délai d'expiration de la connexion
-domains: ["example.com"]        # Domaines par défaut (optionnel)
-addresses: ["localhost:25566"]  # Adresses cibles par défaut (optionnel)
+keepAliveTimeout: 30s           # Délai d'expiration de la connexion
 
 # Configuration du Fournisseur de Fichiers
 file_provider:
   proxies_path: ["./proxies"]   # Chemin vers les configurations de proxy
-  file_type: "yaml"            # Type de fichier (seul yaml est supporté actuellement)
-  watch: true                  # Activer le rechargement à chaud des configurations
+  file_type: "yaml"             # Type de fichier (seul yaml est supporté actuellement)
+  watch: true                   # Activer le rechargement à chaud des configurations
 
 # Configuration du Fournisseur Docker
 docker_provider:
@@ -40,6 +37,24 @@ docker_provider:
   polling_interval: 10                        # Intervalle de sondage en secondes
   watch: true                                 # Surveiller les changements de conteneurs
   default_domains: []                         # Domaines par défaut pour les conteneurs
+
+# Configuration des Gestionnaires de Serveurs
+managers_config:
+  pterodactyl:
+    enabled: true
+    api_key: "votre_clé_api"
+    base_url: "https://pterodactyl.example.com"
+  crafty:
+    enabled: true
+    api_key: "votre_clé_api"
+    base_url: "https://crafty.example.com"
+
+# Configuration du Protocole Proxy (Réception)
+proxy_protocol:
+  enabled: true                    # Activer le support du protocole proxy
+  receive_enabled: true            # Accepter le protocole proxy entrant
+  receive_timeout_secs: 5          # Délai d'attente pour la réception de l'en-tête
+  receive_allowed_versions: [1, 2] # Versions autorisées du protocole proxy
 
 # Configuration du Cache
 cache:
@@ -50,36 +65,60 @@ cache:
 telemetry:
   enabled: false               # Activer la collecte de télémétrie
   export_interval_seconds: 30  # Intervalle d'exportation
-  export_url: "http://..."    # Destination d'exportation (optionnel)
-  enable_metrics: false       # Activer la collecte de métriques
-  enable_tracing: false      # Activer le traçage distribué
+  export_url: "http://..."     # Destination d'exportation (optionnel)
+  enable_metrics: false        # Activer la collecte de métriques
+  enable_tracing: false        # Activer le traçage distribué
 
 # Configuration des Journaux
 logging:
+  debug: true                  # Activer le mode débogage
   use_color: true              # Utiliser des couleurs dans la sortie console
   use_icons: true              # Utiliser des icônes dans la sortie console
   show_timestamp: true         # Afficher l'horodatage dans les journaux
-  time_format: "%Y-%m-%d %H:%M:%S%.3f"  # Format d'horodatage
-  show_target: false           # Afficher la cible du journal
-  show_fields: false           # Afficher les champs du journal
-  template: "{timestamp} {level}: {message}"  # Modèle de journal
-  field_prefixes: {}           # Mappages des préfixes de champs
+  time_format: "%Y-%m-%d %H:%M:%S"  # Format d'horodatage
+  show_target: true            # Afficher la cible du journal
+  show_fields: true            # Afficher les champs du journal
+  template: "{timestamp} [{level}] {message}"  # Modèle de journal
+  regex_filter: "^(pattern)"   # Filtrer les journaux par expression régulière
+  min_level: "info"            # Niveau de journal minimum global
+  log_types:                   # Niveaux de journal par composant
+    supervisor: "info"
+    server_manager: "info"
+    packet_processing: "debug"
+    proxy_protocol: "debug"
+    ban_system: "info"
+    authentication: "info"
+    filter: "info"
+    config_provider: "info"
+    cache: "debug"
+    motd: "warn"
+    telemetry: "error"
+  exclude_types:               # Exclure les types de journaux bruyants
+    - "tcp_connection"
+    - "packet_processing"
+    - "cache"
 
-# Configuration MOTD par défaut
+# Configuration des Filtres
+filters:
+  rate_limiter:
+    enabled: true
+    requests_per_minute: 600   # Requêtes maximales par minute
+    burst_size: 10             # Taille de rafale pour la limitation
+
+# Configuration MOTD par Défaut
 motds:
-  unknown:                    # MOTD pour les serveurs inconnus
-    version: "1.20.1"        # Version Minecraft à afficher
-    max_players: 100         # Nombre maximal de joueurs à afficher
-    online_players: 0        # Nombre de joueurs en ligne à afficher
-    text: "Unknown server" # Description du serveur
-    favicon: "data:image/png;base64,..." # Icône du serveur (optionnel)
-  unreachable:              # MOTD pour les serveurs inaccessibles
-    # Mêmes options que 'unknown'
+  unreachable:
+    version_name: "Infrarust Inaccessible"
+    protocol_version: 760
+    max_players: 100
+    online_players: 0
+    text: "Serveur Inaccessible"
+    favicon: ""
 ```
 
 ## Configuration des Serveurs (proxies/*.yml)
 
-Chaque fichier dans le dossier `proxies/` représente un serveur Minecraft.
+Chaque fichier de configuration de serveur dans le répertoire proxies peut contenir :
 
 ```yaml
 domains:
@@ -87,31 +126,48 @@ domains:
 addresses:
   - "localhost:25566"       # Adresses des serveurs cibles
 
-sendProxyProtocol: false    # Activer le support du protocole PROXY
+sendProxyProtocol: false    # Envoyer le protocole PROXY au backend
 proxy_protocol_version: 2   # Version du protocole PROXY à utiliser (1 ou 2)
 
 proxyMode: "passthrough"    # Mode proxy (passthrough/client_only/offline/server_only)
 
-# Configuration MOTD (remplace le MOTD par défaut / du serveur)
-motd:
-  version: "1.20.1"       # Peut être défini comme n'importe quel texte
-  max_players: 100
-  online_players: 0
-  text: "Bienvenue sur mon serveur !"
-  favicon: "data:image/png;base64,..."
+# Configuration du Gestionnaire de Serveur (optionnel)
+server_manager:
+  provider_name: Local       # Local | Pterodactyl | Crafty | Docker
+  server_id: "mon_serveur"
+  empty_shutdown_time: 300   # Arrêt après temps d'inactivité (secondes)
+  local_provider:            # Uniquement pour le fournisseur Local
+    executable: "java"
+    working_dir: "/chemin/vers/serveur"
+    args:
+      - "-jar"
+      - "server.jar"
+    startup_string: 'For help, type "help"'
 
-### FONCTIONNALITÉS CI-DESSOUS IMPLÉMENTÉES MAIS PAS ENCORE SUPPORTÉES ###
+# Configuration MOTD (par serveur)
+motds:
+  online:
+    enabled: true
+    text: "Bienvenue sur notre serveur !"
+    version_name: "Paper 1.20.4"
+    max_players: 100
+    online_players: 42
+    protocol_version: 765
+    favicon: "./icons/server.png"
+    samples:
+      - name: "Steve"
+        id: "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+  offline:
+    enabled: true
+    text: "Serveur en veille - Connectez-vous pour le réveiller !"
+  # Autres états : starting, stopping, shutting_down, crashed, unreachable, unable_status
 
-# Configuration du Cache
-caches:
-  status_ttl_seconds: 30    # Durée de vie des entrées du cache de statut
-  max_status_entries: 1000  # Nombre maximal d'entrées dans le cache de statut
-
-# Configuration des Filtres
+# Configuration des Filtres par Serveur
 filters:
   rate_limiter:
-    requestLimit: 10        # Nombre maximal de requêtes par fenêtre
-    windowLength: 1s        # Fenêtre temporelle pour la limitation de débit
+    enabled: true
+    requests_per_minute: 600
+    burst_size: 10
   ip_filter:
     enabled: true
     whitelist: ["127.0.0.1"]
@@ -122,21 +178,20 @@ filters:
     blacklist: []
   name_filter:
     enabled: true
-    whitelist: ["player1"]
+    whitelist: ["joueur1"]
     blacklist: []
   ban:
     enabled: true
-    storage_type: "file"    # Type de stockage (file/redis/database)
-    file_path: "bans.json"  # Chemin vers le fichier de stockage des bannissements
-    enable_audit_log: true  # Activer la journalisation des audits de bannissement
-    audit_log_path: "bans_audit.log"  # Chemin vers le journal d'audit
-    audit_log_rotation:     # Paramètres de rotation des journaux
-      max_size: 10485760    # Taille maximale du journal (10Mo)
-      max_files: 5          # Nombre maximal de fichiers journaux
-      compress: true        # Compresser les journaux pivotés
-    auto_cleanup_interval: 3600  # Intervalle de nettoyage automatique en secondes
-    cache_size: 10000      # Taille du cache de bannissement
+    storage_type: "file"
+    file_path: "bans.json"
+
+# Configuration du Cache par Serveur
+caches:
+  status_ttl_seconds: 30
+  max_status_entries: 1000
 ```
+
+Pour des exemples complets de configuration de serveur, consultez les [config_examples sur GitHub](https://github.com/Shadowner/Infrarust/tree/main/config_examples/proxies).
 
 ## Référence des Fonctionnalités
 
@@ -148,6 +203,65 @@ filters:
 | `client_only` | Pour les clients premium se connectant à des serveurs offline |
 | `server_only` | Pour les scénarios où l'authentification du serveur nécessite une gestion |
 | `offline` | Pour les clients et serveurs offline |
+
+### Gestionnaires de Serveurs
+
+Infrarust peut automatiquement démarrer et arrêter les serveurs Minecraft en fonction de l'activité des joueurs.
+
+#### Intégration Pterodactyl
+
+```yaml
+managers_config:
+  pterodactyl:
+    enabled: true
+    api_key: "votre_clé_api"
+    base_url: "https://pterodactyl.example.com"
+```
+
+Puis dans la configuration de votre serveur :
+
+```yaml
+server_manager:
+  provider_name: Pterodactyl
+  server_id: "votre_uuid_serveur"
+  empty_shutdown_time: 300
+```
+
+#### Intégration Crafty Controller
+
+```yaml
+managers_config:
+  crafty:
+    enabled: true
+    api_key: "votre_clé_api"
+    base_url: "https://crafty.example.com"
+```
+
+Puis dans la configuration de votre serveur :
+
+```yaml
+server_manager:
+  provider_name: Crafty
+  server_id: "votre_uuid_serveur"
+```
+
+#### Gestion de Serveur Local
+
+Pour les serveurs gérés localement :
+
+```yaml
+server_manager:
+  provider_name: Local
+  server_id: "serveur_local"
+  empty_shutdown_time: 300
+  local_provider:
+    executable: "java"
+    working_dir: "/chemin/vers/serveur"
+    args:
+      - "-jar"
+      - "server.jar"
+    startup_string: 'For help, type "help"'
+```
 
 ### Intégration Docker
 
@@ -162,42 +276,75 @@ docker_provider:
   default_domains: ["docker.local"]
 ```
 
-Configuration des conteneurs via les étiquettes Docker :
+La configuration des conteneurs se fait via les étiquettes Docker :
 - `infrarust.enable=true` - Activer le proxy pour le conteneur
 - `infrarust.domains=mc.example.com,mc2.example.com` - Domaines pour le conteneur
 - `infrarust.port=25565` - Port Minecraft à l'intérieur du conteneur
 - `infrarust.proxy_mode=passthrough` - Mode proxy
 - `infrarust.proxy_protocol=true` - Activer le protocole PROXY
 
+### Protocole Proxy
+
+Configurer le protocole PROXY pour recevoir les informations client des load balancers :
+
+```yaml
+proxy_protocol:
+  enabled: true
+  receive_enabled: true
+  receive_timeout_secs: 5
+  receive_allowed_versions: [1, 2]
+```
+
+Pour envoyer le protocole PROXY aux serveurs backend, configurez dans la configuration du serveur :
+
+```yaml
+sendProxyProtocol: true
+proxy_protocol_version: 2
+```
+
 ### Télémétrie
 
-La configuration de télémétrie permet la surveillance du proxy :
+La configuration de télémétrie permet la surveillance du proxy via OpenTelemetry :
 
 ```yaml
 telemetry:
-  enabled: false
-  export_interval_seconds: 30
-  export_url: "http://..."
-  enable_metrics: false
-  enable_tracing: false
+  enabled: true
+  export_interval_seconds: 10
+  export_url: "http://localhost:4317"
+  enable_metrics: true
+  enable_tracing: true
 ```
 
 ### Configuration MOTD
 
-Configure l'affichage de la liste des serveurs :
+Configurer l'affichage de la liste des serveurs pour différents états :
 
-```yaml
-motd:
-  version: "1.20.1"        # Version du protocole à afficher
-  max_players: 100         # Nombre maximal de joueurs
-  online_players: 0        # Nombre actuel de joueurs
-  text: "Texte"     # Description du serveur
-  favicon: "base64..."     # Icône du serveur (PNG encodé en base64)
-```
+| État | Description |
+|------|-------------|
+| `online` | Le serveur est en cours d'exécution et accessible |
+| `offline` | Le serveur est en veille/arrêté |
+| `starting` | Le serveur démarre |
+| `stopping` | Le serveur s'arrête gracieusement |
+| `shutting_down` | Compte à rebours avant l'arrêt (supporte le placeholder `${seconds_remaining}`) |
+| `crashed` | Le serveur a planté |
+| `unreachable` | Impossible d'atteindre le serveur |
+| `unable_status` | Impossible d'obtenir le statut du serveur |
+
+Champs MOTD :
+- `enabled` - Activer cet état MOTD
+- `text` - Description du serveur (supporte les codes de couleur Minecraft)
+- `version_name` - Texte de version à afficher
+- `protocol_version` - Numéro de version du protocole Minecraft
+- `max_players` - Nombre maximal de joueurs
+- `online_players` - Nombre actuel de joueurs
+- `favicon` - Icône du serveur (PNG encodé en base64 ou chemin de fichier)
+- `samples` - Échantillons de liste de joueurs (tableau de `{name, id}`)
+
+Pour des exemples complets de MOTD, voir [local-server.yaml](https://github.com/Shadowner/Infrarust/blob/main/config_examples/proxies/local-server.yaml).
 
 ### Configuration du Cache
 
-Configure le cache de statut :
+Configurer la mise en cache des statuts :
 
 ```yaml
 cache:
@@ -213,13 +360,14 @@ Contrôle le nombre de connexions depuis une source unique :
 
 ```yaml
 rate_limiter:
-  requestLimit: 10    # Requêtes maximales
-  windowLength: 1s    # Fenêtre temporelle
+  enabled: true
+  requests_per_minute: 600  # Requêtes maximales par minute
+  burst_size: 10            # Tolérance de rafale
 ```
 
 #### Listes d'Accès
 
-Disponibles pour les adresses IP, UUIDs, et noms de joueurs :
+Disponibles pour les adresses IP, UUIDs et noms de joueurs :
 
 ```yaml
 ip_filter:  # ou id_filter / name_filter
@@ -230,7 +378,7 @@ ip_filter:  # ou id_filter / name_filter
 
 #### Système de Bannissement
 
-Configure les bannissements persistants des joueurs :
+Configurer les bannissements persistants des joueurs :
 
 ```yaml
 ban:
@@ -249,19 +397,33 @@ ban:
 
 ### Configuration des Journaux
 
-Affine la sortie des journaux :
+Affiner la sortie des journaux :
 
 ```yaml
 logging:
+  debug: true
   use_color: true
   use_icons: true
   show_timestamp: true
-  time_format: "%Y-%m-%d %H:%M:%S%.3f"
-  show_target: false
-  show_fields: false
-  template: "{timestamp} {level}: {message}"
-  field_prefixes: {}
+  time_format: "%Y-%m-%d %H:%M:%S"
+  show_target: true
+  show_fields: true
+  template: "{timestamp} [{level}] {message}"
+  regex_filter: "^(pattern)"
+  min_level: "info"
+  log_types:
+    supervisor: "info"
+    server_manager: "info"
+    packet_processing: "debug"
+    ban_system: "info"
+    authentication: "info"
+    telemetry: "warn"
+  exclude_types:
+    - "tcp_connection"
+    - "cache"
 ```
+
+Types de journaux disponibles : `tcp_connection`, `supervisor`, `server_manager`, `packet_processing`, `ban_system`, `authentication`, `telemetry`, `config_provider`, `proxy_protocol`, `cache`, `filter`, `proxy_mode`, `motd`
 
 ## Fonctionnalités Avancées
 
@@ -281,6 +443,6 @@ Le système de bannissement fournit des bannissements persistants avec des optio
 
 ## Besoin d'Aide ?
 
-- 🐛 Signalez les problèmes sur [GitHub](https://github.com/shadowner/infrarust/issues)
-- 💬 Rejoignez notre [Discord](https://discord.gg/sqbJhZVSgG)
-- 📚 Consultez la [documentation](https://infrarust.dev)
+- Signalez les problèmes sur [GitHub](https://github.com/shadowner/infrarust/issues)
+- Rejoignez notre [Discord](https://discord.gg/sqbJhZVSgG)
+- Consultez la [documentation](https://infrarust.dev)
