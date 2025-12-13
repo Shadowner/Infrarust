@@ -18,3 +18,7 @@ target/
 /server/
 bans.audit.json
 bans.json
+
+# Ignore testing directories
+/proxies/
+config.yaml

@@ -12,7 +12,7 @@ use infrarust_config::LogType;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{net::TcpStream, sync::RwLock};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FilterType {
