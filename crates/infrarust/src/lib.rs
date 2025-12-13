@@ -28,6 +28,7 @@ use infrarust_config::{
     },
     provider::{docker::DockerProvider, file::FileProvider},
 };
+use infrarust_event::{eventbus::BUS, events::HandshakeEvent};
 use infrarust_protocol::minecraft::java::handshake::ServerBoundHandshake;
 use infrarust_protocol::version::Version;
 use infrarust_server_manager::{CraftyClient, LocalProvider, PterodactylClient};
@@ -422,6 +423,9 @@ impl Infrarust {
         );
         let handshake = match ServerBoundHandshake::from_packet(&handshake_packet) {
             Ok(handshake) => {
+                BUS.emit(&HandshakeEvent {
+                    packet: handshake.clone(),
+                });
                 debug!(
                     log_type = LogType::PacketProcessing.as_str(),
                     "Successfully parsed handshake: {:?}", handshake

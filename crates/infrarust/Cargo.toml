@@ -31,6 +31,7 @@ infrarust_ban_system = { path = "../infrarust_ban_system", version = "1.3.1" }
 infrarust_server_manager = { path = "../infrarust_server_manager", version = "1.3.1" }
 infrarust_config = { path = "../infrarust_config", version = "1.3.1" }
 infrarust_protocol = { path = "../infrarust_protocol", version = "1.3.1" }
+infrarust_event = { path = "../infrarust_event", version = "1.3.1" }
 
 # Async & Runtime
 tokio = { workspace = true, features = ["full"] }
