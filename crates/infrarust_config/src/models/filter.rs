@@ -8,6 +8,12 @@ pub struct RateLimiterConfig {
     pub enabled: bool,
     pub requests_per_minute: u32,
     pub burst_size: u32,
+    #[serde(default = "default_window_seconds")]
+    pub window_seconds: u64,
+}
+
+fn default_window_seconds() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Deserialize)]
