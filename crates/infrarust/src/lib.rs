@@ -436,7 +436,7 @@ impl Infrarust {
             }
         };
 
-        let domain = handshake.parse_server_address();
+        let domain: Arc<str> = handshake.parse_server_address().into();
         debug!(domain = %domain, log_type = LogType::PacketProcessing.as_str(), "Processing connection for domain");
 
         debug!(

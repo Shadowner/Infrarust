@@ -19,7 +19,7 @@ pub struct ServerRequest {
     pub client_addr: SocketAddr,
     pub original_client_addr: Option<SocketAddr>,
 
-    pub domain: String,
+    pub domain: Arc<str>,
     pub is_login: bool,
     pub protocol_version: Version,
     pub read_packets: [Packet; 2],
