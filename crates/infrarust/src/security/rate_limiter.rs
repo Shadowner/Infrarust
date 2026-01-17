@@ -7,7 +7,7 @@ use std::{
 
 use async_trait::async_trait;
 use infrarust_config::LogType;
-use tokio::{io, net::TcpStream, sync::Mutex};
+use tokio::{io, net::TcpStream, sync::RwLock};
 use tracing::debug;
 use xxhash_rust::xxh64::Xxh64;
 
@@ -16,7 +16,7 @@ use crate::security::filter::{ConfigValue, Filter, FilterError, FilterType};
 pub struct RateLimiter {
     name: String,
     request_limit: u32,
-    counter: Arc<Mutex<LocalCounter>>,
+    counter: Arc<RwLock<LocalCounter>>,
     key_fn: Box<dyn Fn(&TcpStream) -> String + Send + Sync>,
 }
 
@@ -41,7 +41,7 @@ impl RateLimiter {
         Self {
             name: name_str,
             request_limit,
-            counter: Arc::new(Mutex::new(LocalCounter::new(window_length))),
+            counter: Arc::new(RwLock::new(LocalCounter::new(window_length))),
             key_fn: Box::new(key_by_ip),
         }
     }
@@ -58,7 +58,7 @@ impl RateLimiter {
         let key = (self.key_fn)(stream);
         let now = SystemTime::now();
 
-        let mut counter = self.counter.lock().await;
+        let mut counter = self.counter.write().await;
         counter.evict();
 
         let rate = counter.get_rate(&key, now);

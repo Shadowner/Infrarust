@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{Mutex, RwLock, oneshot};
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
@@ -25,10 +25,10 @@ pub struct Manager {
     local_manager: Arc<ServerManager<LocalProvider>>,
     crafty_manager: Arc<ServerManager<CraftyClient>>,
 
-    time_since_empty: Arc<Mutex<HashMap<ManagerType, HashMap<String, u64>>>>,
+    time_since_empty: Arc<RwLock<HashMap<ManagerType, HashMap<String, u64>>>>,
     shutdown_tasks: Arc<Mutex<HashMap<(ManagerType, String), ShutdownTask>>>,
-    shutdown_timers: Arc<Mutex<HashMap<(ManagerType, String), ServerShutdownInfo>>>,
-    starting_servers: Arc<Mutex<HashMap<(ManagerType, String), Instant>>>,
+    shutdown_timers: Arc<RwLock<HashMap<(ManagerType, String), ServerShutdownInfo>>>,
+    starting_servers: Arc<RwLock<HashMap<(ManagerType, String), Instant>>>,
 }
 
 impl Manager {
@@ -48,10 +48,10 @@ impl Manager {
             pterodactyl_manager: Arc::new(pterodactyl_manager),
             local_manager: Arc::new(local_manager),
             crafty_manager: Arc::new(crafty_manager),
-            time_since_empty: Arc::new(Mutex::new(HashMap::new())),
+            time_since_empty: Arc::new(RwLock::new(HashMap::new())),
             shutdown_tasks: Arc::new(Mutex::new(HashMap::new())),
-            shutdown_timers: Arc::new(Mutex::new(HashMap::new())),
-            starting_servers: Arc::new(Mutex::new(HashMap::new())),
+            shutdown_timers: Arc::new(RwLock::new(HashMap::new())),
+            starting_servers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -212,7 +212,7 @@ impl Manager {
 
         // Clean up all empty server tracking
         {
-            let mut time_since_empty = self.time_since_empty.lock().await;
+            let mut time_since_empty = self.time_since_empty.write().await;
             if let Some(manager_map) = time_since_empty.get_mut(&manager_type) {
                 manager_map.remove(server_id);
             }
@@ -220,7 +220,7 @@ impl Manager {
 
         // Clean up shutdown timers
         {
-            let mut shutdown_timers = self.shutdown_timers.lock().await;
+            let mut shutdown_timers = self.shutdown_timers.write().await;
             shutdown_timers.remove(&(manager_type, server_id.to_string()));
         }
 
@@ -269,7 +269,7 @@ impl Manager {
             "Marking server {} as starting", server_id
         );
         {
-            let mut starting_servers = self.starting_servers.lock().await;
+            let mut starting_servers = self.starting_servers.write().await;
             starting_servers.insert((manager_type, server_id.to_string()), Instant::now());
         }
         debug!(
@@ -285,7 +285,7 @@ impl Manager {
         );
         // Use a separate scope to ensure the lock is released quickly
         {
-            let mut starting_servers = self.starting_servers.lock().await;
+            let mut starting_servers = self.starting_servers.write().await;
             starting_servers.remove(&(*manager_type, server_id.to_string()));
         }
     }
@@ -294,7 +294,7 @@ impl Manager {
         // Get the result and release the lock immediately
         let key = (*manager_type, server_id.to_string());
 
-        self.starting_servers.lock().await.contains_key(&key)
+        self.starting_servers.read().await.contains_key(&key)
     }
 
     pub async fn mark_server_as_empty(
@@ -312,7 +312,7 @@ impl Manager {
         }
 
         let already_marked_for_shutdown = {
-            let shutdown_timers = self.shutdown_timers.lock().await;
+            let shutdown_timers = self.shutdown_timers.read().await;
             shutdown_timers.contains_key(&(manager_type, server_id.to_string()))
         };
 
@@ -325,7 +325,7 @@ impl Manager {
         }
 
         {
-            let mut time_since_empty = self.time_since_empty.lock().await;
+            let mut time_since_empty = self.time_since_empty.write().await;
             let manager_map = time_since_empty
                 .entry(manager_type)
                 .or_insert_with(HashMap::new);
@@ -333,7 +333,7 @@ impl Manager {
         }
 
         {
-            let mut shutdown_timers = self.shutdown_timers.lock().await;
+            let mut shutdown_timers = self.shutdown_timers.write().await;
             shutdown_timers.insert(
                 (manager_type, server_id.to_string()),
                 ServerShutdownInfo {
@@ -364,14 +364,14 @@ impl Manager {
         );
 
         {
-            let mut time_since_empty = self.time_since_empty.lock().await;
+            let mut time_since_empty = self.time_since_empty.write().await;
             if let Some(manager_map) = time_since_empty.get_mut(&manager_type) {
                 manager_map.remove(server_id);
             }
         }
 
         {
-            let mut shutdown_timers = self.shutdown_timers.lock().await;
+            let mut shutdown_timers = self.shutdown_timers.write().await;
             shutdown_timers.remove(&(manager_type, server_id.to_string()));
         }
 
@@ -383,7 +383,7 @@ impl Manager {
         &self,
         threshold_seconds: u64,
     ) -> Vec<(String, ManagerType, u64)> {
-        let shutdown_timers = self.shutdown_timers.lock().await;
+        let shutdown_timers = self.shutdown_timers.read().await;
         let now = Instant::now();
         let mut near_shutdown = Vec::new();
 
@@ -440,7 +440,7 @@ impl Manager {
                     _ = sleep(timeout) => {
                         // Double check if the server is still scheduled for shutdown
                         let shutdown_scheduled = {
-                            let timers = self_clone.shutdown_timers.lock().await;
+                            let timers = self_clone.shutdown_timers.read().await;
                             timers.contains_key(&(manager_type_clone, server_id_clone.clone()))
                         };
 
@@ -468,7 +468,7 @@ impl Manager {
                 }
 
                 {
-                    let mut shutdown_timers = self_clone.shutdown_timers.lock().await;
+                    let mut shutdown_timers = self_clone.shutdown_timers.write().await;
                     shutdown_timers.remove(&(manager_type_clone, server_id_clone.clone()));
                 }
             });
@@ -486,7 +486,7 @@ impl Manager {
 
     pub async fn force_clear_starting_status(&self, server_id: &str, manager_type: &ManagerType) {
         debug!("Force clearing starting status for server {}", server_id);
-        let mut starting_servers = self.starting_servers.lock().await;
+        let mut starting_servers = self.starting_servers.write().await;
         if starting_servers
             .remove(&(*manager_type, server_id.to_string()))
             .is_some()
