@@ -185,12 +185,9 @@ impl Gateway {
 
         debug!(
             log_type = LogType::TcpConnection.as_str(),
-            "Looseking up server for domain: {}", request.domain
+            "Looking up server for domain: {}", request.domain
         );
-        let server_config = {
-            let domain = request.domain.clone();
-            self.find_server(&domain).await
-        };
+        let server_config = self.find_server(&request.domain).await;
         let server_config = match server_config {
             Some(config) => config,
             None => return,
@@ -220,7 +217,7 @@ impl Gateway {
                 .await;
 
             if let Ok(manager) = server_manager {
-                let server_id = manager_config.server_id.clone();
+                let server_id = &manager_config.server_id;
                 let manager_type = manager_config.provider_name;
 
                 if manager.state == ServerState::Crashed {
@@ -238,7 +235,7 @@ impl Gateway {
                     let start_server = self
                         .shared
                         .server_managers()
-                        .start_server(&server_id, manager_type)
+                        .start_server(server_id, manager_type)
                         .await;
 
                     if let Err(e) = start_server {
@@ -263,13 +260,11 @@ impl Gateway {
                     let _ = self
                         .shared
                         .server_managers()
-                        .remove_server_from_empty(&server_id, manager_type)
+                        .remove_server_from_empty(server_id, manager_type)
                         .await;
                 }
             }
         }
-
-        let connecting_domain = request.domain.clone();
 
         debug!(
             log_type = LogType::Authentication.as_str(),
@@ -291,7 +286,7 @@ impl Gateway {
                 oneshot_request_receiver,
                 request.is_login,
                 username.clone(),
-                &connecting_domain,
+                &request.domain,
             )
             .instrument(debug_span!(parent: span.clone(), "create_actors",
                 username = %username,
@@ -308,6 +303,7 @@ impl Gateway {
 
         let supervisor = self.shared.actor_supervisor().clone();
         let server_config_clone = server_config.clone();
+        let connecting_domain = request.domain.clone();
 
         debug!(
             log_type = LogType::Authentication.as_str(),
@@ -431,7 +427,7 @@ impl Gateway {
             request.domain
         );
 
-        let self_clone = self.clone();
+        let gateway = self.clone();
         tokio::spawn(async move {
             let near_shutdown_threshold = 60; // Increased to 300 seconds (5 minutes) to show shutdown MOTD earlier
 
@@ -440,7 +436,7 @@ impl Gateway {
             {
                 Some(config) => {
                     // Check if this server is near shutdown
-                    let server_managers = self_clone.shared.server_managers();
+                    let server_managers = gateway.shared.server_managers();
                     let near_shutdown_servers = server_managers
                         .get_servers_near_shutdown(near_shutdown_threshold)
                         .await;
@@ -464,11 +460,11 @@ impl Gateway {
                         );
                         generate_response(
                             MotdState::ImminentShutdown { seconds_remaining: remaining_seconds },
-                            request.domain,
+                            request.domain.to_string(),
                             server_config.clone(),
                         )
                     } else {
-                        let status = self_clone
+                        let status = gateway
                             .shared
                             .server_managers()
                             .get_status_for_server(&config.server_id, config.provider_name)
@@ -480,7 +476,7 @@ impl Gateway {
                                     "Failed to get status for server {} from manager {:?}: {}",
                                     config.server_id, config.provider_name, e
                                 );
-                                generate_response(MotdState::UnableToFetchStatus, request.domain, server_config)
+                                generate_response(MotdState::UnableToFetchStatus, request.domain.to_string(), server_config)
                             }
                             Ok(server_status) => match server_status.state {
                                 ServerState::Crashed => {
@@ -488,14 +484,14 @@ impl Gateway {
                                         "Server {} is crashed, using unreachable MOTD",
                                         server_config.config_id
                                     );
-                                    generate_response(MotdState::Crashed, request.domain, server_config)
+                                    generate_response(MotdState::Crashed, request.domain.to_string(), server_config)
                                 }
                                 ServerState::Running => {
                                     debug!(
                                         log_type = LogType::Authentication.as_str(),
                                         "Server {} is running", server_config.config_id
                                     );
-                                    self_clone
+                                    gateway
                                         .get_or_fetch_status_response(
                                             request.clone(),
                                             server_config,
@@ -507,7 +503,7 @@ impl Gateway {
                                         log_type = LogType::Authentication.as_str(),
                                         "Server {} is starting", server_config.config_id
                                     );
-                                    generate_response(MotdState::Starting, request.domain, server_config)
+                                    generate_response(MotdState::Starting, request.domain.to_string(), server_config)
                                 }
                                 ServerState::Stopped => {
                                     debug!(
@@ -516,7 +512,7 @@ impl Gateway {
                                     );
                                     generate_response(
                                         MotdState::Offline,
-                                        request.domain,
+                                        request.domain.to_string(),
                                         server_config,
                                     )
                                 }
@@ -525,21 +521,21 @@ impl Gateway {
                                         "Server {} is in unknown state",
                                         server_config.config_id
                                     );
-                                    generate_response(MotdState::Crashed, request.domain, server_config)
+                                    generate_response(MotdState::Crashed, request.domain.to_string(), server_config)
                                 }
                                 ServerState::Stopping => {
                                     debug!(
                                         log_type = LogType::Authentication.as_str(),
                                         "Server {} is stopping", server_config.config_id
                                     );
-                                    generate_response(MotdState::Stopping, request.domain, server_config)
+                                    generate_response(MotdState::Stopping, request.domain.to_string(), server_config)
                                 }
                             },
                         }
                     }
                 }
                 None => {
-                    self_clone
+                    gateway
                         .get_or_fetch_status_response(request.clone(), server_config)
                         .await
                 }
@@ -624,7 +620,7 @@ impl Gateway {
                     log_type = LogType::Authentication.as_str(),
                     "Failed to create server instance: {}", e
                 );
-                return self.generate_unreachable_motd_response(req.domain, server_config);
+                return self.generate_unreachable_motd_response(req.domain.to_string(), server_config);
             }
         };
 
@@ -636,7 +632,7 @@ impl Gateway {
         // Check if there's already a cached entry
         if let Some(packet) = self.try_quick_cache_lookup(&tmp_server, &req).await {
             return self.create_status_response(
-                req.domain.clone(),
+                req.domain.to_string(),
                 server_config,
                 packet,
                 &tmp_server,
@@ -648,7 +644,7 @@ impl Gateway {
                 log_type = LogType::Authentication.as_str(),
                 "Using online MOTD for {}", req.domain
             );
-            return generate_response(MotdState::Online, req.domain, server_config);
+            return generate_response(MotdState::Online, req.domain.to_string(), server_config);
         }
 
         // Check for pending requests - if one exists, wait for it instead of making a new request
@@ -677,19 +673,19 @@ impl Gateway {
                         pending_requests.insert(key, receiver.clone());
                         drop(pending_requests);
 
-                        // Spawn a task to fetch the status
-                        let self_clone = self.clone();
-                        let tmp_server_clone = tmp_server.clone();
-                        let req_clone = req.clone();
-                        let server_config_clone = Arc::clone(&server_config);
+                        // Spawn a task to fetch the status - clone required data for async move
+                        let gateway = self.clone();
+                        let server = tmp_server.clone();
+                        let request = req.clone();
+                        let config = Arc::clone(&server_config);
 
                         tokio::spawn(async move {
-                            let result = match tmp_server_clone.fetch_status_directly(&req_clone).await {
+                            let result = match server.fetch_status_directly(&request).await {
                                 Ok(packet) => {
                                     // Update cache
-                                    let mut cache = self_clone.status_cache.write().await;
+                                    let mut cache = gateway.status_cache.write().await;
                                     cache
-                                        .update_cache_for(&tmp_server_clone, &req_clone, packet.clone())
+                                        .update_cache_for(&server, &request, packet.clone())
                                         .await;
 
                                     Ok(packet)
@@ -700,9 +696,9 @@ impl Gateway {
                                         "Status fetch failed: {}. Using unreachable MOTD", e
                                     );
                                     // Get the error MOTD packet
-                                    let motd_response = self_clone.generate_unreachable_motd_response(
-                                        req_clone.domain.clone(),
-                                        server_config_clone,
+                                    let motd_response = gateway.generate_unreachable_motd_response(
+                                        request.domain.to_string(),
+                                        config,
                                     );
 
                                     match motd_response {
@@ -722,7 +718,7 @@ impl Gateway {
                             let _ = sender.send(Some(result));
 
                             // Clean up the pending request
-                            let mut pending_requests = self_clone.pending_status_requests.write().await;
+                            let mut pending_requests = gateway.pending_status_requests.write().await;
                             pending_requests.remove(&key);
                         });
 
@@ -742,13 +738,13 @@ impl Gateway {
                         log_type = LogType::Authentication.as_str(),
                         "Watch channel sender dropped for {}", req.domain
                     );
-                    return self.generate_unreachable_motd_response(req.domain, server_config);
+                    return self.generate_unreachable_motd_response(req.domain.to_string(), server_config);
                 }
                 // Only clone when result is actually ready
                 if let Some(result) = receiver.borrow().as_ref() {
                     return match result {
                         Ok(packet) => {
-                            self.create_status_response(req.domain, server_config, packet.clone(), &tmp_server)
+                            self.create_status_response(req.domain.to_string(), server_config, packet.clone(), &tmp_server)
                         }
                         Err(e) => Err(e.clone()),
                     };
@@ -864,7 +860,7 @@ impl Gateway {
             }
             Err(e) => {
                 error!("Failed to create server instance: {}", e);
-                return self.generate_unreachable_motd_response(req.domain, server);
+                return self.generate_unreachable_motd_response(req.domain.to_string(), server);
             }
         };
 
@@ -888,7 +884,7 @@ impl Gateway {
 
         if let Some(response) = self.try_quick_cache_lookup(tmp_server, req).await {
             let result =
-                self.create_status_response(req.domain.clone(), server, response, tmp_server);
+                self.create_status_response(req.domain.to_string(), server, response, tmp_server);
             return result;
         }
 
@@ -898,11 +894,11 @@ impl Gateway {
                 // Update cache in the background without waiting
                 self.update_cache_in_background(tmp_server, req, packet.clone());
 
-                self.create_status_response(req.domain.clone(), server, packet, tmp_server)
+                self.create_status_response(req.domain.to_string(), server, packet, tmp_server)
             }
             Err(e) => {
                 debug!("Status fetch failed: {}. Using unreachable MOTD", e);
-                self.generate_unreachable_motd_response(req.domain.clone(), server)
+                self.generate_unreachable_motd_response(req.domain.to_string(), server)
             }
         }
     }
@@ -927,15 +923,14 @@ impl Gateway {
     }
 
     fn update_cache_in_background(&self, tmp_server: &Server, req: &ServerRequest, packet: Packet) {
-        let cache = self.status_cache.clone();
-        let tmp_server_clone = tmp_server.clone();
-        let req_clone = req.clone();
-        let packet_clone = packet.clone();
+        let cache = Arc::clone(&self.status_cache);
+        let tmp_server = tmp_server.clone();
+        let req = req.clone();
 
         tokio::spawn(async move {
             if let Ok(mut cache_guard) = cache.try_write() {
                 cache_guard
-                    .update_cache_for(&tmp_server_clone, &req_clone, packet_clone)
+                    .update_cache_for(&tmp_server, &req, packet)
                     .await;
             }
         });
@@ -943,7 +938,7 @@ impl Gateway {
 
     fn create_status_response(
         &self,
-        domain: String,
+        domain: impl Into<String>,
         server: Arc<ServerConfig>,
         packet: Packet,
         tmp_server: &Server,
@@ -955,7 +950,7 @@ impl Gateway {
             read_packets: vec![],
             server_addr: None,
             proxy_mode: tmp_server.config.proxy_mode.unwrap_or_default(),
-            proxied_domain: Some(domain),
+            proxied_domain: Some(domain.into()),
             initial_config: server,
         })
     }
@@ -987,7 +982,7 @@ impl Gateway {
                     read_packets: req.read_packets.to_vec(),
                     server_addr: Some(req.client_addr),
                     proxy_mode: tmp_server.config.proxy_mode.unwrap_or_default(),
-                    proxied_domain: Some(req.domain.clone()),
+                    proxied_domain: Some(req.domain.to_string()),
                     initial_config: server,
                 })
             }
@@ -1000,7 +995,7 @@ impl Gateway {
 
     fn generate_unreachable_motd_response(
         &self,
-        domain: String,
+        domain: impl Into<String> + std::fmt::Display,
         server: Arc<ServerConfig>,
     ) -> ProtocolResult<ServerResponse> {
         debug!("Generating unreachable MOTD response for {}", domain);
@@ -1009,7 +1004,7 @@ impl Gateway {
 
     async fn handle_unknown_server(&self, req: &ServerRequest) -> ProtocolResult<ServerResponse> {
         debug!("Handling unknown server for {}", req.domain);
-        motd::generate_unknown_server_response(req.domain.clone(), self.shared.config())
+        motd::generate_unknown_server_response(req.domain.to_string(), self.shared.config())
     }
 }
 
@@ -1064,12 +1059,12 @@ impl ServerRequester for Gateway {
         req: ServerRequest,
         server: Arc<ServerConfig>,
     ) -> ProtocolResult<ServerResponse> {
-        let domain_ref = &req.domain.clone();
-        debug!("Wake up server: {} with {}", domain_ref, &server.config_id);
+        debug!("Wake up server: {} with {}", &req.domain, &server.config_id);
+        let domain = req.domain.clone();
         let result = self.wake_up_server_internal(req, server).await;
         match &result {
-            Ok(_) => debug!("Wake up server successful for: {}", domain_ref),
-            Err(e) => debug!("Wake up server failed for: {}: {}", domain_ref, e),
+            Ok(_) => debug!("Wake up server successful for: {}", domain),
+            Err(e) => debug!("Wake up server failed for: {}: {}", domain, e),
         }
         result
     }
