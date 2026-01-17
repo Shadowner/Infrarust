@@ -8,7 +8,7 @@ use infrarust_config::{
 use infrarust_protocol::minecraft::java::login::ServerBoundLoginStart;
 use infrarust_server_manager::ServerState;
 use tokio::sync::{
-    Mutex,
+    RwLock,
     mpsc::{self},
     oneshot,
     watch::{self, Receiver},
@@ -31,11 +31,11 @@ use crate::security::BanHelper;
 static SHARED_COMPONENT: std::sync::OnceLock<Arc<SharedComponent>> = std::sync::OnceLock::new();
 #[derive(Debug, Clone)]
 pub struct Gateway {
-    status_cache: Arc<Mutex<StatusCache>>,
+    status_cache: Arc<RwLock<StatusCache>>,
     shared: Arc<SharedComponent>,
     #[allow(clippy::type_complexity)]
     pending_status_requests:
-        Arc<Mutex<HashMap<u64, Receiver<Option<Result<Packet, ProxyProtocolError>>>>>>,
+        Arc<RwLock<HashMap<u64, Receiver<Option<Result<Packet, ProxyProtocolError>>>>>>,
 }
 
 impl Gateway {
@@ -49,8 +49,8 @@ impl Gateway {
 
         let config = shared.config();
         let gateway = Self {
-            status_cache: Arc::new(Mutex::new(StatusCache::from_shared_config(config))),
-            pending_status_requests: Arc::new(Mutex::new(HashMap::new())),
+            status_cache: Arc::new(RwLock::new(StatusCache::from_shared_config(config))),
+            pending_status_requests: Arc::new(RwLock::new(HashMap::new())),
             shared,
         };
 
@@ -629,7 +629,7 @@ impl Gateway {
         };
 
         // Use consistent key for request deduplication
-        let cache = self.status_cache.lock().await;
+        let cache = self.status_cache.read().await;
         let key = cache.cache_key(&tmp_server, req.protocol_version);
         drop(cache);
 
@@ -653,88 +653,106 @@ impl Gateway {
 
         // Check for pending requests - if one exists, wait for it instead of making a new request
         let pending_receiver = {
-            let mut pending_requests = self.pending_status_requests.lock().await;
+            {
+                let pending_requests = self.pending_status_requests.read().await;
+                if let Some(receiver) = pending_requests.get(&key).cloned() {
+                    // Another request is already in progress, wait for it
+                    debug!(
+                        "Waiting for in-progress status request for {} (key: {})",
+                        req.domain, key
+                    );
+                    drop(pending_requests);
+                    Some(receiver)
+                } else {
+                    drop(pending_requests);
+                    // No pending request found with read lock, need to acquire write lock
+                    let mut pending_requests = self.pending_status_requests.write().await;
 
-            if let Some(receiver) = pending_requests.get(&key).cloned() {
-                // Another request is already in progress, wait for it
-                debug!(
-                    "Waiting for in-progress status request for {} (key: {})",
-                    req.domain, key
-                );
-                Some(receiver)
-            } else {
-                // No pending request, create a new sender/receiver pair
-                let (sender, receiver) = watch::channel(None);
-                pending_requests.insert(key, receiver.clone());
+                    // Double-check in case another task inserted while we were waiting for write lock
+                    if let Some(receiver) = pending_requests.get(&key).cloned() {
+                        Some(receiver)
+                    } else {
+                        // No pending request, create a new sender/receiver pair
+                        let (sender, receiver) = watch::channel(None);
+                        pending_requests.insert(key, receiver.clone());
+                        drop(pending_requests);
 
-                // Spawn a task to fetch the status
-                let self_clone = self.clone();
-                let tmp_server_clone = tmp_server.clone();
-                let req_clone = req.clone();
-                let server_config_clone = server_config.clone();
+                        // Spawn a task to fetch the status
+                        let self_clone = self.clone();
+                        let tmp_server_clone = tmp_server.clone();
+                        let req_clone = req.clone();
+                        let server_config_clone = Arc::clone(&server_config);
 
-                tokio::spawn(async move {
-                    let result = match tmp_server_clone.fetch_status_directly(&req_clone).await {
-                        Ok(packet) => {
-                            // Update cache
-                            let mut cache = self_clone.status_cache.lock().await;
-                            cache
-                                .update_cache_for(&tmp_server_clone, &req_clone, packet.clone())
-                                .await;
+                        tokio::spawn(async move {
+                            let result = match tmp_server_clone.fetch_status_directly(&req_clone).await {
+                                Ok(packet) => {
+                                    // Update cache
+                                    let mut cache = self_clone.status_cache.write().await;
+                                    cache
+                                        .update_cache_for(&tmp_server_clone, &req_clone, packet.clone())
+                                        .await;
 
-                            Ok(packet)
-                        }
-                        Err(e) => {
-                            debug!(
-                                log_type = LogType::Authentication.as_str(),
-                                "Status fetch failed: {}. Using unreachable MOTD", e
-                            );
-                            // Get the error MOTD packet
-                            let motd_response = self_clone.generate_unreachable_motd_response(
-                                req_clone.domain.clone(),
-                                server_config_clone,
-                            );
+                                    Ok(packet)
+                                }
+                                Err(e) => {
+                                    debug!(
+                                        log_type = LogType::Authentication.as_str(),
+                                        "Status fetch failed: {}. Using unreachable MOTD", e
+                                    );
+                                    // Get the error MOTD packet
+                                    let motd_response = self_clone.generate_unreachable_motd_response(
+                                        req_clone.domain.clone(),
+                                        server_config_clone,
+                                    );
 
-                            match motd_response {
-                                Ok(resp) => {
-                                    if let Some(packet) = resp.status_response {
-                                        Ok(packet)
-                                    } else {
-                                        Err(e)
+                                    match motd_response {
+                                        Ok(resp) => {
+                                            if let Some(packet) = resp.status_response {
+                                                Ok(packet)
+                                            } else {
+                                                Err(e)
+                                            }
+                                        }
+                                        Err(_) => Err(e),
                                     }
                                 }
-                                Err(_) => Err(e),
-                            }
-                        }
-                    };
+                            };
 
-                    // Send the result to all waiters
-                    let _ = sender.send(Some(result));
+                            // Send the result to all waiters
+                            let _ = sender.send(Some(result));
 
-                    // Clean up the pending request
-                    let mut pending_requests = self_clone.pending_status_requests.lock().await;
-                    pending_requests.remove(&key);
-                });
+                            // Clean up the pending request
+                            let mut pending_requests = self_clone.pending_status_requests.write().await;
+                            pending_requests.remove(&key);
+                        });
 
-                Some(receiver)
+                        Some(receiver)
+                    }
+                }
             }
         };
 
         // Wait for the pending request to complete
         if let Some(mut receiver) = pending_receiver {
-            // Wait for the result to be available
-            let mut result = None;
-            while result.is_none() {
-                let _ = receiver.changed().await;
-                result = receiver.borrow().clone();
-            }
-
-            // Result is guaranteed to be Some due to the while loop above
-            match result.expect("Result should be Some after while loop") {
-                Ok(packet) => {
-                    self.create_status_response(req.domain, server_config, packet, &tmp_server)
+            // Wait for the result to be available - only clone once when ready
+            loop {
+                if receiver.changed().await.is_err() {
+                    // Sender dropped without sending result
+                    debug!(
+                        log_type = LogType::Authentication.as_str(),
+                        "Watch channel sender dropped for {}", req.domain
+                    );
+                    return self.generate_unreachable_motd_response(req.domain, server_config);
                 }
-                Err(e) => Err(e),
+                // Only clone when result is actually ready
+                if let Some(result) = receiver.borrow().as_ref() {
+                    return match result {
+                        Ok(packet) => {
+                            self.create_status_response(req.domain, server_config, packet.clone(), &tmp_server)
+                        }
+                        Err(e) => Err(e.clone()),
+                    };
+                }
             }
         } else {
             // This should never happen, but if it does, fall back to the original implementation
@@ -895,7 +913,7 @@ impl Gateway {
         req: &ServerRequest,
     ) -> Option<Packet> {
         match tokio::time::timeout(std::time::Duration::from_millis(100), async {
-            let mut cache_guard = self.status_cache.lock().await;
+            let mut cache_guard = self.status_cache.write().await;
             cache_guard.check_cache_only(tmp_server, req).await
         })
         .await
@@ -915,7 +933,7 @@ impl Gateway {
         let packet_clone = packet.clone();
 
         tokio::spawn(async move {
-            if let Ok(mut cache_guard) = cache.try_lock() {
+            if let Ok(mut cache_guard) = cache.try_write() {
                 cache_guard
                     .update_cache_for(&tmp_server_clone, &req_clone, packet_clone)
                     .await;
