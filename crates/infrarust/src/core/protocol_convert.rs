@@ -18,10 +18,18 @@ use crate::network::packet::Packet;
 impl From<&ClientBoundEncryptionRequest> for Packet {
     fn from(req: &ClientBoundEncryptionRequest) -> Self {
         let mut packet = Packet::new(CLIENTBOUND_ENCRYPTION_REQUEST_ID);
-        packet.encode(&req.server_id).unwrap();
-        packet.encode(&req.public_key).unwrap();
-        packet.encode(&req.verify_token).unwrap();
-        packet.encode(&req.requires_authentication).unwrap();
+        packet
+            .encode(&req.server_id)
+            .expect("Failed to encode server_id in encryption request");
+        packet
+            .encode(&req.public_key)
+            .expect("Failed to encode public_key in encryption request");
+        packet
+            .encode(&req.verify_token)
+            .expect("Failed to encode verify_token in encryption request");
+        packet
+            .encode(&req.requires_authentication)
+            .expect("Failed to encode requires_authentication in encryption request");
         packet
     }
 }
@@ -52,10 +60,12 @@ impl From<&ClientBoundLoginSuccess> for Packet {
         let mut packet = Packet::new(0x02);
 
         packet.data.extend_from_slice(login.uuid.as_bytes());
-        packet.encode(&login.username).unwrap();
+        packet
+            .encode(&login.username)
+            .expect("Failed to encode username in login success");
         packet
             .encode(&VarInt(login.properties.len() as i32))
-            .unwrap();
+            .expect("Failed to encode properties count in login success");
 
         // Write each property
 
@@ -179,9 +189,13 @@ impl From<&ServerBoundLoginStart> for Packet {
     fn from(login: &ServerBoundLoginStart) -> Self {
         let mut packet = Packet::new(SERVERBOUND_LOGIN_START_ID);
 
-        packet.encode(&login.name).unwrap();
+        packet
+            .encode(&login.name)
+            .expect("Failed to encode name in login start");
         if let Some(uuid) = &login.player_uuid {
-            packet.encode(uuid).unwrap();
+            packet
+                .encode(uuid)
+                .expect("Failed to encode player_uuid in login start");
         }
         packet.set_protocol_version(login.protocol_version);
         packet

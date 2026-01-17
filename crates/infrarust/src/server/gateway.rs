@@ -22,14 +22,11 @@ use crate::{
     Connection,
     core::event::GatewayMessage,
     network::proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
-    server::motd::{
-        generate_not_started_motd_response, generate_starting_motd_response,
-        generate_stopping_motd_response, generate_unable_status_motd_response,
-    },
+    server::motd::{self, MotdState, generate_response},
 };
 use crate::{core::shared_component::SharedComponent, network::connection::PossibleReadValue};
-use crate::{network::packet::Packet, server::motd::generate_crashing_motd_response};
-use crate::{security::BanHelper, server::motd};
+use crate::network::packet::Packet;
+use crate::security::BanHelper;
 
 static SHARED_COMPONENT: std::sync::OnceLock<Arc<SharedComponent>> = std::sync::OnceLock::new();
 #[derive(Debug, Clone)]
@@ -211,7 +208,7 @@ impl Gateway {
             return;
         }
 
-        if server_config.server_manager.is_some() {
+        if let Some(manager_config) = &server_config.server_manager {
             debug!(
                 log_type = LogType::ServerManager.as_str(),
                 "Server manager is present, checking status"
@@ -219,20 +216,12 @@ impl Gateway {
             let server_manager = self
                 .shared
                 .server_managers()
-                .get_status_for_server(
-                    &server_config.server_manager.as_ref().unwrap().server_id,
-                    server_config.server_manager.as_ref().unwrap().provider_name,
-                )
+                .get_status_for_server(&manager_config.server_id, manager_config.provider_name)
                 .await;
 
             if let Ok(manager) = server_manager {
-                let server_id = server_config
-                    .server_manager
-                    .as_ref()
-                    .unwrap()
-                    .server_id
-                    .clone();
-                let manager_type = server_config.server_manager.as_ref().unwrap().provider_name;
+                let server_id = manager_config.server_id.clone();
+                let manager_type = manager_config.provider_name;
 
                 if manager.state == ServerState::Crashed {
                     warn!(
@@ -473,10 +462,10 @@ impl Gateway {
                             "Server {} is scheduled to shut down in {} seconds",
                             server_config.config_id, remaining_seconds
                         );
-                        motd::generate_imminent_shutdown_motd_response(
+                        generate_response(
+                            MotdState::ImminentShutdown { seconds_remaining: remaining_seconds },
                             request.domain,
                             server_config.clone(),
-                            remaining_seconds,
                         )
                     } else {
                         let status = self_clone
@@ -491,7 +480,7 @@ impl Gateway {
                                     "Failed to get status for server {} from manager {:?}: {}",
                                     config.server_id, config.provider_name, e
                                 );
-                                generate_unable_status_motd_response(request.domain, server_config)
+                                generate_response(MotdState::UnableToFetchStatus, request.domain, server_config)
                             }
                             Ok(server_status) => match server_status.state {
                                 ServerState::Crashed => {
@@ -499,7 +488,7 @@ impl Gateway {
                                         "Server {} is crashed, using unreachable MOTD",
                                         server_config.config_id
                                     );
-                                    generate_crashing_motd_response(request.domain, server_config)
+                                    generate_response(MotdState::Crashed, request.domain, server_config)
                                 }
                                 ServerState::Running => {
                                     debug!(
@@ -518,14 +507,15 @@ impl Gateway {
                                         log_type = LogType::Authentication.as_str(),
                                         "Server {} is starting", server_config.config_id
                                     );
-                                    generate_starting_motd_response(request.domain, server_config)
+                                    generate_response(MotdState::Starting, request.domain, server_config)
                                 }
                                 ServerState::Stopped => {
                                     debug!(
                                         log_type = LogType::Authentication.as_str(),
                                         "Server {} is stopped", server_config.config_id
                                     );
-                                    generate_not_started_motd_response(
+                                    generate_response(
+                                        MotdState::Offline,
                                         request.domain,
                                         server_config,
                                     )
@@ -535,14 +525,14 @@ impl Gateway {
                                         "Server {} is in unknown state",
                                         server_config.config_id
                                     );
-                                    generate_crashing_motd_response(request.domain, server_config)
+                                    generate_response(MotdState::Crashed, request.domain, server_config)
                                 }
                                 ServerState::Stopping => {
                                     debug!(
                                         log_type = LogType::Authentication.as_str(),
                                         "Server {} is stopping", server_config.config_id
                                     );
-                                    generate_stopping_motd_response(request.domain, server_config)
+                                    generate_response(MotdState::Stopping, request.domain, server_config)
                                 }
                             },
                         }
@@ -658,7 +648,7 @@ impl Gateway {
                 log_type = LogType::Authentication.as_str(),
                 "Using online MOTD for {}", req.domain
             );
-            return motd::generate_online_motd_response(req.domain, server_config);
+            return generate_response(MotdState::Online, req.domain, server_config);
         }
 
         // Check for pending requests - if one exists, wait for it instead of making a new request
@@ -739,8 +729,8 @@ impl Gateway {
                 result = receiver.borrow().clone();
             }
 
-            // Unwrap the result
-            match result.unwrap() {
+            // Result is guaranteed to be Some due to the while loop above
+            match result.expect("Result should be Some after while loop") {
                 Ok(packet) => {
                     self.create_status_response(req.domain, server_config, packet, &tmp_server)
                 }
