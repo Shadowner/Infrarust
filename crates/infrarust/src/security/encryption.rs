@@ -51,42 +51,50 @@ pub struct EncryptionState {
 
 impl Default for EncryptionState {
     fn default() -> Self {
-        Self::new()
+        Self::try_new().expect("Failed to initialize encryption state - this is a critical error")
     }
 }
 
 impl EncryptionState {
-    pub fn new() -> Self {
+    pub fn try_new() -> Result<Self, RsaError> {
         let mut rng = rand::thread_rng();
-        let private_key =
-            RsaPrivateKey::new(&mut rng, 1024).expect("failed to generate private key");
+        let private_key = RsaPrivateKey::new(&mut rng, 1024)
+            .map_err(|e| RsaError::KeyGenerationError(e.to_string()))?;
         let public_key = RsaPublicKey::from(&private_key);
 
-        // Générer et stocker immédiatement la clé publique au format DER
+        // Generate and store the public key in DER format
         let public_key_der = public_key
             .to_public_key_der()
-            .expect("Failed to encode public key to DER")
+            .map_err(|e| RsaError::KeyEncodingError(e.to_string()))?
             .as_ref()
             .to_vec();
 
         let mut verify_token = vec![0u8; 4];
         rng.fill_bytes(&mut verify_token);
 
-        Self {
-            shared_secret: Vec::new(), // empty for now
+        Ok(Self {
+            shared_secret: Vec::new(),
             verify_token,
             private_key,
             public_key,
-            public_key_der, // Stocker la clé publique DER
+            public_key_der,
             server_public_key: None,
-        }
+        })
     }
 
-    pub fn new_with_server_data(
+    /// Creates a new encryption state.
+    /// Panics if key generation fails (unlikely in normal operation).
+    pub fn new() -> Self {
+        Self::try_new().expect("Failed to initialize encryption state")
+    }
+
+    /// Creates a new encryption state with server data.
+    /// Returns an error if the server public key cannot be parsed or key generation fails.
+    pub fn try_new_with_server_data(
         server_id: String,
         public_key_bytes: Vec<u8>,
         verify_token: Vec<u8>,
-    ) -> Self {
+    ) -> Result<Self, RsaError> {
         debug!(
             log_type = LogType::Authentication.as_str(),
             "Creating new encryption state with server data"
@@ -106,23 +114,34 @@ impl EncryptionState {
             verify_token.len()
         );
 
-        // Parse la clé publique du serveur
+        // Parse the server's public key
         let server_public_key = RsaPublicKey::from_public_key_der(&public_key_bytes)
             .or_else(|_| RsaPublicKey::from_pkcs1_der(&public_key_bytes))
-            .expect("Failed to parse server public key");
+            .map_err(|e| RsaError::KeyEncodingError(format!("Failed to parse server public key: {}", e)))?;
 
         let private_key = RsaPrivateKey::new(&mut rand::thread_rng(), 1024)
-            .expect("failed to generate private key");
+            .map_err(|e| RsaError::KeyGenerationError(e.to_string()))?;
         let public_key = RsaPublicKey::from(&private_key);
 
-        Self {
+        Ok(Self {
             shared_secret: Vec::new(),
             verify_token,
             private_key,
             public_key,
             server_public_key: Some(server_public_key),
             public_key_der: public_key_bytes,
-        }
+        })
+    }
+
+    /// Creates a new encryption state with server data.
+    /// Panics if the server public key cannot be parsed or key generation fails.
+    pub fn new_with_server_data(
+        server_id: String,
+        public_key_bytes: Vec<u8>,
+        verify_token: Vec<u8>,
+    ) -> Self {
+        Self::try_new_with_server_data(server_id, public_key_bytes, verify_token)
+            .expect("Failed to initialize encryption state with server data")
     }
 
     pub fn verify_token_matches(&self, verify_token: &[u8]) -> bool {
@@ -212,13 +231,20 @@ impl EncryptionState {
         )
     }
 
-    pub fn get_public_key_bytes(&self) -> Vec<u8> {
-        // Convertir la clé au format X.509/DER que Minecraft attend
+    /// Get the public key bytes in X.509/DER format.
+    /// Returns an error if encoding fails (unlikely after successful initialization).
+    pub fn try_get_public_key_bytes(&self) -> Result<Vec<u8>, RsaError> {
         self.public_key
             .to_public_key_der()
+            .map(|der| der.as_ref().to_vec())
+            .map_err(|e| RsaError::KeyEncodingError(e.to_string()))
+    }
+
+    /// Get the public key bytes in X.509/DER format.
+    /// Panics if encoding fails (unlikely after successful initialization).
+    pub fn get_public_key_bytes(&self) -> Vec<u8> {
+        self.try_get_public_key_bytes()
             .expect("Failed to encode public key to X.509")
-            .as_ref()
-            .to_vec()
     }
 
     pub fn create_cipher(&self) -> Option<(Aes128Cfb8Enc, Aes128Cfb8Dec)> {

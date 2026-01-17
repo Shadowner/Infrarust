@@ -1,6 +1,8 @@
+use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use tokio::sync::{Mutex, mpsc};
 use tokio::time;
 
@@ -11,6 +13,21 @@ pub use crate::local::LocalServerConfig;
 pub use crate::monitor::{CrashDetector, ServerStatus};
 use crate::process::ProcessProvider;
 use crate::terminal::execute_command;
+
+#[async_trait]
+pub trait ManagerDispatcher: Send + Sync + Debug {
+    /// Get the status of a server by its ID.
+    async fn get_status(&self, server_id: &str) -> Result<ServerStatus, ServerManagerError>;
+
+    /// Start a server by its ID.
+    async fn start(&self, server_id: &str) -> Result<(), ServerManagerError>;
+
+    /// Stop a server by its ID.
+    async fn stop(&self, server_id: &str) -> Result<(), ServerManagerError>;
+
+    /// Restart a server by its ID.
+    async fn restart(&self, server_id: &str) -> Result<(), ServerManagerError>;
+}
 
 #[derive(Debug, Clone)]
 pub struct ServerManager<T: ApiProvider> {
@@ -152,5 +169,24 @@ impl<T: ApiProvider> ServerManager<T> {
         self.ensure_process_provider()?;
         let provider = self.process_provider.as_ref().unwrap();
         provider.stop_process(server_id).await
+    }
+}
+
+#[async_trait]
+impl<T: ApiProvider + 'static> ManagerDispatcher for ServerManager<T> {
+    async fn get_status(&self, server_id: &str) -> Result<ServerStatus, ServerManagerError> {
+        self.get_server_status(server_id).await
+    }
+
+    async fn start(&self, server_id: &str) -> Result<(), ServerManagerError> {
+        self.start_server(server_id).await
+    }
+
+    async fn stop(&self, server_id: &str) -> Result<(), ServerManagerError> {
+        self.stop_server(server_id).await
+    }
+
+    async fn restart(&self, server_id: &str) -> Result<(), ServerManagerError> {
+        self.restart_server(server_id).await
     }
 }
