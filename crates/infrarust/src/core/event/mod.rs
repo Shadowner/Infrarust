@@ -1,3 +1,5 @@
+use bytes::BytesMut;
+
 use crate::network::packet::Packet;
 
 #[derive(Debug, Clone)]
@@ -7,7 +9,7 @@ pub enum GatewayMessage {
 
 #[derive(Debug, Clone)]
 pub enum MinecraftCommunication<T> {
-    RawData(Vec<u8>),
+    RawData(BytesMut),
     Packet(Packet),
     Shutdown,
     CustomData(T),

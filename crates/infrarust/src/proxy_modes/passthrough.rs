@@ -4,6 +4,7 @@ use crate::core::actors::server::MinecraftServer;
 use crate::core::event::MinecraftCommunication;
 use crate::network::connection::PossibleReadValue;
 use async_trait::async_trait;
+use bytes::BytesMut;
 use infrarust_config::LogType;
 use std::io::{self};
 use tracing::{debug, error};
@@ -12,7 +13,7 @@ pub struct PassthroughMode;
 
 #[derive(Debug)]
 pub enum PassthroughMessage {
-    RawData(Vec<u8>),
+    RawData(BytesMut),
 }
 
 #[async_trait]

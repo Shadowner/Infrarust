@@ -12,7 +12,7 @@ use super::Gateway;
 
 impl Gateway {
     async fn is_username_banned(&self, username: &str) -> Option<String> {
-        BanHelper::is_username_banned(&self.shared.filter_registry(), username).await
+        BanHelper::is_username_banned(self.shared.filter_registry(), username).await
     }
 
     #[instrument(name = "client_connection_handling", skip(client, request), fields(
@@ -195,7 +195,7 @@ impl Gateway {
             std::time::Duration::from_secs(5) // Short timeout for status requests
         };
 
-        let supervisor = self.shared.actor_supervisor().clone();
+        let supervisor = self.shared.actor_supervisor_arc();
         let server_config_clone = server_config.clone();
         let connecting_domain = request.domain.clone();
 

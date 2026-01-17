@@ -177,7 +177,7 @@ impl Infrarust {
                 .await;
         });
         let shared_clone = shared.clone();
-        let registry_clone = shared_clone.filter_registry();
+        let registry_clone = shared_clone.filter_registry_arc();
 
         tokio::spawn(async move {
             let config_clone = shared_clone.config();
