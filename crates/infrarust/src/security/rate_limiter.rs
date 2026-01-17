@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    net::SocketAddr,
+    hash::{Hash, Hasher},
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -13,11 +14,88 @@ use xxhash_rust::xxh64::Xxh64;
 
 use crate::security::filter::{ConfigValue, Filter, FilterError, FilterType};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct RateLimitKey {
+    bytes: [u8; 8],
+    len: u8,
+}
+
+impl RateLimitKey {
+    pub fn from_socket_addr(addr: SocketAddr) -> Self {
+        match addr.ip() {
+            IpAddr::V4(ipv4) => {
+                let mut bytes = [0u8; 8];
+                bytes[..4].copy_from_slice(&ipv4.octets());
+                Self { bytes, len: 4 }
+            }
+            IpAddr::V6(ipv6) => {
+                let segments = ipv6.segments();
+                let mut bytes = [0u8; 8];
+                bytes[0..2].copy_from_slice(&segments[0].to_be_bytes());
+                bytes[2..4].copy_from_slice(&segments[1].to_be_bytes());
+                bytes[4..6].copy_from_slice(&segments[2].to_be_bytes());
+                bytes[6..8].copy_from_slice(&segments[3].to_be_bytes());
+                Self { bytes, len: 8 }
+            }
+        }
+    }
+
+    pub fn unknown() -> Self {
+        Self {
+            bytes: [0u8; 8],
+            len: 0,
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
+}
+
+impl Hash for RateLimitKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_bytes().hash(state);
+    }
+}
+
+impl std::fmt::Debug for RateLimitKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.len == 0 {
+            write!(f, "unknown")
+        } else if self.len == 4 {
+            write!(
+                f,
+                "{}.{}.{}.{}",
+                self.bytes[0], self.bytes[1], self.bytes[2], self.bytes[3]
+            )
+        } else {
+            write!(
+                f,
+                "{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}",
+                self.bytes[0],
+                self.bytes[1],
+                self.bytes[2],
+                self.bytes[3],
+                self.bytes[4],
+                self.bytes[5],
+                self.bytes[6],
+                self.bytes[7]
+            )
+        }
+    }
+}
+
+impl std::fmt::Display for RateLimitKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self, f)
+    }
+}
+
 pub struct RateLimiter {
     name: String,
     request_limit: u32,
     counter: Arc<RwLock<LocalCounter>>,
-    key_fn: Box<dyn Fn(&TcpStream) -> String + Send + Sync>,
+    key_fn: Box<dyn Fn(&TcpStream) -> RateLimitKey + Send + Sync>,
 }
 
 impl std::fmt::Debug for RateLimiter {
@@ -48,7 +126,7 @@ impl RateLimiter {
 
     pub fn with_key_fn<F>(mut self, key_fn: F) -> Self
     where
-        F: Fn(&TcpStream) -> String + Send + Sync + 'static,
+        F: Fn(&TcpStream) -> RateLimitKey + Send + Sync + 'static,
     {
         self.key_fn = Box::new(key_fn);
         self
@@ -61,7 +139,7 @@ impl RateLimiter {
         let mut counter = self.counter.write().await;
         counter.evict();
 
-        let rate = counter.get_rate(&key, now);
+        let rate = counter.get_rate(key, now);
 
         if rate >= f64::from(self.request_limit) {
             debug!(
@@ -71,7 +149,7 @@ impl RateLimiter {
             return Err(io::Error::other("Rate limit exceeded"));
         }
 
-        counter.increment(&key, now);
+        counter.increment(key, now);
         debug!(
             log_type = LogType::Filter.as_str(),
             "Rate check passed for key: {} (current rate: {}/{})", key, rate, self.request_limit
@@ -80,26 +158,11 @@ impl RateLimiter {
     }
 }
 
-fn key_by_ip(stream: &TcpStream) -> String {
+fn key_by_ip(stream: &TcpStream) -> RateLimitKey {
     stream
         .peer_addr()
-        .map(canonicalize_ip_addr)
-        .unwrap_or_else(|_| "unknown".to_string())
-}
-
-fn canonicalize_ip_addr(addr: SocketAddr) -> String {
-    let ip = addr.ip();
-    if ip.is_ipv4() {
-        ip.to_string()
-    } else if let std::net::IpAddr::V6(ipv6) = ip {
-        let segments = ipv6.segments();
-        format!(
-            "{}:{}:{}:{}",
-            segments[0], segments[1], segments[2], segments[3]
-        )
-    } else {
-        ip.to_string()
-    }
+        .map(RateLimitKey::from_socket_addr)
+        .unwrap_or_else(|_| RateLimitKey::unknown())
 }
 #[derive(Debug)]
 struct LocalCounter {
@@ -141,7 +204,7 @@ impl LocalCounter {
         self.last_eviction = now;
     }
 
-    fn get_rate(&self, key: &str, now: SystemTime) -> f64 {
+    fn get_rate(&self, key: RateLimitKey, now: SystemTime) -> f64 {
         let hash = self.hash_key(key, now);
         let prev_hash = self.hash_key(key, now - self.window_length);
 
@@ -156,7 +219,7 @@ impl LocalCounter {
             + f64::from(current)
     }
 
-    fn increment(&mut self, key: &str, now: SystemTime) {
+    fn increment(&mut self, key: RateLimitKey, now: SystemTime) {
         let hash = self.hash_key(key, now);
         self.counters
             .entry(hash)
@@ -167,14 +230,14 @@ impl LocalCounter {
             });
     }
 
-    fn hash_key(&self, key: &str, time: SystemTime) -> u64 {
+    fn hash_key(&self, key: RateLimitKey, time: SystemTime) -> u64 {
         let window = time
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
             / self.window_length.as_secs();
 
-        // Use streaming hasher to avoid string allocation
+        // Use streaming hasher with zero-allocation key bytes
         let mut hasher = Xxh64::new(0);
         hasher.update(key.as_bytes());
         hasher.update(&window.to_le_bytes());

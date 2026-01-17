@@ -48,8 +48,8 @@ impl Gateway {
             shared,
         };
 
-        let supervisor = gateway.shared.actor_supervisor();
-        let shutdown = gateway.shared.shutdown_controller();
+        let supervisor = gateway.shared.actor_supervisor_arc();
+        let shutdown = gateway.shared.shutdown_controller_arc();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
             let mut shutdown_rx = shutdown.subscribe().await;

@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use bytes::BytesMut;
 use infrarust_config::models::infrarust::ProxyProtocolConfig;
 use tokio::{
     io::{AsyncWriteExt, BufReader, BufWriter},
@@ -30,7 +31,7 @@ use super::{
 
 #[derive(Debug, Clone)]
 pub enum PossibleReadValue {
-    Raw(Vec<u8>),
+    Raw(BytesMut),
     Packet(Packet),
     Nothing,
     Eof,
@@ -153,7 +154,7 @@ impl Connection {
                         self.closed.store(true, Ordering::SeqCst);
                         Ok(PossibleReadValue::Eof)
                     }
-                    Ok(Some(bytes)) => Ok(PossibleReadValue::Raw(bytes.to_vec())),
+                    Ok(Some(bytes)) => Ok(PossibleReadValue::Raw(bytes)),
                     Err(e) => {
                         // Mark connection as closed on error
                         self.closed.store(true, Ordering::SeqCst);

@@ -1,14 +1,13 @@
 use crate::FilterError;
 use crate::{FilterRegistry, security::BanSystemAdapter, with_filter_or};
 use infrarust_config::LogType;
-use std::sync::Arc;
 use tracing::debug;
 
 pub struct BanHelper;
 
 impl BanHelper {
     pub async fn is_username_banned(
-        registry: &Arc<FilterRegistry>,
+        registry: &FilterRegistry,
         username: &str,
     ) -> Option<String> {
         debug!(

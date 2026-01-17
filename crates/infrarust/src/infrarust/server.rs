@@ -268,7 +268,7 @@ impl Infrarust {
 
         let self_guard = self.clone();
         tokio::spawn(async move {
-            let config_service = self_guard.shared.configuration_service().clone();
+            let config_service = self_guard.shared.configuration_service_arc();
             let configs = config_service.get_all_configurations().await;
 
             for (config_id, _) in configs {

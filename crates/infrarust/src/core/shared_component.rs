@@ -53,20 +53,36 @@ impl SharedComponent {
         &self.config
     }
 
-    pub(crate) fn actor_supervisor(&self) -> Arc<ActorSupervisor> {
-        self.actor_supervisor.clone()
+    pub(crate) fn actor_supervisor(&self) -> &ActorSupervisor {
+        &self.actor_supervisor
     }
 
-    pub(crate) fn configuration_service(&self) -> Arc<ConfigurationService> {
-        self.configuration_service.clone()
+    pub(crate) fn actor_supervisor_arc(&self) -> Arc<ActorSupervisor> {
+        Arc::clone(&self.actor_supervisor)
     }
 
-    pub(crate) fn filter_registry(&self) -> Arc<FilterRegistry> {
-        self.filter_registry.clone()
+    pub(crate) fn configuration_service(&self) -> &ConfigurationService {
+        &self.configuration_service
     }
 
-    pub(crate) fn shutdown_controller(&self) -> Arc<ShutdownController> {
-        self.shutdown_controller.clone()
+    pub(crate) fn configuration_service_arc(&self) -> Arc<ConfigurationService> {
+        Arc::clone(&self.configuration_service)
+    }
+
+    pub(crate) fn filter_registry(&self) -> &FilterRegistry {
+        &self.filter_registry
+    }
+
+    pub(crate) fn filter_registry_arc(&self) -> Arc<FilterRegistry> {
+        Arc::clone(&self.filter_registry)
+    }
+
+    pub(crate) fn shutdown_controller(&self) -> &ShutdownController {
+        &self.shutdown_controller
+    }
+
+    pub(crate) fn shutdown_controller_arc(&self) -> Arc<ShutdownController> {
+        Arc::clone(&self.shutdown_controller)
     }
 
     pub(crate) fn _gateway_sender(&self) -> &Sender<GatewayMessage> {
@@ -77,7 +93,11 @@ impl SharedComponent {
         &self.provider_sender
     }
 
-    pub(crate) fn server_managers(&self) -> Arc<Manager> {
-        self.server_managers.clone()
+    pub(crate) fn server_managers(&self) -> &Manager {
+        &self.server_managers
+    }
+
+    pub(crate) fn server_managers_arc(&self) -> Arc<Manager> {
+        Arc::clone(&self.server_managers)
     }
 }

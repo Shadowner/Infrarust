@@ -36,11 +36,9 @@ impl ConfigurationService {
             "Finding server by domain"
         );
         let domain = domain.to_lowercase();
-        let configs_snapshot = {
-            let configs = self.configurations.read().await;
-            configs.clone()
-        };
-        for config in configs_snapshot.values() {
+        let configs = self.configurations.read().await;
+
+        for config in configs.values() {
             if config
                 .domains
                 .iter()
@@ -69,14 +67,13 @@ impl ConfigurationService {
             log_type = LogType::ConfigProvider.as_str(),
             "Finding server by IP"
         );
-        let configs_snapshot = {
-            let configs = self.configurations.read().await;
-            configs.clone()
-        };
-        let result = configs_snapshot
-            .iter()
-            .find(|(_, server)| server.addresses.contains(&ip.to_string()))
-            .map(|(_, server)| Arc::clone(server));
+        let configs = self.configurations.read().await;
+        let ip_string = ip.to_string();
+
+        let result = configs
+            .values()
+            .find(|server| server.addresses.contains(&ip_string))
+            .map(Arc::clone);
 
         debug!(
             log_type = LogType::ConfigProvider.as_str(),
