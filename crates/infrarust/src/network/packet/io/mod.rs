@@ -1,7 +1,9 @@
+mod buffer_pool;
 mod reader;
 mod utils;
 mod writer;
 
+pub use buffer_pool::{BufferPool, PooledBuffer, get_buffer, get_buffer_with_capacity, return_buffer};
 pub use reader::PacketReader;
 pub use writer::PacketWriter;
 

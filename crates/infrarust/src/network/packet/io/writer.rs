@@ -18,6 +18,7 @@ use super::super::{
 };
 
 use super::RawPacketIO;
+use super::buffer_pool::{get_buffer_with_capacity, return_buffer};
 
 /// Handles packet writing with compression and encryption support
 #[derive(Clone, Debug)]
@@ -91,50 +92,56 @@ impl<W: AsyncWrite + Unpin + Send> PacketWriter<W> {
     pub async fn write_packet(&mut self, packet: &Packet) -> ProtocolResult<()> {
         self.packet_buffer.clear();
         self.output_buffer.clear();
+        self.compressed_buffer.clear();
 
         // Write packet ID and data
         VarInt(packet.id).write_to_bytes(&mut self.packet_buffer)?;
         self.packet_buffer.extend_from_slice(&packet.data);
 
         // Handle compression if enabled
-        let final_data = if self.is_compression_enabled() {
+        if self.is_compression_enabled() {
             let threshold = self.get_compress_threshold();
             if self.packet_buffer.len() >= threshold as usize {
                 let mut compressor = Compressor::new(CompressionLvl::default());
                 let max_sz = compressor.zlib_compress_bound(self.packet_buffer.len());
-                let mut compressed_data = vec![0; max_sz];
+                let mut compressed_data = get_buffer_with_capacity(max_sz);
+                compressed_data.resize(max_sz, 0);
 
                 let actual_sz = compressor
                     .zlib_compress(&self.packet_buffer, &mut compressed_data)
-                    .unwrap();
-                compressed_data.resize(actual_sz, 0);
+                    .map_err(|e| PacketError::Compression(format!("Compression failed: {:?}", e)))?;
 
                 VarInt(self.packet_buffer.len() as i32)
                     .write_to_bytes(&mut self.compressed_buffer)?;
-                self.compressed_buffer.extend_from_slice(&compressed_data);
-                self.compressed_buffer.clone()
+                self.compressed_buffer.extend_from_slice(&compressed_data[..actual_sz]);
+
+                return_buffer(compressed_data);
+
+                VarInt(self.compressed_buffer.len() as i32).write_to_bytes(&mut self.output_buffer)?;
+                self.output_buffer.extend_from_slice(&self.compressed_buffer);
             } else {
-                VarInt(0).write_to_bytes(&mut self.output_buffer)?;
-                self.output_buffer.extend_from_slice(&self.packet_buffer);
-                self.output_buffer.clone()
+                // Uncompressed: [total_length][0][packet_data]
+                VarInt(0).write_to_bytes(&mut self.compressed_buffer)?;
+                self.compressed_buffer.extend_from_slice(&self.packet_buffer);
+
+                VarInt(self.compressed_buffer.len() as i32).write_to_bytes(&mut self.output_buffer)?;
+                self.output_buffer.extend_from_slice(&self.compressed_buffer);
             }
         } else {
-            self.packet_buffer.clone()
-        };
+            // No compression: [total_length][packet_data]
+            VarInt(self.packet_buffer.len() as i32).write_to_bytes(&mut self.output_buffer)?;
+            self.output_buffer.extend_from_slice(&self.packet_buffer);
+        }
 
-        VarInt(final_data.len() as i32).write_to_bytes(&mut self.output_buffer)?;
-        self.output_buffer.extend_from_slice(&final_data);
-
-        // Handle encryption if enabled
-        let mut encrypted_data = self.output_buffer.clone();
+        // Handle encryption if enabled (in-place)
         if let Some(cipher) = &mut self.encryption {
             cipher.encrypt_with_backend_mut(Cfb8Closure {
-                data: &mut encrypted_data,
+                data: &mut self.output_buffer,
             });
         }
 
         // Write final data and flush
-        self.writer.write_all(&encrypted_data).await?;
+        self.writer.write_all(&self.output_buffer).await?;
         self.writer.flush().await?;
 
         Ok(())
