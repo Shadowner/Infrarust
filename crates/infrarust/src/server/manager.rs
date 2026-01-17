@@ -1,6 +1,7 @@
 use infrarust_config::models::{logging::LogType, server::ManagerType};
 use infrarust_server_manager::{
-    CraftyClient, LocalProvider, PterodactylClient, ServerManager, ServerState, ServerStatus,
+    CraftyClient, LocalProvider, ManagerDispatcher, PterodactylClient, ServerManager, ServerState,
+    ServerStatus,
 };
 use std::{
     collections::HashMap,
@@ -19,16 +20,39 @@ struct ServerShutdownInfo {
 
 type ShutdownTask = oneshot::Sender<()>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct ServerKey {
+    manager_type: ManagerType,
+    server_id: String,
+}
+
+impl ServerKey {
+    pub fn new(manager_type: ManagerType, server_id: impl Into<String>) -> Self {
+        Self {
+            manager_type,
+            server_id: server_id.into(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Manager {
-    pterodactyl_manager: Arc<ServerManager<PterodactylClient>>,
+    dispatchers: Arc<HashMap<ManagerType, Arc<dyn ManagerDispatcher>>>,
     local_manager: Arc<ServerManager<LocalProvider>>,
-    crafty_manager: Arc<ServerManager<CraftyClient>>,
 
     time_since_empty: Arc<RwLock<HashMap<ManagerType, HashMap<String, u64>>>>,
-    shutdown_tasks: Arc<Mutex<HashMap<(ManagerType, String), ShutdownTask>>>,
-    shutdown_timers: Arc<RwLock<HashMap<(ManagerType, String), ServerShutdownInfo>>>,
-    starting_servers: Arc<RwLock<HashMap<(ManagerType, String), Instant>>>,
+    shutdown_tasks: Arc<Mutex<HashMap<ServerKey, ShutdownTask>>>,
+    shutdown_timers: Arc<RwLock<HashMap<ServerKey, ServerShutdownInfo>>>,
+    starting_servers: Arc<RwLock<HashMap<ServerKey, Instant>>>,
+}
+
+impl std::fmt::Debug for Manager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Manager")
+            .field("dispatchers", &format!("{} manager types", self.dispatchers.len()))
+            .field("local_manager", &self.local_manager)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Manager {
@@ -37,17 +61,29 @@ impl Manager {
         local_client: LocalProvider,
         crafty_client: CraftyClient,
     ) -> Self {
-        let pterodactyl_manager = ServerManager::new(pterodactyl_client.clone());
+        let pterodactyl_manager = Arc::new(ServerManager::new(pterodactyl_client));
         let local_manager = ServerManager::new(local_client.clone());
-        let crafty_manager = ServerManager::new(crafty_client);
-        // TODO: In the future
-        // pterodactyl_manager.with_process_provider(pterodactyl_client);
-        let local_manager = local_manager.with_process_provider(local_client);
+        let crafty_manager = Arc::new(ServerManager::new(crafty_client));
+        let local_manager = Arc::new(local_manager.with_process_provider(local_client));
+
+        // Build dispatcher map for dynamic dispatch
+        let mut dispatchers: HashMap<ManagerType, Arc<dyn ManagerDispatcher>> = HashMap::new();
+        dispatchers.insert(
+            ManagerType::Pterodactyl,
+            pterodactyl_manager as Arc<dyn ManagerDispatcher>,
+        );
+        dispatchers.insert(
+            ManagerType::Local,
+            local_manager.clone() as Arc<dyn ManagerDispatcher>,
+        );
+        dispatchers.insert(
+            ManagerType::Crafty,
+            crafty_manager as Arc<dyn ManagerDispatcher>,
+        );
 
         Self {
-            pterodactyl_manager: Arc::new(pterodactyl_manager),
-            local_manager: Arc::new(local_manager),
-            crafty_manager: Arc::new(crafty_manager),
+            dispatchers: Arc::new(dispatchers),
+            local_manager,
             time_since_empty: Arc::new(RwLock::new(HashMap::new())),
             shutdown_tasks: Arc::new(Mutex::new(HashMap::new())),
             shutdown_timers: Arc::new(RwLock::new(HashMap::new())),
@@ -55,93 +91,43 @@ impl Manager {
         }
     }
 
+    fn get_dispatcher(&self, manager_type: ManagerType) -> Result<&Arc<dyn ManagerDispatcher>, String> {
+        self.dispatchers
+            .get(&manager_type)
+            .ok_or_else(|| format!("Unsupported manager type: {:?}", manager_type))
+    }
+
     pub async fn get_status_for_server(
         &self,
         server_id: &str,
         manager_type: ManagerType,
     ) -> Result<ServerStatus, String> {
-        //TODO: In the future let it being Dyn !
-        match manager_type {
-            ManagerType::Crafty => {
-                let status = self
-                    .crafty_manager
-                    .get_server_status(server_id)
-                    .await
-                    .map_err(|e| e.to_string())?;
+        let dispatcher = self.get_dispatcher(manager_type)?;
+        let status = dispatcher
+            .get_status(server_id)
+            .await
+            .map_err(|e| e.to_string())?;
 
-                match status.state {
-                    ServerState::Starting => {
-                        self.mark_server_as_starting(server_id, manager_type).await;
-                    }
-                    _ => {
-                        debug!(
-                            log_type = LogType::ServerManager.as_str(),
-                            "Server {} is in state : {:?}", server_id, &manager_type
-                        );
-                        self.remove_server_from_starting(server_id, &manager_type)
-                            .await;
-                    }
-                }
-                Ok(status)
+        // Update tracking state based on actual server state
+        match status.state {
+            ServerState::Starting => {
+                debug!(
+                    log_type = LogType::ServerManager.as_str(),
+                    "Server {} is in starting state", server_id
+                );
+                self.mark_server_as_starting(server_id, manager_type).await;
             }
-            ManagerType::Pterodactyl => {
-                let status = self
-                    .pterodactyl_manager
-                    .get_server_status(server_id)
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                // Update tracking state based on actual server state
-                match status.state {
-                    ServerState::Starting => {
-                        debug!(
-                            log_type = LogType::ServerManager.as_str(),
-                            "Server {} is in starting state", server_id
-                        );
-                        self.mark_server_as_starting(server_id, manager_type).await;
-                    }
-                    _ => {
-                        debug!(
-                            log_type = LogType::ServerManager.as_str(),
-                            "Server {} is in state : {:?}", server_id, &manager_type
-                        );
-                        self.remove_server_from_starting(server_id, &manager_type)
-                            .await;
-                    }
-                }
-
-                Ok(status)
+            _ => {
+                debug!(
+                    log_type = LogType::ServerManager.as_str(),
+                    "Server {} is in state: {:?}", server_id, status.state
+                );
+                self.remove_server_from_starting(server_id, manager_type)
+                    .await;
             }
-            ManagerType::Local => {
-                let status = self
-                    .local_manager
-                    .get_server_status(server_id)
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                // Update tracking state based on actual server state
-                match status.state {
-                    ServerState::Starting => {
-                        debug!(
-                            log_type = LogType::ServerManager.as_str(),
-                            "Server {} is in starting state", server_id
-                        );
-                        self.mark_server_as_starting(server_id, manager_type).await;
-                    }
-                    _ => {
-                        debug!(
-                            log_type = LogType::ServerManager.as_str(),
-                            "Server {} is in state : {:?}", server_id, &manager_type
-                        );
-                        self.remove_server_from_starting(server_id, &manager_type)
-                            .await;
-                    }
-                }
-
-                Ok(status)
-            }
-            _ => Err("Unsupported manager type".to_string()),
         }
+
+        Ok(status)
     }
 
     pub async fn start_server(
@@ -167,19 +153,12 @@ impl Manager {
             log_type = LogType::ServerManager.as_str(),
             "Starting server process: {}", server_id
         );
-        match manager_type {
-            ManagerType::Pterodactyl => self
-                .pterodactyl_manager
-                .start_server(server_id)
-                .await
-                .map_err(|e| e.to_string()),
-            ManagerType::Local => self
-                .local_manager
-                .start_server(server_id)
-                .await
-                .map_err(|e| e.to_string()),
-            _ => Err("Unsupported manager type".to_string()),
-        }
+
+        let dispatcher = self.get_dispatcher(manager_type)?;
+        dispatcher
+            .start(server_id)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     pub async fn stop_server(
@@ -192,23 +171,13 @@ impl Manager {
             "Stopping server: {}", server_id
         );
 
-        //TODO: In the future let it being Dyn !
-        let result = match manager_type {
-            ManagerType::Pterodactyl => self
-                .pterodactyl_manager
-                .stop_server(server_id)
-                .await
-                .map_err(|e| e.to_string()),
-            ManagerType::Local => self
-                .local_manager
-                .stop_server(server_id)
-                .await
-                .map_err(|e| e.to_string()),
-            _ => Err("Unsupported manager type".to_string()),
-        };
+        let dispatcher = self.get_dispatcher(manager_type)?;
+        let result = dispatcher.stop(server_id).await.map_err(|e| e.to_string());
 
-        self.remove_server_from_starting(server_id, &manager_type)
+        self.remove_server_from_starting(server_id, manager_type)
             .await;
+
+        let key = ServerKey::new(manager_type, server_id);
 
         // Clean up all empty server tracking
         {
@@ -221,13 +190,13 @@ impl Manager {
         // Clean up shutdown timers
         {
             let mut shutdown_timers = self.shutdown_timers.write().await;
-            shutdown_timers.remove(&(manager_type, server_id.to_string()));
+            shutdown_timers.remove(&key);
         }
 
         // Cancel any shutdown tasks
         {
             let mut tasks = self.shutdown_tasks.lock().await;
-            if let Some(tx) = tasks.remove(&(manager_type, server_id.to_string())) {
+            if let Some(tx) = tasks.remove(&key) {
                 let _ = tx.send(());
                 debug!(
                     log_type = LogType::ServerManager.as_str(),
@@ -248,19 +217,11 @@ impl Manager {
         self.remove_server_from_empty(server_id, manager_type)
             .await?;
 
-        match manager_type {
-            ManagerType::Pterodactyl => self
-                .pterodactyl_manager
-                .restart_server(server_id)
-                .await
-                .map_err(|e| e.to_string()),
-            ManagerType::Local => self
-                .local_manager
-                .restart_server(server_id)
-                .await
-                .map_err(|e| e.to_string()),
-            _ => Err("Unsupported manager type".to_string()),
-        }
+        let dispatcher = self.get_dispatcher(manager_type)?;
+        dispatcher
+            .restart(server_id)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     pub async fn mark_server_as_starting(&self, server_id: &str, manager_type: ManagerType) {
@@ -268,9 +229,10 @@ impl Manager {
             log_type = LogType::ServerManager.as_str(),
             "Marking server {} as starting", server_id
         );
+        let key = ServerKey::new(manager_type, server_id);
         {
             let mut starting_servers = self.starting_servers.write().await;
-            starting_servers.insert((manager_type, server_id.to_string()), Instant::now());
+            starting_servers.insert(key, Instant::now());
         }
         debug!(
             log_type = LogType::ServerManager.as_str(),
@@ -278,22 +240,20 @@ impl Manager {
         );
     }
 
-    pub async fn remove_server_from_starting(&self, server_id: &str, manager_type: &ManagerType) {
+    pub async fn remove_server_from_starting(&self, server_id: &str, manager_type: ManagerType) {
         debug!(
             log_type = LogType::ServerManager.as_str(),
             "Removing server {} from starting servers", server_id
         );
-        // Use a separate scope to ensure the lock is released quickly
+        let key = ServerKey::new(manager_type, server_id);
         {
             let mut starting_servers = self.starting_servers.write().await;
-            starting_servers.remove(&(*manager_type, server_id.to_string()));
+            starting_servers.remove(&key);
         }
     }
 
-    pub async fn is_server_starting(&self, server_id: &str, manager_type: &ManagerType) -> bool {
-        // Get the result and release the lock immediately
-        let key = (*manager_type, server_id.to_string());
-
+    pub async fn is_server_starting(&self, server_id: &str, manager_type: ManagerType) -> bool {
+        let key = ServerKey::new(manager_type, server_id);
         self.starting_servers.read().await.contains_key(&key)
     }
 
@@ -303,7 +263,7 @@ impl Manager {
         manager_type: ManagerType,
         timeout: Duration,
     ) -> Result<(), String> {
-        if self.is_server_starting(server_id, &manager_type).await {
+        if self.is_server_starting(server_id, manager_type).await {
             debug!(
                 log_type = LogType::ServerManager.as_str(),
                 "Server {} is still starting, not marking as empty", server_id
@@ -311,9 +271,11 @@ impl Manager {
             return Ok(());
         }
 
+        let key = ServerKey::new(manager_type, server_id);
+
         let already_marked_for_shutdown = {
             let shutdown_timers = self.shutdown_timers.read().await;
-            shutdown_timers.contains_key(&(manager_type, server_id.to_string()))
+            shutdown_timers.contains_key(&key)
         };
 
         if already_marked_for_shutdown {
@@ -328,14 +290,14 @@ impl Manager {
             let mut time_since_empty = self.time_since_empty.write().await;
             let manager_map = time_since_empty
                 .entry(manager_type)
-                .or_insert_with(HashMap::new);
+                .or_default();
             manager_map.insert(server_id.to_string(), 0);
         }
 
         {
             let mut shutdown_timers = self.shutdown_timers.write().await;
             shutdown_timers.insert(
-                (manager_type, server_id.to_string()),
+                key,
                 ServerShutdownInfo {
                     scheduled_at: Instant::now(),
                     shutdown_time: timeout,
@@ -363,6 +325,8 @@ impl Manager {
             "Removing server {} from empty", server_id
         );
 
+        let key = ServerKey::new(manager_type, server_id);
+
         {
             let mut time_since_empty = self.time_since_empty.write().await;
             if let Some(manager_map) = time_since_empty.get_mut(&manager_type) {
@@ -372,10 +336,10 @@ impl Manager {
 
         {
             let mut shutdown_timers = self.shutdown_timers.write().await;
-            shutdown_timers.remove(&(manager_type, server_id.to_string()));
+            shutdown_timers.remove(&key);
         }
 
-        self.cancel_shutdown(server_id, &manager_type).await;
+        self.cancel_shutdown(server_id, manager_type).await;
         Ok(())
     }
 
@@ -387,7 +351,7 @@ impl Manager {
         let now = Instant::now();
         let mut near_shutdown = Vec::new();
 
-        for ((manager_type, server_id), info) in shutdown_timers.iter() {
+        for (key, info) in shutdown_timers.iter() {
             let elapsed = now.duration_since(info.scheduled_at);
             let remaining = if elapsed < info.shutdown_time {
                 info.shutdown_time - elapsed
@@ -397,7 +361,7 @@ impl Manager {
 
             let remaining_secs = remaining.as_secs();
             if remaining_secs <= threshold_seconds {
-                near_shutdown.push((server_id.clone(), *manager_type, remaining_secs));
+                near_shutdown.push((key.server_id.clone(), key.manager_type, remaining_secs));
             }
         }
 
@@ -410,7 +374,7 @@ impl Manager {
         manager_type: ManagerType,
         timeout: Duration,
     ) {
-        let key = (manager_type, server_id.clone());
+        let key = ServerKey::new(manager_type, &server_id);
         let should_create_new_task = {
             let tasks = self.shutdown_tasks.lock().await;
             !tasks.contains_key(&key)
@@ -421,10 +385,9 @@ impl Manager {
 
             {
                 let mut tasks = self.shutdown_tasks.lock().await;
-                tasks.insert(key, tx);
+                tasks.insert(key.clone(), tx);
             }
 
-            let manager_type_clone = manager_type;
             let server_id_clone = server_id.clone();
             let self_clone = Arc::new(self.clone());
 
@@ -436,22 +399,24 @@ impl Manager {
             );
 
             tokio::spawn(async move {
+                let task_key = ServerKey::new(manager_type, &server_id_clone);
+
                 tokio::select! {
                     _ = sleep(timeout) => {
                         // Double check if the server is still scheduled for shutdown
                         let shutdown_scheduled = {
                             let timers = self_clone.shutdown_timers.read().await;
-                            timers.contains_key(&(manager_type_clone, server_id_clone.clone()))
+                            timers.contains_key(&task_key)
                         };
 
                         // Check again if the server is still starting before shutting down
-                        if shutdown_scheduled && !self_clone.is_server_starting(&server_id_clone, &manager_type_clone).await {
+                        if shutdown_scheduled && !self_clone.is_server_starting(&server_id_clone, manager_type).await {
                             debug!(log_type = LogType::ServerManager.as_str(), "From Shutdown Task : Auto-shutdown timer expired for empty server {}", server_id_clone);
-                            match self_clone.stop_server(&server_id_clone, manager_type_clone).await {
+                            match self_clone.stop_server(&server_id_clone, manager_type).await {
                                 Ok(_) => info!("Auto-shutting down empty server: {}", server_id_clone),
                                 Err(e) => error!("From Shutdown Task : Failed to auto-shutdown server {}: {}", server_id_clone, e),
                             }
-                        } else if self_clone.is_server_starting(&server_id_clone, &manager_type_clone).await {
+                        } else if self_clone.is_server_starting(&server_id_clone, manager_type).await {
                             debug!("From Shutdown Task : Server {} is still starting, cancel auto-shutdown", server_id_clone);
                         } else {
                             debug!("From Shutdown Task : Shutdown for {} was canceled before timer expired", server_id_clone);
@@ -464,12 +429,12 @@ impl Manager {
 
                 {
                     let mut tasks = self_clone.shutdown_tasks.lock().await;
-                    tasks.remove(&(manager_type_clone, server_id_clone.clone()));
+                    tasks.remove(&task_key);
                 }
 
                 {
                     let mut shutdown_timers = self_clone.shutdown_timers.write().await;
-                    shutdown_timers.remove(&(manager_type_clone, server_id_clone.clone()));
+                    shutdown_timers.remove(&task_key);
                 }
             });
         } else {
@@ -477,20 +442,19 @@ impl Manager {
         }
     }
 
-    async fn cancel_shutdown(&self, server_id: &str, manager_type: &ManagerType) {
+    async fn cancel_shutdown(&self, server_id: &str, manager_type: ManagerType) {
+        let key = ServerKey::new(manager_type, server_id);
         let mut tasks = self.shutdown_tasks.lock().await;
-        if let Some(tx) = tasks.remove(&(*manager_type, server_id.to_string())) {
+        if let Some(tx) = tasks.remove(&key) {
             let _ = tx.send(());
         }
     }
 
-    pub async fn force_clear_starting_status(&self, server_id: &str, manager_type: &ManagerType) {
+    pub async fn force_clear_starting_status(&self, server_id: &str, manager_type: ManagerType) {
         debug!("Force clearing starting status for server {}", server_id);
+        let key = ServerKey::new(manager_type, server_id);
         let mut starting_servers = self.starting_servers.write().await;
-        if starting_servers
-            .remove(&(*manager_type, server_id.to_string()))
-            .is_some()
-        {
+        if starting_servers.remove(&key).is_some() {
             debug!(
                 "Removed server {} from starting servers (forced)",
                 server_id

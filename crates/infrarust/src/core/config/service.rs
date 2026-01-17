@@ -134,7 +134,8 @@ impl ConfigurationService {
                             .register_server(
                                 &manager_config.server_id,
                                 local_config_provider.clone(),
-                            );
+                            )
+                            .await;
                     }
                 }
             }
@@ -218,7 +219,8 @@ impl ConfigurationService {
                 .server_managers()
                 .local_provider()
                 .api_client()
-                .unregister_server(&manager_config.server_id);
+                .unregister_server(&manager_config.server_id)
+                .await;
         }
 
         if config_lock.remove(config_id).is_some() {

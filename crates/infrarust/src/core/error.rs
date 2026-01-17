@@ -65,6 +65,8 @@ pub type Result<T> = std::result::Result<T, InfrarustError>;
 pub enum RsaError {
     RsaLib(rsa::Error),
     InvalidKeyLength(usize),
+    KeyEncodingError(String),
+    KeyGenerationError(String),
 }
 
 impl fmt::Display for RsaError {
@@ -72,6 +74,8 @@ impl fmt::Display for RsaError {
         match self {
             RsaError::RsaLib(err) => write!(f, "{}", err),
             RsaError::InvalidKeyLength(length) => write!(f, "Invalid key length: {}", length),
+            RsaError::KeyEncodingError(msg) => write!(f, "Key encoding error: {}", msg),
+            RsaError::KeyGenerationError(msg) => write!(f, "Key generation error: {}", msg),
         }
     }
 }

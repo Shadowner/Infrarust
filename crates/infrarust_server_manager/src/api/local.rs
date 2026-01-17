@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
 
 use crate::api::{ApiProvider, ApiServerStatus};
@@ -46,21 +46,21 @@ impl LocalProvider {
         }
     }
 
-    pub fn register_server(&self, server_id: &str, config: LocalServerConfig) {
+    pub async fn register_server(&self, server_id: &str, config: LocalServerConfig) {
         debug!(
             log_type = "server_manager",
             "Registering server with id: {}", server_id
         );
-        let mut configs = self.configs.lock().unwrap();
+        let mut configs = self.configs.lock().await;
         configs.insert(server_id.to_string(), config);
     }
 
-    pub fn unregister_server(&self, server_id: &str) {
+    pub async fn unregister_server(&self, server_id: &str) {
         debug!(
             log_type = "server_manager",
             "Unregistering server with id: {}", server_id
         );
-        let mut configs = self.configs.lock().unwrap();
+        let mut configs = self.configs.lock().await;
         configs.remove(server_id);
     }
 
@@ -81,28 +81,30 @@ impl ApiProvider for LocalProvider {
         );
         let is_running = self.process_manager.is_process_running(server_id)?;
 
-        let configs = self.configs.lock().unwrap();
-        let name = match configs.get(server_id) {
-            Some(config) => {
-                // Extract filename from the executable path
-                Path::new(&config.executable)
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .unwrap_or(server_id)
-                    .to_string()
+        let name = {
+            let configs = self.configs.lock().await;
+            match configs.get(server_id) {
+                Some(config) => {
+                    // Extract filename from the executable path
+                    Path::new(&config.executable)
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or(server_id)
+                        .to_string()
+                }
+                None => server_id.to_string(),
             }
-            None => server_id.to_string(),
         };
 
         let state = if is_running {
             match self.process_manager.get_server_state(server_id) {
                 Ok(state) => {
-                    let mut server_states = self.server_states.lock().unwrap();
+                    let mut server_states = self.server_states.lock().await;
                     server_states.insert(server_id.to_string(), state.clone());
                     state
                 }
                 Err(_) => {
-                    let server_states = self.server_states.lock().unwrap();
+                    let server_states = self.server_states.lock().await;
                     server_states
                         .get(server_id)
                         .cloned()
@@ -110,7 +112,7 @@ impl ApiProvider for LocalProvider {
                 }
             }
         } else {
-            let mut server_states = self.server_states.lock().unwrap();
+            let mut server_states = self.server_states.lock().await;
             server_states.insert(server_id.to_string(), ServerState::Stopped);
             ServerState::Stopped
         };
@@ -152,13 +154,13 @@ impl ApiProvider for LocalProvider {
 
         // Update server state to Starting
         {
-            let mut server_states = self.server_states.lock().unwrap();
+            let mut server_states = self.server_states.lock().await;
             server_states.insert(server_id.to_string(), ServerState::Starting);
         }
 
         // Get server config
         let config = {
-            let configs = self.configs.lock().unwrap();
+            let configs = self.configs.lock().await;
             match configs.get(server_id) {
                 Some(config) => config.clone(),
                 None => {
@@ -167,7 +169,7 @@ impl ApiProvider for LocalProvider {
                         "No configuration found for server {}", server_id
                     );
                     // Revert state back to Stopped on error
-                    let mut server_states = self.server_states.lock().unwrap();
+                    let mut server_states = self.server_states.lock().await;
                     server_states.insert(server_id.to_string(), ServerState::Stopped);
 
                     return Err(ServerManagerError::ProcessError(format!(
@@ -207,7 +209,7 @@ impl ApiProvider for LocalProvider {
                     "Failed to start server {}: {}", server_id, e
                 );
                 // Revert state back to Stopped on error
-                let mut server_states = self.server_states.lock().unwrap();
+                let mut server_states = self.server_states.lock().await;
                 server_states.insert(server_id.to_string(), ServerState::Stopped);
                 Err(e)
             }
@@ -228,7 +230,7 @@ impl ApiProvider for LocalProvider {
 
         // Update server state to Stopping
         {
-            let mut server_states = self.server_states.lock().unwrap();
+            let mut server_states = self.server_states.lock().await;
             server_states.insert(server_id.to_string(), ServerState::Stopping);
             debug!(
                 log_type = "server_manager",
@@ -257,7 +259,7 @@ impl ApiProvider for LocalProvider {
 
         // Update server state to Stopped
         {
-            let mut server_states = self.server_states.lock().unwrap();
+            let mut server_states = self.server_states.lock().await;
             server_states.insert(server_id.to_string(), ServerState::Stopped);
             debug!(
                 log_type = "server_manager",

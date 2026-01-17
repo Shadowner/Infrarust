@@ -326,13 +326,14 @@ impl BanSystem {
         self.storage.remove_ban(ban_id).await
     }
 
-    pub async fn remove_ban_by_ip(
+    async fn remove_bans_internal(
         &self,
-        ip: &IpAddr,
+        bans: Vec<BanEntry>,
         removed_by: &str,
+        ip: Option<&IpAddr>,
+        uuid: Option<&str>,
+        username: Option<&str>,
     ) -> Result<Vec<BanEntry>, BanError> {
-        let bans = self.storage.get_bans_by_ip(ip).await?;
-
         if bans.is_empty() {
             return Err(BanError::NotFound);
         }
@@ -363,8 +364,18 @@ impl BanSystem {
             }
         }
 
-        self.verify_ban_removal(Some(ip), None, None).await;
+        self.verify_ban_removal(ip, uuid, username).await;
         Ok(bans)
+    }
+
+    pub async fn remove_ban_by_ip(
+        &self,
+        ip: &IpAddr,
+        removed_by: &str,
+    ) -> Result<Vec<BanEntry>, BanError> {
+        let bans = self.storage.get_bans_by_ip(ip).await?;
+        self.remove_bans_internal(bans, removed_by, Some(ip), None, None)
+            .await
     }
 
     pub async fn remove_ban_by_uuid(
@@ -373,39 +384,8 @@ impl BanSystem {
         removed_by: &str,
     ) -> Result<Vec<BanEntry>, BanError> {
         let bans = self.storage.get_bans_by_uuid(uuid).await?;
-
-        if bans.is_empty() {
-            return Err(BanError::NotFound);
-        }
-
-        // Audit logging
-        if self.config.enable_audit_log {
-            let audit_entries = bans
-                .iter()
-                .map(|ban| {
-                    BanAuditLogEntry::new(BanOperation::Remove, ban.clone(), removed_by.to_string())
-                })
-                .collect::<Vec<_>>();
-
-            if let Err(e) = self.storage.add_audit_logs_batch(audit_entries).await {
-                warn!(
-                    log_type = "ban_system",
-                    "Failed to add audit log entries in batch: {}", e
-                );
-            }
-        }
-
-        for ban in &bans {
-            if let Err(e) = self.storage.remove_ban(&ban.id).await {
-                warn!(
-                    log_type = "ban_system",
-                    "Failed to remove ban {}: {}", ban.id, e
-                );
-            }
-        }
-
-        self.verify_ban_removal(None, Some(uuid), None).await;
-        Ok(bans)
+        self.remove_bans_internal(bans, removed_by, None, Some(uuid), None)
+            .await
     }
 
     pub async fn remove_ban_by_username(
@@ -414,39 +394,8 @@ impl BanSystem {
         removed_by: &str,
     ) -> Result<Vec<BanEntry>, BanError> {
         let bans = self.storage.get_bans_by_username(username).await?;
-
-        if bans.is_empty() {
-            return Err(BanError::NotFound);
-        }
-
-        if self.config.enable_audit_log {
-            let audit_entries = bans
-                .iter()
-                .map(|ban| {
-                    BanAuditLogEntry::new(BanOperation::Remove, ban.clone(), removed_by.to_string())
-                })
-                .collect::<Vec<_>>();
-
-            if let Err(e) = self.storage.add_audit_logs_batch(audit_entries).await {
-                warn!(
-                    log_type = "ban_system",
-                    "Failed to add audit log entries in batch: {}", e
-                );
-            }
-        }
-
-        for ban in &bans {
-            if let Err(e) = self.storage.remove_ban(&ban.id).await {
-                warn!(
-                    log_type = "ban_system",
-                    "Failed to remove ban {}: {}", ban.id, e
-                );
-            }
-        }
-
-        self.verify_ban_removal(None, None, Some(username)).await;
-
-        Ok(bans)
+        self.remove_bans_internal(bans, removed_by, None, None, Some(username))
+            .await
     }
 
     async fn verify_ban_removal(
