@@ -7,7 +7,6 @@ use std::{
         RwLock,
         atomic::{AtomicUsize, Ordering},
     },
-    thread::sleep,
     time::{Duration, Instant},
 };
 
@@ -357,14 +356,9 @@ impl FileProvider {
                         return;
                     }
 
-                    if notify::EventKind::is_create(&event.kind)
-                        || notify::EventKind::is_modify(&event.kind)
-                    {
-                        //HACK: Workaround to let the file be written before reading it
-                        // Yes that's an actual bug that I can't find a solution to
-                        sleep(Duration::from_millis(150)); // Increased sleep time
-                    }
-
+                    // Send events immediately - debouncing is handled by handle_file_event
+                    // The debounce_duration of 1000ms in setup_file_watcher ensures we don't
+                    // read files while they're still being written
                     for path in event.paths {
                         if !path.is_dir() {
                             let _ = file_event_tx.blocking_send(FileEvent {

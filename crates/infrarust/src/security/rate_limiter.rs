@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use infrarust_config::LogType;
 use tokio::{io, net::TcpStream, sync::Mutex};
 use tracing::debug;
-use xxhash_rust::xxh64::xxh64;
+use xxhash_rust::xxh64::Xxh64;
 
 use crate::security::filter::{ConfigValue, Filter, FilterError, FilterType};
 
@@ -125,12 +125,19 @@ impl LocalCounter {
 
     fn evict(&mut self) {
         let now = SystemTime::now();
-        if now.duration_since(self.last_eviction).unwrap() < self.window_length {
+        let since_last = now
+            .duration_since(self.last_eviction)
+            .unwrap_or(Duration::ZERO);
+
+        if since_last < self.window_length {
             return;
         }
 
-        self.counters
-            .retain(|_, count| now.duration_since(count.timestamp).unwrap() < self.window_length);
+        self.counters.retain(|_, count| {
+            now.duration_since(count.timestamp)
+                .unwrap_or(Duration::MAX)
+                < self.window_length
+        });
         self.last_eviction = now;
     }
 
@@ -163,11 +170,15 @@ impl LocalCounter {
     fn hash_key(&self, key: &str, time: SystemTime) -> u64 {
         let window = time
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs()
             / self.window_length.as_secs();
 
-        xxh64(format!("{}:{}", key, window).as_bytes(), 0)
+        // Use streaming hasher to avoid string allocation
+        let mut hasher = Xxh64::new(0);
+        hasher.update(key.as_bytes());
+        hasher.update(&window.to_le_bytes());
+        hasher.digest()
     }
 }
 

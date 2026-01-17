@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -23,7 +24,7 @@ pub struct StatusCache {
 #[derive(Debug, Clone)]
 struct CacheEntry {
     expires_at: SystemTime,
-    response: Packet,
+    response: Arc<Packet>,
 }
 
 impl StatusCache {
@@ -60,7 +61,7 @@ impl StatusCache {
         );
 
         if let Some(cached) = self.check_cache(key) {
-            return Ok(cached);
+            return Ok((*cached).clone());
         }
 
         debug!(
@@ -88,14 +89,14 @@ impl StatusCache {
         }
     }
 
-    fn check_cache(&self, key: u64) -> Option<Packet> {
+    fn check_cache(&self, key: u64) -> Option<Arc<Packet>> {
         if let Some(entry) = self.entries.get(&key) {
             if entry.expires_at > SystemTime::now() {
                 debug!(
                     log_type = LogType::Cache.as_str(),
                     "Cache hit for key: {}", key
                 );
-                return Some(entry.response.clone());
+                return Some(Arc::clone(&entry.response));
             }
             debug!(
                 log_type = LogType::Cache.as_str(),
@@ -118,7 +119,7 @@ impl StatusCache {
             key,
             CacheEntry {
                 expires_at: SystemTime::now() + self.ttl,
-                response,
+                response: Arc::new(response),
             },
         );
 
@@ -198,7 +199,7 @@ impl StatusCache {
             "Quick cache check for domain: {} (key: {})", req.domain, key
         );
 
-        Ok(self.check_cache(key))
+        Ok(self.check_cache(key).map(|arc| (*arc).clone()))
     }
 
     pub async fn update_cache_for(
