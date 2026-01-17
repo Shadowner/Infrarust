@@ -23,6 +23,89 @@ use crate::{
     server::{ServerResponse, manager::Manager},
 };
 
+pub struct ActorPairBuilder<'a> {
+    supervisor: &'a ActorSupervisor,
+    config_id: Option<&'a str>,
+    client_conn: Option<Connection>,
+    proxy_mode: Option<ProxyModeEnum>,
+    oneshot_request_receiver: Option<oneshot::Receiver<ServerResponse>>,
+    is_login: bool,
+    username: String,
+    domain: String,
+}
+
+impl<'a> ActorPairBuilder<'a> {
+    pub fn new(supervisor: &'a ActorSupervisor) -> Self {
+        Self {
+            supervisor,
+            config_id: None,
+            client_conn: None,
+            proxy_mode: None,
+            oneshot_request_receiver: None,
+            is_login: false,
+            username: String::new(),
+            domain: String::new(),
+        }
+    }
+
+    pub fn config_id(mut self, config_id: &'a str) -> Self {
+        self.config_id = Some(config_id);
+        self
+    }
+
+    pub fn client_conn(mut self, conn: Connection) -> Self {
+        self.client_conn = Some(conn);
+        self
+    }
+
+    pub fn proxy_mode(mut self, mode: ProxyModeEnum) -> Self {
+        self.proxy_mode = Some(mode);
+        self
+    }
+
+    pub fn oneshot_receiver(mut self, receiver: oneshot::Receiver<ServerResponse>) -> Self {
+        self.oneshot_request_receiver = Some(receiver);
+        self
+    }
+
+    pub fn is_login(mut self, is_login: bool) -> Self {
+        self.is_login = is_login;
+        self
+    }
+
+    pub fn username(mut self, username: impl Into<String>) -> Self {
+        self.username = username.into();
+        self
+    }
+
+    pub fn domain(mut self, domain: impl Into<String>) -> Self {
+        self.domain = domain.into();
+        self
+    }
+
+    /// Build the ActorPair. Returns None if required fields are missing.
+    pub async fn build(self) -> Option<ActorPair> {
+        let config_id = self.config_id?;
+        let client_conn = self.client_conn?;
+        let proxy_mode = self.proxy_mode?;
+        let oneshot_request_receiver = self.oneshot_request_receiver?;
+
+        Some(
+            self.supervisor
+                .create_actor_pair(
+                    config_id,
+                    client_conn,
+                    proxy_mode,
+                    oneshot_request_receiver,
+                    self.is_login,
+                    self.username,
+                    &self.domain,
+                )
+                .await,
+        )
+    }
+}
+
 #[cfg(feature = "telemetry")]
 use crate::telemetry::TELEMETRY;
 
@@ -168,8 +251,11 @@ impl ActorSupervisor {
         }
     }
 
-    // TODO : Refactor this to remove the allow
-    #[allow(clippy::too_many_arguments)]
+    pub fn builder(&self) -> ActorPairBuilder<'_> {
+        ActorPairBuilder::new(self)
+    }
+
+    #[allow(clippy::too_many_arguments)] // Use builder() for cleaner API
     #[instrument(name = "supervisor_create_pair", skip(self, client_conn, proxy_mode, oneshot_request_receiver), fields(
         config_id = %config_id,
         username = %username,
@@ -203,93 +289,34 @@ impl ActorSupervisor {
             TELEMETRY.update_player_count(1, config_id, client_conn.session_id, &username);
         }
 
-        // TODO: Refactor this horror
+        // Macro to reduce boilerplate for creating actor pairs with different handler types
+        macro_rules! create_pair_with_mode {
+            ($get_mode:expr) => {{
+                let (client_handler, server_handler) = $get_mode;
+                self.create_actor_pair_with_handlers(
+                    config_id,
+                    client_conn,
+                    client_handler,
+                    server_handler,
+                    oneshot_request_receiver,
+                    is_login,
+                    username,
+                    shutdown_flag,
+                    session_id,
+                    domain.to_string(),
+                )
+                .instrument(span)
+                .await
+            }};
+        }
+
         let pair = match proxy_mode {
-            ProxyModeEnum::Status => {
-                let (client_handler, server_handler) = get_status_mode();
-                self.create_actor_pair_with_handlers(
-                    config_id,
-                    client_conn,
-                    client_handler,
-                    server_handler,
-                    oneshot_request_receiver,
-                    is_login,
-                    username,
-                    shutdown_flag,
-                    session_id,
-                    domain.to_string(),
-                )
-                .instrument(span)
-                .await
+            ProxyModeEnum::Status => create_pair_with_mode!(get_status_mode()),
+            ProxyModeEnum::Passthrough | ProxyModeEnum::ServerOnly => {
+                create_pair_with_mode!(get_passthrough_mode())
             }
-            ProxyModeEnum::Passthrough => {
-                let (client_handler, server_handler) = get_passthrough_mode();
-                self.create_actor_pair_with_handlers(
-                    config_id,
-                    client_conn,
-                    client_handler,
-                    server_handler,
-                    oneshot_request_receiver,
-                    is_login,
-                    username,
-                    shutdown_flag,
-                    session_id,
-                    domain.to_string(),
-                )
-                .instrument(span)
-                .await
-            }
-            ProxyModeEnum::Offline => {
-                let (client_handler, server_handler) = get_offline_mode();
-                self.create_actor_pair_with_handlers(
-                    config_id,
-                    client_conn,
-                    client_handler,
-                    server_handler,
-                    oneshot_request_receiver,
-                    is_login,
-                    username,
-                    shutdown_flag,
-                    session_id,
-                    domain.to_string(),
-                )
-                .instrument(span)
-                .await
-            }
-            ProxyModeEnum::ClientOnly => {
-                let (client_handler, server_handler) = get_client_only_mode();
-                self.create_actor_pair_with_handlers(
-                    config_id,
-                    client_conn,
-                    client_handler,
-                    server_handler,
-                    oneshot_request_receiver,
-                    is_login,
-                    username,
-                    shutdown_flag,
-                    session_id,
-                    domain.to_string(),
-                )
-                .instrument(span)
-                .await
-            }
-            ProxyModeEnum::ServerOnly => {
-                let (client_handler, server_handler) = get_passthrough_mode();
-                self.create_actor_pair_with_handlers(
-                    config_id,
-                    client_conn,
-                    client_handler,
-                    server_handler,
-                    oneshot_request_receiver,
-                    is_login,
-                    username,
-                    shutdown_flag,
-                    session_id,
-                    domain.to_string(),
-                )
-                .instrument(span)
-                .await
-            }
+            ProxyModeEnum::Offline => create_pair_with_mode!(get_offline_mode()),
+            ProxyModeEnum::ClientOnly => create_pair_with_mode!(get_client_only_mode()),
         };
 
         self.register_actor_pair(config_id, pair.clone())
@@ -308,7 +335,7 @@ impl ActorSupervisor {
         username = %username,
         is_login = is_login
     ))]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // Internal generic method - use builder() for public API
     async fn create_actor_pair_with_handlers<T>(
         &self,
         config_id: &str,
