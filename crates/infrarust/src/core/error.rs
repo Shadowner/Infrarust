@@ -1,4 +1,65 @@
+
 use std::{fmt, io};
+use thiserror::Error;
+
+pub use infrarust_ban_system::BanError;
+pub use infrarust_protocol::network::ProtocolError;
+pub use infrarust_protocol::packet::PacketError;
+
+use crate::security::filter::FilterError;
+
+#[derive(Debug, Error)]
+pub enum InfrarustError {
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+
+    #[error("Protocol error: {0}")]
+    Protocol(#[from] ProtocolError),
+
+    #[error("Packet error: {0}")]
+    Packet(#[from] PacketError),
+
+    #[error("Ban system error: {0}")]
+    Ban(#[from] BanError),
+
+    #[error("Filter error: {0}")]
+    Filter(#[from] FilterError),
+
+    #[error("RSA error: {0}")]
+    Rsa(#[from] RsaError),
+
+    #[error("Configuration error: {0}")]
+    Config(String),
+
+    #[error("Connection error: {0}")]
+    Connection(String),
+
+    #[error("Timeout: {0}")]
+    Timeout(String),
+
+    #[error("{0}")]
+    Other(String),
+}
+
+impl InfrarustError {
+    pub fn config(msg: impl Into<String>) -> Self {
+        Self::Config(msg.into())
+    }
+
+    pub fn connection(msg: impl Into<String>) -> Self {
+        Self::Connection(msg.into())
+    }
+
+    pub fn timeout(msg: impl Into<String>) -> Self {
+        Self::Timeout(msg.into())
+    }
+
+    pub fn other(msg: impl Into<String>) -> Self {
+        Self::Other(msg.into())
+    }
+}
+
+pub type Result<T> = std::result::Result<T, InfrarustError>;
 
 #[derive(Debug)]
 pub enum RsaError {
@@ -14,6 +75,8 @@ impl fmt::Display for RsaError {
         }
     }
 }
+
+impl std::error::Error for RsaError {}
 
 impl From<rsa::Error> for RsaError {
     fn from(err: rsa::Error) -> Self {
@@ -63,6 +126,12 @@ impl From<io::Error> for InfraRustError {
     }
 }
 
+impl From<InfraRustError> for InfrarustError {
+    fn from(err: InfraRustError) -> Self {
+        InfrarustError::Other(err.to_string())
+    }
+}
+
 #[derive(Debug)]
 pub struct SendError {
     message: String,
@@ -86,6 +155,12 @@ impl std::error::Error for SendError {}
 
 impl From<io::Error> for SendError {
     fn from(err: io::Error) -> Self {
+        SendError::new(err)
+    }
+}
+
+impl From<InfrarustError> for SendError {
+    fn from(err: InfrarustError) -> Self {
         SendError::new(err)
     }
 }

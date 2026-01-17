@@ -17,6 +17,7 @@ use super::super::{
     error::{PacketError, PacketResult},
 };
 use super::RawPacketIO;
+use super::buffer_pool::{get_buffer_with_capacity, return_buffer};
 use crate::{
     network::packet::MAX_UNCOMPRESSED_LENGTH,
     security::encryption::{Aes128Cfb8Dec, Cfb8Closure},
@@ -98,32 +99,31 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
 
         // debug!("Reading packet with total length: {}", packet_length);
 
-        // Read packet data (may be encrypted)
-        let mut encrypted_data = vec![0u8; packet_length as usize];
-        self.reader.read_exact(&mut encrypted_data).await?;
+        // Read packet data using pooled buffer (may be encrypted)
+        let mut encrypted_buffer = get_buffer_with_capacity(packet_length as usize);
+        encrypted_buffer.resize(packet_length as usize, 0);
+        self.reader.read_exact(&mut encrypted_buffer).await?;
 
         // Handle decryption if enabled
         if let Some(cipher) = &mut self.encryption {
             cipher.decrypt_with_backend_mut(Cfb8Closure {
-                data: &mut encrypted_data,
+                data: &mut encrypted_buffer,
             });
         }
 
-        //TODO: I think I've miss implemented the decompression part
-        // Sometimes the code paninc withhread 'tokio-runtime-worker'
-        // panicked at src/network/packet/io/reader.rs:127:22:
-        // called `Result::unwrap()` on an `Err` value: BadData
-
         // Handle decompression if enabled
         let packet_data = if let CompressionState::Enabled { threshold: _ } = self.compression {
-            let mut cursor = Cursor::new(&encrypted_data);
+            let mut cursor = Cursor::new(&encrypted_buffer[..]);
             let (VarInt(data_length), bytes_read) = VarInt::read_from(&mut cursor)?;
             // debug!("Data length (uncompressed): {}", data_length);
 
             if data_length == 0 {
-                BytesMut::from(&encrypted_data[bytes_read..])
+                let result = BytesMut::from(&encrypted_buffer[bytes_read..]);
+                return_buffer(encrypted_buffer);
+                result
             } else {
                 if data_length > MAX_UNCOMPRESSED_LENGTH as i32 {
+                    return_buffer(encrypted_buffer);
                     return Err(PacketError::InvalidLength {
                         length: data_length as usize,
                         max: MAX_UNCOMPRESSED_LENGTH,
@@ -131,22 +131,34 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
                 }
 
                 let mut decompressor = Decompressor::new();
-                let mut outbuf = vec![0; data_length as usize];
+                // Use pooled buffer for decompression output
+                let mut outbuf = get_buffer_with_capacity(data_length as usize);
+                outbuf.resize(data_length as usize, 0);
 
-                decompressor
-                    .zlib_decompress(&encrypted_data[bytes_read..], &mut outbuf)
-                    .unwrap();
+                let decompress_result = decompressor
+                    .zlib_decompress(&encrypted_buffer[bytes_read..], &mut outbuf)
+                    .map_err(|e| PacketError::Compression(format!("Decompression failed: {:?}", e)));
+
+                // Return encrypted buffer early as we don't need it anymore
+                return_buffer(encrypted_buffer);
+
+                decompress_result?;
 
                 if outbuf.len() != data_length as usize {
+                    return_buffer(outbuf);
                     return Err(PacketError::Compression(
                         "Decompressed length mismatch".to_string(),
                     ));
                 }
 
-                BytesMut::from(&outbuf[..])
+                let result = BytesMut::from(&outbuf[..]);
+                return_buffer(outbuf);
+                result
             }
         } else {
-            BytesMut::from(&encrypted_data[..])
+            let result = BytesMut::from(&encrypted_buffer[..]);
+            return_buffer(encrypted_buffer);
+            result
         };
 
         // Read packet ID and create final packet

@@ -9,7 +9,7 @@ pub mod core;
 use core::actors::supervisor::ActorSupervisor;
 use core::config::provider::ConfigProvider;
 use core::config::service::ConfigurationService;
-pub use core::error::RsaError;
+pub use core::error::{InfrarustError, Result as InfrarustResult, RsaError};
 use core::error::SendError;
 use core::shared_component::SharedComponent;
 use std::io;
@@ -222,11 +222,10 @@ impl Infrarust {
             let config_clone = shared_clone.config();
             if let Some(filter_config) = &config_clone.filters {
                 if let Some(rate_config) = &filter_config.rate_limiter {
-                    // REFACTO : Fix this
                     let rate_limiter = RateLimiter::new(
                         "global_rate_limiter",
                         rate_config.burst_size,
-                        Duration::from_secs(60),
+                        Duration::from_secs(rate_config.window_seconds),
                     );
 
                     if let Err(e) = registry_clone.register(rate_limiter).await {
@@ -237,35 +236,29 @@ impl Infrarust {
                     }
                 }
 
-                if config_clone.filters.as_ref().unwrap().ban.enabled {
-                    match BanSystemAdapter::new(
-                        "global_ban_system",
-                        config_clone
-                            .filters
-                            .as_ref()
-                            .unwrap()
-                            .ban
-                            .file_path
-                            .as_ref()
-                            .unwrap()
-                            .clone(),
-                    )
-                    .await
-                    {
-                        Ok(ban_filter) => {
-                            if let Err(e) = registry_clone.register(ban_filter).await {
-                                debug!(
+                if filter_config.ban.enabled {
+                    if let Some(file_path) = &filter_config.ban.file_path {
+                        match BanSystemAdapter::new("global_ban_system", file_path.clone()).await {
+                            Ok(ban_filter) => {
+                                if let Err(e) = registry_clone.register(ban_filter).await {
+                                    debug!(
+                                        log_type = LogType::BanSystem.as_str(),
+                                        "Failed to register ban filter: {}", e
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                error!(
                                     log_type = LogType::BanSystem.as_str(),
-                                    "Failed to register ban filter: {}", e
+                                    "Failed to create ban system adapter: {}", e
                                 );
                             }
                         }
-                        Err(e) => {
-                            error!(
-                                log_type = LogType::BanSystem.as_str(),
-                                "Failed to create ban system adapter: {}", e
-                            );
-                        }
+                    } else {
+                        warn!(
+                            log_type = LogType::BanSystem.as_str(),
+                            "Ban system enabled but no file path configured"
+                        );
                     }
                 }
             }
@@ -639,15 +632,12 @@ impl Infrarust {
         )
     }
 
-    pub async fn get_ban_file_path(&self) -> String {
+    pub async fn get_ban_file_path(&self) -> Option<String> {
         self.shared
             .config()
             .filters
-            .clone()
-            .unwrap()
-            .ban
-            .file_path
-            .unwrap()
+            .as_ref()
+            .and_then(|f| f.ban.file_path.clone())
     }
 
     pub async fn has_ban_system_adapter(&self) -> Result<bool, FilterError> {
