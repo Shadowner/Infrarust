@@ -3,7 +3,8 @@ use std::{
     io,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::AtomicBool,
+        atomic::Ordering::{Acquire, Release},
     },
 };
 
@@ -143,7 +144,7 @@ async fn start_minecraft_server_actor<T>(
         }
 
         debug!(log_type = LogType::TcpConnection.as_str(), "Starting Minecraft Server Actor main loop");
-        while !shutdown.load(Ordering::SeqCst) {
+        while !shutdown.load(Acquire) {
             if actor
                 .server_request
                 .as_ref()
@@ -172,7 +173,7 @@ async fn start_minecraft_server_actor<T>(
                 Some(msg) = actor.gateway_receiver.recv() => {
                     if let Err(e) = actor.handle_gateway_message(msg) {
                         warn!("Error handling gateway message: {:?}", e);
-                        shutdown_flag.store(true, Ordering::SeqCst);
+                        shutdown_flag.store(true, Release);
                         break;
                     }
                 }
@@ -187,11 +188,11 @@ async fn start_minecraft_server_actor<T>(
                             warn!("Error closing server connection: {:?}", e);
                         }
                         actor.server_receiver.close();
-                        shutdown_flag.store(true, Ordering::SeqCst);
+                        shutdown_flag.store(true, Release);
                         break;
                     } else if let Err(e) = proxy_mode.handle_internal_server(msg, &mut actor).await {
                         warn!(log_type = LogType::TcpConnection.as_str(), "Error handling internal server message: {:?}", e);
-                        shutdown_flag.store(true, Ordering::SeqCst);
+                        shutdown_flag.store(true, Release);
                         break;
                     }
                 }
@@ -200,13 +201,13 @@ async fn start_minecraft_server_actor<T>(
                         Ok(read_value) => {
                             if let Err(e) = proxy_mode.handle_external_server(read_value, &mut actor).await {
                                 warn!(log_type = LogType::TcpConnection.as_str(), "Error handling external server message: {:?}", e);
-                                shutdown_flag.store(true, Ordering::SeqCst);
+                                shutdown_flag.store(true, Release);
                                 break;
                             }
                         }
                         Err(e) => {
                             warn!(log_type = LogType::TcpConnection.as_str(), "Error reading from server: {:?}", e);
-                            shutdown_flag.store(true, Ordering::SeqCst);
+                            shutdown_flag.store(true, Release);
                             break;
                         }
                     }
@@ -217,7 +218,7 @@ async fn start_minecraft_server_actor<T>(
                 }
                 else => {
                     debug!(log_type = LogType::TcpConnection.as_str(), "All channels closed");
-                    shutdown_flag.store(true, Ordering::SeqCst);
+                    shutdown_flag.store(true, Release);
                     break;
                 }
             }

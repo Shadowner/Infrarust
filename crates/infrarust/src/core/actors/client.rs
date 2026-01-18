@@ -85,7 +85,7 @@ async fn start_minecraft_client_actor<T>(
     match proxy_mode.initialize_client(&mut actor).await {
         Ok(_) => {}
         Err(e) => {
-            info!("Error initializing client: {:?}", e);
+            debug!("Error initializing client: {:?}", e);
 
             // Ensure connection is closed before returning
             let _ = actor.conn.close().await;
@@ -97,14 +97,14 @@ async fn start_minecraft_client_actor<T>(
     drop(tracing::Span::current());
 
     let shutdown_flag = shutdown.clone();
-    while !shutdown_flag.load(Ordering::SeqCst) {
+    while !shutdown_flag.load(Acquire) {
         tokio::select! {
             Some(msg) = actor.supervisor_receiver.recv() => {
                 actor.handle_supervisor_message(msg);
             }
             Some(msg) = actor.client_receiver.recv() => {
                 if let MinecraftCommunication::Shutdown = msg {
-                     shutdown_flag.store(true, Ordering::SeqCst);
+                     shutdown_flag.store(true, Release);
                      actor.client_receiver.close();
                      if let Err(e) = actor.conn.close().await {
                          error!("Error closing client connection during shutdown: {:?}", e);
@@ -116,7 +116,7 @@ async fn start_minecraft_client_actor<T>(
                     Ok(_) => {}
                     Err(e) => {
                         error!("Error handling internal client message: {:?}", e);
-                        shutdown_flag.store(true, Ordering::SeqCst);
+                        shutdown_flag.store(true, Release);
                         break;
                     }
                 };
@@ -128,21 +128,21 @@ async fn start_minecraft_client_actor<T>(
                             Ok(_) => {}
                             Err(e) => {
                                 debug!(log_type = LogType::TcpConnection.as_str(), "Error handling external client message: {:?}", e);
-                                shutdown_flag.store(true, Ordering::SeqCst);
+                                shutdown_flag.store(true, Release);
                                 break;
                             }
                         }
                     }
                     Err(e) => {
                         debug!(log_type = LogType::TcpConnection.as_str(), "Client connection read error: {:?}", e);
-                        shutdown_flag.store(true, Ordering::SeqCst);
+                        shutdown_flag.store(true, Release);
                         break;
                     }
                 }
             }
             else => {
                 debug!(log_type = LogType::TcpConnection.as_str(), "All channels closed");
-                shutdown_flag.store(true, Ordering::SeqCst);
+                shutdown_flag.store(true, Release);
                 break;
             }
         }
@@ -158,7 +158,7 @@ async fn start_minecraft_client_actor<T>(
         }
     );
 
-    let reason = if shutdown_flag.load(Ordering::SeqCst) {
+    let reason = if shutdown_flag.load(Acquire) {
         "clean_disconnect"
     } else {
         "unexpected_disconnect"
