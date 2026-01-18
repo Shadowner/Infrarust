@@ -150,13 +150,22 @@ impl CommandProcessor {
                 }
 
                 buffer.clear();
-                let read_line_result = reader.read_line(&mut buffer);
-                if read_line_result.is_err() || read_line_result.is_ok_and(|x| x == 0) {
-                    if !is_tty {
-                        // HACK: In non-TTY mode, don't spin at 100% CPU on empty read or on errors
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                match reader.read_line(&mut buffer) {
+                    Ok(0) => {
+                        // EOF reached - stdin is closed, exit the input loop
+                        debug!("CLI input loop: stdin closed (EOF), exiting");
+                        let _ = futures::executor::block_on(tx.send(CommandMessage::Shutdown));
+                        break;
                     }
-                    continue;
+                    Err(e) => {
+                        // IO error - log and exit the loop
+                        debug!("CLI input loop: read error ({:?}), exiting", e);
+                        let _ = futures::executor::block_on(tx.send(CommandMessage::Shutdown));
+                        break;
+                    }
+                    Ok(_) => {
+                        // Successfully read some input, continue processing below
+                    }
                 }
 
                 let input = buffer.trim();
