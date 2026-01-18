@@ -2,9 +2,9 @@ use bytes::BytesMut;
 use parking_lot::Mutex;
 use std::cell::RefCell;
 
-const DEFAULT_BUFFER_CAPACITY: usize = 8192;
+pub const DEFAULT_BUFFER_CAPACITY: usize = 8192;
 
-const MAX_POOL_SIZE: usize = 32;
+pub const MAX_POOL_SIZE: usize = 32;
 
 #[derive(Debug)]
 pub struct BufferPool {

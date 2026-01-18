@@ -9,7 +9,6 @@ use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn
 use super::service::ConfigurationService;
 
 pub struct ConfigProvider {
-    _providers: Vec<Box<dyn Provider>>,
     config_service: Arc<ConfigurationService>,
     provider_receiver: Receiver<ProviderMessage>,
     provider_sender: Sender<ProviderMessage>,
@@ -30,7 +29,6 @@ impl ConfigProvider {
             "Creating new configuration provider"
         );
         Self {
-            _providers: vec![],
             config_service,
             provider_receiver,
             provider_sender,
