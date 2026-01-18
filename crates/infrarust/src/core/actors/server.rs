@@ -60,6 +60,16 @@ impl<T> MinecraftServer<T> {
     fn handle_gateway_message(&mut self, _message: GatewayMessage) -> io::Result<()> {
         Ok(())
     }
+    pub fn server_conn_mut(
+        &mut self,
+    ) -> io::Result<&mut crate::network::connection::ServerConnection> {
+        self.server_request
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "No server request"))?
+            .server_conn
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "No server connection"))
+    }
 }
 
 async fn start_minecraft_server_actor<T>(
