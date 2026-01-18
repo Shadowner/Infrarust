@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use infrarust_config::{ServerConfig, models::logging::LogType};
-use tokio::sync::watch;
+use tokio::sync::{watch, RwLock};
 use tracing::{debug, error};
 
 use crate::{
@@ -10,6 +10,22 @@ use crate::{
 };
 
 use super::Gateway;
+
+struct PendingRequestCleanupGuard {
+    pending_status_requests: Arc<RwLock<HashMap<u64, watch::Receiver<Option<Result<Packet, ProxyProtocolError>>>>>>,
+    key: u64,
+}
+
+impl Drop for PendingRequestCleanupGuard {
+    fn drop(&mut self) {
+        let pending = Arc::clone(&self.pending_status_requests);
+        let key = self.key;
+        tokio::spawn(async move {
+            let mut pending_requests = pending.write().await;
+            pending_requests.remove(&key);
+        });
+    }
+}
 
 impl Gateway {
     /// Get or fetch status response with request coalescing
@@ -77,6 +93,11 @@ impl Gateway {
                         let config = Arc::clone(&server_config);
 
                         tokio::spawn(async move {
+                            let _cleanup_guard = PendingRequestCleanupGuard {
+                                pending_status_requests: Arc::clone(&gateway.pending_status_requests),
+                                key,
+                            };
+
                             let result = match server.fetch_status_directly(&request).await {
                                 Ok(packet) => {
                                     // Update cache
@@ -129,9 +150,6 @@ impl Gateway {
                             // Send the result to all waiters
                             let _ = sender.send(Some(result));
 
-                            // Clean up the pending request
-                            let mut pending_requests = gateway.pending_status_requests.write().await;
-                            pending_requests.remove(&key);
                         });
 
                         Some(receiver)

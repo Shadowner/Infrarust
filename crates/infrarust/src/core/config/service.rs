@@ -96,6 +96,10 @@ impl ConfigurationService {
         configs.clone()
     }
 
+    pub fn config_count(&self) -> Option<usize> {
+        self.configurations.try_read().ok().map(|c| c.len())
+    }
+
     pub async fn update_configurations(&self, configs: Vec<ServerConfig>) {
         let span = debug_span!(
             "config_service: update_config_store",

@@ -24,6 +24,13 @@ use crate::{
 pub const HEALTH_CHECK_INTERVAL_SECS: u64 = 60;
 
 #[derive(Debug, Clone)]
+pub struct GatewayMetrics {
+    pub pending_status_requests_count: usize,
+    pub status_cache_entries: usize,
+    pub status_cache_max_size: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct Gateway {
     status_cache: Arc<RwLock<StatusCache>>,
     pub(crate) shared: Arc<SharedComponent>,
@@ -102,6 +109,17 @@ impl Gateway {
             .configuration_service()
             .remove_configuration(config_id)
             .await;
+    }
+
+    pub fn get_memory_metrics(&self) -> Option<GatewayMetrics> {
+        let pending = self.pending_status_requests.try_read().ok()?;
+        let cache = self.status_cache.try_read().ok()?;
+
+        Some(GatewayMetrics {
+            pending_status_requests_count: pending.len(),
+            status_cache_entries: cache.entry_count(),
+            status_cache_max_size: cache.max_size(),
+        })
     }
 }
 

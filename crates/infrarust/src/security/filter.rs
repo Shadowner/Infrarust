@@ -323,6 +323,27 @@ impl FilterRegistry {
             .map(|(name, entry)| (name.clone(), entry.filter.filter_type(), entry.enabled))
             .collect()
     }
+
+    pub fn get_rate_limiter_metrics(&self) -> Option<Vec<(String, Option<usize>)>> {
+        use crate::security::rate_limiter::RateLimiter;
+
+        let filters = self.filters.try_read().ok()?;
+        let mut metrics = Vec::new();
+
+        for (name, entry) in filters.iter() {
+            if entry.filter.filter_type() == FilterType::RateLimiter {
+                if let Some(rate_limiter) = entry.filter.as_any().downcast_ref::<RateLimiter>() {
+                    metrics.push((name.clone(), rate_limiter.counter_size()));
+                }
+            }
+        }
+
+        Some(metrics)
+    }
+
+    pub fn filter_count(&self) -> Option<usize> {
+        self.filters.try_read().ok().map(|f| f.len())
+    }
 }
 
 #[derive(Default, Clone)]

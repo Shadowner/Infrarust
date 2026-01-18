@@ -143,6 +143,10 @@ impl Infrarust {
         });
 
         let server_gateway = Arc::new(Gateway::new(shared.clone()));
+
+        futures::executor::block_on(async {
+            shared.set_gateway(server_gateway.clone()).await;
+        });
         if let Some(file_config) = shared.config().file_provider.clone() {
             let file_provider = FileProvider::new(
                 file_config.proxies_path,

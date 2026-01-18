@@ -215,4 +215,12 @@ impl StatusCache {
         );
         self.update_cache(key, response);
     }
+
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn max_size(&self) -> usize {
+        self.max_size
+    }
 }

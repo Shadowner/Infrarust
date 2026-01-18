@@ -22,6 +22,14 @@ struct ServerShutdownInfo {
 
 type ShutdownTask = oneshot::Sender<()>;
 
+#[derive(Debug, Clone)]
+pub struct ManagerMetrics {
+    pub time_since_empty_count: usize,
+    pub shutdown_tasks_count: usize,
+    pub shutdown_timers_count: usize,
+    pub starting_servers_count: usize,
+}
+
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct ServerKey {
     manager_type: ManagerType,
@@ -498,5 +506,24 @@ impl Manager {
 
     pub(crate) fn local_provider(&self) -> Arc<ServerManager<LocalProvider>> {
         self.local_manager.clone()
+    }
+
+    pub fn get_memory_metrics(&self) -> Option<ManagerMetrics> {
+        let time_since_empty = self.time_since_empty.try_read().ok()?;
+        let shutdown_tasks = self.shutdown_tasks.try_lock().ok()?;
+        let shutdown_timers = self.shutdown_timers.try_read().ok()?;
+        let starting_servers = self.starting_servers.try_read().ok()?;
+
+        let time_since_empty_count: usize = time_since_empty
+            .values()
+            .map(|map| map.len())
+            .sum();
+
+        Some(ManagerMetrics {
+            time_since_empty_count,
+            shutdown_tasks_count: shutdown_tasks.len(),
+            shutdown_timers_count: shutdown_timers.len(),
+            starting_servers_count: starting_servers.len(),
+        })
     }
 }
