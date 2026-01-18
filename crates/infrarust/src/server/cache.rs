@@ -61,7 +61,7 @@ impl StatusCache {
         );
 
         if let Some(cached) = self.check_cache(key) {
-            return Ok((*cached).clone());
+            return Ok(Arc::unwrap_or_clone(cached));
         }
 
         debug!(
@@ -199,7 +199,7 @@ impl StatusCache {
             "Quick cache check for domain: {} (key: {})", req.domain, key
         );
 
-        Ok(self.check_cache(key).map(|arc| (*arc).clone()))
+        Ok(self.check_cache(key).map(Arc::unwrap_or_clone))
     }
 
     pub async fn update_cache_for(
