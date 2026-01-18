@@ -73,8 +73,8 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
 
     pub async fn read_packet(&mut self) -> PacketResult<Packet> {
         // Read total packet length (may be encrypted)
-        let packet_length = {
-            let mut length_bytes = BytesMut::new();
+        let packet_length = if self.encryption.is_some() {
+            let mut length_bytes = BytesMut::with_capacity(3);
             loop {
                 let mut byte = [0u8; 1];
                 self.reader.read_exact(&mut byte).await?;
@@ -95,13 +95,40 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
             let mut cursor = Cursor::new(&length_bytes);
             let (VarInt(length), _) = VarInt::read_from(&mut cursor)?;
             length
+        } else {
+            let mut varint_buf = [0u8; 3];
+            let length_bytes_count;
+            self.reader.read_exact(&mut varint_buf[0..1]).await?;
+            if varint_buf[0] & 0x80 == 0 {
+                length_bytes_count = 1;
+            } else {
+                self.reader.read_exact(&mut varint_buf[1..2]).await?;
+                if varint_buf[1] & 0x80 == 0 {
+                    length_bytes_count = 2;
+                } else {
+                    self.reader.read_exact(&mut varint_buf[2..3]).await?;
+                    length_bytes_count = 3;
+                    if varint_buf[2] & 0x80 != 0 {
+                        return Err(PacketError::VarIntDecoding("VarInt too long".to_string()));
+                    }
+                }
+            }
+            let mut result = 0i32;
+            for (i, &byte) in varint_buf[..length_bytes_count].iter().enumerate() {
+                result |= ((byte & 0x7F) as i32) << (7 * i);
+            }
+            result
         };
 
         // debug!("Reading packet with total length: {}", packet_length);
 
         // Read packet data using pooled buffer (may be encrypted)
         let mut encrypted_buffer = get_buffer_with_capacity(packet_length as usize);
-        encrypted_buffer.resize(packet_length as usize, 0);
+        // SAFETY: We're about to overwrite this memory with read_exact.
+        // Using resize with 0 would unnecessarily zero memory that gets overwritten.
+        unsafe {
+            encrypted_buffer.set_len(packet_length as usize);
+        }
         self.reader.read_exact(&mut encrypted_buffer).await?;
 
         // Handle decryption if enabled
@@ -133,7 +160,11 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
                 let mut decompressor = Decompressor::new();
                 // Use pooled buffer for decompression output
                 let mut outbuf = get_buffer_with_capacity(data_length as usize);
-                outbuf.resize(data_length as usize, 0);
+                // SAFETY: We're about to overwrite this memory with zlib_decompress.
+                // Using resize with 0 would unnecessarily zero memory that gets overwritten.
+                unsafe {
+                    outbuf.set_len(data_length as usize);
+                }
 
                 let decompress_result = decompressor
                     .zlib_decompress(&encrypted_buffer[bytes_read..], &mut outbuf)
@@ -200,8 +231,7 @@ where
         match self.reader.read_buf(&mut self.buffer).await {
             Ok(0) => Ok(None), // EOF
             Ok(_) => {
-                // Return a clone of our buffer's contents (doesn't copy memory)
-                let result = self.buffer.clone();
+                let result = self.buffer.split();
                 Ok(Some(result))
             }
             Err(e) => Err(PacketError::Io(e)),

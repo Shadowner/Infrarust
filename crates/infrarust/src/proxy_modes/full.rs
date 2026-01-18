@@ -28,6 +28,7 @@ impl ProxyModeHandler for FullMode {
             for packet in response.read_packets {
                 server.write_packet(&packet).await?;
             }
+            server.flush().await?;
 
             let (mut client_read, mut client_write) = client.into_split_raw();
             let (mut server_read, mut server_write) = server.into_split_raw();
@@ -46,6 +47,7 @@ impl ProxyModeHandler for FullMode {
                                 }
                                 debug!("Client -> Server: Packet ID: 0x{:02x}", packet.id);
                                 server_write.write_packet(&packet).await?;
+                                server_write.flush().await?;
                             }
                             Err(e) => {
                                 error!("Client read error: {}", e);
@@ -74,6 +76,7 @@ impl ProxyModeHandler for FullMode {
                                 }
                                 debug!(log_type = LogType::ProxyMode.as_str(), "Server -> Client: Packet ID: 0x{:02x}", packet.id);
                                 client_write.write_packet(&packet).await?;
+                                client_write.flush().await?;
                             }
                             Err(e) => {
                                 error!(log_type = LogType::ProxyMode.as_str(), "Server read error: {}", e);

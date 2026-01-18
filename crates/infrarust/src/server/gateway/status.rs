@@ -158,6 +158,13 @@ impl Gateway {
                             );
                         }
 
+                        if let Err(e) = client.flush().await {
+                            warn!(
+                                log_type = LogType::Authentication.as_str(),
+                                "Failed to flush status packet to client: {:?}", e
+                            );
+                        }
+
                         // Wait briefly for potential ping packet
                         match tokio::time::timeout(
                             tokio::time::Duration::from_secs(2),
@@ -175,6 +182,13 @@ impl Gateway {
                                     debug!(
                                         log_type = LogType::Authentication.as_str(),
                                         "Failed to send ping response: {:?}", e
+                                    );
+                                }
+
+                                if let Err(e) = client.flush().await {
+                                    debug!(
+                                        log_type = LogType::Authentication.as_str(),
+                                        "Failed to flush ping response: {:?}", e
                                     );
                                 }
                             }

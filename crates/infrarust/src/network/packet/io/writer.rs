@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use aes::cipher::BlockEncryptMut;
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -21,6 +23,26 @@ use super::RawPacketIO;
 use super::buffer_pool::{get_buffer_with_capacity, return_buffer};
 
 /// Handles packet writing with compression and encryption support
+// Thread-local compressor pool to avoid per-packet allocation while maintaining Send+Sync
+thread_local! {
+    static COMPRESSOR_POOL: RefCell<Vec<Compressor>> = const { RefCell::new(Vec::new()) };
+}
+fn get_compressor() -> Compressor {
+    COMPRESSOR_POOL.with(|pool| {
+        pool.borrow_mut()
+            .pop()
+            .unwrap_or_else(|| Compressor::new(CompressionLvl::default()))
+    })
+}
+
+fn return_compressor(compressor: Compressor) {
+    COMPRESSOR_POOL.with(|pool| {
+        let mut pool = pool.borrow_mut();
+        if pool.len() < 4 {
+            pool.push(compressor);
+        }
+    });
+}
 #[derive(Clone, Debug)]
 pub struct PacketWriter<W> {
     writer: W,
@@ -102,14 +124,20 @@ impl<W: AsyncWrite + Unpin + Send> PacketWriter<W> {
         if self.is_compression_enabled() {
             let threshold = self.get_compress_threshold();
             if self.packet_buffer.len() >= threshold as usize {
-                let mut compressor = Compressor::new(CompressionLvl::default());
+                let mut compressor = get_compressor();
                 let max_sz = compressor.zlib_compress_bound(self.packet_buffer.len());
                 let mut compressed_data = get_buffer_with_capacity(max_sz);
-                compressed_data.resize(max_sz, 0);
+                // SAFETY: We're about to overwrite this memory with compressed data.
+                // Using resize with 0 would unnecessarily zero memory that gets overwritten.
+                unsafe {
+                    compressed_data.set_len(max_sz);
+                }
 
-                let actual_sz = compressor
+                let compress_result = compressor
                     .zlib_compress(&self.packet_buffer, &mut compressed_data)
-                    .map_err(|e| PacketError::Compression(format!("Compression failed: {:?}", e)))?;
+                    .map_err(|e| PacketError::Compression(format!("Compression failed: {:?}", e)));
+                return_compressor(compressor);
+                let actual_sz = compress_result?;
 
                 VarInt(self.packet_buffer.len() as i32)
                     .write_to_bytes(&mut self.compressed_buffer)?;
@@ -149,7 +177,6 @@ impl<W: AsyncWrite + Unpin + Send> PacketWriter<W> {
 
     pub async fn write_raw(&mut self, data: &[u8]) -> PacketResult<()> {
         self.writer.write_all(data).await.map_err(PacketError::Io)?;
-        self.writer.flush().await.map_err(PacketError::Io)?;
         Ok(())
     }
 
