@@ -361,10 +361,21 @@ pub struct RateLimiterConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::TcpListener;
 
     #[derive(Debug)]
     struct TestFilter {
+        name: String,
         should_fail: bool,
+    }
+
+    impl TestFilter {
+        fn new(name: &str, should_fail: bool) -> Self {
+            Self {
+                name: name.to_string(),
+                should_fail,
+            }
+        }
     }
 
     #[async_trait]
@@ -378,7 +389,7 @@ mod tests {
         }
 
         fn name(&self) -> &str {
-            "TestFilter"
+            &self.name
         }
 
         fn filter_type(&self) -> FilterType {
@@ -390,25 +401,226 @@ mod tests {
         }
     }
 
+    async fn create_test_connection() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let client_task = tokio::spawn(async move { TcpStream::connect(addr).await.unwrap() });
+
+        let (server_stream, _) = listener.accept().await.unwrap();
+        let client_stream = client_task.await.unwrap();
+
+        (client_stream, server_stream)
+    }
+
     #[tokio::test]
     async fn test_filter_chain() {
         let mut chain = FilterChain::new();
-        chain.add_filter(TestFilter { should_fail: false });
-        chain.add_filter(TestFilter { should_fail: false });
+        chain.add_filter(TestFilter::new("test1", false));
+        chain.add_filter(TestFilter::new("test2", false));
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
+        let (client, _server) = create_test_connection().await;
+        assert!(chain.filter(&client).await.is_ok());
 
-        let accept_task = tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.unwrap();
-            socket
-        });
+        chain.add_filter(TestFilter::new("test3", true));
+        assert!(chain.filter(&client).await.is_err());
+    }
 
-        let stream = TcpStream::connect(addr).await.unwrap();
-        let _server_stream = accept_task.await.unwrap();
-        assert!(chain.filter(&stream).await.is_ok());
+    #[tokio::test]
+    async fn test_empty_registry_allows_all() {
+        let registry = FilterRegistry::new();
+        let (client, _server) = create_test_connection().await;
 
-        chain.add_filter(TestFilter { should_fail: true });
-        assert!(chain.filter(&stream).await.is_err());
+        // Empty registry should allow all connections
+        let result = registry.filter(&client).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_registry_register_and_unregister() {
+        let registry = FilterRegistry::new();
+
+        // Register a filter
+        let result = registry
+            .register(TestFilter::new("test_filter", false))
+            .await;
+        assert!(result.is_ok());
+
+        // Verify it's listed
+        let filters = registry.list_filters().await;
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].0, "test_filter");
+
+        // Unregister
+        let result = registry.unregister("test_filter").await;
+        assert!(result.is_ok());
+
+        let filters = registry.list_filters().await;
+        assert!(filters.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_registry_duplicate_registration_fails() {
+        let registry = FilterRegistry::new();
+
+        registry
+            .register(TestFilter::new("duplicate", false))
+            .await
+            .unwrap();
+
+        // Second registration should fail
+        let result = registry
+            .register(TestFilter::new("duplicate", false))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_enabled_filter_blocks_connection() {
+        let registry = FilterRegistry::new();
+        let (client, _server) = create_test_connection().await;
+
+        // Register a blocking filter
+        registry
+            .register(TestFilter::new("blocker", true))
+            .await
+            .unwrap();
+
+        // Should block
+        let result = registry.filter(&client).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_disabled_filter_allows_connection() {
+        let registry = FilterRegistry::new();
+        let (client, _server) = create_test_connection().await;
+
+        // Register a blocking filter
+        registry
+            .register(TestFilter::new("blocker", true))
+            .await
+            .unwrap();
+
+        // Disable it
+        registry.disable("blocker").await.unwrap();
+
+        // Should now allow
+        let result = registry.filter(&client).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_enable_disable_filter() {
+        let registry = FilterRegistry::new();
+
+        registry
+            .register(TestFilter::new("toggle_filter", false))
+            .await
+            .unwrap();
+
+        // Initially enabled
+        assert!(registry.is_enabled("toggle_filter").await.unwrap());
+
+        // Disable
+        registry.disable("toggle_filter").await.unwrap();
+        assert!(!registry.is_enabled("toggle_filter").await.unwrap());
+
+        // Re-enable
+        registry.enable("toggle_filter").await.unwrap();
+        assert!(registry.is_enabled("toggle_filter").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_get_filter() {
+        let registry = FilterRegistry::new();
+
+        registry
+            .register(TestFilter::new("my_filter", false))
+            .await
+            .unwrap();
+
+        let filter = registry.get_filter("my_filter").await;
+        assert!(filter.is_ok());
+        assert_eq!(filter.unwrap().name(), "my_filter");
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent_filter() {
+        let registry = FilterRegistry::new();
+
+        let result = registry.get_filter("nonexistent").await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), FilterError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_filter_chain_order() {
+        let mut chain = FilterChain::new();
+
+        chain.add_filter(TestFilter::new("pass", false));
+        chain.add_filter(TestFilter::new("block", true));
+
+        let (client, _server) = create_test_connection().await;
+
+        let result = chain.filter(&client).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_config_value_accessors() {
+        let string_val = ConfigValue::String("test".to_string());
+        assert_eq!(string_val.as_string(), Some(&"test".to_string()));
+        assert_eq!(string_val.as_int(), None);
+
+        let int_val = ConfigValue::Integer(42);
+        assert_eq!(int_val.as_int(), Some(42));
+        assert_eq!(int_val.as_string(), None);
+
+        let duration_val = ConfigValue::Duration(60);
+        assert_eq!(
+            duration_val.as_duration(),
+            Some(std::time::Duration::from_secs(60))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_filter_type_display() {
+        assert_eq!(format!("{}", FilterType::RateLimiter), "RateLimiter");
+        assert_eq!(format!("{}", FilterType::BanFilter), "BanFilter");
+        assert_eq!(format!("{}", FilterType::IpFilter), "IpFilter");
+        assert_eq!(format!("{}", FilterType::GeoFilter), "GeoFilter");
+        assert_eq!(format!("{}", FilterType::Custom(42)), "Custom(42)");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_passing_filters() {
+        let registry = FilterRegistry::new();
+        let (client, _server) = create_test_connection().await;
+
+        registry
+            .register(TestFilter::new("filter1", false))
+            .await
+            .unwrap();
+        registry
+            .register(TestFilter::new("filter2", false))
+            .await
+            .unwrap();
+        registry
+            .register(TestFilter::new("filter3", false))
+            .await
+            .unwrap();
+
+        let result = registry.filter(&client).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_unregister_nonexistent_filter() {
+        let registry = FilterRegistry::new();
+
+        let result = registry.unregister("nonexistent").await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), FilterError::NotFound(_)));
     }
 }
