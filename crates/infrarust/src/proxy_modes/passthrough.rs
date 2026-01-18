@@ -1,4 +1,5 @@
 use super::{ClientProxyModeHandler, ProxyMessage, ProxyModeMessageType, ServerProxyModeHandler};
+use super::client_only::rewrite_handshake_domain;
 use crate::core::actors::client::MinecraftClient;
 use crate::core::actors::server::MinecraftServer;
 use crate::core::event::MinecraftCommunication;
@@ -178,7 +179,28 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
         );
         if let Some(server_request) = &mut actor.server_request {
             if let Some(server_conn) = &mut server_request.server_conn {
-                for packet in server_request.read_packets.iter() {
+                let effective_domain = server_request.initial_config.get_effective_backend_domain();
+
+                debug!(
+                    log_type = LogType::ProxyMode.as_str(),
+                    "Domain rewrite config - backend_domain: {:?}, rewrite_domain: {}, effective: {:?}",
+                    server_request.initial_config.backend_domain,
+                    server_request.initial_config.rewrite_domain,
+                    effective_domain
+                );
+
+                for (i, packet) in server_request.read_packets.iter().enumerate() {
+                    if i == 0 {
+                        if let Some(ref new_domain) = effective_domain {
+                            debug!(
+                                log_type = LogType::ProxyMode.as_str(),
+                                "Rewriting handshake domain to: {}", new_domain
+                            );
+                            let rewritten_packet = rewrite_handshake_domain(packet, new_domain)?;
+                            server_conn.write_packet(&rewritten_packet).await?;
+                            continue;
+                        }
+                    }
                     server_conn.write_packet(packet).await?;
                 }
                 server_conn.enable_raw_mode();
