@@ -21,7 +21,7 @@ use crate::{
     server::cache::StatusCache,
 };
 
-static SHARED_COMPONENT: std::sync::OnceLock<Arc<SharedComponent>> = std::sync::OnceLock::new();
+pub const HEALTH_CHECK_INTERVAL_SECS: u64 = 60;
 
 #[derive(Debug, Clone)]
 pub struct Gateway {
@@ -39,8 +39,6 @@ impl Gateway {
             "Initializing ServerGateway"
         );
 
-        let _ = SHARED_COMPONENT.set(shared.clone());
-
         let config = shared.config();
         let gateway = Self {
             status_cache: Arc::new(RwLock::new(StatusCache::from_shared_config(config))),
@@ -51,7 +49,7 @@ impl Gateway {
         let supervisor = gateway.shared.actor_supervisor_arc();
         let shutdown = gateway.shared.shutdown_controller_arc();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(HEALTH_CHECK_INTERVAL_SECS));
             let mut shutdown_rx = shutdown.subscribe().await;
 
             loop {
@@ -71,13 +69,9 @@ impl Gateway {
         gateway
     }
 
-    pub fn get_shared_component() -> Option<Arc<SharedComponent>> {
-        SHARED_COMPONENT.get().cloned()
-    }
-
     pub async fn run(&self, mut receiver: mpsc::Receiver<GatewayMessage>) {
-        //TODO: For future use
-        // Keep the gateway running until a shutdown message is received
+        // Keep the gateway running until a shutdown message is received.
+        // Currently only handles Shutdown; more message types can be added as needed.
         #[allow(clippy::never_loop)]
         while let Some(message) = receiver.recv().await {
             match message {

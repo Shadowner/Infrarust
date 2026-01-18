@@ -96,8 +96,4 @@ impl SharedComponent {
     pub(crate) fn server_managers(&self) -> &Manager {
         &self.server_managers
     }
-
-    pub(crate) fn server_managers_arc(&self) -> Arc<Manager> {
-        Arc::clone(&self.server_managers)
-    }
 }

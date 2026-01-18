@@ -123,11 +123,9 @@ impl ActorSupervisor {
 
     pub(crate) async fn get_configs_with_manager_settings(&self) -> Vec<(String, ServerManagerConfig)> {
         let mut result = Vec::new();
-        if let Some(shared) = crate::server::gateway::Gateway::get_shared_component() {
-            let configs = shared
-                .configuration_service()
-                .get_all_configurations()
-                .await;
+        let config_service_guard = self.configuration_service.read().await;
+        if let Some(config_service) = config_service_guard.as_ref() {
+            let configs = config_service.get_all_configurations().await;
 
             for (config_id, config) in configs {
                 if let Some(manager_config) = &config.server_manager {

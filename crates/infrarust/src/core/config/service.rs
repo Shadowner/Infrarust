@@ -4,11 +4,12 @@ use tokio::sync::RwLock;
 use tracing::{Instrument, debug, debug_span, info, instrument};
 use wildmatch::WildMatch;
 
-use crate::server::gateway::Gateway;
+use crate::server::manager::Manager;
 
 #[derive(Clone, Debug)]
 pub struct ConfigurationService {
     configurations: Arc<RwLock<HashMap<String, Arc<ServerConfig>>>>,
+    server_managers: Arc<RwLock<Option<Arc<Manager>>>>,
 }
 
 impl Default for ConfigurationService {
@@ -26,7 +27,13 @@ impl ConfigurationService {
         );
         Self {
             configurations: Arc::new(RwLock::new(HashMap::new())),
+            server_managers: Arc::new(RwLock::new(None)),
         }
+    }
+
+    pub async fn set_server_managers(&self, managers: Arc<Manager>) {
+        let mut lock = self.server_managers.write().await;
+        *lock = Some(managers);
     }
 
     #[instrument(skip(self), fields(domain = %domain))]
@@ -120,22 +127,23 @@ impl ConfigurationService {
                     );
                     if let Some(manager_config) = &config.server_manager
                         && let Some(local_config_provider) = &manager_config.local_provider
-                        && let Some(shared) = Gateway::get_shared_component()
                     {
-                        debug!(
-                            log_type = LogType::ServerManager.as_str(),
-                            "Registering server with ID to the Local Provider {}",
-                            manager_config.server_id
-                        );
-                        shared
-                            .server_managers()
-                            .local_provider()
-                            .api_client()
-                            .register_server(
-                                &manager_config.server_id,
-                                local_config_provider.clone(),
-                            )
-                            .await;
+                        let managers_guard = self.server_managers.read().await;
+                        if let Some(managers) = managers_guard.as_ref() {
+                            debug!(
+                                log_type = LogType::ServerManager.as_str(),
+                                "Registering server with ID to the Local Provider {}",
+                                manager_config.server_id
+                            );
+                            managers
+                                .local_provider()
+                                .api_client()
+                                .register_server(
+                                    &manager_config.server_id,
+                                    local_config_provider.clone(),
+                                )
+                                .await;
+                        }
                     }
                 }
             }
@@ -213,14 +221,15 @@ impl ConfigurationService {
         let config = config_lock.get(config_id).cloned();
         if let Some(config) = config
             && let Some(manager_config) = &config.server_manager
-            && let Some(shared) = Gateway::get_shared_component()
         {
-            shared
-                .server_managers()
-                .local_provider()
-                .api_client()
-                .unregister_server(&manager_config.server_id)
-                .await;
+            let managers_guard = self.server_managers.read().await;
+            if let Some(managers) = managers_guard.as_ref() {
+                managers
+                    .local_provider()
+                    .api_client()
+                    .unregister_server(&manager_config.server_id)
+                    .await;
+            }
         }
 
         if config_lock.remove(config_id).is_some() {
