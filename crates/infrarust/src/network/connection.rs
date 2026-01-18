@@ -231,6 +231,10 @@ impl Connection {
         Ok(self.writer.write_raw(data).await?)
     }
 
+    pub async fn flush(&mut self) -> PacketResult<()> {
+        self.writer.flush().await
+    }
+
     pub async fn write(&mut self, data: PossibleReadValue) -> ProtocolResult<()> {
         match data {
             PossibleReadValue::Packet(packet) => self.write_packet(&packet).await?,
@@ -382,6 +386,10 @@ impl ServerConnection {
 
     pub async fn write_raw(&mut self, data: &[u8]) -> ProtocolResult<()> {
         self.connection.write_raw(data).await
+    }
+
+    pub async fn flush(&mut self) -> ProtocolResult<()> {
+        self.connection.flush().await.map_err(Into::into)
     }
 
     pub async fn write(&mut self, data: PossibleReadValue) -> ProtocolResult<()> {

@@ -27,6 +27,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
         match message {
             MinecraftCommunication::RawData(data) => {
                 actor.conn.write_raw(&data).await?;
+                actor.conn.flush().await?;
             }
             MinecraftCommunication::Shutdown => {
                 actor.conn.close().await?;
@@ -143,6 +144,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
         match message {
             MinecraftCommunication::RawData(data) => {
                 actor.server_conn_mut()?.write_raw(&data).await?;
+                actor.server_conn_mut()?.flush().await?;
             }
             MinecraftCommunication::Shutdown => {
                 debug!("Shutting down server (Received Shutdown message)");
@@ -185,6 +187,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
                     }
                     server_conn.write_packet(packet).await?;
                 }
+                server_conn.flush().await?;
                 server_conn.enable_raw_mode();
             } else {
                 error!(

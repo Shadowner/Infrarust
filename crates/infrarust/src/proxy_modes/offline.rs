@@ -32,10 +32,12 @@ impl ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                         "Received Compression packet"
                     );
                     actor.conn.write_packet(&data).await?;
+                    actor.conn.flush().await?;
                     actor.conn.enable_compression(256);
                     return Ok(());
                 }
                 actor.conn.write_packet(&data).await?;
+                actor.conn.flush().await?;
             }
             MinecraftCommunication::Shutdown => {
                 debug!(
@@ -117,6 +119,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                     "Received packet from server"
                 );
                 actor.server_conn_mut()?.write_packet(&data).await?;
+                actor.server_conn_mut()?.flush().await?;
             }
             MinecraftCommunication::Shutdown => {
                 debug!(
@@ -149,6 +152,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>> for OfflineM
                     for packet in server_request.read_packets.iter() {
                         server_conn.write_packet(packet).await?;
                     }
+                    server_conn.flush().await?;
                     Ok::<(), io::Error>(())
                 }
                 .instrument(span)

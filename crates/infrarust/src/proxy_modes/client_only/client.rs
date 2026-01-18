@@ -46,6 +46,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         match message {
             MinecraftCommunication::Packet(data) => {
                 actor.conn.write_packet(&data).await?;
+                actor.conn.flush().await?;
             }
             MinecraftCommunication::Shutdown => {
                 debug!(
@@ -135,6 +136,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         let mut compression_packet: Packet = Packet::new(0x03);
         let _ = compression_packet.encode(&threshold);
         actor.conn.write_packet(&compression_packet).await?;
+        actor.conn.flush().await?;
 
         // Configure compression for all connections
         actor.conn.enable_compression(threshold.0);
@@ -149,6 +151,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
             "Sending packet: {:?}", request_packet
         );
         actor.conn.write_packet(&request_packet).await?;
+        actor.conn.flush().await?;
 
         let response = actor.conn.read_packet().await?;
         if response.id != 0x01 {
@@ -318,6 +321,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
         }
 
         actor.conn.write_packet(&success_packet).await?;
+        actor.conn.flush().await?;
 
         let login_aknowledged = actor.conn.read_packet().await?;
         if login_aknowledged.id != 0x03 {

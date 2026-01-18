@@ -45,6 +45,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                     "Received packet from server: {:?}", data
                 );
                 actor.server_conn_mut()?.write_packet(&data).await?;
+                actor.server_conn_mut()?.flush().await?;
             }
             MinecraftCommunication::Shutdown => {
                 debug!(
@@ -80,6 +81,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                 prepare_server_handshake(client_handshake, &server_addr.unwrap())?;
             conn.write_packet(&server_handshake).await?;
             conn.write_packet(login_start).await?;
+            conn.flush().await?;
 
             while !server_initialised {
                 match conn.read_packet().await? {
@@ -166,6 +168,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                             "Server received ClientLoginAcknowledged message"
                         );
                         conn.write_packet(&packet).await?;
+                        conn.flush().await?;
                     }
                     _ => {
                         error!(

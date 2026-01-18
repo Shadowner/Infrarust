@@ -405,6 +405,14 @@ impl Server {
             return Err(e);
         }
 
+        if let Err(e) = conn.flush().await {
+            debug!(
+                log_type = LogType::PacketProcessing.as_str(),
+                "Failed to flush status request: {}", e
+            );
+            return Err(e);
+        }
+
         let start = std::time::Instant::now();
         let result = conn.read_packet().await;
         let elapsed = start.elapsed();

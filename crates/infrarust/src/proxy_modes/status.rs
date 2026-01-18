@@ -26,6 +26,7 @@ impl ClientProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
         match message {
             MinecraftCommunication::Packet(data) => {
                 actor.conn.write_packet(&data).await?;
+                actor.conn.flush().await?;
             }
             MinecraftCommunication::Shutdown => {
                 debug!(
@@ -110,6 +111,7 @@ impl ServerProxyModeHandler<MinecraftCommunication<StatusMessage>> for StatusMod
             && let Some(server_conn) = server_request.server_conn.as_mut()
         {
             server_conn.write_packet(&data).await?;
+            server_conn.flush().await?;
         }
         Ok(())
     }
