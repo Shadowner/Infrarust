@@ -7,7 +7,7 @@ use std::{
 use crate::network::ProtocolError;
 use crate::network::Result as ProtocolResult;
 use crate::packet::{PacketCodec, Result as PacketResult};
-use crate::types::{Byte, ProtocolRead, ProtocolString, ProtocolWrite, UnsignedShort, VarInt};
+use crate::types::{ProtocolRead, ProtocolString, ProtocolWrite, UnsignedShort, VarInt};
 
 pub const SERVERBOUND_HANDSHAKE_ID: i32 = 0x00;
 
@@ -16,27 +16,27 @@ pub struct ServerBoundHandshake {
     pub protocol_version: VarInt,
     pub server_address: ProtocolString,
     pub server_port: UnsignedShort,
-    pub next_state: Byte,
+    pub next_state: VarInt,
 }
 
 const SEPARATOR_FORGE: &str = "\0";
 const SEPARATOR_REAL_IP: &str = "///";
 
 impl ServerBoundHandshake {
-    pub const STATE_STATUS: i8 = 1;
-    pub const STATE_LOGIN: i8 = 2;
+    pub const STATE_STATUS: i32 = 1;
+    pub const STATE_LOGIN: i32 = 2;
 
     pub fn new(
         protocol_version: i32,
         server_address: String,
         server_port: u16,
-        next_state: i8,
+        next_state: i32,
     ) -> Self {
         Self {
             protocol_version: VarInt(protocol_version),
             server_address: ProtocolString(server_address),
             server_port: UnsignedShort(server_port),
-            next_state: Byte(next_state),
+            next_state: VarInt(next_state),
         }
     }
 
@@ -128,6 +128,25 @@ impl ServerBoundHandshake {
         Ok(())
     }
 
+    pub fn with_rewritten_domain(&self, new_domain: &str) -> Self {
+        let original_addr = &self.server_address.0;
+
+        let new_addr = if let Some(forge_idx) = original_addr.find(SEPARATOR_FORGE) {
+            format!("{}{}", new_domain, &original_addr[forge_idx..])
+        } else if let Some(realip_idx) = original_addr.find(SEPARATOR_REAL_IP) {
+            format!("{}{}", new_domain, &original_addr[realip_idx..])
+        } else {
+            new_domain.to_string()
+        };
+
+        Self {
+            protocol_version: self.protocol_version.clone(),
+            server_address: ProtocolString(new_addr),
+            server_port: self.server_port.clone(),
+            next_state: self.next_state.clone(),
+        }
+    }
+
     /// Read a handshake packet from bytes
     pub fn read_from_bytes(data: &[u8]) -> io::Result<Self> {
         let mut reader = data;
@@ -135,7 +154,7 @@ impl ServerBoundHandshake {
         let protocol_version = VarInt::read_from(&mut reader)?;
         let server_address = ProtocolString::read_from(&mut reader)?;
         let server_port = UnsignedShort::read_from(&mut reader)?;
-        let next_state = Byte::read_from(&mut reader)?;
+        let next_state = VarInt::read_from(&mut reader)?;
 
         Ok(Self {
             protocol_version: protocol_version.0,
@@ -150,7 +169,7 @@ impl ServerBoundHandshake {
         packet.encode(&self.protocol_version)?;
         packet.encode(&self.server_address)?;
         packet.encode(&self.server_port)?;
-        packet.encode(&VarInt(2))?;
+        packet.encode(&self.next_state)?;
         Ok(())
     }
 
@@ -191,7 +210,7 @@ impl ProtocolRead for ServerBoundHandshake {
         let (server_port, n) = UnsignedShort::read_from(reader)?;
         bytes_read += n;
 
-        let (next_state, n) = Byte::read_from(reader)?;
+        let (next_state, n) = VarInt::read_from(reader)?;
         bytes_read += n;
 
         Ok((
@@ -203,5 +222,66 @@ impl ProtocolRead for ServerBoundHandshake {
             },
             bytes_read,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_with_rewritten_domain_simple() {
+        let handshake = ServerBoundHandshake::new(762, "original.domain.com".to_string(), 25565, 2);
+        let rewritten = handshake.with_rewritten_domain("new.domain.com");
+
+        assert_eq!(rewritten.server_address.0, "new.domain.com");
+        assert_eq!(rewritten.protocol_version.0, 762);
+        assert_eq!(rewritten.server_port.0, 25565);
+        assert_eq!(rewritten.next_state.0, 2);
+    }
+
+    #[test]
+    fn test_with_rewritten_domain_preserves_forge_marker() {
+        let handshake = ServerBoundHandshake::new(
+            762,
+            "original.domain.com\0FML2\0".to_string(),
+            25565,
+            2,
+        );
+        let rewritten = handshake.with_rewritten_domain("new.domain.com");
+
+        assert_eq!(rewritten.server_address.0, "new.domain.com\0FML2\0");
+    }
+
+    #[test]
+    fn test_with_rewritten_domain_preserves_realip_data() {
+        let handshake = ServerBoundHandshake::new(
+            762,
+            "original.domain.com///192.168.1.1:12345///1234567890".to_string(),
+            25565,
+            2,
+        );
+        let rewritten = handshake.with_rewritten_domain("new.domain.com");
+
+        assert_eq!(
+            rewritten.server_address.0,
+            "new.domain.com///192.168.1.1:12345///1234567890"
+        );
+    }
+
+    #[test]
+    fn test_with_rewritten_domain_forge_takes_precedence_over_realip() {
+        let handshake = ServerBoundHandshake::new(
+            762,
+            "original.domain.com\0FML2\0///192.168.1.1:12345".to_string(),
+            25565,
+            2,
+        );
+        let rewritten = handshake.with_rewritten_domain("new.domain.com");
+
+        assert_eq!(
+            rewritten.server_address.0,
+            "new.domain.com\0FML2\0///192.168.1.1:12345"
+        );
     }
 }

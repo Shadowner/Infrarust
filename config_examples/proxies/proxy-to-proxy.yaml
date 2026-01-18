@@ -1,0 +1,24 @@
+# Use case: When this Infrarust instance proxies to another proxy (Infrarust, Velocity, BungeeCord),
+# the downstream proxy needs to receive a domain it recognizes in the handshake packet.
+#
+# Problem: In passthrough mode, the handshake is forwarded AS-IS, preserving the original domain.
+# If the client connects with "test.fr" but the downstream proxy expects "backend.domain.com",
+# the connection will fail.
+#
+# Solution: Use backendDomain or rewriteDomain to rewrite the domain in the handshake.
+
+domains:
+  - "test.fr"
+addresses:
+  - "downstream-proxy.example.com:25565"
+proxyMode: passthrough
+
+# Option 1: Explicit backend domain
+# Use this when the downstream proxy expects a specific domain different from both
+# the client domain and the address hostname.
+backendDomain: "expected-domain-on-downstream-proxy.com"
+
+# Option 2: Auto-extract from address (uncomment to use instead of backendDomain)
+# This extracts the hostname from the first address ("downstream-proxy.example.com")
+# and uses it as the domain in the forwarded handshake.
+# rewriteDomain: true

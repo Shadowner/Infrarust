@@ -5,12 +5,23 @@ use tokio::net::TcpStream;
 use tracing::{Instrument, debug, debug_span, instrument};
 use uuid::Uuid;
 
+const DEFAULT_MINECRAFT_PORT: u16 = 25565;
+
+fn ensure_port(addr: &str) -> String {
+    if addr.contains(':') {
+        addr.to_string()
+    } else {
+        format!("{}:{}", addr, DEFAULT_MINECRAFT_PORT)
+    }
+}
+
 use crate::{
     ServerConnection,
     network::{
         packet::Packet,
         proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
     },
+    proxy_modes::client_only::rewrite_handshake_domain,
     write_proxy_protocol_header,
 };
 
@@ -57,25 +68,26 @@ impl Server {
         }
 
         for (i, addr) in self.config.addresses.iter().enumerate() {
+            let addr_with_port = ensure_port(addr);
             debug!(
                 log_type = LogType::ServerManager.as_str(),
                 "Attempt {} - Connecting to {}",
                 i + 1,
-                addr
+                addr_with_port
             );
             let now = std::time::Instant::now();
 
             #[cfg(feature = "telemetry")]
-            TELEMETRY.record_backend_request_start(&self.config.config_id, addr, &session_id);
+            TELEMETRY.record_backend_request_start(&self.config.config_id, &addr_with_port, &session_id);
 
-            match tokio::time::timeout(std::time::Duration::from_secs(5), TcpStream::connect(addr))
+            match tokio::time::timeout(std::time::Duration::from_secs(5), TcpStream::connect(&addr_with_port))
                 .await
             {
                 Ok(Ok(stream)) => {
                     debug!(
                         log_type = LogType::ServerManager.as_str(),
                         "Connected to {} successfully after {:?}",
-                        addr,
+                        addr_with_port,
                         now.elapsed()
                     );
                     match stream.set_nodelay(true) {
@@ -92,7 +104,7 @@ impl Server {
                     #[cfg(feature = "telemetry")]
                     TELEMETRY.record_backend_request_end(
                         &self.config.config_id,
-                        addr,
+                        &addr_with_port,
                         now,
                         true,
                         &session_id,
@@ -120,7 +132,7 @@ impl Server {
                     debug!(
                         log_type = LogType::ServerManager.as_str(),
                         "Failed to connect to {} after {:?}: {}",
-                        addr,
+                        addr_with_port,
                         now.elapsed(),
                         e
                     );
@@ -128,7 +140,7 @@ impl Server {
                     #[cfg(feature = "telemetry")]
                     TELEMETRY.record_backend_request_end(
                         &self.config.config_id,
-                        addr,
+                        &addr_with_port,
                         now,
                         false,
                         &session_id,
@@ -140,17 +152,17 @@ impl Server {
                 Err(_) => {
                     debug!(
                         log_type = LogType::ServerManager.as_str(),
-                        "Connection to {} timed out after 5 seconds", addr
+                        "Connection to {} timed out after 5 seconds", addr_with_port
                     );
                     let e = std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
-                        format!("Connection to {} timed out", addr),
+                        format!("Connection to {} timed out", addr_with_port),
                     );
 
                     #[cfg(feature = "telemetry")]
                     TELEMETRY.record_backend_request_end(
                         &self.config.config_id,
-                        addr,
+                        &addr_with_port,
                         now,
                         false,
                         &session_id,
@@ -197,16 +209,17 @@ impl Server {
         );
 
         for addr in &self.config.addresses {
+            let addr_with_port = ensure_port(addr);
             #[cfg(feature = "telemetry")]
             let now = std::time::Instant::now();
             #[cfg(feature = "telemetry")]
-            TELEMETRY.record_backend_request_start(&self.config.config_id, addr, &session_id);
+            TELEMETRY.record_backend_request_start(&self.config.config_id, &addr_with_port, &session_id);
 
-            match TcpStream::connect(addr).await {
+            match TcpStream::connect(&addr_with_port).await {
                 Ok(mut stream) => {
                     debug!(
                         log_type = LogType::ServerManager.as_str(),
-                        "Connected to {}", addr
+                        "Connected to {}", addr_with_port
                     );
                     stream.set_nodelay(true)?;
 
@@ -243,7 +256,7 @@ impl Server {
                                 #[cfg(feature = "telemetry")]
                                 TELEMETRY.record_backend_request_end(
                                     &self.config.config_id,
-                                    addr,
+                                    &addr_with_port,
                                     now,
                                     false,
                                     &session_id,
@@ -259,7 +272,7 @@ impl Server {
                     #[cfg(feature = "telemetry")]
                     TELEMETRY.record_backend_request_end(
                         &self.config.config_id,
-                        addr,
+                        &addr_with_port,
                         now,
                         true,
                         &session_id,
@@ -271,13 +284,13 @@ impl Server {
                 Err(e) => {
                     debug!(
                         log_type = LogType::ServerManager.as_str(),
-                        "Failed to connect to {}: {}", addr, e
+                        "Failed to connect to {}: {}", addr_with_port, e
                     );
 
                     #[cfg(feature = "telemetry")]
                     TELEMETRY.record_backend_request_end(
                         &self.config.config_id,
-                        addr,
+                        &addr_with_port,
                         now,
                         false,
                         &session_id,
@@ -366,7 +379,17 @@ impl Server {
         conn: &mut ServerConnection,
         req: &ServerRequest,
     ) -> ProtocolResult<Packet> {
-        if let Err(e) = conn.write_packet(&req.read_packets[0].clone()).await {
+        let handshake_packet = if let Some(ref new_domain) = self.config.get_effective_backend_domain() {
+            debug!(
+                log_type = LogType::PacketProcessing.as_str(),
+                "Rewriting status handshake domain to: {}", new_domain
+            );
+            rewrite_handshake_domain(&req.read_packets[0], new_domain)?
+        } else {
+            req.read_packets[0].clone()
+        };
+
+        if let Err(e) = conn.write_packet(&handshake_packet).await {
             debug!(
                 log_type = LogType::PacketProcessing.as_str(),
                 "Failed to send handshake: {}", e
