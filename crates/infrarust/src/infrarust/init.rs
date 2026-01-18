@@ -128,13 +128,19 @@ impl Infrarust {
         let shared = Arc::new(SharedComponent::new(
             config,
             supervisor.clone(),
-            config_service,
+            config_service.clone(),
             filter_registry,
             shutdown_controller,
             gateway_sender,
             provider_sender,
             managers.clone(),
         ));
+
+        // Inject dependencies that couldn't be set during construction due to circular references
+        futures::executor::block_on(async {
+            config_service.set_server_managers(managers.clone()).await;
+            supervisor.set_configuration_service(config_service).await;
+        });
 
         let server_gateway = Arc::new(Gateway::new(shared.clone()));
         if let Some(file_config) = shared.config().file_provider.clone() {

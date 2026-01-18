@@ -16,6 +16,7 @@ use tokio::{
 use tracing::debug;
 use infrarust_config::LogType;
 
+use crate::core::config::service::ConfigurationService;
 use crate::server::manager::Manager;
 
 pub use actor_pair::ActorPair;
@@ -29,6 +30,7 @@ pub struct ActorSupervisor {
     pub(crate) actors: RwLock<ActorStorage>,
     pub(crate) tasks: RwLock<HashMap<String, Vec<JoinHandle<()>>>>,
     pub(crate) server_manager: Option<Arc<Manager>>,
+    pub(crate) configuration_service: RwLock<Option<Arc<ConfigurationService>>>,
 }
 
 impl Default for ActorSupervisor {
@@ -110,7 +112,13 @@ impl ActorSupervisor {
             actors: RwLock::new(HashMap::new()),
             tasks: RwLock::new(HashMap::new()),
             server_manager,
+            configuration_service: RwLock::new(None),
         }
+    }
+
+    pub async fn set_configuration_service(&self, config_service: Arc<ConfigurationService>) {
+        let mut lock = self.configuration_service.write().await;
+        *lock = Some(config_service);
     }
 
     pub fn builder(&self) -> ActorPairBuilder<'_> {
