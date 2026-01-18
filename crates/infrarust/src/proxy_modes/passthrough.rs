@@ -142,27 +142,11 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
     ) -> io::Result<()> {
         match message {
             MinecraftCommunication::RawData(data) => {
-                actor
-                    .server_request
-                    .as_mut()
-                    .unwrap()
-                    .server_conn
-                    .as_mut()
-                    .unwrap()
-                    .write_raw(&data)
-                    .await?;
+                actor.server_conn_mut()?.write_raw(&data).await?;
             }
             MinecraftCommunication::Shutdown => {
                 debug!("Shutting down server (Received Shutdown message)");
-                let _ = actor
-                    .server_request
-                    .as_mut()
-                    .unwrap()
-                    .server_conn
-                    .as_mut()
-                    .unwrap()
-                    .close()
-                    .await;
+                let _ = actor.server_conn_mut()?.close().await;
             }
             _ => {}
         }
@@ -190,16 +174,14 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
                 );
 
                 for (i, packet) in server_request.read_packets.iter().enumerate() {
-                    if i == 0 {
-                        if let Some(ref new_domain) = effective_domain {
-                            debug!(
-                                log_type = LogType::ProxyMode.as_str(),
-                                "Rewriting handshake domain to: {}", new_domain
-                            );
-                            let rewritten_packet = rewrite_handshake_domain(packet, new_domain)?;
-                            server_conn.write_packet(&rewritten_packet).await?;
-                            continue;
-                        }
+                    if i == 0 && let Some(ref new_domain) = effective_domain {
+                        debug!(
+                            log_type = LogType::ProxyMode.as_str(),
+                            "Rewriting handshake domain to: {}", new_domain
+                        );
+                        let rewritten_packet = rewrite_handshake_domain(packet, new_domain)?;
+                        server_conn.write_packet(&rewritten_packet).await?;
+                        continue;
                     }
                     server_conn.write_packet(packet).await?;
                 }

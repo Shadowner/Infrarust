@@ -14,6 +14,9 @@ use status::StatusMessage;
 use std::io;
 use tracing::{debug, instrument};
 
+pub type ClientHandler<T> = Box<dyn ClientProxyModeHandler<MinecraftCommunication<T>>>;
+pub type ServerHandler<T> = Box<dyn ServerProxyModeHandler<MinecraftCommunication<T>>>;
+pub type ProxyModePair<T> = (ClientHandler<T>, ServerHandler<T>);
 #[async_trait::async_trait]
 pub trait ClientProxyModeHandler<T>: Send + Sync {
     async fn initialize_client(&self, actor: &mut MinecraftClient<T>) -> io::Result<()>;
@@ -54,13 +57,8 @@ pub trait ProxyModeMessageType {
     type Message: ProxyMessage;
 }
 
-//TODO: Refacor to remove the warning
-#[allow(clippy::type_complexity)]
 #[instrument(name = "create_passthrough_mode")]
-pub fn get_passthrough_mode() -> (
-    Box<dyn ClientProxyModeHandler<MinecraftCommunication<PassthroughMessage>>>,
-    Box<dyn ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>>>,
-) {
+pub fn get_passthrough_mode() -> ProxyModePair<PassthroughMessage> {
     debug!(
         log_type = LogType::ProxyMode.as_str(),
         "Creating new passthrough mode handler pair"
@@ -68,12 +66,8 @@ pub fn get_passthrough_mode() -> (
     (Box::new(PassthroughMode), Box::new(PassthroughMode))
 }
 
-#[allow(clippy::type_complexity)]
 #[instrument(name = "create_offline_mode")]
-pub fn get_offline_mode() -> (
-    Box<dyn ClientProxyModeHandler<MinecraftCommunication<OfflineMessage>>>,
-    Box<dyn ServerProxyModeHandler<MinecraftCommunication<OfflineMessage>>>,
-) {
+pub fn get_offline_mode() -> ProxyModePair<OfflineMessage> {
     debug!(
         log_type = LogType::ProxyMode.as_str(),
         "Creating new offline mode handler pair"
@@ -81,12 +75,8 @@ pub fn get_offline_mode() -> (
     (Box::new(OfflineMode), Box::new(OfflineMode))
 }
 
-#[allow(clippy::type_complexity)]
 #[instrument(name = "create_client_only_mode")]
-pub fn get_client_only_mode() -> (
-    Box<dyn ClientProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>>>,
-    Box<dyn ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>>>,
-) {
+pub fn get_client_only_mode() -> ProxyModePair<ClientOnlyMessage> {
     debug!(
         log_type = LogType::ProxyMode.as_str(),
         "Creating new client-only mode handler pair"
@@ -94,12 +84,8 @@ pub fn get_client_only_mode() -> (
     (Box::new(ClientOnlyMode), Box::new(ClientOnlyMode))
 }
 
-#[allow(clippy::type_complexity)]
 #[instrument(name = "create_status_mode")]
-pub fn get_status_mode() -> (
-    Box<dyn ClientProxyModeHandler<MinecraftCommunication<StatusMessage>>>,
-    Box<dyn ServerProxyModeHandler<MinecraftCommunication<StatusMessage>>>,
-) {
+pub fn get_status_mode() -> ProxyModePair<StatusMessage> {
     debug!(
         log_type = LogType::ProxyMode.as_str(),
         "Creating new status mode handler pair"

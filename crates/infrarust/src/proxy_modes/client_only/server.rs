@@ -44,30 +44,14 @@ impl ServerProxyModeHandler<MinecraftCommunication<ClientOnlyMessage>> for Clien
                     log_type = LogType::ProxyMode.as_str(),
                     "Received packet from server: {:?}", data
                 );
-                actor
-                    .server_request
-                    .as_mut()
-                    .unwrap()
-                    .server_conn
-                    .as_mut()
-                    .unwrap()
-                    .write_packet(&data)
-                    .await?;
+                actor.server_conn_mut()?.write_packet(&data).await?;
             }
             MinecraftCommunication::Shutdown => {
                 debug!(
                     log_type = LogType::ProxyMode.as_str(),
                     "Shutting down server (Received Shutdown message)"
                 );
-                let _ = actor
-                    .server_request
-                    .as_mut()
-                    .unwrap()
-                    .server_conn
-                    .as_mut()
-                    .unwrap()
-                    .close()
-                    .await;
+                let _ = actor.server_conn_mut()?.close().await;
             }
             _ => {}
         }

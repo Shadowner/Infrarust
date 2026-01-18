@@ -140,10 +140,10 @@ impl ServerBoundHandshake {
         };
 
         Self {
-            protocol_version: self.protocol_version.clone(),
+            protocol_version: self.protocol_version,
             server_address: ProtocolString(new_addr),
-            server_port: self.server_port.clone(),
-            next_state: self.next_state.clone(),
+            server_port: self.server_port,
+            next_state: self.next_state,
         }
     }
 
