@@ -537,26 +537,19 @@ impl BanSystem {
         self.storage.get_audit_logs_paged(page, page_size).await
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn search_bans(
         &self,
-        ip: Option<IpAddr>,
-        uuid: Option<&str>,
-        username: Option<&str>,
-        reason_contains: Option<&str>,
-        banned_by: Option<&str>,
-        page: usize,
-        page_size: usize,
+        query: SearchBansQuery<'_>,
     ) -> Result<(Vec<BanEntry>, usize), BanError> {
         self.storage
             .search_bans(
-                ip,
-                uuid,
-                username,
-                reason_contains,
-                banned_by,
-                page,
-                page_size,
+                query.ip,
+                query.uuid,
+                query.username,
+                query.reason_contains,
+                query.banned_by,
+                query.page,
+                query.page_size,
             )
             .await
     }
@@ -583,6 +576,52 @@ pub struct BanStatistics {
     pub ip_bans: usize,
     pub uuid_bans: usize,
     pub username_bans: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SearchBansQuery<'a> {
+    pub ip: Option<IpAddr>,
+    pub uuid: Option<&'a str>,
+    pub username: Option<&'a str>,
+    pub reason_contains: Option<&'a str>,
+    pub banned_by: Option<&'a str>,
+    pub page: usize,
+    pub page_size: usize,
+}
+
+impl<'a> SearchBansQuery<'a> {
+    pub fn new() -> Self {
+        Self {
+            page: 0,
+            page_size: 50,
+            ..Default::default()
+        }
+    }
+    pub fn with_ip(mut self, ip: IpAddr) -> Self {
+        self.ip = Some(ip);
+        self
+    }
+    pub fn with_uuid(mut self, uuid: &'a str) -> Self {
+        self.uuid = Some(uuid);
+        self
+    }
+    pub fn with_username(mut self, username: &'a str) -> Self {
+        self.username = Some(username);
+        self
+    }
+    pub fn with_reason_contains(mut self, reason: &'a str) -> Self {
+        self.reason_contains = Some(reason);
+        self
+    }
+    pub fn with_banned_by(mut self, banned_by: &'a str) -> Self {
+        self.banned_by = Some(banned_by);
+        self
+    }
+    pub fn with_pagination(mut self, page: usize, page_size: usize) -> Self {
+        self.page = page;
+        self.page_size = page_size;
+        self
+    }
 }
 
 #[cfg(test)]

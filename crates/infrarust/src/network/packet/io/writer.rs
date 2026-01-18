@@ -22,7 +22,6 @@ use super::super::{
 use super::RawPacketIO;
 use super::buffer_pool::{get_buffer_with_capacity, return_buffer};
 
-/// Handles packet writing with compression and encryption support
 // Thread-local compressor pool to avoid per-packet allocation while maintaining Send+Sync
 thread_local! {
     static COMPRESSOR_POOL: RefCell<Vec<Compressor>> = const { RefCell::new(Vec::new()) };
@@ -168,7 +167,7 @@ impl<W: AsyncWrite + Unpin + Send> PacketWriter<W> {
             });
         }
 
-        // Write final data and flush
+        // Write data to buffer - caller is responsible for flushing at appropriate times
         self.writer.write_all(&self.output_buffer).await?;
         self.writer.flush().await?;
 
