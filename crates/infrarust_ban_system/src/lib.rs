@@ -584,3 +584,351 @@ pub struct BanStatistics {
     pub uuid_bans: usize,
     pub username_bans: usize,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
+
+    fn test_ip() -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))
+    }
+
+    fn test_ip_2() -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))
+    }
+
+    async fn create_test_ban_system() -> BanSystem {
+        let config = BanConfig {
+            storage_type: BanStorageType::Memory,
+            file_path: None,
+            audit_file_path: None,
+            redis_url: None,
+            database_url: None,
+            enable_audit_log: false,
+            auto_cleanup_interval: 0,
+            cache_size: 100,
+        };
+        BanSystem::new(config).await.unwrap()
+    }
+
+    // --- IP Ban Tests ---
+
+    #[tokio::test]
+    async fn test_add_ip_ban() {
+        let ban_system = create_test_ban_system().await;
+        let ip = test_ip();
+
+        let ban = BanEntry::new(
+            Some(ip),
+            None,
+            None,
+            "Test ban".to_string(),
+            None,
+            "admin".to_string(),
+        );
+
+        let result = ban_system.add_ban(ban).await;
+        assert!(result.is_ok());
+
+        let all_bans = ban_system.get_all_bans().await.unwrap();
+        assert_eq!(all_bans.len(), 1);
+        assert_eq!(all_bans[0].ip, Some(ip));
+    }
+
+    #[tokio::test]
+    async fn test_ip_ban_lookup_exists() {
+        let ban_system = create_test_ban_system().await;
+        let ip = test_ip();
+
+        let ban = BanEntry::new(
+            Some(ip),
+            None,
+            None,
+            "Test ban".to_string(),
+            None,
+            "admin".to_string(),
+        );
+        ban_system.add_ban(ban).await.unwrap();
+
+        let is_banned = ban_system.is_ip_banned(&ip).await.unwrap();
+        assert!(is_banned);
+    }
+
+    #[tokio::test]
+    async fn test_ip_ban_lookup_not_exists() {
+        let ban_system = create_test_ban_system().await;
+        let ip = test_ip();
+        let other_ip = test_ip_2();
+
+        let ban = BanEntry::new(
+            Some(ip),
+            None,
+            None,
+            "Test ban".to_string(),
+            None,
+            "admin".to_string(),
+        );
+        ban_system.add_ban(ban).await.unwrap();
+
+        let is_banned = ban_system.is_ip_banned(&other_ip).await.unwrap();
+        assert!(!is_banned);
+    }
+
+    // --- UUID Ban Tests ---
+
+    #[tokio::test]
+    async fn test_add_uuid_ban() {
+        let ban_system = create_test_ban_system().await;
+        let uuid = "550e8400-e29b-41d4-a716-446655440000";
+
+        let ban = BanEntry::new(
+            None,
+            Some(uuid.to_string()),
+            None,
+            "UUID ban test".to_string(),
+            None,
+            "admin".to_string(),
+        );
+
+        ban_system.add_ban(ban).await.unwrap();
+
+        let all_bans = ban_system.get_all_bans().await.unwrap();
+        assert_eq!(all_bans.len(), 1);
+        assert_eq!(all_bans[0].uuid, Some(uuid.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_uuid_ban_lookup() {
+        let ban_system = create_test_ban_system().await;
+        let uuid = "550e8400-e29b-41d4-a716-446655440000";
+        let other_uuid = "123e4567-e89b-12d3-a456-426614174000";
+
+        let ban = BanEntry::new(
+            None,
+            Some(uuid.to_string()),
+            None,
+            "UUID ban test".to_string(),
+            None,
+            "admin".to_string(),
+        );
+        ban_system.add_ban(ban).await.unwrap();
+
+        assert!(ban_system.is_uuid_banned(uuid).await.unwrap());
+        assert!(!ban_system.is_uuid_banned(other_uuid).await.unwrap());
+    }
+
+    // --- Username Ban Tests ---
+
+    #[tokio::test]
+    async fn test_add_username_ban_case_insensitive() {
+        let ban_system = create_test_ban_system().await;
+        let username = "TestPlayer";
+
+        let ban = BanEntry::new(
+            None,
+            None,
+            Some(username.to_string()),
+            "Username ban test".to_string(),
+            None,
+            "admin".to_string(),
+        );
+        ban_system.add_ban(ban).await.unwrap();
+
+        // Test case-insensitive lookup
+        assert!(ban_system.is_username_banned("TestPlayer").await.unwrap());
+        assert!(ban_system.is_username_banned("testplayer").await.unwrap());
+        assert!(ban_system.is_username_banned("TESTPLAYER").await.unwrap());
+        assert!(!ban_system.is_username_banned("OtherPlayer").await.unwrap());
+    }
+
+    // --- Expiration Tests ---
+
+    #[tokio::test]
+    async fn test_temporary_ban_not_expired() {
+        let ban_system = create_test_ban_system().await;
+        let ip = test_ip();
+
+        // Ban that expires in 1 hour
+        let ban = BanEntry::new(
+            Some(ip),
+            None,
+            None,
+            "Temporary ban".to_string(),
+            Some(Duration::from_secs(3600)),
+            "admin".to_string(),
+        );
+
+        assert!(!ban.is_expired());
+        ban_system.add_ban(ban).await.unwrap();
+
+        let is_banned = ban_system.is_ip_banned(&ip).await.unwrap();
+        assert!(is_banned);
+    }
+
+    #[tokio::test]
+    async fn test_temporary_ban_expired() {
+        // Create a ban entry with expires_at in the past
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let expired_ban = BanEntry {
+            id: Uuid::new_v4().to_string(),
+            ip: Some(test_ip()),
+            uuid: None,
+            username: None,
+            reason: "Expired ban".to_string(),
+            created_at: now - 7200, // Created 2 hours ago
+            expires_at: Some(now - 3600), // Expired 1 hour ago
+            banned_by: "admin".to_string(),
+        };
+
+        assert!(expired_ban.is_expired());
+    }
+
+    // --- Removal Tests ---
+
+    #[tokio::test]
+    async fn test_ban_removal_by_ip() {
+        let ban_system = create_test_ban_system().await;
+        let ip = test_ip();
+
+        let ban = BanEntry::new(
+            Some(ip),
+            None,
+            None,
+            "Test ban".to_string(),
+            None,
+            "admin".to_string(),
+        );
+        ban_system.add_ban(ban).await.unwrap();
+
+        assert!(ban_system.is_ip_banned(&ip).await.unwrap());
+
+        // Remove the ban
+        let removed = ban_system.remove_ban_by_ip(&ip, "admin").await;
+        assert!(removed.is_ok());
+
+        assert!(!ban_system.is_ip_banned(&ip).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_list_all_bans() {
+        let ban_system = create_test_ban_system().await;
+
+        // Add multiple bans
+        let ban1 = BanEntry::new(
+            Some(test_ip()),
+            None,
+            None,
+            "Ban 1".to_string(),
+            None,
+            "admin".to_string(),
+        );
+        let ban2 = BanEntry::new(
+            None,
+            Some("uuid-1".to_string()),
+            None,
+            "Ban 2".to_string(),
+            None,
+            "admin".to_string(),
+        );
+        let ban3 = BanEntry::new(
+            None,
+            None,
+            Some("Player1".to_string()),
+            "Ban 3".to_string(),
+            None,
+            "admin".to_string(),
+        );
+
+        ban_system.add_ban(ban1).await.unwrap();
+        ban_system.add_ban(ban2).await.unwrap();
+        ban_system.add_ban(ban3).await.unwrap();
+
+        let all_bans = ban_system.get_all_bans().await.unwrap();
+        assert_eq!(all_bans.len(), 3);
+    }
+
+    // --- BanEntry Unit Tests ---
+
+    #[test]
+    fn test_ban_entry_matches_ip() {
+        let ip = test_ip();
+        let ban = BanEntry::new(
+            Some(ip),
+            None,
+            None,
+            "Test".to_string(),
+            None,
+            "admin".to_string(),
+        );
+
+        assert!(ban.matches_ip(&ip));
+        assert!(!ban.matches_ip(&test_ip_2()));
+    }
+
+    #[test]
+    fn test_ban_entry_matches_uuid() {
+        let uuid = "test-uuid-123";
+        let ban = BanEntry::new(
+            None,
+            Some(uuid.to_string()),
+            None,
+            "Test".to_string(),
+            None,
+            "admin".to_string(),
+        );
+
+        assert!(ban.matches_uuid(uuid));
+        assert!(!ban.matches_uuid("other-uuid"));
+    }
+
+    #[test]
+    fn test_ban_entry_matches_username_case_insensitive() {
+        let username = "TestPlayer";
+        let ban = BanEntry::new(
+            None,
+            None,
+            Some(username.to_string()),
+            "Test".to_string(),
+            None,
+            "admin".to_string(),
+        );
+
+        assert!(ban.matches_username("TestPlayer"));
+        assert!(ban.matches_username("testplayer"));
+        assert!(ban.matches_username("TESTPLAYER"));
+        assert!(!ban.matches_username("OtherPlayer"));
+    }
+
+    #[test]
+    fn test_ban_entry_time_until_expiry() {
+        // Permanent ban
+        let permanent_ban = BanEntry::new(
+            Some(test_ip()),
+            None,
+            None,
+            "Permanent".to_string(),
+            None,
+            "admin".to_string(),
+        );
+        assert!(permanent_ban.time_until_expiry().is_none());
+
+        // Temporary ban
+        let temp_ban = BanEntry::new(
+            Some(test_ip()),
+            None,
+            None,
+            "Temporary".to_string(),
+            Some(Duration::from_secs(3600)),
+            "admin".to_string(),
+        );
+        let time_left = temp_ban.time_until_expiry();
+        assert!(time_left.is_some());
+        assert!(time_left.unwrap().as_secs() > 0);
+    }
+}

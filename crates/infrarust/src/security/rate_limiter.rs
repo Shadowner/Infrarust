@@ -278,3 +278,154 @@ impl Filter for RateLimiter {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::SocketAddr;
+    use tokio::net::{TcpListener, TcpStream};
+
+    async fn create_test_connection() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let client_task = tokio::spawn(async move { TcpStream::connect(addr).await.unwrap() });
+
+        let (server_stream, _) = listener.accept().await.unwrap();
+        let client_stream = client_task.await.unwrap();
+
+        (client_stream, server_stream)
+    }
+
+    #[tokio::test]
+    async fn test_single_request_allowed() {
+        let limiter = RateLimiter::new("test", 10, Duration::from_secs(60));
+        let (client, _server) = create_test_connection().await;
+
+        let result = limiter.check_rate(&client).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_requests_within_limit() {
+        let limiter = RateLimiter::new("test", 5, Duration::from_secs(60));
+        let (client, _server) = create_test_connection().await;
+
+        // Make 4 requests, all should pass (limit is 5)
+        for i in 0..4 {
+            let result = limiter.check_rate(&client).await;
+            assert!(result.is_ok(), "Request {} should pass", i + 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_requests_exceed_limit() {
+        let limiter = RateLimiter::new("test", 3, Duration::from_secs(60));
+        let (client, _server) = create_test_connection().await;
+
+        // First 3 requests should pass
+        for i in 0..3 {
+            let result = limiter.check_rate(&client).await;
+            assert!(result.is_ok(), "Request {} should pass", i + 1);
+        }
+
+        // 4th request should fail
+        let result = limiter.check_rate(&client).await;
+        assert!(result.is_err(), "Request 4 should be rate limited");
+    }
+
+    #[tokio::test]
+    async fn test_different_ips_independent() {
+        // Test that different IP keys are tracked independently in the counter
+        let mut counter = LocalCounter::new(Duration::from_secs(60));
+        let now = SystemTime::now();
+
+        // Create keys for two different IPs
+        let key1 = RateLimitKey::from_socket_addr("192.168.1.1:1234".parse().unwrap());
+        let key2 = RateLimitKey::from_socket_addr("192.168.1.2:1234".parse().unwrap());
+
+        // Increment key1 multiple times
+        counter.increment(key1, now);
+        counter.increment(key1, now);
+        counter.increment(key1, now);
+
+        // key1 should have rate of 3
+        assert_eq!(counter.get_rate(key1, now), 3.0);
+
+        // key2 should still have rate of 0 (independent tracking)
+        assert_eq!(counter.get_rate(key2, now), 0.0);
+
+        // Increment key2 once
+        counter.increment(key2, now);
+        assert_eq!(counter.get_rate(key2, now), 1.0);
+
+        // key1's rate should be unchanged
+        assert_eq!(counter.get_rate(key1, now), 3.0);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_key_from_ipv4() {
+        let addr: SocketAddr = "192.168.1.100:12345".parse().unwrap();
+        let key = RateLimitKey::from_socket_addr(addr);
+
+        assert_eq!(key.len, 4);
+        assert_eq!(format!("{}", key), "192.168.1.100");
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_key_from_ipv6() {
+        let addr: SocketAddr = "[2001:db8::1]:12345".parse().unwrap();
+        let key = RateLimitKey::from_socket_addr(addr);
+
+        assert_eq!(key.len, 8);
+        // IPv6 keys use first 4 segments
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_key_unknown() {
+        let key = RateLimitKey::unknown();
+        assert_eq!(key.len, 0);
+        assert_eq!(format!("{}", key), "unknown");
+    }
+
+    #[tokio::test]
+    async fn test_local_counter_increment_and_get() {
+        let mut counter = LocalCounter::new(Duration::from_secs(60));
+        let key = RateLimitKey::from_socket_addr("192.168.1.1:1234".parse().unwrap());
+        let now = SystemTime::now();
+
+        // Initially rate should be 0
+        assert_eq!(counter.get_rate(key, now), 0.0);
+
+        // After increment, rate should be 1
+        counter.increment(key, now);
+        assert_eq!(counter.get_rate(key, now), 1.0);
+
+        // After another increment, rate should be 2
+        counter.increment(key, now);
+        assert_eq!(counter.get_rate(key, now), 2.0);
+    }
+
+    #[tokio::test]
+    async fn test_local_counter_evict() {
+        let mut counter = LocalCounter::new(Duration::from_secs(1));
+        let key = RateLimitKey::from_socket_addr("192.168.1.1:1234".parse().unwrap());
+        let now = SystemTime::now();
+
+        counter.increment(key, now);
+        assert_eq!(counter.counters.len(), 1);
+
+        // Evict should not remove entries within window
+        counter.evict();
+        assert!(!counter.counters.is_empty() || counter.last_eviction == now);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_filter_trait() {
+        let limiter = RateLimiter::new("test_filter", 10, Duration::from_secs(60));
+
+        assert_eq!(limiter.name(), "test_filter");
+        assert_eq!(limiter.filter_type(), FilterType::RateLimiter);
+        assert!(limiter.is_configurable());
+    }
+}
