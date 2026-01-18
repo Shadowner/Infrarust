@@ -54,7 +54,7 @@ impl BanStorageBackend for MemoryBanStorage {
         match self.index.remove(ban_id).await {
             Some(ban) => {
                 debug!("Ban removed: {:?}", ban);
-                Ok((*ban).clone())
+                Ok(Arc::unwrap_or_clone(ban))
             }
             None => {
                 debug!("Ban not found with ID: {}", ban_id);
@@ -65,24 +65,24 @@ impl BanStorageBackend for MemoryBanStorage {
 
     async fn get_ban_by_id(&self, ban_id: &str) -> Result<BanEntry, BanError> {
         match self.index.get_by_id(ban_id) {
-            Some(ban) => Ok((*ban).clone()),
+            Some(ban) => Ok(Arc::unwrap_or_clone(ban)),
             None => Err(BanError::NotFound),
         }
     }
 
     async fn get_bans_by_ip(&self, ip: &IpAddr) -> Result<Vec<BanEntry>, BanError> {
         let bans = self.index.get_by_ip(ip);
-        Ok(bans.into_iter().map(|b| (*b).clone()).collect())
+        Ok(bans.into_iter().map(Arc::unwrap_or_clone).collect())
     }
 
     async fn get_bans_by_uuid(&self, uuid: &str) -> Result<Vec<BanEntry>, BanError> {
         let bans = self.index.get_by_uuid(uuid);
-        Ok(bans.into_iter().map(|b| (*b).clone()).collect())
+        Ok(bans.into_iter().map(Arc::unwrap_or_clone).collect())
     }
 
     async fn get_bans_by_username(&self, username: &str) -> Result<Vec<BanEntry>, BanError> {
         let bans = self.index.get_by_username(username);
-        Ok(bans.into_iter().map(|b| (*b).clone()).collect())
+        Ok(bans.into_iter().map(Arc::unwrap_or_clone).collect())
     }
 
     async fn is_ip_banned(&self, ip: &IpAddr) -> Result<bool, BanError> {
@@ -180,12 +180,12 @@ impl BanStorageBackend for MemoryBanStorage {
 
     async fn get_all_bans(&self) -> Result<Vec<BanEntry>, BanError> {
         let bans = self.index.get_all();
-        Ok(bans.into_iter().map(|b| (*b).clone()).collect())
+        Ok(bans.into_iter().map(Arc::unwrap_or_clone).collect())
     }
 
     async fn get_active_bans(&self) -> Result<Vec<BanEntry>, BanError> {
         let bans = self.index.get_active().await;
-        Ok(bans.into_iter().map(|b| (*b).clone()).collect())
+        Ok(bans.into_iter().map(Arc::unwrap_or_clone).collect())
     }
 
     async fn get_active_bans_paged(
@@ -203,14 +203,17 @@ impl BanStorageBackend for MemoryBanStorage {
             return Ok((Vec::new(), total));
         }
 
-        let paged_bans = all_bans[start..end].iter().map(|b| (**b).clone()).collect();
+        let paged_bans = all_bans[start..end]
+            .iter()
+            .map(|b| (**b).clone())
+            .collect();
 
         Ok((paged_bans, total))
     }
 
     async fn get_expired_bans(&self) -> Result<Vec<BanEntry>, BanError> {
         let bans = self.index.get_expired().await;
-        Ok(bans.into_iter().map(|b| (*b).clone()).collect())
+        Ok(bans.into_iter().map(Arc::unwrap_or_clone).collect())
     }
 
     async fn clear_expired_bans(&self) -> Result<usize, BanError> {
@@ -280,7 +283,10 @@ impl BanStorageBackend for MemoryBanStorage {
             return Ok((Vec::new(), total));
         }
 
-        let paged_results = results[start..end].iter().map(|b| (**b).clone()).collect();
+        let paged_results = results[start..end]
+            .iter()
+            .map(|b| (**b).clone())
+            .collect();
 
         Ok((paged_results, total))
     }

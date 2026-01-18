@@ -7,13 +7,8 @@ use tracing::{debug, warn};
 use super::ban_storage::FileBanStorage;
 
 #[inline]
-fn arc_to_owned(arc: Arc<BanEntry>) -> BanEntry {
-    Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())
-}
-
-#[inline]
 fn arcs_to_owned(arcs: Vec<Arc<BanEntry>>) -> Vec<BanEntry> {
-    arcs.into_iter().map(arc_to_owned).collect()
+    arcs.into_iter().map(Arc::unwrap_or_clone).collect()
 }
 
 #[async_trait]
@@ -72,7 +67,7 @@ impl BanStorageBackend for FileBanStorage {
                     }
                 }
 
-                Ok(arc_to_owned(ban))
+                Ok(Arc::unwrap_or_clone(ban))
             }
             None => {
                 debug!("Ban not found with ID: {}", ban_id);
@@ -83,7 +78,7 @@ impl BanStorageBackend for FileBanStorage {
 
     async fn get_ban_by_id(&self, ban_id: &str) -> Result<BanEntry, BanError> {
         match self.index.get_by_id(ban_id) {
-            Some(ban) => Ok(arc_to_owned(ban)),
+            Some(ban) => Ok(Arc::unwrap_or_clone(ban)),
             None => Err(BanError::NotFound),
         }
     }
