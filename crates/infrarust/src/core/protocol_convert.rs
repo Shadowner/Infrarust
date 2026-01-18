@@ -78,6 +78,21 @@ impl From<&ClientBoundLoginSuccess> for Packet {
         //         packet.encode(&sig).unwrap();
         //     }
         // }
+        // Write each property (matches the TryFrom parsing implementation)
+        for prop in &login.properties {
+            packet
+                .encode(&prop.name)
+                .expect("Failed to encode property name");
+            packet
+                .encode(&prop.value)
+                .expect("Failed to encode property value");
+            packet
+                .encode(&Boolean(prop.signature.is_some()))
+                .expect("Failed to encode signature flag");
+            if let Some(ref sig) = prop.signature {
+                packet.encode(sig).expect("Failed to encode signature");
+            }
+        }
 
         packet
     }

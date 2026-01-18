@@ -257,7 +257,10 @@ impl EncryptionState {
         }
 
         // Utiliser les 16 octets comme clé et IV
-        let key: &[u8; 16] = self.shared_secret.as_slice().try_into().unwrap();
+        let key: &[u8; 16] = self.shared_secret
+            .as_slice()
+            .try_into()
+            .expect("shared_secret must be exactly 16 bytes (validated above)");
         let iv: &[u8; 16] = key; // Même valeur pour l'IV
 
         let encrypt = Aes128Cfb8Enc::new(key.into(), iv.into());
