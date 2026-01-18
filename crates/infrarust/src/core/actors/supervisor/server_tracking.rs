@@ -8,6 +8,7 @@ use super::ActorSupervisor;
 impl ActorSupervisor {
     pub async fn check_and_mark_empty_servers(&self) {
         if let Some(server_manager) = &self.server_manager {
+            server_manager.cleanup_stale_starting_servers().await;
             debug!(
                 log_type = LogType::ServerManager.as_str(),
                 "Checking for empty servers"

@@ -12,6 +12,8 @@ use tokio::sync::{Mutex, RwLock, oneshot};
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
+const MAX_STARTING_DURATION: Duration = Duration::from_secs(300); // 5 minutes
+
 #[derive(Debug, Clone)]
 struct ServerShutdownInfo {
     scheduled_at: Instant,
@@ -254,7 +256,39 @@ impl Manager {
 
     pub async fn is_server_starting(&self, server_id: &str, manager_type: ManagerType) -> bool {
         let key = ServerKey::new(manager_type, server_id);
-        self.starting_servers.read().await.contains_key(&key)
+        let starting_servers = self.starting_servers.read().await;
+
+        if let Some(started_at) = starting_servers.get(&key) {
+            if started_at.elapsed() > MAX_STARTING_DURATION {
+                debug!(
+                    log_type = LogType::ServerManager.as_str(),
+                    "Server {} starting state is stale ({}s elapsed), treating as not starting",
+                    server_id,
+                    started_at.elapsed().as_secs()
+                );
+                return false;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    pub async fn cleanup_stale_starting_servers(&self) {
+        let mut starting_servers = self.starting_servers.write().await;
+        let stale_keys: Vec<ServerKey> = starting_servers
+            .iter()
+            .filter(|(_, started_at)| started_at.elapsed() > MAX_STARTING_DURATION)
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        for key in stale_keys {
+            debug!(
+                log_type = LogType::ServerManager.as_str(),
+                "Removing stale starting state for server {}", key.server_id
+            );
+            starting_servers.remove(&key);
+        }
     }
 
     pub async fn mark_server_as_empty(
