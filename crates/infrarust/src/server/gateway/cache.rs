@@ -44,18 +44,6 @@ impl Gateway {
             );
         }
 
-        if server_config.motds.online.is_some() {
-            debug!(
-                log_type = LogType::Authentication.as_str(),
-                "Using online MOTD for {}", req.domain
-            );
-            return crate::server::motd::generate_response(
-                MotdState::Online,
-                req.domain.to_string(),
-                server_config,
-            );
-        }
-
         // Check for pending requests - if one exists, wait for it instead of making a new request
         let pending_receiver = {
             {
@@ -97,7 +85,22 @@ impl Gateway {
                                         .update_cache_for(&server, &request, packet.clone())
                                         .await;
 
-                                    Ok(packet)
+                                    if config.motds.online.is_some() {
+                                        debug!(
+                                            log_type = LogType::Authentication.as_str(),
+                                            "Server reachable, using online MOTD for {}", request.domain
+                                        );
+                                        match crate::server::motd::generate_response(
+                                            MotdState::Online,
+                                            request.domain.to_string(),
+                                            config.clone(),
+                                        ) {
+                                            Ok(resp) if resp.status_response.is_some() => Ok(resp.status_response.unwrap()),
+                                            _ => Ok(packet), // Fallback to fetched packet if MOTD generation fails
+                                        }
+                                    } else {
+                                        Ok(packet)
+                                    }
                                 }
                                 Err(e) => {
                                     debug!(
