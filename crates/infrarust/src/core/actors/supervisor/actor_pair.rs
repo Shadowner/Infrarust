@@ -7,7 +7,10 @@ use tracing::{Instrument, debug, debug_span, instrument};
 use crate::{
     Connection,
     core::{
-        actors::{client::MinecraftClientHandler, server::MinecraftServerHandler},
+        actors::{
+            client::{ClientHandlerConfig, MinecraftClientHandler},
+            server::MinecraftServerHandler,
+        },
         event::MinecraftCommunication,
     },
     proxy_modes::{ClientProxyModeHandler, ProxyMessage, ServerProxyModeHandler},
@@ -145,16 +148,16 @@ impl ActorSupervisor {
             None
         };
 
-        let client = MinecraftClientHandler::new(
+        let client = MinecraftClientHandler::new(ClientHandlerConfig {
             server_sender,
             client_receiver,
-            client_handler,
-            client_conn,
+            proxy_mode: client_handler,
+            conn: client_conn,
             is_login,
-            username.clone(),
-            shutdown_flag.clone(),
-            root_span.clone(),
-        )
+            username: username.clone(),
+            shutdown: shutdown_flag.clone(),
+            start_span: root_span.clone(),
+        })
         .await;
 
         let server = MinecraftServerHandler::new(

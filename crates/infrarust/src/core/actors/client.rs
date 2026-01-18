@@ -1,9 +1,10 @@
 use infrarust_config::{LogType, ServerConfig};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::{Acquire, Release};
 use tokio::sync::mpsc;
-use tracing::{Instrument, debug, error, info, instrument};
+use tracing::{Instrument, debug, error, instrument};
 
 const UNKNOWN_PEER_ADDR: SocketAddr =
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
@@ -74,10 +75,10 @@ async fn start_minecraft_client_actor<T>(
     let peer_address = match actor.conn.peer_addr().await {
         Ok(addr) => addr,
         Err(e) => {
-            info!("Cannot get peer address: {:?}", e);
+            debug!("Cannot get peer address: {:?}", e);
 
-            // Ensure shutdown flag is set
-            shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+            // Ensure shutdown flag is set (Release ensures visibility to other threads)
+            shutdown.store(true, Release);
             return;
         }
     };
@@ -184,6 +185,16 @@ async fn start_minecraft_client_actor<T>(
         .await;
 }
 
+pub struct ClientHandlerConfig<T: Send + 'static> {
+    pub server_sender: mpsc::Sender<MinecraftCommunication<T>>,
+    pub client_receiver: mpsc::Receiver<MinecraftCommunication<T>>,
+    pub proxy_mode: Box<dyn ClientProxyModeHandler<MinecraftCommunication<T>>>,
+    pub conn: Connection,
+    pub is_login: bool,
+    pub username: String,
+    pub shutdown: Arc<AtomicBool>,
+    pub start_span: Option<tracing::Span>,
+}
 #[derive(Clone, Debug)]
 pub struct MinecraftClientHandler {
     //TODO: establish a connection to talk to an actor
@@ -193,34 +204,24 @@ pub struct MinecraftClientHandler {
 
 impl MinecraftClientHandler {
     //TODO: Refactor to remove the warning
-    #[allow(clippy::too_many_arguments)]
-    pub async fn new<T: Send + 'static>(
-        server_sender: mpsc::Sender<MinecraftCommunication<T>>,
-        client_receiver: mpsc::Receiver<MinecraftCommunication<T>>,
-        proxy_mode: Box<dyn ClientProxyModeHandler<MinecraftCommunication<T>>>,
-        conn: Connection,
-        is_login: bool,
-        username: String,
-        shutdown: Arc<AtomicBool>,
-        start_span: Option<tracing::Span>,
-    ) -> Self {
+    pub async fn new<T: Send + 'static>(config: ClientHandlerConfig<T>) -> Self {
         let span = tracing::Span::current();
         let (sender, receiver) = mpsc::channel(100);
-        let peer_addr = conn.peer_addr().await.unwrap_or(UNKNOWN_PEER_ADDR);
+        let peer_addr = config.conn.peer_addr().await.unwrap_or(UNKNOWN_PEER_ADDR);
         let actor = MinecraftClient::new(
             receiver,
-            server_sender,
-            client_receiver,
-            conn,
-            is_login,
-            username,
+            config.server_sender,
+            config.client_receiver,
+            config.conn,
+            config.is_login,
+            config.username,
         );
 
-        if is_login {
+        if config.is_login {
             span.in_scope(|| {
                 tokio::spawn(
-                    start_minecraft_client_actor(actor, proxy_mode, shutdown)
-                        .instrument(start_span.unwrap()),
+                    start_minecraft_client_actor(actor, config.proxy_mode, config.shutdown)
+                        .instrument(config.start_span.unwrap()),
                 );
                 Self {
                     _sender: sender,
@@ -229,7 +230,8 @@ impl MinecraftClientHandler {
             })
         } else {
             tokio::spawn(
-                start_minecraft_client_actor(actor, proxy_mode, shutdown).instrument(span),
+                start_minecraft_client_actor(actor, config.proxy_mode, config.shutdown)
+                    .instrument(span),
             );
             Self {
                 _sender: sender,
