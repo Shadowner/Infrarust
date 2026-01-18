@@ -1,8 +1,12 @@
 use infrarust_config::{LogType, ServerConfig};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tracing::{Instrument, debug, error, info, instrument};
+
+const UNKNOWN_PEER_ADDR: SocketAddr =
+    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
 
 use crate::Connection;
 use crate::core::actors::supervisor::ActorSupervisor;
@@ -202,10 +206,7 @@ impl MinecraftClientHandler {
     ) -> Self {
         let span = tracing::Span::current();
         let (sender, receiver) = mpsc::channel(100);
-        let peer_addr = conn
-            .peer_addr()
-            .await
-            .unwrap_or_else(|_| "unknown".parse().unwrap());
+        let peer_addr = conn.peer_addr().await.unwrap_or(UNKNOWN_PEER_ADDR);
         let actor = MinecraftClient::new(
             receiver,
             server_sender,
