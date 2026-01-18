@@ -7,6 +7,8 @@ use crate::core::shared_component::SharedComponent;
 use infrarust_config::LogType;
 use tracing::debug;
 
+const NA: &str = "N/A";
+
 pub struct DebugCommand {
     shared: Arc<SharedComponent>,
 }
@@ -66,18 +68,190 @@ impl DebugCommand {
             result.push('\n');
         }
 
+        result.push_str(&self.format_memory_metrics());
+
         // Memory usage information (if available on the platform)
         if let Some(usage) = get_memory_usage() {
             result.push_str(&format!(
-                "{}\n",
+                "\n{}\n",
                 fmt::sub_header(&format!("Current process memory usage: {:.2} MB", usage))
             ));
         }
 
         result.push_str(&format!(
-            "{}\n",
+            "\n{}\n",
             fmt::header(&format!("Total Actors: {}", total_actors))
         ));
+
+        result
+    }
+
+    fn format_memory_metrics(&self) -> String {
+        let mut result = String::new();
+
+        result.push_str(&format!(
+            "{}\n\n",
+            fmt::header("Memory Retention Metrics")
+        ));
+
+        result.push_str(&format!("{}\n", fmt::warning("[CRITICAL]")));
+
+        // ActorSupervisor metrics
+        let supervisor = self.shared.actor_supervisor();
+        if let Some(metrics) = supervisor.get_memory_metrics() {
+            result.push_str(&format!(
+                "  ActorSupervisor :: actors = {}\n",
+                metrics.total_actor_entries
+            ));
+            for (config_id, count) in &metrics.actors_by_config {
+                if *count > 0 {
+                    result.push_str(&format!(
+                        "    - {}: {}\n",
+                        fmt::entity(config_id),
+                        count
+                    ));
+                }
+            }
+
+            result.push_str(&format!(
+                "  ActorSupervisor :: tasks = {}\n",
+                metrics.total_task_entries
+            ));
+            for (config_id, count) in &metrics.tasks_by_config {
+                if *count > 0 {
+                    result.push_str(&format!(
+                        "    - {}: {}\n",
+                        fmt::entity(config_id),
+                        count
+                    ));
+                }
+            }
+
+            result.push_str(&format!(
+                "  ActorSupervisor :: orphaned_tasks = {}\n",
+                if metrics.orphaned_tasks > 0 {
+                    fmt::warning(&metrics.orphaned_tasks.to_string())
+                } else {
+                    fmt::success(&metrics.orphaned_tasks.to_string())
+                }
+            ));
+        } else {
+            result.push_str(&format!("  ActorSupervisor :: actors = {}\n", NA));
+            result.push_str(&format!("  ActorSupervisor :: tasks = {}\n", NA));
+            result.push_str(&format!("  ActorSupervisor :: orphaned_tasks = {}\n", NA));
+        }
+
+        // RateLimiter metrics
+        if let Some(rate_limiter_metrics) = self.shared.filter_registry().get_rate_limiter_metrics() {
+            for (name, counter_size) in rate_limiter_metrics {
+                match counter_size {
+                    Some(size) => {
+                        result.push_str(&format!(
+                            "  RateLimiter ({}) :: counters = {} {}\n",
+                            fmt::entity(&name),
+                            size,
+                            fmt::secondary("(no limit)")
+                        ));
+                    }
+                    None => {
+                        result.push_str(&format!(
+                            "  RateLimiter ({}) :: counters = {}\n",
+                            fmt::entity(&name),
+                            NA
+                        ));
+                    }
+                }
+            }
+        } else {
+            result.push_str(&format!("  RateLimiter :: counters = {}\n", NA));
+        }
+
+        result.push('\n');
+
+        result.push_str(&format!("{}\n", fmt::warning("[HIGH]")));
+
+        // Gateway metrics
+        if let Some(gateway) = self.shared.gateway() {
+            if let Some(metrics) = gateway.get_memory_metrics() {
+                result.push_str(&format!(
+                    "  Gateway :: pending_status_requests = {}\n",
+                    metrics.pending_status_requests_count
+                ));
+            } else {
+                result.push_str(&format!("  Gateway :: pending_status_requests = {}\n", NA));
+            }
+        } else {
+            result.push_str(&format!("  Gateway :: pending_status_requests = {}\n", NA));
+        }
+
+        // Manager metrics
+        if let Some(metrics) = self.shared.server_managers().get_memory_metrics() {
+            result.push_str(&format!(
+                "  Manager :: starting_servers = {}\n",
+                metrics.starting_servers_count
+            ));
+        } else {
+            result.push_str(&format!("  Manager :: starting_servers = {}\n", NA));
+        }
+
+        result.push('\n');
+
+        result.push_str(&format!("{}\n", fmt::secondary("[MEDIUM]")));
+
+        // Gateway status cache
+        if let Some(gateway) = self.shared.gateway() {
+            if let Some(metrics) = gateway.get_memory_metrics() {
+                result.push_str(&format!(
+                    "  Gateway :: status_cache_entries = {} / {}\n",
+                    metrics.status_cache_entries,
+                    metrics.status_cache_max_size
+                ));
+            } else {
+                result.push_str(&format!("  Gateway :: status_cache_entries = {}\n", NA));
+            }
+        } else {
+            result.push_str(&format!("  Gateway :: status_cache_entries = {}\n", NA));
+        }
+
+        // Manager tracking maps
+        if let Some(metrics) = self.shared.server_managers().get_memory_metrics() {
+            result.push_str(&format!(
+                "  Manager :: time_since_empty = {}\n",
+                metrics.time_since_empty_count
+            ));
+            result.push_str(&format!(
+                "  Manager :: shutdown_tasks = {}\n",
+                metrics.shutdown_tasks_count
+            ));
+            result.push_str(&format!(
+                "  Manager :: shutdown_timers = {}\n",
+                metrics.shutdown_timers_count
+            ));
+        } else {
+            result.push_str(&format!("  Manager :: time_since_empty = {}\n", NA));
+            result.push_str(&format!("  Manager :: shutdown_tasks = {}\n", NA));
+            result.push_str(&format!("  Manager :: shutdown_timers = {}\n", NA));
+        }
+
+        // ConfigurationService metrics
+        if let Some(count) = self.shared.configuration_service().config_count() {
+            result.push_str(&format!(
+                "  ConfigurationService :: configurations = {}\n",
+                count
+            ));
+        } else {
+            result.push_str(&format!("  ConfigurationService :: configurations = {}\n", NA));
+        }
+
+        // FilterRegistry metrics
+        if let Some(count) = self.shared.filter_registry().filter_count() {
+            result.push_str(&format!(
+                "  FilterRegistry :: registered_filters = {}\n",
+                count
+            ));
+        } else {
+            result.push_str(&format!("  FilterRegistry :: registered_filters = {}\n", NA));
+        }
 
         result
     }

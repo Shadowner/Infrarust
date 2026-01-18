@@ -21,7 +21,7 @@ use crate::server::manager::Manager;
 
 pub use actor_pair::ActorPair;
 pub use builder::ActorPairBuilder;
-pub use types::{ActorStorage, SupervisorMessage, TaskInfo, TaskStats};
+pub use types::{ActorStorage, ActorSupervisorMetrics, SupervisorMessage, TaskInfo, TaskStats};
 
 static GLOBAL_SUPERVISOR: OnceCell<Arc<ActorSupervisor>> = OnceCell::const_new();
 
@@ -166,5 +166,51 @@ impl ActorSupervisor {
         }
 
         result
+    }
+
+    pub fn get_memory_metrics(&self) -> Option<ActorSupervisorMetrics> {
+        let actors = self.actors.try_read().ok()?;
+        let tasks = self.tasks.try_read().ok()?;
+
+        let mut actors_by_config = HashMap::new();
+        let mut total_actors = 0;
+
+        for (config_id, pairs) in actors.iter() {
+            let active_count = pairs
+                .iter()
+                .filter(|p| !p.shutdown.load(std::sync::atomic::Ordering::SeqCst))
+                .count();
+            actors_by_config.insert(config_id.clone(), active_count);
+            total_actors += active_count;
+        }
+
+        let mut tasks_by_config = HashMap::new();
+        let mut total_tasks = 0;
+        let mut orphaned_tasks = 0;
+
+        for (config_id, handles) in tasks.iter() {
+            let running_count = handles.iter().filter(|h| !h.is_finished()).count();
+            tasks_by_config.insert(config_id.clone(), running_count);
+            total_tasks += running_count;
+
+            // Check for orphaned tasks (tasks without actors)
+            let actor_count = actors.get(config_id).map_or(0, |pairs| {
+                pairs
+                    .iter()
+                    .filter(|p| !p.shutdown.load(std::sync::atomic::Ordering::SeqCst))
+                    .count()
+            });
+            if actor_count == 0 && running_count > 0 {
+                orphaned_tasks += running_count;
+            }
+        }
+
+        Some(ActorSupervisorMetrics {
+            total_actor_entries: total_actors,
+            actors_by_config,
+            total_task_entries: total_tasks,
+            tasks_by_config,
+            orphaned_tasks,
+        })
     }
 }

@@ -40,3 +40,12 @@ pub struct TaskInfo {
     /// Whether the task was aborted
     pub is_aborted: bool,
 }
+
+#[derive(Debug, Clone)]
+pub struct ActorSupervisorMetrics {
+    pub total_actor_entries: usize,
+    pub actors_by_config: HashMap<String, usize>,
+    pub total_task_entries: usize,
+    pub tasks_by_config: HashMap<String, usize>,
+    pub orphaned_tasks: usize,
+}

@@ -156,6 +156,10 @@ impl RateLimiter {
         );
         Ok(())
     }
+
+    pub fn counter_size(&self) -> Option<usize> {
+        self.counter.try_read().ok().map(|c| c.counters.len())
+    }
 }
 
 fn key_by_ip(stream: &TcpStream) -> RateLimitKey {
