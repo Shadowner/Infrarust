@@ -5,7 +5,7 @@ use tokio::sync::watch;
 use tracing::{debug, error};
 
 use crate::{
-    network::{packet::Packet, proxy_protocol::ProtocolResult},
+    network::{packet::Packet, proxy_protocol::{ProtocolResult, errors::ProxyProtocolError}},
     server::{ServerRequest, ServerResponse, backend::Server, motd::MotdState},
 };
 
@@ -228,11 +228,30 @@ impl Gateway {
         server: Arc<ServerConfig>,
     ) -> ProtocolResult<ServerResponse> {
         debug!("Generating unreachable MOTD response for {}", domain);
-        crate::server::motd::generate_unreachable_motd_response(domain, server, self.shared.config())
+        crate::server::motd::generate_response(MotdState::Unreachable, domain, server)
     }
 
     pub(crate) async fn handle_unknown_server(&self, req: &ServerRequest) -> ProtocolResult<ServerResponse> {
         debug!("Handling unknown server for {}", req.domain);
-        crate::server::motd::generate_unknown_server_response(req.domain.to_string(), self.shared.config())
+        let domain_str = req.domain.to_string();
+
+        if let Some(motd) = self.shared.config().motds.unknown.clone() {
+            let fake_config = Arc::new(ServerConfig {
+                domains: vec![domain_str.clone()],
+                addresses: vec![],
+                config_id: format!("unknown_{}", domain_str),
+                motds: infrarust_config::models::server::ServerMotds {
+                    unknown: Some(motd),
+                    ..Default::default()
+                },
+                ..ServerConfig::default()
+            });
+            crate::server::motd::generate_response(MotdState::Unknown, domain_str, fake_config)
+        } else {
+            Err(ProxyProtocolError::Other(format!(
+                "Server not found for domain: {}",
+                domain_str
+            )))
+        }
     }
 }
