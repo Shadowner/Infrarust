@@ -34,9 +34,14 @@ impl Gateway {
 
         let gateway = self.clone();
         tokio::spawn(async move {
-            let near_shutdown_threshold = 60;
+            const STATUS_REQUEST_TIMEOUT_SECS: u64 = 10;
 
-            let response: Result<ServerResponse, _> = match &server_config.server_manager {
+            let result = tokio::time::timeout(
+                tokio::time::Duration::from_secs(STATUS_REQUEST_TIMEOUT_SECS),
+                async {
+                    let near_shutdown_threshold = 60;
+
+                    let response: Result<ServerResponse, _> = match &server_config.server_manager {
                 Some(config) => {
                     // Check if this server is near shutdown
                     let server_managers = gateway.shared.server_managers();
@@ -213,8 +218,17 @@ impl Gateway {
                     );
                 }
             };
+                }
+            ).await;
 
-            // Always close the connection when done
+            if result.is_err() {
+                warn!(
+                    log_type = LogType::Authentication.as_str(),
+                    "Status request timed out after {} seconds, forcing connection close",
+                    STATUS_REQUEST_TIMEOUT_SECS
+                );
+            }
+
             if let Err(e) = client.close().await {
                 warn!(
                     log_type = LogType::Authentication.as_str(),
