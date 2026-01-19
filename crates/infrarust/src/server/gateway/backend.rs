@@ -30,7 +30,7 @@ impl Gateway {
             }
             Err(e) => {
                 error!("Failed to create server instance: {}", e);
-                return self.generate_unreachable_motd_response(req.domain.to_string(), server);
+                return self.generate_unreachable_motd_response(Arc::clone(&req.domain), server);
             }
         };
 
@@ -54,7 +54,7 @@ impl Gateway {
 
         if let Some(response) = self.try_quick_cache_lookup(tmp_server, req).await {
             let result =
-                self.create_status_response(req.domain.to_string(), server, response, tmp_server);
+                self.create_status_response(Arc::clone(&req.domain), server, response, tmp_server);
             return result;
         }
 
@@ -64,11 +64,11 @@ impl Gateway {
                 // Update cache in the background without waiting
                 self.update_cache_in_background(tmp_server, req, packet.clone());
 
-                self.create_status_response(req.domain.to_string(), server, packet, tmp_server)
+                self.create_status_response(Arc::clone(&req.domain), server, packet, tmp_server)
             }
             Err(e) => {
                 debug!("Status fetch failed: {}. Using unreachable MOTD", e);
-                self.generate_unreachable_motd_response(req.domain.to_string(), server)
+                self.generate_unreachable_motd_response(Arc::clone(&req.domain), server)
             }
         }
     }
@@ -109,7 +109,7 @@ impl Gateway {
                     read_packets: req.read_packets.to_vec(),
                     server_addr: Some(req.client_addr),
                     proxy_mode: tmp_server.config.proxy_mode.unwrap_or_default(),
-                    proxied_domain: Some(req.domain.to_string()),
+                    proxied_domain: Some(Arc::clone(&req.domain)),
                     initial_config: server,
                 })
             }
