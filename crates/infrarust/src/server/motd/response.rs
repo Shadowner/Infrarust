@@ -21,7 +21,7 @@ use super::{
 };
 
 fn create_server_response(
-    domain: impl Into<String>,
+    domain: Arc<str>,
     server: Arc<ServerConfig>,
     motd_packet: Packet,
 ) -> ServerResponse {
@@ -34,14 +34,14 @@ fn create_server_response(
         read_packets: vec![],
         server_addr: None,
         proxy_mode: ProxyModeEnum::Status,
-        proxied_domain: Some(domain.into()),
+        proxied_domain: Some(domain),
         initial_config: server,
     }
 }
 
 pub fn generate_response(
     state: MotdState,
-    domain: impl Into<String>,
+    domain: Arc<str>,
     server: Arc<ServerConfig>,
 ) -> ProtocolResult<ServerResponse> {
     let motd_config = get_motd_config_for_state(&state, &server.motds);
@@ -62,7 +62,7 @@ pub fn generate_unreachable_motd_response(
     } else {
         generate_motd_packet(&MotdConfig::default_unreachable(), true)?
     };
-    Ok(create_server_response(domain, server, motd_packet))
+    Ok(create_server_response(Arc::from(domain.into()), server, motd_packet))
 }
 
 #[deprecated(since = "1.5.1", note = "Use generate_response with MotdState::UnknownServer instead")]
@@ -80,7 +80,7 @@ pub fn generate_unknown_server_response(
 
     if let Some(motd) = config.motds.unknown.clone() {
         let motd_packet = generate_motd_packet(&motd, true)?;
-        Ok(create_server_response(domain_str.clone(), fake_config, motd_packet))
+        Ok(create_server_response(Arc::from(domain_str), fake_config, motd_packet))
     } else {
         Err(ProxyProtocolError::Other(format!(
             "Server not found for domain: {}",
@@ -94,7 +94,7 @@ pub fn generate_starting_motd_response(
     domain: impl Into<String>,
     server: Arc<ServerConfig>,
 ) -> ProtocolResult<ServerResponse> {
-    generate_response(MotdState::Starting, domain, server)
+    generate_response(MotdState::Starting, Arc::from(domain.into()), server)
 }
 
 #[deprecated(since = "1.5.1", note = "Use generate_response with MotdState::Offline instead")]
@@ -102,7 +102,7 @@ pub fn generate_not_started_motd_response(
     domain: impl Into<String>,
     server: Arc<ServerConfig>,
 ) -> ProtocolResult<ServerResponse> {
-    generate_response(MotdState::Offline, domain, server)
+    generate_response(MotdState::Offline, Arc::from(domain.into()), server)
 }
 
 #[deprecated(since = "1.5.1", note = "Use generate_response with MotdState::UnableToFetchStatus instead")]
@@ -110,7 +110,7 @@ pub fn generate_unable_status_motd_response(
     domain: impl Into<String>,
     server: Arc<ServerConfig>,
 ) -> ProtocolResult<ServerResponse> {
-    generate_response(MotdState::UnableToFetchStatus, domain, server)
+    generate_response(MotdState::UnableToFetchStatus, Arc::from(domain.into()), server)
 }
 
 #[deprecated(since = "1.5.1", note = "Use generate_response with MotdState::Crashed instead")]
@@ -118,7 +118,7 @@ pub fn generate_crashing_motd_response(
     domain: impl Into<String>,
     server: Arc<ServerConfig>,
 ) -> ProtocolResult<ServerResponse> {
-    generate_response(MotdState::Crashed, domain, server)
+    generate_response(MotdState::Crashed, Arc::from(domain.into()), server)
 }
 
 #[deprecated(since = "1.5.1", note = "Use generate_response with MotdState::Unknown instead")]
@@ -126,7 +126,7 @@ pub fn generate_unknown_status_server_response(
     domain: impl Into<String>,
     server: Arc<ServerConfig>,
 ) -> ProtocolResult<ServerResponse> {
-    generate_response(MotdState::Unknown, domain, server)
+    generate_response(MotdState::Unknown, Arc::from(domain.into()), server)
 }
 
 #[deprecated(since = "1.5.1", note = "Use generate_response with MotdState::Stopping instead")]
@@ -134,7 +134,7 @@ pub fn generate_stopping_motd_response(
     domain: impl Into<String>,
     server: Arc<ServerConfig>,
 ) -> ProtocolResult<ServerResponse> {
-    generate_response(MotdState::Stopping, domain, server)
+    generate_response(MotdState::Stopping, Arc::from(domain.into()), server)
 }
 
 #[deprecated(since = "1.5.1", note = "Use generate_response with MotdState::ImminentShutdown instead")]
@@ -145,7 +145,7 @@ pub fn generate_imminent_shutdown_motd_response(
 ) -> ProtocolResult<ServerResponse> {
     generate_response(
         MotdState::ImminentShutdown { seconds_remaining },
-        domain,
+        Arc::from(domain.into()),
         server,
     )
 }
@@ -155,7 +155,7 @@ pub fn generate_online_motd_response(
     domain: impl Into<String>,
     server: Arc<ServerConfig>,
 ) -> ProtocolResult<ServerResponse> {
-    generate_response(MotdState::Online, domain, server)
+    generate_response(MotdState::Online, Arc::from(domain.into()), server)
 }
 
 pub async fn handle_server_fetch_error(

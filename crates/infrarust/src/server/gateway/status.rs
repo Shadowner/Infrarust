@@ -68,7 +68,7 @@ impl Gateway {
                         );
                         generate_response(
                             MotdState::ImminentShutdown { seconds_remaining: remaining_seconds },
-                            request.domain.to_string(),
+                            Arc::clone(&request.domain),
                             server_config.clone(),
                         )
                     } else {
@@ -84,7 +84,7 @@ impl Gateway {
                                     "Failed to get status for server {} from manager {:?}: {}",
                                     config.server_id, config.provider_name, e
                                 );
-                                generate_response(MotdState::UnableToFetchStatus, request.domain.to_string(), server_config)
+                                generate_response(MotdState::UnableToFetchStatus, Arc::clone(&request.domain), server_config)
                             }
                             Ok(server_status) => match server_status.state {
                                 ServerState::Crashed => {
@@ -92,7 +92,7 @@ impl Gateway {
                                         "Server {} is crashed, using unreachable MOTD",
                                         server_config.config_id
                                     );
-                                    generate_response(MotdState::Crashed, request.domain.to_string(), server_config)
+                                    generate_response(MotdState::Crashed, Arc::clone(&request.domain), server_config)
                                 }
                                 ServerState::Running => {
                                     debug!(
@@ -111,7 +111,7 @@ impl Gateway {
                                         log_type = LogType::Authentication.as_str(),
                                         "Server {} is starting", server_config.config_id
                                     );
-                                    generate_response(MotdState::Starting, request.domain.to_string(), server_config)
+                                    generate_response(MotdState::Starting, Arc::clone(&request.domain), server_config)
                                 }
                                 ServerState::Stopped => {
                                     debug!(
@@ -120,7 +120,7 @@ impl Gateway {
                                     );
                                     generate_response(
                                         MotdState::Offline,
-                                        request.domain.to_string(),
+                                        Arc::clone(&request.domain),
                                         server_config,
                                     )
                                 }
@@ -129,14 +129,14 @@ impl Gateway {
                                         "Server {} is in unknown state",
                                         server_config.config_id
                                     );
-                                    generate_response(MotdState::Crashed, request.domain.to_string(), server_config)
+                                    generate_response(MotdState::Crashed, Arc::clone(&request.domain), server_config)
                                 }
                                 ServerState::Stopping => {
                                     debug!(
                                         log_type = LogType::Authentication.as_str(),
                                         "Server {} is stopping", server_config.config_id
                                     );
-                                    generate_response(MotdState::Stopping, request.domain.to_string(), server_config)
+                                    generate_response(MotdState::Stopping, Arc::clone(&request.domain), server_config)
                                 }
                             },
                         }

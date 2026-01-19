@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MotdState {
     /// Server is online and running normally
@@ -23,17 +25,17 @@ pub enum MotdState {
 }
 
 impl MotdState {
-    pub fn default_text(&self) -> String {
+    pub fn default_text(&self) -> Cow<'static, str> {
         match self {
-            MotdState::Online => "Server is online".to_string(),
+            MotdState::Online => Cow::Borrowed("Server is online"),
             MotdState::Offline => {
-                "§e§oServer is sleeping. §8§o\nConnect to it to wake it up.".to_string()
+                Cow::Borrowed("§e§oServer is sleeping. §8§o\nConnect to it to wake it up.")
             }
             MotdState::Starting => {
-                "§6Server is starting...§r\n§8§oPlease wait a moment".to_string()
+                Cow::Borrowed("§6Server is starting...§r\n§8§oPlease wait a moment")
             }
             MotdState::Stopping => {
-                "§6Server is marked to shutdown...\n§8§o Connect to it to cancel it !".to_string()
+                Cow::Borrowed("§6Server is marked to shutdown...\n§8§o Connect to it to cancel it !")
             }
             MotdState::ImminentShutdown { seconds_remaining } => {
                 let time_str = if *seconds_remaining <= 60 {
@@ -41,24 +43,24 @@ impl MotdState {
                 } else {
                     format!("{:.1} minutes", *seconds_remaining as f64 / 60.0)
                 };
-                format!(
+                Cow::Owned(format!(
                     "§c§lServer shutting down in {}!§r\n§e§oConnect now to keep it online!",
                     time_str
-                )
+                ))
             }
             MotdState::Crashed => {
-                "§4Server is in a crashing state...§r\n§8§o -> Contact an admin if the issue persist.".to_string()
+                Cow::Borrowed("§4Server is in a crashing state...§r\n§8§o -> Contact an admin if the issue persist.")
             }
             MotdState::Unreachable => {
-                "§cServer is unreachable...§r\n§8§oTry again later".to_string()
+                Cow::Borrowed("§cServer is unreachable...§r\n§8§oTry again later")
             }
             MotdState::UnableToFetchStatus => {
-                "§cUnable to obtain server status...§r\n§8§o -> Contact an admin if the issue persist.".to_string()
+                Cow::Borrowed("§cUnable to obtain server status...§r\n§8§o -> Contact an admin if the issue persist.")
             }
             MotdState::Unknown => {
-                "§cUnknown server status...§r\n§8§o -> Contact an admin if the issue persist.".to_string()
+                Cow::Borrowed("§cUnknown server status...§r\n§8§o -> Contact an admin if the issue persist.")
             }
-            MotdState::UnknownServer => "§cServer not found".to_string(),
+            MotdState::UnknownServer => Cow::Borrowed("§cServer not found"),
         }
     }
 

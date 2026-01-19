@@ -34,7 +34,7 @@ pub struct ServerResponse {
     pub read_packets: Vec<Packet>,
     pub server_addr: Option<SocketAddr>,
     pub proxy_mode: ProxyModeEnum,
-    pub proxied_domain: Option<String>,
+    pub proxied_domain: Option<Arc<str>>,
     pub initial_config: Arc<ServerConfig>,
 }
 

@@ -25,7 +25,7 @@ impl Gateway {
                     log_type = LogType::Authentication.as_str(),
                     "Failed to create server instance: {}", e
                 );
-                return self.generate_unreachable_motd_response(req.domain.to_string(), server_config);
+                return self.generate_unreachable_motd_response(Arc::clone(&req.domain), server_config);
             }
         };
 
@@ -37,7 +37,7 @@ impl Gateway {
         // Check if there's already a cached entry
         if let Some(packet) = self.try_quick_cache_lookup(&tmp_server, &req).await {
             return self.create_status_response(
-                req.domain.to_string(),
+                Arc::clone(&req.domain),
                 server_config,
                 packet,
                 &tmp_server,
@@ -78,7 +78,7 @@ impl Gateway {
                                 );
                                 match crate::server::motd::generate_response(
                                     MotdState::Online,
-                                    request.domain.to_string(),
+                                    Arc::clone(&request.domain),
                                     config.clone(),
                                 ) {
                                     Ok(resp) if resp.status_response.is_some() => {
@@ -97,7 +97,7 @@ impl Gateway {
                                 "Status fetch failed: {}. Using unreachable MOTD", e
                             );
                             let motd_response = gateway.generate_unreachable_motd_response(
-                                request.domain.to_string(),
+                                Arc::clone(&request.domain),
                                 config,
                             );
 
@@ -134,14 +134,14 @@ impl Gateway {
                         log_type = LogType::Authentication.as_str(),
                         "Watch channel sender dropped for {}", req.domain
                     );
-                    return self.generate_unreachable_motd_response(req.domain.to_string(), server_config);
+                    return self.generate_unreachable_motd_response(Arc::clone(&req.domain), server_config);
                 }
                 // Only clone when result is actually ready
                 if let Some(result) = receiver.borrow().as_ref() {
                     return match result {
                         Ok(packet_arc) => {
                             self.create_status_response(
-                                req.domain.to_string(),
+                                Arc::clone(&req.domain),
                                 server_config,
                                 Arc::unwrap_or_clone(Arc::clone(packet_arc)),
                                 &tmp_server,
@@ -197,7 +197,7 @@ impl Gateway {
 
     pub(crate) fn create_status_response(
         &self,
-        domain: impl Into<String>,
+        domain: Arc<str>,
         server: Arc<ServerConfig>,
         packet: Packet,
         tmp_server: &Server,
@@ -209,14 +209,14 @@ impl Gateway {
             read_packets: vec![],
             server_addr: None,
             proxy_mode: tmp_server.config.proxy_mode.unwrap_or_default(),
-            proxied_domain: Some(domain.into()),
+            proxied_domain: Some(domain),
             initial_config: server,
         })
     }
 
     pub(crate) fn generate_unreachable_motd_response(
         &self,
-        domain: impl Into<String> + std::fmt::Display,
+        domain: Arc<str>,
         server: Arc<ServerConfig>,
     ) -> ProtocolResult<ServerResponse> {
         debug!("Generating unreachable MOTD response for {}", domain);
@@ -225,24 +225,23 @@ impl Gateway {
 
     pub(crate) async fn handle_unknown_server(&self, req: &ServerRequest) -> ProtocolResult<ServerResponse> {
         debug!("Handling unknown server for {}", req.domain);
-        let domain_str = req.domain.to_string();
 
         if let Some(motd) = self.shared.config().motds.unknown.clone() {
             let fake_config = Arc::new(ServerConfig {
-                domains: vec![domain_str.clone()],
+                domains: vec![req.domain.to_string()],
                 addresses: vec![],
-                config_id: format!("unknown_{}", domain_str),
+                config_id: format!("unknown_{}", req.domain),
                 motds: infrarust_config::models::server::ServerMotds {
                     unknown: Some(motd),
                     ..Default::default()
                 },
                 ..ServerConfig::default()
             });
-            crate::server::motd::generate_response(MotdState::Unknown, domain_str, fake_config)
+            crate::server::motd::generate_response(MotdState::Unknown, Arc::clone(&req.domain), fake_config)
         } else {
             Err(ProxyProtocolError::Other(format!(
                 "Server not found for domain: {}",
-                domain_str
+                req.domain
             )))
         }
     }

@@ -22,17 +22,65 @@ pub fn generate_motd_packet(
 ) -> Result<Packet, ProxyProtocolError> {
     let status_json = ResponseJSON {
         version: VersionJSON {
-            name: motd.version_name.clone().unwrap_or_default(),
+            name: motd.version_name.as_deref().unwrap_or_default().to_string(),
             protocol: motd.protocol_version.unwrap_or_default(),
         },
         players: PlayersJSON {
             max: motd.max_players.unwrap_or_default(),
             online: motd.online_players.unwrap_or_default(),
-            sample: motd.samples.clone().unwrap_or_default(),
+            sample: motd.samples.as_ref().cloned().unwrap_or_default(),
         },
         description: serde_json::json!({
-            "text":  motd.text.clone().unwrap_or_default(),
+            "text": motd.text.as_deref().unwrap_or_default(),
         }),
+        favicon: motd
+            .favicon
+            .as_ref()
+            .and_then(|f| parse_favicon(f))
+            .or_else(|| get_default_favicon(include_infrarust_favicon)),
+        previews_chat: false,
+        enforces_secure_chat: false,
+        modinfo: None,
+        forge_data: None,
+    };
+
+    let json_str = match serde_json::to_string(&status_json) {
+        Ok(json_str) => json_str,
+        Err(e) => {
+            #[cfg(feature = "telemetry")]
+            TELEMETRY.record_internal_error("status_json_serialize_failed", None, None);
+
+            return Err(ProxyProtocolError::Other(format!(
+                "Failed to serialize status JSON: {}",
+                e
+            )));
+        }
+    };
+
+    let mut response_packet = Packet::new(CLIENTBOUND_RESPONSE_ID);
+    response_packet.encode(&ClientBoundResponse {
+        json_response: ProtocolString(json_str),
+    })?;
+
+    Ok(response_packet)
+}
+
+fn generate_motd_packet_with_text(
+    motd: &MotdConfig,
+    text_override: &str,
+    include_infrarust_favicon: bool,
+) -> Result<Packet, ProxyProtocolError> {
+    let status_json = ResponseJSON {
+        version: VersionJSON {
+            name: motd.version_name.as_deref().unwrap_or_default().to_string(),
+            protocol: motd.protocol_version.unwrap_or_default(),
+        },
+        players: PlayersJSON {
+            max: motd.max_players.unwrap_or_default(),
+            online: motd.online_players.unwrap_or_default(),
+            sample: motd.samples.as_ref().cloned().unwrap_or_default(),
+        },
+        description: serde_json::json!({ "text": text_override }),
         favicon: motd
             .favicon
             .as_ref()
@@ -88,18 +136,15 @@ pub fn generate_for_state(
         (MotdState::ImminentShutdown { seconds_remaining }, Some(motd)) => {
             // Special handling for imminent shutdown: replace placeholder in text
             let motd_text = motd.text.as_ref().map_or_else(
-                || state.default_text(),
+                || state.default_text().into_owned(),
                 |text| text.replace("${seconds_remaining}", &seconds_remaining.to_string()),
             );
-
-            let mut motd = motd.clone();
-            motd.text = Some(motd_text);
-            generate_motd_packet(&motd, false)
+            generate_motd_packet_with_text(motd, &motd_text, false)
         }
         (_, Some(motd)) => generate_motd_packet(motd, use_default_favicon),
         // No custom config, use defaults
         (state, None) => {
-            let default_motd = create_default_motd(state.default_text());
+            let default_motd = create_default_motd(state.default_text().into_owned());
             generate_motd_packet(&default_motd, use_default_favicon)
         }
     }
