@@ -249,8 +249,7 @@ impl Infrarust {
                         domain: domain.clone(),
                         is_login,
                         protocol_version,
-                        read_packets: [handshake_packet, second_packet],
-
+                        read_packets: Arc::new([handshake_packet, second_packet]),
                         session_id,
                     },
                 )

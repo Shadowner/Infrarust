@@ -1,7 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use infrarust_config::{ServerConfig, models::logging::LogType};
-use tokio::sync::{watch, RwLock};
+use tokio::sync::watch;
 use tracing::{debug, error};
 
 use crate::{
@@ -10,22 +10,6 @@ use crate::{
 };
 
 use super::Gateway;
-
-struct PendingRequestCleanupGuard {
-    pending_status_requests: Arc<RwLock<HashMap<u64, watch::Receiver<Option<Result<Packet, ProxyProtocolError>>>>>>,
-    key: u64,
-}
-
-impl Drop for PendingRequestCleanupGuard {
-    fn drop(&mut self) {
-        let pending = Arc::clone(&self.pending_status_requests);
-        let key = self.key;
-        tokio::spawn(async move {
-            let mut pending_requests = pending.write().await;
-            pending_requests.remove(&key);
-        });
-    }
-}
 
 impl Gateway {
     /// Get or fetch status response with request coalescing
@@ -62,99 +46,81 @@ impl Gateway {
 
         // Check for pending requests - if one exists, wait for it instead of making a new request
         let pending_receiver = {
-            {
-                let pending_requests = self.pending_status_requests.read().await;
-                if let Some(receiver) = pending_requests.get(&key).cloned() {
-                    // Another request is already in progress, wait for it
-                    debug!(
-                        "Waiting for in-progress status request for {} (key: {})",
-                        req.domain, key
-                    );
-                    drop(pending_requests);
-                    Some(receiver)
-                } else {
-                    drop(pending_requests);
-                    // No pending request found with read lock, need to acquire write lock
-                    let mut pending_requests = self.pending_status_requests.write().await;
+            let mut pending_requests = self.pending_status_requests.write().await;
+            if let Some(receiver) = pending_requests.get(&key).cloned() {
+                debug!(
+                    "Waiting for in-progress status request for {} (key: {})",
+                    req.domain, key
+                );
+                Some(receiver)
+            } else {
+                let (sender, receiver) = watch::channel::<Option<Result<Arc<Packet>, ProxyProtocolError>>>(None);
+                pending_requests.insert(key, receiver.clone());
+                drop(pending_requests);
 
-                    // Double-check in case another task inserted while we were waiting for write lock
-                    if let Some(receiver) = pending_requests.get(&key).cloned() {
-                        Some(receiver)
-                    } else {
-                        // No pending request, create a new sender/receiver pair
-                        let (sender, receiver) = watch::channel(None);
-                        pending_requests.insert(key, receiver.clone());
-                        drop(pending_requests);
+                let gateway = self.clone();
+                let server = tmp_server.clone();
+                let request = req.clone();
+                let config = Arc::clone(&server_config);
 
-                        // Spawn a task to fetch the status - clone required data for async move
-                        let gateway = self.clone();
-                        let server = tmp_server.clone();
-                        let request = req.clone();
-                        let config = Arc::clone(&server_config);
+                tokio::spawn(async move {
+                    let result = match server.fetch_status_directly(&request).await {
+                        Ok(packet) => {
+                            let mut cache = gateway.status_cache.write().await;
+                            cache
+                                .update_cache_for(&server, &request, packet.clone())
+                                .await;
 
-                        tokio::spawn(async move {
-                            let _cleanup_guard = PendingRequestCleanupGuard {
-                                pending_status_requests: Arc::clone(&gateway.pending_status_requests),
-                                key,
+                            let final_packet = if config.motds.online.is_some() {
+                                debug!(
+                                    log_type = LogType::Authentication.as_str(),
+                                    "Server reachable, using online MOTD for {}", request.domain
+                                );
+                                match crate::server::motd::generate_response(
+                                    MotdState::Online,
+                                    request.domain.to_string(),
+                                    config.clone(),
+                                ) {
+                                    Ok(resp) if resp.status_response.is_some() => {
+                                        resp.status_response.unwrap()
+                                    }
+                                    _ => packet, // Fallback to fetched packet if MOTD generation fails
+                                }
+                            } else {
+                                packet
                             };
+                            Ok(Arc::new(final_packet))
+                        }
+                        Err(e) => {
+                            debug!(
+                                log_type = LogType::Authentication.as_str(),
+                                "Status fetch failed: {}. Using unreachable MOTD", e
+                            );
+                            let motd_response = gateway.generate_unreachable_motd_response(
+                                request.domain.to_string(),
+                                config,
+                            );
 
-                            let result = match server.fetch_status_directly(&request).await {
-                                Ok(packet) => {
-                                    // Update cache
-                                    let mut cache = gateway.status_cache.write().await;
-                                    cache
-                                        .update_cache_for(&server, &request, packet.clone())
-                                        .await;
-
-                                    if config.motds.online.is_some() {
-                                        debug!(
-                                            log_type = LogType::Authentication.as_str(),
-                                            "Server reachable, using online MOTD for {}", request.domain
-                                        );
-                                        match crate::server::motd::generate_response(
-                                            MotdState::Online,
-                                            request.domain.to_string(),
-                                            config.clone(),
-                                        ) {
-                                            Ok(resp) if resp.status_response.is_some() => Ok(resp.status_response.unwrap()),
-                                            _ => Ok(packet), // Fallback to fetched packet if MOTD generation fails
-                                        }
+                            match motd_response {
+                                Ok(resp) => {
+                                    if let Some(packet) = resp.status_response {
+                                        Ok(Arc::new(packet))
                                     } else {
-                                        Ok(packet)
+                                        Err(e)
                                     }
                                 }
-                                Err(e) => {
-                                    debug!(
-                                        log_type = LogType::Authentication.as_str(),
-                                        "Status fetch failed: {}. Using unreachable MOTD", e
-                                    );
-                                    // Get the error MOTD packet
-                                    let motd_response = gateway.generate_unreachable_motd_response(
-                                        request.domain.to_string(),
-                                        config,
-                                    );
+                                Err(_) => Err(e),
+                            }
+                        }
+                    };
 
-                                    match motd_response {
-                                        Ok(resp) => {
-                                            if let Some(packet) = resp.status_response {
-                                                Ok(packet)
-                                            } else {
-                                                Err(e)
-                                            }
-                                        }
-                                        Err(_) => Err(e),
-                                    }
-                                }
-                            };
+                    let _ = sender.send(Some(result));
 
-                            // Send the result to all waiters
-                            let _ = sender.send(Some(result));
+                    let mut pending_requests = gateway.pending_status_requests.write().await;
+                    pending_requests.remove(&key);
+                });
 
-                        });
-
-                        Some(receiver)
-                    }
-                }
+                Some(receiver)
             }
         };
 
@@ -173,8 +139,13 @@ impl Gateway {
                 // Only clone when result is actually ready
                 if let Some(result) = receiver.borrow().as_ref() {
                     return match result {
-                        Ok(packet) => {
-                            self.create_status_response(req.domain.to_string(), server_config, packet.clone(), &tmp_server)
+                        Ok(packet_arc) => {
+                            self.create_status_response(
+                                req.domain.to_string(),
+                                server_config,
+                                Arc::unwrap_or_clone(Arc::clone(packet_arc)),
+                                &tmp_server,
+                            )
                         }
                         Err(e) => Err(e.clone()),
                     };

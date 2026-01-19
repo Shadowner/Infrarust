@@ -36,7 +36,7 @@ pub struct Gateway {
     pub(crate) shared: Arc<SharedComponent>,
     #[allow(clippy::type_complexity)]
     pending_status_requests:
-        Arc<RwLock<HashMap<u64, Receiver<Option<Result<crate::network::packet::Packet, ProxyProtocolError>>>>>>,
+        Arc<RwLock<HashMap<u64, Receiver<Option<Result<Arc<crate::network::packet::Packet>, ProxyProtocolError>>>>>>,
 }
 
 impl Gateway {
