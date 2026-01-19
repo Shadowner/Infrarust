@@ -56,6 +56,10 @@ pub struct InfrarustConfig {
     pub domains: Option<Vec<String>>,
     pub addresses: Option<Vec<String>>,
     pub keepalive_timeout: Option<Duration>,
+
+    pub handshake_timeout_secs: Option<u64>,
+    pub status_request_timeout_secs: Option<u64>,
+
     pub file_provider: Option<FileProviderConfig>,
     pub docker_provider: Option<DockerProviderConfig>,
 
@@ -113,6 +117,14 @@ impl InfrarustConfig {
 
         if let Some(keepalive_timeout) = &other.keepalive_timeout {
             self.keepalive_timeout = Some(*keepalive_timeout);
+        }
+
+        if let Some(handshake_timeout_secs) = other.handshake_timeout_secs {
+            self.handshake_timeout_secs = Some(handshake_timeout_secs);
+        }
+
+        if let Some(status_request_timeout_secs) = other.status_request_timeout_secs {
+            self.status_request_timeout_secs = Some(status_request_timeout_secs);
         }
 
         if let Some(file_provider) = &other.file_provider {

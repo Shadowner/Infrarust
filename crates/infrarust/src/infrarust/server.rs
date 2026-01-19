@@ -118,14 +118,14 @@ impl Infrarust {
             client.peer_addr().await?
         );
 
-        const INITIAL_PACKET_TIMEOUT_SECS: u64 = 10;
+        let handshake_timeout_secs = self.shared.config().handshake_timeout_secs.unwrap_or(10);
 
         debug!(
             log_type = LogType::PacketProcessing.as_str(),
-            "Reading handshake packet (with {}s timeout)", INITIAL_PACKET_TIMEOUT_SECS
+            "Reading handshake packet (with {}s timeout)", handshake_timeout_secs
         );
         let handshake_packet = match tokio::time::timeout(
-            tokio::time::Duration::from_secs(INITIAL_PACKET_TIMEOUT_SECS),
+            tokio::time::Duration::from_secs(handshake_timeout_secs),
             client.read_packet(),
         )
         .await
@@ -153,7 +153,7 @@ impl Infrarust {
             Err(_) => {
                 debug!(
                     log_type = LogType::PacketProcessing.as_str(),
-                    "Timeout reading handshake packet after {}s", INITIAL_PACKET_TIMEOUT_SECS
+                    "Timeout reading handshake packet after {}s", handshake_timeout_secs
                 );
                 if let Err(close_err) = client.close().await {
                     warn!(
@@ -197,10 +197,10 @@ impl Infrarust {
 
         debug!(
             log_type = LogType::PacketProcessing.as_str(),
-            "Reading second packet (with {}s timeout)", INITIAL_PACKET_TIMEOUT_SECS
+            "Reading second packet (with {}s timeout)", handshake_timeout_secs
         );
         let second_packet = match tokio::time::timeout(
-            tokio::time::Duration::from_secs(INITIAL_PACKET_TIMEOUT_SECS),
+            tokio::time::Duration::from_secs(handshake_timeout_secs),
             client.read_packet(),
         )
         .await
@@ -228,7 +228,7 @@ impl Infrarust {
             Err(_) => {
                 debug!(
                     log_type = LogType::PacketProcessing.as_str(),
-                    "Timeout reading second packet after {}s", INITIAL_PACKET_TIMEOUT_SECS
+                    "Timeout reading second packet after {}s", handshake_timeout_secs
                 );
                 if let Err(close_err) = client.close().await {
                     warn!(
