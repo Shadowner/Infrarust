@@ -22,7 +22,7 @@ pub struct ServerRequest {
     pub domain: Arc<str>,
     pub is_login: bool,
     pub protocol_version: Version,
-    pub read_packets: [Packet; 2],
+    pub read_packets: Arc<[Packet; 2]>,
     pub session_id: uuid::Uuid,
 }
 
