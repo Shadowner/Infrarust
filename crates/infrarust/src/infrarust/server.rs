@@ -118,19 +118,26 @@ impl Infrarust {
             client.peer_addr().await?
         );
 
+        const INITIAL_PACKET_TIMEOUT_SECS: u64 = 10;
+
         debug!(
             log_type = LogType::PacketProcessing.as_str(),
-            "Reading handshake packet (with 10s timeout)"
+            "Reading handshake packet (with {}s timeout)", INITIAL_PACKET_TIMEOUT_SECS
         );
-        let handshake_packet = match client.read_packet().await {
-            Ok(packet) => {
+        let handshake_packet = match tokio::time::timeout(
+            tokio::time::Duration::from_secs(INITIAL_PACKET_TIMEOUT_SECS),
+            client.read_packet(),
+        )
+        .await
+        {
+            Ok(Ok(packet)) => {
                 debug!(
                     log_type = LogType::PacketProcessing.as_str(),
                     "Successfully read handshake packet"
                 );
                 packet
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 debug!(
                     log_type = LogType::PacketProcessing.as_str(),
                     "Failed to read handshake packet: {}", e
@@ -142,6 +149,19 @@ impl Infrarust {
                     );
                 }
                 return Err(e.into());
+            }
+            Err(_) => {
+                debug!(
+                    log_type = LogType::PacketProcessing.as_str(),
+                    "Timeout reading handshake packet after {}s", INITIAL_PACKET_TIMEOUT_SECS
+                );
+                if let Err(close_err) = client.close().await {
+                    warn!(
+                        log_type = LogType::TcpConnection.as_str(),
+                        "Error closing client connection: {}", close_err
+                    );
+                }
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "Handshake packet timeout"));
             }
         };
 
@@ -177,17 +197,22 @@ impl Infrarust {
 
         debug!(
             log_type = LogType::PacketProcessing.as_str(),
-            "Reading second packet (with 10s timeout)"
+            "Reading second packet (with {}s timeout)", INITIAL_PACKET_TIMEOUT_SECS
         );
-        let second_packet = match client.read_packet().await {
-            Ok(packet) => {
+        let second_packet = match tokio::time::timeout(
+            tokio::time::Duration::from_secs(INITIAL_PACKET_TIMEOUT_SECS),
+            client.read_packet(),
+        )
+        .await
+        {
+            Ok(Ok(packet)) => {
                 debug!(
                     log_type = LogType::PacketProcessing.as_str(),
                     "Successfully read second packet"
                 );
                 packet
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 debug!(
                     log_type = LogType::PacketProcessing.as_str(),
                     "Failed to read second packet: {}", e
@@ -199,6 +224,19 @@ impl Infrarust {
                     );
                 }
                 return Err(e.into());
+            }
+            Err(_) => {
+                debug!(
+                    log_type = LogType::PacketProcessing.as_str(),
+                    "Timeout reading second packet after {}s", INITIAL_PACKET_TIMEOUT_SECS
+                );
+                if let Err(close_err) = client.close().await {
+                    warn!(
+                        log_type = LogType::TcpConnection.as_str(),
+                        "Error closing client connection: {}", close_err
+                    );
+                }
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "Second packet timeout"));
             }
         };
 
