@@ -34,10 +34,10 @@ impl Gateway {
 
         let gateway = self.clone();
         tokio::spawn(async move {
-            const STATUS_REQUEST_TIMEOUT_SECS: u64 = 10;
+            let status_request_timeout_secs = gateway.shared.config().status_request_timeout_secs.unwrap_or(10);
 
             let result = tokio::time::timeout(
-                tokio::time::Duration::from_secs(STATUS_REQUEST_TIMEOUT_SECS),
+                tokio::time::Duration::from_secs(status_request_timeout_secs),
                 async {
                     let near_shutdown_threshold = 60;
 
@@ -225,7 +225,7 @@ impl Gateway {
                 warn!(
                     log_type = LogType::Authentication.as_str(),
                     "Status request timed out after {} seconds, forcing connection close",
-                    STATUS_REQUEST_TIMEOUT_SECS
+                    status_request_timeout_secs
                 );
             }
 

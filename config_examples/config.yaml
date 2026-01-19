@@ -1,6 +1,10 @@
 bind: "0.0.0.0:25565"
 keepAliveTimeout: 30s
 
+# Connection timeouts
+handshake_timeout_secs: 10    # Timeout for initial client handshake (default: 10)
+status_request_timeout_secs: 10  # Timeout for status request processing (default: 10)
+
 filters:
   rateLimiter:
     requestLimit: 10
