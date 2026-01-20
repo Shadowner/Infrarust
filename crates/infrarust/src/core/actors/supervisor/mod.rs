@@ -38,16 +38,10 @@ impl Default for ActorSupervisor {
 
 impl ActorSupervisor {
     pub fn global() -> Arc<ActorSupervisor> {
-        match GLOBAL_SUPERVISOR.get() {
-            Some(supervisor) => supervisor.clone(),
-            None => {
-                debug!(
-                    log_type = LogType::Supervisor.as_str(),
-                    "Warning: Using temporary supervisor instance - global was not initialized"
-                );
-                Arc::new(ActorSupervisor::new(None))
-            }
-        }
+        GLOBAL_SUPERVISOR
+            .get()
+            .cloned()
+            .expect("ActorSupervisor::global() called before initialization. Ensure initialize_global() is called during startup.")
     }
 
     pub async fn get_task_statistics(&self) -> HashMap<String, TaskStats> {
