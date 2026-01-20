@@ -121,7 +121,8 @@ impl ActorSupervisor {
                         warn!(
                             log_type = LogType::ServerManager.as_str(),
                             "Failed to cancel shutdown for server {} (may already be stopped): {}",
-                            config_id, e
+                            config_id,
+                            e
                         );
                     }
                 }

@@ -132,15 +132,19 @@ impl Infrarust {
         ));
 
         // Inject dependencies that couldn't be set during construction due to circular references
-        futures::executor::block_on(async {
-            config_service.set_server_managers(managers.clone()).await;
-            supervisor.set_configuration_service(config_service).await;
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                config_service.set_server_managers(managers.clone()).await;
+                supervisor.set_configuration_service(config_service).await;
+            })
         });
 
         let server_gateway = Arc::new(Gateway::new(shared.clone()));
 
-        futures::executor::block_on(async {
-            shared.set_gateway(server_gateway.clone()).await;
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                shared.set_gateway(server_gateway.clone()).await;
+            })
         });
         if let Some(file_config) = shared.config().file_provider.clone() {
             let file_provider = FileProvider::new(
@@ -195,9 +199,10 @@ impl Infrarust {
                     );
 
                     if let Err(e) = registry_clone.register(rate_limiter).await {
-                        debug!(
+                        warn!(
                             log_type = LogType::Filter.as_str(),
-                            "Failed to register rate limiter: {}", e
+                            "Failed to register rate limiter - server will run without rate limiting: {}",
+                            e
                         );
                     }
                 }
@@ -207,9 +212,10 @@ impl Infrarust {
                         match BanSystemAdapter::new("global_ban_system", file_path.clone()).await {
                             Ok(ban_filter) => {
                                 if let Err(e) = registry_clone.register(ban_filter).await {
-                                    debug!(
+                                    warn!(
                                         log_type = LogType::BanSystem.as_str(),
-                                        "Failed to register ban filter: {}", e
+                                        "Failed to register ban filter - server will run without ban system: {}",
+                                        e
                                     );
                                 }
                             }

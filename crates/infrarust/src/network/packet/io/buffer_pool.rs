@@ -24,12 +24,26 @@ impl BufferPool {
         Self::with_capacity(DEFAULT_BUFFER_CAPACITY, MAX_POOL_SIZE)
     }
 
-    pub fn with_capacity(default_capacity: usize, max_pool_size: usize) -> Self {
-        Self {
+    pub fn try_with_capacity(
+        default_capacity: usize,
+        max_pool_size: usize,
+    ) -> Result<Self, &'static str> {
+        if default_capacity == 0 {
+            return Err("default_capacity must be greater than zero");
+        }
+        if max_pool_size == 0 {
+            return Err("max_pool_size must be greater than zero");
+        }
+
+        Ok(Self {
             buffers: Mutex::new(Vec::with_capacity(max_pool_size)),
             default_capacity,
             max_pool_size,
-        }
+        })
+    }
+    pub fn with_capacity(default_capacity: usize, max_pool_size: usize) -> Self {
+        Self::try_with_capacity(default_capacity, max_pool_size)
+            .expect("BufferPool::with_capacity() called with zero capacity or pool size")
     }
 
     pub fn get(&self) -> BytesMut {

@@ -154,8 +154,13 @@ impl CommandProcessor {
                     Ok(0) => {
                         // EOF reached - stdin is closed, exit the input loop
                         debug!("CLI input loop: stdin closed (EOF), exiting");
-                        if let Err(e) = futures::executor::block_on(tx.send(CommandMessage::Shutdown)) {
-                            error!("Failed to send shutdown command on EOF: {:?}. Forcing exit.", e);
+                        if let Err(e) =
+                            futures::executor::block_on(tx.send(CommandMessage::Shutdown))
+                        {
+                            error!(
+                                "Failed to send shutdown command on EOF: {:?}. Forcing exit.",
+                                e
+                            );
                             std::process::exit(1);
                         }
                         break;
@@ -163,8 +168,13 @@ impl CommandProcessor {
                     Err(e) => {
                         // IO error - log and exit the loop
                         debug!("CLI input loop: read error ({:?}), exiting", e);
-                        if let Err(send_err) = futures::executor::block_on(tx.send(CommandMessage::Shutdown)) {
-                            error!("Failed to send shutdown command on read error: {:?}. Forcing exit.", send_err);
+                        if let Err(send_err) =
+                            futures::executor::block_on(tx.send(CommandMessage::Shutdown))
+                        {
+                            error!(
+                                "Failed to send shutdown command on read error: {:?}. Forcing exit.",
+                                send_err
+                            );
                             std::process::exit(1);
                         }
                         break;
@@ -187,9 +197,9 @@ impl CommandProcessor {
                     break;
                 }
 
-                if let Err(e) = futures::executor::block_on(
-                    tx.send(CommandMessage::Execute(input.to_string())),
-                ) {
+                if let Err(e) =
+                    futures::executor::block_on(tx.send(CommandMessage::Execute(input.to_string())))
+                {
                     debug!("Failed to send command: {:?}", e);
                 }
             }
