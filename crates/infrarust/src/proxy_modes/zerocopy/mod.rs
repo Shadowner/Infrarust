@@ -1,9 +1,6 @@
 #[cfg(target_os = "linux")]
 mod linux;
 
-#[cfg(not(target_os = "linux"))]
-mod fallback;
-
 pub mod types;
 
 use std::sync::atomic::AtomicBool;
@@ -11,7 +8,10 @@ use std::sync::Arc;
 
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
+#[cfg(target_os = "linux")]
 use tracing::{debug, info};
+#[cfg(not(target_os = "linux"))]
+use tracing::error;
 
 pub use types::ZeroCopyMessage;
 
@@ -36,15 +36,15 @@ pub fn spawn_splice_task(
 
     #[cfg(not(target_os = "linux"))]
     {
-        info!("Using userspace fallback for zero-copy transfer");
+        let _ = (client, server);
+
         tokio::spawn(async move {
-            match fallback::copy_bidirectional(client, server, shutdown).await {
-                Ok(result) => result,
-                Err(e) => {
-                    debug!("Fallback transfer error: {}", e);
-                    (0, 0)
-                }
-            }
+            error!(
+                "ZeroCopy mode is not available: requires Linux with splice() syscall support. \
+                 This platform does not support zero-copy networking."
+            );
+            shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+            (0, 0)
         })
     }
 }
