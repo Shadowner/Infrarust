@@ -110,18 +110,30 @@ impl std::fmt::Debug for RateLimiter {
 }
 
 impl RateLimiter {
-    pub fn new(name: impl Into<String>, request_limit: u32, window_length: Duration) -> Self {
+    pub fn try_new(
+        name: impl Into<String>,
+        request_limit: u32,
+        window_length: Duration,
+    ) -> Result<Self, &'static str> {
+        if window_length.is_zero() {
+            return Err("window_length must be greater than zero");
+        }
+
         let name_str = name.into();
         debug!(
             log_type = LogType::Filter.as_str(),
             "Creating new rate limiter: {}", name_str
         );
-        Self {
+        Ok(Self {
             name: name_str,
             request_limit,
             counter: Arc::new(RwLock::new(LocalCounter::new(window_length))),
             key_fn: Box::new(key_by_ip),
-        }
+        })
+    }
+    pub fn new(name: impl Into<String>, request_limit: u32, window_length: Duration) -> Self {
+        Self::try_new(name, request_limit, window_length)
+            .expect("RateLimiter::new() called with zero window_length")
     }
 
     pub fn with_key_fn<F>(mut self, key_fn: F) -> Self
