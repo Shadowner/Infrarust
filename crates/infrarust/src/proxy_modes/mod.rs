@@ -2,6 +2,7 @@ pub mod client_only;
 pub mod offline;
 pub mod passthrough;
 pub mod status;
+pub mod zerocopy;
 
 use crate::core::actors::server::MinecraftServer;
 use crate::core::{actors::client::MinecraftClient, event::MinecraftCommunication};
@@ -11,6 +12,7 @@ use infrarust_config::LogType;
 use offline::{OfflineMessage, OfflineMode};
 use passthrough::{PassthroughMessage, PassthroughMode};
 use status::StatusMessage;
+pub use zerocopy::{ZeroCopyMessage, spawn_splice_task};
 use std::io;
 use tracing::{debug, instrument};
 

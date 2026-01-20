@@ -61,6 +61,7 @@ impl ConfigsCommand {
                     ProxyModeEnum::Status => "Status Only",
                     ProxyModeEnum::ClientOnly => "Client Only",
                     ProxyModeEnum::ServerOnly => "Server Only",
+                    ProxyModeEnum::ZeroCopyPassthrough => "Zero Copy Passthrough",
                 });
 
             result.push_str(&format!(

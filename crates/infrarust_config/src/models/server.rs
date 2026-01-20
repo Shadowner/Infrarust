@@ -17,6 +17,8 @@ pub enum ProxyModeEnum {
     Offline,
     #[serde(rename = "server_only")]
     ServerOnly,
+    #[serde(rename = "zerocopy_passthrough")]
+    ZeroCopyPassthrough,
 
     #[serde(skip)]
     Status,

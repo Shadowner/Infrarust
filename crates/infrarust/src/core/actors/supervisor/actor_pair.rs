@@ -2,7 +2,7 @@ use std::sync::{Arc, atomic::AtomicBool};
 
 use infrarust_config::{LogType, models::server::ProxyModeEnum};
 use tokio::sync::mpsc;
-use tracing::{Instrument, debug, debug_span, instrument};
+use tracing::{Instrument, debug, debug_span, info, instrument, warn};
 
 use crate::{
     Connection,
@@ -13,7 +13,7 @@ use crate::{
         },
         event::MinecraftCommunication,
     },
-    proxy_modes::{ClientProxyModeHandler, ProxyMessage, ServerProxyModeHandler},
+    proxy_modes::{ClientProxyModeHandler, ProxyMessage, ServerProxyModeHandler, spawn_splice_task, client_only::rewrite_handshake_domain},
     server::ServerResponse,
 };
 
@@ -32,6 +32,7 @@ pub struct ActorPair {
     pub server_name: String,
     pub disconnect_logged: Arc<AtomicBool>,
     pub is_login: bool,
+    pub zerocopy_task: Option<Arc<tokio::task::JoinHandle<(u64, u64)>>>,
 }
 
 impl ActorSupervisor {
@@ -99,6 +100,60 @@ impl ActorSupervisor {
             }};
         }
 
+        if proxy_mode == ProxyModeEnum::ZeroCopyPassthrough {
+            if let Some(pair) = self
+                .create_zerocopy_actor_pair(
+                    config_id,
+                    client_conn,
+                    oneshot_request_receiver,
+                    is_login,
+                    username.clone(),
+                    domain,
+                )
+                .instrument(span)
+                .await
+            {
+                self.register_actor_pair(config_id, pair.clone())
+                    .instrument(debug_span!("register_pair"))
+                    .await;
+
+                debug!(
+                    log_type = LogType::Supervisor.as_str(),
+                    "Zerocopy actor pair created successfully"
+                );
+                return pair;
+            } else {
+                warn!(
+                    log_type = LogType::Supervisor.as_str(),
+                    "Zerocopy actor pair creation failed, connection lost"
+                );
+                let client = MinecraftClientHandler::new_zerocopy_stub(
+                    std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+                        std::net::Ipv4Addr::new(0, 0, 0, 0),
+                        0,
+                    )),
+                    shutdown_flag.clone(),
+                    session_id,
+                );
+                let server = MinecraftServerHandler::new_zerocopy_stub(shutdown_flag.clone());
+                shutdown_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+
+                return ActorPair {
+                    username,
+                    client,
+                    server,
+                    shutdown: shutdown_flag,
+                    created_at: std::time::Instant::now(),
+                    session_id,
+                    config_id: config_id.to_string(),
+                    server_name: domain.to_string(),
+                    disconnect_logged: Arc::new(AtomicBool::new(false)),
+                    is_login,
+                    zerocopy_task: None,
+                };
+            }
+        }
+
         let pair = match proxy_mode {
             ProxyModeEnum::Status => create_pair_with_mode!(get_status_mode()),
             ProxyModeEnum::Passthrough | ProxyModeEnum::ServerOnly => {
@@ -106,6 +161,9 @@ impl ActorSupervisor {
             }
             ProxyModeEnum::Offline => create_pair_with_mode!(get_offline_mode()),
             ProxyModeEnum::ClientOnly => create_pair_with_mode!(get_client_only_mode()),
+            ProxyModeEnum::ZeroCopyPassthrough => {
+                unreachable!("ZeroCopyPassthrough handled above")
+            }
         };
 
         self.register_actor_pair(config_id, pair.clone())
@@ -188,7 +246,188 @@ impl ActorSupervisor {
             server_name,
             disconnect_logged: Arc::new(AtomicBool::new(false)),
             is_login,
+            zerocopy_task: None,
         }
+    }
+
+    /// This mode bypasses the normal actor message passing for data transfer,
+    /// using splice() (on Linux) or optimized userspace copy for direct
+    /// TCP-to-TCP data flow after the initial handshake.
+    #[allow(clippy::too_many_arguments)]
+    #[instrument(name = "supervisor_create_zerocopy_pair", skip(self, client_conn, oneshot_request_receiver), fields(
+        config_id = %config_id,
+        username = %username,
+        is_login = is_login
+    ))]
+    pub(crate) async fn create_zerocopy_actor_pair(
+        &self,
+        config_id: &str,
+        client_conn: Connection,
+        oneshot_request_receiver: tokio::sync::oneshot::Receiver<ServerResponse>,
+        is_login: bool,
+        username: String,
+        domain: &str,
+    ) -> Option<ActorPair> {
+        use std::sync::atomic::Ordering::SeqCst;
+
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let session_id = client_conn.session_id;
+
+        info!(
+            log_type = LogType::Supervisor.as_str(),
+            "Creating zerocopy actor pair with session_id: {}", session_id
+        );
+
+        let client_peer_addr = match client_conn.peer_addr().await {
+            Ok(addr) => addr,
+            Err(e) => {
+                warn!(
+                    log_type = LogType::Supervisor.as_str(),
+                    "Failed to get client peer address: {:?}", e
+                );
+                return None;
+            }
+        };
+
+        let client = MinecraftClientHandler::new_zerocopy_stub(
+            client_peer_addr,
+            shutdown_flag.clone(),
+            session_id,
+        );
+        let server = MinecraftServerHandler::new_zerocopy_stub(shutdown_flag.clone());
+
+        let server_name = domain.to_string();
+        let shutdown_for_task = shutdown_flag.clone();
+        tokio::spawn(async move {
+            let server_response = match oneshot_request_receiver.await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    warn!(
+                        log_type = LogType::Supervisor.as_str(),
+                        "Failed to receive server response for zerocopy: {:?}", e
+                    );
+                    shutdown_for_task.store(true, SeqCst);
+                    return;
+                }
+            };
+            let mut server_conn = match server_response.server_conn {
+                Some(conn) => conn,
+                None => {
+                    warn!(
+                        log_type = LogType::Supervisor.as_str(),
+                        "No server connection in response for zerocopy mode"
+                    );
+                    shutdown_for_task.store(true, SeqCst);
+                    return;
+                }
+            };
+            let effective_domain = server_response.initial_config.get_effective_backend_domain();
+
+            debug!(
+                log_type = LogType::ProxyMode.as_str(),
+                "Zerocopy domain rewrite config - backend_domain: {:?}, rewrite_domain: {}, effective: {:?}",
+                server_response.initial_config.backend_domain,
+                server_response.initial_config.rewrite_domain,
+                effective_domain
+            );
+
+            for (i, packet) in server_response.read_packets.iter().enumerate() {
+                if i == 0 && let Some(ref new_domain) = effective_domain {
+                    debug!(
+                        log_type = LogType::ProxyMode.as_str(),
+                        "Rewriting handshake domain to: {}", new_domain
+                    );
+                    match rewrite_handshake_domain(packet, new_domain) {
+                        Ok(rewritten_packet) => {
+                            if let Err(e) = server_conn.write_packet(&rewritten_packet).await {
+                                warn!("Failed to send rewritten handshake packet: {:?}", e);
+                                shutdown_for_task.store(true, SeqCst);
+                                return;
+                            }
+                            continue;
+                        }
+                        Err(e) => {
+                            warn!("Failed to rewrite handshake domain: {:?}", e);
+                            shutdown_for_task.store(true, SeqCst);
+                            return;
+                        }
+                    }
+                }
+                if let Err(e) = server_conn.write_packet(packet).await {
+                    warn!("Failed to send handshake packet: {:?}", e);
+                    shutdown_for_task.store(true, SeqCst);
+                    return;
+                }
+            }
+
+            if let Err(e) = server_conn.flush().await {
+                warn!("Failed to flush server connection: {:?}", e);
+                shutdown_for_task.store(true, SeqCst);
+                return;
+            }
+
+            let client_stream = match client_conn.into_tcp_stream_async().await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    warn!(
+                        log_type = LogType::Supervisor.as_str(),
+                        "Failed to extract client TcpStream: {:?}", e
+                    );
+                    shutdown_for_task.store(true, SeqCst);
+                    return;
+                }
+            };
+
+            let server_stream = match server_conn.into_tcp_stream_async().await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    warn!(
+                        log_type = LogType::Supervisor.as_str(),
+                        "Failed to extract server TcpStream: {:?}", e
+                    );
+                    shutdown_for_task.store(true, SeqCst);
+                    return;
+                }
+            };
+
+            info!(
+                log_type = LogType::Supervisor.as_str(),
+                "Zerocopy splice setup complete, starting data transfer"
+            );
+
+            let splice_task = spawn_splice_task(client_stream, server_stream, shutdown_for_task.clone());
+            match splice_task.await {
+                Ok((client_to_server, server_to_client)) => {
+                    debug!(
+                        log_type = LogType::Supervisor.as_str(),
+                        "Zerocopy splice completed: {} bytes client->server, {} bytes server->client",
+                        client_to_server, server_to_client
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        log_type = LogType::Supervisor.as_str(),
+                        "Zerocopy splice task error: {:?}", e
+                    );
+                }
+            }
+
+            shutdown_for_task.store(true, SeqCst);
+        });
+
+        Some(ActorPair {
+            username,
+            client,
+            server,
+            shutdown: shutdown_flag,
+            created_at: std::time::Instant::now(),
+            session_id,
+            config_id: config_id.to_string(),
+            server_name,
+            disconnect_logged: Arc::new(AtomicBool::new(false)),
+            is_login,
+            zerocopy_task: None, // Task is managed internally by the background spawn
+        })
     }
 
     #[instrument(skip(self, pair), fields(config_id = %config_id))]

@@ -109,6 +109,9 @@ chrono = { workspace = true }
 futures = { workspace = true }
 bollard = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

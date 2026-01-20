@@ -1010,6 +1010,7 @@ dependencies = [
  "infrarust_protocol",
  "infrarust_server_manager",
  "ipnetwork",
+ "libc",
  "libdeflater",
  "notify",
  "num-bigint",

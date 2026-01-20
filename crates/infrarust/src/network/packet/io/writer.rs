@@ -79,6 +79,10 @@ impl<W: AsyncWrite + Unpin + Send> PacketWriter<W> {
         &mut self.writer
     }
 
+    pub fn into_inner(self) -> W {
+        self.writer
+    }
+
     pub fn enable_encryption(&mut self, cipher: Aes128Cfb8Enc) {
         self.encryption = Some(cipher);
     }

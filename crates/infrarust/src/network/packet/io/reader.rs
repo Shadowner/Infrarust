@@ -220,6 +220,14 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
     pub fn get_mut(&mut self) -> &mut R {
         &mut self.reader
     }
+
+    pub fn into_inner(self) -> R {
+        self.reader
+    }
+
+    pub fn buffer(&self) -> &BytesMut {
+        &self.buffer
+    }
 }
 
 #[async_trait]
