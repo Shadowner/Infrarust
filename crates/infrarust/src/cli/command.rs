@@ -5,7 +5,7 @@ use std::io::IsTerminal;
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, error};
 
 pub trait Command: Send + Sync {
     fn name(&self) -> &'static str;
@@ -154,13 +154,19 @@ impl CommandProcessor {
                     Ok(0) => {
                         // EOF reached - stdin is closed, exit the input loop
                         debug!("CLI input loop: stdin closed (EOF), exiting");
-                        let _ = futures::executor::block_on(tx.send(CommandMessage::Shutdown));
+                        if let Err(e) = futures::executor::block_on(tx.send(CommandMessage::Shutdown)) {
+                            error!("Failed to send shutdown command on EOF: {:?}. Forcing exit.", e);
+                            std::process::exit(1);
+                        }
                         break;
                     }
                     Err(e) => {
                         // IO error - log and exit the loop
                         debug!("CLI input loop: read error ({:?}), exiting", e);
-                        let _ = futures::executor::block_on(tx.send(CommandMessage::Shutdown));
+                        if let Err(send_err) = futures::executor::block_on(tx.send(CommandMessage::Shutdown)) {
+                            error!("Failed to send shutdown command on read error: {:?}. Forcing exit.", send_err);
+                            std::process::exit(1);
+                        }
                         break;
                     }
                     Ok(_) => {
@@ -174,13 +180,18 @@ impl CommandProcessor {
                 }
 
                 if input == "exit" || input == "quit" {
-                    let _ = futures::executor::block_on(tx.send(CommandMessage::Shutdown));
+                    if let Err(e) = futures::executor::block_on(tx.send(CommandMessage::Shutdown)) {
+                        error!("Failed to send shutdown command: {:?}. Forcing exit.", e);
+                        std::process::exit(1);
+                    }
                     break;
                 }
 
-                let _ = futures::executor::block_on(
+                if let Err(e) = futures::executor::block_on(
                     tx.send(CommandMessage::Execute(input.to_string())),
-                );
+                ) {
+                    debug!("Failed to send command: {:?}", e);
+                }
             }
         });
     }
