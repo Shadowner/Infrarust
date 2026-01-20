@@ -6,10 +6,7 @@ use tracing::debug;
 pub struct BanHelper;
 
 impl BanHelper {
-    pub async fn is_username_banned(
-        registry: &FilterRegistry,
-        username: &str,
-    ) -> Option<String> {
+    pub async fn is_username_banned(registry: &FilterRegistry, username: &str) -> Option<String> {
         debug!(
             log_type = LogType::BanSystem.as_str(),
             "Checking if username '{}' is banned", username

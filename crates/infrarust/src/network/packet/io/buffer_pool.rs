@@ -34,7 +34,9 @@ impl BufferPool {
 
     pub fn get(&self) -> BytesMut {
         let mut buffers = self.buffers.lock();
-        buffers.pop().unwrap_or_else(|| BytesMut::with_capacity(self.default_capacity))
+        buffers
+            .pop()
+            .unwrap_or_else(|| BytesMut::with_capacity(self.default_capacity))
     }
 
     pub fn get_with_capacity(&self, min_capacity: usize) -> BytesMut {

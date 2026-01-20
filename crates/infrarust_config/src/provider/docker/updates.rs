@@ -9,7 +9,8 @@ use super::DockerProvider;
 impl DockerProvider {
     #[instrument(skip(self, config), fields(key = %key), name = "docker_provider: send_update")]
     pub(crate) async fn send_update(&self, key: String, config: Option<ServerConfig>) {
-        let span = debug_span!("docker_provider: send_update", key = %key, has_config = config.is_some());
+        let span =
+            debug_span!("docker_provider: send_update", key = %key, has_config = config.is_some());
 
         let should_send = match &config {
             Some(new_config) => {

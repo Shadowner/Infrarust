@@ -59,7 +59,10 @@ pub struct Manager {
 impl std::fmt::Debug for Manager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Manager")
-            .field("dispatchers", &format!("{} manager types", self.dispatchers.len()))
+            .field(
+                "dispatchers",
+                &format!("{} manager types", self.dispatchers.len()),
+            )
             .field("local_manager", &self.local_manager)
             .finish_non_exhaustive()
     }
@@ -101,7 +104,10 @@ impl Manager {
         }
     }
 
-    fn get_dispatcher(&self, manager_type: ManagerType) -> Result<&Arc<dyn ManagerDispatcher>, String> {
+    fn get_dispatcher(
+        &self,
+        manager_type: ManagerType,
+    ) -> Result<&Arc<dyn ManagerDispatcher>, String> {
         self.dispatchers
             .get(&manager_type)
             .ok_or_else(|| format!("Unsupported manager type: {:?}", manager_type))
@@ -165,10 +171,7 @@ impl Manager {
         );
 
         let dispatcher = self.get_dispatcher(manager_type)?;
-        dispatcher
-            .start(server_id)
-            .await
-            .map_err(|e| e.to_string())
+        dispatcher.start(server_id).await.map_err(|e| e.to_string())
     }
 
     pub async fn stop_server(
@@ -330,9 +333,7 @@ impl Manager {
 
         {
             let mut time_since_empty = self.time_since_empty.write().await;
-            let manager_map = time_since_empty
-                .entry(manager_type)
-                .or_default();
+            let manager_map = time_since_empty.entry(manager_type).or_default();
             manager_map.insert(server_id.to_string(), 0);
         }
 
@@ -514,10 +515,7 @@ impl Manager {
         let shutdown_timers = self.shutdown_timers.try_read().ok()?;
         let starting_servers = self.starting_servers.try_read().ok()?;
 
-        let time_since_empty_count: usize = time_since_empty
-            .values()
-            .map(|map| map.len())
-            .sum();
+        let time_since_empty_count: usize = time_since_empty.values().map(|map| map.len()).sum();
 
         Some(ManagerMetrics {
             time_since_empty_count,

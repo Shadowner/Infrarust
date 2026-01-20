@@ -490,9 +490,7 @@ mod tests {
             .unwrap();
 
         // Second registration should fail
-        let result = registry
-            .register(TestFilter::new("duplicate", false))
-            .await;
+        let result = registry.register(TestFilter::new("duplicate", false)).await;
         assert!(result.is_err());
     }
 

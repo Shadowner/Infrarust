@@ -117,7 +117,9 @@ impl EncryptionState {
         // Parse the server's public key
         let server_public_key = RsaPublicKey::from_public_key_der(&public_key_bytes)
             .or_else(|_| RsaPublicKey::from_pkcs1_der(&public_key_bytes))
-            .map_err(|e| RsaError::KeyEncodingError(format!("Failed to parse server public key: {}", e)))?;
+            .map_err(|e| {
+                RsaError::KeyEncodingError(format!("Failed to parse server public key: {}", e))
+            })?;
 
         let private_key = RsaPrivateKey::new(&mut rand::thread_rng(), 1024)
             .map_err(|e| RsaError::KeyGenerationError(e.to_string()))?;
@@ -257,7 +259,8 @@ impl EncryptionState {
         }
 
         // Utiliser les 16 octets comme clé et IV
-        let key: &[u8; 16] = self.shared_secret
+        let key: &[u8; 16] = self
+            .shared_secret
             .as_slice()
             .try_into()
             .expect("shared_secret must be exactly 16 bytes (validated above)");

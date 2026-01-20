@@ -5,16 +5,13 @@ mod health;
 mod server_tracking;
 pub mod types;
 
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use infrarust_config::LogType;
+use std::{collections::HashMap, sync::Arc};
 use tokio::{
     sync::{OnceCell, RwLock},
     task::JoinHandle,
 };
 use tracing::debug;
-use infrarust_config::LogType;
 
 use crate::core::config::service::ConfigurationService;
 use crate::server::manager::Manager;

@@ -87,7 +87,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         // Register the server with an ID
-        local_provider.register_server("echo-server", server_config).await;
+        local_provider
+            .register_server("echo-server", server_config)
+            .await;
 
         // Create a server manager with the local provider as both API and process provider
         let server_manager =
@@ -150,7 +152,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let custom_provider = CustomProcessProvider::new(local_provider.clone());
 
         // Register the server in our custom provider
-        custom_provider.register_server("custom-server", server_config).await;
+        custom_provider
+            .register_server("custom-server", server_config)
+            .await;
 
         // Create a server manager using LocalProvider for API and CustomProcessProvider for process interaction
         let server_manager =

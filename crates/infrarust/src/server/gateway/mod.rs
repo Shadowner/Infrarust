@@ -35,8 +35,14 @@ pub struct Gateway {
     status_cache: Arc<RwLock<StatusCache>>,
     pub(crate) shared: Arc<SharedComponent>,
     #[allow(clippy::type_complexity)]
-    pending_status_requests:
-        Arc<RwLock<HashMap<u64, Receiver<Option<Result<Arc<crate::network::packet::Packet>, ProxyProtocolError>>>>>>,
+    pending_status_requests: Arc<
+        RwLock<
+            HashMap<
+                u64,
+                Receiver<Option<Result<Arc<crate::network::packet::Packet>, ProxyProtocolError>>>,
+            >,
+        >,
+    >,
 }
 
 impl Gateway {
@@ -56,7 +62,8 @@ impl Gateway {
         let supervisor = gateway.shared.actor_supervisor_arc();
         let shutdown = gateway.shared.shutdown_controller_arc();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(HEALTH_CHECK_INTERVAL_SECS));
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(HEALTH_CHECK_INTERVAL_SECS));
             let mut shutdown_rx = shutdown.subscribe().await;
 
             loop {

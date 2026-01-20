@@ -81,9 +81,7 @@ impl DockerProvider {
         }
 
         let mut addresses = Vec::new();
-        if let Some(custom_address) =
-            labels.get(&format!("{}.address", self.config.label_prefix))
-        {
+        if let Some(custom_address) = labels.get(&format!("{}.address", self.config.label_prefix)) {
             addresses.push(custom_address.clone());
         }
 

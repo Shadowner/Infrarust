@@ -34,7 +34,11 @@ impl Gateway {
 
         let gateway = self.clone();
         tokio::spawn(async move {
-            let status_request_timeout_secs = gateway.shared.config().status_request_timeout_secs.unwrap_or(10);
+            let status_request_timeout_secs = gateway
+                .shared
+                .config()
+                .status_request_timeout_secs
+                .unwrap_or(10);
 
             let result = tokio::time::timeout(
                 tokio::time::Duration::from_secs(status_request_timeout_secs),

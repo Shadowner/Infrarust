@@ -820,7 +820,7 @@ mod tests {
             uuid: None,
             username: None,
             reason: "Expired ban".to_string(),
-            created_at: now - 7200, // Created 2 hours ago
+            created_at: now - 7200,       // Created 2 hours ago
             expires_at: Some(now - 3600), // Expired 1 hour ago
             banned_by: "admin".to_string(),
         };

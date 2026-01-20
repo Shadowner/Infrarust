@@ -7,7 +7,7 @@ use tokio::net::TcpListener;
 use tracing::{Instrument, Span, debug, debug_span, error, info, instrument, warn};
 use uuid::Uuid;
 
-use crate::{Connection, core::error::SendError, server::ServerRequest, Infrarust};
+use crate::{Connection, Infrarust, core::error::SendError, server::ServerRequest};
 
 impl Infrarust {
     pub async fn run(self: Arc<Self>) -> Result<(), SendError> {
@@ -161,7 +161,10 @@ impl Infrarust {
                         "Error closing client connection: {}", close_err
                     );
                 }
-                return Err(io::Error::new(io::ErrorKind::TimedOut, "Handshake packet timeout"));
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Handshake packet timeout",
+                ));
             }
         };
 
@@ -236,7 +239,10 @@ impl Infrarust {
                         "Error closing client connection: {}", close_err
                     );
                 }
-                return Err(io::Error::new(io::ErrorKind::TimedOut, "Second packet timeout"));
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Second packet timeout",
+                ));
             }
         };
 

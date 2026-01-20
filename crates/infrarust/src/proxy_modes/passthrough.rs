@@ -1,5 +1,5 @@
-use super::{ClientProxyModeHandler, ProxyMessage, ProxyModeMessageType, ServerProxyModeHandler};
 use super::client_only::rewrite_handshake_domain;
+use super::{ClientProxyModeHandler, ProxyMessage, ProxyModeMessageType, ServerProxyModeHandler};
 use crate::core::actors::client::MinecraftClient;
 use crate::core::actors::server::MinecraftServer;
 use crate::core::event::MinecraftCommunication;
@@ -176,7 +176,9 @@ impl ServerProxyModeHandler<MinecraftCommunication<PassthroughMessage>> for Pass
                 );
 
                 for (i, packet) in server_request.read_packets.iter().enumerate() {
-                    if i == 0 && let Some(ref new_domain) = effective_domain {
+                    if i == 0
+                        && let Some(ref new_domain) = effective_domain
+                    {
                         debug!(
                             log_type = LogType::ProxyMode.as_str(),
                             "Rewriting handshake domain to: {}", new_domain

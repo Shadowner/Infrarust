@@ -5,7 +5,10 @@ use tokio::sync::watch;
 use tracing::{debug, error};
 
 use crate::{
-    network::{packet::Packet, proxy_protocol::{ProtocolResult, errors::ProxyProtocolError}},
+    network::{
+        packet::Packet,
+        proxy_protocol::{ProtocolResult, errors::ProxyProtocolError},
+    },
     server::{ServerRequest, ServerResponse, backend::Server, motd::MotdState},
 };
 
@@ -25,7 +28,8 @@ impl Gateway {
                     log_type = LogType::Authentication.as_str(),
                     "Failed to create server instance: {}", e
                 );
-                return self.generate_unreachable_motd_response(Arc::clone(&req.domain), server_config);
+                return self
+                    .generate_unreachable_motd_response(Arc::clone(&req.domain), server_config);
             }
         };
 
@@ -54,7 +58,8 @@ impl Gateway {
                 );
                 Some(receiver)
             } else {
-                let (sender, receiver) = watch::channel::<Option<Result<Arc<Packet>, ProxyProtocolError>>>(None);
+                let (sender, receiver) =
+                    watch::channel::<Option<Result<Arc<Packet>, ProxyProtocolError>>>(None);
                 pending_requests.insert(key, receiver.clone());
                 drop(pending_requests);
 
@@ -134,19 +139,20 @@ impl Gateway {
                         log_type = LogType::Authentication.as_str(),
                         "Watch channel sender dropped for {}", req.domain
                     );
-                    return self.generate_unreachable_motd_response(Arc::clone(&req.domain), server_config);
+                    return self.generate_unreachable_motd_response(
+                        Arc::clone(&req.domain),
+                        server_config,
+                    );
                 }
                 // Only clone when result is actually ready
                 if let Some(result) = receiver.borrow().as_ref() {
                     return match result {
-                        Ok(packet_arc) => {
-                            self.create_status_response(
-                                Arc::clone(&req.domain),
-                                server_config,
-                                Arc::unwrap_or_clone(Arc::clone(packet_arc)),
-                                &tmp_server,
-                            )
-                        }
+                        Ok(packet_arc) => self.create_status_response(
+                            Arc::clone(&req.domain),
+                            server_config,
+                            Arc::unwrap_or_clone(Arc::clone(packet_arc)),
+                            &tmp_server,
+                        ),
                         Err(e) => Err(e.clone()),
                     };
                 }
@@ -181,7 +187,12 @@ impl Gateway {
         }
     }
 
-    pub(crate) fn update_cache_in_background(&self, tmp_server: &Server, req: &ServerRequest, packet: Packet) {
+    pub(crate) fn update_cache_in_background(
+        &self,
+        tmp_server: &Server,
+        req: &ServerRequest,
+        packet: Packet,
+    ) {
         let cache = Arc::clone(&self.status_cache);
         let tmp_server = tmp_server.clone();
         let req = req.clone();
@@ -223,7 +234,10 @@ impl Gateway {
         crate::server::motd::generate_response(MotdState::Unreachable, domain, server)
     }
 
-    pub(crate) async fn handle_unknown_server(&self, req: &ServerRequest) -> ProtocolResult<ServerResponse> {
+    pub(crate) async fn handle_unknown_server(
+        &self,
+        req: &ServerRequest,
+    ) -> ProtocolResult<ServerResponse> {
         debug!("Handling unknown server for {}", req.domain);
 
         if let Some(motd) = self.shared.config().motds.unknown.clone() {
@@ -237,7 +251,11 @@ impl Gateway {
                 },
                 ..ServerConfig::default()
             });
-            crate::server::motd::generate_response(MotdState::Unknown, Arc::clone(&req.domain), fake_config)
+            crate::server::motd::generate_response(
+                MotdState::Unknown,
+                Arc::clone(&req.domain),
+                fake_config,
+            )
         } else {
             Err(ProxyProtocolError::Other(format!(
                 "Server not found for domain: {}",

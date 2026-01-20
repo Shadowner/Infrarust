@@ -103,11 +103,9 @@ impl DockerProvider {
                                     ..Default::default()
                                 };
 
-                                if let Ok(containers) =
-                                    docker.list_containers(Some(options)).await
+                                if let Ok(containers) = docker.list_containers(Some(options)).await
                                     && let Some(container) = containers.first()
-                                    && let Some(config) =
-                                        self.process_container(container).await
+                                    && let Some(config) = self.process_container(container).await
                                 {
                                     let key = self.generate_config_id(container_id);
                                     self.send_update(key, Some(config)).await;
