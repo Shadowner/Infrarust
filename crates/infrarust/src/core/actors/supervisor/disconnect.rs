@@ -103,14 +103,22 @@ impl ActorSupervisor {
         }
 
         if !config_ids_to_clean.is_empty() {
+            let actor_counts: std::collections::HashMap<String, usize> = {
+                let actors = self.actors.read().await;
+                config_ids_to_clean
+                    .iter()
+                    .map(|config_id| {
+                        let count = actors.get(config_id).map_or(0, |pairs| pairs.len());
+                        (config_id.clone(), count)
+                    })
+                    .collect()
+            };
+
             let mut tasks = self.tasks.write().await;
 
             for config_id in config_ids_to_clean {
                 if let Some(task_handles) = tasks.get_mut(&config_id) {
-                    let actors_count = {
-                        let actors = self.actors.read().await;
-                        actors.get(&config_id).map_or(0, |pairs| pairs.len())
-                    };
+                    let actors_count = actor_counts.get(&config_id).copied().unwrap_or(0);
 
                     while task_handles.len() > actors_count {
                         if let Some(handle) = task_handles.pop() {
