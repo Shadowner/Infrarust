@@ -1,7 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use infrarust_config::{LogType, ServerManagerConfig};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::ActorSupervisor;
 
@@ -111,12 +111,19 @@ impl ActorSupervisor {
                         count
                     );
 
-                    let _ = server_manager
+                    if let Err(e) = server_manager
                         .remove_server_from_empty(
                             &manager_config.server_id,
                             manager_config.provider_name,
                         )
-                        .await;
+                        .await
+                    {
+                        warn!(
+                            log_type = LogType::ServerManager.as_str(),
+                            "Failed to cancel shutdown for server {} (may already be stopped): {}",
+                            config_id, e
+                        );
+                    }
                 }
             }
         }
