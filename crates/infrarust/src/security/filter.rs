@@ -331,10 +331,10 @@ impl FilterRegistry {
         let mut metrics = Vec::new();
 
         for (name, entry) in filters.iter() {
-            if entry.filter.filter_type() == FilterType::RateLimiter {
-                if let Some(rate_limiter) = entry.filter.as_any().downcast_ref::<RateLimiter>() {
-                    metrics.push((name.clone(), rate_limiter.counter_size()));
-                }
+            if entry.filter.filter_type() == FilterType::RateLimiter
+                && let Some(rate_limiter) = entry.filter.as_any().downcast_ref::<RateLimiter>()
+            {
+                metrics.push((name.clone(), rate_limiter.counter_size()));
             }
         }
 
