@@ -140,19 +140,25 @@ impl<W: AsyncWrite + Unpin + Send> PacketWriter<W> {
 
                 VarInt(self.packet_buffer.len() as i32)
                     .write_to_bytes(&mut self.compressed_buffer)?;
-                self.compressed_buffer.extend_from_slice(&compressed_data[..actual_sz]);
+                self.compressed_buffer
+                    .extend_from_slice(&compressed_data[..actual_sz]);
 
                 return_buffer(compressed_data);
 
-                VarInt(self.compressed_buffer.len() as i32).write_to_bytes(&mut self.output_buffer)?;
-                self.output_buffer.extend_from_slice(&self.compressed_buffer);
+                VarInt(self.compressed_buffer.len() as i32)
+                    .write_to_bytes(&mut self.output_buffer)?;
+                self.output_buffer
+                    .extend_from_slice(&self.compressed_buffer);
             } else {
                 // Uncompressed: [total_length][0][packet_data]
                 VarInt(0).write_to_bytes(&mut self.compressed_buffer)?;
-                self.compressed_buffer.extend_from_slice(&self.packet_buffer);
+                self.compressed_buffer
+                    .extend_from_slice(&self.packet_buffer);
 
-                VarInt(self.compressed_buffer.len() as i32).write_to_bytes(&mut self.output_buffer)?;
-                self.output_buffer.extend_from_slice(&self.compressed_buffer);
+                VarInt(self.compressed_buffer.len() as i32)
+                    .write_to_bytes(&mut self.output_buffer)?;
+                self.output_buffer
+                    .extend_from_slice(&self.compressed_buffer);
             }
         } else {
             // No compression: [total_length][packet_data]

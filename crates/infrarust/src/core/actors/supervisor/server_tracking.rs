@@ -122,7 +122,9 @@ impl ActorSupervisor {
         }
     }
 
-    pub(crate) async fn get_configs_with_manager_settings(&self) -> Vec<(String, ServerManagerConfig)> {
+    pub(crate) async fn get_configs_with_manager_settings(
+        &self,
+    ) -> Vec<(String, ServerManagerConfig)> {
         let mut result = Vec::new();
         let config_service_guard = self.configuration_service.read().await;
         if let Some(config_service) = config_service_guard.as_ref() {

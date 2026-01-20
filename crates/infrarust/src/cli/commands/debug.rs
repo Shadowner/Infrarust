@@ -89,10 +89,7 @@ impl DebugCommand {
     fn format_memory_metrics(&self) -> String {
         let mut result = String::new();
 
-        result.push_str(&format!(
-            "{}\n\n",
-            fmt::header("Memory Retention Metrics")
-        ));
+        result.push_str(&format!("{}\n\n", fmt::header("Memory Retention Metrics")));
 
         result.push_str(&format!("{}\n", fmt::warning("[CRITICAL]")));
 
@@ -105,11 +102,7 @@ impl DebugCommand {
             ));
             for (config_id, count) in &metrics.actors_by_config {
                 if *count > 0 {
-                    result.push_str(&format!(
-                        "    - {}: {}\n",
-                        fmt::entity(config_id),
-                        count
-                    ));
+                    result.push_str(&format!("    - {}: {}\n", fmt::entity(config_id), count));
                 }
             }
 
@@ -119,11 +112,7 @@ impl DebugCommand {
             ));
             for (config_id, count) in &metrics.tasks_by_config {
                 if *count > 0 {
-                    result.push_str(&format!(
-                        "    - {}: {}\n",
-                        fmt::entity(config_id),
-                        count
-                    ));
+                    result.push_str(&format!("    - {}: {}\n", fmt::entity(config_id), count));
                 }
             }
 
@@ -142,7 +131,8 @@ impl DebugCommand {
         }
 
         // RateLimiter metrics
-        if let Some(rate_limiter_metrics) = self.shared.filter_registry().get_rate_limiter_metrics() {
+        if let Some(rate_limiter_metrics) = self.shared.filter_registry().get_rate_limiter_metrics()
+        {
             for (name, counter_size) in rate_limiter_metrics {
                 match counter_size {
                     Some(size) => {
@@ -203,8 +193,7 @@ impl DebugCommand {
             if let Some(metrics) = gateway.get_memory_metrics() {
                 result.push_str(&format!(
                     "  Gateway :: status_cache_entries = {} / {}\n",
-                    metrics.status_cache_entries,
-                    metrics.status_cache_max_size
+                    metrics.status_cache_entries, metrics.status_cache_max_size
                 ));
             } else {
                 result.push_str(&format!("  Gateway :: status_cache_entries = {}\n", NA));
@@ -240,7 +229,10 @@ impl DebugCommand {
                 count
             ));
         } else {
-            result.push_str(&format!("  ConfigurationService :: configurations = {}\n", NA));
+            result.push_str(&format!(
+                "  ConfigurationService :: configurations = {}\n",
+                NA
+            ));
         }
 
         // FilterRegistry metrics
@@ -250,7 +242,10 @@ impl DebugCommand {
                 count
             ));
         } else {
-            result.push_str(&format!("  FilterRegistry :: registered_filters = {}\n", NA));
+            result.push_str(&format!(
+                "  FilterRegistry :: registered_filters = {}\n",
+                NA
+            ));
         }
 
         result

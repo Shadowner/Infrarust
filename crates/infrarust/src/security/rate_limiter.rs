@@ -201,9 +201,7 @@ impl LocalCounter {
         }
 
         self.counters.retain(|_, count| {
-            now.duration_since(count.timestamp)
-                .unwrap_or(Duration::MAX)
-                < self.window_length
+            now.duration_since(count.timestamp).unwrap_or(Duration::MAX) < self.window_length
         });
         self.last_eviction = now;
     }

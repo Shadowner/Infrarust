@@ -52,7 +52,9 @@ impl ActorSupervisor {
         username: String,
         domain: &str,
     ) -> ActorPair {
-        use crate::proxy_modes::{get_client_only_mode, get_offline_mode, get_passthrough_mode, get_status_mode};
+        use crate::proxy_modes::{
+            get_client_only_mode, get_offline_mode, get_passthrough_mode, get_status_mode,
+        };
 
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let span = debug_span!("actor_pair_setup", log_type = LogType::Supervisor.as_str());
@@ -68,7 +70,12 @@ impl ActorSupervisor {
 
         if is_login {
             #[cfg(feature = "telemetry")]
-            crate::telemetry::TELEMETRY.update_player_count(1, config_id, client_conn.session_id, &username);
+            crate::telemetry::TELEMETRY.update_player_count(
+                1,
+                config_id,
+                client_conn.session_id,
+                &username,
+            );
         }
 
         // Macro to reduce boilerplate for creating actor pairs with different handler types

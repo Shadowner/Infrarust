@@ -78,10 +78,17 @@ impl Server {
             let now = std::time::Instant::now();
 
             #[cfg(feature = "telemetry")]
-            TELEMETRY.record_backend_request_start(&self.config.config_id, &addr_with_port, &session_id);
+            TELEMETRY.record_backend_request_start(
+                &self.config.config_id,
+                &addr_with_port,
+                &session_id,
+            );
 
-            match tokio::time::timeout(std::time::Duration::from_secs(5), TcpStream::connect(&addr_with_port))
-                .await
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                TcpStream::connect(&addr_with_port),
+            )
+            .await
             {
                 Ok(Ok(stream)) => {
                     debug!(
@@ -213,7 +220,11 @@ impl Server {
             #[cfg(feature = "telemetry")]
             let now = std::time::Instant::now();
             #[cfg(feature = "telemetry")]
-            TELEMETRY.record_backend_request_start(&self.config.config_id, &addr_with_port, &session_id);
+            TELEMETRY.record_backend_request_start(
+                &self.config.config_id,
+                &addr_with_port,
+                &session_id,
+            );
 
             match TcpStream::connect(&addr_with_port).await {
                 Ok(mut stream) => {
@@ -379,15 +390,16 @@ impl Server {
         conn: &mut ServerConnection,
         req: &ServerRequest,
     ) -> ProtocolResult<Packet> {
-        let handshake_packet = if let Some(ref new_domain) = self.config.get_effective_backend_domain() {
-            debug!(
-                log_type = LogType::PacketProcessing.as_str(),
-                "Rewriting status handshake domain to: {}", new_domain
-            );
-            rewrite_handshake_domain(&req.read_packets[0], new_domain)?
-        } else {
-            req.read_packets[0].clone()
-        };
+        let handshake_packet =
+            if let Some(ref new_domain) = self.config.get_effective_backend_domain() {
+                debug!(
+                    log_type = LogType::PacketProcessing.as_str(),
+                    "Rewriting status handshake domain to: {}", new_domain
+                );
+                rewrite_handshake_domain(&req.read_packets[0], new_domain)?
+            } else {
+                req.read_packets[0].clone()
+            };
 
         if let Err(e) = conn.write_packet(&handshake_packet).await {
             debug!(

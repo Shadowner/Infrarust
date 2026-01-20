@@ -1,4 +1,7 @@
-use infrarust_config::{ServerConfig, models::{logging::LogType, server::ProxyModeEnum}};
+use infrarust_config::{
+    ServerConfig,
+    models::{logging::LogType, server::ProxyModeEnum},
+};
 use infrarust_protocol::minecraft::java::login::ServerBoundLoginStart;
 use infrarust_server_manager::ServerState;
 use tokio::sync::oneshot;
@@ -6,7 +9,11 @@ use tracing::{Instrument, Span, debug, debug_span, info, instrument, warn};
 
 #[cfg(feature = "telemetry")]
 use crate::telemetry::TELEMETRY;
-use crate::{Connection, security::BanHelper, server::{ServerRequest, ServerRequester}};
+use crate::{
+    Connection,
+    security::BanHelper,
+    server::{ServerRequest, ServerRequester},
+};
 
 use super::Gateway;
 

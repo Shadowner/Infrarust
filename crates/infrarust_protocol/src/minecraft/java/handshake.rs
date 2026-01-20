@@ -242,12 +242,8 @@ mod tests {
 
     #[test]
     fn test_with_rewritten_domain_preserves_forge_marker() {
-        let handshake = ServerBoundHandshake::new(
-            762,
-            "original.domain.com\0FML2\0".to_string(),
-            25565,
-            2,
-        );
+        let handshake =
+            ServerBoundHandshake::new(762, "original.domain.com\0FML2\0".to_string(), 25565, 2);
         let rewritten = handshake.with_rewritten_domain("new.domain.com");
 
         assert_eq!(rewritten.server_address.0, "new.domain.com\0FML2\0");

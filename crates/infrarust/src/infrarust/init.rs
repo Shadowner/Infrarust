@@ -12,19 +12,14 @@ use infrarust_server_manager::{CraftyClient, LocalProvider, PterodactylClient};
 use tracing::{Instrument, Span, debug, debug_span, error, info, warn};
 
 use crate::{
-    core::{
-        actors::supervisor::ActorSupervisor,
-        config::provider::ConfigProvider,
-        config::service::ConfigurationService,
-        shared_component::SharedComponent,
-    },
-    security::{
-        filter::FilterRegistry, RateLimiter,
-        ban_system_adapter::BanSystemAdapter,
-    },
-    server::{gateway::Gateway, manager::Manager},
     Infrarust,
     cli::ShutdownController,
+    core::{
+        actors::supervisor::ActorSupervisor, config::provider::ConfigProvider,
+        config::service::ConfigurationService, shared_component::SharedComponent,
+    },
+    security::{RateLimiter, ban_system_adapter::BanSystemAdapter, filter::FilterRegistry},
+    server::{gateway::Gateway, manager::Manager},
 };
 
 impl Infrarust {

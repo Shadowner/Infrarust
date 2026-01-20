@@ -203,10 +203,7 @@ impl BanStorageBackend for MemoryBanStorage {
             return Ok((Vec::new(), total));
         }
 
-        let paged_bans = all_bans[start..end]
-            .iter()
-            .map(|b| (**b).clone())
-            .collect();
+        let paged_bans = all_bans[start..end].iter().map(|b| (**b).clone()).collect();
 
         Ok((paged_bans, total))
     }
@@ -283,10 +280,7 @@ impl BanStorageBackend for MemoryBanStorage {
             return Ok((Vec::new(), total));
         }
 
-        let paged_results = results[start..end]
-            .iter()
-            .map(|b| (**b).clone())
-            .collect();
+        let paged_results = results[start..end].iter().map(|b| (**b).clone()).collect();
 
         Ok((paged_results, total))
     }

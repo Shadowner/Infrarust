@@ -216,10 +216,7 @@ impl BanStorageBackend for FileBanStorage {
             return Ok((Vec::new(), total));
         }
 
-        let paged_bans = all_bans[start..end]
-            .iter()
-            .map(|b| (**b).clone())
-            .collect();
+        let paged_bans = all_bans[start..end].iter().map(|b| (**b).clone()).collect();
 
         Ok((paged_bans, total))
     }

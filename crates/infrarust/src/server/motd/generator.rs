@@ -14,7 +14,10 @@ use crate::network::{
 #[cfg(feature = "telemetry")]
 use crate::telemetry::TELEMETRY;
 
-use super::{favicon::{get_default_favicon, parse_favicon}, state::MotdState};
+use super::{
+    favicon::{get_default_favicon, parse_favicon},
+    state::MotdState,
+};
 
 pub fn generate_motd_packet(
     motd: &MotdConfig,

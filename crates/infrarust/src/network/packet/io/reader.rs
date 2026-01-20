@@ -168,7 +168,9 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
 
                 let decompress_result = decompressor
                     .zlib_decompress(&encrypted_buffer[bytes_read..], &mut outbuf)
-                    .map_err(|e| PacketError::Compression(format!("Decompression failed: {:?}", e)));
+                    .map_err(|e| {
+                        PacketError::Compression(format!("Decompression failed: {:?}", e))
+                    });
 
                 // Return encrypted buffer early as we don't need it anymore
                 return_buffer(encrypted_buffer);

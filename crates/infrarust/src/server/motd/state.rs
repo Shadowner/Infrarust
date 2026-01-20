@@ -34,9 +34,9 @@ impl MotdState {
             MotdState::Starting => {
                 Cow::Borrowed("§6Server is starting...§r\n§8§oPlease wait a moment")
             }
-            MotdState::Stopping => {
-                Cow::Borrowed("§6Server is marked to shutdown...\n§8§o Connect to it to cancel it !")
-            }
+            MotdState::Stopping => Cow::Borrowed(
+                "§6Server is marked to shutdown...\n§8§o Connect to it to cancel it !",
+            ),
             MotdState::ImminentShutdown { seconds_remaining } => {
                 let time_str = if *seconds_remaining <= 60 {
                     format!("{} seconds", seconds_remaining)
@@ -48,18 +48,18 @@ impl MotdState {
                     time_str
                 ))
             }
-            MotdState::Crashed => {
-                Cow::Borrowed("§4Server is in a crashing state...§r\n§8§o -> Contact an admin if the issue persist.")
-            }
+            MotdState::Crashed => Cow::Borrowed(
+                "§4Server is in a crashing state...§r\n§8§o -> Contact an admin if the issue persist.",
+            ),
             MotdState::Unreachable => {
                 Cow::Borrowed("§cServer is unreachable...§r\n§8§oTry again later")
             }
-            MotdState::UnableToFetchStatus => {
-                Cow::Borrowed("§cUnable to obtain server status...§r\n§8§o -> Contact an admin if the issue persist.")
-            }
-            MotdState::Unknown => {
-                Cow::Borrowed("§cUnknown server status...§r\n§8§o -> Contact an admin if the issue persist.")
-            }
+            MotdState::UnableToFetchStatus => Cow::Borrowed(
+                "§cUnable to obtain server status...§r\n§8§o -> Contact an admin if the issue persist.",
+            ),
+            MotdState::Unknown => Cow::Borrowed(
+                "§cUnknown server status...§r\n§8§o -> Contact an admin if the issue persist.",
+            ),
             MotdState::UnknownServer => Cow::Borrowed("§cServer not found"),
         }
     }

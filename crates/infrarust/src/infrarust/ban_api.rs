@@ -3,8 +3,10 @@ use std::net::IpAddr;
 use infrarust_ban_system::BanEntry;
 
 use crate::{
-    security::{ban_system_adapter::BanSystemAdapter, filter::FilterError, with_filter, with_filter_or},
     Infrarust,
+    security::{
+        ban_system_adapter::BanSystemAdapter, filter::FilterError, with_filter, with_filter_or,
+    },
 };
 
 impl Infrarust {
