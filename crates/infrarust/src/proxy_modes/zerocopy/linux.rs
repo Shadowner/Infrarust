@@ -1,11 +1,11 @@
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tracing::debug;
 
 const SPLICE_MAX: usize = 65536;
@@ -96,8 +96,8 @@ async fn splice_one_direction(
 
         let _ = output.write(&[]).await?;
 
-                    // Output closed
-                    // Wait for output to be writable again
+        // Output closed
+        // Wait for output to be writable again
         loop {
             match pipe.splice_to_fd(output.as_ref().as_raw_fd()) {
                 Ok(0) => return Ok(total_bytes), // Pipe empty or output closed

@@ -12,9 +12,9 @@ use infrarust_config::LogType;
 use offline::{OfflineMessage, OfflineMode};
 use passthrough::{PassthroughMessage, PassthroughMode};
 use status::StatusMessage;
-pub use zerocopy::{ZeroCopyMessage, spawn_splice_task};
 use std::io;
 use tracing::{debug, instrument};
+pub use zerocopy::{ZeroCopyMessage, spawn_splice_task};
 
 pub type ClientHandler<T> = Box<dyn ClientProxyModeHandler<MinecraftCommunication<T>>>;
 pub type ServerHandler<T> = Box<dyn ServerProxyModeHandler<MinecraftCommunication<T>>>;

@@ -13,7 +13,10 @@ use crate::{
         },
         event::MinecraftCommunication,
     },
-    proxy_modes::{ClientProxyModeHandler, ProxyMessage, ServerProxyModeHandler, spawn_splice_task, client_only::rewrite_handshake_domain},
+    proxy_modes::{
+        ClientProxyModeHandler, ProxyMessage, ServerProxyModeHandler,
+        client_only::rewrite_handshake_domain, spawn_splice_task,
+    },
     server::ServerResponse,
 };
 
@@ -321,7 +324,9 @@ impl ActorSupervisor {
                     return;
                 }
             };
-            let effective_domain = server_response.initial_config.get_effective_backend_domain();
+            let effective_domain = server_response
+                .initial_config
+                .get_effective_backend_domain();
 
             debug!(
                 log_type = LogType::ProxyMode.as_str(),
@@ -332,7 +337,9 @@ impl ActorSupervisor {
             );
 
             for (i, packet) in server_response.read_packets.iter().enumerate() {
-                if i == 0 && let Some(ref new_domain) = effective_domain {
+                if i == 0
+                    && let Some(ref new_domain) = effective_domain
+                {
                     debug!(
                         log_type = LogType::ProxyMode.as_str(),
                         "Rewriting handshake domain to: {}", new_domain
@@ -395,13 +402,15 @@ impl ActorSupervisor {
                 "Zerocopy splice setup complete, starting data transfer"
             );
 
-            let splice_task = spawn_splice_task(client_stream, server_stream, shutdown_for_task.clone());
+            let splice_task =
+                spawn_splice_task(client_stream, server_stream, shutdown_for_task.clone());
             match splice_task.await {
                 Ok((client_to_server, server_to_client)) => {
                     debug!(
                         log_type = LogType::Supervisor.as_str(),
                         "Zerocopy splice completed: {} bytes client->server, {} bytes server->client",
-                        client_to_server, server_to_client
+                        client_to_server,
+                        server_to_client
                     );
                 }
                 Err(e) => {

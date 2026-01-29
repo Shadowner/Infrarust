@@ -316,9 +316,10 @@ impl Connection {
             .map_err(|e| io::Error::other(e.to_string()))
     }
     pub async fn into_tcp_stream_async(mut self) -> io::Result<TcpStream> {
-        self.writer.flush().await.map_err(|e| {
-            io::Error::other(format!("Flush failed: {}", e))
-        })?;
+        self.writer
+            .flush()
+            .await
+            .map_err(|e| io::Error::other(format!("Flush failed: {}", e)))?;
         if !self.reader.buffer().is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

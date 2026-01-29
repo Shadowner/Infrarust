@@ -3,15 +3,15 @@ mod linux;
 
 pub mod types;
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
-#[cfg(target_os = "linux")]
-use tracing::{debug, info};
 #[cfg(not(target_os = "linux"))]
 use tracing::error;
+#[cfg(target_os = "linux")]
+use tracing::{debug, info};
 
 pub use types::ZeroCopyMessage;
 
