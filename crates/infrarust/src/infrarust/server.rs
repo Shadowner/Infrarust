@@ -114,12 +114,86 @@ impl Infrarust {
 
         debug!(
             log_type = LogType::TcpConnection.as_str(),
-            "Starting to process new connection from {}",
-            client.peer_addr().await?
+            "Starting to process new connection from {}", peer_addr
         );
 
         let handshake_timeout_secs = self.shared.config().handshake_timeout_secs.unwrap_or(10);
 
+        // Peek the first byte to detect legacy protocol before reading any packets
+        let first_byte = match tokio::time::timeout(
+            tokio::time::Duration::from_secs(handshake_timeout_secs),
+            client.peek_first_byte(),
+        )
+        .await
+        {
+            Ok(Ok(byte)) => byte,
+            Ok(Err(e)) => {
+                debug!(
+                    log_type = LogType::TcpConnection.as_str(),
+                    "Failed to peek first byte: {}", e
+                );
+                let _ = client.close().await;
+                return Err(e);
+            }
+            Err(_) => {
+                debug!(
+                    log_type = LogType::TcpConnection.as_str(),
+                    "Timeout waiting for first byte after {}s", handshake_timeout_secs
+                );
+                let _ = client.close().await;
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "First byte timeout",
+                ));
+            }
+        };
+
+        let client_addr = peer_addr;
+        let session_id = client.session_id;
+
+        match first_byte {
+            0xFE => {
+                // Legacy server list ping (Beta 1.8 through 1.6)
+                debug!(
+                    log_type = LogType::PacketProcessing.as_str(),
+                    "Detected legacy ping (0xFE) from {}", client_addr
+                );
+                crate::server::legacy_handler::handle_legacy_ping(
+                    &mut client,
+                    &self.gateway,
+                    session_id,
+                    client_addr,
+                )
+                .await
+            }
+            0x02 => {
+                // Legacy login handshake (Beta 1.8 through 1.6)
+                debug!(
+                    log_type = LogType::PacketProcessing.as_str(),
+                    "Detected legacy login handshake (0x02) from {}", client_addr
+                );
+                crate::server::legacy_handler::handle_legacy_login(
+                    client,
+                    &self.gateway,
+                    session_id,
+                    client_addr,
+                )
+                .await
+            }
+            _ => {
+                // Modern protocol (1.7+) — VarInt-prefixed packets
+                self.handle_modern_connection(client, handshake_timeout_secs)
+                    .await
+            }
+        }
+    }
+
+    /// Handle a modern (1.7+) Minecraft connection with VarInt-framed packets.
+    async fn handle_modern_connection(
+        &self,
+        mut client: Connection,
+        handshake_timeout_secs: u64,
+    ) -> io::Result<()> {
         debug!(
             log_type = LogType::PacketProcessing.as_str(),
             "Reading handshake packet (with {}s timeout)", handshake_timeout_secs
