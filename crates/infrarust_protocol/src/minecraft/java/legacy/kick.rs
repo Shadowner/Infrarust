@@ -46,6 +46,42 @@ pub fn encode_utf16be(s: &str) -> Vec<u8> {
     bytes
 }
 
+pub fn parse_protocol_from_legacy_kick(raw: &[u8]) -> std::io::Result<(i32, String)> {
+    if raw.len() < 3 || raw[0] != LEGACY_KICK_PACKET_ID {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Not a legacy kick packet",
+        ));
+    }
+
+    let str_len = u16::from_be_bytes([raw[1], raw[2]]) as usize;
+    let expected_end = 3 + str_len * 2;
+    if raw.len() < expected_end {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Kick packet data truncated",
+        ));
+    }
+
+    let payload = decode_utf16be(&raw[3..expected_end])?;
+    let parts: Vec<&str> = payload.split('\0').collect();
+
+    if parts.len() >= 3 && parts[0] == "\u{00A7}1" {
+        let protocol: i32 = parts[1].parse().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Invalid protocol version number: '{}'", parts[1]),
+            )
+        })?;
+        let version_name = parts[2].to_string();
+        Ok((protocol, version_name))
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Beta format response: no protocol version available",
+        ))
+    }
+}
 pub fn decode_utf16be(data: &[u8]) -> std::io::Result<String> {
     if !data.len().is_multiple_of(2) {
         return Err(std::io::Error::new(
@@ -122,6 +158,33 @@ mod tests {
     #[test]
     fn test_decode_utf16be_odd_length() {
         let result = decode_utf16be(&[0x00, 0x41, 0x00]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_protocol_from_v1_4_kick() {
+        let packet = build_legacy_kick_v1_4(61, "1.5.2", "A Minecraft Server", 5, 20);
+        let (protocol, version_name) = parse_protocol_from_legacy_kick(&packet).unwrap();
+        assert_eq!(protocol, 61);
+        assert_eq!(version_name, "1.5.2");
+    }
+
+    #[test]
+    fn test_parse_protocol_from_beta_kick_fails() {
+        let packet = build_legacy_kick_beta("A Minecraft Server", 5, 20);
+        let result = parse_protocol_from_legacy_kick(&packet);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_protocol_from_empty_packet() {
+        let result = parse_protocol_from_legacy_kick(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_protocol_from_wrong_packet_id() {
+        let result = parse_protocol_from_legacy_kick(&[0xFE, 0x00, 0x01]);
         assert!(result.is_err());
     }
 }

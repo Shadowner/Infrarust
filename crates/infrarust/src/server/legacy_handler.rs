@@ -75,10 +75,15 @@ pub async fn handle_legacy_ping(
     );
 
     // Look up server config by hostname (or use first available for domain-less pings)
-    let server_config = if let Some(hostname) = variant.hostname() {
-        gateway.find_server(hostname).await
-    } else {
-        find_default_server(gateway).await
+    let server_config = match &variant {
+        LegacyPingVariant::V1_6 { hostname, .. } => gateway.find_server(hostname).await,
+        LegacyPingVariant::Beta | LegacyPingVariant::V1_4 => {
+            let response_bytes = generate_legacy_connect_prompt(&variant);
+            conn.write_raw(&response_bytes).await?;
+            conn.flush().await?;
+            let _ = conn.close().await;
+            return Ok(());
+        }
     };
 
     let response_bytes = match server_config {
@@ -190,16 +195,7 @@ pub async fn handle_legacy_login(
     );
 
     // Look up server config by hostname
-    let server_config = if handshake.hostname.is_empty() {
-        find_default_server(gateway).await
-    } else {
-        let found = gateway.find_server(&handshake.hostname).await;
-        if found.is_none() {
-            find_default_server(gateway).await
-        } else {
-            found
-        }
-    };
+    let server_config = gateway.find_server(&handshake.hostname).await;
 
     let server_config = match server_config {
         Some(config) => config,
@@ -458,16 +454,6 @@ async fn read_legacy_string_bytes(conn: &mut Connection) -> io::Result<Vec<u8>> 
     Ok(result)
 }
 
-async fn find_default_server(gateway: &Gateway) -> Option<Arc<infrarust_config::ServerConfig>> {
-    let configs = gateway
-        .shared
-        .configuration_service()
-        .get_all_configurations()
-        .await;
-
-    configs.into_values().next()
-}
-
 async fn fetch_and_convert_to_legacy(
     variant: &LegacyPingVariant,
     server_config: &Arc<infrarust_config::ServerConfig>,
@@ -495,7 +481,7 @@ async fn fetch_and_convert_to_legacy(
     generate_legacy_motd_from_packet(&status_packet, variant)
 }
 
-fn build_synthetic_status_request(hostname: &str, session_id: Uuid) -> io::Result<ServerRequest> {
+pub(crate) fn build_synthetic_status_request(hostname: &str, session_id: Uuid) -> io::Result<ServerRequest> {
     let handshake = ServerBoundHandshake {
         protocol_version: VarInt(47), // 1.8 protocol (commonly supported)
         server_address: infrarust_protocol::types::ProtocolString(hostname.to_string()),
@@ -553,7 +539,7 @@ async fn forward_legacy_ping_to_backend(
 }
 
 /// Wire format: `[0xFF] [u16 BE: string_length_in_utf16_units] [UTF-16BE: payload]`
-async fn read_legacy_kick_response(
+pub(crate) async fn read_legacy_kick_response(
     conn: &mut crate::network::connection::ServerConnection,
 ) -> io::Result<Vec<u8>> {
     let mut packet_id = [0u8; 1];
@@ -610,6 +596,13 @@ fn generate_legacy_fallback(
     }
 }
 
+fn generate_legacy_connect_prompt(variant: &LegacyPingVariant) -> Vec<u8> {
+    if variant.uses_v1_4_response_format() {
+        build_legacy_kick_v1_4(0, "Infrarust", "Direct Connect to join the server.", 0, 0)
+    } else {
+        build_legacy_kick_beta("Connect to join the server.", 0, 0)
+    }
+}
 fn generate_legacy_no_server(variant: &LegacyPingVariant) -> Vec<u8> {
     if variant.uses_v1_4_response_format() {
         build_legacy_kick_v1_4(0, "Infrarust", "Unknown server", 0, 0)
