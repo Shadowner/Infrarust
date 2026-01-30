@@ -1,4 +1,11 @@
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{
+    io,
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::Ordering,
+    },
+};
 
 use infrarust_config::models::logging::LogType;
 use infrarust_protocol::{
@@ -14,7 +21,7 @@ use infrarust_protocol::{
     types::VarInt,
     version::Version,
 };
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -209,7 +216,7 @@ pub async fn handle_legacy_login(
     };
 
     // Connect to backend
-    let server = Server::new(server_config).map_err(|e| {
+    let server = Server::new(server_config.clone()).map_err(|e| {
         io::Error::new(
             io::ErrorKind::ConnectionRefused,
             format!("Failed to create server: {}", e),
@@ -247,6 +254,31 @@ pub async fn handle_legacy_login(
         "Legacy handshake replayed to backend, starting bidirectional forwarding"
     );
 
+    let configured_mode = server_config.proxy_mode.unwrap_or_default();
+    warn!(
+        log_type = LogType::ProxyMode.as_str(),
+        "Legacy connection from {}: using zerocopy mode (configured: {:?})",
+        client_addr,
+        configured_mode
+    );
+
+    let shutdown = gateway
+        .shared
+        .actor_supervisor()
+        .register_legacy_actor_pair(
+            &server_config.config_id,
+            handshake.username.clone(),
+            handshake.hostname.clone(),
+            client_addr,
+            session_id,
+        )
+        .await;
+
+    info!(
+        "Player '{}' connected to '{}' ({}) [legacy]",
+        &handshake.username, &handshake.hostname, &server_config.config_id
+    );
+
     // Reassemble TCP streams for zero-copy bidirectional forwarding
     let client_stream = conn.into_tcp_stream()?;
     let backend_stream = backend.into_tcp_stream()?;
@@ -256,6 +288,18 @@ pub async fn handle_legacy_login(
 
     let client_to_server = tokio::io::copy(&mut client_read, &mut server_write);
     let server_to_client = tokio::io::copy(&mut server_read, &mut client_write);
+
+    let shutdown_watcher = {
+        let shutdown = shutdown.clone();
+        async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if shutdown.load(Ordering::Acquire) {
+                    break;
+                }
+            }
+        }
+    };
 
     tokio::select! {
         result = client_to_server => {
@@ -268,7 +312,12 @@ pub async fn handle_legacy_login(
                 debug!(log_type = LogType::TcpConnection.as_str(), "Legacy server->client copy ended: {}", e);
             }
         }
+        _ = shutdown_watcher => {
+            debug!(log_type = LogType::TcpConnection.as_str(), "Legacy connection shutdown requested via kick");
+        }
     }
+
+    shutdown.store(true, Ordering::SeqCst);
 
     Ok(())
 }
