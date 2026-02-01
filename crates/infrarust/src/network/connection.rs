@@ -10,7 +10,7 @@ use std::{
 use bytes::BytesMut;
 use infrarust_config::models::infrarust::ProxyProtocolConfig;
 use tokio::{
-    io::{AsyncWriteExt, BufReader, BufWriter},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
     net::{
         TcpStream,
         tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -127,6 +127,40 @@ impl Connection {
 
     pub fn enable_raw_mode(&mut self) {
         self.mode = ConnectionMode::Raw;
+    }
+
+    pub async fn peek_first_byte(&mut self) -> io::Result<u8> {
+        let buf = self.reader.reader.fill_buf().await?;
+        if buf.is_empty() {
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "Connection closed before any data received",
+            ));
+        }
+        Ok(buf[0])
+    }
+
+    pub async fn read_exact_raw(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        self.reader.reader.read_exact(buf).await?;
+        Ok(())
+    }
+
+    pub async fn read_raw_up_to(&mut self, max_len: usize) -> io::Result<Vec<u8>> {
+        let mut result = Vec::with_capacity(max_len);
+        let mut remaining = max_len;
+
+        while remaining > 0 {
+            let buf = self.reader.reader.fill_buf().await?;
+            if buf.is_empty() {
+                break;
+            }
+            let to_read = buf.len().min(remaining);
+            result.extend_from_slice(&buf[..to_read]);
+            self.reader.reader.consume(to_read);
+            remaining -= to_read;
+        }
+
+        Ok(result)
     }
 
     pub async fn read(&mut self) -> io::Result<PossibleReadValue> {
@@ -461,5 +495,13 @@ impl ServerConnection {
 
     pub fn enable_raw_mode(&mut self) {
         self.connection.enable_raw_mode();
+    }
+
+    pub async fn read_exact_raw(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        self.connection.read_exact_raw(buf).await
+    }
+
+    pub async fn read_raw_up_to(&mut self, max_len: usize) -> io::Result<Vec<u8>> {
+        self.connection.read_raw_up_to(max_len).await
     }
 }

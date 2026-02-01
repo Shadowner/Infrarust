@@ -1,4 +1,5 @@
 pub mod handshake;
+pub mod legacy;
 pub mod login;
 pub mod play;
 pub mod sha1;

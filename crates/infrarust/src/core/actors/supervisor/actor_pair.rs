@@ -439,6 +439,42 @@ impl ActorSupervisor {
         })
     }
 
+    pub async fn register_legacy_actor_pair(
+        &self,
+        config_id: &str,
+        username: String,
+        server_name: String,
+        client_addr: std::net::SocketAddr,
+        session_id: uuid::Uuid,
+    ) -> Arc<AtomicBool> {
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+
+        let client = MinecraftClientHandler::new_zerocopy_stub(
+            client_addr,
+            shutdown_flag.clone(),
+            session_id,
+        );
+        let server = MinecraftServerHandler::new_zerocopy_stub(shutdown_flag.clone());
+
+        let pair = ActorPair {
+            username,
+            client,
+            server,
+            shutdown: shutdown_flag.clone(),
+            created_at: std::time::Instant::now(),
+            session_id,
+            config_id: config_id.to_string(),
+            server_name,
+            disconnect_logged: Arc::new(AtomicBool::new(false)),
+            is_login: true,
+            zerocopy_task: None,
+        };
+
+        self.register_actor_pair(config_id, pair).await;
+
+        shutdown_flag
+    }
+
     #[instrument(skip(self, pair), fields(config_id = %config_id))]
     pub(crate) async fn register_actor_pair(&self, config_id: &str, pair: ActorPair) {
         let mut actors = self.actors.write().await;

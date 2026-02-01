@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod cache;
 pub mod gateway;
+pub mod legacy_handler;
 pub mod manager;
 pub mod motd;
 

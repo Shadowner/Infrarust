@@ -4,7 +4,10 @@ mod response;
 mod state;
 
 pub use favicon::{INFRARUST_FAVICON, parse_favicon};
-pub use generator::{generate_for_state, generate_motd_packet, get_motd_config_for_state};
+pub use generator::{
+    generate_for_state, generate_legacy_motd_for_state, generate_legacy_motd_from_packet,
+    generate_motd_packet, get_motd_config_for_state,
+};
 pub use response::{
     generate_response, handle_server_fetch_error, handle_server_fetch_error_with_shared,
 };

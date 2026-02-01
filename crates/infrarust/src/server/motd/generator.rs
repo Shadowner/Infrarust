@@ -1,7 +1,15 @@
+use std::io;
+
 use infrarust_config::models::server::MotdConfig;
 use infrarust_protocol::{
-    minecraft::java::status::clientbound_response::{
-        CLIENTBOUND_RESPONSE_ID, ClientBoundResponse, PlayersJSON, ResponseJSON, VersionJSON,
+    minecraft::java::{
+        legacy::{
+            kick::{build_legacy_kick_beta, build_legacy_kick_v1_4},
+            ping::LegacyPingVariant,
+        },
+        status::clientbound_response::{
+            CLIENTBOUND_RESPONSE_ID, ClientBoundResponse, PlayersJSON, ResponseJSON, VersionJSON,
+        },
     },
     types::ProtocolString,
 };
@@ -168,6 +176,97 @@ pub fn get_motd_config_for_state<'a>(
         MotdState::UnableToFetchStatus => server_motds.unable_status.as_ref(),
         MotdState::Unknown => server_motds.unknown.as_ref(),
         MotdState::UnknownServer => None,
+    }
+}
+
+/// Extracts the JSON from the modern packet, parses it, and reformats
+/// as a legacy 0xFF kick packet (Beta or 1.4+ format depending on variant).
+pub fn generate_legacy_motd_from_packet(
+    status_packet: &Packet,
+    variant: &LegacyPingVariant,
+) -> io::Result<Vec<u8>> {
+    // Decode the modern status response to get the JSON
+    let response: ClientBoundResponse = status_packet.decode().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to decode status packet: {}", e),
+        )
+    })?;
+
+    let json: ResponseJSON = serde_json::from_str(&response.json_response.0).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to parse status JSON: {}", e),
+        )
+    })?;
+
+    let motd = extract_motd_text(&json.description);
+
+    Ok(build_legacy_kick_from_json(
+        variant,
+        &motd,
+        json.players.online,
+        json.players.max,
+        json.version.protocol,
+        &json.version.name,
+    ))
+}
+
+pub fn generate_legacy_motd_for_state(
+    state: &MotdState,
+    motd_config: Option<&MotdConfig>,
+    variant: &LegacyPingVariant,
+) -> io::Result<Vec<u8>> {
+    let default_text = state.default_text();
+    let motd_text = motd_config
+        .and_then(|c| c.text.as_deref())
+        .unwrap_or_else(|| default_text.as_ref());
+
+    let protocol = motd_config.and_then(|c| c.protocol_version).unwrap_or(0);
+
+    let version_name = motd_config
+        .and_then(|c| c.version_name.as_deref())
+        .unwrap_or("Infrarust");
+
+    let online = motd_config.and_then(|c| c.online_players).unwrap_or(0);
+
+    let max = motd_config.and_then(|c| c.max_players).unwrap_or(0);
+
+    Ok(build_legacy_kick_from_json(
+        variant,
+        motd_text,
+        online,
+        max,
+        protocol,
+        version_name,
+    ))
+}
+
+fn build_legacy_kick_from_json(
+    variant: &LegacyPingVariant,
+    motd: &str,
+    online: i32,
+    max: i32,
+    protocol: i32,
+    version_name: &str,
+) -> Vec<u8> {
+    if variant.uses_v1_4_response_format() {
+        build_legacy_kick_v1_4(protocol, version_name, motd, online, max)
+    } else {
+        build_legacy_kick_beta(motd, online, max)
+    }
+}
+
+/// The description can be either a plain string `"text"` or a JSON object `{"text": "..."}`.
+fn extract_motd_text(description: &serde_json::Value) -> String {
+    match description {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Object(obj) => obj
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        _ => String::new(),
     }
 }
 
