@@ -10,7 +10,7 @@
     <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" />
   </div>
   
-  <h4>Compatible with <i>almost</i> all vanilla, plugin, and modded Minecraft servers</h4>
+  <h4>Compatible with all vanilla, plugin, and modded Minecraft servers</h4>
 </div>
 
 > [!WARNING]
