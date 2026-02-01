@@ -203,7 +203,7 @@ impl ApiProvider for CraftyClient {
 
     async fn start_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
         let url = format!(
-            "{}/api/v2/servers/{}/actions/start_server",
+            "{}/api/v2/servers/{}/action/start_server",
             self.base_url, server_id
         );
         let response = self
@@ -235,7 +235,7 @@ impl ApiProvider for CraftyClient {
 
     async fn stop_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
         let url = format!(
-            "{}/api/v2/servers/{}/actions/stop_server",
+            "{}/api/v2/servers/{}/action/stop_server",
             self.base_url, server_id
         );
         let response = self
@@ -266,7 +266,7 @@ impl ApiProvider for CraftyClient {
 
     async fn restart_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
         let url = format!(
-            "{}/api/v2/servers/{}/actions/restart_server",
+            "{}/api/v2/servers/{}/action/restart_server",
             self.base_url, server_id
         );
         let response = self
