@@ -2,6 +2,7 @@ pub mod client_only;
 pub mod offline;
 pub mod passthrough;
 pub mod status;
+pub mod zerocopy;
 
 use crate::core::actors::server::MinecraftServer;
 use crate::core::{actors::client::MinecraftClient, event::MinecraftCommunication};
@@ -13,6 +14,7 @@ use passthrough::{PassthroughMessage, PassthroughMode};
 use status::StatusMessage;
 use std::io;
 use tracing::{debug, instrument};
+pub use zerocopy::{ZeroCopyMessage, spawn_splice_task};
 
 pub type ClientHandler<T> = Box<dyn ClientProxyModeHandler<MinecraftCommunication<T>>>;
 pub type ServerHandler<T> = Box<dyn ServerProxyModeHandler<MinecraftCommunication<T>>>;

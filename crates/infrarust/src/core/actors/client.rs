@@ -3,6 +3,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{Instrument, debug, error, instrument};
 
@@ -248,5 +249,40 @@ impl MinecraftClientHandler {
     pub async fn get_peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
         self.peer_addr
             .ok_or_else(|| std::io::Error::other("No peer address available"))
+    }
+    /// This handler doesn't process any data - the splice task handles all data transfer.
+    /// It only exists to maintain registration with the supervisor for list/kick commands.
+    pub fn new_zerocopy_stub(
+        peer_addr: std::net::SocketAddr,
+        shutdown: Arc<AtomicBool>,
+        session_id: uuid::Uuid,
+    ) -> Self {
+        let (sender, mut receiver) = mpsc::channel::<SupervisorMessage>(1);
+
+        tokio::spawn(async move {
+            loop {
+                if shutdown.load(Acquire) {
+                    break;
+                }
+                tokio::select! {
+                    biased;
+                    msg = receiver.recv() => {
+                        if msg.is_none() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                }
+            }
+
+            ActorSupervisor::global()
+                .log_player_disconnect(session_id, "zerocopy_complete")
+                .await;
+        });
+
+        Self {
+            _sender: sender,
+            peer_addr: Some(peer_addr),
+        }
     }
 }

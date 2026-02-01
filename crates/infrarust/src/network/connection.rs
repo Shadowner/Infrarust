@@ -293,6 +293,57 @@ impl Connection {
     ) {
         (self.reader, self.writer)
     }
+    pub fn into_tcp_stream(self) -> io::Result<TcpStream> {
+        if !self.reader.buffer().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Buffered read data would be lost",
+            ));
+        }
+        let buf_reader = self.reader.into_inner();
+        let buf_writer = self.writer.into_inner();
+
+        if !buf_reader.buffer().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "BufReader has buffered data that would be lost",
+            ));
+        }
+        let read_half = buf_reader.into_inner();
+        let write_half = buf_writer.into_inner();
+        read_half
+            .reunite(write_half)
+            .map_err(|e| io::Error::other(e.to_string()))
+    }
+    pub async fn into_tcp_stream_async(mut self) -> io::Result<TcpStream> {
+        self.writer
+            .flush()
+            .await
+            .map_err(|e| io::Error::other(format!("Flush failed: {}", e)))?;
+        if !self.reader.buffer().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Buffered read data would be lost",
+            ));
+        }
+
+        let buf_reader = self.reader.into_inner();
+        let buf_writer = self.writer.into_inner();
+
+        if !buf_reader.buffer().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "BufReader has buffered data that would be lost",
+            ));
+        }
+
+        let read_half = buf_reader.into_inner();
+        let write_half = buf_writer.into_inner();
+
+        read_half
+            .reunite(write_half)
+            .map_err(|e| io::Error::other(e.to_string()))
+    }
 }
 
 #[derive(Debug)]
@@ -346,6 +397,14 @@ impl ServerConnection {
         PacketWriter<BufWriter<tokio::net::tcp::OwnedWriteHalf>>,
     ) {
         self.connection.into_split_raw()
+    }
+
+    pub fn into_tcp_stream(self) -> io::Result<TcpStream> {
+        self.connection.into_tcp_stream()
+    }
+
+    pub async fn into_tcp_stream_async(self) -> io::Result<TcpStream> {
+        self.connection.into_tcp_stream_async().await
     }
 
     pub async fn close(&mut self) -> PacketResult<()> {

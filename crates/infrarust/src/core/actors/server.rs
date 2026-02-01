@@ -346,4 +346,31 @@ impl MinecraftServerHandler {
     pub async fn send_message(&self, message: GatewayMessage) {
         let _ = self.sender_to_actor.send(message).await;
     }
+
+    /// This handler doesn't process any data - the splice task handles all data transfer.
+    /// It only exists to maintain registration with the supervisor.
+    pub fn new_zerocopy_stub(shutdown: Arc<AtomicBool>) -> Self {
+        let (sender, mut receiver) = mpsc::channel::<GatewayMessage>(1);
+
+        tokio::spawn(async move {
+            loop {
+                if shutdown.load(Acquire) {
+                    break;
+                }
+                tokio::select! {
+                    biased;
+                    msg = receiver.recv() => {
+                        if msg.is_none() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+                }
+            }
+        });
+
+        Self {
+            sender_to_actor: sender,
+        }
+    }
 }
