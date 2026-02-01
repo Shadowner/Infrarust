@@ -1,10 +1,7 @@
 use std::{
     io,
     net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::Ordering,
-    },
+    sync::{Arc, atomic::Ordering},
 };
 
 use infrarust_config::models::logging::LogType;
@@ -425,7 +422,6 @@ async fn read_legacy_handshake_data(conn: &mut Connection) -> io::Result<Vec<u8>
         conn.read_exact_raw(&mut str_data).await?;
         data.extend_from_slice(&str_data);
     } else {
-
         let username_bytes = read_legacy_string_bytes(conn).await?;
         data.extend_from_slice(&username_bytes);
 
@@ -481,7 +477,10 @@ async fn fetch_and_convert_to_legacy(
     generate_legacy_motd_from_packet(&status_packet, variant)
 }
 
-pub(crate) fn build_synthetic_status_request(hostname: &str, session_id: Uuid) -> io::Result<ServerRequest> {
+pub(crate) fn build_synthetic_status_request(
+    hostname: &str,
+    session_id: Uuid,
+) -> io::Result<ServerRequest> {
     let handshake = ServerBoundHandshake {
         protocol_version: VarInt(47), // 1.8 protocol (commonly supported)
         server_address: infrarust_protocol::types::ProtocolString(hostname.to_string()),
