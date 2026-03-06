@@ -38,6 +38,13 @@ use std::sync::Arc;
 use crate::core::shared_component::SharedComponent;
 use crate::server::gateway::Gateway;
 
+#[cfg(target_env = "musl")]
+use mimalloc::MiMalloc;
+
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 #[derive(Debug)]
 pub struct Infrarust {
     shared: Arc<SharedComponent>,
