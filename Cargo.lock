@@ -991,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust"
-version = "1.6.2"
+version = "1.6.3"
 dependencies = [
  "aes",
  "anyhow",
@@ -1049,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust_ban_system"
-version = "1.6.2"
+version = "1.6.3"
 dependencies = [
  "async-trait",
  "dashmap",
@@ -1064,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust_config"
-version = "1.6.2"
+version = "1.6.3"
 dependencies = [
  "async-trait",
  "bollard",
@@ -1086,11 +1086,11 @@ dependencies = [
 
 [[package]]
 name = "infrarust_motd"
-version = "1.6.2"
+version = "1.6.3"
 
 [[package]]
 name = "infrarust_protocol"
-version = "1.6.2"
+version = "1.6.3"
 dependencies = [
  "async-trait",
  "base64",
@@ -1106,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust_server_manager"
-version = "1.6.2"
+version = "1.6.3"
 dependencies = [
  "async-trait",
  "reqwest",
