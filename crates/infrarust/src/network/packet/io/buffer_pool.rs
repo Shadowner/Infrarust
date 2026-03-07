@@ -62,8 +62,14 @@ impl BufferPool {
 
         if let Some(mut buf) = buffers.pop() {
             if buf.capacity() < min_capacity {
-                buf.reserve(min_capacity - buf.capacity());
+                buf.reserve(min_capacity);
             }
+            debug_assert!(
+                buf.capacity() >= min_capacity,
+                "BufferPool: capacity {} < requested {}",
+                buf.capacity(),
+                min_capacity
+            );
             return buf;
         }
 
@@ -191,6 +197,67 @@ mod tests {
 
         let buf = pool.get_with_capacity(16384);
         assert!(buf.capacity() >= 16384);
+    }
+
+    #[test]
+    fn test_get_with_capacity_returns_sufficient_capacity() {
+        let pool = BufferPool::new();
+
+        // Put a buffer with capacity 8192 (the default)
+        let buf = BytesMut::with_capacity(8192);
+        pool.put(buf);
+
+        // Request a capacity larger than existing but less than 2x existing.
+        // This is the exact scenario that triggered the heap corruption bug:
+        // reserve(min_capacity - old_cap) was a no-op when old_cap >= min_capacity/2.
+        let result = pool.get_with_capacity(12000);
+        assert!(
+            result.capacity() >= 12000,
+            "Expected capacity >= 12000, got {}",
+            result.capacity()
+        );
+    }
+
+    #[test]
+    fn test_get_with_capacity_exact_boundary() {
+        let pool = BufferPool::new();
+
+        let buf = BytesMut::with_capacity(8192);
+        pool.put(buf);
+
+        // Request exactly the existing capacity
+        let result = pool.get_with_capacity(8192);
+        assert!(result.capacity() >= 8192);
+    }
+
+    #[test]
+    fn test_get_with_capacity_much_larger() {
+        let pool = BufferPool::new();
+
+        let buf = BytesMut::with_capacity(4096);
+        pool.put(buf);
+
+        // Request much larger than existing
+        let result = pool.get_with_capacity(65536);
+        assert!(
+            result.capacity() >= 65536,
+            "Expected capacity >= 65536, got {}",
+            result.capacity()
+        );
+    }
+
+    #[test]
+    fn test_get_with_capacity_prefers_matching_buffer() {
+        let pool = BufferPool::new();
+
+        // Put a small and a large buffer
+        pool.put(BytesMut::with_capacity(4096));
+        pool.put(BytesMut::with_capacity(16384));
+
+        // Should find the 16384 buffer directly
+        let result = pool.get_with_capacity(12000);
+        assert!(result.capacity() >= 12000);
+        assert_eq!(pool.len(), 1);
     }
 
     #[test]
