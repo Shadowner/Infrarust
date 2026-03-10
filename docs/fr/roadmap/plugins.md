@@ -1,3 +1,0 @@
-# Système de plugins
-
-## TODO

@@ -1,6 +1,0 @@
-domains:
-  - "passthrough.local"
-addresses:
-  - "172.19.0.4:25565"
-sendProxyProtocol: true
-proxyMode: passthrough
