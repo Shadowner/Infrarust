@@ -1,0 +1,54 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/infrarust-protocol",
+    "crates/infrarust-api",
+    "crates/infrarust-config",
+    "crates/infrarust-core",
+    "crates/infrarust-limbo",
+    "crates/infrarust-ban",
+    "crates/infrarust-server-manager",
+    "crates/infrarust-proxy",
+    "plugins/infrarust-plugin-auth",
+    "plugins/infrarust-plugin-antibot",
+    "plugins/infrarust-plugin-server-wake",
+    "plugins/infrarust-plugin-queue",
+    "tools/infrarust-motd",
+]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yml = "0.0.12"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+arc-swap = "1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+notify = "7"
+
+# Internal crates
+infrarust-protocol = { path = "crates/infrarust-protocol" }
+infrarust-api = { path = "crates/infrarust-api" }
+infrarust-config = { path = "crates/infrarust-config" }
+infrarust-core = { path = "crates/infrarust-core" }
+infrarust-limbo = { path = "crates/infrarust-limbo" }
+infrarust-ban = { path = "crates/infrarust-ban" }
+infrarust-server-manager = { path = "crates/infrarust-server-manager" }
+
+[workspace.package]
+version = "2.0.0-alpha.1"
+edition = "2024"
+license = "AGPL-3.0"
+repository = "https://github.com/Shadowner/Infrarust"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

@@ -1,0 +1,18 @@
+[package]
+name = "infrarust-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+watch = ["notify"]
+
+[dependencies]
+serde = { workspace = true }
+serde_yml = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+notify = { workspace = true, optional = true }

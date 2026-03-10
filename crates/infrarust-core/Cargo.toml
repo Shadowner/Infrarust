@@ -1,0 +1,18 @@
+[package]
+name = "infrarust-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+bytes = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+arc-swap = { workspace = true }
+uuid = { workspace = true }
+infrarust-protocol = { workspace = true }
+infrarust-api = { workspace = true }
+infrarust-config = { workspace = true }

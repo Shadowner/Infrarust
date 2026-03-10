@@ -1,0 +1,15 @@
+[package]
+name = "infrarust-motd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "infrarust-motd"
+path = "src/main.rs"
+
+[dependencies]
+infrarust-protocol = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }

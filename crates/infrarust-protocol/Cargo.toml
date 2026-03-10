@@ -1,0 +1,16 @@
+[package]
+name = "infrarust-protocol"
+version = "2.0.0-alpha.1"
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-only"
+description = "Minecraft protocol codec for the Infrarust proxy"
+repository = "https://github.com/Shadowner/Infrarust"
+
+[dependencies]
+thiserror = "2"
+uuid = { version = "1", features = ["v3", "v4"] }
+bytes = "1"
+
+[dev-dependencies]
+# Rien pour cette phase

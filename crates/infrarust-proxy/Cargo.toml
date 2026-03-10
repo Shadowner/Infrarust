@@ -1,0 +1,27 @@
+[package]
+name = "infrarust-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "infrarust"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+infrarust-protocol = { workspace = true }
+infrarust-api = { workspace = true }
+infrarust-config = { workspace = true }
+infrarust-core = { workspace = true }
+infrarust-limbo = { workspace = true }
+infrarust-ban = { workspace = true }
+infrarust-server-manager = { workspace = true }
+
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = "0.1"
