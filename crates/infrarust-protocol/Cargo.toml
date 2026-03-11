@@ -7,10 +7,18 @@ license = "AGPL-3.0-only"
 description = "Minecraft protocol codec for the Infrarust proxy"
 repository = "https://github.com/Shadowner/Infrarust"
 
+[features]
+default = []
+libdeflater = ["dep:libdeflater"]
+
 [dependencies]
 thiserror = "2"
 uuid = { version = "1", features = ["v3", "v4"] }
 bytes = "1"
+flate2 = "1"
+libdeflater = { version = "1", optional = true }
+aes = "0.8"
+cfb8 = "0.8"
+cipher = "0.4"
 
 [dev-dependencies]
-# Rien pour cette phase
