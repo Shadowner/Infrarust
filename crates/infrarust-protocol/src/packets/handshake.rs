@@ -48,10 +48,7 @@ impl Packet for SHandshake {
         let next_state_id = r.read_var_int()?;
 
         let next_state = ConnectionState::from_handshake_id(next_state_id.0).ok_or_else(|| {
-            ProtocolError::invalid(format!(
-                "invalid handshake next_state: {}",
-                next_state_id.0
-            ))
+            ProtocolError::invalid(format!("invalid handshake next_state: {}", next_state_id.0))
         })?;
 
         Ok(Self {
@@ -62,7 +59,11 @@ impl Packet for SHandshake {
         })
     }
 
-    fn encode(&self, mut w: &mut (impl std::io::Write + ?Sized), _version: ProtocolVersion) -> ProtocolResult<()> {
+    fn encode(
+        &self,
+        mut w: &mut (impl std::io::Write + ?Sized),
+        _version: ProtocolVersion,
+    ) -> ProtocolResult<()> {
         w.write_var_int(&self.protocol_version)?;
         w.write_string(&self.server_address)?;
         w.write_u16_be(self.server_port)?;

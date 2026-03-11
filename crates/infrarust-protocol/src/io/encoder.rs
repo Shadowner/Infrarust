@@ -2,11 +2,11 @@
 
 use bytes::{BufMut, BytesMut};
 
+use crate::MAX_PACKET_SIZE;
 use crate::codec::VarInt;
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::io::compression::{self, ZlibCompressor};
 use crate::io::frame::PacketFrame;
-use crate::MAX_PACKET_SIZE;
 
 /// Writes a VarInt into a BytesMut buffer.
 fn write_varint(buf: &mut BytesMut, varint: VarInt) -> ProtocolResult<()> {
@@ -89,8 +89,7 @@ impl PacketEncoder {
                     // Compress: [VarInt(packet_len)] [VarInt(uncompressed_len)] [compressed(VarInt(packet_id) + payload)]
 
                     // Build uncompressed data
-                    let mut uncompressed_data =
-                        Vec::with_capacity(packet_id_size + payload.len());
+                    let mut uncompressed_data = Vec::with_capacity(packet_id_size + payload.len());
                     packet_id_varint.encode(&mut uncompressed_data)?;
                     uncompressed_data.extend_from_slice(payload);
 
@@ -100,8 +99,7 @@ impl PacketEncoder {
 
                     let compressed_size = self.compress_buf.len();
                     let data_len_varint = VarInt(uncompressed_len as i32);
-                    let packet_len =
-                        data_len_varint.written_size() + compressed_size;
+                    let packet_len = data_len_varint.written_size() + compressed_size;
                     if packet_len > MAX_PACKET_SIZE {
                         return Err(ProtocolError::too_large(MAX_PACKET_SIZE, packet_len));
                     }
@@ -283,11 +281,7 @@ mod tests {
     #[test]
     fn test_encode_decode_round_trip_no_compression() {
         let mut encoder = PacketEncoder::new();
-        let payloads: &[(i32, &[u8])] = &[
-            (0x00, b"hello"),
-            (0x7F, b""),
-            (0x01, &[0xFF; 100]),
-        ];
+        let payloads: &[(i32, &[u8])] = &[(0x00, b"hello"), (0x7F, b""), (0x01, &[0xFF; 100])];
 
         for &(id, payload) in payloads {
             encoder.append_raw(id, payload).unwrap();

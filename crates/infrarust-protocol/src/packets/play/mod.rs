@@ -1,5 +1,5 @@
-pub(crate) mod common;
 pub mod chat;
+pub(crate) mod common;
 pub mod disconnect;
 pub mod join_game;
 pub mod keepalive;

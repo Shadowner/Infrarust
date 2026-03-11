@@ -259,8 +259,8 @@ pub(crate) fn read_string_bounded_from_reader(
     }
     let mut buf = vec![0u8; byte_len];
     reader.read_exact(&mut buf)?;
-    let s = String::from_utf8(buf)
-        .map_err(|_| ProtocolError::invalid("invalid UTF-8 in string"))?;
+    let s =
+        String::from_utf8(buf).map_err(|_| ProtocolError::invalid("invalid UTF-8 in string"))?;
     if s.chars().count() > max_chars {
         return Err(ProtocolError::too_large(max_chars, s.chars().count()));
     }
@@ -350,7 +350,10 @@ mod tests {
             val.encode(&mut buf).unwrap();
             let mut slice: &[u8] = &buf;
             let decoded = f32::decode(&mut slice).unwrap();
-            assert!((val - decoded).abs() < f32::EPSILON, "f32 round-trip for {val}");
+            assert!(
+                (val - decoded).abs() < f32::EPSILON,
+                "f32 round-trip for {val}"
+            );
         }
     }
 
@@ -361,7 +364,10 @@ mod tests {
             val.encode(&mut buf).unwrap();
             let mut slice: &[u8] = &buf;
             let decoded = f64::decode(&mut slice).unwrap();
-            assert!((val - decoded).abs() < f64::EPSILON, "f64 round-trip for {val}");
+            assert!(
+                (val - decoded).abs() < f64::EPSILON,
+                "f64 round-trip for {val}"
+            );
         }
     }
 
@@ -527,7 +533,8 @@ mod tests {
 
         let mut buf = Vec::new();
         buf.write_var_int(&VarInt(300)).unwrap();
-        buf.write_var_long(&crate::codec::varlong::VarLong(i64::MAX)).unwrap();
+        buf.write_var_long(&crate::codec::varlong::VarLong(i64::MAX))
+            .unwrap();
 
         let mut reader = Cursor::new(buf);
         assert_eq!(reader.read_var_int().unwrap(), VarInt(300));

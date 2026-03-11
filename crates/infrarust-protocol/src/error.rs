@@ -91,9 +91,7 @@ mod tests {
 
     #[test]
     fn test_incomplete_is_not_fatal() {
-        let err = ProtocolError::Incomplete {
-            context: "varint",
-        };
+        let err = ProtocolError::Incomplete { context: "varint" };
         assert!(!err.is_fatal());
         assert!(err.is_incomplete());
     }
@@ -120,8 +118,7 @@ mod tests {
 
     #[test]
     fn test_io_connection_reset_is_fatal() {
-        let err =
-            ProtocolError::Io(io::Error::new(io::ErrorKind::ConnectionReset, "reset"));
+        let err = ProtocolError::Io(io::Error::new(io::ErrorKind::ConnectionReset, "reset"));
         assert!(err.is_fatal());
     }
 
@@ -135,9 +132,7 @@ mod tests {
 
     #[test]
     fn test_display_messages_are_descriptive() {
-        let incomplete = ProtocolError::Incomplete {
-            context: "varint",
-        };
+        let incomplete = ProtocolError::Incomplete { context: "varint" };
         assert!(
             format!("{incomplete}").contains("varint"),
             "incomplete display should contain context"

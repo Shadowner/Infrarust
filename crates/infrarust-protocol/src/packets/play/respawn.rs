@@ -87,10 +87,7 @@ impl Packet for CRespawn {
 }
 
 /// Decodes Respawn for 1.20.2+ (follows Velocity's RespawnPacket pattern).
-fn decode_1_20_2_up(
-    r: &mut &[u8],
-    version: ProtocolVersion,
-) -> ProtocolResult<CRespawn> {
+fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<CRespawn> {
     // Dimension: VarInt for 1.20.5+, String for 1.20.2–1.20.3
     let dimension = if version.no_less_than(ProtocolVersion::V1_20_5) {
         r.read_var_int()?.0

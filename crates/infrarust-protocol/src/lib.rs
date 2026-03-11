@@ -23,8 +23,8 @@ pub use crypto::{DecryptCipher, EncryptCipher};
 pub use error::{ProtocolError, ProtocolResult};
 pub use io::{PacketDecoder, PacketEncoder, PacketFrame};
 pub use legacy::{
-    detect as detect_legacy, parse_legacy_ping, LegacyDetection, LegacyPingRequest,
-    LegacyPingResponse, LegacyPingVariant,
+    LegacyDetection, LegacyPingRequest, LegacyPingResponse, LegacyPingVariant,
+    detect as detect_legacy, parse_legacy_ping,
 };
 pub use packets::{
     CConfigDisconnect, CConfigPluginMessage, CDisconnect, CEncryptionRequest, CFinishConfig,
@@ -35,7 +35,7 @@ pub use packets::{
     SKnownPacks, SLoginAcknowledged, SLoginPluginResponse, SLoginStart, SPingRequest,
     SPluginMessage, SStatusRequest,
 };
-pub use registry::{build_default_registry, DecodedPacket, PacketRegistry};
+pub use registry::{DecodedPacket, PacketRegistry, build_default_registry};
 pub use version::{ConnectionState, Direction, ProtocolVersion};
 
 /// Maximum size of a single Minecraft packet (2 MiB).

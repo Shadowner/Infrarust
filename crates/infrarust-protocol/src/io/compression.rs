@@ -77,9 +77,9 @@ impl ZlibDecompressor for Flate2Decompressor {
         output.clear();
         output.resize(expected_size, 0);
         let mut decoder = flate2::read::ZlibDecoder::new(input);
-        decoder.read_exact(output).map_err(|_| {
-            ProtocolError::invalid("failed to decompress packet data")
-        })?;
+        decoder
+            .read_exact(output)
+            .map_err(|_| ProtocolError::invalid("failed to decompress packet data"))?;
         // Verify no extra data (align with libdeflater behavior)
         let mut extra = [0u8; 1];
         if decoder.read(&mut extra).unwrap_or(0) > 0 {
@@ -101,8 +101,7 @@ pub(crate) struct LibdeflateCompressor {
 #[cfg(feature = "libdeflater")]
 impl LibdeflateCompressor {
     pub fn new(level: u32) -> Self {
-        let lvl = libdeflater::CompressionLvl::new(level as i32)
-            .unwrap_or_default();
+        let lvl = libdeflater::CompressionLvl::new(level as i32).unwrap_or_default();
         Self {
             compressor: libdeflater::Compressor::new(lvl),
         }

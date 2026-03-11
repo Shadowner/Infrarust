@@ -402,7 +402,11 @@ mod tests {
         ];
         for (a, b) in pairs {
             assert_eq!(a.no_less_than(b), a >= b, "no_less_than({a:?}, {b:?})");
-            assert_eq!(a.no_greater_than(b), a <= b, "no_greater_than({a:?}, {b:?})");
+            assert_eq!(
+                a.no_greater_than(b),
+                a <= b,
+                "no_greater_than({a:?}, {b:?})"
+            );
             assert_eq!(a.less_than(b), a < b, "less_than({a:?}, {b:?})");
             assert_eq!(a.greater_than(b), a > b, "greater_than({a:?}, {b:?})");
         }
@@ -438,9 +442,7 @@ mod tests {
 
     #[test]
     fn test_supported_is_sorted() {
-        assert!(ProtocolVersion::SUPPORTED
-            .windows(2)
-            .all(|w| w[0] < w[1]));
+        assert!(ProtocolVersion::SUPPORTED.windows(2).all(|w| w[0] < w[1]));
     }
 
     #[test]
@@ -483,7 +485,10 @@ mod tests {
     fn test_from_handshake_id_transfer() {
         // Transfer (intent 3, added in 1.20.5) maps to Login for now,
         // since the subsequent packet flow is identical.
-        assert_eq!(ConnectionState::from_handshake_id(3), Some(ConnectionState::Login));
+        assert_eq!(
+            ConnectionState::from_handshake_id(3),
+            Some(ConnectionState::Login)
+        );
     }
 
     #[test]

@@ -6,9 +6,7 @@
 
 pub mod ping;
 
-pub use ping::{
-    parse_legacy_ping, LegacyPingRequest, LegacyPingResponse, LegacyPingVariant,
-};
+pub use ping::{LegacyPingRequest, LegacyPingResponse, LegacyPingVariant, parse_legacy_ping};
 
 /// Type of connection detected by the first byte of the TCP stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

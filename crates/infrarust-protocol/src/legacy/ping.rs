@@ -46,15 +46,14 @@ fn encode_utf16be(s: &str) -> Vec<u8> {
 
 /// Decodes UTF-16 Big-Endian bytes into a Rust string.
 fn decode_utf16be(data: &[u8]) -> ProtocolResult<String> {
-    if data.len() % 2 != 0 {
+    if !data.len().is_multiple_of(2) {
         return Err(ProtocolError::invalid("UTF-16BE data has odd length"));
     }
     let code_units: Vec<u16> = data
         .chunks_exact(2)
         .map(|c| u16::from_be_bytes([c[0], c[1]]))
         .collect();
-    String::from_utf16(&code_units)
-        .map_err(|_| ProtocolError::invalid("invalid UTF-16BE string"))
+    String::from_utf16(&code_units).map_err(|_| ProtocolError::invalid("invalid UTF-16BE string"))
 }
 
 /// Builds a legacy kick packet from a payload string.
@@ -78,10 +77,7 @@ impl LegacyPingResponse {
     ///
     /// Format: `"MOTD§online§max"` — no protocol version or game version.
     pub fn build_beta_response(&self) -> ProtocolResult<Vec<u8>> {
-        let payload = format!(
-            "{}§{}§{}",
-            self.motd, self.online_players, self.max_players
-        );
+        let payload = format!("{}§{}§{}", self.motd, self.online_players, self.max_players);
         build_kick_packet(&payload)
     }
 
@@ -172,9 +168,7 @@ fn parse_v1_6_ping(data: &[u8]) -> ProtocolResult<LegacyPingRequest> {
 
     // Hostname length (u16 BE, in UTF-16 code units)
     if pos + 2 > data.len() {
-        return Err(ProtocolError::invalid(
-            "V1_6 ping: missing hostname length",
-        ));
+        return Err(ProtocolError::invalid("V1_6 ping: missing hostname length"));
     }
     let hostname_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
     pos += 2;
@@ -204,8 +198,8 @@ fn parse_v1_6_ping(data: &[u8]) -> ProtocolResult<LegacyPingRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::legacy::detect;
     use crate::legacy::LegacyDetection;
+    use crate::legacy::detect;
 
     #[test]
     fn test_detect_legacy_ping() {
@@ -361,7 +355,10 @@ mod tests {
         let string_len = u16::from_be_bytes([bytes[1], bytes[2]]) as usize;
         let string_data = &bytes[3..3 + string_len * 2];
         let decoded = decode_utf16be(string_data).unwrap();
-        assert_eq!(decoded, "\u{00a7}1\0127\01.21.4\0A Minecraft Server\03\0100");
+        assert_eq!(
+            decoded,
+            "\u{00a7}1\0127\01.21.4\0A Minecraft Server\03\0100"
+        );
     }
 
     #[test]

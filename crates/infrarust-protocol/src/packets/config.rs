@@ -415,7 +415,8 @@ mod tests {
         assert_eq!(c_buf, s_buf);
 
         // Cross-decode
-        let decoded_s = SKnownPacks::decode(&mut c_buf.as_slice(), ProtocolVersion::V1_20_5).unwrap();
+        let decoded_s =
+            SKnownPacks::decode(&mut c_buf.as_slice(), ProtocolVersion::V1_20_5).unwrap();
         assert_eq!(decoded_s.packs, packs);
     }
 

@@ -1,6 +1,6 @@
 pub mod builder;
 
-pub use builder::{build_default_registry, PacketMapping, PacketRegistration};
+pub use builder::{PacketMapping, PacketRegistration, build_default_registry};
 
 use crate::error::ProtocolResult;
 use crate::io::PacketFrame;
@@ -139,15 +139,15 @@ impl PacketRegistry {
     ) -> ProtocolResult<DecodedPacket> {
         let key = (state, direction, version);
 
-        if let Some(ver_reg) = self.registries.get(&key) {
-            if let Some(decoder) = ver_reg.id_to_decoder.get(&frame.id) {
-                let mut payload = frame.payload.as_ref();
-                let packet = decoder(&mut payload, version)?;
-                return Ok(DecodedPacket::Typed {
-                    id: frame.id,
-                    packet,
-                });
-            }
+        if let Some(ver_reg) = self.registries.get(&key)
+            && let Some(decoder) = ver_reg.id_to_decoder.get(&frame.id)
+        {
+            let mut payload = frame.payload.as_ref();
+            let packet = decoder(&mut payload, version)?;
+            return Ok(DecodedPacket::Typed {
+                id: frame.id,
+                packet,
+            });
         }
 
         Ok(DecodedPacket::Opaque {
@@ -196,7 +196,10 @@ impl PacketRegistry {
         type_id: TypeId,
         packet_id: i32,
     ) {
-        let ver_reg = self.registries.entry(key).or_insert_with(VersionRegistry::new);
+        let ver_reg = self
+            .registries
+            .entry(key)
+            .or_insert_with(VersionRegistry::new);
         ver_reg.type_to_id.insert(type_id, packet_id);
     }
 
@@ -208,7 +211,10 @@ impl PacketRegistry {
         packet_id: i32,
         decoder: DecoderFn,
     ) {
-        let ver_reg = self.registries.entry(key).or_insert_with(VersionRegistry::new);
+        let ver_reg = self
+            .registries
+            .entry(key)
+            .or_insert_with(VersionRegistry::new);
         ver_reg.id_to_decoder.insert(packet_id, decoder);
     }
 }
@@ -302,12 +308,9 @@ mod tests {
     fn test_decode_unknown_version_returns_opaque() {
         // Register only for V1_9+, then try V1_8-style lookup on a fresh registry
         let mut registry = PacketRegistry::new();
-        PacketRegistration::<SHandshake>::new(
-            ConnectionState::Handshake,
-            Direction::Serverbound,
-        )
-        .map(0x00, ProtocolVersion::V1_9, false)
-        .register(&mut registry);
+        PacketRegistration::<SHandshake>::new(ConnectionState::Handshake, Direction::Serverbound)
+            .map(0x00, ProtocolVersion::V1_9, false)
+            .register(&mut registry);
 
         let payload = make_handshake_payload(47, "mc.example.com", 25565, 2);
         let frame = PacketFrame {
@@ -331,13 +334,10 @@ mod tests {
     #[test]
     fn test_versioned_mapping_different_ids() {
         let mut registry = PacketRegistry::new();
-        PacketRegistration::<SHandshake>::new(
-            ConnectionState::Handshake,
-            Direction::Serverbound,
-        )
-        .map(0x14, ProtocolVersion::V1_7_2, false)
-        .map(0x01, ProtocolVersion::V1_9, false)
-        .register(&mut registry);
+        PacketRegistration::<SHandshake>::new(ConnectionState::Handshake, Direction::Serverbound)
+            .map(0x14, ProtocolVersion::V1_7_2, false)
+            .map(0x01, ProtocolVersion::V1_9, false)
+            .register(&mut registry);
 
         // V1_8 should have id 0x14
         assert_eq!(
@@ -363,12 +363,9 @@ mod tests {
     #[test]
     fn test_version_range_filling() {
         let mut registry = PacketRegistry::new();
-        PacketRegistration::<SHandshake>::new(
-            ConnectionState::Handshake,
-            Direction::Serverbound,
-        )
-        .map(0x00, ProtocolVersion::V1_7_2, false)
-        .register(&mut registry);
+        PacketRegistration::<SHandshake>::new(ConnectionState::Handshake, Direction::Serverbound)
+            .map(0x00, ProtocolVersion::V1_7_2, false)
+            .register(&mut registry);
 
         // Should be found for all supported versions
         for version in [
@@ -393,13 +390,10 @@ mod tests {
     #[test]
     fn test_mapping_range_stops_at_next_mapping() {
         let mut registry = PacketRegistry::new();
-        PacketRegistration::<SHandshake>::new(
-            ConnectionState::Handshake,
-            Direction::Serverbound,
-        )
-        .map(0x14, ProtocolVersion::V1_7_2, false)
-        .map(0x01, ProtocolVersion::V1_9, false)
-        .register(&mut registry);
+        PacketRegistration::<SHandshake>::new(ConnectionState::Handshake, Direction::Serverbound)
+            .map(0x14, ProtocolVersion::V1_7_2, false)
+            .map(0x01, ProtocolVersion::V1_9, false)
+            .register(&mut registry);
 
         // V1_8 should have 0x14 (first mapping)
         assert_eq!(
@@ -433,12 +427,14 @@ mod tests {
     #[test]
     fn test_explicit_to_range() {
         let mut registry = PacketRegistry::new();
-        PacketRegistration::<SHandshake>::new(
-            ConnectionState::Handshake,
-            Direction::Serverbound,
-        )
-        .map_range(0x0F, ProtocolVersion::V1_17, ProtocolVersion::V1_18_2, false)
-        .register(&mut registry);
+        PacketRegistration::<SHandshake>::new(ConnectionState::Handshake, Direction::Serverbound)
+            .map_range(
+                0x0F,
+                ProtocolVersion::V1_17,
+                ProtocolVersion::V1_18_2,
+                false,
+            )
+            .register(&mut registry);
 
         // V1_17 → found
         assert_eq!(
@@ -474,12 +470,9 @@ mod tests {
     #[test]
     fn test_encode_only_not_in_decoder() {
         let mut registry = PacketRegistry::new();
-        PacketRegistration::<SHandshake>::new(
-            ConnectionState::Handshake,
-            Direction::Serverbound,
-        )
-        .map(0x10, ProtocolVersion::V1_7_2, true)
-        .register(&mut registry);
+        PacketRegistration::<SHandshake>::new(ConnectionState::Handshake, Direction::Serverbound)
+            .map(0x10, ProtocolVersion::V1_7_2, true)
+            .register(&mut registry);
 
         // has_decoder should be false (encode_only)
         assert!(!registry.has_decoder(
@@ -577,35 +570,57 @@ mod tests {
         let v = ProtocolVersion::V1_21;
 
         // Clientbound
-        assert!(registry
-            .get_packet_id::<CKeepAlive>(ConnectionState::Play, Direction::Clientbound, v)
-            .is_some());
-        assert!(registry
-            .get_packet_id::<CDisconnect>(ConnectionState::Play, Direction::Clientbound, v)
-            .is_some());
-        assert!(registry
-            .get_packet_id::<CJoinGame>(ConnectionState::Play, Direction::Clientbound, v)
-            .is_some());
-        assert!(registry
-            .get_packet_id::<CRespawn>(ConnectionState::Play, Direction::Clientbound, v)
-            .is_some());
-        assert!(registry
-            .get_packet_id::<CPluginMessage>(ConnectionState::Play, Direction::Clientbound, v)
-            .is_some());
-        assert!(registry
-            .get_packet_id::<CSystemChatMessage>(ConnectionState::Play, Direction::Clientbound, v)
-            .is_some());
-        assert!(registry
-            .get_packet_id::<CTransfer>(ConnectionState::Play, Direction::Clientbound, v)
-            .is_some());
+        assert!(
+            registry
+                .get_packet_id::<CKeepAlive>(ConnectionState::Play, Direction::Clientbound, v)
+                .is_some()
+        );
+        assert!(
+            registry
+                .get_packet_id::<CDisconnect>(ConnectionState::Play, Direction::Clientbound, v)
+                .is_some()
+        );
+        assert!(
+            registry
+                .get_packet_id::<CJoinGame>(ConnectionState::Play, Direction::Clientbound, v)
+                .is_some()
+        );
+        assert!(
+            registry
+                .get_packet_id::<CRespawn>(ConnectionState::Play, Direction::Clientbound, v)
+                .is_some()
+        );
+        assert!(
+            registry
+                .get_packet_id::<CPluginMessage>(ConnectionState::Play, Direction::Clientbound, v)
+                .is_some()
+        );
+        assert!(
+            registry
+                .get_packet_id::<CSystemChatMessage>(
+                    ConnectionState::Play,
+                    Direction::Clientbound,
+                    v
+                )
+                .is_some()
+        );
+        assert!(
+            registry
+                .get_packet_id::<CTransfer>(ConnectionState::Play, Direction::Clientbound, v)
+                .is_some()
+        );
 
         // Serverbound
-        assert!(registry
-            .get_packet_id::<SKeepAlive>(ConnectionState::Play, Direction::Serverbound, v)
-            .is_some());
-        assert!(registry
-            .get_packet_id::<SPluginMessage>(ConnectionState::Play, Direction::Serverbound, v)
-            .is_some());
+        assert!(
+            registry
+                .get_packet_id::<SKeepAlive>(ConnectionState::Play, Direction::Serverbound, v)
+                .is_some()
+        );
+        assert!(
+            registry
+                .get_packet_id::<SPluginMessage>(ConnectionState::Play, Direction::Serverbound, v)
+                .is_some()
+        );
     }
 
     #[test]
@@ -693,7 +708,10 @@ mod tests {
         // Decode with PacketDecoder
         let mut decoder = PacketDecoder::new();
         decoder.queue_bytes(&wire_bytes);
-        let frame = decoder.try_next_frame().unwrap().expect("should decode a frame");
+        let frame = decoder
+            .try_next_frame()
+            .unwrap()
+            .expect("should decode a frame");
         assert_eq!(frame.id, packet_id);
 
         // Decode via registry

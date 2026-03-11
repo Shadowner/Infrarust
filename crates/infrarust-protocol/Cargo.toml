@@ -2,7 +2,7 @@
 name = "infrarust-protocol"
 version = "2.0.0-alpha.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.94"
 license = "AGPL-3.0-only"
 description = "Minecraft protocol codec for the Infrarust proxy"
 repository = "https://github.com/Shadowner/Infrarust"
@@ -12,13 +12,13 @@ default = []
 libdeflater = ["dep:libdeflater"]
 
 [dependencies]
-thiserror = "2"
-uuid = { version = "1", features = ["v3", "v4"] }
-bytes = "1"
-flate2 = "1"
-libdeflater = { version = "1", optional = true }
-aes = "0.8"
-cfb8 = "0.8"
-cipher = "0.4"
+thiserror = "2.0.18"
+uuid = { version = "1.22.0", features = ["v3", "v4"] }
+bytes = "1.11.1"
+flate2 = "1.1.9"
+libdeflater = { version = "1.25.2", optional = true }
+aes = "0.8.4"
+cfb8 = "0.8.1"
+cipher = "0.4.4"
 
 [dev-dependencies]

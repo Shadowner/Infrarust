@@ -58,8 +58,11 @@ impl Packet for CDisconnect {
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         if version.less_than(ProtocolVersion::V1_20_3) {
-            let json = std::str::from_utf8(&self.reason)
-                .map_err(|_| crate::error::ProtocolError::invalid("CDisconnect reason is not valid UTF-8 for JSON version"))?;
+            let json = std::str::from_utf8(&self.reason).map_err(|_| {
+                crate::error::ProtocolError::invalid(
+                    "CDisconnect reason is not valid UTF-8 for JSON version",
+                )
+            })?;
             w.write_string(json)?;
         } else {
             w.write_all(&self.reason)?;

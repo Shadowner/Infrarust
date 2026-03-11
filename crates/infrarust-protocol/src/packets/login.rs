@@ -21,7 +21,10 @@ fn read_byte_array_short(r: &mut &[u8]) -> ProtocolResult<Vec<u8>> {
     r.read_byte_array_bounded(len)
 }
 
-fn write_byte_array_short(mut w: &mut (impl std::io::Write + ?Sized), data: &[u8]) -> ProtocolResult<()> {
+fn write_byte_array_short(
+    mut w: &mut (impl std::io::Write + ?Sized),
+    data: &[u8],
+) -> ProtocolResult<()> {
     w.write_i16_be(data.len() as i16)?;
     w.write_all(data)?;
     Ok(())
@@ -39,7 +42,10 @@ fn read_uuid_int_array(r: &mut &[u8]) -> ProtocolResult<uuid::Uuid> {
     Ok(uuid::Uuid::from_u128(((msb as u128) << 64) | (lsb as u128)))
 }
 
-fn write_uuid_int_array(mut w: &mut (impl std::io::Write + ?Sized), uuid: &uuid::Uuid) -> ProtocolResult<()> {
+fn write_uuid_int_array(
+    mut w: &mut (impl std::io::Write + ?Sized),
+    uuid: &uuid::Uuid,
+) -> ProtocolResult<()> {
     let val = uuid.as_u128();
     let msb = (val >> 64) as u64;
     let lsb = val as u64;
@@ -410,14 +416,12 @@ impl Packet for CLoginSuccess {
             read_uuid_int_array(r)?
         } else if version.no_less_than(ProtocolVersion::V1_7_6) {
             let s = r.read_string_bounded(36)?;
-            uuid::Uuid::parse_str(&s).map_err(|e| {
-                ProtocolError::invalid(format!("invalid UUID string: {e}"))
-            })?
+            uuid::Uuid::parse_str(&s)
+                .map_err(|e| ProtocolError::invalid(format!("invalid UUID string: {e}")))?
         } else {
             let s = r.read_string_bounded(32)?;
-            uuid::Uuid::parse_str(&s).map_err(|e| {
-                ProtocolError::invalid(format!("invalid undashed UUID: {e}"))
-            })?
+            uuid::Uuid::parse_str(&s)
+                .map_err(|e| ProtocolError::invalid(format!("invalid undashed UUID: {e}")))?
         };
 
         let username = r.read_string_bounded(16)?;

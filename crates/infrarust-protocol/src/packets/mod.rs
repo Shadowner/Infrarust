@@ -6,8 +6,8 @@ pub mod play;
 pub mod status;
 
 pub use config::{
-    CConfigDisconnect, CConfigPluginMessage, CFinishConfig, CKnownPacks, CRegistryData,
-    KnownPack, SAcknowledgeFinishConfig, SConfigPluginMessage, SKnownPacks,
+    CConfigDisconnect, CConfigPluginMessage, CFinishConfig, CKnownPacks, CRegistryData, KnownPack,
+    SAcknowledgeFinishConfig, SConfigPluginMessage, SKnownPacks,
 };
 pub use handshake::SHandshake;
 pub use login::{
@@ -83,7 +83,8 @@ pub trait Packet: Send + Sync + std::fmt::Debug + 'static {
     ///
     /// Writes the bytes WITHOUT the packet_id (added by the encoder/registry).
     /// `version` is the protocol version of the destination connection.
-    fn encode(&self, w: &mut (impl Write + ?Sized), version: ProtocolVersion) -> ProtocolResult<()>;
+    fn encode(&self, w: &mut (impl Write + ?Sized), version: ProtocolVersion)
+    -> ProtocolResult<()>;
 }
 
 /// Object-safe version of the [`Packet`] trait.
@@ -96,11 +97,7 @@ pub trait ErasedPacket: Send + Sync + std::fmt::Debug {
     fn packet_name(&self) -> &'static str;
 
     /// Encodes the payload into the given writer.
-    fn encode_payload(
-        &self,
-        w: &mut dyn Write,
-        version: ProtocolVersion,
-    ) -> ProtocolResult<()>;
+    fn encode_payload(&self, w: &mut dyn Write, version: ProtocolVersion) -> ProtocolResult<()>;
 
     /// Allows downcasting to the concrete type.
     fn as_any(&self) -> &dyn Any;
@@ -115,11 +112,7 @@ impl<P: Packet + Any> ErasedPacket for P {
         P::NAME
     }
 
-    fn encode_payload(
-        &self,
-        w: &mut dyn Write,
-        version: ProtocolVersion,
-    ) -> ProtocolResult<()> {
+    fn encode_payload(&self, w: &mut dyn Write, version: ProtocolVersion) -> ProtocolResult<()> {
         self.encode(w, version)
     }
 

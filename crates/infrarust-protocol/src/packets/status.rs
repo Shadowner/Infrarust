@@ -164,7 +164,10 @@ mod tests {
         pkt.encode(&mut buf, ProtocolVersion::V1_21).unwrap();
         assert!(buf.is_empty());
         let decoded = SStatusRequest::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
-        assert_eq!(std::mem::size_of_val(&decoded), std::mem::size_of::<SStatusRequest>());
+        assert_eq!(
+            std::mem::size_of_val(&decoded),
+            std::mem::size_of::<SStatusRequest>()
+        );
     }
 
     #[test]
@@ -210,34 +213,50 @@ mod tests {
         let registry = build_default_registry();
 
         // All status packets should be registered for V1_7_2+
-        for version in [ProtocolVersion::V1_7_2, ProtocolVersion::V1_8, ProtocolVersion::V1_21] {
-            assert!(registry.has_decoder(
-                ConnectionState::Status,
-                Direction::Serverbound,
-                version,
-                0x00,
-            ), "SStatusRequest should be registered for {version}");
+        for version in [
+            ProtocolVersion::V1_7_2,
+            ProtocolVersion::V1_8,
+            ProtocolVersion::V1_21,
+        ] {
+            assert!(
+                registry.has_decoder(
+                    ConnectionState::Status,
+                    Direction::Serverbound,
+                    version,
+                    0x00,
+                ),
+                "SStatusRequest should be registered for {version}"
+            );
 
-            assert!(registry.has_decoder(
-                ConnectionState::Status,
-                Direction::Clientbound,
-                version,
-                0x00,
-            ), "CStatusResponse should be registered for {version}");
+            assert!(
+                registry.has_decoder(
+                    ConnectionState::Status,
+                    Direction::Clientbound,
+                    version,
+                    0x00,
+                ),
+                "CStatusResponse should be registered for {version}"
+            );
 
-            assert!(registry.has_decoder(
-                ConnectionState::Status,
-                Direction::Serverbound,
-                version,
-                0x01,
-            ), "SPingRequest should be registered for {version}");
+            assert!(
+                registry.has_decoder(
+                    ConnectionState::Status,
+                    Direction::Serverbound,
+                    version,
+                    0x01,
+                ),
+                "SPingRequest should be registered for {version}"
+            );
 
-            assert!(registry.has_decoder(
-                ConnectionState::Status,
-                Direction::Clientbound,
-                version,
-                0x01,
-            ), "CPingResponse should be registered for {version}");
+            assert!(
+                registry.has_decoder(
+                    ConnectionState::Status,
+                    Direction::Clientbound,
+                    version,
+                    0x01,
+                ),
+                "CPingResponse should be registered for {version}"
+            );
         }
     }
 }

@@ -46,9 +46,7 @@ impl VarLong {
         let mut val = 0i64;
         for i in 0..Self::MAX_SIZE {
             if r.is_empty() {
-                return Err(ProtocolError::Incomplete {
-                    context: "VarLong",
-                });
+                return Err(ProtocolError::Incomplete { context: "VarLong" });
             }
             let byte = r[0];
             *r = &r[1..];

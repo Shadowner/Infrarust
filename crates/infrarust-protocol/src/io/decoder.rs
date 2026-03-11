@@ -2,8 +2,8 @@
 
 use bytes::{Buf, BytesMut};
 
-use crate::codec::varint::VarIntDecodeStatus;
 use crate::codec::VarInt;
+use crate::codec::varint::VarIntDecodeStatus;
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::io::compression::{self, ZlibDecompressor};
 use crate::io::frame::PacketFrame;
