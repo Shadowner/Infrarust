@@ -156,22 +156,8 @@ fn decode_1_20_2_up(
     let is_debug = r.read_bool()?;
     let is_flat = r.read_bool()?;
 
-    // Death location (optional)
-    let (death_dimension, death_position) = if r.read_bool()? {
-        let dim = r.read_string()?;
-        let pos = r.read_i64_be()?;
-        (Some(dim), Some(pos))
-    } else {
-        (None, None)
-    };
-
-    let portal_cooldown = r.read_var_int()?.0;
-
-    let sea_level = if version.no_less_than(ProtocolVersion::V1_21_2) {
-        r.read_var_int()?.0
-    } else {
-        63
-    };
+    let (death_dimension, death_position) = super::common::decode_death_location(r)?;
+    let (portal_cooldown, sea_level) = super::common::decode_world_info(r, version)?;
 
     let enforces_secure_chat = if version.no_less_than(ProtocolVersion::V1_20_5) {
         r.read_bool()?
@@ -241,20 +227,8 @@ fn encode_1_20_2_up(
     w.write_bool(pkt.is_debug)?;
     w.write_bool(pkt.is_flat)?;
 
-    // Death location
-    if let (Some(dim), Some(pos)) = (&pkt.death_dimension, pkt.death_position) {
-        w.write_bool(true)?;
-        w.write_string(dim)?;
-        w.write_i64_be(pos)?;
-    } else {
-        w.write_bool(false)?;
-    }
-
-    w.write_var_int(&VarInt(pkt.portal_cooldown))?;
-
-    if version.no_less_than(ProtocolVersion::V1_21_2) {
-        w.write_var_int(&VarInt(pkt.sea_level))?;
-    }
+    super::common::encode_death_location(w, &pkt.death_dimension, pkt.death_position)?;
+    super::common::encode_world_info(w, pkt.portal_cooldown, pkt.sea_level, version)?;
 
     if version.no_less_than(ProtocolVersion::V1_20_5) {
         w.write_bool(pkt.enforces_secure_chat)?;

@@ -20,6 +20,28 @@ fn write_varint(buf: &mut BytesMut, varint: VarInt) -> ProtocolResult<()> {
 ///
 /// Encryption is **not** handled here — it is applied downstream by the
 /// transport layer after `take()`.
+///
+/// # Example
+///
+/// ```
+/// use infrarust_protocol::{PacketEncoder, PacketDecoder, PacketFrame};
+/// use bytes::Bytes;
+///
+/// let mut encoder = PacketEncoder::new();
+/// let mut decoder = PacketDecoder::new();
+///
+/// // Encode a frame
+/// let frame = PacketFrame { id: 0x42, payload: Bytes::from_static(b"hello") };
+/// encoder.append_frame(&frame).unwrap();
+///
+/// // Feed encoded bytes into the decoder
+/// decoder.queue_bytes(&encoder.take());
+///
+/// // Decode back
+/// let decoded = decoder.try_next_frame().unwrap().unwrap();
+/// assert_eq!(decoded.id, 0x42);
+/// assert_eq!(&decoded.payload[..], b"hello");
+/// ```
 pub struct PacketEncoder {
     buf: BytesMut,
     compression_threshold: Option<i32>,

@@ -136,10 +136,10 @@ impl PacketDecoder {
 
                     let mut cursor: &[u8] = &self.decompress_buf;
                     let packet_id = VarInt::decode(&mut cursor)?;
-                    let remaining = cursor.to_vec();
+                    let payload = bytes::Bytes::copy_from_slice(cursor);
                     Ok(Some(PacketFrame {
                         id: packet_id.0,
-                        payload: bytes::Bytes::from(remaining),
+                        payload,
                     }))
                 }
             }

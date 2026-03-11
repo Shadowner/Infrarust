@@ -143,7 +143,11 @@ pub(crate) fn encode_string(s: &str, w: &mut impl Write) -> ProtocolResult<()> {
 
 /// Decodes a VarInt-prefixed UTF-8 string with a character limit.
 pub(crate) fn decode_string(r: &mut &[u8], max_chars: usize) -> ProtocolResult<String> {
-    let byte_len = VarInt::decode(r)?.0 as usize;
+    let raw_len = VarInt::decode(r)?.0;
+    if raw_len < 0 {
+        return Err(ProtocolError::invalid("negative length"));
+    }
+    let byte_len = raw_len as usize;
     // A single UTF-8 char is at most 4 bytes
     let max_bytes = max_chars * 4;
     if byte_len > max_bytes {
@@ -191,7 +195,11 @@ impl Encode for Vec<u8> {
 
 impl Decode<'_> for Vec<u8> {
     fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
-        let len = VarInt::decode(r)?.0 as usize;
+        let raw_len = VarInt::decode(r)?.0;
+        if raw_len < 0 {
+            return Err(ProtocolError::invalid("negative length"));
+        }
+        let len = raw_len as usize;
         if r.len() < len {
             return Err(ProtocolError::Incomplete {
                 context: "byte array",
@@ -240,17 +248,18 @@ pub(crate) fn read_string_bounded_from_reader(
     reader: &mut impl Read,
     max_chars: usize,
 ) -> ProtocolResult<String> {
-    let byte_len = read_varint_from_reader(reader)?.0 as usize;
+    let raw_len = read_varint_from_reader(reader)?.0;
+    if raw_len < 0 {
+        return Err(ProtocolError::invalid("negative length"));
+    }
+    let byte_len = raw_len as usize;
     let max_bytes = max_chars * 4;
     if byte_len > max_bytes {
         return Err(ProtocolError::too_large(max_bytes, byte_len));
     }
-    let mut buf = vec![0u8; cautious_capacity(byte_len)];
-    if byte_len > buf.len() {
-        buf.resize(byte_len, 0);
-    }
-    reader.read_exact(&mut buf[..byte_len])?;
-    let s = String::from_utf8(buf[..byte_len].to_vec())
+    let mut buf = vec![0u8; byte_len];
+    reader.read_exact(&mut buf)?;
+    let s = String::from_utf8(buf)
         .map_err(|_| ProtocolError::invalid("invalid UTF-8 in string"))?;
     if s.chars().count() > max_chars {
         return Err(ProtocolError::too_large(max_chars, s.chars().count()));
@@ -526,5 +535,65 @@ mod tests {
             reader.read_var_long().unwrap(),
             crate::codec::varlong::VarLong(i64::MAX)
         );
+    }
+
+    #[test]
+    fn test_string_decode_invalid_utf8() {
+        let data = {
+            let mut buf = Vec::new();
+            VarInt(2).encode(&mut buf).unwrap();
+            buf.extend_from_slice(&[0xFF, 0xFE]); // invalid UTF-8
+            buf
+        };
+        let mut cursor = data.as_slice();
+        let result = String::decode(&mut cursor);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn test_string_decode_negative_length() {
+        let mut buf = Vec::new();
+        VarInt(-1).encode(&mut buf).unwrap();
+        let mut cursor = buf.as_slice();
+        let result = String::decode(&mut cursor);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn test_byte_array_decode_negative_length() {
+        let mut buf = Vec::new();
+        VarInt(-1).encode(&mut buf).unwrap();
+        let mut cursor = buf.as_slice();
+        let result = Vec::<u8>::decode(&mut cursor);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn test_read_byte_array_negative_length() {
+        use crate::codec::McBufReadExt;
+        use std::io::Cursor;
+
+        let mut buf = Vec::new();
+        VarInt(-5).encode(&mut buf).unwrap();
+        let mut reader = Cursor::new(buf);
+        let result = reader.read_byte_array(1024);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn test_read_string_negative_length() {
+        use crate::codec::McBufReadExt;
+        use std::io::Cursor;
+
+        let mut buf = Vec::new();
+        VarInt(-1).encode(&mut buf).unwrap();
+        let mut reader = Cursor::new(buf);
+        let result = reader.read_string();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ProtocolError::Invalid { .. }));
     }
 }

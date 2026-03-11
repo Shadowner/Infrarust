@@ -137,6 +137,33 @@ mod tests {
     }
 
     #[test]
+    fn test_varlong_decode_incomplete() {
+        // A VarLong with continuation bit set but no more bytes
+        let mut buf: &[u8] = &[0x80, 0x80];
+        let err = VarLong::decode(&mut buf).unwrap_err();
+        assert!(err.is_incomplete());
+    }
+
+    #[test]
+    fn test_varlong_round_trip_zero() {
+        let vl = VarLong(0);
+        let mut buf = Vec::new();
+        vl.encode(&mut buf).unwrap();
+        assert_eq!(buf, [0x00]);
+        let mut slice: &[u8] = &buf;
+        assert_eq!(VarLong::decode(&mut slice).unwrap(), vl);
+    }
+
+    #[test]
+    fn test_varlong_max_is_not_11_bytes() {
+        // VarLong(i64::MIN) should use exactly 10 bytes (maximum)
+        let mut buf = Vec::new();
+        VarLong(i64::MIN).encode(&mut buf).unwrap();
+        assert_eq!(buf.len(), 10);
+        assert_eq!(VarLong(i64::MIN).written_size(), 10);
+    }
+
+    #[test]
     fn test_from_i64_conversion() {
         assert_eq!(VarLong::from(42i64).0, 42);
         assert_eq!(i64::from(VarLong(42)), 42);

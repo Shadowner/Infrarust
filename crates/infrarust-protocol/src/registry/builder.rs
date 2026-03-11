@@ -25,7 +25,12 @@ pub struct PacketMapping {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use infrarust_protocol::{PacketRegistry, SHandshake};
+/// use infrarust_protocol::registry::builder::PacketRegistration;
+/// use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+///
+/// let mut registry = PacketRegistry::new();
 /// PacketRegistration::<SHandshake>::new(
 ///     ConnectionState::Handshake,
 ///     Direction::Serverbound,

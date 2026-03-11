@@ -85,6 +85,51 @@ impl PacketRegistry {
     ///
     /// Returns an error only if a decoder is found but fails
     /// (corrupted data). Missing decoder is NOT an error.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use infrarust_protocol::{
+    ///     build_default_registry, DecodedPacket, PacketFrame, Packet,
+    ///     SHandshake, VarInt,
+    /// };
+    /// use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+    /// use bytes::Bytes;
+    ///
+    /// let registry = build_default_registry();
+    ///
+    /// // Encode a handshake payload
+    /// let handshake = SHandshake {
+    ///     protocol_version: VarInt(769),
+    ///     server_address: "localhost".to_string(),
+    ///     server_port: 25565,
+    ///     next_state: ConnectionState::Login,
+    /// };
+    /// let mut payload = Vec::new();
+    /// handshake.encode(&mut payload, ProtocolVersion::V1_21).unwrap();
+    ///
+    /// // Wrap in a frame (packet id 0x00 for handshake)
+    /// let frame = PacketFrame { id: 0x00, payload: Bytes::from(payload) };
+    ///
+    /// // Decode via the registry → Typed
+    /// let decoded = registry.decode_frame(
+    ///     &frame,
+    ///     ConnectionState::Handshake,
+    ///     Direction::Serverbound,
+    ///     ProtocolVersion::V1_21,
+    /// ).unwrap();
+    /// assert!(matches!(decoded, DecodedPacket::Typed { .. }));
+    ///
+    /// // Unknown packet id → Opaque
+    /// let unknown = PacketFrame { id: 0xFF, payload: Bytes::new() };
+    /// let decoded = registry.decode_frame(
+    ///     &unknown,
+    ///     ConnectionState::Handshake,
+    ///     Direction::Serverbound,
+    ///     ProtocolVersion::V1_21,
+    /// ).unwrap();
+    /// assert!(matches!(decoded, DecodedPacket::Opaque { .. }));
+    /// ```
     pub fn decode_frame(
         &self,
         frame: &PacketFrame,

@@ -1,3 +1,4 @@
+pub(crate) mod common;
 pub mod chat;
 pub mod disconnect;
 pub mod join_game;

@@ -80,6 +80,13 @@ impl ZlibDecompressor for Flate2Decompressor {
         decoder.read_exact(output).map_err(|_| {
             ProtocolError::invalid("failed to decompress packet data")
         })?;
+        // Verify no extra data (align with libdeflater behavior)
+        let mut extra = [0u8; 1];
+        if decoder.read(&mut extra).unwrap_or(0) > 0 {
+            return Err(ProtocolError::invalid(
+                "decompressed data larger than expected size",
+            ));
+        }
         Ok(())
     }
 }
@@ -219,5 +226,25 @@ mod tests {
             .unwrap();
 
         assert_eq!(decompressed, original);
+    }
+
+    #[test]
+    fn test_decompress_corrupted_data() {
+        let mut decompressor = new_decompressor();
+        // Valid zlib header followed by corrupted data
+        let corrupted = vec![0x78, 0x9C, 0xFF, 0xFF, 0xFF];
+        let mut output = Vec::new();
+        let result = decompressor.decompress(&corrupted, &mut output, 100);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decompress_empty_input() {
+        let mut decompressor = new_decompressor();
+        let mut output = Vec::new();
+        // Empty input with expected_size=0 should not panic
+        let result = decompressor.decompress(&[], &mut output, 0);
+        // Either Ok (0 bytes) or Err — the important thing is no panic
+        let _ = result;
     }
 }

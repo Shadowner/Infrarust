@@ -178,6 +178,22 @@ mod tests {
     }
 
     #[test]
+    fn test_wrong_key_cannot_decrypt() {
+        let key1 = [0x11u8; 16];
+        let key2 = [0x22u8; 16];
+        let original = b"secret message here";
+        let mut data = original.to_vec();
+
+        let mut enc = EncryptCipher::new(&key1);
+        enc.encrypt(&mut data);
+
+        let mut dec = DecryptCipher::new(&key2);
+        dec.decrypt(&mut data);
+
+        assert_ne!(&data[..], &original[..]);
+    }
+
+    #[test]
     fn test_two_independent_ciphers() {
         let key = [0x33u8; 16];
         let original = b"independent test";

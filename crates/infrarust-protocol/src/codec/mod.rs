@@ -236,7 +236,11 @@ impl<R: Read> McBufReadExt for R {
     }
 
     fn read_byte_array(&mut self, max_len: usize) -> ProtocolResult<Vec<u8>> {
-        let len = self.read_var_int()?.0 as usize;
+        let raw_len = self.read_var_int()?.0;
+        if raw_len < 0 {
+            return Err(crate::error::ProtocolError::invalid("negative length"));
+        }
+        let len = raw_len as usize;
         if len > max_len {
             return Err(crate::error::ProtocolError::too_large(max_len, len));
         }
@@ -244,13 +248,9 @@ impl<R: Read> McBufReadExt for R {
     }
 
     fn read_byte_array_bounded(&mut self, count: usize) -> ProtocolResult<Vec<u8>> {
-        let cap = count.min(1024 * 1024);
-        let mut buf = vec![0u8; cap];
-        if count > cap {
-            buf.resize(count, 0);
-        }
-        self.read_exact(&mut buf[..count])?;
-        Ok(buf[..count].to_vec())
+        let mut buf = vec![0u8; count];
+        self.read_exact(&mut buf)?;
+        Ok(buf)
     }
 
     fn read_remaining(&mut self) -> ProtocolResult<Vec<u8>> {

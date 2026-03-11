@@ -38,6 +38,29 @@ use std::io::Write;
 ///
 /// - **Single trait** (unlike Pumpkin's ClientPacket/ServerPacket) —
 ///   a proxy reads AND writes in both directions.
+///
+/// # Example
+///
+/// ```
+/// use infrarust_protocol::{Packet, SHandshake, VarInt};
+/// use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
+///
+/// let handshake = SHandshake {
+///     protocol_version: VarInt(769),
+///     server_address: "mc.example.com".to_string(),
+///     server_port: 25565,
+///     next_state: ConnectionState::Login,
+/// };
+///
+/// // Encode
+/// let mut buf = Vec::new();
+/// handshake.encode(&mut buf, ProtocolVersion::V1_21).unwrap();
+///
+/// // Decode
+/// let decoded = SHandshake::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
+/// assert_eq!(decoded.server_address, "mc.example.com");
+/// assert_eq!(decoded.server_port, 25565);
+/// ```
 pub trait Packet: Send + Sync + std::fmt::Debug + 'static {
     /// Human-readable name for logging and debug.
     const NAME: &'static str;

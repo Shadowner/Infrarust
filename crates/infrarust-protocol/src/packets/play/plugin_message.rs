@@ -3,6 +3,24 @@ use crate::error::ProtocolResult;
 use crate::packets::Packet;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
+/// Shared decode for plugin message packets.
+fn decode_plugin_message(r: &mut &[u8]) -> ProtocolResult<(String, Vec<u8>)> {
+    let channel = r.read_string()?;
+    let data = r.read_remaining()?;
+    Ok((channel, data))
+}
+
+/// Shared encode for plugin message packets.
+fn encode_plugin_message(
+    mut w: &mut (impl std::io::Write + ?Sized),
+    channel: &str,
+    data: &[u8],
+) -> ProtocolResult<()> {
+    w.write_string(channel)?;
+    w.write_all(data)?;
+    Ok(())
+}
+
 // ── CPluginMessage ─────────────────────────────────────────────────
 
 /// Plugin message packet (Clientbound).
@@ -29,19 +47,16 @@ impl Packet for CPluginMessage {
     }
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
-        let channel = r.read_string()?;
-        let data = r.read_remaining()?;
+        let (channel, data) = decode_plugin_message(r)?;
         Ok(Self { channel, data })
     }
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
-        w.write_string(&self.channel)?;
-        w.write_all(&self.data)?;
-        Ok(())
+        encode_plugin_message(w, &self.channel, &self.data)
     }
 }
 
@@ -68,19 +83,16 @@ impl Packet for SPluginMessage {
     }
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
-        let channel = r.read_string()?;
-        let data = r.read_remaining()?;
+        let (channel, data) = decode_plugin_message(r)?;
         Ok(Self { channel, data })
     }
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
-        w.write_string(&self.channel)?;
-        w.write_all(&self.data)?;
-        Ok(())
+        encode_plugin_message(w, &self.channel, &self.data)
     }
 }
 
