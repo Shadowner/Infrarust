@@ -1,6 +1,6 @@
 use bytes::Bytes;
 
-/// An unparsed packet — just a packet_id and raw bytes.
+/// An unparsed packet — just a `packet_id` and raw bytes.
 ///
 /// This is the default type for all packets that the proxy doesn't know
 /// or doesn't need to inspect. The payload is forwarded as-is to the
@@ -11,6 +11,6 @@ use bytes::Bytes;
 pub struct OpaquePacket {
     /// The packet ID.
     pub id: i32,
-    /// The raw payload (after the packet_id in the frame).
+    /// The raw payload (after the `packet_id` in the frame).
     pub payload: Bytes,
 }

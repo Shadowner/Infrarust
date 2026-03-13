@@ -14,9 +14,9 @@ use super::session::VirtualBackendSession;
 ///
 /// # Implementation Notes
 ///
-/// - `on_session_start` **must** send a JoinGame packet and initial world
+/// - `on_session_start` **must** send a `JoinGame` packet and initial world
 ///   data, or the client will disconnect.
-/// - `on_packet_received` **must** handle KeepAlive packets.
+/// - `on_packet_received` **must** handle `KeepAlive` packets.
 ///
 /// # Example
 /// ```ignore
@@ -48,13 +48,13 @@ pub trait VirtualBackendHandler: Send + Sync {
 
     /// Called when a player session starts on this virtual backend.
     ///
-    /// The handler **must** send the initial game state (JoinGame packet,
+    /// The handler **must** send the initial game state (`JoinGame` packet,
     /// spawn position, initial chunks) or the client will disconnect.
     fn on_session_start(&self, session: &dyn VirtualBackendSession) -> BoxFuture<'_, ()>;
 
     /// Called when a packet is received from the client.
     ///
-    /// The handler **must** respond to KeepAlive packets to keep
+    /// The handler **must** respond to `KeepAlive` packets to keep
     /// the connection alive.
     fn on_packet_received(
         &self,

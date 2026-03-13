@@ -1,7 +1,7 @@
 //! Socket configuration via `socket2`.
 //!
 //! Provides functions to create and configure TCP sockets with
-//! SO_REUSEADDR, SO_REUSEPORT, TCP_NODELAY, and TCP keepalive
+//! `SO_REUSEADDR`, `SO_REUSEPORT`, `TCP_NODELAY`, and TCP keepalive
 //! before converting them to tokio types.
 
 use std::net::SocketAddr;
@@ -15,7 +15,7 @@ use crate::error::TransportError;
 
 /// Creates and configures a listener socket.
 ///
-/// Sets SO_REUSEADDR (always), SO_REUSEPORT (Linux, if requested),
+/// Sets `SO_REUSEADDR` (always), `SO_REUSEPORT` (Linux, if requested),
 /// nonblocking mode, then binds and listens with a backlog of 1024.
 pub fn configure_listener_socket(
     addr: SocketAddr,
@@ -59,7 +59,7 @@ pub fn configure_listener_socket(
     Ok(socket)
 }
 
-/// Configures a stream socket with TCP_NODELAY and keepalive.
+/// Configures a stream socket with `TCP_NODELAY` and keepalive.
 pub fn configure_stream_socket(
     socket: &Socket,
     keepalive: &KeepaliveConfig,

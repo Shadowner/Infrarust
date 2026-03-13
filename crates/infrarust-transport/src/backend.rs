@@ -28,7 +28,7 @@ pub struct BackendConnector {
 
 impl BackendConnector {
     /// Creates a new backend connector.
-    pub fn new(default_timeout: Duration, keepalive: KeepaliveConfig) -> Self {
+    pub const fn new(default_timeout: Duration, keepalive: KeepaliveConfig) -> Self {
         Self {
             default_timeout,
             keepalive,
@@ -38,7 +38,7 @@ impl BackendConnector {
     /// Connects to one of the given backend addresses.
     ///
     /// Tries each address in order. On the first successful connection,
-    /// configures the socket (TCP_NODELAY, keepalive) and optionally
+    /// configures the socket (`TCP_NODELAY`, keepalive) and optionally
     /// sends a proxy protocol v2 header.
     ///
     /// Returns `AllBackendsFailed` if no address could be reached.
@@ -71,7 +71,7 @@ impl BackendConnector {
             }
         }
 
-        Err(last_error.unwrap_or(TransportError::AllBackendsFailed {
+        Err(last_error.unwrap_or_else(|| TransportError::AllBackendsFailed {
             server_id: server_id.to_string(),
         }))
     }
@@ -139,22 +139,22 @@ impl BackendConnection {
     }
 
     /// Returns a reference to the TCP stream.
-    pub fn stream(&self) -> &TcpStream {
+    pub const fn stream(&self) -> &TcpStream {
         &self.stream
     }
 
     /// Returns a mutable reference to the TCP stream.
-    pub fn stream_mut(&mut self) -> &mut TcpStream {
+    pub const fn stream_mut(&mut self) -> &mut TcpStream {
         &mut self.stream
     }
 
     /// Returns the remote backend address.
-    pub fn remote_addr(&self) -> SocketAddr {
+    pub const fn remote_addr(&self) -> SocketAddr {
         self.remote_addr
     }
 
     /// Returns the time when the connection was established.
-    pub fn connected_at(&self) -> Instant {
+    pub const fn connected_at(&self) -> Instant {
         self.connected_at
     }
 }

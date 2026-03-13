@@ -22,7 +22,8 @@ pub struct RawPacket {
 
 impl RawPacket {
     /// Creates a new `RawPacket` with the given ID and data.
-    pub fn new(packet_id: i32, data: bytes::Bytes) -> Self {
+    #[must_use]
+    pub const fn new(packet_id: i32, data: bytes::Bytes) -> Self {
         Self { packet_id, data }
     }
 }

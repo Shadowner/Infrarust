@@ -1,12 +1,12 @@
 //! Zlib compression abstraction with compile-time backend selection.
 //!
-//! By default, uses `flate2` (pure Rust via miniz_oxide). With the `libdeflater`
+//! By default, uses `flate2` (pure Rust via `miniz_oxide`). With the `libdeflater`
 //! feature flag, switches to `libdeflate` for 2-3x better performance.
 
 use crate::error::{ProtocolError, ProtocolResult};
 
 /// Compresses data in zlib format.
-pub(crate) trait ZlibCompressor {
+pub trait ZlibCompressor {
     /// Compresses `input` into `output` (zlib format).
     ///
     /// `output` is cleared then filled with compressed data.
@@ -14,11 +14,11 @@ pub(crate) trait ZlibCompressor {
 }
 
 /// Decompresses data in zlib format.
-pub(crate) trait ZlibDecompressor {
+pub trait ZlibDecompressor {
     /// Decompresses `input` (zlib) into `output`.
     ///
     /// `expected_size` is the known decompressed size (from the protocol's
-    /// data_len VarInt). `output` is cleared then filled.
+    /// `data_len` `VarInt`). `output` is cleared then filled.
     fn decompress(
         &mut self,
         input: &[u8],
@@ -30,13 +30,13 @@ pub(crate) trait ZlibDecompressor {
 // --- flate2 backend (always available) ---
 
 #[cfg_attr(feature = "libdeflater", allow(dead_code))]
-pub(crate) struct Flate2Compressor {
+pub struct Flate2Compressor {
     level: flate2::Compression,
 }
 
 #[cfg_attr(feature = "libdeflater", allow(dead_code))]
 impl Flate2Compressor {
-    pub fn new(level: u32) -> Self {
+    pub const fn new(level: u32) -> Self {
         Self {
             level: flate2::Compression::new(level),
         }
@@ -56,11 +56,11 @@ impl ZlibCompressor for Flate2Compressor {
 }
 
 #[cfg_attr(feature = "libdeflater", allow(dead_code))]
-pub(crate) struct Flate2Decompressor;
+pub struct Flate2Decompressor;
 
 #[cfg_attr(feature = "libdeflater", allow(dead_code))]
 impl Flate2Decompressor {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -94,13 +94,14 @@ impl ZlibDecompressor for Flate2Decompressor {
 // --- libdeflater backend (behind feature flag) ---
 
 #[cfg(feature = "libdeflater")]
-pub(crate) struct LibdeflateCompressor {
+pub struct LibdeflateCompressor {
     compressor: libdeflater::Compressor,
 }
 
 #[cfg(feature = "libdeflater")]
 impl LibdeflateCompressor {
     pub fn new(level: u32) -> Self {
+        #[allow(clippy::cast_possible_wrap)] // Compression level values are small positive integers
         let lvl = libdeflater::CompressionLvl::new(level as i32).unwrap_or_default();
         Self {
             compressor: libdeflater::Compressor::new(lvl),
@@ -124,7 +125,7 @@ impl ZlibCompressor for LibdeflateCompressor {
 }
 
 #[cfg(feature = "libdeflater")]
-pub(crate) struct LibdeflateDecompressor {
+pub struct LibdeflateDecompressor {
     decompressor: libdeflater::Decompressor,
 }
 
@@ -163,7 +164,7 @@ impl ZlibDecompressor for LibdeflateDecompressor {
 // --- Factory functions ---
 
 /// Creates the default compressor based on enabled features.
-pub(crate) fn new_compressor(level: u32) -> Box<dyn ZlibCompressor + Send + Sync> {
+pub fn new_compressor(level: u32) -> Box<dyn ZlibCompressor + Send + Sync> {
     #[cfg(feature = "libdeflater")]
     {
         Box::new(LibdeflateCompressor::new(level))
@@ -175,7 +176,7 @@ pub(crate) fn new_compressor(level: u32) -> Box<dyn ZlibCompressor + Send + Sync
 }
 
 /// Creates the default decompressor based on enabled features.
-pub(crate) fn new_decompressor() -> Box<dyn ZlibDecompressor + Send + Sync> {
+pub fn new_decompressor() -> Box<dyn ZlibDecompressor + Send + Sync> {
     #[cfg(feature = "libdeflater")]
     {
         Box::new(LibdeflateDecompressor::new())
@@ -215,7 +216,8 @@ mod tests {
         let mut decompressor = new_decompressor();
 
         // 64 KB of patterned data
-        let original: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+        #[allow(clippy::cast_possible_truncation)] // i % 251 always fits in u8
+        let original: Vec<u8> = (0..65536).map(|i: u32| (i % 251) as u8).collect();
         let mut compressed = Vec::new();
         compressor.compress(&original, &mut compressed).unwrap();
 

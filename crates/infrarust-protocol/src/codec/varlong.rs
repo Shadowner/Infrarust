@@ -1,4 +1,4 @@
-//! VarLong encoding and decoding for the Minecraft protocol.
+//! `VarLong` encoding and decoding for the Minecraft protocol.
 
 use std::fmt;
 use std::io::Write;
@@ -6,7 +6,7 @@ use std::io::Write;
 use crate::codec::{Decode, Encode};
 use crate::error::{ProtocolError, ProtocolResult};
 
-/// VarLong Minecraft — a signed 64-bit integer encoded in 1–10 bytes.
+/// `VarLong` Minecraft — a signed 64-bit integer encoded in 1–10 bytes.
 ///
 /// Same encoding scheme as [`super::VarInt`] but for `i64` values.
 /// Rarely a performance bottleneck, so uses a simple loop-based encoder.
@@ -14,12 +14,13 @@ use crate::error::{ProtocolError, ProtocolResult};
 pub struct VarLong(pub i64);
 
 impl VarLong {
-    /// Maximum number of bytes a VarLong can occupy on the wire.
+    /// Maximum number of bytes a `VarLong` can occupy on the wire.
     pub const MAX_SIZE: usize = 10;
 
-    /// Returns the number of bytes this VarLong will occupy when encoded.
+    /// Returns the number of bytes this `VarLong` will occupy when encoded.
     ///
     /// Computed in O(1) without loops.
+    #[allow(clippy::cast_possible_truncation)] // leading_zeros returns u32, always fits in usize
     pub const fn written_size(self) -> usize {
         match self.0 {
             0 => 1,
@@ -27,10 +28,12 @@ impl VarLong {
         }
     }
 
-    /// Encodes this VarLong using a classic byte-by-byte loop.
+    /// Encodes this `VarLong` using a classic byte-by-byte loop.
+    #[allow(clippy::cast_sign_loss)] // VarLong encoding intentionally reinterprets bits as unsigned
     pub fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         let mut val = self.0 as u64;
         loop {
+            #[allow(clippy::cast_possible_truncation)] // Masked to 7 bits, always fits in u8
             let byte = (val & 0x7F) as u8;
             val >>= 7;
             if val == 0 {
@@ -41,7 +44,7 @@ impl VarLong {
         }
     }
 
-    /// Decodes a VarLong from a byte slice, advancing the cursor.
+    /// Decodes a `VarLong` from a byte slice, advancing the cursor.
     pub fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
         let mut val = 0i64;
         for i in 0..Self::MAX_SIZE {
@@ -52,7 +55,7 @@ impl VarLong {
             *r = &r[1..];
             val |= (i64::from(byte) & 0x7F) << (i * 7);
             if byte & 0x80 == 0 {
-                return Ok(VarLong(val));
+                return Ok(Self(val));
             }
         }
         Err(ProtocolError::invalid("VarLong too large (> 10 bytes)"))
@@ -61,19 +64,19 @@ impl VarLong {
 
 impl Encode for VarLong {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
-        VarLong::encode(self, w)
+        Self::encode(self, w)
     }
 }
 
 impl Decode<'_> for VarLong {
     fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
-        VarLong::decode(r)
+        Self::decode(r)
     }
 }
 
 impl From<i64> for VarLong {
     fn from(val: i64) -> Self {
-        VarLong(val)
+        Self(val)
     }
 }
 

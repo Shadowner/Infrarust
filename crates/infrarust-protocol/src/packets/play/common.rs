@@ -1,4 +1,4 @@
-//! Shared helpers for play packets (JoinGame, Respawn).
+//! Shared helpers for play packets (`CJoinGame`, `CRespawn`).
 
 use std::io::Write;
 
@@ -7,7 +7,7 @@ use crate::error::ProtocolResult;
 use crate::version::ProtocolVersion;
 
 /// Decodes an optional death location (dimension identifier + packed position).
-pub(crate) fn decode_death_location(
+pub fn decode_death_location(
     r: &mut &[u8],
 ) -> ProtocolResult<(Option<String>, Option<i64>)> {
     if r.read_bool()? {
@@ -20,9 +20,9 @@ pub(crate) fn decode_death_location(
 }
 
 /// Encodes an optional death location (dimension identifier + packed position).
-pub(crate) fn encode_death_location(
+pub fn encode_death_location(
     mut w: &mut (impl Write + ?Sized),
-    death_dimension: &Option<String>,
+    death_dimension: Option<&str>,
     death_position: Option<i64>,
 ) -> ProtocolResult<()> {
     if let (Some(dim), Some(pos)) = (death_dimension, death_position) {
@@ -35,8 +35,8 @@ pub(crate) fn encode_death_location(
     Ok(())
 }
 
-/// Decodes portal_cooldown and sea_level (version-dependent).
-pub(crate) fn decode_world_info(
+/// Decodes portal cooldown and sea level (version-dependent).
+pub fn decode_world_info(
     r: &mut &[u8],
     version: ProtocolVersion,
 ) -> ProtocolResult<(i32, i32)> {
@@ -49,8 +49,8 @@ pub(crate) fn decode_world_info(
     Ok((portal_cooldown, sea_level))
 }
 
-/// Encodes portal_cooldown and sea_level (version-dependent).
-pub(crate) fn encode_world_info(
+/// Encodes portal cooldown and sea level (version-dependent).
+pub fn encode_world_info(
     mut w: &mut (impl Write + ?Sized),
     portal_cooldown: i32,
     sea_level: i32,

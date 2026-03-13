@@ -12,7 +12,7 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 /// Strategy: full parse for >= 1.20.2, opaque for older versions.
 #[derive(Debug, Clone)]
 pub struct CRespawn {
-    /// Dimension ID (VarInt) for 1.20.5+.
+    /// Dimension ID (`VarInt`) for 1.20.5+.
     pub dimension: i32,
     pub level_name: String,
     pub hashed_seed: i64,
@@ -36,6 +36,7 @@ impl Default for CRespawn {
             dimension: 0,
             level_name: String::new(),
             hashed_seed: 0,
+
             gamemode: 0,
             previous_gamemode: -1,
             is_debug: false,
@@ -86,7 +87,7 @@ impl Packet for CRespawn {
     }
 }
 
-/// Decodes Respawn for 1.20.2+ (follows Velocity's RespawnPacket pattern).
+/// Decodes Respawn for 1.20.2+ (follows Velocity's `RespawnPacket` pattern).
 fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<CRespawn> {
     // Dimension: VarInt for 1.20.5+, String for 1.20.2–1.20.3
     let dimension = if version.no_less_than(ProtocolVersion::V1_20_5) {
@@ -145,7 +146,7 @@ fn encode_1_20_2_up(
     w.write_bool(pkt.is_debug)?;
     w.write_bool(pkt.is_flat)?;
 
-    super::common::encode_death_location(w, &pkt.death_dimension, pkt.death_position)?;
+    super::common::encode_death_location(w, pkt.death_dimension.as_deref(), pkt.death_position)?;
     super::common::encode_world_info(w, pkt.portal_cooldown, pkt.sea_level, version)?;
 
     // data_to_keep at END for 1.20.2+
@@ -169,7 +170,7 @@ mod tests {
         let pkt = CRespawn {
             dimension: 1,
             level_name: "minecraft:the_nether".to_string(),
-            hashed_seed: 987654321,
+            hashed_seed: 987_654_321,
             gamemode: 0,
             previous_gamemode: 1,
             is_debug: false,
@@ -184,7 +185,7 @@ mod tests {
         let decoded = round_trip_version(&pkt, ProtocolVersion::V1_21);
         assert_eq!(decoded.dimension, 1);
         assert_eq!(decoded.level_name, "minecraft:the_nether");
-        assert_eq!(decoded.hashed_seed, 987654321);
+        assert_eq!(decoded.hashed_seed, 987_654_321);
         assert_eq!(decoded.gamemode, 0);
         assert_eq!(decoded.previous_gamemode, 1);
         assert_eq!(decoded.data_to_keep, 0x03);
@@ -202,7 +203,7 @@ mod tests {
             is_flat: false,
             data_to_keep: 0,
             death_dimension: Some("minecraft:overworld".to_string()),
-            death_position: Some(12345678),
+            death_position: Some(12_345_678),
             portal_cooldown: 10,
             sea_level: 63,
             raw_payload: None,
@@ -212,7 +213,7 @@ mod tests {
             decoded.death_dimension.as_deref(),
             Some("minecraft:overworld")
         );
-        assert_eq!(decoded.death_position, Some(12345678));
+        assert_eq!(decoded.death_position, Some(12_345_678));
         assert_eq!(decoded.portal_cooldown, 10);
     }
 

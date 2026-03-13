@@ -79,10 +79,7 @@ impl Middleware for LoginStartParserMiddleware {
                     )),
                 ));
             }
-            let login_start = SLoginStart::decode(
-                &mut frame.payload.as_ref(),
-                protocol_version,
-            )?;
+            let login_start = SLoginStart::decode(&mut frame.payload.as_ref(), protocol_version)?;
 
             tracing::debug!(
                 username = %login_start.name,

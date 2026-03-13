@@ -5,7 +5,7 @@ use crate::packets::Packet;
 use crate::registry::PacketRegistry;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// A mapping of a packet_id for a range of versions.
+/// A mapping of a `packet_id` for a range of versions.
 ///
 /// Equivalent of `PacketMapping` in Velocity.
 pub struct PacketMapping {
@@ -47,7 +47,7 @@ pub struct PacketRegistration<P: Packet> {
 
 impl<P: Packet + 'static> PacketRegistration<P> {
     /// Creates a new builder for a packet in a given state and direction.
-    pub fn new(state: ConnectionState, direction: Direction) -> Self {
+    pub const fn new(state: ConnectionState, direction: Direction) -> Self {
         Self {
             state,
             direction,
@@ -63,7 +63,8 @@ impl<P: Packet + 'static> PacketRegistration<P> {
     /// last mapping.
     ///
     /// `encode_only`: if true, the proxy can encode this packet but won't
-    /// decode it (no DecoderFn in id_to_decoder).
+    /// decode it (no `DecoderFn` in `id_to_decoder`).
+    #[allow(clippy::return_self_not_must_use)] // Builder pattern, chaining is the expected usage
     pub fn map(mut self, id: i32, from: ProtocolVersion, encode_only: bool) -> Self {
         self.mappings.push(PacketMapping {
             id,
@@ -77,6 +78,7 @@ impl<P: Packet + 'static> PacketRegistration<P> {
     /// Adds a mapping with an explicit end version.
     ///
     /// Useful for packets that disappear in a newer version.
+    #[allow(clippy::return_self_not_must_use)] // Builder pattern, chaining is the expected usage
     pub fn map_range(
         mut self,
         id: i32,
@@ -104,8 +106,8 @@ impl<P: Packet + 'static> PacketRegistration<P> {
     ///     else last version in SUPPORTED (if last mapping)
     ///
     /// For each version in \[from, to\]:
-    ///   - Always: insert into type_to_id (TypeId → packet_id) for encoding
-    ///   - If !encode_only: insert into id_to_decoder (packet_id → DecoderFn) for decoding
+    ///   - Always: insert into `type_to_id` (`TypeId` → `packet_id`) for encoding
+    ///   - If !`encode_only`: insert into `id_to_decoder` (`packet_id` → `DecoderFn`) for decoding
     pub fn register(self, registry: &mut PacketRegistry) {
         let last_supported = match ProtocolVersion::SUPPORTED.last() {
             Some(v) => *v,
@@ -146,7 +148,8 @@ impl<P: Packet + 'static> PacketRegistration<P> {
 
 /// Builds the default registry with all packets known to the proxy.
 ///
-/// Packet IDs sourced from Velocity's StateRegistry.java.
+/// Packet IDs sourced from Velocity's `StateRegistry.java`.
+#[allow(clippy::too_many_lines)] // Registry initialization is inherently declarative and long
 pub fn build_default_registry() -> PacketRegistry {
     let mut registry = PacketRegistry::new();
 

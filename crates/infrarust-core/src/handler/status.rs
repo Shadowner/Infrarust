@@ -22,7 +22,7 @@ pub struct StatusHandler {
 
 impl StatusHandler {
     /// Creates a new status handler.
-    pub fn new(registry: Arc<PacketRegistry>) -> Self {
+    pub const fn new(registry: Arc<PacketRegistry>) -> Self {
         Self { registry }
     }
 
@@ -82,14 +82,14 @@ impl StatusHandler {
         };
 
         // Decode and echo back as pong
-        let decoded = self.registry.decode_frame(
+        let ping_decoded = self.registry.decode_frame(
             &frame,
             ConnectionState::Status,
             Direction::Serverbound,
             protocol_version,
         )?;
 
-        let payload = match decoded {
+        let payload = match ping_decoded {
             DecodedPacket::Typed { packet, .. } => packet
                 .as_any()
                 .downcast_ref::<SPingRequest>()

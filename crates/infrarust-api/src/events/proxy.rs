@@ -17,7 +17,7 @@ pub struct ProxyPingEvent {
 
 impl ProxyPingEvent {
     /// Returns a mutable reference to the ping response.
-    pub fn response_mut(&mut self) -> &mut PingResponse {
+    pub const fn response_mut(&mut self) -> &mut PingResponse {
         &mut self.response
     }
 }

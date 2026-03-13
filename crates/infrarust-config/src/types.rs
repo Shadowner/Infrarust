@@ -38,12 +38,12 @@ pub enum ProxyMode {
 
 impl ProxyMode {
     /// `true` si le proxy parse les paquets au-delà du handshake.
-    pub fn is_intercepted(&self) -> bool {
+    pub const fn is_intercepted(&self) -> bool {
         matches!(self, Self::ClientOnly | Self::Offline | Self::Full)
     }
 
     /// `true` si le proxy fait du forward brut après le handshake.
-    pub fn is_forwarding(&self) -> bool {
+    pub const fn is_forwarding(&self) -> bool {
         matches!(self, Self::Passthrough | Self::ZeroCopy | Self::ServerOnly)
     }
 }
@@ -312,7 +312,7 @@ pub struct LocalManagerConfig {
     pub command: String,
     /// Répertoire de travail
     pub working_dir: std::path::PathBuf,
-    /// Arguments (ex: ["-Xmx4G", "-jar", "server.jar", "nogui"])
+    /// Arguments (ex: `["-Xmx4G", "-jar", "server.jar", "nogui"]`)
     #[serde(default)]
     pub args: Vec<String>,
     /// Pattern dans stdout qui indique que le serveur est prêt

@@ -104,7 +104,7 @@ impl ConnectionContext {
     ///
     /// # Panics
     /// Panics if the stream has already been taken.
-    pub fn stream(&self) -> &TcpStream {
+    pub const fn stream(&self) -> &TcpStream {
         self.stream.as_ref().expect("stream already taken")
     }
 
@@ -112,7 +112,7 @@ impl ConnectionContext {
     ///
     /// # Panics
     /// Panics if the stream has already been taken.
-    pub fn stream_mut(&mut self) -> &mut TcpStream {
+    pub const fn stream_mut(&mut self) -> &mut TcpStream {
         self.stream.as_mut().expect("stream already taken")
     }
 
@@ -120,12 +120,12 @@ impl ConnectionContext {
     ///
     /// # Panics
     /// Panics if the stream has already been taken.
-    pub fn take_stream(&mut self) -> TcpStream {
+    pub const fn take_stream(&mut self) -> TcpStream {
         self.stream.take().expect("stream already taken")
     }
 
     /// Returns `true` if the stream is still present.
-    pub fn has_stream(&self) -> bool {
+    pub const fn has_stream(&self) -> bool {
         self.stream.is_some()
     }
 
@@ -150,7 +150,7 @@ impl ConnectionContext {
     }
 
     /// Builds a `ConnectionInfo` for passing to `BackendConnector`.
-    pub fn connection_info(&self) -> ConnectionInfo {
+    pub const fn connection_info(&self) -> ConnectionInfo {
         ConnectionInfo {
             peer_addr: self.peer_addr,
             real_ip: Some(self.client_ip),

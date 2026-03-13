@@ -6,7 +6,7 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 /// Join game packet (Clientbound).
 ///
 /// Sent by the server when the player joins or is transferred. The proxy
-/// intercepts this to learn the entity_id, gamemode, and dimension info
+/// intercepts this to learn the entity ID, gamemode, and dimension info
 /// needed for server switching and Virtual Backend.
 ///
 /// This is the most complex packet in the protocol with 3 format eras.
@@ -15,6 +15,7 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 /// - **Pre-1.20.2**: Only `entity_id` is parsed; everything else is stored
 ///   in `raw_payload` for opaque forwarding.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)] // Protocol-defined fields, cannot refactor
 pub struct CJoinGame {
     pub entity_id: i32,
     pub is_hardcore: bool,
@@ -31,7 +32,7 @@ pub struct CJoinGame {
     pub hashed_seed: i64,
     pub is_debug: bool,
     pub is_flat: bool,
-    /// Dimension ID (VarInt) for 1.20.5+, or dimension key index for 1.20.2–1.20.3.
+    /// Dimension ID (as `VarInt`) for 1.20.5+, or dimension key index for 1.20.2-1.20.3.
     pub dimension: i32,
     pub portal_cooldown: i32,
     pub sea_level: i32,
@@ -40,8 +41,8 @@ pub struct CJoinGame {
     pub death_dimension: Option<String>,
     /// Death location (1.19+): packed position.
     pub death_position: Option<i64>,
-    /// Opaque payload for pre-1.20.2 versions (everything after entity_id).
-    /// When set, encode writes entity_id + raw_payload verbatim.
+    /// Opaque payload for pre-1.20.2 versions (everything after `entity_id`).
+    /// When set, encode writes entity ID + raw payload verbatim.
     pub raw_payload: Option<Vec<u8>>,
 }
 
@@ -61,6 +62,7 @@ impl Default for CJoinGame {
             level_names: Vec::new(),
             level_name: String::new(),
             hashed_seed: 0,
+
             is_debug: false,
             is_flat: false,
             dimension: 0,
@@ -117,7 +119,7 @@ impl Packet for CJoinGame {
     }
 }
 
-/// Decodes JoinGame for 1.20.2+ (Velocity's decode1202Up pattern).
+/// Decodes `JoinGame` for 1.20.2+ (Velocity's decode1202Up pattern).
 fn decode_1_20_2_up(
     r: &mut &[u8],
     entity_id: i32,
@@ -126,6 +128,7 @@ fn decode_1_20_2_up(
     let is_hardcore = r.read_bool()?;
 
     // Level names
+    #[allow(clippy::cast_sign_loss)] // Protocol level count is non-negative
     let level_count = r.read_var_int()?.0 as usize;
     let mut level_names = Vec::with_capacity(level_count.min(64));
     for _ in 0..level_count {
@@ -191,7 +194,7 @@ fn decode_1_20_2_up(
     })
 }
 
-/// Encodes JoinGame for 1.20.2+.
+/// Encodes `JoinGame` for 1.20.2+.
 fn encode_1_20_2_up(
     pkt: &CJoinGame,
     mut w: &mut (impl std::io::Write + ?Sized),
@@ -200,6 +203,7 @@ fn encode_1_20_2_up(
     w.write_bool(pkt.is_hardcore)?;
 
     // Level names
+    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Level name count bounded by protocol
     w.write_var_int(&VarInt(pkt.level_names.len() as i32))?;
     for name in &pkt.level_names {
         w.write_string(name)?;
@@ -227,7 +231,7 @@ fn encode_1_20_2_up(
     w.write_bool(pkt.is_debug)?;
     w.write_bool(pkt.is_flat)?;
 
-    super::common::encode_death_location(w, &pkt.death_dimension, pkt.death_position)?;
+    super::common::encode_death_location(w, pkt.death_dimension.as_deref(), pkt.death_position)?;
     super::common::encode_world_info(w, pkt.portal_cooldown, pkt.sea_level, version)?;
 
     if version.no_less_than(ProtocolVersion::V1_20_5) {
@@ -265,7 +269,7 @@ mod tests {
                 "minecraft:the_nether".to_string(),
             ],
             level_name: "minecraft:overworld".to_string(),
-            hashed_seed: 123456789,
+            hashed_seed: 123_456_789,
             is_debug: false,
             is_flat: false,
             dimension: 0,
@@ -287,7 +291,7 @@ mod tests {
         assert!(decoded.enable_respawn_screen);
         assert_eq!(decoded.level_names.len(), 2);
         assert_eq!(decoded.level_name, "minecraft:overworld");
-        assert_eq!(decoded.hashed_seed, 123456789);
+        assert_eq!(decoded.hashed_seed, 123_456_789);
         assert_eq!(decoded.portal_cooldown, 20);
         assert!(decoded.enforces_secure_chat);
         assert!(decoded.raw_payload.is_none());

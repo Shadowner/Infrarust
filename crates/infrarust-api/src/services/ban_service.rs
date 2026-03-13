@@ -74,10 +74,10 @@ mod tests {
         let target = BanTarget::Username("griefer".into());
         #[allow(unreachable_patterns)]
         match target {
-            BanTarget::Ip(_) => {}
-            BanTarget::Username(_) => {}
-            BanTarget::Uuid(_) => {}
-            _ => {}
+            BanTarget::Ip(_)
+            | BanTarget::Username(_)
+            | BanTarget::Uuid(_)
+            | _ => {}
         }
     }
 }

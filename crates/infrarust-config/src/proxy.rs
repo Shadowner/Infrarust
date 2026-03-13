@@ -29,7 +29,7 @@ pub struct ProxyConfig {
     #[serde(with = "humantime_serde")]
     pub connect_timeout: Duration,
 
-    /// Active la réception du proxy protocol (HAProxy v1/v2)
+    /// Active la réception du proxy protocol (`HAProxy` v1/v2)
     #[serde(default)]
     pub receive_proxy_protocol: bool,
 
@@ -61,7 +61,7 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub keepalive: KeepaliveConfig,
 
-    /// Active SO_REUSEPORT (Linux uniquement)
+    /// Active `SO_REUSEPORT` (Linux uniquement)
     #[serde(default)]
     pub so_reuseport: bool,
 }

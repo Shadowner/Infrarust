@@ -1,4 +1,4 @@
-//! VarInt encoding and decoding for the Minecraft protocol.
+//! `VarInt` encoding and decoding for the Minecraft protocol.
 
 use std::fmt;
 use std::io::Write;
@@ -6,29 +6,30 @@ use std::io::Write;
 use crate::codec::{Decode, Encode};
 use crate::error::{ProtocolError, ProtocolResult};
 
-/// VarInt Minecraft — a signed 32-bit integer encoded in 1–5 bytes.
+/// `VarInt` Minecraft — a signed 32-bit integer encoded in 1–5 bytes.
 ///
 /// Each byte uses 7 bits for the value and 1 bit (MSB) as a continuation flag.
 /// Used throughout the protocol: packet IDs, string lengths, array lengths, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VarInt(pub i32);
 
-/// Result of a partial VarInt decode attempt.
+/// Result of a partial `VarInt` decode attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VarIntDecodeStatus {
-    /// Not enough bytes to complete the VarInt.
+    /// Not enough bytes to complete the `VarInt`.
     Incomplete,
-    /// VarInt exceeds maximum size (5 bytes for VarInt, 10 for VarLong).
+    /// `VarInt` exceeds maximum size (5 bytes for `VarInt`, 10 for `VarLong`).
     TooLarge,
 }
 
 impl VarInt {
-    /// Maximum number of bytes a VarInt can occupy on the wire.
+    /// Maximum number of bytes a `VarInt` can occupy on the wire.
     pub const MAX_SIZE: usize = 5;
 
-    /// Returns the number of bytes this VarInt will occupy when encoded.
+    /// Returns the number of bytes this `VarInt` will occupy when encoded.
     ///
     /// Computed in O(1) without loops.
+    #[allow(clippy::cast_possible_truncation)] // leading_zeros returns u32, always fits in usize
     pub const fn written_size(self) -> usize {
         match self.0 {
             0 => 1,
@@ -36,25 +37,27 @@ impl VarInt {
         }
     }
 
-    /// Encodes this VarInt using a branchless algorithm (adapted from Valence).
+    /// Encodes this `VarInt` using a branchless algorithm (adapted from Valence).
     ///
     /// The algorithm spreads 7-bit groups into a u64 with gaps, computes the
     /// byte count via `leading_zeros`, inserts continuation bits in one OR, then
     /// writes the necessary bytes in little-endian order.
+    #[allow(clippy::cast_sign_loss)] // VarInt encoding intentionally reinterprets bits as unsigned
     pub fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         let x = self.0 as u64;
         let stage1 = (x & 0x7f)
             | ((x & 0x3f80) << 1)
-            | ((x & 0x1fc000) << 2)
-            | ((x & 0xfe00000) << 3)
-            | ((x & 0xf0000000) << 4);
+            | ((x & 0x001f_c000) << 2)
+            | ((x & 0x0fe0_0000) << 3)
+            | ((x & 0xf000_0000) << 4);
 
         let leading = stage1.leading_zeros();
+        #[allow(clippy::cast_possible_truncation)] // leading_zeros returns u32, always < 64
         let unused_bytes = (leading - 1) >> 3;
         let bytes_needed = (8 - unused_bytes) as usize;
 
-        let msbs = 0x8080808080808080_u64;
-        let msbmask = 0xffffffffffffffff_u64 >> (((8 - bytes_needed + 1) << 3) - 1);
+        let msbs = 0x8080_8080_8080_8080_u64;
+        let msbmask = 0xffff_ffff_ffff_ffff_u64 >> (((8 - bytes_needed + 1) << 3) - 1);
         let merged = stage1 | (msbs & msbmask);
 
         let bytes = merged.to_le_bytes();
@@ -63,10 +66,10 @@ impl VarInt {
         Ok(())
     }
 
-    /// Decodes a VarInt from a byte slice, advancing the cursor.
+    /// Decodes a `VarInt` from a byte slice, advancing the cursor.
     ///
     /// Returns `ProtocolError::Incomplete` if the buffer is too short,
-    /// or `ProtocolError::Invalid` if the VarInt exceeds 5 bytes.
+    /// or `ProtocolError::Invalid` if the `VarInt` exceeds 5 bytes.
     pub fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
         let mut val = 0i32;
         for i in 0..Self::MAX_SIZE {
@@ -77,19 +80,19 @@ impl VarInt {
             *r = &r[1..];
             val |= (i32::from(byte) & 0x7F) << (i * 7);
             if byte & 0x80 == 0 {
-                return Ok(VarInt(val));
+                return Ok(Self(val));
             }
         }
         Err(ProtocolError::invalid("VarInt too large (> 5 bytes)"))
     }
 
-    /// Attempts to decode a VarInt without consuming the buffer.
+    /// Attempts to decode a `VarInt` without consuming the buffer.
     ///
     /// Used by the packet decoder for framing — we need to try reading the
-    /// length VarInt without advancing the cursor if it's incomplete.
+    /// length `VarInt` without advancing the cursor if it's incomplete.
     ///
     /// Returns `(value, bytes_consumed)` on success.
-    pub fn decode_partial(buf: &[u8]) -> Result<(VarInt, usize), VarIntDecodeStatus> {
+    pub fn decode_partial(buf: &[u8]) -> Result<(Self, usize), VarIntDecodeStatus> {
         let mut val = 0i32;
         for i in 0..Self::MAX_SIZE {
             if i >= buf.len() {
@@ -98,7 +101,7 @@ impl VarInt {
             let byte = buf[i];
             val |= (i32::from(byte) & 0x7F) << (i * 7);
             if byte & 0x80 == 0 {
-                return Ok((VarInt(val), i + 1));
+                return Ok((Self(val), i + 1));
             }
         }
         Err(VarIntDecodeStatus::TooLarge)
@@ -107,19 +110,19 @@ impl VarInt {
 
 impl Encode for VarInt {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
-        VarInt::encode(self, w)
+        Self::encode(self, w)
     }
 }
 
 impl Decode<'_> for VarInt {
     fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
-        VarInt::decode(r)
+        Self::decode(r)
     }
 }
 
 impl From<i32> for VarInt {
     fn from(val: i32) -> Self {
-        VarInt(val)
+        Self(val)
     }
 }
 
@@ -148,7 +151,7 @@ mod tests {
         128,
         255,
         25565,
-        2097151,
+        2_097_151,
         i32::MIN,
         i32::MAX,
     ];

@@ -193,19 +193,19 @@ mod tests {
     #[test]
     fn test_ping_request_round_trip() {
         let pkt = SPingRequest {
-            payload: 1234567890123456789,
+            payload: 1_234_567_890_123_456_789,
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
-        assert_eq!(decoded.payload, 1234567890123456789);
+        assert_eq!(decoded.payload, 1_234_567_890_123_456_789);
     }
 
     #[test]
     fn test_ping_response_round_trip() {
         let pkt = CPingResponse {
-            payload: -9876543210,
+            payload: -9_876_543_210,
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
-        assert_eq!(decoded.payload, -9876543210);
+        assert_eq!(decoded.payload, -9_876_543_210);
     }
 
     #[test]

@@ -21,8 +21,8 @@ mod private {
 /// # Active vs Passive Mode
 ///
 /// Some methods only work when the player is on an **active** proxy path
-/// (ClientOnly, Offline, or Full mode). In passive modes (Passthrough,
-/// ZeroCopy), methods like `send_message` or `switch_server` will return
+/// (`ClientOnly`, Offline, or Full mode). In passive modes (Passthrough,
+/// `ZeroCopy`), methods like `send_message` or `switch_server` will return
 /// `Err(PlayerError::NotActive)`.
 ///
 /// Use [`is_active()`](Player::is_active) to check before calling these methods.

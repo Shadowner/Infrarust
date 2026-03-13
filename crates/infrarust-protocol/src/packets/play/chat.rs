@@ -6,7 +6,7 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 /// System chat message packet (Clientbound, 1.19+).
 ///
 /// Used for system messages, proxy announcements, etc.
-/// Replaces the older ChatMessage packet for non-player messages.
+/// Replaces the older chat message packet for non-player messages.
 ///
 /// Content format:
 /// - Pre-1.20.3: JSON text component (String)
@@ -74,11 +74,10 @@ impl Packet for CSystemChatMessage {
                 )
             })?;
             w.write_string(json)?;
-            w.write_bool(self.overlay)?;
         } else {
             w.write_all(&self.content)?;
-            w.write_bool(self.overlay)?;
         }
+        w.write_bool(self.overlay)?;
         Ok(())
     }
 }

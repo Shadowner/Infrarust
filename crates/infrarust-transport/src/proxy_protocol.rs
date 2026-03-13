@@ -1,4 +1,4 @@
-//! HAProxy proxy protocol v1/v2 decode and encode.
+//! `HAProxy` proxy protocol v1/v2 decode and encode.
 //!
 //! Uses the `ppp` crate for parsing and building proxy protocol headers.
 //! When proxy protocol is expected, it MUST be present — there is no
@@ -217,7 +217,7 @@ pub async fn encode_proxy_protocol_v2(
         .unwrap_or_else(|| client_info.peer_addr.ip());
     let source_port = client_info
         .real_port
-        .unwrap_or(client_info.peer_addr.port());
+        .unwrap_or_else(|| client_info.peer_addr.port());
     let source_addr = SocketAddr::new(source_ip, source_port);
     let dest_addr = client_info.local_addr;
 

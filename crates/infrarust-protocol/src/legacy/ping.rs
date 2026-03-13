@@ -16,11 +16,11 @@ pub enum LegacyPingVariant {
 pub struct LegacyPingRequest {
     /// The detected ping variant.
     pub variant: LegacyPingVariant,
-    /// Hostname extracted from the MC|PingHost plugin message (V1_6 only).
+    /// Hostname extracted from the MC|PingHost plugin message (`V1_6` only).
     pub hostname: Option<String>,
-    /// Port extracted from the plugin message (V1_6 only).
+    /// Port extracted from the plugin message (`V1_6` only).
     pub port: Option<i32>,
-    /// Legacy protocol version (V1_6 only).
+    /// Legacy protocol version (`V1_6` only).
     pub protocol_version: Option<u8>,
 }
 
@@ -41,7 +41,7 @@ pub struct LegacyPingResponse {
 
 /// Encodes a Rust string into UTF-16 Big-Endian bytes.
 fn encode_utf16be(s: &str) -> Vec<u8> {
-    s.encode_utf16().flat_map(|c| c.to_be_bytes()).collect()
+    s.encode_utf16().flat_map(u16::to_be_bytes).collect()
 }
 
 /// Decodes UTF-16 Big-Endian bytes into a Rust string.
@@ -62,11 +62,12 @@ fn decode_utf16be(data: &[u8]) -> ProtocolResult<String> {
 fn build_kick_packet(payload: &str) -> ProtocolResult<Vec<u8>> {
     let encoded = encode_utf16be(payload);
     let code_unit_count = encoded.len() / 2;
-    if code_unit_count > u16::MAX as usize {
-        return Err(ProtocolError::too_large(u16::MAX as usize, code_unit_count));
+    if code_unit_count > usize::from(u16::MAX) {
+        return Err(ProtocolError::too_large(usize::from(u16::MAX), code_unit_count));
     }
     let mut out = Vec::with_capacity(1 + 2 + encoded.len());
     out.push(0xFF);
+    #[allow(clippy::cast_possible_truncation)] // Checked above that it fits in u16
     out.extend_from_slice(&(code_unit_count as u16).to_be_bytes());
     out.extend_from_slice(&encoded);
     Ok(out)
@@ -99,7 +100,7 @@ impl LegacyPingResponse {
 
 /// Parses a legacy ping from the bytes AFTER the initial `0xFE`.
 ///
-/// Determines the variant and extracts hostname/port for V1_6.
+/// Determines the variant and extracts hostname/port for `V1_6`.
 pub fn parse_legacy_ping(data: &[u8]) -> ProtocolResult<LegacyPingRequest> {
     // Beta variant: no additional data, or first byte is not 0x01
     if data.is_empty() || data[0] != 0x01 {
@@ -125,7 +126,7 @@ pub fn parse_legacy_ping(data: &[u8]) -> ProtocolResult<LegacyPingRequest> {
     parse_v1_6_ping(&data[2..])
 }
 
-/// Parses the V1_6 MC|PingHost plugin message.
+/// Parses the `V1_6` `MC|PingHost` plugin message.
 ///
 /// `data` starts after the `0x01 0xFA` prefix.
 ///
@@ -144,7 +145,7 @@ fn parse_v1_6_ping(data: &[u8]) -> ProtocolResult<LegacyPingRequest> {
         ));
     }
 
-    let channel_len = u16::from_be_bytes([data[0], data[1]]) as usize;
+    let channel_len = usize::from(u16::from_be_bytes([data[0], data[1]]));
     let channel_bytes = channel_len * 2; // UTF-16 = 2 bytes per code unit
     let offset = 2 + channel_bytes;
 
@@ -170,7 +171,7 @@ fn parse_v1_6_ping(data: &[u8]) -> ProtocolResult<LegacyPingRequest> {
     if pos + 2 > data.len() {
         return Err(ProtocolError::invalid("V1_6 ping: missing hostname length"));
     }
-    let hostname_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+    let hostname_len = usize::from(u16::from_be_bytes([data[pos], data[pos + 1]]));
     pos += 2;
 
     // Hostname (UTF-16BE)
@@ -244,6 +245,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_possible_truncation)] // Test values are known to fit
     fn test_parse_v1_6_ping() {
         // Build a complete MC|PingHost plugin message
         let mut data = Vec::new();
@@ -252,7 +254,7 @@ mod tests {
         let channel = "MC|PingHost";
         let channel_utf16: Vec<u8> = channel
             .encode_utf16()
-            .flat_map(|c| c.to_be_bytes())
+            .flat_map(u16::to_be_bytes)
             .collect();
         let channel_code_units = channel.encode_utf16().count() as u16;
         data.extend_from_slice(&channel_code_units.to_be_bytes());
@@ -262,7 +264,7 @@ mod tests {
         let hostname = "mc.example.com";
         let hostname_utf16: Vec<u8> = hostname
             .encode_utf16()
-            .flat_map(|c| c.to_be_bytes())
+            .flat_map(u16::to_be_bytes)
             .collect();
         let hostname_code_units = hostname.encode_utf16().count() as u16;
 
@@ -288,6 +290,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_possible_truncation)] // Test values are known to fit
     fn test_parse_v1_6_hostname_extraction() {
         // Test with a different hostname containing subdomain
         let mut data = Vec::new();
@@ -295,7 +298,7 @@ mod tests {
         let channel = "MC|PingHost";
         let channel_utf16: Vec<u8> = channel
             .encode_utf16()
-            .flat_map(|c| c.to_be_bytes())
+            .flat_map(u16::to_be_bytes)
             .collect();
         data.extend_from_slice(&(channel.encode_utf16().count() as u16).to_be_bytes());
         data.extend_from_slice(&channel_utf16);
@@ -303,7 +306,7 @@ mod tests {
         let hostname = "play.my-server.net";
         let hostname_utf16: Vec<u8> = hostname
             .encode_utf16()
-            .flat_map(|c| c.to_be_bytes())
+            .flat_map(u16::to_be_bytes)
             .collect();
         let data_length = (1 + 2 + hostname_utf16.len() + 4) as u16;
         data.extend_from_slice(&data_length.to_be_bytes());
@@ -357,7 +360,7 @@ mod tests {
         let decoded = decode_utf16be(string_data).unwrap();
         assert_eq!(
             decoded,
-            "\u{00a7}1\0127\01.21.4\0A Minecraft Server\03\0100"
+            "\u{00a7}1\x00127\x001.21.4\x00A Minecraft Server\x003\x00100"
         );
     }
 

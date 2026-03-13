@@ -60,13 +60,13 @@ pub enum PluginError {
 
 impl From<String> for PluginError {
     fn from(s: String) -> Self {
-        PluginError::Custom(s)
+        Self::Custom(s)
     }
 }
 
 impl From<&str> for PluginError {
     fn from(s: &str) -> Self {
-        PluginError::Custom(s.to_owned())
+        Self::Custom(s.to_owned())
     }
 }
 
@@ -107,12 +107,12 @@ mod tests {
         let err = PlayerError::Disconnected;
         #[allow(unreachable_patterns)]
         match err {
-            PlayerError::NotActive => {}
-            PlayerError::Disconnected => {}
-            PlayerError::SendFailed(_) => {}
-            PlayerError::ServerNotFound(_) => {}
-            PlayerError::SwitchFailed(_) => {}
-            _ => {}
+            PlayerError::NotActive
+            | PlayerError::Disconnected
+            | PlayerError::SendFailed(_)
+            | PlayerError::ServerNotFound(_)
+            | PlayerError::SwitchFailed(_)
+            | _ => {}
         }
     }
 }

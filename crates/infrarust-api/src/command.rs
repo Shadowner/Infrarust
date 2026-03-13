@@ -43,8 +43,11 @@ pub struct CommandContext {
 /// ```
 pub trait CommandHandler: Send + Sync {
     /// Executes the command.
-    fn execute(&self, ctx: CommandContext, player_registry: &dyn PlayerRegistry)
-        -> BoxFuture<'_, ()>;
+    fn execute(
+        &self,
+        ctx: CommandContext,
+        player_registry: &dyn PlayerRegistry,
+    ) -> BoxFuture<'_, ()>;
 
     /// Returns tab-completion suggestions for partial arguments.
     ///

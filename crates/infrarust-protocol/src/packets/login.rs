@@ -16,11 +16,13 @@ pub struct Property {
 
 // ── Helper functions for 1.7.x short-prefixed byte arrays ───────────
 
+#[allow(clippy::cast_sign_loss)] // Protocol short-prefixed length is non-negative in practice
 fn read_byte_array_short(r: &mut &[u8]) -> ProtocolResult<Vec<u8>> {
     let len = r.read_i16_be()? as usize;
     r.read_byte_array_bounded(len)
 }
 
+#[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Protocol byte arrays fit in i16
 fn write_byte_array_short(
     mut w: &mut (impl std::io::Write + ?Sized),
     data: &[u8],
@@ -32,22 +34,27 @@ fn write_byte_array_short(
 
 // ── Helper functions for UUID int array (1.16-1.18.2) ───────────────
 
+#[allow(clippy::many_single_char_names)] // UUID components are conventionally named a/b/c/d
+#[allow(clippy::cast_sign_loss)] // Intentional bit reinterpretation for UUID int array format
 fn read_uuid_int_array(r: &mut &[u8]) -> ProtocolResult<uuid::Uuid> {
     let a = r.read_i32_be()? as u32;
     let b = r.read_i32_be()? as u32;
     let c = r.read_i32_be()? as u32;
     let d = r.read_i32_be()? as u32;
-    let msb = ((a as u64) << 32) | (b as u64);
-    let lsb = ((c as u64) << 32) | (d as u64);
-    Ok(uuid::Uuid::from_u128(((msb as u128) << 64) | (lsb as u128)))
+    let msb = (u64::from(a) << 32) | u64::from(b);
+    let lsb = (u64::from(c) << 32) | u64::from(d);
+    Ok(uuid::Uuid::from_u128((u128::from(msb) << 64) | u128::from(lsb)))
 }
 
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)] // UUID int array protocol format
 fn write_uuid_int_array(
     mut w: &mut (impl std::io::Write + ?Sized),
     uuid: &uuid::Uuid,
 ) -> ProtocolResult<()> {
     let val = uuid.as_u128();
+    #[allow(clippy::cast_possible_truncation)] // Intentionally extracting lower 64 bits
     let msb = (val >> 64) as u64;
+    #[allow(clippy::cast_possible_truncation)] // Intentionally extracting lower 64 bits
     let lsb = val as u64;
     w.write_i32_be((msb >> 32) as i32)?;
     w.write_i32_be(msb as i32)?;
@@ -107,10 +114,12 @@ impl Packet for SLoginStart {
                 key_buf.extend_from_slice(&ts.to_be_bytes());
                 // public key (byte array)
                 let pk = r.read_byte_array(512)?;
+                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
                 VarInt(pk.len() as i32).encode(&mut key_buf)?;
                 key_buf.extend_from_slice(&pk);
                 // signature (byte array)
                 let sig = r.read_byte_array(4096)?;
+                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
                 VarInt(sig.len() as i32).encode(&mut key_buf)?;
                 key_buf.extend_from_slice(&sig);
                 signature_data = Some(key_buf);
@@ -388,7 +397,7 @@ impl Packet for CSetCompression {
 /// - 1.19+: UUID as binary (16 bytes)
 ///
 /// Properties (skin/texture data) are only sent in 1.19+.
-/// strict_error_handling is only sent in 1.20.5 and 1.21.
+/// `strict_error_handling` is only sent in 1.20.5 and 1.21.
 #[derive(Debug, Clone)]
 pub struct CLoginSuccess {
     pub uuid: uuid::Uuid,
@@ -428,6 +437,7 @@ impl Packet for CLoginSuccess {
 
         // Properties: 1.19+
         let properties = if version.no_less_than(ProtocolVersion::V1_19) {
+            #[allow(clippy::cast_sign_loss)] // Protocol property count is non-negative
             let count = r.read_var_int()?.0 as usize;
             let mut props = Vec::with_capacity(count.min(64));
             for _ in 0..count {
@@ -485,6 +495,7 @@ impl Packet for CLoginSuccess {
 
         // Properties: 1.19+
         if version.no_less_than(ProtocolVersion::V1_19) {
+            #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Property count bounded by protocol
             w.write_var_int(&VarInt(self.properties.len() as i32))?;
             for prop in &self.properties {
                 w.write_string(&prop.name)?;
@@ -782,13 +793,13 @@ mod tests {
     #[test]
     fn test_encryption_request_v1_8() {
         let pkt = CEncryptionRequest {
-            server_id: "".to_string(),
+            server_id: String::new(),
             public_key: vec![1, 2, 3, 4, 5],
             verify_token: vec![10, 20, 30, 40],
             should_authenticate: true,
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_8);
-        assert_eq!(decoded.server_id, "");
+        assert!(decoded.server_id.is_empty());
         assert_eq!(decoded.public_key, vec![1, 2, 3, 4, 5]);
         assert_eq!(decoded.verify_token, vec![10, 20, 30, 40]);
         assert!(decoded.should_authenticate); // default true for < 1.20.5
@@ -797,7 +808,7 @@ mod tests {
     #[test]
     fn test_encryption_request_v1_20_5_with_should_authenticate() {
         let pkt = CEncryptionRequest {
-            server_id: "".to_string(),
+            server_id: String::new(),
             public_key: vec![1, 2, 3],
             verify_token: vec![4, 5, 6],
             should_authenticate: false,

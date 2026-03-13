@@ -13,7 +13,7 @@ mod private {
 /// A session handle for a player in a limbo stage.
 ///
 /// Provides high-level communication methods. The proxy handles the
-/// underlying Minecraft protocol (JoinGame, KeepAlive, chunks).
+/// underlying Minecraft protocol (`JoinGame`, `KeepAlive`, chunks).
 ///
 /// Obtained in [`LimboHandler`](super::handler::LimboHandler) callbacks.
 pub trait LimboSession: Send + Sync + private::Sealed {

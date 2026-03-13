@@ -1,14 +1,14 @@
-use infrarust_config::{DomainIndex, ServerConfig};
+use infrarust_config::{DomainIndex, DomainRewrite, MotdConfig, ProxyMode, ServerConfig};
 
 fn make_config(id: &str, domains: &[&str], addr: &str) -> ServerConfig {
     ServerConfig {
         id: Some(id.to_string()),
-        domains: domains.iter().map(|d| d.to_string()).collect(),
+        domains: domains.iter().map(ToString::to_string).collect(),
         addresses: vec![addr.parse().unwrap()],
-        proxy_mode: Default::default(),
+        proxy_mode: ProxyMode::default(),
         send_proxy_protocol: false,
-        domain_rewrite: Default::default(),
-        motd: Default::default(),
+        domain_rewrite: DomainRewrite::default(),
+        motd: MotdConfig::default(),
         server_manager: None,
         timeouts: None,
         max_players: 0,

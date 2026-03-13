@@ -38,7 +38,7 @@ pub struct Component {
     /// Obfuscated (magic) formatting.
     pub obfuscated: Option<bool>,
     /// Child components appended after this component's text.
-    pub extra: Vec<Component>,
+    pub extra: Vec<Self>,
     /// Click event triggered when this component is clicked.
     pub click_event: Option<ClickEvent>,
     /// Hover event triggered when this component is hovered.
@@ -82,54 +82,63 @@ impl Component {
     }
 
     /// Sets the text color.
+    #[must_use]
     pub fn color(mut self, color: impl Into<String>) -> Self {
         self.color = Some(color.into());
         self
     }
 
     /// Enables bold formatting.
-    pub fn bold(mut self) -> Self {
+    #[must_use]
+    pub const fn bold(mut self) -> Self {
         self.bold = Some(true);
         self
     }
 
     /// Enables italic formatting.
-    pub fn italic(mut self) -> Self {
+    #[must_use]
+    pub const fn italic(mut self) -> Self {
         self.italic = Some(true);
         self
     }
 
     /// Enables underline formatting.
-    pub fn underlined(mut self) -> Self {
+    #[must_use]
+    pub const fn underlined(mut self) -> Self {
         self.underlined = Some(true);
         self
     }
 
     /// Enables strikethrough formatting.
-    pub fn strikethrough(mut self) -> Self {
+    #[must_use]
+    pub const fn strikethrough(mut self) -> Self {
         self.strikethrough = Some(true);
         self
     }
 
     /// Enables obfuscated (magic) formatting.
-    pub fn obfuscated(mut self) -> Self {
+    #[must_use]
+    pub const fn obfuscated(mut self) -> Self {
         self.obfuscated = Some(true);
         self
     }
 
     /// Appends a child component after this component's text.
-    pub fn append(mut self, child: Component) -> Self {
+    #[must_use]
+    pub fn append(mut self, child: Self) -> Self {
         self.extra.push(child);
         self
     }
 
     /// Sets a click event on this component.
+    #[must_use]
     pub fn click(mut self, event: ClickEvent) -> Self {
         self.click_event = Some(event);
         self
     }
 
     /// Sets a hover event on this component.
+    #[must_use]
     pub fn hover(mut self, event: HoverEvent) -> Self {
         self.hover_event = Some(event);
         self
@@ -146,15 +155,16 @@ impl Component {
     ///     Component::text("two"),
     ///     Component::text("three"),
     /// ];
-    /// let joined = Component::join(parts, Component::text(", "));
+    /// let joined = Component::join(parts, &Component::text(", "));
     /// assert_eq!(joined.text, "one");
     /// // "one" + ", " + "two" + ", " + "three"
     /// assert_eq!(joined.extra.len(), 4);
     /// ```
-    pub fn join(components: Vec<Component>, separator: Component) -> Self {
+    #[must_use]
+    pub fn join(components: Vec<Self>, separator: &Self) -> Self {
         let mut iter = components.into_iter();
         let Some(first) = iter.next() else {
-            return Component::text("");
+            return Self::text("");
         };
 
         let mut result = first;
@@ -203,7 +213,8 @@ pub struct TitleData {
 
 impl TitleData {
     /// Creates a new title with default timings (10 fade-in, 70 stay, 20 fade-out).
-    pub fn new(title: Component, subtitle: Component) -> Self {
+    #[must_use]
+    pub const fn new(title: Component, subtitle: Component) -> Self {
         Self {
             title,
             subtitle,
@@ -214,19 +225,22 @@ impl TitleData {
     }
 
     /// Sets the fade-in duration in ticks.
-    pub fn fade_in(mut self, ticks: i32) -> Self {
+    #[must_use]
+    pub const fn fade_in(mut self, ticks: i32) -> Self {
         self.fade_in_ticks = ticks;
         self
     }
 
     /// Sets the stay duration in ticks.
-    pub fn stay(mut self, ticks: i32) -> Self {
+    #[must_use]
+    pub const fn stay(mut self, ticks: i32) -> Self {
         self.stay_ticks = ticks;
         self
     }
 
     /// Sets the fade-out duration in ticks.
-    pub fn fade_out(mut self, ticks: i32) -> Self {
+    #[must_use]
+    pub const fn fade_out(mut self, ticks: i32) -> Self {
         self.fade_out_ticks = ticks;
         self
     }
@@ -283,19 +297,19 @@ mod tests {
             Component::text("b"),
             Component::text("c"),
         ];
-        let joined = Component::join(parts, Component::text(", "));
+        let joined = Component::join(parts, &Component::text(", "));
         assert_eq!(joined.to_string(), "a, b, c");
     }
 
     #[test]
     fn join_empty() {
-        let joined = Component::join(vec![], Component::text(", "));
+        let joined = Component::join(vec![], &Component::text(", "));
         assert_eq!(joined.to_string(), "");
     }
 
     #[test]
     fn join_single() {
-        let joined = Component::join(vec![Component::text("only")], Component::text(", "));
+        let joined = Component::join(vec![Component::text("only")], &Component::text(", "));
         assert_eq!(joined.to_string(), "only");
     }
 
@@ -323,11 +337,11 @@ mod tests {
         let event = ClickEvent::OpenUrl("https://example.com".into());
         #[allow(unreachable_patterns)]
         match event {
-            ClickEvent::OpenUrl(_) => {}
-            ClickEvent::SuggestCommand(_) => {}
-            ClickEvent::RunCommand(_) => {}
-            ClickEvent::CopyToClipboard(_) => {}
-            _ => {}
+            ClickEvent::OpenUrl(_)
+            | ClickEvent::SuggestCommand(_)
+            | ClickEvent::RunCommand(_)
+            | ClickEvent::CopyToClipboard(_)
+            | _ => {}
         }
     }
 }

@@ -26,7 +26,7 @@ pub struct PassthroughHandler {
 
 impl PassthroughHandler {
     /// Creates a new passthrough handler.
-    pub fn new(
+    pub const fn new(
         backend_connector: Arc<BackendConnector>,
         registry: Arc<ConnectionRegistry>,
     ) -> Self {
@@ -106,8 +106,8 @@ impl PassthroughHandler {
         let session = session_token.clone();
         tokio::spawn(async move {
             tokio::select! {
-                _ = global.cancelled() => combined.cancel(),
-                _ = session.cancelled() => combined.cancel(),
+                () = global.cancelled() => combined.cancel(),
+                () = session.cancelled() => combined.cancel(),
             }
         });
 
@@ -175,6 +175,7 @@ impl PassthroughHandler {
     }
 
     /// Re-encodes the handshake packet with a new domain and forwards all packets.
+    #[allow(clippy::unused_self)] // Method for API consistency
     async fn forward_with_rewritten_handshake(
         &self,
         backend: &mut tokio::net::TcpStream,
@@ -186,10 +187,8 @@ impl PassthroughHandler {
             crate::pipeline::types::ConnectionIntent::Status => {
                 infrarust_protocol::ConnectionState::Status
             }
-            crate::pipeline::types::ConnectionIntent::Login => {
-                infrarust_protocol::ConnectionState::Login
-            }
-            crate::pipeline::types::ConnectionIntent::Transfer => {
+            crate::pipeline::types::ConnectionIntent::Login
+            | crate::pipeline::types::ConnectionIntent::Transfer => {
                 infrarust_protocol::ConnectionState::Login
             }
         };

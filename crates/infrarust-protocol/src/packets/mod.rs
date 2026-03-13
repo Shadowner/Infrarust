@@ -73,7 +73,7 @@ pub trait Packet: Send + Sync + std::fmt::Debug + 'static {
 
     /// Decodes the packet payload.
     ///
-    /// `r` contains the bytes AFTER the packet_id (already read by framing).
+    /// `r` contains the bytes AFTER the `packet_id` (already read by framing).
     /// `version` is the protocol version of the current connection.
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self>
     where
@@ -81,7 +81,7 @@ pub trait Packet: Send + Sync + std::fmt::Debug + 'static {
 
     /// Encodes the packet payload.
     ///
-    /// Writes the bytes WITHOUT the packet_id (added by the encoder/registry).
+    /// Writes the bytes WITHOUT the `packet_id` (added by the encoder/registry).
     /// `version` is the protocol version of the destination connection.
     fn encode(&self, w: &mut (impl Write + ?Sized), version: ProtocolVersion)
     -> ProtocolResult<()>;

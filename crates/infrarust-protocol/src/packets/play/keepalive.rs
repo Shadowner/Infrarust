@@ -7,12 +7,12 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 /// Keep-alive packet (Clientbound).
 ///
-/// Sent periodically by the server. The client must respond with SKeepAlive
+/// Sent periodically by the server. The client must respond with `SKeepAlive`
 /// containing the same ID within 15 seconds or get disconnected.
 ///
 /// Wire format varies by version:
-/// - 1.7.2–1.7.6: `i32`
-/// - 1.8–1.12.1: `VarInt`
+/// - 1.7.2 - 1.7.6: `i32`
+/// - 1.8 - 1.12.1: `VarInt`
 /// - 1.12.2+: `i64`
 #[derive(Debug, Clone)]
 pub struct CKeepAlive {
@@ -48,7 +48,7 @@ impl Packet for CKeepAlive {
 
 /// Keep-alive packet (Serverbound).
 ///
-/// Client's response to CKeepAlive with the same ID.
+/// Client's response to `CKeepAlive` with the same ID.
 #[derive(Debug, Clone)]
 pub struct SKeepAlive {
     pub id: i64,
@@ -85,9 +85,9 @@ fn decode_keepalive_id(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResul
     if version.no_less_than(ProtocolVersion::V1_12_2) {
         r.read_i64_be()
     } else if version.no_less_than(ProtocolVersion::V1_8) {
-        Ok(r.read_var_int()?.0 as i64)
+        Ok(i64::from(r.read_var_int()?.0))
     } else {
-        Ok(r.read_i32_be()? as i64)
+        Ok(i64::from(r.read_i32_be()?))
     }
 }
 
@@ -99,8 +99,10 @@ fn encode_keepalive_id(
     if version.no_less_than(ProtocolVersion::V1_12_2) {
         w.write_i64_be(id)?;
     } else if version.no_less_than(ProtocolVersion::V1_8) {
+        #[allow(clippy::cast_possible_truncation)] // Protocol keepalive IDs fit in i32 for pre-1.12.2
         w.write_var_int(&VarInt(id as i32))?;
     } else {
+        #[allow(clippy::cast_possible_truncation)] // Protocol keepalive IDs fit in i32 for pre-1.8
         w.write_i32_be(id as i32)?;
     }
     Ok(())

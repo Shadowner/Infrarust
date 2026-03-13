@@ -174,11 +174,11 @@ mod tests {
         let result = PreLoginResult::Allowed;
         #[allow(unreachable_patterns)]
         match result {
-            PreLoginResult::Allowed => {}
-            PreLoginResult::Denied { .. } => {}
-            PreLoginResult::ForceOffline => {}
-            PreLoginResult::ForceOnline => {}
-            _ => {}
+            PreLoginResult::Allowed
+            | PreLoginResult::Denied { .. }
+            | PreLoginResult::ForceOffline
+            | PreLoginResult::ForceOnline
+            | _ => {}
         }
     }
 }

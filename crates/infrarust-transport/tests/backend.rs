@@ -37,7 +37,7 @@ async fn spawn_echo_server() -> (SocketAddr, CancellationToken) {
                         tokio::io::copy(&mut r, &mut w).await.ok();
                     });
                 }
-                _ = t.cancelled() => break,
+                () = t.cancelled() => break,
             }
         }
     });

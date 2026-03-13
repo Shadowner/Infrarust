@@ -21,7 +21,7 @@ pub struct LegacyHandler {
 
 impl LegacyHandler {
     /// Creates a new legacy handler with shared config state.
-    pub fn new(
+    pub const fn new(
         domain_index: Arc<ArcSwap<DomainIndex>>,
         configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
     ) -> Self {
@@ -55,21 +55,23 @@ impl LegacyHandler {
         let request = parse_legacy_ping(&data)?;
 
         // Try to resolve domain for 1.6 variant
-        let motd = if let Some(ref hostname) = request.hostname {
-            let domain = hostname.to_lowercase();
-            let index = self.domain_index.load();
-            if let Some(config_id) = index.resolve(&domain) {
-                let configs = self.configs.load();
-                configs
-                    .get(config_id)
-                    .and_then(|cfg| cfg.motd.online.as_ref().map(|m| m.text.clone()))
-                    .unwrap_or_else(|| "An Infrarust Proxy".to_string())
-            } else {
-                "An Infrarust Proxy".to_string()
-            }
-        } else {
-            "An Infrarust Proxy".to_string()
-        };
+        let motd = request.hostname.as_ref().map_or_else(
+            || "An Infrarust Proxy".to_string(),
+            |hostname| {
+                let domain = hostname.to_lowercase();
+                let index = self.domain_index.load();
+                index.resolve(&domain).map_or_else(
+                    || "An Infrarust Proxy".to_string(),
+                    |config_id| {
+                        let configs = self.configs.load();
+                        configs
+                            .get(config_id)
+                            .and_then(|cfg| cfg.motd.online.as_ref().map(|m| m.text.clone()))
+                            .unwrap_or_else(|| "An Infrarust Proxy".to_string())
+                    },
+                )
+            },
+        );
 
         let response = LegacyPingResponse {
             protocol_version: CURRENT_MC_PROTOCOL,

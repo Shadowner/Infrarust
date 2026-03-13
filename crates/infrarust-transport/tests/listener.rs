@@ -31,6 +31,7 @@ async fn test_bind_and_accept() {
         accepted.connection.peer_addr(),
         client.local_addr().unwrap()
     );
+    drop(accepted);
     shutdown.cancel();
 }
 
@@ -52,9 +53,9 @@ async fn test_max_connections_semaphore() {
     let _client2 = tokio::net::TcpStream::connect(addr).await.unwrap();
 
     let accept_result = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
-
     // Should time out because semaphore is full
     assert!(accept_result.is_err());
+    drop(accept_result);
 
     // Drop first connection to release semaphore
     drop(accepted1);
@@ -79,4 +80,5 @@ async fn test_shutdown_stops_accept() {
 
     let result = listener.accept().await;
     assert!(result.is_err());
+    drop(result);
 }

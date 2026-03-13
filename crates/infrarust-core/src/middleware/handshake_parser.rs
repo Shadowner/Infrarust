@@ -5,8 +5,8 @@ use tokio::io::AsyncReadExt;
 
 use infrarust_protocol::io::PacketDecoder;
 use infrarust_protocol::legacy;
-use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::packets::Packet;
+use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
@@ -116,10 +116,8 @@ impl Middleware for HandshakeParserMiddleware {
                     )),
                 ));
             }
-            let handshake = SHandshake::decode(
-                &mut frame.payload.as_ref(),
-                ProtocolVersion::V1_7_2,
-            )?;
+            let handshake =
+                SHandshake::decode(&mut frame.payload.as_ref(), ProtocolVersion::V1_7_2)?;
 
             // Extract and clean domain
             let domain = strip_fml_markers(&handshake.server_address).to_lowercase();

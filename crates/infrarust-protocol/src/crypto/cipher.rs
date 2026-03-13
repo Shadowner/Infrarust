@@ -165,7 +165,8 @@ mod tests {
     #[test]
     fn test_encrypt_large_data() {
         let key = [0x77u8; 16];
-        let original: Vec<u8> = (0..1_000_000).map(|i| (i % 256) as u8).collect();
+        #[allow(clippy::cast_possible_truncation)] // i % 256 always fits in u8
+        let original: Vec<u8> = (0..1_000_000).map(|i: u32| (i % 256) as u8).collect();
         let mut data = original.clone();
 
         let mut enc = EncryptCipher::new(&key);

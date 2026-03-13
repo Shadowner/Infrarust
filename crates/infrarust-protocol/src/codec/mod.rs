@@ -21,7 +21,7 @@ use crate::error::ProtocolResult;
 
 /// Encodes a type into the Minecraft wire format.
 ///
-/// For stable primitive types (VarInt, String, UUID, etc.) that don't vary between
+/// For stable primitive types (`VarInt`, String, UUID, etc.) that don't vary between
 /// protocol versions. Version-dependent packets use the `Packet` trait (defined in
 /// a later phase) which takes a `ProtocolVersion` parameter.
 ///
@@ -80,17 +80,17 @@ pub trait McBufReadExt: Read {
     fn read_f64_be(&mut self) -> ProtocolResult<f64>;
     /// Reads a boolean (single byte, 0 or 1).
     fn read_bool(&mut self) -> ProtocolResult<bool>;
-    /// Reads a VarInt.
+    /// Reads a `VarInt`.
     fn read_var_int(&mut self) -> ProtocolResult<VarInt>;
-    /// Reads a VarLong.
+    /// Reads a `VarLong`.
     fn read_var_long(&mut self) -> ProtocolResult<VarLong>;
-    /// Reads a VarInt-prefixed UTF-8 string (max 32767 chars).
+    /// Reads a `VarInt`-prefixed UTF-8 string (max 32767 chars).
     fn read_string(&mut self) -> ProtocolResult<String>;
-    /// Reads a VarInt-prefixed UTF-8 string with a custom character limit.
+    /// Reads a `VarInt`-prefixed UTF-8 string with a custom character limit.
     fn read_string_bounded(&mut self, max_len: usize) -> ProtocolResult<String>;
     /// Reads a UUID (16 bytes big-endian).
     fn read_uuid(&mut self) -> ProtocolResult<uuid::Uuid>;
-    /// Reads a VarInt-prefixed byte array with a maximum length.
+    /// Reads a `VarInt`-prefixed byte array with a maximum length.
     fn read_byte_array(&mut self, max_len: usize) -> ProtocolResult<Vec<u8>>;
     /// Reads exactly `count` bytes.
     fn read_byte_array_bounded(&mut self, count: usize) -> ProtocolResult<Vec<u8>>;
@@ -124,15 +124,15 @@ pub trait McBufWriteExt: Write {
     fn write_f64_be(&mut self, value: f64) -> ProtocolResult<()>;
     /// Writes a boolean (single byte).
     fn write_bool(&mut self, value: bool) -> ProtocolResult<()>;
-    /// Writes a VarInt.
+    /// Writes a `VarInt`.
     fn write_var_int(&mut self, value: &VarInt) -> ProtocolResult<()>;
-    /// Writes a VarLong.
+    /// Writes a `VarLong`.
     fn write_var_long(&mut self, value: &VarLong) -> ProtocolResult<()>;
-    /// Writes a VarInt-prefixed UTF-8 string.
+    /// Writes a `VarInt`-prefixed UTF-8 string.
     fn write_string(&mut self, value: &str) -> ProtocolResult<()>;
     /// Writes a UUID (16 bytes big-endian).
     fn write_uuid(&mut self, value: &uuid::Uuid) -> ProtocolResult<()>;
-    /// Writes a VarInt-prefixed byte array.
+    /// Writes a `VarInt`-prefixed byte array.
     fn write_byte_array(&mut self, data: &[u8]) -> ProtocolResult<()>;
 }
 
@@ -146,7 +146,7 @@ impl<R: Read> McBufReadExt for R {
     }
 
     fn read_i8(&mut self) -> ProtocolResult<i8> {
-        Ok(self.read_u8()? as i8)
+        Ok(self.read_u8()?.cast_signed())
     }
 
     fn read_u16_be(&mut self) -> ProtocolResult<u16> {
@@ -240,6 +240,7 @@ impl<R: Read> McBufReadExt for R {
         if raw_len < 0 {
             return Err(crate::error::ProtocolError::invalid("negative length"));
         }
+        #[allow(clippy::cast_sign_loss)] // Checked non-negative above
         let len = raw_len as usize;
         if len > max_len {
             return Err(crate::error::ProtocolError::too_large(max_len, len));
@@ -269,7 +270,7 @@ impl<W: Write> McBufWriteExt for W {
     }
 
     fn write_i8(&mut self, value: i8) -> ProtocolResult<()> {
-        self.write_all(&[value as u8])?;
+        self.write_all(&[value.cast_unsigned()])?;
         Ok(())
     }
 
@@ -340,6 +341,7 @@ impl<W: Write> McBufWriteExt for W {
         Ok(())
     }
 
+    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Byte array length bounded by protocol limits
     fn write_byte_array(&mut self, data: &[u8]) -> ProtocolResult<()> {
         VarInt(data.len() as i32).encode(self)?;
         self.write_all(data)?;

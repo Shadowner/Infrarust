@@ -1,6 +1,6 @@
 //! Legacy Minecraft protocol support (Beta 1.8 – MC 1.6).
 //!
-//! The legacy protocol is completely outside the VarInt framing used by
+//! The legacy protocol is completely outside the `VarInt` framing used by
 //! modern (1.7+) Minecraft. This module provides detection, parsing, and
 //! response construction for legacy ping and login connections.
 
@@ -15,15 +15,15 @@ pub enum LegacyDetection {
     LegacyPing,
     /// `0x02` — Legacy login (pre-Netty).
     LegacyLogin,
-    /// Other — Modern protocol (1.7+), first byte is the start of a VarInt length.
+    /// Other — Modern protocol (1.7+), first byte is the start of a `VarInt` length.
     Modern,
 }
 
 /// Detects the type of connection by the first byte of the TCP stream.
 ///
 /// Called by the transport layer before deciding which decoder to use
-/// (PacketDecoder for modern, legacy handler for legacy).
-pub fn detect(first_byte: u8) -> LegacyDetection {
+/// (`PacketDecoder` for modern, legacy handler for legacy).
+pub const fn detect(first_byte: u8) -> LegacyDetection {
     match first_byte {
         0xFE => LegacyDetection::LegacyPing,
         0x02 => LegacyDetection::LegacyLogin,

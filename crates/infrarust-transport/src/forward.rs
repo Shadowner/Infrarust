@@ -85,7 +85,7 @@ async fn copy_forward(
                 },
             }
         }
-        _ = shutdown.cancelled() => {
+        () = shutdown.cancelled() => {
             ForwardResult {
                 client_to_backend: 0,
                 backend_to_client: 0,
@@ -99,7 +99,9 @@ async fn copy_forward(
 
 #[cfg(target_os = "linux")]
 mod splice_impl {
-    use super::*;
+    use super::{
+        CancellationToken, ForwardEndReason, ForwardResult, Forwarder, Future, Pin, TcpStream,
+    };
     use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 
     /// Zero-copy forwarder using the Linux `splice(2)` syscall.
@@ -116,14 +118,14 @@ mod splice_impl {
 
     impl SpliceForwarder {
         /// Creates a new splice forwarder with default pipe size (64 KiB).
-        pub fn new() -> Self {
+        pub const fn new() -> Self {
             Self {
                 pipe_size: 64 * 1024,
             }
         }
 
         /// Creates a new splice forwarder with custom pipe size.
-        pub fn with_pipe_size(pipe_size: usize) -> Self {
+        pub const fn with_pipe_size(pipe_size: usize) -> Self {
             Self { pipe_size }
         }
     }
@@ -147,6 +149,8 @@ mod splice_impl {
             }
 
             // Try to set pipe size
+            // Pipe size is always a reasonable value (e.g. 64 KiB), safe to truncate to i32.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             let _ = nix::fcntl::fcntl(
                 write_fd.as_raw_fd(),
                 nix::fcntl::FcntlArg::F_SETPIPE_SZ(size as i32),
@@ -158,7 +162,7 @@ mod splice_impl {
 
     /// Splices data in one direction via a kernel pipe.
     ///
-    /// Uses the TcpStream's readiness methods to avoid double epoll registration.
+    /// Uses the `TcpStream`'s readiness methods to avoid double epoll registration.
     async fn splice_one_direction(
         src: &TcpStream,
         dst: &TcpStream,
@@ -185,7 +189,7 @@ mod splice_impl {
                             None,
                             65536,
                             flags,
-                        ).map_err(|e| std::io::Error::from_raw_os_error(e as i32))
+                        ).map_err(std::io::Error::other)
                     }) {
                         Ok(0) => break, // EOF
                         Ok(n) => n,
@@ -193,7 +197,7 @@ mod splice_impl {
                         Err(e) => return Err(e),
                     }
                 }
-                _ = shutdown.cancelled() => break,
+                () = shutdown.cancelled() => break,
             };
 
             // Pump: pipe → destination
@@ -211,22 +215,26 @@ mod splice_impl {
                                 None,
                                 drained - pumped,
                                 flags,
-                            ).map_err(|e| std::io::Error::from_raw_os_error(e as i32))
+                            ).map_err(std::io::Error::other)
                         }) {
                             Ok(0) => return Err(std::io::Error::new(
                                 std::io::ErrorKind::WriteZero,
                                 "splice pump returned 0"
                             )),
                             Ok(n) => pumped += n,
-                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {},
                             Err(e) => return Err(e),
                         }
                     }
-                    _ = shutdown.cancelled() => break,
+                    () = shutdown.cancelled() => break,
                 }
             }
 
-            total += pumped as u64;
+            // pumped is a byte count from splice, always fits in u64.
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                total += pumped as u64;
+            }
         }
 
         Ok(total)
@@ -298,7 +306,7 @@ mod splice_impl {
                             Err(e) => ForwardEndReason::Error(e),
                         }
                     }
-                    _ = shutdown.cancelled() => {
+                    () = shutdown.cancelled() => {
                         ForwardEndReason::Shutdown
                     }
                 };

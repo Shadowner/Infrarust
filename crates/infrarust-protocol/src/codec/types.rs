@@ -1,7 +1,7 @@
 //! Encode/Decode implementations for Minecraft primitive types.
 //!
 //! All numeric types use big-endian byte order (Minecraft standard).
-//! Strings are VarInt-prefixed UTF-8. UUIDs are encoded as u128 big-endian.
+//! Strings are `VarInt`-prefixed UTF-8. UUIDs are encoded as u128 big-endian.
 
 use std::io::{Read, Write};
 
@@ -16,7 +16,7 @@ const MAX_STRING_CHARS: usize = 32767;
 
 /// Computes a cautious pre-allocation capacity.
 ///
-/// Prevents a malicious VarInt length prefix from causing a massive allocation
+/// Prevents a malicious `VarInt` length prefix from causing a massive allocation
 /// before any data has been read from the network.
 fn cautious_capacity(size_hint: usize) -> usize {
     const MAX_PREALLOC_BYTES: usize = 1024 * 1024; // 1 MB
@@ -67,7 +67,7 @@ impl Decode<'_> for u8 {
 
 impl Encode for i8 {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
-        w.write_all(&[*self as u8])?;
+        w.write_all(&[(*self).cast_unsigned()])?;
         Ok(())
     }
 }
@@ -75,7 +75,7 @@ impl Encode for i8 {
 impl Decode<'_> for i8 {
     fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
         let byte = u8::decode(r)?;
-        Ok(byte as i8)
+        Ok(byte.cast_signed())
     }
 }
 
@@ -129,7 +129,8 @@ impl Decode<'_> for String {
     }
 }
 
-/// Encodes a string with VarInt length prefix.
+/// Encodes a string with `VarInt` length prefix.
+#[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // String byte length bounded by MAX_STRING_CHARS * 4 < i32::MAX
 pub(crate) fn encode_string(s: &str, w: &mut impl Write) -> ProtocolResult<()> {
     let char_len = s.chars().count();
     if char_len > MAX_STRING_CHARS {
@@ -141,12 +142,13 @@ pub(crate) fn encode_string(s: &str, w: &mut impl Write) -> ProtocolResult<()> {
     Ok(())
 }
 
-/// Decodes a VarInt-prefixed UTF-8 string with a character limit.
+/// Decodes a `VarInt`-prefixed UTF-8 string with a character limit.
 pub(crate) fn decode_string(r: &mut &[u8], max_chars: usize) -> ProtocolResult<String> {
     let raw_len = VarInt::decode(r)?.0;
     if raw_len < 0 {
         return Err(ProtocolError::invalid("negative length"));
     }
+    #[allow(clippy::cast_sign_loss)] // Checked non-negative above
     let byte_len = raw_len as usize;
     // A single UTF-8 char is at most 4 bytes
     let max_bytes = max_chars * 4;
@@ -179,13 +181,14 @@ impl Encode for Uuid {
 impl Decode<'_> for Uuid {
     fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
         let val = u128::decode(r)?;
-        Ok(Uuid::from_u128(val))
+        Ok(Self::from_u128(val))
     }
 }
 
 // --- Vec<u8> (byte array with VarInt length prefix) ---
 
 impl Encode for Vec<u8> {
+    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Byte arrays bounded by protocol limits
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         VarInt(self.len() as i32).encode(w)?;
         w.write_all(self)?;
@@ -199,13 +202,14 @@ impl Decode<'_> for Vec<u8> {
         if raw_len < 0 {
             return Err(ProtocolError::invalid("negative length"));
         }
+        #[allow(clippy::cast_sign_loss)] // Checked non-negative above
         let len = raw_len as usize;
         if r.len() < len {
             return Err(ProtocolError::Incomplete {
                 context: "byte array",
             });
         }
-        let mut buf = Vec::with_capacity(cautious_capacity(len));
+        let mut buf = Self::with_capacity(cautious_capacity(len));
         let (data, rest) = r.split_at(len);
         buf.extend_from_slice(data);
         *r = rest;
@@ -252,6 +256,7 @@ pub(crate) fn read_string_bounded_from_reader(
     if raw_len < 0 {
         return Err(ProtocolError::invalid("negative length"));
     }
+    #[allow(clippy::cast_sign_loss)] // Checked non-negative above
     let byte_len = raw_len as usize;
     let max_bytes = max_chars * 4;
     if byte_len > max_bytes {
@@ -267,7 +272,7 @@ pub(crate) fn read_string_bounded_from_reader(
     Ok(s)
 }
 
-/// Reads a VarInt from a `Read` source (byte-by-byte).
+/// Reads a `VarInt` from a `Read` source (byte-by-byte).
 pub(crate) fn read_varint_from_reader(reader: &mut impl Read) -> ProtocolResult<VarInt> {
     let mut val = 0i32;
     for i in 0..VarInt::MAX_SIZE {
@@ -281,7 +286,7 @@ pub(crate) fn read_varint_from_reader(reader: &mut impl Read) -> ProtocolResult<
     Err(ProtocolError::invalid("VarInt too large (> 5 bytes)"))
 }
 
-/// Reads a VarLong from a `Read` source (byte-by-byte).
+/// Reads a `VarLong` from a `Read` source (byte-by-byte).
 pub(crate) fn read_varlong_from_reader(
     reader: &mut impl Read,
 ) -> ProtocolResult<crate::codec::varlong::VarLong> {
@@ -345,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_f32_round_trip() {
-        for &val in &[0.0f32, 1.0, -1.0, 3.14] {
+        for &val in &[0.0f32, 1.0, -1.0, 3.15] {
             let mut buf = Vec::new();
             val.encode(&mut buf).unwrap();
             let mut slice: &[u8] = &buf;
@@ -359,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_f64_round_trip() {
-        for &val in &[0.0f64, 1.0, -1.0, 3.14] {
+        for &val in &[0.0f64, 1.0, -1.0, 3.15] {
             let mut buf = Vec::new();
             val.encode(&mut buf).unwrap();
             let mut slice: &[u8] = &buf;
@@ -435,7 +440,7 @@ mod tests {
 
     #[test]
     fn test_uuid_is_big_endian() {
-        let uuid = Uuid::from_u128(0xFF00000000000000_0000000000000000);
+        let uuid = Uuid::from_u128(0xFF00_0000_0000_0000_0000_0000_0000_0000);
         let mut buf = Vec::new();
         uuid.encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0xFF, "first byte should be MSB of u128");
@@ -498,32 +503,32 @@ mod tests {
         buf.write_i8(-1).unwrap();
         buf.write_u16_be(1234).unwrap();
         buf.write_i16_be(-567).unwrap();
-        buf.write_u32_be(0xDEADBEEF).unwrap();
+        buf.write_u32_be(0xDEAD_BEEF).unwrap();
         buf.write_i32_be(-42).unwrap();
-        buf.write_u64_be(0xCAFEBABE).unwrap();
+        buf.write_u64_be(0xCAFE_BABE).unwrap();
         buf.write_i64_be(-99).unwrap();
-        buf.write_f32_be(3.14).unwrap();
-        buf.write_f64_be(2.718).unwrap();
+        buf.write_f32_be(3.15).unwrap();
+        buf.write_f64_be(2.720).unwrap();
         buf.write_bool(true).unwrap();
         buf.write_string("hello").unwrap();
-        buf.write_uuid(&Uuid::from_u128(123456)).unwrap();
+        buf.write_uuid(&Uuid::from_u128(123_456)).unwrap();
 
         let mut reader = Cursor::new(buf);
         assert_eq!(reader.read_u8().unwrap(), 42);
         assert_eq!(reader.read_i8().unwrap(), -1);
         assert_eq!(reader.read_u16_be().unwrap(), 1234);
         assert_eq!(reader.read_i16_be().unwrap(), -567);
-        assert_eq!(reader.read_u32_be().unwrap(), 0xDEADBEEF);
+        assert_eq!(reader.read_u32_be().unwrap(), 0xDEAD_BEEF);
         assert_eq!(reader.read_i32_be().unwrap(), -42);
-        assert_eq!(reader.read_u64_be().unwrap(), 0xCAFEBABE);
+        assert_eq!(reader.read_u64_be().unwrap(), 0xCAFE_BABE);
         assert_eq!(reader.read_i64_be().unwrap(), -99);
         let f32_val = reader.read_f32_be().unwrap();
-        assert!((f32_val - 3.14).abs() < f32::EPSILON);
+        assert!((f32_val - 3.15).abs() < f32::EPSILON);
         let f64_val = reader.read_f64_be().unwrap();
-        assert!((f64_val - 2.718).abs() < f64::EPSILON);
+        assert!((f64_val - 2.720).abs() < f64::EPSILON);
         assert!(reader.read_bool().unwrap());
         assert_eq!(reader.read_string().unwrap(), "hello");
-        assert_eq!(reader.read_uuid().unwrap(), Uuid::from_u128(123456));
+        assert_eq!(reader.read_uuid().unwrap(), Uuid::from_u128(123_456));
     }
 
     #[test]

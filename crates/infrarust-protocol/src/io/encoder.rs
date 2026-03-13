@@ -8,7 +8,7 @@ use crate::error::{ProtocolError, ProtocolResult};
 use crate::io::compression::{self, ZlibCompressor};
 use crate::io::frame::PacketFrame;
 
-/// Writes a VarInt into a BytesMut buffer.
+/// Writes a `VarInt` into a `BytesMut` buffer.
 fn write_varint(buf: &mut BytesMut, varint: VarInt) -> ProtocolResult<()> {
     varint.encode(&mut buf.writer())
 }
@@ -60,10 +60,11 @@ impl PacketEncoder {
         }
     }
 
-    /// Encodes an opaque packet (packet_id + raw payload) into the buffer.
+    /// Encodes an opaque packet (`packet_id` + raw payload) into the buffer.
     ///
     /// This is the most common path for a proxy: the packet was received as a
     /// `PacketFrame` and is forwarded as-is.
+    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Packet sizes validated against MAX_PACKET_SIZE which fits in i32
     pub fn append_raw(&mut self, packet_id: i32, payload: &[u8]) -> ProtocolResult<()> {
         let packet_id_varint = VarInt(packet_id);
         let packet_id_size = packet_id_varint.written_size();
@@ -149,15 +150,15 @@ impl PacketEncoder {
 
     /// Enables compression with the given threshold.
     ///
-    /// Called when the proxy receives/sends a SetCompression packet.
+    /// Called when the proxy receives/sends a `SetCompression` packet.
     /// `threshold` is the minimum uncompressed size (in bytes) above which
     /// packets are compressed. Typically 256.
-    pub fn set_compression(&mut self, threshold: i32) {
+    pub const fn set_compression(&mut self, threshold: i32) {
         self.compression_threshold = Some(threshold);
     }
 
     /// Returns the current compression threshold, or `None` if compression is disabled.
-    pub fn compression_threshold(&self) -> Option<i32> {
+    pub const fn compression_threshold(&self) -> Option<i32> {
         self.compression_threshold
     }
 }

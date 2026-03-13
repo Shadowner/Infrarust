@@ -63,13 +63,13 @@ mod tests {
         let state = ServerState::Online;
         #[allow(unreachable_patterns)]
         match state {
-            ServerState::Online => {}
-            ServerState::Offline => {}
-            ServerState::Starting => {}
-            ServerState::Stopping => {}
-            ServerState::Sleeping => {}
-            ServerState::Crashed => {}
-            _ => {}
+            ServerState::Online
+            | ServerState::Offline
+            | ServerState::Starting
+            | ServerState::Stopping
+            | ServerState::Sleeping
+            | ServerState::Crashed
+            | _ => {}
         }
     }
 }

@@ -152,7 +152,7 @@ impl ProtocolVersion {
     ///
     /// Legacy versions (Beta 1.8 through MC 1.6) use a different wire format
     /// and are handled by a separate code path.
-    pub fn is_legacy(self) -> bool {
+    pub const fn is_legacy(self) -> bool {
         self.0 <= Self::LEGACY.0 && self.0 >= 0
     }
 
@@ -164,9 +164,8 @@ impl ProtocolVersion {
     /// Returns the human-readable Minecraft version name.
     ///
     /// Returns `"unknown"` for unrecognized protocol IDs.
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
-            Self::UNKNOWN => "unknown",
             Self::LEGACY => "legacy",
             Self::V1_7_2 => "1.7.2",
             Self::V1_7_6 => "1.7.6",
@@ -269,7 +268,7 @@ impl ConnectionState {
     ///
     /// Note: Transfer (intention 3) is handled by [`from_handshake_id`](Self::from_handshake_id)
     /// but does not have its own variant yet.
-    pub fn handshake_id(self) -> Option<i32> {
+    pub const fn handshake_id(self) -> Option<i32> {
         match self {
             Self::Status => Some(1),
             Self::Login => Some(2),
@@ -285,15 +284,14 @@ impl ConnectionState {
     ///   the subsequent packet flow is identical. A dedicated `Transfer` variant may be
     ///   added in the future if the flows diverge.)
     /// - anything else → `None`
-    pub fn from_handshake_id(id: i32) -> Option<Self> {
+    pub const fn from_handshake_id(id: i32) -> Option<Self> {
         match id {
             1 => Some(Self::Status),
-            2 => Some(Self::Login),
             // Transfer (intent 3) was added in 1.20.5 (protocol 766).
             // The login flow after a Transfer handshake is identical to a normal Login,
             // so we map it to Login for now. If Transfer-specific behavior is needed,
             // a dedicated variant can be introduced.
-            3 => Some(Self::Login),
+            2 | 3 => Some(Self::Login),
             _ => None,
         }
     }
@@ -323,7 +321,8 @@ pub enum Direction {
 
 impl Direction {
     /// Returns the opposite direction.
-    pub fn opposite(self) -> Self {
+    #[allow(clippy::return_self_not_must_use)] // Simple value type, not a builder
+    pub const fn opposite(self) -> Self {
         match self {
             Self::Serverbound => Self::Clientbound,
             Self::Clientbound => Self::Serverbound,
@@ -384,9 +383,11 @@ mod tests {
 
     #[test]
     fn test_version_range_empty_when_inverted() {
-        let versions: Vec<_> =
-            ProtocolVersion::range(ProtocolVersion::V1_20, ProtocolVersion::V1_19).collect();
-        assert!(versions.is_empty());
+        assert!(
+            ProtocolVersion::range(ProtocolVersion::V1_20, ProtocolVersion::V1_19)
+                .next()
+                .is_none()
+        );
     }
 
     #[test]

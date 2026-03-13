@@ -55,12 +55,12 @@ impl ProtocolError {
     }
 
     /// Creates a [`TooLarge`](ProtocolError::TooLarge) error.
-    pub fn too_large(max: usize, actual: usize) -> Self {
+    pub const fn too_large(max: usize, actual: usize) -> Self {
         Self::TooLarge { max, actual }
     }
 
     /// Returns `true` if this error indicates incomplete data (non-fatal).
-    pub fn is_incomplete(&self) -> bool {
+    pub const fn is_incomplete(&self) -> bool {
         matches!(self, Self::Incomplete { .. })
     }
 

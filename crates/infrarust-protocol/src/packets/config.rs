@@ -6,7 +6,7 @@ use super::Packet;
 
 // ── KnownPack ───────────────────────────────────────────────────────
 
-/// A known data pack entry used in CKnownPacks / SKnownPacks.
+/// A known data pack entry used in `CKnownPacks` / `SKnownPacks`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownPack {
     pub namespace: String,
@@ -137,6 +137,7 @@ impl Packet for CKnownPacks {
     }
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
+        #[allow(clippy::cast_sign_loss)] // Protocol pack count is non-negative
         let count = r.read_var_int()?.0 as usize;
         let mut packs = Vec::with_capacity(count.min(64));
         for _ in 0..count {
@@ -154,6 +155,7 @@ impl Packet for CKnownPacks {
         mut w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Pack count bounded by protocol
         w.write_var_int(&VarInt(self.packs.len() as i32))?;
         for pack in &self.packs {
             w.write_string(&pack.namespace)?;
@@ -186,6 +188,7 @@ impl Packet for SKnownPacks {
     }
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
+        #[allow(clippy::cast_sign_loss)] // Protocol pack count is non-negative
         let count = r.read_var_int()?.0 as usize;
         let mut packs = Vec::with_capacity(count.min(64));
         for _ in 0..count {
@@ -203,6 +206,7 @@ impl Packet for SKnownPacks {
         mut w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Pack count bounded by protocol
         w.write_var_int(&VarInt(self.packs.len() as i32))?;
         for pack in &self.packs {
             w.write_string(&pack.namespace)?;

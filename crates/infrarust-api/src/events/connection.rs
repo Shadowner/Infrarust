@@ -257,11 +257,11 @@ mod tests {
         let result = KickedFromServerResult::SendToLimbo;
         #[allow(unreachable_patterns)]
         match result {
-            KickedFromServerResult::DisconnectPlayer { .. } => {}
-            KickedFromServerResult::RedirectTo(_) => {}
-            KickedFromServerResult::SendToLimbo => {}
-            KickedFromServerResult::Notify { .. } => {}
-            _ => {}
+            KickedFromServerResult::DisconnectPlayer { .. }
+            | KickedFromServerResult::RedirectTo(_)
+            | KickedFromServerResult::SendToLimbo
+            | KickedFromServerResult::Notify { .. }
+            | _ => {}
         }
     }
 }

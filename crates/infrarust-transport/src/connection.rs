@@ -41,7 +41,8 @@ impl ClientConnection {
     }
 
     /// Sets the real client address from proxy protocol info.
-    pub fn with_proxy_protocol(mut self, info: &ProxyProtocolInfo) -> Self {
+    #[must_use]
+    pub const fn with_proxy_protocol(mut self, info: &ProxyProtocolInfo) -> Self {
         self.real_ip = Some(info.source_addr.ip());
         self.real_port = Some(info.source_addr.port());
         self
@@ -87,32 +88,32 @@ impl ClientConnection {
     }
 
     /// Returns the TCP peer address.
-    pub fn peer_addr(&self) -> SocketAddr {
+    pub const fn peer_addr(&self) -> SocketAddr {
         self.peer_addr
     }
 
     /// Returns the real client IP from proxy protocol, if available.
-    pub fn real_ip(&self) -> Option<IpAddr> {
+    pub const fn real_ip(&self) -> Option<IpAddr> {
         self.real_ip
     }
 
     /// Returns the local listener address.
-    pub fn local_addr(&self) -> SocketAddr {
+    pub const fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
 
     /// Returns the time when the connection was accepted.
-    pub fn connected_at(&self) -> Instant {
+    pub const fn connected_at(&self) -> Instant {
         self.connected_at
     }
 
     /// Returns a reference to the underlying TCP stream.
-    pub fn stream(&self) -> &TcpStream {
+    pub const fn stream(&self) -> &TcpStream {
         &self.stream
     }
 
     /// Returns a mutable reference to the underlying TCP stream.
-    pub fn stream_mut(&mut self) -> &mut TcpStream {
+    pub const fn stream_mut(&mut self) -> &mut TcpStream {
         &mut self.stream
     }
 }

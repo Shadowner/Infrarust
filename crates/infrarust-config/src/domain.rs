@@ -8,7 +8,7 @@ use crate::server::ServerConfig;
 
 /// Index pré-compilé pour la résolution de domaines.
 ///
-/// Résout le problème V1 du O(n×m) avec recompilation du WildMatch
+/// Résout le problème V1 du O(n×m) avec recompilation du `WildMatch`
 /// à chaque requête. Ici les patterns sont compilés une seule fois
 /// au chargement (et recompilés au hot-reload).
 ///
@@ -18,7 +18,7 @@ use crate::server::ServerConfig;
 ///   (rarement plus de 10-20 patterns en pratique)
 /// - Les domaines exacts sont prioritaires sur les wildcards
 pub struct DomainIndex {
-    /// Domaines exacts → config_id. Lookup O(1).
+    /// Domaines exacts → `config_id`. Lookup O(1).
     exact: HashMap<String, String>,
     /// Patterns wildcard pré-compilés, testés dans l'ordre d'insertion.
     wildcards: Vec<CompiledPattern>,
@@ -44,7 +44,7 @@ impl DomainIndex {
     /// Construit l'index à partir d'une liste de configs.
     ///
     /// Les domaines sont normalisés en lowercase.
-    /// Les domaines sans wildcard vont dans la HashMap exacte.
+    /// Les domaines sans wildcard vont dans la `HashMap` exacte.
     /// Les domaines avec `*` ou `?` vont dans la liste wildcard.
     pub fn build(configs: &[ServerConfig]) -> Self {
         let mut exact = HashMap::new();

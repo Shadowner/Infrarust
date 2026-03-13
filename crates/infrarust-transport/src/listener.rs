@@ -28,7 +28,7 @@ pub struct ListenerConfig {
     pub max_connections: u32,
     /// TCP keepalive configuration for accepted connections.
     pub keepalive: KeepaliveConfig,
-    /// Enable SO_REUSEPORT (Linux only).
+    /// Enable `SO_REUSEPORT` (Linux only).
     pub so_reuseport: bool,
     /// Decode proxy protocol headers on accepted connections.
     pub receive_proxy_protocol: bool,
@@ -37,7 +37,7 @@ pub struct ListenerConfig {
 /// TCP listener with connection limiting and graceful shutdown.
 #[derive(Debug)]
 pub struct Listener {
-    tcp_listener: TcpListener,
+    inner: TcpListener,
     semaphore: Option<Arc<Semaphore>>,
     config: ListenerConfig,
     shutdown: CancellationToken,
@@ -51,26 +51,27 @@ pub struct AcceptedConnection {
     /// The accepted client connection.
     pub connection: ClientConnection,
     /// Semaphore permit (released on drop).
-    _permit: Option<OwnedSemaphorePermit>,
+    permit: Option<OwnedSemaphorePermit>,
 }
 
 impl std::fmt::Debug for AcceptedConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AcceptedConnection")
             .field("connection", &self.connection)
-            .field("has_permit", &self._permit.is_some())
+            .field("haspermit", &self.permit.is_some())
             .finish()
     }
 }
 
 impl Listener {
     /// Binds to the configured address and prepares the listener.
+    #[allow(clippy::unused_async)] // Kept async for API consistency; callers already await this.
     pub async fn bind(
         config: ListenerConfig,
         shutdown: CancellationToken,
     ) -> Result<Self, TransportError> {
         let socket = configure_listener_socket(config.bind, config.so_reuseport)?;
-        let tcp_listener = into_tokio_listener(socket)?;
+        let inner = into_tokio_listener(socket)?;
 
         let semaphore = if config.max_connections > 0 {
             Some(Arc::new(Semaphore::new(config.max_connections as usize)))
@@ -81,7 +82,7 @@ impl Listener {
         tracing::info!(bind = %config.bind, max_connections = config.max_connections, "listener bound");
 
         Ok(Self {
-            tcp_listener,
+            inner,
             semaphore,
             config,
             shutdown,
@@ -104,7 +105,7 @@ impl Listener {
                     result = sem.clone().acquire_owned() => {
                         result.map_err(|_| TransportError::Shutdown)?
                     }
-                    _ = self.shutdown.cancelled() => {
+                    () = self.shutdown.cancelled() => {
                         return Err(TransportError::Shutdown);
                     }
                 };
@@ -115,7 +116,7 @@ impl Listener {
 
             // Accept connection
             let (stream, peer_addr) = tokio::select! {
-                result = self.tcp_listener.accept() => {
+                result = self.inner.accept() => {
                     match result {
                         Ok((stream, addr)) => (stream, addr),
                         Err(e) if is_transient_error(&e) => {
@@ -126,7 +127,7 @@ impl Listener {
                         Err(e) => return Err(TransportError::Accept(e)),
                     }
                 }
-                _ = self.shutdown.cancelled() => {
+                () = self.shutdown.cancelled() => {
                     return Err(TransportError::Shutdown);
                 }
             };
@@ -143,7 +144,7 @@ impl Listener {
                 .map_err(TransportError::SocketConfig)?;
 
             let local_addr = self
-                .tcp_listener
+                .inner
                 .local_addr()
                 .map_err(TransportError::SocketConfig)?;
 
@@ -157,14 +158,14 @@ impl Listener {
 
             return Ok(AcceptedConnection {
                 connection: conn,
-                _permit: permit,
+                permit,
             });
         }
     }
 
     /// Returns the local address the listener is bound to.
     pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
-        self.tcp_listener
+        self.inner
             .local_addr()
             .map_err(TransportError::SocketConfig)
     }
@@ -175,6 +176,6 @@ fn is_transient_error(e: &std::io::Error) -> bool {
     matches!(
         e.kind(),
         std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::ConnectionReset
-    ) || matches!(e.raw_os_error(), Some(24) | Some(23) | Some(12) | Some(105))
+    ) || matches!(e.raw_os_error(), Some(24 | 23 | 12 | 105))
     // 24=EMFILE, 23=ENFILE, 12=ENOMEM, 105=ENOBUFS (Linux values)
 }

@@ -61,12 +61,12 @@ mod tests {
         let mode = ProxyMode::Passthrough;
         #[allow(unreachable_patterns)]
         match mode {
-            ProxyMode::Passthrough => {}
-            ProxyMode::ZeroCopy => {}
-            ProxyMode::ClientOnly => {}
-            ProxyMode::Offline => {}
-            ProxyMode::ServerOnly => {}
-            _ => {}
+            ProxyMode::Passthrough
+            | ProxyMode::ZeroCopy
+            | ProxyMode::ClientOnly
+            | ProxyMode::Offline
+            | ProxyMode::ServerOnly
+            | _ => {}
         }
     }
 }

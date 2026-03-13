@@ -23,7 +23,7 @@ pub enum HandlerResult {
 /// A handler for a limbo stage (Tier 2).
 ///
 /// Limbo handlers are chained in order as configured per-server. The proxy
-/// handles the Minecraft protocol (JoinGame, KeepAlive, chunks) — the
+/// handles the Minecraft protocol (`JoinGame`, `KeepAlive`, chunks) — the
 /// handler only provides the game logic.
 ///
 /// Methods use [`BoxFuture`] to allow dyn-dispatch (`Box<dyn LimboHandler>`).

@@ -77,6 +77,7 @@ impl PacketDecoder {
         if packet_len <= 0 {
             return Err(ProtocolError::invalid("packet length must be positive"));
         }
+        #[allow(clippy::cast_sign_loss)] // Checked positive above
         let packet_len = packet_len as usize;
         if packet_len > MAX_PACKET_SIZE {
             return Err(ProtocolError::too_large(MAX_PACKET_SIZE, packet_len));
@@ -92,9 +93,28 @@ impl PacketDecoder {
         let mut data = self.buf.split_to(packet_len);
 
         // 5. Decode based on compression mode
-        match self.compression_threshold {
-            None => {
-                // No compression: [VarInt(packet_id)] [payload]
+        #[allow(clippy::branches_sharing_code)] // Both branches share initial cursor setup but diverge significantly after
+        if self.compression_threshold.is_none() {
+            // No compression: [VarInt(packet_id)] [payload]
+            let slice = &data[..];
+            let mut cursor = slice;
+            let packet_id = VarInt::decode(&mut cursor)?;
+            let id_size = slice.len() - cursor.len();
+            data.advance(id_size);
+            Ok(Some(PacketFrame {
+                id: packet_id.0,
+                payload: data.freeze(),
+            }))
+        } else {
+            // Compression mode: [VarInt(data_len)] [compressed or raw data]
+            let slice = &data[..];
+            let mut cursor = slice;
+            let data_len = VarInt::decode(&mut cursor)?;
+            let data_len_varint_size = slice.len() - cursor.len();
+            data.advance(data_len_varint_size);
+
+            if data_len.0 == 0 {
+                // Not compressed (below threshold)
                 let slice = &data[..];
                 let mut cursor = slice;
                 let packet_id = VarInt::decode(&mut cursor)?;
@@ -104,60 +124,40 @@ impl PacketDecoder {
                     id: packet_id.0,
                     payload: data.freeze(),
                 }))
-            }
-            Some(_) => {
-                // Compression mode: [VarInt(data_len)] [compressed or raw data]
-                let slice = &data[..];
-                let mut cursor = slice;
-                let data_len = VarInt::decode(&mut cursor)?;
-                let data_len_varint_size = slice.len() - cursor.len();
-                data.advance(data_len_varint_size);
-
-                if data_len.0 == 0 {
-                    // Not compressed (below threshold)
-                    let slice = &data[..];
-                    let mut cursor = slice;
-                    let packet_id = VarInt::decode(&mut cursor)?;
-                    let id_size = slice.len() - cursor.len();
-                    data.advance(id_size);
-                    Ok(Some(PacketFrame {
-                        id: packet_id.0,
-                        payload: data.freeze(),
-                    }))
-                } else {
-                    // Compressed
-                    let data_len = data_len.0 as usize;
-                    if data_len > MAX_PACKET_DATA_SIZE {
-                        return Err(ProtocolError::too_large(MAX_PACKET_DATA_SIZE, data_len));
-                    }
-
-                    self.decompressor
-                        .decompress(&data[..], &mut self.decompress_buf, data_len)?;
-
-                    let mut cursor: &[u8] = &self.decompress_buf;
-                    let packet_id = VarInt::decode(&mut cursor)?;
-                    let payload = bytes::Bytes::copy_from_slice(cursor);
-                    Ok(Some(PacketFrame {
-                        id: packet_id.0,
-                        payload,
-                    }))
+            } else {
+                // Compressed
+                #[allow(clippy::cast_sign_loss)] // data_len > 0 checked by the if above
+                let data_len = data_len.0 as usize;
+                if data_len > MAX_PACKET_DATA_SIZE {
+                    return Err(ProtocolError::too_large(MAX_PACKET_DATA_SIZE, data_len));
                 }
+
+                self.decompressor
+                    .decompress(&data[..], &mut self.decompress_buf, data_len)?;
+
+                let mut cursor: &[u8] = &self.decompress_buf;
+                let packet_id = VarInt::decode(&mut cursor)?;
+                let payload = bytes::Bytes::copy_from_slice(cursor);
+                Ok(Some(PacketFrame {
+                    id: packet_id.0,
+                    payload,
+                }))
             }
         }
     }
 
     /// Enables compression with the given threshold.
     ///
-    /// Called when the proxy receives/sends a SetCompression packet.
+    /// Called when the proxy receives/sends a `SetCompression` packet.
     /// After this call, all packets are expected in compressed format.
     /// `threshold` is the minimum uncompressed size (in bytes) above which
     /// packets are compressed. Typically 256.
-    pub fn set_compression(&mut self, threshold: i32) {
+    pub const fn set_compression(&mut self, threshold: i32) {
         self.compression_threshold = Some(threshold);
     }
 
     /// Returns the current compression threshold, or `None` if compression is disabled.
-    pub fn compression_threshold(&self) -> Option<i32> {
+    pub const fn compression_threshold(&self) -> Option<i32> {
         self.compression_threshold
     }
 }
@@ -174,6 +174,7 @@ mod tests {
     use crate::io::encoder::PacketEncoder;
 
     /// Helper: manually encode a simple uncompressed frame.
+    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
     fn encode_frame(packet_id: i32, payload: &[u8]) -> Vec<u8> {
         let id_varint = VarInt(packet_id);
         let data_len = id_varint.written_size() + payload.len();
@@ -249,6 +250,7 @@ mod tests {
     #[test]
     fn test_decode_packet_too_large() {
         // Encode a VarInt with value > MAX_PACKET_SIZE
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         let big_len = VarInt((MAX_PACKET_SIZE + 1) as i32);
         let mut buf = Vec::new();
         big_len.encode(&mut buf).unwrap();
@@ -309,11 +311,13 @@ mod tests {
     fn test_decode_compressed_zip_bomb_protection() {
         // Manually craft a packet with data_len > MAX_PACKET_DATA_SIZE
         // Format: [VarInt(packet_len)] [VarInt(huge_data_len)] [some bytes]
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         let huge_data_len = VarInt((MAX_PACKET_DATA_SIZE + 1) as i32);
         let mut inner = Vec::new();
         huge_data_len.encode(&mut inner).unwrap();
         inner.extend_from_slice(&[0x00; 10]); // some garbage bytes
 
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         let packet_len = VarInt(inner.len() as i32);
         let mut buf = Vec::new();
         packet_len.encode(&mut buf).unwrap();
@@ -335,6 +339,7 @@ mod tests {
         data_len.encode(&mut inner).unwrap();
         inner.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // garbage
 
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         let packet_len = VarInt(inner.len() as i32);
         let mut buf = Vec::new();
         packet_len.encode(&mut buf).unwrap();

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 /// Type-erased decoder function stored in the registry.
 ///
-/// Takes a byte slice (payload after the packet_id) and the version,
+/// Takes a byte slice (payload after the `packet_id`) and the version,
 /// returns a boxed packet.
 type DecoderFn = fn(&mut &[u8], ProtocolVersion) -> ProtocolResult<Box<dyn ErasedPacket>>;
 
@@ -41,26 +41,18 @@ pub enum DecodedPacket {
 
 /// Registry for a specific (state, direction, version) combination.
 /// Contains two O(1) lookups:
-/// - decode: packet_id → DecoderFn
-/// - encode: TypeId (of the Packet struct) → packet_id
+/// - decode: `packet_id` → `DecoderFn`
+/// - encode: `TypeId` (of the Packet struct) → `packet_id`
+#[derive(Default)]
 struct VersionRegistry {
     id_to_decoder: HashMap<i32, DecoderFn>,
     type_to_id: HashMap<TypeId, i32>,
 }
 
-impl VersionRegistry {
-    fn new() -> Self {
-        Self {
-            id_to_decoder: HashMap::new(),
-            type_to_id: HashMap::new(),
-        }
-    }
-}
-
 /// Complete packet registry, immutable after construction.
 ///
 /// Contains a [`VersionRegistry`] per (state, direction, version) combination.
-/// Lookup is O(1): two nested HashMaps.
+/// Lookup is O(1): two nested `HashMaps`.
 ///
 /// Built via [`PacketRegistration`] builders then frozen behind an `Arc`.
 ///
@@ -156,7 +148,7 @@ impl PacketRegistry {
         })
     }
 
-    /// Gets the packet_id for encoding a given typed packet.
+    /// Gets the `packet_id` for encoding a given typed packet.
     ///
     /// Returns `None` if the packet is not registered for this
     /// (state, direction, version) combination.
@@ -172,7 +164,7 @@ impl PacketRegistry {
             .and_then(|ver_reg| ver_reg.type_to_id.get(&TypeId::of::<P>()).copied())
     }
 
-    /// Checks if a decoder exists for a given packet_id.
+    /// Checks if a decoder exists for a given `packet_id`.
     ///
     /// Useful for debug and tests.
     pub fn has_decoder(
@@ -199,11 +191,11 @@ impl PacketRegistry {
         let ver_reg = self
             .registries
             .entry(key)
-            .or_insert_with(VersionRegistry::new);
+            .or_default();
         ver_reg.type_to_id.insert(type_id, packet_id);
     }
 
-    /// Inserts a decoder function for a packet_id.
+    /// Inserts a decoder function for a `packet_id`.
     /// Used internally by the builder.
     pub(crate) fn insert_decoder(
         &mut self,
@@ -214,7 +206,7 @@ impl PacketRegistry {
         let ver_reg = self
             .registries
             .entry(key)
-            .or_insert_with(VersionRegistry::new);
+            .or_default();
         ver_reg.id_to_decoder.insert(packet_id, decoder);
     }
 }
@@ -679,6 +671,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::similar_names)] // decoder/decoded are semantically distinct
     fn test_end_to_end_play_packet() {
         use crate::io::{PacketDecoder, PacketEncoder};
         use crate::packets::CKeepAlive;

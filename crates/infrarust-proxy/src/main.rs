@@ -34,8 +34,8 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     // Init tracing — RUST_LOG takes priority over --log-level
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(true)
@@ -62,11 +62,7 @@ fn main() -> ExitCode {
     if config.worker_threads > 0 {
         builder.worker_threads(config.worker_threads);
     }
-    let runtime = match builder
-        .enable_all()
-        .thread_name("infrarust-worker")
-        .build()
-    {
+    let runtime = match builder.enable_all().thread_name("infrarust-worker").build() {
         Ok(rt) => rt,
         Err(e) => {
             tracing::error!("failed to build tokio runtime: {e}");
@@ -95,8 +91,7 @@ fn load_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
         config.bind = bind;
     }
 
-    infrarust_config::validate_proxy_config(&config)
-        .context("configuration validation failed")?;
+    infrarust_config::validate_proxy_config(&config).context("configuration validation failed")?;
 
     Ok(config)
 }
@@ -113,8 +108,8 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     });
 
     // Build and run the proxy server
-    let server = ProxyServer::new(config, shutdown.clone())
-        .context("failed to initialize proxy server")?;
+    let server =
+        ProxyServer::new(config, shutdown.clone()).context("failed to initialize proxy server")?;
 
     tracing::info!("infrarust is ready, accepting connections");
 
