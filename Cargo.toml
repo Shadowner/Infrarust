@@ -8,6 +8,7 @@ members = [
     "crates/infrarust-limbo",
     "crates/infrarust-ban",
     "crates/infrarust-server-manager",
+    "crates/infrarust-transport",
     "crates/infrarust-proxy",
     "plugins/infrarust-plugin-auth",
     "plugins/infrarust-plugin-antibot",
@@ -37,6 +38,7 @@ notify = "7"
 infrarust-protocol = { path = "crates/infrarust-protocol" }
 infrarust-api = { path = "crates/infrarust-api" }
 infrarust-config = { path = "crates/infrarust-config" }
+infrarust-transport = { path = "crates/infrarust-transport" }
 infrarust-core = { path = "crates/infrarust-core" }
 infrarust-limbo = { path = "crates/infrarust-limbo" }
 infrarust-ban = { path = "crates/infrarust-ban" }

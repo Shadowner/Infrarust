@@ -233,6 +233,39 @@ pub struct TimeoutConfig {
     pub write: Duration,
 }
 
+// ─────────────────────────── Keepalive ────────────────────────────
+
+/// Configuration TCP keepalive.
+///
+/// Contrôle les sondes keepalive envoyées sur les connexions TCP
+/// pour détecter les connexions mortes.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KeepaliveConfig {
+    /// Durée d'inactivité avant la première sonde.
+    #[serde(default = "defaults::keepalive_time")]
+    #[serde(with = "humantime_serde")]
+    pub time: Duration,
+
+    /// Intervalle entre les sondes.
+    #[serde(default = "defaults::keepalive_interval")]
+    #[serde(with = "humantime_serde")]
+    pub interval: Duration,
+
+    /// Nombre de sondes échouées avant fermeture.
+    #[serde(default = "defaults::keepalive_retries")]
+    pub retries: u32,
+}
+
+impl Default for KeepaliveConfig {
+    fn default() -> Self {
+        Self {
+            time: defaults::keepalive_time(),
+            interval: defaults::keepalive_interval(),
+            retries: defaults::keepalive_retries(),
+        }
+    }
+}
+
 // ─────────────────────────── IP Filter ────────────────────────────
 
 /// Filtrage IP par CIDR.

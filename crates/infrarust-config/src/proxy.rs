@@ -7,7 +7,9 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::defaults;
-use crate::types::{MotdEntry, RateLimitConfig, StatusCacheConfig, TelemetryConfig};
+use crate::types::{
+    KeepaliveConfig, MotdEntry, RateLimitConfig, StatusCacheConfig, TelemetryConfig,
+};
 
 /// Configuration racine du proxy.
 /// Correspond au fichier `infrarust.toml`.
@@ -54,4 +56,12 @@ pub struct ProxyConfig {
     /// Config de la télémétrie
     #[serde(default)]
     pub telemetry: TelemetryConfig,
+
+    /// Config TCP keepalive
+    #[serde(default)]
+    pub keepalive: KeepaliveConfig,
+
+    /// Active SO_REUSEPORT (Linux uniquement)
+    #[serde(default)]
+    pub so_reuseport: bool,
 }

@@ -58,3 +58,15 @@ pub fn otlp_endpoint() -> String {
 pub fn service_name() -> String {
     "infrarust".to_string()
 }
+
+pub fn keepalive_time() -> Duration {
+    Duration::from_secs(30)
+}
+
+pub fn keepalive_interval() -> Duration {
+    Duration::from_secs(10)
+}
+
+pub fn keepalive_retries() -> u32 {
+    3
+}
