@@ -1,13 +1,11 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 
 use tokio::io::AsyncReadExt;
 
 use infrarust_protocol::io::PacketDecoder;
+use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::login::SLoginStart;
-use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
-use infrarust_protocol::version::{ConnectionState, Direction};
 
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
@@ -16,17 +14,18 @@ use crate::pipeline::types::{HandshakeData, LoginData};
 
 /// Middleware that parses the LoginStart packet to extract username and UUID.
 ///
+/// Decodes the packet directly (without the packet registry) for
+/// forward-compatibility with unknown protocol versions.
+///
 /// Runs in the login pipeline after the common pipeline has completed.
 /// Appends the raw login packet bytes to `HandshakeData.raw_packets`
 /// for forwarding to the backend in passthrough mode.
-pub struct LoginStartParserMiddleware {
-    registry: Arc<PacketRegistry>,
-}
+#[derive(Default)]
+pub struct LoginStartParserMiddleware;
 
 impl LoginStartParserMiddleware {
-    /// Creates a new login start parser using the given packet registry.
-    pub fn new(registry: Arc<PacketRegistry>) -> Self {
-        Self { registry }
+    pub fn new() -> Self {
+        Self
     }
 }
 
@@ -70,35 +69,20 @@ impl Middleware for LoginStartParserMiddleware {
                 }
             };
 
-            // Decode the login start packet
-            let decoded = self.registry.decode_frame(
-                &frame,
-                ConnectionState::Login,
-                Direction::Serverbound,
+            // Decode the login start packet directly — always packet ID 0x00
+            // in Login state, no registry needed for forward-compatibility.
+            if frame.id != 0x00 {
+                return Err(CoreError::Protocol(
+                    infrarust_protocol::ProtocolError::invalid(format!(
+                        "expected login start (0x00), got 0x{:02X}",
+                        frame.id,
+                    )),
+                ));
+            }
+            let login_start = SLoginStart::decode(
+                &mut frame.payload.as_ref(),
                 protocol_version,
             )?;
-
-            let login_start: SLoginStart = match decoded {
-                DecodedPacket::Typed { packet, .. } => {
-                    match packet.as_any().downcast_ref::<SLoginStart>() {
-                        Some(ls) => ls.clone(),
-                        None => {
-                            return Err(CoreError::Protocol(
-                                infrarust_protocol::ProtocolError::invalid(
-                                    "expected SLoginStart packet",
-                                ),
-                            ));
-                        }
-                    }
-                }
-                DecodedPacket::Opaque { .. } => {
-                    return Err(CoreError::Protocol(
-                        infrarust_protocol::ProtocolError::invalid(
-                            "login start packet not registered in registry",
-                        ),
-                    ));
-                }
-            };
 
             tracing::debug!(
                 username = %login_start.name,

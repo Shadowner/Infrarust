@@ -1,0 +1,2 @@
+domains = ["localhost", "test-4.fr"]
+addresses = ["127.0.0.1:25570"]

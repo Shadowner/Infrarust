@@ -1,0 +1,2 @@
+# Minimal Infrarust proxy configuration for smoke testing
+servers_dir = "./examples/servers"

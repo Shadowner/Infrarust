@@ -67,9 +67,7 @@ impl ProxyServer {
         // Build common pipeline: IpFilter → HandshakeParser → RateLimiter → DomainRouter
         let mut common_pipeline = Pipeline::new();
         common_pipeline.add(Box::new(IpFilterMiddleware::new(None))); // Global filter from proxy config — Phase 2
-        common_pipeline.add(Box::new(HandshakeParserMiddleware::new(Arc::clone(
-            &packet_registry,
-        ))));
+        common_pipeline.add(Box::new(HandshakeParserMiddleware::new()));
         common_pipeline.add(Box::new(RateLimiterMiddleware::new(&config.rate_limit)));
         common_pipeline.add(Box::new(DomainRouterMiddleware::new(
             Arc::clone(&domain_index),
@@ -78,9 +76,7 @@ impl ProxyServer {
 
         // Build login pipeline: LoginStartParser
         let mut login_pipeline = Pipeline::new();
-        login_pipeline.add(Box::new(LoginStartParserMiddleware::new(Arc::clone(
-            &packet_registry,
-        ))));
+        login_pipeline.add(Box::new(LoginStartParserMiddleware::new()));
 
         // Build handlers
         let status_handler = StatusHandler::new(Arc::clone(&packet_registry));

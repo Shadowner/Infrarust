@@ -1,14 +1,13 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 
 use tokio::io::AsyncReadExt;
 
 use infrarust_protocol::io::PacketDecoder;
 use infrarust_protocol::legacy;
 use infrarust_protocol::packets::handshake::SHandshake;
-use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::packets::Packet;
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
@@ -18,16 +17,19 @@ use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected};
 /// Middleware that parses the Minecraft handshake packet.
 ///
 /// Detects legacy clients (0xFE first byte) and short-circuits.
-/// For modern clients, decodes the SHandshake packet, strips FML markers,
-/// and inserts `HandshakeData` into the context extensions.
-pub struct HandshakeParserMiddleware {
-    registry: Arc<PacketRegistry>,
-}
+/// For modern clients, decodes the SHandshake packet directly (without the
+/// packet registry), strips FML markers, and inserts `HandshakeData` into
+/// the context extensions.
+///
+/// The handshake format has been stable since Minecraft 1.7 and is decoded
+/// independently of the client's protocol version. This makes the proxy
+/// forward-compatible with any future Minecraft version.
+#[derive(Default)]
+pub struct HandshakeParserMiddleware;
 
 impl HandshakeParserMiddleware {
-    /// Creates a new handshake parser using the given packet registry.
-    pub fn new(registry: Arc<PacketRegistry>) -> Self {
-        Self { registry }
+    pub fn new() -> Self {
+        Self
     }
 }
 
@@ -104,36 +106,20 @@ impl Middleware for HandshakeParserMiddleware {
             // Store all raw bytes read so far for forwarding
             let raw_packet = raw_data;
 
-            // Decode the handshake frame
-            // First pass: use UNKNOWN version since we don't know it yet
-            let decoded = self.registry.decode_frame(
-                &frame,
-                ConnectionState::Handshake,
-                Direction::Serverbound,
-                ProtocolVersion::UNKNOWN,
+            // Decode the handshake directly — always packet ID 0x00,
+            // format stable since MC 1.7, no registry needed.
+            if frame.id != 0x00 {
+                return Err(CoreError::Protocol(
+                    infrarust_protocol::ProtocolError::invalid(format!(
+                        "expected handshake (0x00), got 0x{:02X}",
+                        frame.id,
+                    )),
+                ));
+            }
+            let handshake = SHandshake::decode(
+                &mut frame.payload.as_ref(),
+                ProtocolVersion::V1_7_2,
             )?;
-
-            let handshake: SHandshake = match decoded {
-                DecodedPacket::Typed { packet, .. } => {
-                    match packet.as_any().downcast_ref::<SHandshake>() {
-                        Some(hs) => hs.clone(),
-                        None => {
-                            return Err(CoreError::Protocol(
-                                infrarust_protocol::ProtocolError::invalid(
-                                    "expected SHandshake packet",
-                                ),
-                            ));
-                        }
-                    }
-                }
-                DecodedPacket::Opaque { .. } => {
-                    return Err(CoreError::Protocol(
-                        infrarust_protocol::ProtocolError::invalid(
-                            "handshake packet not registered in registry",
-                        ),
-                    ));
-                }
-            };
 
             // Extract and clean domain
             let domain = strip_fml_markers(&handshake.server_address).to_lowercase();

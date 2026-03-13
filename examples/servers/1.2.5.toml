@@ -1,0 +1,2 @@
+domains = ["test.fr"]
+addresses = ["127.0.0.1:25568"]

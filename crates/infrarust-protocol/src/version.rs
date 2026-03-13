@@ -76,6 +76,16 @@ impl ProtocolVersion {
     pub const V1_21_2: Self = Self(768);
     /// Minecraft 1.21.4
     pub const V1_21_4: Self = Self(769);
+    /// Minecraft 1.21.5
+    pub const V1_21_5: Self = Self(770);
+    /// Minecraft 1.21.6
+    pub const V1_21_6: Self = Self(771);
+    /// Minecraft 1.21.7
+    pub const V1_21_7: Self = Self(772);
+    /// Minecraft 1.21.9
+    pub const V1_21_9: Self = Self(773);
+    /// Minecraft 1.21.11
+    pub const V1_21_11: Self = Self(774);
 
     /// All supported protocol versions, sorted in ascending order.
     ///
@@ -111,6 +121,11 @@ impl ProtocolVersion {
         Self::V1_21,
         Self::V1_21_2,
         Self::V1_21_4,
+        Self::V1_21_5,
+        Self::V1_21_6,
+        Self::V1_21_7,
+        Self::V1_21_9,
+        Self::V1_21_11,
     ];
 
     /// Returns `true` if `self >= other`.
@@ -182,6 +197,11 @@ impl ProtocolVersion {
             Self::V1_21 => "1.21",
             Self::V1_21_2 => "1.21.2",
             Self::V1_21_4 => "1.21.4",
+            Self::V1_21_5 => "1.21.5",
+            Self::V1_21_6 => "1.21.6",
+            Self::V1_21_7 => "1.21.7",
+            Self::V1_21_9 => "1.21.9",
+            Self::V1_21_11 => "1.21.11",
             _ => "unknown",
         }
     }
