@@ -1,0 +1,44 @@
+# Domaines qui routent vers ce serveur
+# Supporte les wildcards : "*.mc.example.com"
+domains = ["survival.mc.example.com", "*.survival.example.com"]
+
+# Adresses backend (host:port, port par défaut = 25565)
+addresses = ["10.0.1.10:25565", "10.0.1.11:25565"]
+
+# Mode de proxy
+proxy_mode = "passthrough"
+
+# Envoyer le proxy protocol au backend
+send_proxy_protocol = false
+
+# Réécriture du domaine dans le handshake
+domain_rewrite = "none"
+
+# Nombre max de joueurs (0 = illimité)
+max_players = 100
+
+# Timeouts spécifiques (override global)
+[timeouts]
+connect = "3s"
+read = "30s"
+write = "30s"
+
+# MOTD par état du serveur
+[motd.online]
+text = "§aSurvival §7— §fBienvenue !"
+favicon = "./icons/survival.png"
+
+[motd.sleeping]
+text = "§eSurvival §7— §fConnect to wake up!"
+version_name = "Server Sleeping"
+
+[motd.starting]
+text = "§eSurvival §7— §fStarting..."
+
+# Gestion automatique du serveur
+[server_manager]
+type = "pterodactyl"
+api_url = "https://panel.example.com"
+api_key = "ptlc_xxxxx"
+server_id = "abc123"
+shutdown_after = "10m"

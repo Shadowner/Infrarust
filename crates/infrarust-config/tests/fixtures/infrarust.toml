@@ -1,0 +1,44 @@
+# Adresse d'écoute du proxy
+bind = "0.0.0.0:25565"
+
+# Nombre max de connexions simultanées (0 = illimité)
+max_connections = 10000
+
+# Timeout de connexion vers les backends
+connect_timeout = "5s"
+
+# Réception du proxy protocol HAProxy (v1/v2)
+receive_proxy_protocol = false
+
+# Dossier contenant les fichiers .toml des serveurs
+servers_dir = "./servers"
+
+# Nombre de worker threads tokio (0 = auto, basé sur les CPUs)
+worker_threads = 0
+
+[rate_limit]
+# Connexions max par IP par fenêtre (login)
+max_connections = 3
+# Durée de la fenêtre
+window = "10s"
+# Limite séparée pour les status pings (plus permissif)
+status_max = 30
+status_window = "10s"
+
+[status_cache]
+# Durée de vie d'une entrée en cache
+ttl = "5s"
+# Nombre max d'entrées
+max_entries = 1000
+
+# MOTD par défaut quand aucun serveur ne matche le domaine
+[default_motd]
+text = "§cUnknown server"
+version_name = "Infrarust"
+max_players = 0
+
+[telemetry]
+enabled = false
+# Endpoint OTLP (OpenTelemetry)
+otlp_endpoint = "http://localhost:4317"
+service_name = "infrarust"

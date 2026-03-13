@@ -5,14 +5,12 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-default = []
-watch = ["notify"]
-
 [dependencies]
 serde = { workspace = true }
-serde_yml = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
 tracing = { workspace = true }
-notify = { workspace = true, optional = true }
+tokio = { version = "1", features = ["sync"] }
+toml = "0.8"
+ipnet = { version = "2", features = ["serde"] }
+humantime-serde = "1.1"
+wildmatch = "2.6"

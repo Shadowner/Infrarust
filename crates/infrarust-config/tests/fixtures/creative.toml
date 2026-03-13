@@ -1,0 +1,12 @@
+domains = ["creative.mc.example.com"]
+addresses = ["127.0.0.1:25566"]
+proxy_mode = "client_only"
+
+[server_manager]
+type = "local"
+command = "java"
+working_dir = "/opt/minecraft/creative"
+args = ["-Xmx4G", "-jar", "server.jar", "nogui"]
+ready_pattern = 'For help, type "help"'
+shutdown_timeout = "30s"
+shutdown_after = "15m"

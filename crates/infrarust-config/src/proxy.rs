@@ -1,0 +1,57 @@
+//! Global proxy configuration (`infrarust.toml`).
+
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use serde::Deserialize;
+
+use crate::defaults;
+use crate::types::{MotdEntry, RateLimitConfig, StatusCacheConfig, TelemetryConfig};
+
+/// Configuration racine du proxy.
+/// Correspond au fichier `infrarust.toml`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProxyConfig {
+    /// Adresse d'écoute, ex: "0.0.0.0:25565"
+    #[serde(default = "defaults::bind")]
+    pub bind: SocketAddr,
+
+    /// Nombre max de connexions simultanées (0 = illimité)
+    #[serde(default)]
+    pub max_connections: u32,
+
+    /// Timeout de connexion au backend
+    #[serde(default = "defaults::connect_timeout")]
+    #[serde(with = "humantime_serde")]
+    pub connect_timeout: Duration,
+
+    /// Active la réception du proxy protocol (HAProxy v1/v2)
+    #[serde(default)]
+    pub receive_proxy_protocol: bool,
+
+    /// Chemin vers le dossier de configs serveurs
+    #[serde(default = "defaults::servers_dir")]
+    pub servers_dir: PathBuf,
+
+    /// Nombre de worker threads tokio (0 = auto)
+    #[serde(default)]
+    pub worker_threads: usize,
+
+    /// Config du rate limiting global
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
+
+    /// Config du cache de status ping
+    #[serde(default)]
+    pub status_cache: StatusCacheConfig,
+
+    /// MOTD par défaut quand aucun serveur ne matche
+    #[serde(default)]
+    pub default_motd: Option<MotdEntry>,
+
+    /// Config de la télémétrie
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
+}
