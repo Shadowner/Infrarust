@@ -676,8 +676,8 @@ name = "infrarust-api"
 version = "2.0.0-alpha.1"
 dependencies = [
  "bytes",
- "serde",
  "thiserror",
+ "tracing",
  "uuid",
 ]
 

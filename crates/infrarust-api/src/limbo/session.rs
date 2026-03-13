@@ -1,0 +1,40 @@
+//! Limbo session trait.
+
+use crate::error::PlayerError;
+use crate::types::{Component, GameProfile, PlayerId, TitleData};
+
+use super::handler::HandlerResult;
+
+mod private {
+    /// Sealed — only the proxy implements [`LimboSession`](super::LimboSession).
+    pub trait Sealed {}
+}
+
+/// A session handle for a player in a limbo stage.
+///
+/// Provides high-level communication methods. The proxy handles the
+/// underlying Minecraft protocol (JoinGame, KeepAlive, chunks).
+///
+/// Obtained in [`LimboHandler`](super::handler::LimboHandler) callbacks.
+pub trait LimboSession: Send + Sync + private::Sealed {
+    /// Returns the player's session ID.
+    fn player_id(&self) -> PlayerId;
+
+    /// Returns the player's game profile.
+    fn profile(&self) -> &GameProfile;
+
+    /// Sends a chat message to the player.
+    fn send_message(&self, message: Component) -> Result<(), PlayerError>;
+
+    /// Sends a title display to the player.
+    fn send_title(&self, title: TitleData) -> Result<(), PlayerError>;
+
+    /// Sends an action bar message to the player.
+    fn send_action_bar(&self, message: Component) -> Result<(), PlayerError>;
+
+    /// Signals that this handler is done processing the player.
+    ///
+    /// Call this when the handler returned [`HandlerResult::Hold`] and
+    /// is now ready to release the player.
+    fn complete(&self, result: HandlerResult);
+}
