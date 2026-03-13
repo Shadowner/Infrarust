@@ -6,13 +6,23 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+infrarust-config = { workspace = true }
+infrarust-protocol = { workspace = true }
+infrarust-transport = { workspace = true }
+
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 bytes = { workspace = true }
-tracing = { workspace = true }
-thiserror = { workspace = true }
+dashmap = { workspace = true }
+governor = { workspace = true }
 arc-swap = { workspace = true }
+notify = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
 uuid = { workspace = true }
-infrarust-protocol = { workspace = true }
-infrarust-api = { workspace = true }
-infrarust-config = { workspace = true }
+nonzero_ext = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
