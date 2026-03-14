@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod error;
 pub mod handler;
 pub mod middleware;
@@ -6,3 +7,5 @@ pub mod provider;
 pub mod registry;
 pub mod reload;
 pub mod server;
+pub mod session;
+pub mod util;

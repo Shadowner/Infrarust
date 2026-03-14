@@ -5,7 +5,7 @@ use arc_swap::ArcSwap;
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
-use infrarust_config::{DomainIndex, ProxyConfig, ServerConfig};
+use infrarust_config::{DomainIndex, ProxyConfig, ProxyMode, ServerConfig};
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::packets::login::CLoginDisconnect;
 use infrarust_protocol::registry::PacketRegistry;
@@ -13,8 +13,11 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_protocol::{Packet, build_default_registry};
 use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
 
+use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
+use crate::handler::client_only::ClientOnlyHandler;
 use crate::handler::legacy::LegacyHandler;
+use crate::handler::offline::OfflineHandler;
 use crate::handler::passthrough::PassthroughHandler;
 use crate::handler::status::StatusHandler;
 use crate::middleware::domain_router::DomainRouterMiddleware;
@@ -25,7 +28,7 @@ use crate::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::pipeline::Pipeline;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
-use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected};
+use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected, RoutingData};
 use crate::provider::file::FileProvider;
 use crate::registry::ConnectionRegistry;
 
@@ -39,6 +42,8 @@ pub struct ProxyServer {
     status_handler: StatusHandler,
     legacy_handler: LegacyHandler,
     passthrough_handler: PassthroughHandler,
+    offline_handler: OfflineHandler,
+    client_only_handler: ClientOnlyHandler,
     registry: Arc<ConnectionRegistry>,
     domain_index: Arc<ArcSwap<DomainIndex>>,
     configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
@@ -90,6 +95,20 @@ impl ProxyServer {
         let passthrough_handler =
             PassthroughHandler::new(Arc::clone(&backend_connector), Arc::clone(&registry));
 
+        let offline_handler = OfflineHandler::new(
+            Arc::clone(&backend_connector),
+            Arc::clone(&packet_registry),
+            Arc::clone(&registry),
+        );
+
+        let auth = Arc::new(MojangAuth::new()?);
+        let client_only_handler = ClientOnlyHandler::new(
+            Arc::clone(&backend_connector),
+            Arc::clone(&packet_registry),
+            Arc::clone(&registry),
+            auth,
+        );
+
         Ok(Self {
             config,
             common_pipeline,
@@ -97,6 +116,8 @@ impl ProxyServer {
             status_handler,
             legacy_handler,
             passthrough_handler,
+            offline_handler,
+            client_only_handler,
             registry,
             domain_index,
             configs,
@@ -209,10 +230,45 @@ impl ProxyServer {
                         return Ok(());
                     }
                 }
-                // Forward to backend
-                self.passthrough_handler
-                    .handle(ctx, shutdown.child_token())
-                    .await?;
+
+                // Route by proxy mode
+                let proxy_mode = ctx
+                    .extensions
+                    .get::<RoutingData>()
+                    .expect("RoutingData must be set by domain_router")
+                    .server_config
+                    .proxy_mode;
+
+                match proxy_mode {
+                    ProxyMode::Passthrough | ProxyMode::ZeroCopy | ProxyMode::ServerOnly => {
+                        self.passthrough_handler
+                            .handle(ctx, shutdown.child_token())
+                            .await?;
+                    }
+                    ProxyMode::Offline => {
+                        self.offline_handler
+                            .handle(ctx, shutdown.child_token())
+                            .await?;
+                    }
+                    ProxyMode::ClientOnly => {
+                        self.client_only_handler
+                            .handle(ctx, shutdown.child_token())
+                            .await?;
+                    }
+                    ProxyMode::Full => {
+                        tracing::warn!(
+                            "Full mode not yet implemented, falling back to Passthrough"
+                        );
+                        self.passthrough_handler
+                            .handle(ctx, shutdown.child_token())
+                            .await?;
+                    }
+                    _ => {
+                        self.passthrough_handler
+                            .handle(ctx, shutdown.child_token())
+                            .await?;
+                    }
+                }
             }
             ConnectionIntent::Transfer => {
                 tracing::debug!("transfer intent — not supported in Phase 1");

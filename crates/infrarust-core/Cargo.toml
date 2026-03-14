@@ -22,7 +22,16 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 nonzero_ext = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true }
 toml = { workspace = true }
+reqwest = { workspace = true }
+
+# Auth Mojang (ClientOnly)
+rsa = { version = "0.9", features = ["sha1"] }
+sha1 = "0.10"
+rand = "0.8"
+num-bigint = "0.4"
+base64 = "0.22"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
