@@ -92,6 +92,11 @@ impl BanManager {
         self.storage.remove_ban(target).await
     }
 
+    /// Checks if an IP is banned (called by `BanIpCheckMiddleware` in the common pipeline).
+    pub async fn is_ip_banned(&self, ip: &IpAddr) -> Result<Option<BanEntry>, CoreError> {
+        self.storage.is_banned(&BanTarget::Ip(*ip)).await
+    }
+
     /// Checks a player against the ban storage (called by `BanCheckMiddleware`).
     pub async fn check_player(
         &self,

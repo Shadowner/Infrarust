@@ -24,6 +24,7 @@ use crate::handler::offline::OfflineHandler;
 use crate::handler::passthrough::PassthroughHandler;
 use crate::handler::status::StatusHandler;
 use crate::middleware::ban_check::BanCheckMiddleware;
+use crate::middleware::ban_ip_check::BanIpCheckMiddleware;
 use crate::middleware::domain_router::DomainRouterMiddleware;
 use crate::middleware::handshake_parser::HandshakeParserMiddleware;
 use crate::middleware::ip_filter::IpFilterMiddleware;
@@ -74,16 +75,6 @@ impl ProxyServer {
         // Build packet registry
         let packet_registry = Arc::new(build_default_registry());
 
-        // Build common pipeline: IpFilter → HandshakeParser → RateLimiter → DomainRouter
-        let mut common_pipeline = Pipeline::new();
-        common_pipeline.add(Box::new(IpFilterMiddleware::new(None))); // Global filter from proxy config — Phase 2
-        common_pipeline.add(Box::new(HandshakeParserMiddleware::new()));
-        common_pipeline.add(Box::new(RateLimiterMiddleware::new(&config.rate_limit)));
-        common_pipeline.add(Box::new(DomainRouterMiddleware::new(
-            Arc::clone(&domain_index),
-            Arc::clone(&configs),
-        )));
-
         // Build handlers
         let status_handler = StatusHandler::new(Arc::clone(&packet_registry));
         let legacy_handler = LegacyHandler::new(Arc::clone(&domain_index), Arc::clone(&configs));
@@ -98,6 +89,19 @@ impl ProxyServer {
         let ban_storage = Arc::new(FileBanStorage::new(config.ban.file.clone()));
         ban_storage.load().await?;
         let ban_manager = Arc::new(BanManager::new(ban_storage, Arc::clone(&registry)));
+
+        // Build common pipeline: IpFilter → BanIpCheck → HandshakeParser → RateLimiter → DomainRouter
+        let mut common_pipeline = Pipeline::new();
+        common_pipeline.add(Box::new(IpFilterMiddleware::new(None))); // Global filter from proxy config — Phase 2
+        common_pipeline.add(Box::new(BanIpCheckMiddleware::new(Arc::clone(
+            &ban_manager,
+        ))));
+        common_pipeline.add(Box::new(HandshakeParserMiddleware::new()));
+        common_pipeline.add(Box::new(RateLimiterMiddleware::new(&config.rate_limit)));
+        common_pipeline.add(Box::new(DomainRouterMiddleware::new(
+            Arc::clone(&domain_index),
+            Arc::clone(&configs),
+        )));
 
         // Build login pipeline: LoginStartParser → BanCheck
         let mut login_pipeline = Pipeline::new();

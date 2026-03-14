@@ -1,4 +1,5 @@
 pub mod ban_check;
+pub mod ban_ip_check;
 pub mod domain_router;
 pub mod handshake_parser;
 pub mod ip_filter;
