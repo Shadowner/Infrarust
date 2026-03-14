@@ -14,12 +14,16 @@ use infrarust_protocol::{Packet, build_default_registry};
 use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
 
 use crate::auth::mojang::MojangAuth;
+use crate::ban::file_storage::FileBanStorage;
+use crate::ban::manager::BanManager;
+use crate::ban::storage::BanStorage;
 use crate::error::CoreError;
 use crate::handler::client_only::ClientOnlyHandler;
 use crate::handler::legacy::LegacyHandler;
 use crate::handler::offline::OfflineHandler;
 use crate::handler::passthrough::PassthroughHandler;
 use crate::handler::status::StatusHandler;
+use crate::middleware::ban_check::BanCheckMiddleware;
 use crate::middleware::domain_router::DomainRouterMiddleware;
 use crate::middleware::handshake_parser::HandshakeParserMiddleware;
 use crate::middleware::ip_filter::IpFilterMiddleware;
@@ -45,6 +49,7 @@ pub struct ProxyServer {
     offline_handler: OfflineHandler,
     client_only_handler: ClientOnlyHandler,
     registry: Arc<ConnectionRegistry>,
+    ban_manager: Arc<BanManager>,
     domain_index: Arc<ArcSwap<DomainIndex>>,
     configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
     packet_registry: Arc<PacketRegistry>,
@@ -53,7 +58,7 @@ pub struct ProxyServer {
 
 impl ProxyServer {
     /// Builds the proxy server from config, loading server configs from disk.
-    pub fn new(config: ProxyConfig, shutdown: CancellationToken) -> Result<Self, CoreError> {
+    pub async fn new(config: ProxyConfig, shutdown: CancellationToken) -> Result<Self, CoreError> {
         // Load initial server configs
         let provider = FileProvider::new(config.servers_dir.clone());
         let server_configs = provider.load_configs()?;
@@ -79,10 +84,6 @@ impl ProxyServer {
             Arc::clone(&configs),
         )));
 
-        // Build login pipeline: LoginStartParser
-        let mut login_pipeline = Pipeline::new();
-        login_pipeline.add(Box::new(LoginStartParserMiddleware::new()));
-
         // Build handlers
         let status_handler = StatusHandler::new(Arc::clone(&packet_registry));
         let legacy_handler = LegacyHandler::new(Arc::clone(&domain_index), Arc::clone(&configs));
@@ -92,6 +93,17 @@ impl ProxyServer {
             config.keepalive.clone(),
         ));
         let registry = Arc::new(ConnectionRegistry::new());
+
+        // Ban system
+        let ban_storage = Arc::new(FileBanStorage::new(config.ban.file.clone()));
+        ban_storage.load().await?;
+        let ban_manager = Arc::new(BanManager::new(ban_storage, Arc::clone(&registry)));
+
+        // Build login pipeline: LoginStartParser → BanCheck
+        let mut login_pipeline = Pipeline::new();
+        login_pipeline.add(Box::new(LoginStartParserMiddleware::new()));
+        login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
+
         let passthrough_handler =
             PassthroughHandler::new(Arc::clone(&backend_connector), Arc::clone(&registry));
 
@@ -119,6 +131,7 @@ impl ProxyServer {
             offline_handler,
             client_only_handler,
             registry,
+            ban_manager,
             domain_index,
             configs,
             packet_registry,
@@ -140,6 +153,11 @@ impl ProxyServer {
         let listener = Listener::bind(listener_config, self.shutdown.clone()).await?;
 
         tracing::info!(bind = %self.config.bind, "proxy server listening");
+
+        // Start ban purge task
+        let _purge_handle = self
+            .ban_manager
+            .start_purge_task(self.config.ban.purge_interval, self.shutdown.clone());
 
         // Start config hot-reload
         let provider = FileProvider::new(self.config.servers_dir.clone());
@@ -316,6 +334,11 @@ impl ProxyServer {
     /// Returns a reference to the connection registry.
     pub fn registry(&self) -> &ConnectionRegistry {
         &self.registry
+    }
+
+    /// Returns a reference to the ban manager.
+    pub fn ban_manager(&self) -> &Arc<BanManager> {
+        &self.ban_manager
     }
 
     /// Returns the shutdown token.

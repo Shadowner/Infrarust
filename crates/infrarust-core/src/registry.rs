@@ -95,6 +95,23 @@ impl ConnectionRegistry {
     pub fn all(&self) -> Vec<SessionEntry> {
         self.sessions.iter().map(|r| r.clone()).collect()
     }
+
+    /// Finds all sessions from a given IP (may be multiple for multi-accounts).
+    pub fn find_by_ip(&self, ip: &IpAddr) -> Vec<SessionEntry> {
+        self.sessions
+            .iter()
+            .filter(|r| r.client_ip == *ip)
+            .map(|r| r.clone())
+            .collect()
+    }
+
+    /// Finds the session with the given Mojang UUID.
+    pub fn find_by_uuid(&self, uuid: &Uuid) -> Option<SessionEntry> {
+        self.sessions
+            .iter()
+            .find(|r| r.player_uuid.as_ref() == Some(uuid))
+            .map(|r| r.clone())
+    }
 }
 
 impl Default for ConnectionRegistry {

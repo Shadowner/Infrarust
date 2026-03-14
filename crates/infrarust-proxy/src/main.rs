@@ -108,8 +108,9 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     });
 
     // Build and run the proxy server
-    let server =
-        ProxyServer::new(config, shutdown.clone()).context("failed to initialize proxy server")?;
+    let server = ProxyServer::new(config, shutdown.clone())
+        .await
+        .context("failed to initialize proxy server")?;
 
     tracing::info!("infrarust is ready, accepting connections");
 

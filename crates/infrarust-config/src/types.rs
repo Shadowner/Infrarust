@@ -370,3 +370,33 @@ pub struct TelemetryConfig {
     #[serde(default = "defaults::service_name")]
     pub service_name: String,
 }
+
+// ─────────────────────────── Ban ────────────────────────────────
+
+/// Configuration du système de ban.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BanConfig {
+    /// Chemin du fichier de bans JSON.
+    #[serde(default = "defaults::ban_file")]
+    pub file: std::path::PathBuf,
+
+    /// Intervalle de purge automatique des bans expirés.
+    #[serde(default = "defaults::ban_purge_interval")]
+    #[serde(with = "humantime_serde")]
+    pub purge_interval: Duration,
+
+    /// Activer l'audit log (trace des opérations ban/unban).
+    #[serde(default = "defaults::ban_audit_log")]
+    pub enable_audit_log: bool,
+}
+
+impl Default for BanConfig {
+    fn default() -> Self {
+        Self {
+            file: defaults::ban_file(),
+            purge_interval: defaults::ban_purge_interval(),
+            enable_audit_log: defaults::ban_audit_log(),
+        }
+    }
+}

@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::defaults;
 use crate::types::{
-    KeepaliveConfig, MotdEntry, RateLimitConfig, StatusCacheConfig, TelemetryConfig,
+    BanConfig, KeepaliveConfig, MotdEntry, RateLimitConfig, StatusCacheConfig, TelemetryConfig,
 };
 
 /// Configuration racine du proxy.
@@ -64,4 +64,8 @@ pub struct ProxyConfig {
     /// Active `SO_REUSEPORT` (Linux uniquement)
     #[serde(default)]
     pub so_reuseport: bool,
+
+    /// Configuration du système de ban
+    #[serde(default)]
+    pub ban: BanConfig,
 }

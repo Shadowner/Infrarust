@@ -70,3 +70,15 @@ pub const fn keepalive_interval() -> Duration {
 pub const fn keepalive_retries() -> u32 {
     3
 }
+
+pub fn ban_file() -> std::path::PathBuf {
+    std::path::PathBuf::from("bans.json")
+}
+
+pub const fn ban_purge_interval() -> std::time::Duration {
+    std::time::Duration::from_secs(300)
+}
+
+pub const fn ban_audit_log() -> bool {
+    true
+}
