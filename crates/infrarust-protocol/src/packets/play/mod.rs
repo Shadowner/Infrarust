@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod chat_session;
 pub(crate) mod common;
 pub mod disconnect;
 pub mod join_game;
@@ -8,6 +9,7 @@ pub mod respawn;
 pub mod transfer;
 
 pub use chat::CSystemChatMessage;
+pub use chat_session::SChatSessionUpdate;
 pub use disconnect::CDisconnect;
 pub use join_game::CJoinGame;
 pub use keepalive::{CKeepAlive, SKeepAlive};

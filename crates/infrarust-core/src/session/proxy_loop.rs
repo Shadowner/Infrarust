@@ -12,6 +12,7 @@ use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfi
 use infrarust_protocol::packets::login::{
     CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged,
 };
+use infrarust_protocol::packets::play::chat_session::SChatSessionUpdate;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction};
@@ -53,6 +54,10 @@ enum BackendAction {
 /// - `LoginSuccess`: transitions Login → Config (1.20.2+) or Play
 /// - `FinishConfig` / `AcknowledgeFinishConfig`: transitions Config → Play
 /// - `Disconnect`: forwards and terminates
+///
+/// In Play state, only `CDisconnect` is intercepted. All other packets
+/// are forwarded opaquely for maximum performance and to avoid decode
+/// errors from version-specific packet ID mismatches.
 pub async fn proxy_loop(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
@@ -96,8 +101,10 @@ pub async fn proxy_loop(
 
 /// Handles a packet from the client, forwarding it to the backend.
 ///
-/// In Phase 2A, most packets are forwarded opaquely.
-/// `SLoginAcknowledged` and `SAcknowledgeFinishConfig` trigger state transitions.
+/// - In Login/Config state: decodes for state transition detection
+///   (`SLoginAcknowledged`, `SAcknowledgeFinishConfig`).
+/// - In Play state: drops `SChatSessionUpdate` (would cause signature
+///   validation failures on offline backends), forwards everything else opaquely.
 async fn handle_client_to_backend(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
@@ -107,7 +114,22 @@ async fn handle_client_to_backend(
     let version = client.protocol_version;
     let state = client.state();
 
-    // Try to decode for state transition detection
+    // In Play state: minimal interception — only drop Chat Session
+    if state == ConnectionState::Play {
+        let chat_session_id = registry.get_packet_id::<SChatSessionUpdate>(
+            ConnectionState::Play,
+            Direction::Serverbound,
+            version,
+        );
+        if Some(frame.id) == chat_session_id {
+            tracing::debug!("dropping Chat Session Update (offline backend)");
+            return Ok(());
+        }
+        backend.write_frame(&frame).await?;
+        return Ok(());
+    }
+
+    // Login/Config: decode for state transition detection
     match registry.decode_frame(&frame, state, Direction::Serverbound, version) {
         Ok(DecodedPacket::Typed { packet, .. }) => {
             if packet
@@ -136,7 +158,7 @@ async fn handle_client_to_backend(
                 return Ok(());
             }
 
-            // All other typed packets: forward opaquely
+            // All other typed packets: forward
             backend.write_frame(&frame).await?;
         }
         Ok(DecodedPacket::Opaque { .. }) | Err(_) => {
@@ -150,11 +172,10 @@ async fn handle_client_to_backend(
 
 /// Handles a packet from the backend, forwarding it to the client.
 ///
-/// Intercepts special packets for state management:
-/// - `SetCompression`: activates compression on both bridges
-/// - `LoginSuccess`: state transition Login → Config/Play
-/// - `Disconnect`: forwards and signals loop termination
-/// - `FinishConfig`: prepares Config → Play transition
+/// - In Login/Config state: intercepts `SetCompression`, `LoginSuccess`,
+///   `Disconnect`, and `FinishConfig` for state management.
+/// - In Play state: only intercepts `CDisconnect` for disconnect reason
+///   logging. All other packets are forwarded opaquely.
 async fn handle_backend_to_client(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
@@ -164,6 +185,31 @@ async fn handle_backend_to_client(
     let version = client.protocol_version;
     let state = backend.state;
 
+    // In Play state: only intercept Disconnect
+    if state == ConnectionState::Play {
+        match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
+            Ok(DecodedPacket::Typed { packet, .. }) => {
+                if packet.as_any().downcast_ref::<CDisconnect>().is_some() {
+                    client.write_frame(&frame).await?;
+                    return Ok(BackendAction::Disconnected(Some(
+                        "backend disconnect".to_string(),
+                    )));
+                }
+                // KeepAlive or other typed: forward
+                client.write_frame(&frame).await?;
+            }
+            Ok(DecodedPacket::Opaque { .. }) => {
+                client.write_frame(&frame).await?;
+            }
+            Err(_) => {
+                // Should not happen with encode_only cleanup, but forward anyway
+                client.write_frame(&frame).await?;
+            }
+        }
+        return Ok(BackendAction::Continue);
+    }
+
+    // Login/Config: full interception logic
     match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
         Ok(DecodedPacket::Typed { packet, .. }) => {
             // SetCompression — activate on both sides, forward to client
@@ -197,8 +243,8 @@ async fn handle_backend_to_client(
                 return Ok(BackendAction::Disconnected(Some(disconnect.reason.clone())));
             }
 
-            // Play Disconnect
-            if let Some(_disconnect) = packet.as_any().downcast_ref::<CDisconnect>() {
+            // Play Disconnect (should not occur in Login/Config, but handle defensively)
+            if packet.as_any().downcast_ref::<CDisconnect>().is_some() {
                 client.write_frame(&frame).await?;
                 return Ok(BackendAction::Disconnected(Some(
                     "backend disconnect".to_string(),

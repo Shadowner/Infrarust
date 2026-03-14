@@ -364,96 +364,96 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x1D, ProtocolVersion::V1_20_5, false)
     .register(&mut registry);
 
-    // JoinGame Clientbound
+    // JoinGame Clientbound (encode-only: proxy doesn't intercept)
     PacketRegistration::<crate::packets::CJoinGame>::new(
         ConnectionState::Play,
         Direction::Clientbound,
     )
-    .map(0x01, ProtocolVersion::V1_7_2, false)
-    .map(0x23, ProtocolVersion::V1_9, false)
-    .map(0x25, ProtocolVersion::V1_13, false)
-    .map(0x25, ProtocolVersion::V1_14, false)
-    .map(0x26, ProtocolVersion::V1_15, false)
-    .map(0x25, ProtocolVersion::V1_16, false)
-    .map(0x24, ProtocolVersion::V1_16_2, false)
-    .map(0x26, ProtocolVersion::V1_17, false)
-    .map(0x23, ProtocolVersion::V1_19, false)
-    .map(0x25, ProtocolVersion::V1_19_1, false)
-    .map(0x24, ProtocolVersion::V1_19_3, false)
-    .map(0x28, ProtocolVersion::V1_19_4, false)
-    .map(0x29, ProtocolVersion::V1_20_2, false)
-    .map(0x2B, ProtocolVersion::V1_20_5, false)
-    .map(0x2C, ProtocolVersion::V1_21_2, false)
+    .map(0x01, ProtocolVersion::V1_7_2, true)
+    .map(0x23, ProtocolVersion::V1_9, true)
+    .map(0x25, ProtocolVersion::V1_13, true)
+    .map(0x25, ProtocolVersion::V1_14, true)
+    .map(0x26, ProtocolVersion::V1_15, true)
+    .map(0x25, ProtocolVersion::V1_16, true)
+    .map(0x24, ProtocolVersion::V1_16_2, true)
+    .map(0x26, ProtocolVersion::V1_17, true)
+    .map(0x23, ProtocolVersion::V1_19, true)
+    .map(0x25, ProtocolVersion::V1_19_1, true)
+    .map(0x24, ProtocolVersion::V1_19_3, true)
+    .map(0x28, ProtocolVersion::V1_19_4, true)
+    .map(0x29, ProtocolVersion::V1_20_2, true)
+    .map(0x2B, ProtocolVersion::V1_20_5, true)
+    .map(0x2C, ProtocolVersion::V1_21_2, true)
     .register(&mut registry);
 
-    // Respawn Clientbound
+    // Respawn Clientbound (encode-only: proxy doesn't intercept)
     PacketRegistration::<crate::packets::CRespawn>::new(
         ConnectionState::Play,
         Direction::Clientbound,
     )
-    .map(0x07, ProtocolVersion::V1_7_2, false)
-    .map(0x33, ProtocolVersion::V1_9, false)
-    .map(0x34, ProtocolVersion::V1_12, false)
-    .map(0x35, ProtocolVersion::V1_12_1, false)
-    .map(0x38, ProtocolVersion::V1_13, false)
-    .map(0x3A, ProtocolVersion::V1_14, false)
-    .map(0x3B, ProtocolVersion::V1_15, false)
-    .map(0x3A, ProtocolVersion::V1_16, false)
-    .map(0x39, ProtocolVersion::V1_16_2, false)
-    .map(0x3D, ProtocolVersion::V1_17, false)
-    .map(0x3B, ProtocolVersion::V1_19, false)
-    .map(0x3E, ProtocolVersion::V1_19_1, false)
-    .map(0x3D, ProtocolVersion::V1_19_3, false)
-    .map(0x41, ProtocolVersion::V1_19_4, false)
-    .map(0x43, ProtocolVersion::V1_20_2, false)
-    .map(0x45, ProtocolVersion::V1_20_3, false)
-    .map(0x47, ProtocolVersion::V1_20_5, false)
-    .map(0x4C, ProtocolVersion::V1_21_2, false)
+    .map(0x07, ProtocolVersion::V1_7_2, true)
+    .map(0x33, ProtocolVersion::V1_9, true)
+    .map(0x34, ProtocolVersion::V1_12, true)
+    .map(0x35, ProtocolVersion::V1_12_1, true)
+    .map(0x38, ProtocolVersion::V1_13, true)
+    .map(0x3A, ProtocolVersion::V1_14, true)
+    .map(0x3B, ProtocolVersion::V1_15, true)
+    .map(0x3A, ProtocolVersion::V1_16, true)
+    .map(0x39, ProtocolVersion::V1_16_2, true)
+    .map(0x3D, ProtocolVersion::V1_17, true)
+    .map(0x3B, ProtocolVersion::V1_19, true)
+    .map(0x3E, ProtocolVersion::V1_19_1, true)
+    .map(0x3D, ProtocolVersion::V1_19_3, true)
+    .map(0x41, ProtocolVersion::V1_19_4, true)
+    .map(0x43, ProtocolVersion::V1_20_2, true)
+    .map(0x45, ProtocolVersion::V1_20_3, true)
+    .map(0x47, ProtocolVersion::V1_20_5, true)
+    .map(0x4C, ProtocolVersion::V1_21_2, true)
     .register(&mut registry);
 
-    // PluginMessage Clientbound
+    // PluginMessage Clientbound (encode-only: proxy doesn't intercept)
     PacketRegistration::<crate::packets::CPluginMessage>::new(
         ConnectionState::Play,
         Direction::Clientbound,
     )
-    .map(0x3F, ProtocolVersion::V1_7_2, false)
-    .map(0x18, ProtocolVersion::V1_9, false)
-    .map(0x19, ProtocolVersion::V1_13, false)
-    .map(0x18, ProtocolVersion::V1_14, false)
-    .map(0x19, ProtocolVersion::V1_15, false)
-    .map(0x18, ProtocolVersion::V1_16, false)
-    .map(0x17, ProtocolVersion::V1_16_2, false)
-    .map(0x18, ProtocolVersion::V1_17, false)
-    .map(0x15, ProtocolVersion::V1_19, false)
-    .map(0x16, ProtocolVersion::V1_19_1, false)
-    .map(0x15, ProtocolVersion::V1_19_3, false)
-    .map(0x17, ProtocolVersion::V1_19_4, false)
-    .map(0x18, ProtocolVersion::V1_20_2, false)
-    .map(0x19, ProtocolVersion::V1_20_5, false)
+    .map(0x3F, ProtocolVersion::V1_7_2, true)
+    .map(0x18, ProtocolVersion::V1_9, true)
+    .map(0x19, ProtocolVersion::V1_13, true)
+    .map(0x18, ProtocolVersion::V1_14, true)
+    .map(0x19, ProtocolVersion::V1_15, true)
+    .map(0x18, ProtocolVersion::V1_16, true)
+    .map(0x17, ProtocolVersion::V1_16_2, true)
+    .map(0x18, ProtocolVersion::V1_17, true)
+    .map(0x15, ProtocolVersion::V1_19, true)
+    .map(0x16, ProtocolVersion::V1_19_1, true)
+    .map(0x15, ProtocolVersion::V1_19_3, true)
+    .map(0x17, ProtocolVersion::V1_19_4, true)
+    .map(0x18, ProtocolVersion::V1_20_2, true)
+    .map(0x19, ProtocolVersion::V1_20_5, true)
     .register(&mut registry);
 
-    // SystemChatMessage Clientbound (1.19+)
+    // SystemChatMessage Clientbound (encode-only: proxy doesn't intercept)
     PacketRegistration::<crate::packets::CSystemChatMessage>::new(
         ConnectionState::Play,
         Direction::Clientbound,
     )
-    .map(0x5F, ProtocolVersion::V1_19, false)
-    .map(0x62, ProtocolVersion::V1_19_1, false)
-    .map(0x60, ProtocolVersion::V1_19_3, false)
-    .map(0x64, ProtocolVersion::V1_19_4, false)
-    .map(0x67, ProtocolVersion::V1_20_2, false)
-    .map(0x69, ProtocolVersion::V1_20_3, false)
-    .map(0x6C, ProtocolVersion::V1_20_5, false)
-    .map(0x73, ProtocolVersion::V1_21_2, false)
+    .map(0x5F, ProtocolVersion::V1_19, true)
+    .map(0x62, ProtocolVersion::V1_19_1, true)
+    .map(0x60, ProtocolVersion::V1_19_3, true)
+    .map(0x64, ProtocolVersion::V1_19_4, true)
+    .map(0x67, ProtocolVersion::V1_20_2, true)
+    .map(0x69, ProtocolVersion::V1_20_3, true)
+    .map(0x6C, ProtocolVersion::V1_20_5, true)
+    .map(0x73, ProtocolVersion::V1_21_2, true)
     .register(&mut registry);
 
-    // Transfer Clientbound (1.20.5+)
+    // Transfer Clientbound (encode-only: proxy doesn't intercept)
     PacketRegistration::<crate::packets::CTransfer>::new(
         ConnectionState::Play,
         Direction::Clientbound,
     )
-    .map(0x73, ProtocolVersion::V1_20_5, false)
-    .map(0x7A, ProtocolVersion::V1_21_2, false)
+    .map(0x73, ProtocolVersion::V1_20_5, true)
+    .map(0x7A, ProtocolVersion::V1_21_2, true)
     .register(&mut registry);
 
     // ── Play (Serverbound) ────────────────────────────────────────
@@ -481,26 +481,36 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x1A, ProtocolVersion::V1_21_2, false)
     .register(&mut registry);
 
-    // PluginMessage Serverbound
+    // Chat Session Update Serverbound (encode-only: proxy uses ID for filtering)
+    PacketRegistration::<crate::packets::SChatSessionUpdate>::new(
+        ConnectionState::Play,
+        Direction::Serverbound,
+    )
+    .map(0x07, ProtocolVersion::V1_21, true)
+    .map(0x08, ProtocolVersion::V1_21_2, true)
+    .map(0x09, ProtocolVersion::V1_21_6, true)
+    .register(&mut registry);
+
+    // PluginMessage Serverbound (encode-only: proxy doesn't intercept)
     PacketRegistration::<crate::packets::SPluginMessage>::new(
         ConnectionState::Play,
         Direction::Serverbound,
     )
-    .map(0x17, ProtocolVersion::V1_7_2, false)
-    .map(0x09, ProtocolVersion::V1_9, false)
-    .map(0x0A, ProtocolVersion::V1_12, false)
-    .map(0x09, ProtocolVersion::V1_12_1, false)
-    .map(0x0A, ProtocolVersion::V1_13, false)
-    .map(0x0B, ProtocolVersion::V1_14, false)
-    .map(0x0A, ProtocolVersion::V1_17, false)
-    .map(0x0C, ProtocolVersion::V1_19, false)
-    .map(0x0D, ProtocolVersion::V1_19_1, false)
-    .map(0x0C, ProtocolVersion::V1_19_3, false)
-    .map(0x0D, ProtocolVersion::V1_19_4, false)
-    .map(0x0F, ProtocolVersion::V1_20_2, false)
-    .map(0x10, ProtocolVersion::V1_20_3, false)
-    .map(0x12, ProtocolVersion::V1_20_5, false)
-    .map(0x14, ProtocolVersion::V1_21_2, false)
+    .map(0x17, ProtocolVersion::V1_7_2, true)
+    .map(0x09, ProtocolVersion::V1_9, true)
+    .map(0x0A, ProtocolVersion::V1_12, true)
+    .map(0x09, ProtocolVersion::V1_12_1, true)
+    .map(0x0A, ProtocolVersion::V1_13, true)
+    .map(0x0B, ProtocolVersion::V1_14, true)
+    .map(0x0A, ProtocolVersion::V1_17, true)
+    .map(0x0C, ProtocolVersion::V1_19, true)
+    .map(0x0D, ProtocolVersion::V1_19_1, true)
+    .map(0x0C, ProtocolVersion::V1_19_3, true)
+    .map(0x0D, ProtocolVersion::V1_19_4, true)
+    .map(0x0F, ProtocolVersion::V1_20_2, true)
+    .map(0x10, ProtocolVersion::V1_20_3, true)
+    .map(0x12, ProtocolVersion::V1_20_5, true)
+    .map(0x14, ProtocolVersion::V1_21_2, true)
     .register(&mut registry);
 
     registry
