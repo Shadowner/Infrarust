@@ -146,7 +146,7 @@ impl ProxyServer {
                         }
                     }
                 }
-                _ = self.shutdown.cancelled() => {
+                () = self.shutdown.cancelled() => {
                     tracing::info!("proxy server shutting down");
                     break;
                 }
@@ -230,11 +230,10 @@ impl ProxyServer {
             reason: json_reason,
         };
 
-        let version = ctx
-            .extensions
-            .get::<HandshakeData>()
-            .map(|h| h.protocol_version)
-            .unwrap_or(ProtocolVersion(infrarust_protocol::CURRENT_MC_PROTOCOL));
+        let version = ctx.extensions.get::<HandshakeData>().map_or(
+            ProtocolVersion(infrarust_protocol::CURRENT_MC_PROTOCOL),
+            |h| h.protocol_version,
+        );
 
         let packet_id = self
             .packet_registry
@@ -264,7 +263,7 @@ impl ProxyServer {
     }
 
     /// Returns the shutdown token.
-    pub fn shutdown(&self) -> &CancellationToken {
+    pub const fn shutdown(&self) -> &CancellationToken {
         &self.shutdown
     }
 }

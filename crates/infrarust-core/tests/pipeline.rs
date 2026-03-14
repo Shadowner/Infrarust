@@ -9,7 +9,7 @@ use infrarust_core::pipeline::middleware::{Middleware, MiddlewareResult};
 
 // --- Test helpers ---
 
-/// Creates a minimal ConnectionContext for testing (no real TCP stream).
+/// Creates a minimal `ConnectionContext` for testing (no real TCP stream).
 ///
 /// Uses a connected loopback TCP pair so the context has a valid stream.
 async fn make_test_ctx() -> ConnectionContext {

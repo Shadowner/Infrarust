@@ -188,10 +188,7 @@ impl PacketRegistry {
         type_id: TypeId,
         packet_id: i32,
     ) {
-        let ver_reg = self
-            .registries
-            .entry(key)
-            .or_default();
+        let ver_reg = self.registries.entry(key).or_default();
         ver_reg.type_to_id.insert(type_id, packet_id);
     }
 
@@ -203,10 +200,7 @@ impl PacketRegistry {
         packet_id: i32,
         decoder: DecoderFn,
     ) {
-        let ver_reg = self
-            .registries
-            .entry(key)
-            .or_default();
+        let ver_reg = self.registries.entry(key).or_default();
         ver_reg.id_to_decoder.insert(packet_id, decoder);
     }
 }

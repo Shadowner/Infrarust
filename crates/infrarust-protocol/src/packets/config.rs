@@ -155,7 +155,8 @@ impl Packet for CKnownPacks {
         mut w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Pack count bounded by protocol
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+        // Pack count bounded by protocol
         w.write_var_int(&VarInt(self.packs.len() as i32))?;
         for pack in &self.packs {
             w.write_string(&pack.namespace)?;
@@ -206,7 +207,8 @@ impl Packet for SKnownPacks {
         mut w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Pack count bounded by protocol
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+        // Pack count bounded by protocol
         w.write_var_int(&VarInt(self.packs.len() as i32))?;
         for pack in &self.packs {
             w.write_string(&pack.namespace)?;

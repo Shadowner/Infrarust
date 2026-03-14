@@ -63,7 +63,10 @@ fn build_kick_packet(payload: &str) -> ProtocolResult<Vec<u8>> {
     let encoded = encode_utf16be(payload);
     let code_unit_count = encoded.len() / 2;
     if code_unit_count > usize::from(u16::MAX) {
-        return Err(ProtocolError::too_large(usize::from(u16::MAX), code_unit_count));
+        return Err(ProtocolError::too_large(
+            usize::from(u16::MAX),
+            code_unit_count,
+        ));
     }
     let mut out = Vec::with_capacity(1 + 2 + encoded.len());
     out.push(0xFF);
@@ -252,20 +255,14 @@ mod tests {
 
         // Channel name "MC|PingHost" in UTF-16BE
         let channel = "MC|PingHost";
-        let channel_utf16: Vec<u8> = channel
-            .encode_utf16()
-            .flat_map(u16::to_be_bytes)
-            .collect();
+        let channel_utf16: Vec<u8> = channel.encode_utf16().flat_map(u16::to_be_bytes).collect();
         let channel_code_units = channel.encode_utf16().count() as u16;
         data.extend_from_slice(&channel_code_units.to_be_bytes());
         data.extend_from_slice(&channel_utf16);
 
         // Data section
         let hostname = "mc.example.com";
-        let hostname_utf16: Vec<u8> = hostname
-            .encode_utf16()
-            .flat_map(u16::to_be_bytes)
-            .collect();
+        let hostname_utf16: Vec<u8> = hostname.encode_utf16().flat_map(u16::to_be_bytes).collect();
         let hostname_code_units = hostname.encode_utf16().count() as u16;
 
         // data_length = 1 (protocol_version) + 2 (hostname_len) + hostname_bytes + 4 (port)
@@ -296,18 +293,12 @@ mod tests {
         let mut data = Vec::new();
 
         let channel = "MC|PingHost";
-        let channel_utf16: Vec<u8> = channel
-            .encode_utf16()
-            .flat_map(u16::to_be_bytes)
-            .collect();
+        let channel_utf16: Vec<u8> = channel.encode_utf16().flat_map(u16::to_be_bytes).collect();
         data.extend_from_slice(&(channel.encode_utf16().count() as u16).to_be_bytes());
         data.extend_from_slice(&channel_utf16);
 
         let hostname = "play.my-server.net";
-        let hostname_utf16: Vec<u8> = hostname
-            .encode_utf16()
-            .flat_map(u16::to_be_bytes)
-            .collect();
+        let hostname_utf16: Vec<u8> = hostname.encode_utf16().flat_map(u16::to_be_bytes).collect();
         let data_length = (1 + 2 + hostname_utf16.len() + 4) as u16;
         data.extend_from_slice(&data_length.to_be_bytes());
         data.push(78); // protocol version

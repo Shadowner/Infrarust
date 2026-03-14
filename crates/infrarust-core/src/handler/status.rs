@@ -37,28 +37,25 @@ impl StatusHandler {
 
         let protocol_version = handshake
             .as_ref()
-            .map(|h| h.protocol_version)
-            .unwrap_or(ProtocolVersion(CURRENT_MC_PROTOCOL));
+            .map_or(ProtocolVersion(CURRENT_MC_PROTOCOL), |h| h.protocol_version);
 
         // Wait for SStatusRequest packet (empty packet, just the frame)
         let mut decoder = PacketDecoder::new();
 
         loop {
-            match decoder.try_next_frame()? {
-                Some(_frame) => break, // Got the status request
-                None => {
-                    let mut buf = [0u8; 512];
-                    let n = ctx.stream_mut().read(&mut buf).await?;
-                    if n == 0 {
-                        return Err(CoreError::ConnectionClosed);
-                    }
-                    decoder.queue_bytes(&buf[..n]);
-                }
+            if decoder.try_next_frame()?.is_some() {
+                break; // Got the status request
             }
+            let mut buf = [0u8; 512];
+            let n = ctx.stream_mut().read(&mut buf).await?;
+            if n == 0 {
+                return Err(CoreError::ConnectionClosed);
+            }
+            decoder.queue_bytes(&buf[..n]);
         }
 
         // Build and send status response
-        let json = self.build_status_json(routing.as_ref(), connection_registry);
+        let json = Self::build_status_json(routing.as_ref(), connection_registry);
         let response = CStatusResponse {
             json_response: json,
         };
@@ -68,17 +65,15 @@ impl StatusHandler {
         // Wait for ping request
         let mut decoder = PacketDecoder::new();
         let frame = loop {
-            match decoder.try_next_frame()? {
-                Some(frame) => break frame,
-                None => {
-                    let mut buf = [0u8; 512];
-                    let n = ctx.stream_mut().read(&mut buf).await?;
-                    if n == 0 {
-                        return Err(CoreError::ConnectionClosed);
-                    }
-                    decoder.queue_bytes(&buf[..n]);
-                }
+            if let Some(frame) = decoder.try_next_frame()? {
+                break frame;
             }
+            let mut buf = [0u8; 512];
+            let n = ctx.stream_mut().read(&mut buf).await?;
+            if n == 0 {
+                return Err(CoreError::ConnectionClosed);
+            }
+            decoder.queue_bytes(&buf[..n]);
         };
 
         // Decode and echo back as pong
@@ -93,8 +88,7 @@ impl StatusHandler {
             DecodedPacket::Typed { packet, .. } => packet
                 .as_any()
                 .downcast_ref::<SPingRequest>()
-                .map(|p| p.payload)
-                .unwrap_or(0),
+                .map_or(0, |p| p.payload),
             DecodedPacket::Opaque { .. } => 0,
         };
 
@@ -130,19 +124,18 @@ impl StatusHandler {
     }
 
     fn build_status_json(
-        &self,
         routing: Option<&RoutingData>,
         connection_registry: &ConnectionRegistry,
     ) -> String {
-        let (motd_text, max_players, version_name, _favicon) = match routing {
-            Some(rd) => {
+        let (motd_text, max_players, version_name, _favicon) = routing.map_or_else(
+            || ("An Infrarust Proxy".to_string(), 0u32, None, None),
+            |rd| {
                 let cfg = &rd.server_config;
                 let motd = cfg
                     .motd
                     .online
                     .as_ref()
-                    .map(|m| m.text.as_str())
-                    .unwrap_or("An Infrarust Proxy");
+                    .map_or("An Infrarust Proxy", |m| m.text.as_str());
                 let max = cfg
                     .motd
                     .online
@@ -156,13 +149,10 @@ impl StatusHandler {
                     .and_then(|m| m.version_name.clone());
                 let favicon = cfg.motd.online.as_ref().and_then(|m| m.favicon.clone());
                 (motd.to_string(), max, ver, favicon)
-            }
-            None => ("An Infrarust Proxy".to_string(), 0u32, None, None),
-        };
+            },
+        );
 
-        let online = routing
-            .map(|rd| connection_registry.count_by_server(&rd.config_id))
-            .unwrap_or(0);
+        let online = routing.map_or(0, |rd| connection_registry.count_by_server(&rd.config_id));
 
         let version_name = version_name.unwrap_or_else(|| CURRENT_MC_VERSION.to_string());
 

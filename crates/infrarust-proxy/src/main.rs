@@ -25,7 +25,7 @@ struct Cli {
     #[arg(short, long)]
     bind: Option<std::net::SocketAddr>,
 
-    /// Log level filter (overridden by RUST_LOG env var)
+    /// Log level filter (overridden by `RUST_LOG` env var)
     #[arg(short, long, default_value = "info")]
     log_level: String,
 }
@@ -130,11 +130,11 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
                 break;
             }
             tokio::select! {
-                _ = &mut deadline => {
+                () = &mut deadline => {
                     tracing::warn!(remaining = count, "drain timeout, forcing shutdown");
                     break;
                 }
-                _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+                () = tokio::time::sleep(Duration::from_millis(250)) => {}
             }
         }
     }

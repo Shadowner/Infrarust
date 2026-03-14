@@ -12,7 +12,7 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::types::{HandshakeData, LoginData};
 
-/// Middleware that parses the LoginStart packet to extract username and UUID.
+/// Middleware that parses the `LoginStart` packet to extract username and UUID.
 ///
 /// Decodes the packet directly (without the packet registry) for
 /// forward-compatibility with unknown protocol versions.
@@ -24,7 +24,7 @@ use crate::pipeline::types::{HandshakeData, LoginData};
 pub struct LoginStartParserMiddleware;
 
 impl LoginStartParserMiddleware {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -55,18 +55,16 @@ impl Middleware for LoginStartParserMiddleware {
 
             let mut raw_data = ctx.buffered_data.clone();
             let frame = loop {
-                match decoder.try_next_frame()? {
-                    Some(frame) => break frame,
-                    None => {
-                        let mut buf = [0u8; 1024];
-                        let n = ctx.stream_mut().read(&mut buf).await?;
-                        if n == 0 {
-                            return Err(CoreError::ConnectionClosed);
-                        }
-                        decoder.queue_bytes(&buf[..n]);
-                        raw_data.extend_from_slice(&buf[..n]);
-                    }
+                if let Some(frame) = decoder.try_next_frame()? {
+                    break frame;
                 }
+                let mut buf = [0u8; 1024];
+                let n = ctx.stream_mut().read(&mut buf).await?;
+                if n == 0 {
+                    return Err(CoreError::ConnectionClosed);
+                }
+                decoder.queue_bytes(&buf[..n]);
+                raw_data.extend_from_slice(&buf[..n]);
             };
 
             // Decode the login start packet directly — always packet ID 0x00

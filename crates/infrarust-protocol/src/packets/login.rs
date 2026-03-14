@@ -43,7 +43,9 @@ fn read_uuid_int_array(r: &mut &[u8]) -> ProtocolResult<uuid::Uuid> {
     let d = r.read_i32_be()? as u32;
     let msb = (u64::from(a) << 32) | u64::from(b);
     let lsb = (u64::from(c) << 32) | u64::from(d);
-    Ok(uuid::Uuid::from_u128((u128::from(msb) << 64) | u128::from(lsb)))
+    Ok(uuid::Uuid::from_u128(
+        (u128::from(msb) << 64) | u128::from(lsb),
+    ))
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)] // UUID int array protocol format
@@ -495,7 +497,8 @@ impl Packet for CLoginSuccess {
 
         // Properties: 1.19+
         if version.no_less_than(ProtocolVersion::V1_19) {
-            #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Property count bounded by protocol
+            #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+            // Property count bounded by protocol
             w.write_var_int(&VarInt(self.properties.len() as i32))?;
             for prop in &self.properties {
                 w.write_string(&prop.name)?;

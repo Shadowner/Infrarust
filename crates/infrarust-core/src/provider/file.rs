@@ -15,7 +15,7 @@ pub struct FileProvider {
 
 impl FileProvider {
     /// Creates a new file provider for the given directory.
-    pub fn new(servers_dir: PathBuf) -> Self {
+    pub const fn new(servers_dir: PathBuf) -> Self {
         Self { servers_dir }
     }
 

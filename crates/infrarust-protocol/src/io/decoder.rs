@@ -93,7 +93,8 @@ impl PacketDecoder {
         let mut data = self.buf.split_to(packet_len);
 
         // 5. Decode based on compression mode
-        #[allow(clippy::branches_sharing_code)] // Both branches share initial cursor setup but diverge significantly after
+        #[allow(clippy::branches_sharing_code)]
+        // Both branches share initial cursor setup but diverge significantly after
         if self.compression_threshold.is_none() {
             // No compression: [VarInt(packet_id)] [payload]
             let slice = &data[..];

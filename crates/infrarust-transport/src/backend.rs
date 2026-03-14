@@ -71,9 +71,11 @@ impl BackendConnector {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| TransportError::AllBackendsFailed {
-            server_id: server_id.to_string(),
-        }))
+        Err(
+            last_error.unwrap_or_else(|| TransportError::AllBackendsFailed {
+                server_id: server_id.to_string(),
+            }),
+        )
     }
 
     async fn try_connect(

@@ -55,9 +55,8 @@ impl Middleware for RateLimiterMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
-            let handshake = match ctx.extensions.get::<HandshakeData>() {
-                Some(h) => h,
-                None => return Ok(MiddlewareResult::Continue), // No handshake yet, skip
+            let Some(handshake) = ctx.extensions.get::<HandshakeData>() else {
+                return Ok(MiddlewareResult::Continue); // No handshake yet, skip
             };
 
             let limiter = match handshake.intent {
@@ -65,16 +64,15 @@ impl Middleware for RateLimiterMiddleware {
                 ConnectionIntent::Login | ConnectionIntent::Transfer => &self.login_limiter,
             };
 
-            match limiter.check_key(&ctx.client_ip) {
-                Ok(_) => Ok(MiddlewareResult::Continue),
-                Err(_) => {
-                    tracing::debug!(
-                        ip = %ctx.client_ip,
-                        intent = ?handshake.intent,
-                        "rate limit exceeded"
-                    );
-                    Ok(MiddlewareResult::Reject("Rate limit exceeded".into()))
-                }
+            if limiter.check_key(&ctx.client_ip).is_ok() {
+                Ok(MiddlewareResult::Continue)
+            } else {
+                tracing::debug!(
+                    ip = %ctx.client_ip,
+                    intent = ?handshake.intent,
+                    "rate limit exceeded"
+                );
+                Ok(MiddlewareResult::Reject("Rate limit exceeded".into()))
             }
         })
     }

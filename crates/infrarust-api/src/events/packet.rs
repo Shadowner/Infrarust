@@ -108,9 +108,7 @@ mod tests {
         let dir = PacketDirection::Serverbound;
         #[allow(unreachable_patterns)]
         match dir {
-            PacketDirection::Serverbound
-            | PacketDirection::Clientbound
-            | _ => {}
+            PacketDirection::Serverbound | PacketDirection::Clientbound | _ => {}
         }
     }
 }

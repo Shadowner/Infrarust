@@ -22,7 +22,7 @@ pub struct DomainRouterMiddleware {
 
 impl DomainRouterMiddleware {
     /// Creates a new domain router with shared hot-reloadable state.
-    pub fn new(
+    pub const fn new(
         domain_index: Arc<ArcSwap<DomainIndex>>,
         configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
     ) -> Self {
@@ -52,27 +52,23 @@ impl Middleware for DomainRouterMiddleware {
 
             // Resolve domain to config id
             let index = self.domain_index.load();
-            let config_id = match index.resolve(domain) {
-                Some(id) => id.to_string(),
-                None => {
-                    tracing::debug!(domain, "no server found for domain");
-                    return Ok(MiddlewareResult::Reject(format!(
-                        "Unknown server: {domain}"
-                    )));
-                }
+            let Some(id) = index.resolve(domain) else {
+                tracing::debug!(domain, "no server found for domain");
+                return Ok(MiddlewareResult::Reject(format!(
+                    "Unknown server: {domain}"
+                )));
             };
+            let config_id = id.to_string();
 
             // Look up full config
             let configs = self.configs.load();
-            let server_config = match configs.get(&config_id) {
-                Some(cfg) => Arc::clone(cfg),
-                None => {
-                    tracing::warn!(config_id, "config id resolved but config not found");
-                    return Ok(MiddlewareResult::Reject(format!(
-                        "Unknown server: {domain}"
-                    )));
-                }
+            let Some(cfg) = configs.get(&config_id) else {
+                tracing::warn!(config_id, "config id resolved but config not found");
+                return Ok(MiddlewareResult::Reject(format!(
+                    "Unknown server: {domain}"
+                )));
             };
+            let server_config = Arc::clone(cfg);
 
             // Check per-server IP filter
             if let Some(ref ip_filter) = server_config.ip_filter

@@ -13,6 +13,7 @@ use crate::provider::ConfigChange;
 ///
 /// Listens for `ConfigChange` events and atomically swaps
 /// the domain index and config map via `ArcSwap`.
+#[allow(clippy::implicit_hasher)] // ArcSwap<HashMap> is the canonical type used across the crate
 pub async fn run_config_watcher(
     mut rx: mpsc::Receiver<ConfigChange>,
     domain_index: Arc<ArcSwap<DomainIndex>>,
@@ -40,7 +41,7 @@ pub async fn run_config_watcher(
                     }
                 }
             }
-            _ = shutdown.cancelled() => {
+            () = shutdown.cancelled() => {
                 tracing::debug!("config watcher shutting down");
                 break;
             }

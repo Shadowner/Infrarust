@@ -7,9 +7,7 @@ use crate::error::ProtocolResult;
 use crate::version::ProtocolVersion;
 
 /// Decodes an optional death location (dimension identifier + packed position).
-pub fn decode_death_location(
-    r: &mut &[u8],
-) -> ProtocolResult<(Option<String>, Option<i64>)> {
+pub fn decode_death_location(r: &mut &[u8]) -> ProtocolResult<(Option<String>, Option<i64>)> {
     if r.read_bool()? {
         let dim = r.read_string()?;
         let pos = r.read_i64_be()?;
@@ -36,10 +34,7 @@ pub fn encode_death_location(
 }
 
 /// Decodes portal cooldown and sea level (version-dependent).
-pub fn decode_world_info(
-    r: &mut &[u8],
-    version: ProtocolVersion,
-) -> ProtocolResult<(i32, i32)> {
+pub fn decode_world_info(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<(i32, i32)> {
     let portal_cooldown = r.read_var_int()?.0;
     let sea_level = if version.no_less_than(ProtocolVersion::V1_21_2) {
         r.read_var_int()?.0

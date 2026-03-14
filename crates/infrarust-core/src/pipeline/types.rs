@@ -41,7 +41,7 @@ pub struct RoutingData {
 /// Data extracted by the login start parser middleware.
 #[derive(Debug, Clone)]
 pub struct LoginData {
-    /// Player username from LoginStart packet.
+    /// Player username from `LoginStart` packet.
     pub username: String,
     /// Player UUID (present in 1.20.2+).
     pub player_uuid: Option<Uuid>,

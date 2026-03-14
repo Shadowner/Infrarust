@@ -17,7 +17,7 @@ use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected};
 /// Middleware that parses the Minecraft handshake packet.
 ///
 /// Detects legacy clients (0xFE first byte) and short-circuits.
-/// For modern clients, decodes the SHandshake packet directly (without the
+/// For modern clients, decodes the `SHandshake` packet directly (without the
 /// packet registry), strips FML markers, and inserts `HandshakeData` into
 /// the context extensions.
 ///
@@ -28,7 +28,7 @@ use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected};
 pub struct HandshakeParserMiddleware;
 
 impl HandshakeParserMiddleware {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -36,11 +36,7 @@ impl HandshakeParserMiddleware {
 /// Strips Forge Mod Loader markers from the domain string.
 fn strip_fml_markers(domain: &str) -> &str {
     // FML markers: \0FML\0, \0FML2\0, \0FML3\0
-    if let Some(pos) = domain.find('\0') {
-        &domain[..pos]
-    } else {
-        domain
-    }
+    domain.find('\0').map_or(domain, |pos| &domain[..pos])
 }
 
 impl Middleware for HandshakeParserMiddleware {
@@ -88,19 +84,17 @@ impl Middleware for HandshakeParserMiddleware {
 
             let mut raw_data = ctx.buffered_data.clone();
             let frame = loop {
-                match decoder.try_next_frame()? {
-                    Some(frame) => break frame,
-                    None => {
-                        // Need more data from the stream
-                        let mut buf = [0u8; 1024];
-                        let n = ctx.stream_mut().read(&mut buf).await?;
-                        if n == 0 {
-                            return Err(CoreError::ConnectionClosed);
-                        }
-                        decoder.queue_bytes(&buf[..n]);
-                        raw_data.extend_from_slice(&buf[..n]);
-                    }
+                if let Some(frame) = decoder.try_next_frame()? {
+                    break frame;
                 }
+                // Need more data from the stream
+                let mut buf = [0u8; 1024];
+                let n = ctx.stream_mut().read(&mut buf).await?;
+                if n == 0 {
+                    return Err(CoreError::ConnectionClosed);
+                }
+                decoder.queue_bytes(&buf[..n]);
+                raw_data.extend_from_slice(&buf[..n]);
             };
 
             // Store all raw bytes read so far for forwarding

@@ -203,7 +203,8 @@ fn encode_1_20_2_up(
     w.write_bool(pkt.is_hardcore)?;
 
     // Level names
-    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Level name count bounded by protocol
+    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+    // Level name count bounded by protocol
     w.write_var_int(&VarInt(pkt.level_names.len() as i32))?;
     for name in &pkt.level_names {
         w.write_string(name)?;

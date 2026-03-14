@@ -131,6 +131,7 @@ pub enum DomainRewrite {
 
 /// Configuration du rate limiting.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RateLimitConfig {
     /// Connexions login max par IP par fenêtre.
     #[serde(default = "defaults::rate_limit_max")]
@@ -166,6 +167,7 @@ impl Default for RateLimitConfig {
 
 /// Configuration du cache de status ping.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StatusCacheConfig {
     /// Durée de vie d'une entrée en cache.
     #[serde(default = "defaults::status_cache_ttl")]
@@ -190,6 +192,7 @@ impl Default for StatusCacheConfig {
 
 /// MOTD par état du serveur.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MotdConfig {
     pub online: Option<MotdEntry>,
     pub offline: Option<MotdEntry>,
@@ -201,6 +204,7 @@ pub struct MotdConfig {
 
 /// Une entrée MOTD.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MotdEntry {
     /// Texte du MOTD (supporte les codes Minecraft §).
     pub text: String,
@@ -219,6 +223,7 @@ pub struct MotdEntry {
 
 /// Timeouts spécifiques à un serveur (override global).
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TimeoutConfig {
     #[serde(default = "defaults::connect_timeout")]
     #[serde(with = "humantime_serde")]
@@ -240,6 +245,7 @@ pub struct TimeoutConfig {
 /// Contrôle les sondes keepalive envoyées sur les connexions TCP
 /// pour détecter les connexions mortes.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeepaliveConfig {
     /// Durée d'inactivité avant la première sonde.
     #[serde(default = "defaults::keepalive_time")]
@@ -274,6 +280,7 @@ impl Default for KeepaliveConfig {
 /// Si `blacklist` est non-vide, les IPs dans la blacklist sont refusées.
 /// La whitelist est évaluée en premier.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IpFilterConfig {
     #[serde(default)]
     pub whitelist: Vec<IpNet>,
@@ -307,6 +314,7 @@ pub enum ServerManagerConfig {
 
 /// Provider Local : lance un processus Java local.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalManagerConfig {
     /// Commande à exécuter (ex: "java")
     pub command: String,
@@ -329,6 +337,7 @@ pub struct LocalManagerConfig {
 
 /// Provider Pterodactyl : API REST.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PterodactylManagerConfig {
     pub api_url: String,
     pub api_key: String,
@@ -339,6 +348,7 @@ pub struct PterodactylManagerConfig {
 
 /// Provider Crafty Controller : API REST.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CraftyManagerConfig {
     pub api_url: String,
     pub api_key: String,
@@ -351,6 +361,7 @@ pub struct CraftyManagerConfig {
 
 /// Configuration de la télémétrie OpenTelemetry.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TelemetryConfig {
     #[serde(default)]
     pub enabled: bool,

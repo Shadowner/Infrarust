@@ -14,7 +14,7 @@ pub struct IpFilterMiddleware {
 
 impl IpFilterMiddleware {
     /// Creates a new IP filter middleware with an optional global filter config.
-    pub fn new(global_filter: Option<IpFilterConfig>) -> Self {
+    pub const fn new(global_filter: Option<IpFilterConfig>) -> Self {
         Self { global_filter }
     }
 }

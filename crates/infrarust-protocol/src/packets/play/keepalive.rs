@@ -99,7 +99,8 @@ fn encode_keepalive_id(
     if version.no_less_than(ProtocolVersion::V1_12_2) {
         w.write_i64_be(id)?;
     } else if version.no_less_than(ProtocolVersion::V1_8) {
-        #[allow(clippy::cast_possible_truncation)] // Protocol keepalive IDs fit in i32 for pre-1.12.2
+        #[allow(clippy::cast_possible_truncation)]
+        // Protocol keepalive IDs fit in i32 for pre-1.12.2
         w.write_var_int(&VarInt(id as i32))?;
     } else {
         #[allow(clippy::cast_possible_truncation)] // Protocol keepalive IDs fit in i32 for pre-1.8
