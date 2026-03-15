@@ -827,6 +827,7 @@ dependencies = [
  "governor",
  "infrarust-config",
  "infrarust-protocol",
+ "infrarust-server-manager",
  "infrarust-transport",
  "nonzero_ext",
  "notify",
@@ -935,11 +936,15 @@ dependencies = [
 name = "infrarust-server-manager"
 version = "2.0.0-alpha.1"
 dependencies = [
- "infrarust-api",
+ "dashmap",
+ "infrarust-config",
  "reqwest",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

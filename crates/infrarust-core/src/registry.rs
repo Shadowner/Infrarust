@@ -120,6 +120,12 @@ impl Default for ConnectionRegistry {
     }
 }
 
+impl infrarust_server_manager::PlayerCounter for ConnectionRegistry {
+    fn count_by_server(&self, server_id: &str) -> usize {
+        self.count_by_server(server_id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -8,6 +8,8 @@ use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_protocol::{CURRENT_MC_PROTOCOL, CURRENT_MC_VERSION, Packet};
 
+use infrarust_server_manager::{ServerManagerService, ServerState};
+
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
@@ -15,15 +17,22 @@ use crate::registry::ConnectionRegistry;
 
 /// Handles Minecraft status ping requests (intent = Status).
 ///
-/// Phase 1: returns MOTD from config only (no relay backend).
+/// Returns contextual MOTD based on server state when a server_manager is configured.
 pub struct StatusHandler {
     registry: Arc<PacketRegistry>,
+    server_manager: Option<Arc<ServerManagerService>>,
 }
 
 impl StatusHandler {
     /// Creates a new status handler.
-    pub const fn new(registry: Arc<PacketRegistry>) -> Self {
-        Self { registry }
+    pub fn new(
+        registry: Arc<PacketRegistry>,
+        server_manager: Option<Arc<ServerManagerService>>,
+    ) -> Self {
+        Self {
+            registry,
+            server_manager,
+        }
     }
 
     /// Handles a status request on the given connection context.
@@ -55,7 +64,11 @@ impl StatusHandler {
         }
 
         // Build and send status response
-        let json = Self::build_status_json(routing.as_ref(), connection_registry);
+        let json = Self::build_status_json(
+            routing.as_ref(),
+            connection_registry,
+            self.server_manager.as_deref(),
+        );
         let response = CStatusResponse {
             json_response: json,
         };
@@ -123,19 +136,64 @@ impl StatusHandler {
         Ok(())
     }
 
+    /// Resolves the MOTD text based on server state.
+    fn resolve_motd(
+        cfg: &infrarust_config::ServerConfig,
+        server_manager: Option<&ServerManagerService>,
+    ) -> String {
+        // If no server_manager service or no server_manager config → use online MOTD
+        if cfg.server_manager.is_none() {
+            return cfg
+                .motd
+                .online
+                .as_ref()
+                .map_or("An Infrarust Proxy".to_string(), |m| m.text.clone());
+        }
+
+        let server_id = cfg.effective_id();
+        let state = server_manager.and_then(|sm| sm.get_state(&server_id));
+
+        match state {
+            Some(ServerState::Online) => cfg
+                .motd
+                .online
+                .as_ref()
+                .map_or("A Minecraft Server".to_string(), |m| m.text.clone()),
+            Some(ServerState::Sleeping) => cfg.motd.sleeping.as_ref().map_or(
+                "\u{00a7}7Server sleeping \u{2014} \u{00a7}aConnect to wake up!".to_string(),
+                |m| m.text.clone(),
+            ),
+            Some(ServerState::Starting) => cfg
+                .motd
+                .starting
+                .as_ref()
+                .map_or("\u{00a7}eServer is starting...".to_string(), |m| {
+                    m.text.clone()
+                }),
+            Some(ServerState::Crashed) => cfg
+                .motd
+                .crashed
+                .as_ref()
+                .map_or("\u{00a7}cServer unavailable".to_string(), |m| {
+                    m.text.clone()
+                }),
+            _ => "A Minecraft Server".to_string(),
+        }
+    }
+
     fn build_status_json(
         routing: Option<&RoutingData>,
         connection_registry: &ConnectionRegistry,
+        server_manager: Option<&ServerManagerService>,
     ) -> String {
         let (motd_text, max_players, version_name, _favicon) = routing.map_or_else(
             || ("An Infrarust Proxy".to_string(), 0u32, None, None),
             |rd| {
                 let cfg = &rd.server_config;
-                let motd = cfg
-                    .motd
-                    .online
-                    .as_ref()
-                    .map_or("An Infrarust Proxy", |m| m.text.as_str());
+
+                // Determine MOTD based on server state if a server_manager is active
+                let motd_text = Self::resolve_motd(cfg, server_manager);
+
                 let max = cfg
                     .motd
                     .online
@@ -148,7 +206,7 @@ impl StatusHandler {
                     .as_ref()
                     .and_then(|m| m.version_name.clone());
                 let favicon = cfg.motd.online.as_ref().and_then(|m| m.favicon.clone());
-                (motd.to_string(), max, ver, favicon)
+                (motd_text, max, ver, favicon)
             },
         );
 

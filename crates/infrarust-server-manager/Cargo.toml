@@ -5,16 +5,17 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-default = ["pterodactyl", "local"]
-pterodactyl = []
-crafty = []
-local = []
-
 [dependencies]
+infrarust-config = { workspace = true }
 tokio = { workspace = true }
-tracing = { workspace = true }
-thiserror = { workspace = true }
-serde = { workspace = true }
 reqwest = { workspace = true }
-infrarust-api = { workspace = true }
+dashmap = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+tempfile = "3"

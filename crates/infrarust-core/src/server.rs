@@ -13,6 +13,8 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_protocol::{Packet, build_default_registry};
 use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
 
+use infrarust_server_manager::ServerManagerService;
+
 use crate::auth::mojang::MojangAuth;
 use crate::ban::file_storage::FileBanStorage;
 use crate::ban::manager::BanManager;
@@ -30,6 +32,7 @@ use crate::middleware::handshake_parser::HandshakeParserMiddleware;
 use crate::middleware::ip_filter::IpFilterMiddleware;
 use crate::middleware::login_start_parser::LoginStartParserMiddleware;
 use crate::middleware::rate_limiter::RateLimiterMiddleware;
+use crate::middleware::server_manager::ServerManagerMiddleware;
 use crate::pipeline::Pipeline;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
@@ -51,6 +54,7 @@ pub struct ProxyServer {
     client_only_handler: ClientOnlyHandler,
     registry: Arc<ConnectionRegistry>,
     ban_manager: Arc<BanManager>,
+    server_manager: Option<Arc<ServerManagerService>>,
     domain_index: Arc<ArcSwap<DomainIndex>>,
     configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
     packet_registry: Arc<PacketRegistry>,
@@ -70,13 +74,36 @@ impl ProxyServer {
             .into_iter()
             .map(|c| (c.effective_id(), Arc::new(c)))
             .collect();
+
+        // Build server manager from configs that have a server_manager
+        let managed_configs: Vec<(String, infrarust_config::ServerManagerConfig)> = config_map
+            .values()
+            .filter_map(|c| {
+                c.server_manager
+                    .as_ref()
+                    .map(|sm| (c.effective_id(), sm.clone()))
+            })
+            .collect();
+
         let configs = Arc::new(ArcSwap::from_pointee(config_map));
 
         // Build packet registry
         let packet_registry = Arc::new(build_default_registry());
 
+        let server_manager = if managed_configs.is_empty() {
+            None
+        } else {
+            let http_client = reqwest::Client::new();
+            let service = ServerManagerService::new(&managed_configs, http_client);
+            tracing::info!(count = managed_configs.len(), "server manager initialized");
+            Some(Arc::new(service))
+        };
+
         // Build handlers
-        let status_handler = StatusHandler::new(Arc::clone(&packet_registry));
+        let status_handler = StatusHandler::new(
+            Arc::clone(&packet_registry),
+            server_manager.as_ref().map(Arc::clone),
+        );
         let legacy_handler = LegacyHandler::new(Arc::clone(&domain_index), Arc::clone(&configs));
 
         let backend_connector = Arc::new(BackendConnector::new(
@@ -103,10 +130,13 @@ impl ProxyServer {
             Arc::clone(&configs),
         )));
 
-        // Build login pipeline: LoginStartParser → BanCheck
+        // Build login pipeline: LoginStartParser → BanCheck → ServerManager
         let mut login_pipeline = Pipeline::new();
         login_pipeline.add(Box::new(LoginStartParserMiddleware::new()));
         login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
+        if let Some(ref sm) = server_manager {
+            login_pipeline.add(Box::new(ServerManagerMiddleware::new(Arc::clone(sm))));
+        }
 
         let passthrough_handler =
             PassthroughHandler::new(Arc::clone(&backend_connector), Arc::clone(&registry));
@@ -136,6 +166,7 @@ impl ProxyServer {
             client_only_handler,
             registry,
             ban_manager,
+            server_manager,
             domain_index,
             configs,
             packet_registry,
@@ -157,6 +188,15 @@ impl ProxyServer {
         let listener = Listener::bind(listener_config, self.shutdown.clone()).await?;
 
         tracing::info!(bind = %self.config.bind, "proxy server listening");
+
+        // Start server manager health check and monitoring
+        if let Some(ref sm) = self.server_manager {
+            sm.initial_health_check().await;
+            let player_counter: Arc<dyn infrarust_server_manager::PlayerCounter> =
+                Arc::clone(&self.registry) as _;
+            let _monitoring_handles = sm.start_monitoring(player_counter, self.shutdown.clone());
+            tracing::info!("server manager monitoring started");
+        }
 
         // Start ban purge task
         let _purge_handle = self

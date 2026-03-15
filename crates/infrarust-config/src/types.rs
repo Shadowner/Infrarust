@@ -330,9 +330,14 @@ pub struct LocalManagerConfig {
     #[serde(default = "defaults::shutdown_timeout")]
     #[serde(with = "humantime_serde")]
     pub shutdown_timeout: Duration,
-    /// Durée d'inactivité avant shutdown auto
+    /// Durée d'inactivité avant shutdown auto (None = désactivé)
+    #[serde(default)]
     #[serde(with = "humantime_serde")]
-    pub shutdown_after: Duration,
+    pub shutdown_after: Option<Duration>,
+    /// Timeout pour le démarrage du serveur
+    #[serde(default = "defaults::start_timeout")]
+    #[serde(with = "humantime_serde")]
+    pub start_timeout: Duration,
 }
 
 /// Provider Pterodactyl : API REST.
@@ -342,8 +347,18 @@ pub struct PterodactylManagerConfig {
     pub api_url: String,
     pub api_key: String,
     pub server_id: String,
+    /// Durée d'inactivité avant shutdown auto (None = désactivé)
+    #[serde(default)]
     #[serde(with = "humantime_serde")]
-    pub shutdown_after: Duration,
+    pub shutdown_after: Option<Duration>,
+    /// Timeout pour le démarrage du serveur
+    #[serde(default = "defaults::start_timeout")]
+    #[serde(with = "humantime_serde")]
+    pub start_timeout: Duration,
+    /// Intervalle de polling pour vérifier l'état
+    #[serde(default = "defaults::poll_interval")]
+    #[serde(with = "humantime_serde")]
+    pub poll_interval: Duration,
 }
 
 /// Provider Crafty Controller : API REST.
@@ -353,8 +368,18 @@ pub struct CraftyManagerConfig {
     pub api_url: String,
     pub api_key: String,
     pub server_id: String,
+    /// Durée d'inactivité avant shutdown auto (None = désactivé)
+    #[serde(default)]
     #[serde(with = "humantime_serde")]
-    pub shutdown_after: Duration,
+    pub shutdown_after: Option<Duration>,
+    /// Timeout pour le démarrage du serveur
+    #[serde(default = "defaults::start_timeout")]
+    #[serde(with = "humantime_serde")]
+    pub start_timeout: Duration,
+    /// Intervalle de polling pour vérifier l'état
+    #[serde(default = "defaults::poll_interval")]
+    #[serde(with = "humantime_serde")]
+    pub poll_interval: Duration,
 }
 
 // ─────────────────────────── Telemetry ────────────────────────────

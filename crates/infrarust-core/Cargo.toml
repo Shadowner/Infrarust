@@ -9,6 +9,7 @@ repository.workspace = true
 infrarust-config = { workspace = true }
 infrarust-protocol = { workspace = true }
 infrarust-transport = { workspace = true }
+infrarust-server-manager = { workspace = true }
 
 tokio = { workspace = true }
 tokio-util = { workspace = true }

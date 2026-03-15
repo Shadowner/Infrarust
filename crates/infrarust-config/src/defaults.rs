@@ -51,6 +51,14 @@ pub const fn shutdown_timeout() -> Duration {
     Duration::from_secs(30)
 }
 
+pub const fn start_timeout() -> Duration {
+    Duration::from_secs(60)
+}
+
+pub const fn poll_interval() -> Duration {
+    Duration::from_secs(5)
+}
+
 pub fn otlp_endpoint() -> String {
     "http://localhost:4317".to_string()
 }
