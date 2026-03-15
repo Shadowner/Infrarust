@@ -105,9 +105,16 @@ impl ServerProvider for PterodactylProvider {
             }
 
             let body: serde_json::Value = resp.json().await?;
-            let current_state = body["attributes"]["current_state"]
-                .as_str()
-                .unwrap_or("unknown");
+            let current_state = match body["attributes"]["current_state"].as_str() {
+                Some(state) => state,
+                None => {
+                    tracing::warn!(
+                        server_id = %self.server_id,
+                        "failed to extract current_state from Pterodactyl response, defaulting to Unknown"
+                    );
+                    return Ok(ProviderStatus::Unknown);
+                }
+            };
 
             Ok(map_pterodactyl_state(current_state))
         })

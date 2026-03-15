@@ -40,9 +40,7 @@ impl Middleware for LoginStartParserMiddleware {
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
             let protocol_version = ctx
-                .extensions
-                .get::<HandshakeData>()
-                .expect("HandshakeData must be set by handshake_parser")
+                .require_extension::<HandshakeData>("HandshakeData")?
                 .protocol_version;
 
             // Read the login start packet

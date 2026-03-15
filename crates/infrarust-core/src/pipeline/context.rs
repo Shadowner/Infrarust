@@ -8,6 +8,8 @@ use tokio::time::Instant;
 
 use infrarust_transport::{AcceptedConnection, ConnectionInfo};
 
+use crate::error::CoreError;
+
 /// Type-erased extension map for storing middleware data.
 ///
 /// Inspired by the rama Extensions pattern: a `HashMap<TypeId, Box<dyn Any>>`
@@ -98,6 +100,19 @@ impl ConnectionContext {
             buffered_data,
             extensions: Extensions::new(),
         }
+    }
+
+    /// Retrieves a required extension, returning an error if missing.
+    ///
+    /// Prefer this over `extensions.get::<T>().expect(...)` in production code
+    /// to avoid panics on pipeline misconfiguration.
+    pub fn require_extension<T: Send + Sync + 'static>(
+        &self,
+        name: &'static str,
+    ) -> Result<&T, CoreError> {
+        self.extensions
+            .get::<T>()
+            .ok_or(CoreError::MissingExtension(name))
     }
 
     /// Returns a reference to the client stream.

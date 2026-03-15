@@ -43,10 +43,7 @@ impl Middleware for DomainRouterMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
-            let handshake = ctx
-                .extensions
-                .get::<HandshakeData>()
-                .expect("HandshakeData must be set by handshake_parser");
+            let handshake = ctx.require_extension::<HandshakeData>("HandshakeData")?;
 
             let domain = &handshake.domain;
 

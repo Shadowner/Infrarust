@@ -1,11 +1,10 @@
 [package]
 name = "infrarust-protocol"
-version = "2.0.0-alpha.1"
-edition = "2024"
-rust-version = "1.94"
-license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Minecraft protocol codec for the Infrarust proxy"
-repository = "https://github.com/Shadowner/Infrarust"
 
 [features]
 default = []

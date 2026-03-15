@@ -98,8 +98,18 @@ impl FileBanStorage {
 
     /// Persists to disk (crash-safe: write tmp then rename).
     /// Serialized with a mutex to prevent concurrent temp file conflicts.
+    /// Uses a timeout to avoid blocking indefinitely on slow I/O.
     async fn persist(&self) -> Result<(), CoreError> {
-        let _guard = self.write_lock.lock().await;
+        let _guard =
+            match tokio::time::timeout(std::time::Duration::from_secs(5), self.write_lock.lock())
+                .await
+            {
+                Ok(guard) => guard,
+                Err(_) => {
+                    tracing::warn!("ban persistence lock timed out, skipping this persist cycle");
+                    return Ok(());
+                }
+            };
         let audit_log = self.audit_log.read().await;
         let data = self.serialize_all(&audit_log)?;
         drop(audit_log);

@@ -163,6 +163,16 @@ mod splice_impl {
     /// Splices data in one direction via a kernel pipe.
     ///
     /// Uses the `TcpStream`'s readiness methods to avoid double epoll registration.
+    /// When the source reaches EOF, the destination's write half is shut down to
+    /// propagate the EOF signal to the other direction.
+    /// Converts a nix errno to a std::io::Error, preserving the OS error code.
+    ///
+    /// Unlike `Error::other()`, this correctly maps EAGAIN to `ErrorKind::WouldBlock`,
+    /// which is required for `try_io`'s readiness-clearing contract.
+    fn nix_to_io_error(e: nix::Error) -> std::io::Error {
+        std::io::Error::from_raw_os_error(e as i32)
+    }
+
     async fn splice_one_direction(
         src: &TcpStream,
         dst: &TcpStream,
@@ -174,12 +184,16 @@ mod splice_impl {
 
         let mut total: u64 = 0;
         let flags = SpliceFFlags::SPLICE_F_NONBLOCK | SpliceFFlags::SPLICE_F_MOVE;
+        let mut eof_received = false;
 
         loop {
             // Drain: source → pipe
             let drained = tokio::select! {
                 result = src.ready(Interest::READABLE) => {
                     let _ = result?;
+                    // SAFETY: `TcpStream` owns a valid file descriptor for its entire lifetime.
+                    // We borrow it only within the scope of `try_io`'s closure, which guarantees
+                    // the fd remains valid. The `TcpStream` is not dropped or moved during this call.
                     let src_fd = unsafe { BorrowedFd::borrow_raw(src.as_raw_fd()) };
                     match src.try_io(Interest::READABLE, || {
                         nix::fcntl::splice(
@@ -189,9 +203,9 @@ mod splice_impl {
                             None,
                             65536,
                             flags,
-                        ).map_err(std::io::Error::other)
+                        ).map_err(nix_to_io_error)
                     }) {
-                        Ok(0) => break, // EOF
+                        Ok(0) => { eof_received = true; break; }
                         Ok(n) => n,
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
                         Err(e) => return Err(e),
@@ -200,33 +214,28 @@ mod splice_impl {
                 () = shutdown.cancelled() => break,
             };
 
-            // Pump: pipe → destination
+            // Pump: pipe → destination (always drain fully to avoid data loss)
             let mut pumped = 0usize;
             while pumped < drained {
-                tokio::select! {
-                    result = dst.ready(Interest::WRITABLE) => {
-                        let _ = result?;
-                        let dst_fd = unsafe { BorrowedFd::borrow_raw(dst.as_raw_fd()) };
-                        match dst.try_io(Interest::WRITABLE, || {
-                            nix::fcntl::splice(
-                                &pipe.read_fd,
-                                None,
-                                dst_fd,
-                                None,
-                                drained - pumped,
-                                flags,
-                            ).map_err(std::io::Error::other)
-                        }) {
-                            Ok(0) => return Err(std::io::Error::new(
-                                std::io::ErrorKind::WriteZero,
-                                "splice pump returned 0"
-                            )),
-                            Ok(n) => pumped += n,
-                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {},
-                            Err(e) => return Err(e),
-                        }
+                let result = dst.ready(Interest::WRITABLE).await;
+                let _ = result?;
+                // SAFETY: `TcpStream` owns a valid file descriptor for its entire lifetime.
+                // We borrow it only within the scope of `try_io`'s closure, which guarantees
+                // the fd remains valid. The `TcpStream` is not dropped or moved during this call.
+                let dst_fd = unsafe { BorrowedFd::borrow_raw(dst.as_raw_fd()) };
+                match dst.try_io(Interest::WRITABLE, || {
+                    nix::fcntl::splice(&pipe.read_fd, None, dst_fd, None, drained - pumped, flags)
+                        .map_err(nix_to_io_error)
+                }) {
+                    Ok(0) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::WriteZero,
+                            "splice pump returned 0",
+                        ));
                     }
-                    () = shutdown.cancelled() => break,
+                    Ok(n) => pumped += n,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(e) => return Err(e),
                 }
             }
 
@@ -235,6 +244,12 @@ mod splice_impl {
             {
                 total += pumped as u64;
             }
+        }
+
+        // Propagate EOF to the other end by half-closing the destination's write side.
+        // This lets the other direction detect EOF and finish naturally.
+        if eof_received {
+            let _ = nix::sys::socket::shutdown(dst.as_raw_fd(), nix::sys::socket::Shutdown::Write);
         }
 
         Ok(total)
@@ -279,34 +294,49 @@ mod splice_impl {
 
                 let (mut client_to_backend, mut backend_to_client) = (0u64, 0u64);
 
+                // Wait for the first direction to finish. Each direction propagates
+                // EOF via socket half-close, so the other direction will finish
+                // naturally without needing CancellationToken signaling.
                 let reason = tokio::select! {
                     result = &mut c2b => {
                         match result {
                             Ok(bytes) => {
                                 client_to_backend = bytes;
-                                shutdown.cancel();
+                                // c2b already shut down backend's write half;
+                                // wait for b2c to drain and finish naturally.
                                 if let Ok(bytes) = (&mut b2c).await {
                                     backend_to_client = bytes;
                                 }
                                 ForwardEndReason::ClientClosed
                             }
-                            Err(e) => ForwardEndReason::Error(e),
+                            Err(e) => {
+                                shutdown.cancel();
+                                let _ = (&mut b2c).await;
+                                ForwardEndReason::Error(e)
+                            }
                         }
                     }
                     result = &mut b2c => {
                         match result {
                             Ok(bytes) => {
                                 backend_to_client = bytes;
-                                shutdown.cancel();
+                                // b2c already shut down client's write half;
+                                // wait for c2b to drain and finish naturally.
                                 if let Ok(bytes) = (&mut c2b).await {
                                     client_to_backend = bytes;
                                 }
                                 ForwardEndReason::BackendClosed
                             }
-                            Err(e) => ForwardEndReason::Error(e),
+                            Err(e) => {
+                                shutdown.cancel();
+                                let _ = (&mut c2b).await;
+                                ForwardEndReason::Error(e)
+                            }
                         }
                     }
                     () = shutdown.cancelled() => {
+                        let _ = (&mut c2b).await;
+                        let _ = (&mut b2c).await;
                         ForwardEndReason::Shutdown
                     }
                 };

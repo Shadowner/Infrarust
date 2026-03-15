@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+use std::sync::Arc;
 
 use tokio::time::Instant;
 
@@ -33,7 +34,7 @@ pub struct SessionEntry {
 /// Pure data structure backed by `DashMap` — no background tasks.
 /// Passthrough handler calls `register()` at start, `unregister()` at end.
 pub struct ConnectionRegistry {
-    sessions: DashMap<Uuid, SessionEntry>,
+    sessions: DashMap<Uuid, Arc<SessionEntry>>,
 }
 
 impl ConnectionRegistry {
@@ -47,34 +48,34 @@ impl ConnectionRegistry {
     /// Registers a new session, returning its UUID.
     pub fn register(&self, entry: SessionEntry) -> Uuid {
         let id = entry.session_id;
-        self.sessions.insert(id, entry);
+        self.sessions.insert(id, Arc::new(entry));
         id
     }
 
     /// Removes a session by ID, returning the entry if it existed.
-    pub fn unregister(&self, session_id: &Uuid) -> Option<SessionEntry> {
+    pub fn unregister(&self, session_id: &Uuid) -> Option<Arc<SessionEntry>> {
         self.sessions.remove(session_id).map(|(_, v)| v)
     }
 
-    /// Returns a clone of the session entry for the given ID.
-    pub fn get(&self, session_id: &Uuid) -> Option<SessionEntry> {
-        self.sessions.get(session_id).map(|r| r.clone())
+    /// Returns a reference-counted handle to the session entry.
+    pub fn get(&self, session_id: &Uuid) -> Option<Arc<SessionEntry>> {
+        self.sessions.get(session_id).map(|r| Arc::clone(&r))
     }
 
     /// Finds the first session matching the given username.
-    pub fn find_by_username(&self, username: &str) -> Option<SessionEntry> {
+    pub fn find_by_username(&self, username: &str) -> Option<Arc<SessionEntry>> {
         self.sessions
             .iter()
             .find(|r| r.username.as_deref() == Some(username))
-            .map(|r| r.clone())
+            .map(|r| Arc::clone(&r))
     }
 
     /// Returns all sessions connected to the given server.
-    pub fn find_by_server(&self, server_id: &str) -> Vec<SessionEntry> {
+    pub fn find_by_server(&self, server_id: &str) -> Vec<Arc<SessionEntry>> {
         self.sessions
             .iter()
             .filter(|r| r.server_id == server_id)
-            .map(|r| r.clone())
+            .map(|r| Arc::clone(&r))
             .collect()
     }
 
@@ -92,25 +93,25 @@ impl ConnectionRegistry {
     }
 
     /// Returns a snapshot of all active sessions.
-    pub fn all(&self) -> Vec<SessionEntry> {
-        self.sessions.iter().map(|r| r.clone()).collect()
+    pub fn all(&self) -> Vec<Arc<SessionEntry>> {
+        self.sessions.iter().map(|r| Arc::clone(&r)).collect()
     }
 
     /// Finds all sessions from a given IP (may be multiple for multi-accounts).
-    pub fn find_by_ip(&self, ip: &IpAddr) -> Vec<SessionEntry> {
+    pub fn find_by_ip(&self, ip: &IpAddr) -> Vec<Arc<SessionEntry>> {
         self.sessions
             .iter()
             .filter(|r| r.client_ip == *ip)
-            .map(|r| r.clone())
+            .map(|r| Arc::clone(&r))
             .collect()
     }
 
     /// Finds the session with the given Mojang UUID.
-    pub fn find_by_uuid(&self, uuid: &Uuid) -> Option<SessionEntry> {
+    pub fn find_by_uuid(&self, uuid: &Uuid) -> Option<Arc<SessionEntry>> {
         self.sessions
             .iter()
             .find(|r| r.player_uuid.as_ref() == Some(uuid))
-            .map(|r| r.clone())
+            .map(|r| Arc::clone(&r))
     }
 }
 

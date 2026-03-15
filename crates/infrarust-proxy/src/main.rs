@@ -116,28 +116,28 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
 
     server.run().await.context("proxy server error")?;
 
-    // Post-shutdown: log remaining connections
+    // Post-shutdown: drain active connections with a timeout
     let remaining = server.registry().count();
     if remaining > 0 {
         tracing::info!(remaining, "waiting for active connections to drain");
 
-        let deadline = tokio::time::sleep(Duration::from_secs(30));
-        tokio::pin!(deadline);
-
-        loop {
-            let count = server.registry().count();
-            if count == 0 {
-                tracing::info!("all connections drained");
-                break;
-            }
-            tokio::select! {
-                () = &mut deadline => {
-                    tracing::warn!(remaining = count, "drain timeout, forcing shutdown");
+        let _ = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let count = server.registry().count();
+                if count == 0 {
+                    tracing::info!("all connections drained");
                     break;
                 }
-                () = tokio::time::sleep(Duration::from_millis(250)) => {}
+                tokio::time::sleep(Duration::from_millis(250)).await;
             }
-        }
+        })
+        .await
+        .inspect_err(|_| {
+            tracing::warn!(
+                remaining = server.registry().count(),
+                "drain timeout, forcing shutdown"
+            );
+        });
     }
 
     tracing::info!("infrarust stopped");

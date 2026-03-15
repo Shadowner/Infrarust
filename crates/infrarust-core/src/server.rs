@@ -305,9 +305,7 @@ impl ProxyServer {
 
         // Branch on intent
         let intent = ctx
-            .extensions
-            .get::<HandshakeData>()
-            .expect("HandshakeData must be set after common pipeline")
+            .require_extension::<HandshakeData>("HandshakeData")?
             .intent;
 
         match intent {
@@ -327,9 +325,7 @@ impl ProxyServer {
 
                 // Route by proxy mode
                 let proxy_mode = ctx
-                    .extensions
-                    .get::<RoutingData>()
-                    .expect("RoutingData must be set by domain_router")
+                    .require_extension::<RoutingData>("RoutingData")?
                     .server_config
                     .proxy_mode;
 

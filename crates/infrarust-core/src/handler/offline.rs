@@ -49,15 +49,9 @@ impl OfflineHandler {
         mut ctx: ConnectionContext,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
-        let routing = ctx
-            .extensions
-            .get::<RoutingData>()
-            .expect("RoutingData must be set by domain_router")
-            .clone();
+        let routing = ctx.require_extension::<RoutingData>("RoutingData")?.clone();
         let handshake = ctx
-            .extensions
-            .get::<HandshakeData>()
-            .expect("HandshakeData must be set by handshake_parser")
+            .require_extension::<HandshakeData>("HandshakeData")?
             .clone();
         let login_data = ctx.extensions.get::<LoginData>().cloned();
 

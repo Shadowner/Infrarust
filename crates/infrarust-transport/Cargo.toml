@@ -17,7 +17,7 @@ tracing = { workspace = true }
 infrarust-config = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "0.29", features = ["fs", "zerocopy"] }
+nix = { version = "0.29", features = ["fs", "net", "zerocopy"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

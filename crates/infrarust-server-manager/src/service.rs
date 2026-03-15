@@ -29,26 +29,26 @@ pub trait PlayerCounter: Send + Sync {
 /// Tracks the state of each managed server, provides wake-up with waiters,
 /// adaptive polling, and auto-shutdown after idle.
 pub struct ServerManagerService {
-    entries: DashMap<String, ServerEntry>,
+    pub(crate) entries: DashMap<String, ServerEntry>,
 }
 
-struct ServerEntry {
+pub(crate) struct ServerEntry {
     /// Current state.
-    state: ServerState,
+    pub(crate) state: ServerState,
     /// The provider controlling this server.
-    provider: Arc<dyn ServerProvider>,
+    pub(crate) provider: Arc<dyn ServerProvider>,
     /// Duration of inactivity before auto-shutdown (None = disabled).
-    shutdown_after: Option<Duration>,
+    pub(crate) shutdown_after: Option<Duration>,
     /// Maximum time to wait for the server to become Online.
-    start_timeout: Duration,
+    pub(crate) start_timeout: Duration,
     /// Base polling interval.
-    poll_interval: Duration,
+    pub(crate) poll_interval: Duration,
     /// Timestamp of the last player seen connected (for auto-shutdown).
-    last_player_seen: Option<Instant>,
+    pub(crate) last_player_seen: Option<Instant>,
     /// Timestamp when start was requested (for timeout tracking).
-    start_requested_at: Option<Instant>,
+    pub(crate) start_requested_at: Option<Instant>,
     /// Waiters: connections waiting for the server to become Online.
-    waiters: Vec<oneshot::Sender<Result<(), ServerManagerError>>>,
+    pub(crate) waiters: Vec<oneshot::Sender<Result<(), ServerManagerError>>>,
 }
 
 impl ServerManagerService {
@@ -348,7 +348,7 @@ impl ServerManagerService {
             let token = shutdown.clone();
 
             let handle = tokio::spawn(async move {
-                monitor_server(service, server_id, counter, token).await;
+                crate::monitor::monitor_server(service, server_id, counter, token).await;
             });
 
             handles.push(handle);
@@ -358,7 +358,7 @@ impl ServerManagerService {
     }
 
     /// Checks provider status for a server (used by monitoring task).
-    async fn check_provider_status(
+    pub(crate) async fn check_provider_status(
         &self,
         server_id: &str,
     ) -> Result<ProviderStatus, ServerManagerError> {
@@ -376,7 +376,7 @@ impl ServerManagerService {
     }
 
     /// Updates server state and returns the previous state if changed.
-    fn update_state(
+    pub(crate) fn update_state(
         &self,
         server_id: &str,
         new_status: ProviderStatus,
@@ -401,7 +401,7 @@ impl ServerManagerService {
     }
 
     /// Notifies all waiters for a server with the given result.
-    fn notify_waiters(&self, server_id: &str, result: Result<(), ServerManagerError>) {
+    pub(crate) fn notify_waiters(&self, server_id: &str, result: Result<(), ServerManagerError>) {
         if let Some(mut entry) = self.entries.get_mut(server_id) {
             let waiters = std::mem::take(&mut entry.waiters);
             drop(entry);
@@ -423,125 +423,11 @@ impl ServerManagerService {
         }
     }
 
-    /// Checks if a server should be auto-shutdown due to inactivity.
-    async fn check_auto_shutdown(&self, server_id: &str, player_count: usize) {
-        let should_stop = {
-            let mut entry = match self.entries.get_mut(server_id) {
-                Some(e) => e,
-                None => return,
-            };
-
-            if player_count > 0 {
-                entry.last_player_seen = Some(Instant::now());
-                return;
-            }
-
-            let shutdown_after = match entry.shutdown_after {
-                Some(d) => d,
-                None => return,
-            };
-
-            let last_seen = match entry.last_player_seen {
-                Some(t) => t,
-                None => {
-                    entry.last_player_seen = Some(Instant::now());
-                    return;
-                }
-            };
-
-            last_seen.elapsed() >= shutdown_after
-        };
-
-        if should_stop {
-            tracing::info!(
-                server = %server_id,
-                "auto-shutdown: no players for shutdown_after duration"
-            );
-            if let Err(e) = self.stop_server(server_id).await {
-                tracing::warn!(server = %server_id, "auto-shutdown failed: {e}");
-            }
-        }
-    }
-
     /// Returns the poll interval for a server.
-    fn get_poll_interval(&self, server_id: &str) -> Duration {
+    pub(crate) fn get_poll_interval(&self, server_id: &str) -> Duration {
         self.entries
             .get(server_id)
             .map(|e| e.poll_interval)
             .unwrap_or(Duration::from_secs(5))
-    }
-}
-
-/// Per-server monitoring task.
-async fn monitor_server(
-    service: Arc<ServerManagerService>,
-    server_id: String,
-    player_counter: Arc<dyn PlayerCounter>,
-    shutdown: CancellationToken,
-) {
-    tracing::info!(server = %server_id, "monitoring task started");
-
-    let mut fast_poll = false;
-
-    loop {
-        let interval = if fast_poll {
-            service.get_poll_interval(&server_id)
-        } else {
-            service.get_poll_interval(&server_id) * 6
-        };
-
-        tokio::select! {
-            () = tokio::time::sleep(interval) => {}
-            () = shutdown.cancelled() => {
-                tracing::info!(server = %server_id, "monitoring task shutting down");
-                break;
-            }
-        }
-
-        // Skip polling if server is Crashed (wait for ensure_started)
-        if let Some(state) = service.get_state(&server_id)
-            && state == ServerState::Crashed
-        {
-            continue;
-        }
-
-        // 1. Poll provider status
-        let new_status = match service.check_provider_status(&server_id).await {
-            Ok(status) => status,
-            Err(e) => {
-                tracing::warn!(server = %server_id, "status check failed: {e}");
-                continue;
-            }
-        };
-
-        // 2. Update state and detect transitions
-        if let Some((_old, new_state)) = service.update_state(&server_id, new_status) {
-            match new_state {
-                ServerState::Online => {
-                    service.notify_waiters(&server_id, Ok(()));
-                    fast_poll = false;
-                }
-                ServerState::Crashed | ServerState::Sleeping => {
-                    service.notify_waiters(
-                        &server_id,
-                        Err(ServerManagerError::ProcessExited {
-                            server_id: server_id.clone(),
-                            exit_code: None,
-                        }),
-                    );
-                    fast_poll = false;
-                }
-                ServerState::Starting | ServerState::Stopping => {
-                    fast_poll = true;
-                }
-                _ => {}
-            }
-        }
-
-        // 3. Check auto-shutdown (only when running)
-        if new_status == ProviderStatus::Running {
-            let player_count = player_counter.count_by_server(&server_id);
-            service.check_auto_shutdown(&server_id, player_count).await;
-        }
     }
 }

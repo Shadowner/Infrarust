@@ -26,12 +26,17 @@ pub struct DomainIndex {
 
 struct CompiledPattern {
     /// Le pattern original (pour debug/affichage).
-    #[allow(dead_code)]
     raw: String,
     /// Le pattern compilé.
     matcher: WildMatch,
     /// L'identifiant de la config associée.
     config_id: String,
+}
+
+impl std::fmt::Display for CompiledPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.raw)
+    }
 }
 
 /// Strip FML markers (`\0FML`, `\0FML2`, `\0FML3`) appended by

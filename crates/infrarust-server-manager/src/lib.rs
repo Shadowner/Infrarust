@@ -9,6 +9,7 @@
 pub mod crafty;
 pub mod error;
 pub mod local;
+mod monitor;
 pub mod provider;
 pub mod pterodactyl;
 pub mod service;

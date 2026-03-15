@@ -54,7 +54,7 @@ pub struct ProxyProtocolInfo {
 pub async fn decode_proxy_protocol(
     stream: &mut TcpStream,
 ) -> Result<(ProxyProtocolInfo, usize), TransportError> {
-    let mut buf = vec![0u8; MAX_HEADER_SIZE];
+    let mut buf = [0u8; MAX_HEADER_SIZE];
     let mut total_read = 0;
 
     // Read enough data to parse the header
@@ -111,13 +111,11 @@ enum DecodeAttempt {
 }
 
 fn try_decode_v2(buf: &[u8]) -> Result<(ProxyProtocolInfo, usize), DecodeAttempt> {
-    let header = ppp::v2::Header::try_from(buf).map_err(|e| {
-        let msg = format!("{e}");
-        if msg.contains("incomplete") || msg.contains("Incomplete") || buf.len() < 16 {
+    let header = ppp::v2::Header::try_from(buf).map_err(|e| match e {
+        ppp::v2::ParseError::Incomplete(_) | ppp::v2::ParseError::Partial(_, _) => {
             DecodeAttempt::Incomplete
-        } else {
-            DecodeAttempt::Failed(TransportError::ProxyProtocolDecode(msg))
         }
+        other => DecodeAttempt::Failed(TransportError::ProxyProtocolDecode(format!("{other}"))),
     })?;
 
     let (source_addr, dest_addr) =

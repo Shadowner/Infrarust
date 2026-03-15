@@ -45,7 +45,7 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
 /// Checks:
 /// - `servers_dir` exists on disk
 pub fn validate_proxy_config(config: &ProxyConfig) -> Result<(), ConfigError> {
-    if !config.servers_dir.exists() {
+    if !config.servers_dir.is_dir() {
         return Err(ConfigError::DirectoryNotFound(config.servers_dir.clone()));
     }
 

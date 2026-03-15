@@ -116,7 +116,16 @@ impl ServerProvider for CraftyProvider {
             }
 
             let body: serde_json::Value = resp.json().await?;
-            let running = body["data"]["running"].as_bool().unwrap_or(false);
+            let running = match body["data"]["running"].as_bool() {
+                Some(v) => v,
+                None => {
+                    tracing::warn!(
+                        server_id = %self.server_id,
+                        "failed to extract running status from Crafty response, defaulting to Unknown"
+                    );
+                    return Ok(ProviderStatus::Unknown);
+                }
+            };
 
             Ok(if running {
                 ProviderStatus::Running

@@ -26,6 +26,9 @@ pub enum CoreError {
     #[error("auth error: {0}")]
     Auth(String),
 
+    #[error("missing pipeline extension: {0} — check middleware ordering")]
+    MissingExtension(&'static str),
+
     #[error("{0}")]
     Other(String),
 }
