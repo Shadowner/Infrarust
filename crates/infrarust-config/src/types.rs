@@ -199,6 +199,7 @@ pub struct MotdConfig {
     pub sleeping: Option<MotdEntry>,
     pub starting: Option<MotdEntry>,
     pub crashed: Option<MotdEntry>,
+    pub stopping: Option<MotdEntry>,
     pub unreachable: Option<MotdEntry>,
 }
 

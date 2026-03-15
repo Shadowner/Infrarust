@@ -24,7 +24,6 @@ use crate::handler::client_only::ClientOnlyHandler;
 use crate::handler::legacy::LegacyHandler;
 use crate::handler::offline::OfflineHandler;
 use crate::handler::passthrough::PassthroughHandler;
-use crate::handler::status::StatusHandler;
 use crate::middleware::ban_check::BanCheckMiddleware;
 use crate::middleware::ban_ip_check::BanIpCheckMiddleware;
 use crate::middleware::domain_router::DomainRouterMiddleware;
@@ -39,6 +38,7 @@ use crate::pipeline::middleware::MiddlewareResult;
 use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected, RoutingData};
 use crate::provider::file::FileProvider;
 use crate::registry::ConnectionRegistry;
+use crate::status::{FaviconCache, StatusCache, StatusHandler, StatusRelayClient};
 
 /// The main proxy server orchestrator.
 ///
@@ -99,18 +99,46 @@ impl ProxyServer {
             Some(Arc::new(service))
         };
 
-        // Build handlers
-        let status_handler = StatusHandler::new(
-            Arc::clone(&packet_registry),
-            server_manager.as_ref().map(Arc::clone),
-        );
-        let legacy_handler = LegacyHandler::new(Arc::clone(&domain_index), Arc::clone(&configs));
-
         let backend_connector = Arc::new(BackendConnector::new(
             config.connect_timeout,
             config.keepalive.clone(),
         ));
         let registry = Arc::new(ConnectionRegistry::new());
+
+        // Build status subsystem
+        let status_cache = Arc::new(StatusCache::new(config.status_cache.ttl));
+
+        let favicon_configs: Vec<(String, Arc<ServerConfig>)> = configs
+            .load()
+            .iter()
+            .map(|(id, cfg)| (id.clone(), Arc::clone(cfg)))
+            .collect();
+        let favicon_cache = Arc::new(
+            FaviconCache::load_from_configs(&favicon_configs, config.default_motd.as_ref()).await?,
+        );
+
+        let relay_client = StatusRelayClient::new(
+            Arc::clone(&backend_connector),
+            Arc::clone(&packet_registry),
+            std::time::Duration::from_secs(5),
+        );
+
+        let status_handler = StatusHandler::new(
+            relay_client,
+            Arc::clone(&status_cache),
+            Arc::clone(&favicon_cache),
+            server_manager.as_ref().map(Arc::clone),
+            Arc::clone(&packet_registry),
+            config.default_motd.clone(),
+        );
+
+        let legacy_handler = LegacyHandler::new(
+            Arc::clone(&domain_index),
+            Arc::clone(&configs),
+            config.default_motd.clone(),
+            server_manager.as_ref().map(Arc::clone),
+            Arc::clone(&registry),
+        );
 
         // Ban system
         let ban_storage = Arc::new(FileBanStorage::new(config.ban.file.clone()));
@@ -208,11 +236,15 @@ impl ProxyServer {
         if let Ok((rx, _watcher)) = provider.watch() {
             let domain_index = Arc::clone(&self.domain_index);
             let configs = Arc::clone(&self.configs);
+            let status_cache = Arc::clone(self.status_handler.cache());
+            let favicon_cache = Arc::clone(self.status_handler.favicon_cache());
             let shutdown = self.shutdown.clone();
             tokio::spawn(crate::reload::run_config_watcher(
                 rx,
                 domain_index,
                 configs,
+                status_cache,
+                favicon_cache,
                 shutdown,
             ));
         }

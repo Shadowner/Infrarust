@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::defaults;
 use crate::types::{
-    BanConfig, KeepaliveConfig, MotdEntry, RateLimitConfig, StatusCacheConfig, TelemetryConfig,
+    BanConfig, KeepaliveConfig, MotdConfig, RateLimitConfig, StatusCacheConfig, TelemetryConfig,
 };
 
 /// Configuration racine du proxy.
@@ -51,7 +51,7 @@ pub struct ProxyConfig {
 
     /// MOTD par défaut quand aucun serveur ne matche
     #[serde(default)]
-    pub default_motd: Option<MotdEntry>,
+    pub default_motd: Option<MotdConfig>,
 
     /// Config de la télémétrie
     #[serde(default)]

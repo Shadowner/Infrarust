@@ -32,7 +32,7 @@ ttl = "5s"
 max_entries = 1000
 
 # MOTD par défaut quand aucun serveur ne matche le domaine
-[default_motd]
+[default_motd.online]
 text = "§cUnknown server"
 version_name = "Infrarust"
 max_players = 0

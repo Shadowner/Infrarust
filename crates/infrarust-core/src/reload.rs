@@ -8,16 +8,20 @@ use tokio_util::sync::CancellationToken;
 use infrarust_config::{DomainIndex, ServerConfig};
 
 use crate::provider::ConfigChange;
+use crate::status::{FaviconCache, StatusCache};
 
 /// Runs the config hot-reload loop.
 ///
 /// Listens for `ConfigChange` events and atomically swaps
-/// the domain index and config map via `ArcSwap`.
+/// the domain index and config map via `ArcSwap`. Also invalidates
+/// the status cache and reloads favicons on config change.
 #[allow(clippy::implicit_hasher)] // ArcSwap<HashMap> is the canonical type used across the crate
 pub async fn run_config_watcher(
     mut rx: mpsc::Receiver<ConfigChange>,
     domain_index: Arc<ArcSwap<DomainIndex>>,
     configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
+    status_cache: Arc<StatusCache>,
+    favicon_cache: Arc<FaviconCache>,
     shutdown: CancellationToken,
 ) {
     loop {
@@ -33,6 +37,20 @@ pub async fn run_config_watcher(
                         let count = map.len();
                         domain_index.store(Arc::new(index));
                         configs.store(Arc::new(map));
+
+                        // Invalidate status cache — server addresses may have changed
+                        status_cache.invalidate_all();
+
+                        // Reload favicons for new/changed server configs
+                        let favicon_configs: Vec<(String, Arc<ServerConfig>)> = configs
+                            .load()
+                            .iter()
+                            .map(|(id, cfg)| (id.clone(), Arc::clone(cfg)))
+                            .collect();
+                        if let Err(e) = favicon_cache.reload(&favicon_configs, None).await {
+                            tracing::warn!(error = %e, "failed to reload favicons");
+                        }
+
                         tracing::info!(servers = count, "config reloaded");
                     }
                     None => {

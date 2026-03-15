@@ -41,13 +41,17 @@ fn test_parse_proxy_status_cache() {
 fn test_parse_proxy_default_motd() {
     let config = load_proxy_fixture();
 
-    let motd = config
+    let motd_config = config
         .default_motd
         .as_ref()
         .expect("default_motd should be set");
-    assert_eq!(motd.text, "§cUnknown server");
-    assert_eq!(motd.version_name.as_deref(), Some("Infrarust"));
-    assert_eq!(motd.max_players, Some(0));
+    let online = motd_config
+        .online
+        .as_ref()
+        .expect("default_motd.online should be set");
+    assert_eq!(online.text, "§cUnknown server");
+    assert_eq!(online.version_name.as_deref(), Some("Infrarust"));
+    assert_eq!(online.max_players, Some(0));
 }
 
 #[test]

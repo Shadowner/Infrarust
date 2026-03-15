@@ -9,4 +9,5 @@ pub mod registry;
 pub mod reload;
 pub mod server;
 pub mod session;
+pub mod status;
 pub mod util;
