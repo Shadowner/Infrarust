@@ -7,7 +7,7 @@ pub mod middleware;
 pub mod pipeline;
 pub mod provider;
 pub mod registry;
-pub mod reload;
+pub mod routing;
 pub mod server;
 pub mod session;
 pub mod status;

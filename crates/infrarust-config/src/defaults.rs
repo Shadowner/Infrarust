@@ -90,3 +90,15 @@ pub const fn ban_purge_interval() -> std::time::Duration {
 pub const fn ban_audit_log() -> bool {
     true
 }
+
+pub fn docker_endpoint() -> String {
+    "unix:///var/run/docker.sock".to_string()
+}
+
+pub const fn docker_poll_interval() -> std::time::Duration {
+    std::time::Duration::from_secs(30)
+}
+
+pub const fn docker_reconnect_delay() -> std::time::Duration {
+    std::time::Duration::from_secs(5)
+}

@@ -1,35 +1,25 @@
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-
-use arc_swap::ArcSwap;
-
-use infrarust_config::{DomainIndex, ServerConfig};
 
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::types::{HandshakeData, RoutingData};
+use crate::routing::DomainRouter;
 
 /// Middleware that resolves the target server from the handshake domain.
 ///
-/// Uses `ArcSwap` for lock-free hot-reloadable domain index lookups.
+/// Uses the `DomainRouter` for lock-free concurrent domain resolution
+/// with incremental add/update/remove support.
 pub struct DomainRouterMiddleware {
-    domain_index: Arc<ArcSwap<DomainIndex>>,
-    configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
+    domain_router: Arc<DomainRouter>,
 }
 
 impl DomainRouterMiddleware {
-    /// Creates a new domain router with shared hot-reloadable state.
-    pub const fn new(
-        domain_index: Arc<ArcSwap<DomainIndex>>,
-        configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
-    ) -> Self {
-        Self {
-            domain_index,
-            configs,
-        }
+    /// Creates a new domain router middleware.
+    pub fn new(domain_router: Arc<DomainRouter>) -> Self {
+        Self { domain_router }
     }
 }
 
@@ -47,25 +37,14 @@ impl Middleware for DomainRouterMiddleware {
 
             let domain = &handshake.domain;
 
-            // Resolve domain to config id
-            let index = self.domain_index.load();
-            let Some(id) = index.resolve(domain) else {
+            // Resolve domain to server config
+            let Some((_provider_id, server_config)) = self.domain_router.resolve(domain) else {
                 tracing::debug!(domain, "no server found for domain");
                 return Ok(MiddlewareResult::Reject(format!(
                     "Unknown server: {domain}"
                 )));
             };
-            let config_id = id.to_string();
-
-            // Look up full config
-            let configs = self.configs.load();
-            let Some(cfg) = configs.get(&config_id) else {
-                tracing::warn!(config_id, "config id resolved but config not found");
-                return Ok(MiddlewareResult::Reject(format!(
-                    "Unknown server: {domain}"
-                )));
-            };
-            let server_config = Arc::clone(cfg);
+            let config_id = server_config.effective_id();
 
             // Check per-server IP filter
             if let Some(ref ip_filter) = server_config.ip_filter

@@ -426,3 +426,44 @@ impl Default for BanConfig {
         }
     }
 }
+
+// ─────────────────────────── Docker Provider ───────────────────────
+
+/// Configuration du provider Docker.
+///
+/// Ce type est toujours compilé (pas de feature gate) pour que
+/// `ProxyConfig` puisse parser une section `[docker]` quelle que
+/// soit la configuration de compilation. Le `DockerProvider` lui-même
+/// est feature-gated dans `infrarust-core`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DockerProviderConfig {
+    /// Endpoint Docker (ex: "unix:///var/run/docker.sock").
+    #[serde(default = "defaults::docker_endpoint")]
+    pub endpoint: String,
+
+    /// Réseau Docker préféré pour la résolution d'adresse.
+    #[serde(default)]
+    pub network: Option<String>,
+
+    /// Intervalle de polling de fallback.
+    #[serde(default = "defaults::docker_poll_interval")]
+    #[serde(with = "humantime_serde")]
+    pub poll_interval: Duration,
+
+    /// Délai de reconnexion après coupure du daemon Docker.
+    #[serde(default = "defaults::docker_reconnect_delay")]
+    #[serde(with = "humantime_serde")]
+    pub reconnect_delay: Duration,
+}
+
+impl Default for DockerProviderConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: defaults::docker_endpoint(),
+            network: None,
+            poll_interval: defaults::docker_poll_interval(),
+            reconnect_delay: defaults::docker_reconnect_delay(),
+        }
+    }
+}

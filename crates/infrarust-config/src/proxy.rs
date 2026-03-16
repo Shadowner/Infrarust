@@ -8,7 +8,8 @@ use serde::Deserialize;
 
 use crate::defaults;
 use crate::types::{
-    BanConfig, KeepaliveConfig, MotdConfig, RateLimitConfig, StatusCacheConfig, TelemetryConfig,
+    BanConfig, DockerProviderConfig, KeepaliveConfig, MotdConfig, RateLimitConfig,
+    StatusCacheConfig, TelemetryConfig,
 };
 
 /// Configuration racine du proxy.
@@ -68,4 +69,9 @@ pub struct ProxyConfig {
     /// Configuration du système de ban
     #[serde(default)]
     pub ban: BanConfig,
+
+    /// Configuration du provider Docker (optionnel).
+    /// Présent dans le TOML même sans la feature `docker` compilée.
+    #[serde(default)]
+    pub docker: Option<DockerProviderConfig>,
 }

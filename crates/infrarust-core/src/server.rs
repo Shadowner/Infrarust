@@ -1,11 +1,9 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use arc_swap::ArcSwap;
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
-use infrarust_config::{DomainIndex, ProxyConfig, ProxyMode, ServerConfig};
+use infrarust_config::{ProxyConfig, ProxyMode};
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::packets::login::CLoginDisconnect;
 use infrarust_protocol::registry::PacketRegistry;
@@ -42,7 +40,9 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
 use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected, RoutingData};
 use crate::provider::file::FileProvider;
+use crate::provider::registry::ProviderRegistry;
 use crate::registry::ConnectionRegistry;
+use crate::routing::DomainRouter;
 use crate::status::{FaviconCache, StatusCache, StatusHandler, StatusRelayClient};
 
 /// The main proxy server orchestrator.
@@ -61,8 +61,7 @@ pub struct ProxyServer {
     ban_manager: Arc<BanManager>,
     server_manager: Option<Arc<ServerManagerService>>,
     event_bus: Arc<EventBusImpl>,
-    domain_index: Arc<ArcSwap<DomainIndex>>,
-    configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
+    domain_router: Arc<DomainRouter>,
     packet_registry: Arc<PacketRegistry>,
     shutdown: CancellationToken,
 }
@@ -70,34 +69,71 @@ pub struct ProxyServer {
 impl ProxyServer {
     /// Builds the proxy server from config, loading server configs from disk.
     pub async fn new(config: ProxyConfig, shutdown: CancellationToken) -> Result<Self, CoreError> {
-        // Load initial server configs
-        let provider = FileProvider::new(config.servers_dir.clone());
-        let server_configs = provider.load_configs()?;
-
-        // Build domain index and config map
-        let domain_index = Arc::new(ArcSwap::from_pointee(DomainIndex::build(&server_configs)));
-        let config_map: HashMap<String, Arc<ServerConfig>> = server_configs
-            .into_iter()
-            .map(|c| (c.effective_id(), Arc::new(c)))
-            .collect();
-
-        // Build server manager from configs that have a server_manager
-        let managed_configs: Vec<(String, infrarust_config::ServerManagerConfig)> = config_map
-            .values()
-            .filter_map(|c| {
-                c.server_manager
-                    .as_ref()
-                    .map(|sm| (c.effective_id(), sm.clone()))
-            })
-            .collect();
-
-        let configs = Arc::new(ArcSwap::from_pointee(config_map));
+        // Create domain router (initially empty — providers populate it)
+        let domain_router = Arc::new(DomainRouter::new());
 
         // Build packet registry
         let packet_registry = Arc::new(build_default_registry());
 
         // Create the event bus
         let event_bus = Arc::new(EventBusImpl::new());
+
+        let backend_connector = Arc::new(BackendConnector::new(
+            config.connect_timeout,
+            config.keepalive.clone(),
+        ));
+        let registry = Arc::new(ConnectionRegistry::new());
+
+        // Build status subsystem
+        let status_cache = Arc::new(StatusCache::new(config.status_cache.ttl));
+        let favicon_cache =
+            Arc::new(FaviconCache::load_from_configs(&[], config.default_motd.as_ref()).await?);
+
+        // --- Provider Registry: load initial configs ---
+        let mut provider_registry = ProviderRegistry::new(
+            Arc::clone(&domain_router),
+            Arc::clone(&event_bus),
+            Arc::clone(&status_cache),
+            Arc::clone(&favicon_cache),
+            shutdown.clone(),
+        );
+
+        // File provider (always enabled)
+        provider_registry.add_provider(Box::new(FileProvider::new(config.servers_dir.clone())));
+
+        // Docker provider (feature-gated)
+        #[cfg(feature = "docker")]
+        if let Some(ref docker_config) = config.docker {
+            match crate::provider::docker::DockerProvider::new(docker_config) {
+                Ok(docker_provider) => {
+                    provider_registry.add_provider(Box::new(docker_provider));
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to initialize docker provider, continuing without");
+                }
+            }
+        }
+
+        #[cfg(not(feature = "docker"))]
+        if config.docker.is_some() {
+            tracing::warn!(
+                "docker configuration found but docker feature is not enabled, ignoring"
+            );
+        }
+
+        // Start all providers (loads initial configs + starts watchers)
+        let _provider_handle = provider_registry.start().await?;
+
+        // Build server manager from configs that have a server_manager
+        let managed_configs: Vec<(String, infrarust_config::ServerManagerConfig)> = domain_router
+            .list_all()
+            .iter()
+            .filter_map(|(_pid, c)| {
+                c.server_manager
+                    .as_ref()
+                    .map(|sm| (c.effective_id(), sm.clone()))
+            })
+            .collect();
 
         let server_manager = if managed_configs.is_empty() {
             None
@@ -121,23 +157,18 @@ impl ProxyServer {
             Some(Arc::new(service))
         };
 
-        let backend_connector = Arc::new(BackendConnector::new(
-            config.connect_timeout,
-            config.keepalive.clone(),
-        ));
-        let registry = Arc::new(ConnectionRegistry::new());
-
-        // Build status subsystem
-        let status_cache = Arc::new(StatusCache::new(config.status_cache.ttl));
-
-        let favicon_configs: Vec<(String, Arc<ServerConfig>)> = configs
-            .load()
-            .iter()
-            .map(|(id, cfg)| (id.clone(), Arc::clone(cfg)))
+        // Load favicons from initial configs
+        let favicon_configs: Vec<(String, Arc<infrarust_config::ServerConfig>)> = domain_router
+            .list_all()
+            .into_iter()
+            .map(|(_pid, cfg)| (cfg.effective_id(), cfg))
             .collect();
-        let favicon_cache = Arc::new(
-            FaviconCache::load_from_configs(&favicon_configs, config.default_motd.as_ref()).await?,
-        );
+        if let Err(e) = favicon_cache
+            .reload(&favicon_configs, config.default_motd.as_ref())
+            .await
+        {
+            tracing::warn!(error = %e, "failed to load initial favicons");
+        }
 
         let relay_client = StatusRelayClient::new(
             Arc::clone(&backend_connector),
@@ -156,8 +187,7 @@ impl ProxyServer {
         );
 
         let legacy_handler = LegacyHandler::new(
-            Arc::clone(&domain_index),
-            Arc::clone(&configs),
+            Arc::clone(&domain_router),
             config.default_motd.clone(),
             server_manager.as_ref().map(Arc::clone),
             Arc::clone(&registry),
@@ -176,10 +206,9 @@ impl ProxyServer {
         ))));
         common_pipeline.add(Box::new(HandshakeParserMiddleware::new()));
         common_pipeline.add(Box::new(RateLimiterMiddleware::new(&config.rate_limit)));
-        common_pipeline.add(Box::new(DomainRouterMiddleware::new(
-            Arc::clone(&domain_index),
-            Arc::clone(&configs),
-        )));
+        common_pipeline.add(Box::new(DomainRouterMiddleware::new(Arc::clone(
+            &domain_router,
+        ))));
 
         // Build login pipeline: LoginStartParser → BanCheck → ServerManager
         let mut login_pipeline = Pipeline::new();
@@ -222,8 +251,7 @@ impl ProxyServer {
             ban_manager,
             server_manager,
             event_bus,
-            domain_index,
-            configs,
+            domain_router,
             packet_registry,
             shutdown,
         })
@@ -258,25 +286,7 @@ impl ProxyServer {
             .ban_manager
             .start_purge_task(self.config.ban.purge_interval, self.shutdown.clone());
 
-        // Start config hot-reload
-        let provider = FileProvider::new(self.config.servers_dir.clone());
-        if let Ok((rx, _watcher)) = provider.watch() {
-            let domain_index = Arc::clone(&self.domain_index);
-            let configs = Arc::clone(&self.configs);
-            let status_cache = Arc::clone(self.status_handler.cache());
-            let favicon_cache = Arc::clone(self.status_handler.favicon_cache());
-            let shutdown = self.shutdown.clone();
-            let event_bus_for_watcher = Arc::clone(&self.event_bus);
-            tokio::spawn(crate::reload::run_config_watcher(
-                rx,
-                domain_index,
-                configs,
-                status_cache,
-                favicon_cache,
-                event_bus_for_watcher,
-                shutdown,
-            ));
-        }
+        // Config hot-reload is handled by the ProviderRegistry (started in new())
 
         // Accept loop
         loop {
@@ -445,6 +455,11 @@ impl ProxyServer {
     /// Returns the event bus.
     pub fn event_bus(&self) -> &Arc<EventBusImpl> {
         &self.event_bus
+    }
+
+    /// Returns the domain router.
+    pub fn domain_router(&self) -> &Arc<DomainRouter> {
+        &self.domain_router
     }
 
     /// Returns the shutdown token.

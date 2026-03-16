@@ -1,10 +1,8 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use arc_swap::ArcSwap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use infrarust_config::{DomainIndex, MotdConfig, ServerConfig};
+use infrarust_config::MotdConfig;
 use infrarust_protocol::legacy::{LegacyPingVariant, parse_legacy_ping};
 use infrarust_protocol::{CURRENT_MC_PROTOCOL, CURRENT_MC_VERSION, LegacyPingResponse};
 
@@ -13,13 +11,13 @@ use infrarust_server_manager::{ServerManagerService, ServerState};
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::registry::ConnectionRegistry;
+use crate::routing::DomainRouter;
 
 /// Handles legacy Minecraft ping requests (pre-1.7 clients).
 ///
 /// Supports three variants: Beta (0xFE), 1.4 (0xFE01), and 1.6 (0xFE01FA).
 pub struct LegacyHandler {
-    domain_index: Arc<ArcSwap<DomainIndex>>,
-    configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
+    domain_router: Arc<DomainRouter>,
     default_motd: Option<MotdConfig>,
     server_manager: Option<Arc<ServerManagerService>>,
     connection_registry: Arc<ConnectionRegistry>,
@@ -28,15 +26,13 @@ pub struct LegacyHandler {
 impl LegacyHandler {
     /// Creates a new legacy handler with shared config state.
     pub fn new(
-        domain_index: Arc<ArcSwap<DomainIndex>>,
-        configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
+        domain_router: Arc<DomainRouter>,
         default_motd: Option<MotdConfig>,
         server_manager: Option<Arc<ServerManagerService>>,
         connection_registry: Arc<ConnectionRegistry>,
     ) -> Self {
         Self {
-            domain_index,
-            configs,
+            domain_router,
             default_motd,
             server_manager,
             connection_registry,
@@ -100,24 +96,20 @@ impl LegacyHandler {
     /// Resolves MOTD for 1.6 pings (hostname available via MC|PingHost).
     fn resolve_with_hostname(&self, hostname: &str) -> (String, i32, i32) {
         let domain = hostname.to_lowercase();
-        let index = self.domain_index.load();
 
-        let Some(config_id) = index.resolve(&domain) else {
+        let Some((_provider_id, cfg)) = self.domain_router.resolve(&domain) else {
             return self.resolve_from_default_motd();
         };
 
-        let configs = self.configs.load();
-        let Some(cfg) = configs.get(config_id) else {
-            return self.resolve_from_default_motd();
-        };
+        let config_id = cfg.effective_id();
 
         // Check server manager state
         if cfg.server_manager.is_some()
             && let Some(ref sm) = self.server_manager
-            && let Some(state) = sm.get_state(config_id)
+            && let Some(state) = sm.get_state(&config_id)
             && state != ServerState::Online
         {
-            return self.resolve_state_motd(cfg, state, config_id);
+            return self.resolve_state_motd(&cfg, state, &config_id);
         }
 
         let motd = cfg
@@ -126,7 +118,7 @@ impl LegacyHandler {
             .as_ref()
             .map_or_else(|| self.default_motd_text(), |m| m.text.clone());
 
-        let online = self.connection_registry.count_by_server(config_id) as i32;
+        let online = self.connection_registry.count_by_server(&config_id) as i32;
         let max = cfg
             .motd
             .online
@@ -156,7 +148,7 @@ impl LegacyHandler {
     /// Resolves MOTD for non-online server states (sleeping, starting, etc.).
     fn resolve_state_motd(
         &self,
-        cfg: &ServerConfig,
+        cfg: &infrarust_config::ServerConfig,
         state: ServerState,
         config_id: &str,
     ) -> (String, i32, i32) {

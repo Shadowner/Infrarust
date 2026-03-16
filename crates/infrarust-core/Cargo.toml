@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+docker = ["dep:bollard", "dep:futures-util"]
+
 [dependencies]
 infrarust-api = { workspace = true }
 infrarust-config = { workspace = true }
@@ -27,6 +31,11 @@ serde_json = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 reqwest = { workspace = true }
+wildmatch = "2.6"
+
+# Docker provider (optional)
+bollard = { version = "0.18", optional = true }
+futures-util = { version = "0.3", optional = true }
 
 # Auth Mojang (ClientOnly)
 rsa = { version = "0.9", features = ["sha1"] }

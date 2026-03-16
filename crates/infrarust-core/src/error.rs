@@ -29,6 +29,12 @@ pub enum CoreError {
     #[error("missing pipeline extension: {0} — check middleware ordering")]
     MissingExtension(&'static str),
 
+    #[error("invalid provider id (expected `type@id`): {0}")]
+    InvalidProviderId(String),
+
+    #[error("docker connection error: {0}")]
+    DockerConnection(String),
+
     #[error("{0}")]
     Other(String),
 }
