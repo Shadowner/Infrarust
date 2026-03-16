@@ -9,8 +9,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use infrarust_protocol::Packet;
+use infrarust_protocol::codec::McBufWriteExt;
 use infrarust_protocol::crypto::{DecryptCipher, EncryptCipher};
 use infrarust_protocol::io::{PacketDecoder, PacketEncoder, PacketFrame};
+use infrarust_protocol::packets::config::CConfigDisconnect;
 use infrarust_protocol::packets::login::CLoginDisconnect;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
 use infrarust_protocol::registry::PacketRegistry;
@@ -152,6 +154,11 @@ impl ClientBridge {
     }
 
     /// Sends a disconnect packet and shuts down the connection.
+    ///
+    /// Uses the correct packet type and encoding for the current state and version:
+    /// - Login: `CLoginDisconnect` (JSON string)
+    /// - Config: `CConfigDisconnect` (JSON for 1.20.2, NBT for 1.20.3+)
+    /// - Play: `CDisconnect` (JSON for <1.20.3, NBT for 1.20.3+)
     pub async fn disconnect(
         &mut self,
         reason: &str,
@@ -160,13 +167,35 @@ impl ClientBridge {
         let json = serde_json::json!({"text": reason}).to_string();
         match self.state {
             ConnectionState::Login => {
-                let pkt = CLoginDisconnect {
-                    reason: json.clone(),
+                let pkt = CLoginDisconnect { reason: json };
+                self.send_packet(&pkt, registry).await.ok();
+            }
+            ConnectionState::Config => {
+                let reason_bytes = if self.protocol_version.less_than(ProtocolVersion::V1_20_3) {
+                    // 1.20.2: Chat component as VarInt-prefixed JSON string
+                    let mut buf = Vec::new();
+                    buf.write_string(&json)?;
+                    buf
+                } else {
+                    // 1.20.3+: NBT text component
+                    encode_nbt_text_component(reason)
+                };
+                let pkt = CConfigDisconnect {
+                    reason: reason_bytes,
                 };
                 self.send_packet(&pkt, registry).await.ok();
             }
-            ConnectionState::Play | ConnectionState::Config => {
-                let pkt = CDisconnect::from_json(&json);
+            ConnectionState::Play => {
+                let reason_bytes = if self.protocol_version.less_than(ProtocolVersion::V1_20_3) {
+                    // JSON bytes — CDisconnect.encode() adds the VarInt length prefix
+                    json.into_bytes()
+                } else {
+                    // NBT text component
+                    encode_nbt_text_component(reason)
+                };
+                let pkt = CDisconnect {
+                    reason: reason_bytes,
+                };
                 self.send_packet(&pkt, registry).await.ok();
             }
             _ => {}
@@ -174,4 +203,25 @@ impl ClientBridge {
         self.stream.shutdown().await.ok();
         Ok(())
     }
+}
+
+/// Encodes a plain-text message as an NBT text component for 1.20.3+.
+///
+/// Produces a TAG_Compound with a "text" TAG_String field, using
+/// standard NBT encoding (empty root name).
+fn encode_nbt_text_component(text: &str) -> Vec<u8> {
+    let text_bytes = text.as_bytes();
+    #[allow(clippy::cast_possible_truncation)]
+    let text_len = text_bytes.len() as u16;
+
+    let mut buf = Vec::with_capacity(3 + 7 + text_bytes.len() + 1);
+    buf.push(0x0A); // TAG_Compound (root)
+    buf.extend_from_slice(&[0x00, 0x00]); // empty root name
+    buf.push(0x08); // TAG_String
+    buf.extend_from_slice(&4u16.to_be_bytes()); // field name "text" (length 4)
+    buf.extend_from_slice(b"text");
+    buf.extend_from_slice(&text_len.to_be_bytes()); // string value length
+    buf.extend_from_slice(text_bytes);
+    buf.push(0x00); // TAG_End
+    buf
 }

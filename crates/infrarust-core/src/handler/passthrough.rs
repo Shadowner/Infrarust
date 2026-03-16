@@ -7,6 +7,9 @@ use uuid::Uuid;
 use infrarust_config::DomainRewrite;
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::packets::handshake::SHandshake;
+use infrarust_protocol::packets::login::CLoginDisconnect;
+use infrarust_protocol::registry::PacketRegistry;
+use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_protocol::{Packet, VarInt};
 use infrarust_transport::{BackendConnector, select_forwarder};
 
@@ -21,17 +24,20 @@ use crate::registry::{ConnectionRegistry, SessionEntry};
 /// registers the session, and starts bidirectional forwarding.
 pub struct PassthroughHandler {
     backend_connector: Arc<BackendConnector>,
+    packet_registry: Arc<PacketRegistry>,
     registry: Arc<ConnectionRegistry>,
 }
 
 impl PassthroughHandler {
     /// Creates a new passthrough handler.
-    pub const fn new(
+    pub fn new(
         backend_connector: Arc<BackendConnector>,
+        packet_registry: Arc<PacketRegistry>,
         registry: Arc<ConnectionRegistry>,
     ) -> Self {
         Self {
             backend_connector,
+            packet_registry,
             registry,
         }
     }
@@ -51,7 +57,7 @@ impl PassthroughHandler {
         let server_config = &routing.server_config;
 
         // Connect to backend
-        let backend = self
+        let backend = match self
             .backend_connector
             .connect(
                 &routing.config_id,
@@ -60,7 +66,22 @@ impl PassthroughHandler {
                 server_config.send_proxy_protocol,
                 &ctx.connection_info(),
             )
-            .await?;
+            .await
+        {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(
+                    server = %routing.config_id,
+                    error = %e,
+                    "backend unreachable, sending disconnect to client"
+                );
+                let msg = server_config.effective_disconnect_message();
+                self.send_kick_raw(ctx.stream_mut(), msg, handshake.protocol_version)
+                    .await
+                    .ok();
+                return Ok(());
+            }
+        };
 
         // Forward initial packets to backend
         let mut backend = backend;
@@ -165,6 +186,39 @@ impl PassthroughHandler {
         }
 
         backend.flush().await?;
+        Ok(())
+    }
+
+    /// Sends a login disconnect packet directly to the client stream.
+    async fn send_kick_raw(
+        &self,
+        stream: &mut tokio::net::TcpStream,
+        reason: &str,
+        version: ProtocolVersion,
+    ) -> Result<(), CoreError> {
+        let json_reason = serde_json::json!({"text": reason}).to_string();
+        let packet = CLoginDisconnect {
+            reason: json_reason,
+        };
+
+        let packet_id = self
+            .packet_registry
+            .get_packet_id::<CLoginDisconnect>(
+                ConnectionState::Login,
+                Direction::Clientbound,
+                version,
+            )
+            .unwrap_or(0x00);
+
+        let mut payload = Vec::new();
+        packet.encode(&mut payload, version)?;
+
+        let mut encoder = PacketEncoder::new();
+        encoder.append_raw(packet_id, &payload)?;
+        let bytes = encoder.take();
+
+        stream.write_all(&bytes).await?;
+        stream.flush().await?;
         Ok(())
     }
 

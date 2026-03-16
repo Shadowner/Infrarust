@@ -166,8 +166,11 @@ impl ProxyServer {
             login_pipeline.add(Box::new(ServerManagerMiddleware::new(Arc::clone(sm))));
         }
 
-        let passthrough_handler =
-            PassthroughHandler::new(Arc::clone(&backend_connector), Arc::clone(&registry));
+        let passthrough_handler = PassthroughHandler::new(
+            Arc::clone(&backend_connector),
+            Arc::clone(&packet_registry),
+            Arc::clone(&registry),
+        );
 
         let offline_handler = OfflineHandler::new(
             Arc::clone(&backend_connector),

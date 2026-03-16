@@ -129,7 +129,7 @@ impl ClientOnlyHandler {
 
         // ── Phase 2: Backend Login (Offline Mode) ──
 
-        let backend_conn = self
+        let backend_conn = match self
             .backend_connector
             .connect(
                 &routing.config_id,
@@ -138,7 +138,20 @@ impl ClientOnlyHandler {
                 server_config.send_proxy_protocol,
                 &ctx.connection_info(),
             )
-            .await?;
+            .await
+        {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(
+                    server = %routing.config_id,
+                    error = %e,
+                    "backend unreachable, sending disconnect to client"
+                );
+                let msg = server_config.effective_disconnect_message();
+                client.disconnect(msg, &self.registry).await.ok();
+                return Ok(());
+            }
+        };
 
         let mut backend = BackendBridge::new(backend_conn.into_stream());
 

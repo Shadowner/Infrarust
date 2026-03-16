@@ -54,6 +54,10 @@ pub struct ServerConfig {
     /// Filtres IP spécifiques
     #[serde(default)]
     pub ip_filter: Option<IpFilterConfig>,
+
+    /// Message de déconnexion envoyé au joueur quand le backend est injoignable.
+    #[serde(default)]
+    pub disconnect_message: Option<String>,
 }
 
 impl ServerConfig {
@@ -64,5 +68,12 @@ impl ServerConfig {
     /// config to the rest of the system.
     pub fn effective_id(&self) -> String {
         self.id.clone().unwrap_or_else(|| "unknown".to_string())
+    }
+
+    /// Returns the disconnect message for when the backend is unreachable.
+    pub fn effective_disconnect_message(&self) -> &str {
+        self.disconnect_message
+            .as_deref()
+            .unwrap_or("Server is currently unreachable. Please try again later.")
     }
 }

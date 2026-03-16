@@ -13,6 +13,7 @@ fn make_config(id: &str, domains: &[&str], addr: &str) -> ServerConfig {
         timeouts: None,
         max_players: 0,
         ip_filter: None,
+        disconnect_message: None,
     }
 }
 

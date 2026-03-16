@@ -342,6 +342,7 @@ mod tests {
             timeouts: None,
             max_players: 0,
             ip_filter: None,
+            disconnect_message: None,
         }
     }
 
