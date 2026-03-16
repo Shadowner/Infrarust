@@ -13,7 +13,12 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_protocol::{Packet, build_default_registry};
 use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
 
+use infrarust_api::events::proxy::ServerStateChangeEvent;
+use infrarust_api::types::ServerId;
 use infrarust_server_manager::ServerManagerService;
+
+use crate::event_bus::EventBusImpl;
+use crate::event_bus::conversion::convert_server_state;
 
 use crate::auth::mojang::MojangAuth;
 use crate::ban::file_storage::FileBanStorage;
@@ -55,6 +60,7 @@ pub struct ProxyServer {
     registry: Arc<ConnectionRegistry>,
     ban_manager: Arc<BanManager>,
     server_manager: Option<Arc<ServerManagerService>>,
+    event_bus: Arc<EventBusImpl>,
     domain_index: Arc<ArcSwap<DomainIndex>>,
     configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
     packet_registry: Arc<PacketRegistry>,
@@ -90,11 +96,27 @@ impl ProxyServer {
         // Build packet registry
         let packet_registry = Arc::new(build_default_registry());
 
+        // Create the event bus
+        let event_bus = Arc::new(EventBusImpl::new());
+
         let server_manager = if managed_configs.is_empty() {
             None
         } else {
             let http_client = reqwest::Client::new();
             let service = ServerManagerService::new(&managed_configs, http_client);
+
+            // Wire state change callback to fire ServerStateChangeEvent
+            let bus = Arc::clone(&event_bus);
+            service.set_on_state_change(Arc::new(move |server_id, old, new| {
+                let api_old = convert_server_state(old);
+                let api_new = convert_server_state(new);
+                bus.fire_and_forget_arc(ServerStateChangeEvent {
+                    server: ServerId::new(server_id),
+                    old_state: api_old,
+                    new_state: api_new,
+                });
+            }));
+
             tracing::info!(count = managed_configs.len(), "server manager initialized");
             Some(Arc::new(service))
         };
@@ -130,6 +152,7 @@ impl ProxyServer {
             server_manager.as_ref().map(Arc::clone),
             Arc::clone(&packet_registry),
             config.default_motd.clone(),
+            Arc::clone(&event_bus),
         );
 
         let legacy_handler = LegacyHandler::new(
@@ -198,6 +221,7 @@ impl ProxyServer {
             registry,
             ban_manager,
             server_manager,
+            event_bus,
             domain_index,
             configs,
             packet_registry,
@@ -242,12 +266,14 @@ impl ProxyServer {
             let status_cache = Arc::clone(self.status_handler.cache());
             let favicon_cache = Arc::clone(self.status_handler.favicon_cache());
             let shutdown = self.shutdown.clone();
+            let event_bus_for_watcher = Arc::clone(&self.event_bus);
             tokio::spawn(crate::reload::run_config_watcher(
                 rx,
                 domain_index,
                 configs,
                 status_cache,
                 favicon_cache,
+                event_bus_for_watcher,
                 shutdown,
             ));
         }
@@ -414,6 +440,11 @@ impl ProxyServer {
     /// Returns a reference to the ban manager.
     pub fn ban_manager(&self) -> &Arc<BanManager> {
         &self.ban_manager
+    }
+
+    /// Returns the event bus.
+    pub fn event_bus(&self) -> &Arc<EventBusImpl> {
+        &self.event_bus
     }
 
     /// Returns the shutdown token.

@@ -4,10 +4,12 @@
 //! full decision tree: server manager states → relay → cache → stale
 //! fallback → synthetic MOTDs.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use infrarust_api::events::proxy::ProxyPingEvent;
 use infrarust_config::{MotdConfig, ServerConfig};
 use infrarust_protocol::io::{PacketDecoder, PacketEncoder};
 use infrarust_protocol::packets::status::{CPingResponse, CStatusResponse, SPingRequest};
@@ -22,6 +24,8 @@ use super::favicon::FaviconCache;
 use super::relay::StatusRelayClient;
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
+use crate::event_bus::EventBusImpl;
+use crate::event_bus::conversion::{apply_api_to_core, core_to_api_ping_response};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::registry::ConnectionRegistry;
@@ -34,6 +38,7 @@ pub struct StatusHandler {
     server_manager: Option<Arc<ServerManagerService>>,
     registry: Arc<PacketRegistry>,
     default_motd: Option<MotdConfig>,
+    event_bus: Arc<EventBusImpl>,
 }
 
 impl StatusHandler {
@@ -45,6 +50,7 @@ impl StatusHandler {
         server_manager: Option<Arc<ServerManagerService>>,
         registry: Arc<PacketRegistry>,
         default_motd: Option<MotdConfig>,
+        event_bus: Arc<EventBusImpl>,
     ) -> Self {
         Self {
             relay_client,
@@ -53,6 +59,7 @@ impl StatusHandler {
             server_manager,
             registry,
             default_motd,
+            event_bus,
         }
     }
 
@@ -83,9 +90,19 @@ impl StatusHandler {
         self.read_status_request(ctx).await?;
 
         // Resolve the status response
-        let response = self
+        let mut response = self
             .resolve_response(ctx, &routing, &handshake, connection_registry)
             .await;
+
+        // Fire ProxyPingEvent — handlers can modify the response
+        let api_response = core_to_api_ping_response(&response);
+        let remote_addr = SocketAddr::new(ctx.client_ip, ctx.peer_addr.port());
+        let event = ProxyPingEvent {
+            remote_addr,
+            response: api_response,
+        };
+        let event = self.event_bus.fire(event).await;
+        apply_api_to_core(&mut response, &event.response);
 
         // Send CStatusResponse
         let json = response

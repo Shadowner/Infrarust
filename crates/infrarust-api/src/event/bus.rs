@@ -4,7 +4,8 @@ use std::any::{Any, TypeId};
 
 use super::{BoxFuture, EventPriority, ListenerHandle};
 
-mod private {
+#[doc(hidden)]
+pub mod private {
     /// Sealed trait marker — only the proxy may implement [`EventBus`](super::EventBus).
     pub trait Sealed {}
 }

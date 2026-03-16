@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod ban;
 pub mod error;
+pub mod event_bus;
 pub mod handler;
 pub mod middleware;
 pub mod pipeline;

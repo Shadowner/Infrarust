@@ -825,6 +825,7 @@ dependencies = [
  "bytes",
  "dashmap",
  "governor",
+ "infrarust-api",
  "infrarust-config",
  "infrarust-protocol",
  "infrarust-server-manager",

@@ -5,8 +5,10 @@ use arc_swap::ArcSwap;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::events::proxy::ConfigReloadEvent;
 use infrarust_config::{DomainIndex, ServerConfig};
 
+use crate::event_bus::EventBusImpl;
 use crate::provider::ConfigChange;
 use crate::status::{FaviconCache, StatusCache};
 
@@ -22,6 +24,7 @@ pub async fn run_config_watcher(
     configs: Arc<ArcSwap<HashMap<String, Arc<ServerConfig>>>>,
     status_cache: Arc<StatusCache>,
     favicon_cache: Arc<FaviconCache>,
+    event_bus: Arc<EventBusImpl>,
     shutdown: CancellationToken,
 ) {
     loop {
@@ -50,6 +53,9 @@ pub async fn run_config_watcher(
                         if let Err(e) = favicon_cache.reload(&favicon_configs, None).await {
                             tracing::warn!(error = %e, "failed to reload favicons");
                         }
+
+                        // Fire ConfigReloadEvent for plugins
+                        event_bus.fire_and_forget_arc(ConfigReloadEvent);
 
                         tracing::info!(servers = count, "config reloaded");
                     }

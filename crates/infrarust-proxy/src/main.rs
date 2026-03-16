@@ -10,6 +10,7 @@ use clap::Parser;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
+use infrarust_api::events::proxy::{ProxyInitializeEvent, ProxyShutdownEvent};
 use infrarust_config::ProxyConfig;
 use infrarust_core::server::ProxyServer;
 
@@ -114,7 +115,11 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
 
     tracing::info!("infrarust is ready, accepting connections");
 
+    server.event_bus().fire(ProxyInitializeEvent).await;
+
     server.run().await.context("proxy server error")?;
+
+    server.event_bus().fire(ProxyShutdownEvent).await;
 
     // Post-shutdown: drain active connections with a timeout
     let remaining = server.registry().count();

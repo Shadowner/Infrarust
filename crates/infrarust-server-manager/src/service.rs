@@ -24,12 +24,17 @@ pub trait PlayerCounter: Send + Sync {
     fn count_by_server(&self, server_id: &str) -> usize;
 }
 
+/// Callback type for server state change notifications.
+pub type StateChangeCallback = Arc<dyn Fn(&str, ServerState, ServerState) + Send + Sync>;
+
 /// Central orchestrator for server management.
 ///
 /// Tracks the state of each managed server, provides wake-up with waiters,
 /// adaptive polling, and auto-shutdown after idle.
 pub struct ServerManagerService {
     pub(crate) entries: DashMap<String, ServerEntry>,
+    /// Optional callback fired on every state transition.
+    on_state_change: std::sync::RwLock<Option<StateChangeCallback>>,
 }
 
 pub(crate) struct ServerEntry {
@@ -106,7 +111,10 @@ impl ServerManagerService {
             tracing::info!(server = %server_id, "registered managed server");
         }
 
-        Self { entries }
+        Self {
+            entries,
+            on_state_change: std::sync::RwLock::new(None),
+        }
     }
 
     /// Registers a server with a custom provider.
@@ -146,6 +154,28 @@ impl ServerManagerService {
             .collect()
     }
 
+    /// Registers a callback that fires on every state transition.
+    ///
+    /// The callback receives `(server_id, old_state, new_state)`.
+    pub fn set_on_state_change(&self, callback: StateChangeCallback) {
+        let mut cb = self
+            .on_state_change
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        *cb = Some(callback);
+    }
+
+    /// Fires the state change callback (if set) outside of any DashMap lock.
+    fn fire_state_change(&self, server_id: &str, old: ServerState, new: ServerState) {
+        let cb = self
+            .on_state_change
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(ref callback) = *cb {
+            callback(server_id, old, new);
+        }
+    }
+
     /// Performs an initial health check for all managed servers.
     ///
     /// Calls `provider.check_status()` on each server to determine its initial state.
@@ -165,8 +195,17 @@ impl ServerManagerService {
             match provider.check_status().await {
                 Ok(status) => {
                     let new_state = ServerState::from(status);
-                    if let Some(mut entry) = self.entries.get_mut(&server_id) {
+                    let old_state = {
+                        let mut entry = match self.entries.get_mut(&server_id) {
+                            Some(e) => e,
+                            None => continue,
+                        };
+                        let old = entry.state;
                         entry.state = new_state;
+                        old
+                    };
+                    if old_state != new_state {
+                        self.fire_state_change(&server_id, old_state, new_state);
                     }
                     tracing::info!(
                         server = %server_id,
@@ -213,6 +252,7 @@ impl ServerManagerService {
                 ServerState::Sleeping | ServerState::Crashed => {
                     // Need to start the server
                     let provider = Arc::clone(&entry.provider);
+                    let old_state = entry.state;
                     entry.state = ServerState::Starting;
                     entry.start_requested_at = Some(Instant::now());
 
@@ -221,6 +261,8 @@ impl ServerManagerService {
                     let (tx, rx) = oneshot::channel();
                     entry.waiters.push(tx);
                     drop(entry);
+
+                    self.fire_state_change(server_id, old_state, ServerState::Starting);
 
                     // Call start on the provider (lock-free)
                     if let Err(e) = provider.start().await {
@@ -231,6 +273,11 @@ impl ServerManagerService {
                             // Notify waiters of failure
                             let waiters = std::mem::take(&mut entry.waiters);
                             drop(entry);
+                            self.fire_state_change(
+                                server_id,
+                                ServerState::Starting,
+                                ServerState::Crashed,
+                            );
                             for tx in waiters {
                                 let _ = tx.send(Err(ServerManagerError::Provider {
                                     server_id: server_id.to_string(),
@@ -253,6 +300,7 @@ impl ServerManagerService {
                 _ => {
                     // Unknown — try to start
                     let provider = Arc::clone(&entry.provider);
+                    let old_state = entry.state;
                     entry.state = ServerState::Starting;
                     entry.start_requested_at = Some(Instant::now());
                     let start_timeout = entry.start_timeout;
@@ -260,6 +308,7 @@ impl ServerManagerService {
                     entry.waiters.push(tx);
                     drop(entry);
 
+                    self.fire_state_change(server_id, old_state, ServerState::Starting);
                     let _ = provider.start().await;
                     (rx, start_timeout)
                 }
@@ -285,7 +334,7 @@ impl ServerManagerService {
 
     /// Starts a server manually.
     pub async fn start_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
-        let provider = {
+        let (provider, old_state) = {
             let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
                 ServerManagerError::ServerNotFound {
                     server_id: server_id.to_string(),
@@ -300,26 +349,31 @@ impl ServerManagerService {
                 });
             }
 
+            let old = entry.state;
             entry.state = ServerState::Starting;
             entry.start_requested_at = Some(Instant::now());
-            Arc::clone(&entry.provider)
+            (Arc::clone(&entry.provider), old)
         };
 
+        self.fire_state_change(server_id, old_state, ServerState::Starting);
         provider.start().await
     }
 
     /// Stops a server manually.
     pub async fn stop_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
-        let provider = {
+        let (provider, old_state) = {
             let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
                 ServerManagerError::ServerNotFound {
                     server_id: server_id.to_string(),
                 }
             })?;
 
+            let old = entry.state;
             entry.state = ServerState::Stopping;
-            Arc::clone(&entry.provider)
+            (Arc::clone(&entry.provider), old)
         };
+
+        self.fire_state_change(server_id, old_state, ServerState::Stopping);
 
         provider.stop().await?;
 
@@ -327,6 +381,8 @@ impl ServerManagerService {
             entry.state = ServerState::Sleeping;
             entry.last_player_seen = None;
         }
+
+        self.fire_state_change(server_id, ServerState::Stopping, ServerState::Sleeping);
 
         Ok(())
     }
@@ -381,22 +437,29 @@ impl ServerManagerService {
         server_id: &str,
         new_status: ProviderStatus,
     ) -> Option<(ServerState, ServerState)> {
-        let mut entry = self.entries.get_mut(server_id)?;
-        let new_state = ServerState::from(new_status);
-        let old_state = entry.state;
+        let (old_state, new_state) = {
+            let mut entry = self.entries.get_mut(server_id)?;
+            let new_state = ServerState::from(new_status);
+            let old_state = entry.state;
 
-        if old_state == new_state {
-            return None;
-        }
+            if old_state == new_state {
+                return None;
+            }
 
-        tracing::info!(
-            server = %server_id,
-            from = %old_state,
-            to = %new_state,
-            "state transition"
-        );
+            tracing::info!(
+                server = %server_id,
+                from = %old_state,
+                to = %new_state,
+                "state transition"
+            );
 
-        entry.state = new_state;
+            entry.state = new_state;
+            (old_state, new_state)
+        };
+
+        // Fire callback outside DashMap lock
+        self.fire_state_change(server_id, old_state, new_state);
+
         Some((old_state, new_state))
     }
 

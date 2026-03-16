@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+infrarust-api = { workspace = true }
 infrarust-config = { workspace = true }
 infrarust-protocol = { workspace = true }
 infrarust-transport = { workspace = true }
