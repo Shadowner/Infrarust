@@ -26,6 +26,8 @@ pub struct PassthroughHandler {
     backend_connector: Arc<BackendConnector>,
     packet_registry: Arc<PacketRegistry>,
     registry: Arc<ConnectionRegistry>,
+    #[cfg(feature = "telemetry")]
+    metrics: Option<Arc<crate::telemetry::ProxyMetrics>>,
 }
 
 impl PassthroughHandler {
@@ -39,10 +41,20 @@ impl PassthroughHandler {
             backend_connector,
             packet_registry,
             registry,
+            #[cfg(feature = "telemetry")]
+            metrics: None,
         }
     }
 
+    /// Sets the metrics collector (telemetry feature only).
+    #[cfg(feature = "telemetry")]
+    pub fn with_metrics(mut self, metrics: Arc<crate::telemetry::ProxyMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
     /// Handles a login connection by forwarding to the backend.
+    #[tracing::instrument(name = "proxy.session", skip_all, fields(mode = "passthrough"))]
     pub async fn handle(
         &self,
         mut ctx: ConnectionContext,
@@ -109,6 +121,13 @@ impl PassthroughHandler {
             "session started"
         );
 
+        // Record metrics
+        #[cfg(feature = "telemetry")]
+        if let Some(ref metrics) = self.metrics {
+            metrics.record_connection_start(&routing.config_id, "passthrough");
+            metrics.record_player_join(&routing.config_id);
+        }
+
         // Bidirectional forward
         let client_stream = ctx.take_stream();
         let backend_stream = backend.into_stream();
@@ -132,6 +151,14 @@ impl PassthroughHandler {
 
         // Cleanup
         self.registry.unregister(&session_id);
+
+        // Record end metrics
+        #[cfg(feature = "telemetry")]
+        if let Some(ref metrics) = self.metrics {
+            let duration_secs = ctx.connected_at.elapsed().as_secs_f64();
+            metrics.record_connection_end(duration_secs, &routing.config_id, "passthrough");
+            metrics.record_player_leave(&routing.config_id);
+        }
 
         tracing::info!(
             session = %session_id,

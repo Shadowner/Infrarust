@@ -386,15 +386,115 @@ pub struct CraftyManagerConfig {
 // ─────────────────────────── Telemetry ────────────────────────────
 
 /// Configuration de la télémétrie OpenTelemetry.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// Sous-sections : `[telemetry.metrics]`, `[telemetry.traces]`, `[telemetry.resource]`.
+/// Absent du TOML → `None` dans `ProxyConfig` (pas de télémétrie).
+#[derive(Debug, Clone, Deserialize)]
 pub struct TelemetryConfig {
+    /// Active la télémétrie. `false` = initialisé mais pas d'export.
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "defaults::otlp_endpoint")]
-    pub otlp_endpoint: String,
+
+    /// Endpoint OTLP (ex: "http://localhost:4317"). `None` = SDK default.
+    #[serde(default)]
+    pub endpoint: Option<String>,
+
+    /// Protocole d'export : "grpc" ou "http".
+    #[serde(default = "defaults::telemetry_protocol")]
+    pub protocol: String,
+
+    /// Configuration des métriques.
+    #[serde(default)]
+    pub metrics: MetricsConfig,
+
+    /// Configuration des traces.
+    #[serde(default)]
+    pub traces: TracesConfig,
+
+    /// Attributs de ressource OTel.
+    #[serde(default)]
+    pub resource: ResourceConfig,
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: None,
+            protocol: defaults::telemetry_protocol(),
+            metrics: MetricsConfig::default(),
+            traces: TracesConfig::default(),
+            resource: ResourceConfig::default(),
+        }
+    }
+}
+
+/// Configuration des métriques OTel.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsConfig {
+    /// Active l'export des métriques.
+    #[serde(default = "defaults::true_val")]
+    pub enabled: bool,
+
+    /// Intervalle d'export des métriques.
+    #[serde(default = "defaults::metrics_export_interval")]
+    #[serde(with = "humantime_serde")]
+    pub export_interval: Duration,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: defaults::true_val(),
+            export_interval: defaults::metrics_export_interval(),
+        }
+    }
+}
+
+/// Configuration des traces OTel.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TracesConfig {
+    /// Active l'export des traces.
+    #[serde(default = "defaults::true_val")]
+    pub enabled: bool,
+
+    /// Ratio d'échantillonnage pour les status pings (0.0-1.0).
+    /// Les connexions login sont toujours tracées à 100%.
+    #[serde(default = "defaults::sampling_ratio")]
+    pub sampling_ratio: f64,
+}
+
+impl Default for TracesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: defaults::true_val(),
+            sampling_ratio: defaults::sampling_ratio(),
+        }
+    }
+}
+
+/// Attributs de ressource OTel.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceConfig {
+    /// Nom du service OTel.
     #[serde(default = "defaults::service_name")]
     pub service_name: String,
+
+    /// Version du service OTel.
+    #[serde(default = "defaults::service_version")]
+    pub service_version: String,
+}
+
+impl Default for ResourceConfig {
+    fn default() -> Self {
+        Self {
+            service_name: defaults::service_name(),
+            service_version: defaults::service_version(),
+        }
+    }
 }
 
 // ─────────────────────────── Ban ────────────────────────────────

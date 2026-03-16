@@ -10,6 +10,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_protocol::{Packet, build_default_registry};
 use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
+use tracing::Instrument;
 
 use infrarust_api::events::proxy::ServerStateChangeEvent;
 use infrarust_api::types::ServerId;
@@ -35,6 +36,7 @@ use crate::middleware::ip_filter::IpFilterMiddleware;
 use crate::middleware::login_start_parser::LoginStartParserMiddleware;
 use crate::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::middleware::server_manager::ServerManagerMiddleware;
+use crate::middleware::telemetry::{ConnectionSpan, TelemetryMiddleware};
 use crate::pipeline::Pipeline;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
@@ -210,25 +212,34 @@ impl ProxyServer {
             &domain_router,
         ))));
 
-        // Build login pipeline: LoginStartParser → BanCheck → ServerManager
+        // Build login pipeline: LoginStartParser → BanCheck → Telemetry → ServerManager
         let mut login_pipeline = Pipeline::new();
         login_pipeline.add(Box::new(LoginStartParserMiddleware::new()));
         login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
+        login_pipeline.add(Box::new(TelemetryMiddleware));
         if let Some(ref sm) = server_manager {
             login_pipeline.add(Box::new(ServerManagerMiddleware::new(Arc::clone(sm))));
         }
+
+        // Build ProxyMetrics (telemetry feature only)
+        #[cfg(feature = "telemetry")]
+        let proxy_metrics = Arc::new(crate::telemetry::ProxyMetrics::new());
 
         let passthrough_handler = PassthroughHandler::new(
             Arc::clone(&backend_connector),
             Arc::clone(&packet_registry),
             Arc::clone(&registry),
         );
+        #[cfg(feature = "telemetry")]
+        let passthrough_handler = passthrough_handler.with_metrics(Arc::clone(&proxy_metrics));
 
         let offline_handler = OfflineHandler::new(
             Arc::clone(&backend_connector),
             Arc::clone(&packet_registry),
             Arc::clone(&registry),
         );
+        #[cfg(feature = "telemetry")]
+        let offline_handler = offline_handler.with_metrics(Arc::clone(&proxy_metrics));
 
         let auth = Arc::new(MojangAuth::new()?);
         let client_only_handler = ClientOnlyHandler::new(
@@ -237,6 +248,8 @@ impl ProxyServer {
             Arc::clone(&registry),
             auth,
         );
+        #[cfg(feature = "telemetry")]
+        let client_only_handler = client_only_handler.with_metrics(Arc::clone(&proxy_metrics));
 
         Ok(Self {
             config,
@@ -368,20 +381,30 @@ impl ProxyServer {
                     .server_config
                     .proxy_mode;
 
+                // Extract the connection span (created by TelemetryMiddleware)
+                let span = ctx
+                    .extensions
+                    .remove::<ConnectionSpan>()
+                    .map(|cs| cs.0)
+                    .unwrap_or_else(tracing::Span::none);
+
                 match proxy_mode {
                     ProxyMode::Passthrough | ProxyMode::ZeroCopy | ProxyMode::ServerOnly => {
                         self.passthrough_handler
                             .handle(ctx, shutdown.child_token())
+                            .instrument(span)
                             .await?;
                     }
                     ProxyMode::Offline => {
                         self.offline_handler
                             .handle(ctx, shutdown.child_token())
+                            .instrument(span)
                             .await?;
                     }
                     ProxyMode::ClientOnly => {
                         self.client_only_handler
                             .handle(ctx, shutdown.child_token())
+                            .instrument(span)
                             .await?;
                     }
                     ProxyMode::Full => {
@@ -390,11 +413,13 @@ impl ProxyServer {
                         );
                         self.passthrough_handler
                             .handle(ctx, shutdown.child_token())
+                            .instrument(span)
                             .await?;
                     }
                     _ => {
                         self.passthrough_handler
                             .handle(ctx, shutdown.child_token())
+                            .instrument(span)
                             .await?;
                     }
                 }

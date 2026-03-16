@@ -9,6 +9,9 @@ repository.workspace = true
 name = "infrarust"
 path = "src/main.rs"
 
+[features]
+telemetry = ["infrarust-core/telemetry", "dep:opentelemetry", "dep:tracing-opentelemetry"]
+
 [dependencies]
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -24,6 +27,10 @@ infrarust-core = { workspace = true }
 infrarust-limbo = { workspace = true }
 infrarust-ban = { workspace = true }
 infrarust-server-manager = { workspace = true }
+
+# Telemetry (optional)
+opentelemetry = { version = "0.31", optional = true }
+tracing-opentelemetry = { version = "0.32", optional = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = "0.1"

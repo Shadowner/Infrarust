@@ -40,5 +40,9 @@ max_players = 0
 [telemetry]
 enabled = false
 # Endpoint OTLP (OpenTelemetry)
-otlp_endpoint = "http://localhost:4317"
+endpoint = "http://localhost:4317"
+protocol = "grpc"
+
+[telemetry.resource]
 service_name = "infrarust"
+service_version = "2.0.0"

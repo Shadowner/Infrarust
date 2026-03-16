@@ -74,6 +74,7 @@ impl StatusHandler {
     }
 
     /// Handles a status request on the given connection context.
+    #[tracing::instrument(name = "status.ping", skip_all)]
     pub async fn handle(
         &self,
         ctx: &mut ConnectionContext,

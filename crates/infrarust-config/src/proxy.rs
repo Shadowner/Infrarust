@@ -54,9 +54,9 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub default_motd: Option<MotdConfig>,
 
-    /// Config de la télémétrie
+    /// Config de la télémétrie (absent = désactivé)
     #[serde(default)]
-    pub telemetry: TelemetryConfig,
+    pub telemetry: Option<TelemetryConfig>,
 
     /// Config TCP keepalive
     #[serde(default)]

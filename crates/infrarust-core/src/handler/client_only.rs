@@ -38,6 +38,8 @@ pub struct ClientOnlyHandler {
     registry: Arc<PacketRegistry>,
     connection_registry: Arc<ConnectionRegistry>,
     auth: Arc<MojangAuth>,
+    #[cfg(feature = "telemetry")]
+    metrics: Option<Arc<crate::telemetry::ProxyMetrics>>,
 }
 
 impl ClientOnlyHandler {
@@ -53,10 +55,20 @@ impl ClientOnlyHandler {
             registry,
             connection_registry,
             auth,
+            #[cfg(feature = "telemetry")]
+            metrics: None,
         }
     }
 
+    /// Sets the metrics collector (telemetry feature only).
+    #[cfg(feature = "telemetry")]
+    pub fn with_metrics(mut self, metrics: Arc<crate::telemetry::ProxyMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
     /// Handles a ClientOnly-mode connection.
+    #[tracing::instrument(name = "proxy.session", skip_all, fields(mode = "client_only"))]
     pub async fn handle(
         &self,
         mut ctx: ConnectionContext,
@@ -203,6 +215,13 @@ impl ClientOnlyHandler {
             "session started"
         );
 
+        // Record metrics
+        #[cfg(feature = "telemetry")]
+        if let Some(ref metrics) = self.metrics {
+            metrics.record_connection_start(&routing.config_id, "client_only");
+            metrics.record_player_join(&routing.config_id);
+        }
+
         // Combine shutdown tokens
         let combined_shutdown = CancellationToken::new();
         let combined = combined_shutdown.clone();
@@ -221,6 +240,14 @@ impl ClientOnlyHandler {
 
         // Cleanup
         self.connection_registry.unregister(&session_id);
+
+        // Record end metrics
+        #[cfg(feature = "telemetry")]
+        if let Some(ref metrics) = self.metrics {
+            let duration_secs = ctx.connected_at.elapsed().as_secs_f64();
+            metrics.record_connection_end(duration_secs, &routing.config_id, "client_only");
+            metrics.record_player_leave(&routing.config_id);
+        }
 
         match &outcome {
             ProxyLoopOutcome::ClientDisconnected => {

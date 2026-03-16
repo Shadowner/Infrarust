@@ -67,6 +67,26 @@ pub fn service_name() -> String {
     "infrarust".to_string()
 }
 
+pub fn telemetry_protocol() -> String {
+    "grpc".to_string()
+}
+
+pub const fn true_val() -> bool {
+    true
+}
+
+pub const fn metrics_export_interval() -> Duration {
+    Duration::from_secs(15)
+}
+
+pub const fn sampling_ratio() -> f64 {
+    0.1
+}
+
+pub fn service_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 pub const fn keepalive_time() -> Duration {
     Duration::from_secs(30)
 }

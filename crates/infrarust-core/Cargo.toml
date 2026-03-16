@@ -8,6 +8,12 @@ repository.workspace = true
 [features]
 default = []
 docker = ["dep:bollard", "dep:futures-util"]
+telemetry = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:tracing-opentelemetry",
+]
 
 [dependencies]
 infrarust-api = { workspace = true }
@@ -36,6 +42,12 @@ wildmatch = "2.6"
 # Docker provider (optional)
 bollard = { version = "0.18", optional = true }
 futures-util = { version = "0.3", optional = true }
+
+# Telemetry (optional)
+opentelemetry = { version = "0.31", optional = true }
+opentelemetry_sdk = { version = "0.31", optional = true }
+opentelemetry-otlp = { version = "0.31", optional = true, features = ["grpc-tonic", "http-proto"] }
+tracing-opentelemetry = { version = "0.32", optional = true }
 
 # Auth Mojang (ClientOnly)
 rsa = { version = "0.9", features = ["sha1"] }

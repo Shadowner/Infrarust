@@ -35,6 +35,9 @@ pub enum CoreError {
     #[error("docker connection error: {0}")]
     DockerConnection(String),
 
+    #[error("telemetry initialization error: {0}")]
+    TelemetryInit(String),
+
     #[error("{0}")]
     Other(String),
 }

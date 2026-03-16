@@ -34,22 +34,71 @@ struct Cli {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    // Init tracing — RUST_LOG takes priority over --log-level
+    // Load config FIRST (before subscriber, to get telemetry config)
+    let config = match load_config(&cli) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Init tracing subscriber — RUST_LOG takes priority over --log-level
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
+
+    #[cfg(feature = "telemetry")]
+    let _otel_guard = {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        if let Some(ref tc) = config.telemetry {
+            if tc.enabled {
+                match infrarust_core::telemetry::init_telemetry(tc) {
+                    Ok(guard) => {
+                        let tracer = opentelemetry::global::tracer("infrarust");
+                        let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+                        tracing_subscriber::registry()
+                            .with(filter)
+                            .with(tracing_subscriber::fmt::layer().with_target(true))
+                            .with(otel_layer)
+                            .init();
+                        Some(guard)
+                    }
+                    Err(e) => {
+                        // Fall back to fmt-only subscriber
+                        tracing_subscriber::fmt()
+                            .with_env_filter(filter)
+                            .with_target(true)
+                            .init();
+                        tracing::warn!(
+                            "failed to initialize OpenTelemetry: {e}, continuing without telemetry"
+                        );
+                        None
+                    }
+                }
+            } else {
+                tracing_subscriber::fmt()
+                    .with_env_filter(filter)
+                    .with_target(true)
+                    .init();
+                None
+            }
+        } else {
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(true)
+                .init();
+            None
+        }
+    };
+
+    #[cfg(not(feature = "telemetry"))]
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(true)
         .init();
-
-    // Load config (sync, before runtime)
-    let config = match load_config(&cli) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("{e:#}");
-            return ExitCode::FAILURE;
-        }
-    };
 
     tracing::info!(
         bind = %config.bind,

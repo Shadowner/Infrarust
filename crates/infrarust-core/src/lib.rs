@@ -11,4 +11,5 @@ pub mod routing;
 pub mod server;
 pub mod session;
 pub mod status;
+pub mod telemetry;
 pub mod util;

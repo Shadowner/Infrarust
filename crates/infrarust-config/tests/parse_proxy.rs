@@ -58,9 +58,15 @@ fn test_parse_proxy_default_motd() {
 fn test_parse_proxy_telemetry() {
     let config = load_proxy_fixture();
 
-    assert!(!config.telemetry.enabled);
-    assert_eq!(config.telemetry.otlp_endpoint, "http://localhost:4317");
-    assert_eq!(config.telemetry.service_name, "infrarust");
+    let tc = config
+        .telemetry
+        .as_ref()
+        .expect("telemetry should be present");
+    assert!(!tc.enabled);
+    assert_eq!(tc.endpoint.as_deref(), Some("http://localhost:4317"));
+    assert_eq!(tc.protocol, "grpc");
+    assert_eq!(tc.resource.service_name, "infrarust");
+    assert_eq!(tc.resource.service_version, "2.0.0");
 }
 
 #[test]
