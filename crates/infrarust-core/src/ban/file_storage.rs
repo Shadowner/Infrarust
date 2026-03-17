@@ -39,6 +39,8 @@ pub struct FileBanStorage {
     write_lock: tokio::sync::Mutex<()>,
 }
 
+const MAX_AUDIT_LOG_ENTRIES: usize = 10_000;
+
 impl FileBanStorage {
     /// Creates a new empty file ban storage.
     pub fn new(file_path: PathBuf) -> Self {
@@ -94,6 +96,10 @@ impl FileBanStorage {
     async fn add_audit_entry(&self, entry: BanAuditLogEntry) {
         let mut log = self.audit_log.write().await;
         log.push(entry);
+        if log.len() > MAX_AUDIT_LOG_ENTRIES {
+            let to_trim = log.len() - MAX_AUDIT_LOG_ENTRIES;
+            log.drain(0..to_trim);
+        }
     }
 
     /// Persists to disk (crash-safe: write tmp then rename).
@@ -235,6 +241,7 @@ impl BanStorage for FileBanStorage {
                         if entry.is_expired() {
                             drop(entry);
                             self.ip_bans.remove(ip);
+                            self.persist().await?;
                             return Ok(None);
                         }
                         return Ok(Some(entry.clone()));
@@ -246,6 +253,7 @@ impl BanStorage for FileBanStorage {
                         if entry.is_expired() {
                             drop(entry);
                             self.username_bans.remove(&key);
+                            self.persist().await?;
                             return Ok(None);
                         }
                         return Ok(Some(entry.clone()));
@@ -256,6 +264,7 @@ impl BanStorage for FileBanStorage {
                         if entry.is_expired() {
                             drop(entry);
                             self.uuid_bans.remove(uuid);
+                            self.persist().await?;
                             return Ok(None);
                         }
                         return Ok(Some(entry.clone()));
