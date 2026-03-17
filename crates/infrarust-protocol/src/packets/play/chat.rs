@@ -82,6 +82,93 @@ impl Packet for CSystemChatMessage {
     }
 }
 
+/// Serverbound chat message packet.
+///
+/// Sent by the client when typing a chat message. Pre-1.19, this is also
+/// used for slash commands (messages starting with `/`). From 1.19+,
+/// commands use the separate [`SChatCommand`] packet.
+///
+/// Only the message string is decoded; remaining bytes (timestamp, salt,
+/// signature in 1.19+) are preserved opaquely for forwarding.
+#[derive(Debug, Clone)]
+pub struct SChatMessage {
+    /// The chat message text.
+    pub message: String,
+    /// Remaining bytes after the message (signatures, etc.).
+    pub remaining: Vec<u8>,
+}
+
+impl Packet for SChatMessage {
+    const NAME: &'static str = "SChatMessage";
+
+    fn state() -> ConnectionState {
+        ConnectionState::Play
+    }
+
+    fn direction() -> Direction {
+        Direction::Serverbound
+    }
+
+    fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
+        let message = r.read_string()?;
+        let remaining = r.read_remaining()?;
+        Ok(Self { message, remaining })
+    }
+
+    fn encode(
+        &self,
+        mut w: &mut (impl std::io::Write + ?Sized),
+        _version: ProtocolVersion,
+    ) -> ProtocolResult<()> {
+        w.write_string(&self.message)?;
+        w.write_all(&self.remaining)?;
+        Ok(())
+    }
+}
+
+/// Serverbound chat command packet (1.19+).
+///
+/// Sent by the client when typing a slash command. The command string
+/// does NOT include the leading `/`.
+///
+/// Only the command string is decoded; remaining bytes (timestamp, salt,
+/// argument signatures) are preserved opaquely for forwarding.
+#[derive(Debug, Clone)]
+pub struct SChatCommand {
+    /// The command text without the leading `/`.
+    pub command: String,
+    /// Remaining bytes after the command (signatures, etc.).
+    pub remaining: Vec<u8>,
+}
+
+impl Packet for SChatCommand {
+    const NAME: &'static str = "SChatCommand";
+
+    fn state() -> ConnectionState {
+        ConnectionState::Play
+    }
+
+    fn direction() -> Direction {
+        Direction::Serverbound
+    }
+
+    fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
+        let command = r.read_string()?;
+        let remaining = r.read_remaining()?;
+        Ok(Self { command, remaining })
+    }
+
+    fn encode(
+        &self,
+        mut w: &mut (impl std::io::Write + ?Sized),
+        _version: ProtocolVersion,
+    ) -> ProtocolResult<()> {
+        w.write_string(&self.command)?;
+        w.write_all(&self.remaining)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -121,5 +208,49 @@ mod tests {
         let pkt = CSystemChatMessage::from_json(r#"{"text":"Action bar"}"#, true);
         let decoded = round_trip(&pkt, ProtocolVersion::V1_19_4);
         assert!(decoded.overlay);
+    }
+
+    #[test]
+    fn test_chat_message_round_trip() {
+        let pkt = SChatMessage {
+            message: "Hello world!".to_string(),
+            remaining: vec![],
+        };
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_19);
+        assert_eq!(decoded.message, "Hello world!");
+        assert!(decoded.remaining.is_empty());
+    }
+
+    #[test]
+    fn test_chat_message_with_remaining_bytes() {
+        let pkt = SChatMessage {
+            message: "test".to_string(),
+            remaining: vec![0x01, 0x02, 0x03, 0xAA, 0xBB],
+        };
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_19_4);
+        assert_eq!(decoded.message, "test");
+        assert_eq!(decoded.remaining, vec![0x01, 0x02, 0x03, 0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn test_chat_command_round_trip() {
+        let pkt = SChatCommand {
+            command: "gamemode creative".to_string(),
+            remaining: vec![],
+        };
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_19);
+        assert_eq!(decoded.command, "gamemode creative");
+        assert!(decoded.remaining.is_empty());
+    }
+
+    #[test]
+    fn test_chat_command_with_remaining_bytes() {
+        let pkt = SChatCommand {
+            command: "tp Player1".to_string(),
+            remaining: vec![0xFF, 0x00, 0x42],
+        };
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
+        assert_eq!(decoded.command, "tp Player1");
+        assert_eq!(decoded.remaining, vec![0xFF, 0x00, 0x42]);
     }
 }

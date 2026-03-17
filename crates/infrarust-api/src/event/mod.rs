@@ -72,6 +72,36 @@ impl ListenerHandle {
     }
 }
 
+/// Connection state for packet filtering.
+/// Mirror of `infrarust_protocol::version::ConnectionState` for API stability.
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ConnectionState {
+    /// Initial handshake state.
+    Handshake,
+    /// Server list ping / status query.
+    Status,
+    /// Authentication and login flow.
+    Login,
+    /// Configuration state (1.20.2+).
+    Configuration,
+    /// Main gameplay state.
+    Play,
+}
+
+/// Filter for subscribing to a specific packet by ID, state, and direction.
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub struct PacketFilter {
+    /// The numeric packet ID.
+    pub packet_id: i32,
+    /// The connection state the packet belongs to.
+    pub state: ConnectionState,
+    /// The direction of the packet.
+    pub direction: PacketDirection,
+}
+
+pub use crate::events::packet::PacketDirection;
+
 /// Marker trait for all proxy events.
 ///
 /// All event types implement this trait. Plugins subscribe to events

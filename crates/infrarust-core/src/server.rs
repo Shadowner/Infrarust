@@ -6,7 +6,6 @@ use tokio_util::sync::CancellationToken;
 use infrarust_config::{ProxyConfig, ProxyMode};
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::packets::login::CLoginDisconnect;
-use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_protocol::{Packet, build_default_registry};
 use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
@@ -43,15 +42,17 @@ use crate::pipeline::middleware::MiddlewareResult;
 use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected, RoutingData};
 use crate::provider::file::FileProvider;
 use crate::provider::registry::ProviderRegistry;
+use crate::player::registry::PlayerRegistryImpl;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
+use crate::services::ProxyServices;
+use crate::services::command_manager::CommandManagerImpl;
 use crate::status::{FaviconCache, StatusCache, StatusHandler, StatusRelayClient};
 
 /// The main proxy server orchestrator.
 ///
 /// Wires together the listener, pipelines, handlers, and config hot-reload.
 pub struct ProxyServer {
-    config: ProxyConfig,
     common_pipeline: Pipeline,
     login_pipeline: Pipeline,
     status_handler: StatusHandler,
@@ -59,12 +60,7 @@ pub struct ProxyServer {
     passthrough_handler: PassthroughHandler,
     offline_handler: OfflineHandler,
     client_only_handler: ClientOnlyHandler,
-    registry: Arc<ConnectionRegistry>,
-    ban_manager: Arc<BanManager>,
-    server_manager: Option<Arc<ServerManagerService>>,
-    event_bus: Arc<EventBusImpl>,
-    domain_router: Arc<DomainRouter>,
-    packet_registry: Arc<PacketRegistry>,
+    services: ProxyServices,
     shutdown: CancellationToken,
 }
 
@@ -205,6 +201,22 @@ impl ProxyServer {
         ban_storage.load().await?;
         let ban_manager = Arc::new(BanManager::new(ban_storage, Arc::clone(&registry)));
 
+        // Build plugin services
+        let player_registry = Arc::new(PlayerRegistryImpl::new(Arc::clone(&registry)));
+        let command_manager = Arc::new(CommandManagerImpl::new());
+
+        let services = ProxyServices {
+            event_bus: Arc::clone(&event_bus),
+            player_registry,
+            command_manager,
+            connection_registry: Arc::clone(&registry),
+            packet_registry: Arc::clone(&packet_registry),
+            server_manager: server_manager.clone(),
+            ban_manager: Arc::clone(&ban_manager),
+            config: Arc::new(config.clone()),
+            domain_router: Arc::clone(&domain_router),
+        };
+
         // Build common pipeline: IpFilter → BanIpCheck → HandshakeParser → RateLimiter → DomainRouter
         let mut common_pipeline = Pipeline::new();
         common_pipeline.add(Box::new(IpFilterMiddleware::new(None))); // Global filter from proxy config — Phase 2
@@ -232,16 +244,14 @@ impl ProxyServer {
 
         let passthrough_handler = PassthroughHandler::new(
             Arc::clone(&backend_connector),
-            Arc::clone(&packet_registry),
-            Arc::clone(&registry),
+            services.clone(),
         );
         #[cfg(feature = "telemetry")]
         let passthrough_handler = passthrough_handler.with_metrics(Arc::clone(&proxy_metrics));
 
         let offline_handler = OfflineHandler::new(
             Arc::clone(&backend_connector),
-            Arc::clone(&packet_registry),
-            Arc::clone(&registry),
+            services.clone(),
         );
         #[cfg(feature = "telemetry")]
         let offline_handler = offline_handler.with_metrics(Arc::clone(&proxy_metrics));
@@ -249,15 +259,13 @@ impl ProxyServer {
         let auth = Arc::new(MojangAuth::new()?);
         let client_only_handler = ClientOnlyHandler::new(
             Arc::clone(&backend_connector),
-            Arc::clone(&packet_registry),
-            Arc::clone(&registry),
+            services.clone(),
             auth,
         );
         #[cfg(feature = "telemetry")]
         let client_only_handler = client_only_handler.with_metrics(Arc::clone(&proxy_metrics));
 
         Ok(Self {
-            config,
             common_pipeline,
             login_pipeline,
             status_handler,
@@ -265,12 +273,7 @@ impl ProxyServer {
             passthrough_handler,
             offline_handler,
             client_only_handler,
-            registry,
-            ban_manager,
-            server_manager,
-            event_bus,
-            domain_router,
-            packet_registry,
+            services,
             shutdown,
         })
     }
@@ -281,31 +284,33 @@ impl ProxyServer {
     /// Returns `CoreError` if the listener fails to bind.
     pub async fn run(&self) -> Result<(), CoreError> {
         // Bind listener
+        let config = &self.services.config;
         let listener_config = ListenerConfig {
-            bind: self.config.bind,
-            max_connections: self.config.max_connections,
-            keepalive: self.config.keepalive.clone(),
-            so_reuseport: self.config.so_reuseport,
-            receive_proxy_protocol: self.config.receive_proxy_protocol,
+            bind: config.bind,
+            max_connections: config.max_connections,
+            keepalive: config.keepalive.clone(),
+            so_reuseport: config.so_reuseport,
+            receive_proxy_protocol: config.receive_proxy_protocol,
         };
 
         let listener = Listener::bind(listener_config, self.shutdown.clone()).await?;
 
-        tracing::info!(bind = %self.config.bind, "proxy server listening");
+        tracing::info!(bind = %config.bind, "proxy server listening");
 
         // Start server manager health check and monitoring
-        if let Some(ref sm) = self.server_manager {
+        if let Some(ref sm) = self.services.server_manager {
             sm.initial_health_check().await;
             let player_counter: Arc<dyn infrarust_server_manager::PlayerCounter> =
-                Arc::clone(&self.registry) as _;
+                Arc::clone(&self.services.connection_registry) as _;
             let _monitoring_handles = sm.start_monitoring(player_counter, self.shutdown.clone());
             tracing::info!("server manager monitoring started");
         }
 
         // Start ban purge task
         let _purge_handle = self
+            .services
             .ban_manager
-            .start_purge_task(self.config.ban.purge_interval, self.shutdown.clone());
+            .start_purge_task(config.ban.purge_interval, self.shutdown.clone());
 
         // Config hot-reload is handled by the ProviderRegistry (started in new())
 
@@ -371,7 +376,7 @@ impl ProxyServer {
 
         match intent {
             ConnectionIntent::Status => {
-                self.status_handler.handle(&mut ctx, &self.registry).await?;
+                self.status_handler.handle(&mut ctx, &self.services.connection_registry).await?;
             }
             ConnectionIntent::Login => {
                 // Execute login pipeline
@@ -448,6 +453,7 @@ impl ProxyServer {
         );
 
         let packet_id = self
+            .services
             .packet_registry
             .get_packet_id::<CLoginDisconnect>(
                 ConnectionState::Login,
@@ -469,24 +475,29 @@ impl ProxyServer {
         Ok(())
     }
 
+    /// Returns the shared services.
+    pub const fn services(&self) -> &ProxyServices {
+        &self.services
+    }
+
     /// Returns a reference to the connection registry.
     pub fn registry(&self) -> &ConnectionRegistry {
-        &self.registry
+        &self.services.connection_registry
     }
 
     /// Returns a reference to the ban manager.
-    pub const fn ban_manager(&self) -> &Arc<BanManager> {
-        &self.ban_manager
+    pub fn ban_manager(&self) -> &Arc<BanManager> {
+        &self.services.ban_manager
     }
 
     /// Returns the event bus.
-    pub const fn event_bus(&self) -> &Arc<EventBusImpl> {
-        &self.event_bus
+    pub fn event_bus(&self) -> &Arc<EventBusImpl> {
+        &self.services.event_bus
     }
 
     /// Returns the domain router.
-    pub const fn domain_router(&self) -> &Arc<DomainRouter> {
-        &self.domain_router
+    pub fn domain_router(&self) -> &Arc<DomainRouter> {
+        &self.services.domain_router
     }
 
     /// Returns the shutdown token.

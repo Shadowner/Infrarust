@@ -11,9 +11,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus};
-use infrarust_api::event::{Event, EventPriority, ListenerHandle};
+use infrarust_api::event::{ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection, PacketFilter};
 
 use super::handler::{HandlerEntry, HandlerKind};
+
+/// Internal key for packet-specific handler lookup.
+#[derive(Hash, Eq, PartialEq, Clone, Copy)]
+struct PacketKey {
+    packet_id: i32,
+    state: ConnectionState,
+    direction: PacketDirection,
+}
 
 /// The proxy's event bus implementation.
 ///
@@ -39,6 +47,9 @@ pub struct EventBusImpl {
     /// The `Arc<Vec<...>>` enables lock-free dispatch via snapshot cloning.
     handlers: RwLock<HashMap<TypeId, Arc<Vec<HandlerEntry>>>>,
 
+    /// Handlers for specific packet (id, state, direction) combinations.
+    packet_handlers: RwLock<HashMap<PacketKey, Arc<Vec<HandlerEntry>>>>,
+
     /// Monotonic counter for generating unique `ListenerHandle` values.
     next_handle: AtomicU64,
 }
@@ -48,6 +59,7 @@ impl EventBusImpl {
     pub fn new() -> Self {
         Self {
             handlers: RwLock::new(HashMap::new()),
+            packet_handlers: RwLock::new(HashMap::new()),
             next_handle: AtomicU64::new(1),
         }
     }
@@ -123,6 +135,61 @@ impl EventBusImpl {
         handle
     }
 
+    /// Internal helper: inserts a handler entry into the sorted vec for
+    /// the given packet key.
+    #[allow(clippy::significant_drop_tightening)]
+    fn insert_packet_handler(&self, key: PacketKey, entry: HandlerEntry) -> ListenerHandle {
+        let handle = entry.handle;
+        {
+            let mut map = self
+                .packet_handlers
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let vec_arc = map.entry(key).or_default();
+            let vec = Arc::make_mut(vec_arc);
+            let pos = vec.partition_point(|h| h.priority.value() <= entry.priority.value());
+            vec.insert(pos, entry);
+        }
+        handle
+    }
+
+    /// Dispatches a packet event to all handlers registered for the given packet.
+    ///
+    /// Handlers are invoked sequentially in priority order, same as `fire()`.
+    pub async fn fire_packet_event(
+        &self,
+        packet_id: i32,
+        state: ConnectionState,
+        direction: PacketDirection,
+        event: &mut infrarust_api::events::packet::RawPacketEvent,
+    ) {
+        let key = PacketKey {
+            packet_id,
+            state,
+            direction,
+        };
+        let snapshot = {
+            let map = self
+                .packet_handlers
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            map.get(&key).cloned()
+        };
+
+        if let Some(handlers) = snapshot {
+            for entry in handlers.iter() {
+                match &entry.kind {
+                    HandlerKind::Sync(handler) => {
+                        handler(event as &mut dyn std::any::Any);
+                    }
+                    HandlerKind::Async(handler) => {
+                        handler(event as &mut dyn std::any::Any).await;
+                    }
+                }
+            }
+        }
+    }
+
     /// Generates the next unique `ListenerHandle`.
     fn next_handle(&self) -> ListenerHandle {
         ListenerHandle::new(self.next_handle.fetch_add(1, Ordering::Relaxed))
@@ -167,16 +234,89 @@ impl EventBus for EventBusImpl {
         self.insert_handler(event_type, entry)
     }
 
-    fn unsubscribe(&self, handle: ListenerHandle) {
-        let mut map = self
-            .handlers
-            .write()
+    fn subscribe_packet(
+        &self,
+        filter: PacketFilter,
+        priority: EventPriority,
+        handler: ErasedHandler,
+    ) -> ListenerHandle {
+        let key = PacketKey {
+            packet_id: filter.packet_id,
+            state: filter.state,
+            direction: filter.direction,
+        };
+        let entry = HandlerEntry {
+            handle: self.next_handle(),
+            priority,
+            kind: HandlerKind::from_sync(handler),
+        };
+        self.insert_packet_handler(key, entry)
+    }
+
+    fn subscribe_packet_async(
+        &self,
+        filter: PacketFilter,
+        priority: EventPriority,
+        handler: ErasedAsyncHandler,
+    ) -> ListenerHandle {
+        let key = PacketKey {
+            packet_id: filter.packet_id,
+            state: filter.state,
+            direction: filter.direction,
+        };
+        let entry = HandlerEntry {
+            handle: self.next_handle(),
+            priority,
+            kind: HandlerKind::from_async(handler),
+        };
+        self.insert_packet_handler(key, entry)
+    }
+
+    fn has_packet_listeners(
+        &self,
+        packet_id: i32,
+        state: ConnectionState,
+        direction: PacketDirection,
+    ) -> bool {
+        let key = PacketKey {
+            packet_id,
+            state,
+            direction,
+        };
+        let map = self
+            .packet_handlers
+            .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for vec_arc in map.values_mut() {
-            let vec = Arc::make_mut(vec_arc);
-            if let Some(pos) = vec.iter().position(|h| h.handle == handle) {
-                vec.remove(pos);
-                return;
+        map.get(&key).is_some_and(|v| !v.is_empty())
+    }
+
+    fn unsubscribe(&self, handle: ListenerHandle) {
+        // Search lifecycle handlers first
+        {
+            let mut map = self
+                .handlers
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for vec_arc in map.values_mut() {
+                let vec = Arc::make_mut(vec_arc);
+                if let Some(pos) = vec.iter().position(|h| h.handle == handle) {
+                    vec.remove(pos);
+                    return;
+                }
+            }
+        }
+        // Search packet handlers
+        {
+            let mut map = self
+                .packet_handlers
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for vec_arc in map.values_mut() {
+                let vec = Arc::make_mut(vec_arc);
+                if let Some(pos) = vec.iter().position(|h| h.handle == handle) {
+                    vec.remove(pos);
+                    return;
+                }
             }
         }
     }

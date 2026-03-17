@@ -6,12 +6,13 @@
 
 use std::sync::Arc;
 
+use infrarust_api::event::ResultedEvent;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_protocol::packets::login::{
     CLoginDisconnect, CLoginSuccess, CSetCompression, Property, SLoginAcknowledged,
 };
-use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
+use infrarust_protocol::registry::DecodedPacket;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_transport::BackendConnector;
 
@@ -20,7 +21,7 @@ use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::player::PlayerSession;
-use crate::registry::ConnectionRegistry;
+use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
@@ -35,8 +36,7 @@ use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
 /// 5. Run `proxy_loop` for bidirectional forwarding
 pub struct ClientOnlyHandler {
     backend_connector: Arc<BackendConnector>,
-    registry: Arc<PacketRegistry>,
-    connection_registry: Arc<ConnectionRegistry>,
+    services: ProxyServices,
     auth: Arc<MojangAuth>,
     #[cfg(feature = "telemetry")]
     metrics: Option<Arc<crate::telemetry::ProxyMetrics>>,
@@ -44,16 +44,14 @@ pub struct ClientOnlyHandler {
 
 impl ClientOnlyHandler {
     /// Creates a new `ClientOnly` handler.
-    pub const fn new(
+    pub fn new(
         backend_connector: Arc<BackendConnector>,
-        registry: Arc<PacketRegistry>,
-        connection_registry: Arc<ConnectionRegistry>,
+        services: ProxyServices,
         auth: Arc<MojangAuth>,
     ) -> Self {
         Self {
             backend_connector,
-            registry,
-            connection_registry,
+            services,
             auth,
             #[cfg(feature = "telemetry")]
             metrics: None,
@@ -92,10 +90,29 @@ impl ClientOnlyHandler {
 
         let mut client = ClientBridge::new(ctx.take_stream(), ctx.buffered_data.split(), version);
 
+        // ── PreLoginEvent ──
+        let pre_login_profile = infrarust_api::types::GameProfile {
+            uuid: uuid::Uuid::nil(),
+            username: login_data.username.clone(),
+            properties: vec![],
+        };
+        let pre_login = infrarust_api::events::lifecycle::PreLoginEvent::new(
+            pre_login_profile,
+            ctx.peer_addr,
+            infrarust_api::types::ProtocolVersion::new(version.0),
+            handshake.domain.clone(),
+        );
+        let pre_login = self.services.event_bus.fire(pre_login).await;
+        if let infrarust_api::events::lifecycle::PreLoginResult::Denied { reason } = pre_login.result() {
+            let reason_json = reason.to_json();
+            client.disconnect(&reason_json, &self.services.packet_registry).await.ok();
+            return Ok(());
+        }
+
         // Mojang auth: RSA exchange → session verification → enable encryption
         let game_profile = self
             .auth
-            .authenticate(&mut client, &login_data.username, &self.registry)
+            .authenticate(&mut client, &login_data.username, &self.services.packet_registry)
             .await?;
 
         tracing::info!(
@@ -104,9 +121,31 @@ impl ClientOnlyHandler {
             "client authenticated"
         );
 
+        // Build api_profile and player_id early for events
+        let player_uuid = game_profile.uuid().unwrap_or_else(|_| uuid::Uuid::new_v4());
+        let player_id = infrarust_api::types::PlayerId::new(player_uuid.as_u128() as u64);
+        let api_profile = infrarust_api::types::GameProfile {
+            uuid: player_uuid,
+            username: game_profile.name.clone(),
+            properties: game_profile.properties.iter().map(|p| {
+                infrarust_api::types::ProfileProperty {
+                    name: p.name.clone(),
+                    value: p.value.clone(),
+                    signature: p.signature.clone(),
+                }
+            }).collect(),
+        };
+
         // Send LoginSuccess to client with the Mojang profile
         self.send_login_success(&mut client, &game_profile, version)
             .await?;
+
+        // ── PostLoginEvent (fire-and-forget) ──
+        self.services.event_bus.fire_and_forget_arc(infrarust_api::events::lifecycle::PostLoginEvent {
+            profile: api_profile.clone(),
+            player_id,
+            protocol_version: infrarust_api::types::ProtocolVersion::new(version.0),
+        });
 
         // ── Handle LoginAcknowledged (1.20.2+) ──
 
@@ -117,7 +156,7 @@ impl ClientOnlyHandler {
                 .await?
                 .ok_or(CoreError::ConnectionClosed)?;
 
-            let decoded = self.registry.decode_frame(
+            let decoded = self.services.packet_registry.decode_frame(
                 &frame,
                 ConnectionState::Login,
                 Direction::Serverbound,
@@ -144,8 +183,36 @@ impl ClientOnlyHandler {
             client.set_state(ConnectionState::Play);
         }
 
+        // ── PlayerChooseInitialServerEvent ──
+        let initial_server = infrarust_api::types::ServerId::new(routing.config_id.clone());
+        let choose = infrarust_api::events::connection::PlayerChooseInitialServerEvent::new(
+            player_id, api_profile.clone(), initial_server.clone(),
+        );
+        let choose = self.services.event_bus.fire(choose).await;
+        let target_server_id = match choose.result() {
+            infrarust_api::events::connection::PlayerChooseInitialServerResult::Allowed => initial_server,
+            infrarust_api::events::connection::PlayerChooseInitialServerResult::Redirect(id) => id.clone(),
+            _ => initial_server,
+        };
+
+        // ── ServerPreConnectEvent ──
+        let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(
+            player_id, api_profile.clone(), target_server_id.clone(),
+        );
+        let pre_connect = self.services.event_bus.fire(pre_connect).await;
+        match pre_connect.result() {
+            infrarust_api::events::connection::ServerPreConnectResult::Allowed => {}
+            infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
+                let reason_json = reason.to_json();
+                client.disconnect(&reason_json, &self.services.packet_registry).await.ok();
+                return Ok(());
+            }
+            _ => {} // ConnectTo, SendToLimbo, VirtualBackend — Phase 4
+        }
+
         // ── Phase 2: Backend Login (Offline Mode) ──
 
+        // TODO: Phase 4 — resolve target_server_id to addresses for backend connection
         let backend_conn = match self
             .backend_connector
             .connect(
@@ -165,7 +232,7 @@ impl ClientOnlyHandler {
                     "backend unreachable, sending disconnect to client"
                 );
                 let msg = server_config.effective_disconnect_message();
-                client.disconnect(msg, &self.registry).await.ok();
+                client.disconnect(msg, &self.services.packet_registry).await.ok();
                 return Ok(());
             }
         };
@@ -178,7 +245,7 @@ impl ClientOnlyHandler {
                 &handshake,
                 server_config,
                 &game_profile.name,
-                &self.registry,
+                &self.services.packet_registry,
             )
             .await?;
 
@@ -190,32 +257,25 @@ impl ClientOnlyHandler {
         // For 1.20.2+: send LoginAcknowledged to backend to transition it to Config
         if version.no_less_than(ProtocolVersion::V1_20_2) {
             let ack = SLoginAcknowledged;
-            backend.send_packet(&ack, &self.registry).await?;
+            backend.send_packet(&ack, &self.services.packet_registry).await?;
             backend.set_state(ConnectionState::Config);
             tracing::debug!("backend LoginAcknowledged → Config");
         }
 
+        // ── ServerConnectedEvent (fire-and-forget) ──
+        self.services.event_bus.fire_and_forget_arc(infrarust_api::events::connection::ServerConnectedEvent {
+            player_id,
+            server: target_server_id.clone(),
+        });
+
         // ── Phase 3: Session ──
 
         let session_token = CancellationToken::new();
-        let player_uuid = game_profile.uuid().unwrap_or_else(|_| uuid::Uuid::new_v4());
         let (cmd_tx, cmd_rx) = PlayerSession::channel();
 
-        let api_profile = infrarust_api::types::GameProfile {
-            uuid: player_uuid,
-            username: game_profile.name.clone(),
-            properties: game_profile.properties.iter().map(|p| {
-                infrarust_api::types::ProfileProperty {
-                    name: p.name.clone(),
-                    value: p.value.clone(),
-                    signature: p.signature.clone(),
-                }
-            }).collect(),
-        };
-
         let player_session = Arc::new(PlayerSession::new(
-            infrarust_api::types::PlayerId::new(player_uuid.as_u128() as u64),
-            api_profile,
+            player_id,
+            api_profile.clone(),
             infrarust_api::types::ProtocolVersion::new(version.0),
             ctx.peer_addr,
             Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
@@ -224,7 +284,7 @@ impl ClientOnlyHandler {
             session_token.clone(),
         ));
 
-        let session_id = self.connection_registry.register(player_session);
+        let session_id = self.services.connection_registry.register(player_session);
 
         tracing::info!(
             session = %session_id,
@@ -256,10 +316,30 @@ impl ClientOnlyHandler {
 
         // Proxy loop (Config → Play for 1.20.2+, or Play for older)
         let outcome =
-            proxy_loop(&mut client, &mut backend, &self.registry, combined_shutdown, cmd_rx).await;
+            proxy_loop(&mut client, &mut backend, &self.services.packet_registry, combined_shutdown, cmd_rx, &self.services, player_id).await;
+
+        // ── KickedFromServerEvent (on backend disconnect) ──
+        if let ProxyLoopOutcome::BackendDisconnected { ref reason } = outcome {
+            let kick_reason = reason.as_deref().unwrap_or("Disconnected");
+            let kicked = infrarust_api::events::connection::KickedFromServerEvent::new(
+                player_id,
+                infrarust_api::types::ServerId::new(routing.config_id.clone()),
+                infrarust_api::types::Component::text(kick_reason),
+            );
+            let _kicked = self.services.event_bus.fire(kicked).await;
+            // For now, always disconnect. Phase 4 will handle RedirectTo/SendToLimbo.
+        }
+
+        // ── DisconnectEvent (always) ──
+        let disconnect = infrarust_api::events::lifecycle::DisconnectEvent {
+            player_id,
+            username: game_profile.name.clone(),
+            last_server: Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
+        };
+        let _ = self.services.event_bus.fire(disconnect).await;
 
         // Cleanup
-        let _ = self.connection_registry.unregister(&session_id);
+        let _ = self.services.connection_registry.unregister(&session_id);
 
         // Record end metrics
         #[cfg(feature = "telemetry")]
@@ -314,7 +394,7 @@ impl ClientOnlyHandler {
                 && version.no_greater_than(ProtocolVersion::V1_21),
         };
 
-        client.send_packet(&login_success, &self.registry).await?;
+        client.send_packet(&login_success, &self.services.packet_registry).await?;
         tracing::debug!("sent LoginSuccess to client");
 
         Ok(())
@@ -337,7 +417,7 @@ impl ClientOnlyHandler {
                 .await?
                 .ok_or(CoreError::ConnectionClosed)?;
 
-            let decoded = self.registry.decode_frame(
+            let decoded = self.services.packet_registry.decode_frame(
                 &frame,
                 ConnectionState::Login,
                 Direction::Clientbound,
@@ -368,7 +448,7 @@ impl ClientOnlyHandler {
 
                     if let Some(disconnect) = packet.as_any().downcast_ref::<CLoginDisconnect>() {
                         client
-                            .disconnect("Backend refused connection", &self.registry)
+                            .disconnect("Backend refused connection", &self.services.packet_registry)
                             .await?;
                         return Err(CoreError::Rejected(format!(
                             "backend refused login: {}",

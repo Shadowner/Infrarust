@@ -2,7 +2,7 @@
 
 use std::any::{Any, TypeId};
 
-use super::{BoxFuture, EventPriority, ListenerHandle};
+use super::{BoxFuture, ConnectionState, EventPriority, ListenerHandle, PacketDirection, PacketFilter};
 
 #[doc(hidden)]
 pub mod private {
@@ -58,6 +58,33 @@ pub trait EventBus: Send + Sync + private::Sealed {
         handler: ErasedAsyncHandler,
     ) -> ListenerHandle;
 
+    /// Subscribes a type-erased synchronous handler for a specific packet.
+    fn subscribe_packet(
+        &self,
+        filter: PacketFilter,
+        priority: EventPriority,
+        handler: ErasedHandler,
+    ) -> ListenerHandle;
+
+    /// Subscribes a type-erased asynchronous handler for a specific packet.
+    fn subscribe_packet_async(
+        &self,
+        filter: PacketFilter,
+        priority: EventPriority,
+        handler: ErasedAsyncHandler,
+    ) -> ListenerHandle;
+
+    /// Returns `true` if any listeners are registered for the given packet.
+    ///
+    /// Used in the packet forwarding loop to skip event dispatch when
+    /// nobody is listening — must be O(1).
+    fn has_packet_listeners(
+        &self,
+        packet_id: i32,
+        state: ConnectionState,
+        direction: PacketDirection,
+    ) -> bool;
+
     /// Removes a previously registered listener.
     fn unsubscribe(&self, handle: ListenerHandle);
 }
@@ -89,6 +116,26 @@ pub trait EventBusExt {
     where
         E: super::Event,
         F: Fn(&mut E) -> BoxFuture<'_, ()> + Send + Sync + 'static;
+
+    /// Subscribes a synchronous handler for a specific packet.
+    fn subscribe_packet_typed<F>(
+        &self,
+        filter: PacketFilter,
+        priority: EventPriority,
+        handler: F,
+    ) -> ListenerHandle
+    where
+        F: Fn(&mut crate::events::packet::RawPacketEvent) + Send + Sync + 'static;
+
+    /// Subscribes an asynchronous handler for a specific packet.
+    fn subscribe_packet_async_typed<F>(
+        &self,
+        filter: PacketFilter,
+        priority: EventPriority,
+        handler: F,
+    ) -> ListenerHandle
+    where
+        F: Fn(&mut crate::events::packet::RawPacketEvent) -> BoxFuture<'_, ()> + Send + Sync + 'static;
 }
 
 impl EventBusExt for dyn EventBus + '_ {
@@ -118,6 +165,48 @@ impl EventBusExt for dyn EventBus + '_ {
             priority,
             Box::new(move |any| {
                 if let Some(event) = any.downcast_mut::<E>() {
+                    handler(event)
+                } else {
+                    Box::pin(async {})
+                }
+            }),
+        )
+    }
+
+    fn subscribe_packet_typed<F>(
+        &self,
+        filter: PacketFilter,
+        priority: EventPriority,
+        handler: F,
+    ) -> ListenerHandle
+    where
+        F: Fn(&mut crate::events::packet::RawPacketEvent) + Send + Sync + 'static,
+    {
+        self.subscribe_packet(
+            filter,
+            priority,
+            Box::new(move |any| {
+                if let Some(event) = any.downcast_mut::<crate::events::packet::RawPacketEvent>() {
+                    handler(event);
+                }
+            }),
+        )
+    }
+
+    fn subscribe_packet_async_typed<F>(
+        &self,
+        filter: PacketFilter,
+        priority: EventPriority,
+        handler: F,
+    ) -> ListenerHandle
+    where
+        F: Fn(&mut crate::events::packet::RawPacketEvent) -> BoxFuture<'_, ()> + Send + Sync + 'static,
+    {
+        self.subscribe_packet_async(
+            filter,
+            priority,
+            Box::new(move |any| {
+                if let Some(event) = any.downcast_mut::<crate::events::packet::RawPacketEvent>() {
                     handler(event)
                 } else {
                     Box::pin(async {})

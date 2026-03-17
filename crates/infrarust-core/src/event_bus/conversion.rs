@@ -153,6 +153,43 @@ pub const fn convert_server_state(
     }
 }
 
+/// Converts protocol `ConnectionState` to API `ConnectionState`.
+pub fn protocol_state_to_api(
+    state: infrarust_protocol::version::ConnectionState,
+) -> infrarust_api::event::ConnectionState {
+    match state {
+        infrarust_protocol::version::ConnectionState::Handshake => {
+            infrarust_api::event::ConnectionState::Handshake
+        }
+        infrarust_protocol::version::ConnectionState::Status => {
+            infrarust_api::event::ConnectionState::Status
+        }
+        infrarust_protocol::version::ConnectionState::Login => {
+            infrarust_api::event::ConnectionState::Login
+        }
+        infrarust_protocol::version::ConnectionState::Config => {
+            infrarust_api::event::ConnectionState::Configuration
+        }
+        infrarust_protocol::version::ConnectionState::Play => {
+            infrarust_api::event::ConnectionState::Play
+        }
+    }
+}
+
+/// Converts protocol `Direction` to API `PacketDirection`.
+pub fn protocol_direction_to_api(
+    direction: infrarust_protocol::version::Direction,
+) -> infrarust_api::events::packet::PacketDirection {
+    match direction {
+        infrarust_protocol::version::Direction::Serverbound => {
+            infrarust_api::events::packet::PacketDirection::Serverbound
+        }
+        infrarust_protocol::version::Direction::Clientbound => {
+            infrarust_api::events::packet::PacketDirection::Clientbound
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]

@@ -529,6 +529,48 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x1A, ProtocolVersion::V1_21_2, false)
     .register(&mut registry);
 
+    // ChatMessage Serverbound — registered as encode_only because the proxy
+    // decodes these manually in detect_chat_or_command() for partial parsing
+    // (only the message string, not the full signature chain).
+    PacketRegistration::<crate::packets::SChatMessage>::new(
+        ConnectionState::Play,
+        Direction::Serverbound,
+    )
+    .map(0x01, ProtocolVersion::V1_7_2, true)
+    .map(0x02, ProtocolVersion::V1_9, true)
+    .map(0x03, ProtocolVersion::V1_12, true)
+    .map(0x02, ProtocolVersion::V1_12_1, true)
+    .map(0x02, ProtocolVersion::V1_13, true)
+    .map(0x03, ProtocolVersion::V1_14, true)
+    .map(0x03, ProtocolVersion::V1_15, true)
+    .map(0x03, ProtocolVersion::V1_16, true)
+    .map(0x03, ProtocolVersion::V1_17, true)
+    .map(0x05, ProtocolVersion::V1_19, true)
+    .map(0x05, ProtocolVersion::V1_19_1, true)
+    .map(0x05, ProtocolVersion::V1_19_3, true)
+    .map(0x05, ProtocolVersion::V1_19_4, true)
+    .map(0x06, ProtocolVersion::V1_20_2, true)
+    .map(0x06, ProtocolVersion::V1_20_5, true)
+    .map(0x07, ProtocolVersion::V1_21_2, true)
+    .map(0x08, ProtocolVersion::V1_21_6, true)
+    .register(&mut registry);
+
+    // ChatCommand Serverbound (1.19+) — registered as encode_only because
+    // the proxy decodes these manually in detect_chat_or_command().
+    PacketRegistration::<crate::packets::SChatCommand>::new(
+        ConnectionState::Play,
+        Direction::Serverbound,
+    )
+    .map(0x04, ProtocolVersion::V1_19, true)
+    .map(0x04, ProtocolVersion::V1_19_1, true)
+    .map(0x04, ProtocolVersion::V1_19_3, true)
+    .map(0x04, ProtocolVersion::V1_19_4, true)
+    .map(0x04, ProtocolVersion::V1_20_2, true)
+    .map(0x04, ProtocolVersion::V1_20_5, true)
+    .map(0x05, ProtocolVersion::V1_21_2, true)
+    .map(0x06, ProtocolVersion::V1_21_6, true)
+    .register(&mut registry);
+
     // Chat Session Update Serverbound (encode-only: proxy uses ID for filtering)
     PacketRegistration::<crate::packets::SChatSessionUpdate>::new(
         ConnectionState::Play,

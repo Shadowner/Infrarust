@@ -188,6 +188,71 @@ impl ResultedEvent for KickedFromServerEvent {
     }
 }
 
+// ---------------------------------------------------------------------------
+// PlayerChooseInitialServerEvent
+// ---------------------------------------------------------------------------
+
+/// Dispatched after PostLoginEvent, before ServerPreConnectEvent.
+/// Allows a plugin to redirect the player to a different server
+/// than the one resolved by the DomainRouter.
+///
+/// Use cases: lobby plugin, load balancer, queue system.
+pub struct PlayerChooseInitialServerEvent {
+    /// The player connecting.
+    pub player_id: PlayerId,
+    /// The player's game profile.
+    pub profile: GameProfile,
+    /// The server resolved by the DomainRouter (default target).
+    pub initial_server: ServerId,
+    result: PlayerChooseInitialServerResult,
+}
+
+/// Result of a [`PlayerChooseInitialServerEvent`].
+#[derive(Default, Clone)]
+#[non_exhaustive]
+pub enum PlayerChooseInitialServerResult {
+    /// Use the server resolved by the DomainRouter.
+    #[default]
+    Allowed,
+    /// Redirect to a different server.
+    Redirect(ServerId),
+}
+
+impl PlayerChooseInitialServerEvent {
+    /// Creates a new event.
+    pub fn new(player_id: PlayerId, profile: GameProfile, initial_server: ServerId) -> Self {
+        Self {
+            player_id,
+            profile,
+            initial_server,
+            result: PlayerChooseInitialServerResult::default(),
+        }
+    }
+
+    /// Returns the current result.
+    pub fn result(&self) -> &PlayerChooseInitialServerResult {
+        &self.result
+    }
+
+    /// Sets the result.
+    pub fn set_result(&mut self, result: PlayerChooseInitialServerResult) {
+        self.result = result;
+    }
+}
+
+impl Event for PlayerChooseInitialServerEvent {}
+impl ResultedEvent for PlayerChooseInitialServerEvent {
+    type Result = PlayerChooseInitialServerResult;
+
+    fn result(&self) -> &Self::Result {
+        &self.result
+    }
+
+    fn set_result(&mut self, result: Self::Result) {
+        self.result = result;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]

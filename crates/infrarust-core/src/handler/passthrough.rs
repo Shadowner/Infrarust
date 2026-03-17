@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use infrarust_api::event::ResultedEvent;
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
@@ -7,7 +8,6 @@ use infrarust_config::DomainRewrite;
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::packets::login::CLoginDisconnect;
-use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_protocol::{Packet, VarInt};
 use infrarust_transport::{BackendConnector, select_forwarder};
@@ -16,7 +16,7 @@ use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::player::PlayerSession;
-use crate::registry::ConnectionRegistry;
+use crate::services::ProxyServices;
 
 /// Handles passthrough proxy connections.
 ///
@@ -24,23 +24,20 @@ use crate::registry::ConnectionRegistry;
 /// registers the session, and starts bidirectional forwarding.
 pub struct PassthroughHandler {
     backend_connector: Arc<BackendConnector>,
-    packet_registry: Arc<PacketRegistry>,
-    registry: Arc<ConnectionRegistry>,
+    services: ProxyServices,
     #[cfg(feature = "telemetry")]
     metrics: Option<Arc<crate::telemetry::ProxyMetrics>>,
 }
 
 impl PassthroughHandler {
     /// Creates a new passthrough handler.
-    pub const fn new(
+    pub fn new(
         backend_connector: Arc<BackendConnector>,
-        packet_registry: Arc<PacketRegistry>,
-        registry: Arc<ConnectionRegistry>,
+        services: ProxyServices,
     ) -> Self {
         Self {
             backend_connector,
-            packet_registry,
-            registry,
+            services,
             #[cfg(feature = "telemetry")]
             metrics: None,
         }
@@ -70,6 +67,52 @@ impl PassthroughHandler {
         let login_data = ctx.extensions.get::<LoginData>().cloned();
 
         let server_config = &routing.server_config;
+
+        // Build player_id and api_profile early for events
+        let player_uuid = login_data
+            .as_ref()
+            .and_then(|d| d.player_uuid)
+            .unwrap_or_else(uuid::Uuid::new_v4);
+        let username = login_data
+            .as_ref()
+            .map(|d| d.username.clone())
+            .unwrap_or_default();
+        let player_id = infrarust_api::types::PlayerId::new(player_uuid.as_u128() as u64);
+        let api_profile = infrarust_api::types::GameProfile {
+            uuid: player_uuid,
+            username: username.clone(),
+            properties: vec![],
+        };
+
+        // ── ServerPreConnectEvent ──
+        let initial_server = infrarust_api::types::ServerId::new(routing.config_id.clone());
+        let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(
+            player_id, api_profile.clone(), initial_server,
+        );
+        let pre_connect = self.services.event_bus.fire(pre_connect).await;
+        match pre_connect.result() {
+            infrarust_api::events::connection::ServerPreConnectResult::Allowed => {}
+            infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
+                let json_reason = reason.to_json();
+                let packet = CLoginDisconnect { reason: json_reason };
+                let packet_id = self.services.packet_registry
+                    .get_packet_id::<CLoginDisconnect>(
+                        ConnectionState::Login,
+                        Direction::Clientbound,
+                        handshake.protocol_version,
+                    )
+                    .unwrap_or(0x00);
+                let mut payload = Vec::new();
+                packet.encode(&mut payload, handshake.protocol_version)?;
+                let mut encoder = PacketEncoder::new();
+                encoder.append_raw(packet_id, &payload)?;
+                let bytes = encoder.take();
+                ctx.stream_mut().write_all(&bytes).await?;
+                ctx.stream_mut().flush().await?;
+                return Ok(());
+            }
+            _ => {} // ConnectTo, SendToLimbo, VirtualBackend — Phase 4
+        }
 
         // Connect to backend
         let backend = match self
@@ -103,26 +146,18 @@ impl PassthroughHandler {
         self.forward_initial_packets(backend.stream_mut(), &handshake, server_config)
             .await?;
 
+        // ── ServerConnectedEvent (fire-and-forget) ──
+        self.services.event_bus.fire_and_forget_arc(infrarust_api::events::connection::ServerConnectedEvent {
+            player_id,
+            server: infrarust_api::types::ServerId::new(routing.config_id.clone()),
+        });
+
         // Register session
         let session_token = CancellationToken::new();
         let (cmd_tx, _cmd_rx) = PlayerSession::channel();
-        let player_uuid = login_data
-            .as_ref()
-            .and_then(|d| d.player_uuid)
-            .unwrap_or_else(uuid::Uuid::new_v4);
-        let username = login_data
-            .as_ref()
-            .map(|d| d.username.clone())
-            .unwrap_or_default();
-
-        let api_profile = infrarust_api::types::GameProfile {
-            uuid: player_uuid,
-            username: username.clone(),
-            properties: vec![],
-        };
 
         let player_session = Arc::new(PlayerSession::new(
-            infrarust_api::types::PlayerId::new(player_uuid.as_u128() as u64),
+            player_id,
             api_profile,
             infrarust_api::types::ProtocolVersion::new(handshake.protocol_version.0),
             ctx.peer_addr,
@@ -132,7 +167,7 @@ impl PassthroughHandler {
             session_token.clone(),
         ));
 
-        let session_id = self.registry.register(player_session);
+        let session_id = self.services.connection_registry.register(player_session);
 
         tracing::info!(
             session = %session_id,
@@ -170,8 +205,16 @@ impl PassthroughHandler {
             .forward(client_stream, backend_stream, combined_shutdown)
             .await;
 
+        // ── DisconnectEvent (always) ──
+        let disconnect = infrarust_api::events::lifecycle::DisconnectEvent {
+            player_id,
+            username,
+            last_server: Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
+        };
+        let _ = self.services.event_bus.fire(disconnect).await;
+
         // Cleanup
-        let _ = self.registry.unregister(&session_id);
+        let _ = self.services.connection_registry.unregister(&session_id);
 
         // Record end metrics
         #[cfg(feature = "telemetry")]
@@ -250,6 +293,7 @@ impl PassthroughHandler {
         };
 
         let packet_id = self
+            .services
             .packet_registry
             .get_packet_id::<CLoginDisconnect>(
                 ConnectionState::Login,

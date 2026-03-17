@@ -9,7 +9,7 @@ pub mod respawn;
 pub mod title;
 pub mod transfer;
 
-pub use chat::CSystemChatMessage;
+pub use chat::{CSystemChatMessage, SChatCommand, SChatMessage};
 pub use chat_session::SChatSessionUpdate;
 pub use disconnect::CDisconnect;
 pub use join_game::CJoinGame;
