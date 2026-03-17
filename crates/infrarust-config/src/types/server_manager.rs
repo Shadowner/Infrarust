@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::defaults;
 
 /// Server manager configuration (auto start/stop).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerManagerConfig {
     Local(LocalManagerConfig),
@@ -16,7 +16,7 @@ pub enum ServerManagerConfig {
 }
 
 /// Local provider: launches a local Java process.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocalManagerConfig {
     /// Command to execute (e.g., "java")
@@ -44,7 +44,7 @@ pub struct LocalManagerConfig {
 }
 
 /// Pterodactyl provider: REST API.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PterodactylManagerConfig {
     pub api_url: String,
@@ -65,7 +65,7 @@ pub struct PterodactylManagerConfig {
 }
 
 /// Crafty Controller provider: REST API.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CraftyManagerConfig {
     pub api_url: String,

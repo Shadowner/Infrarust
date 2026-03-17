@@ -8,7 +8,7 @@ use serde::Deserialize;
 /// If `whitelist` is non-empty, only IPs in the whitelist are allowed.
 /// If `blacklist` is non-empty, IPs in the blacklist are rejected.
 /// The whitelist is evaluated first.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IpFilterConfig {
     #[serde(default)]

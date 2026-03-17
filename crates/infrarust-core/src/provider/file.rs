@@ -253,19 +253,7 @@ fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<P
 /// derive `PartialEq`. A content hash would be more robust but this covers
 /// the common cases.
 fn configs_equal(a: &ServerConfig, b: &ServerConfig) -> bool {
-    // Compare the most common change indicators
-    a.domains == b.domains
-        && format!("{:?}", a.addresses) == format!("{:?}", b.addresses)
-        && a.proxy_mode == b.proxy_mode
-        && a.send_proxy_protocol == b.send_proxy_protocol
-        && a.max_players == b.max_players
-        && a.id == b.id
-        && format!("{:?}", a.motd) == format!("{:?}", b.motd)
-        && format!("{:?}", a.server_manager) == format!("{:?}", b.server_manager)
-        && format!("{:?}", a.ip_filter) == format!("{:?}", b.ip_filter)
-        && a.disconnect_message == b.disconnect_message
-        && format!("{:?}", a.domain_rewrite) == format!("{:?}", b.domain_rewrite)
-        && format!("{:?}", a.timeouts) == format!("{:?}", b.timeouts)
+    a == b
 }
 
 // ---------------------------------------------------------------------------

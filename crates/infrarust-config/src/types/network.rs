@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::defaults;
 
 /// Server-specific timeouts (overrides global settings).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimeoutConfig {
     #[serde(default = "defaults::connect_timeout")]
@@ -27,7 +27,7 @@ pub struct TimeoutConfig {
 ///
 /// Controls the keepalive probes sent on TCP connections
 /// to detect dead connections.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeepaliveConfig {
     /// Idle duration before the first probe.

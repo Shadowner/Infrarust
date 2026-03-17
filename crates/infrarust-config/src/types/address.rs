@@ -71,7 +71,7 @@ impl<'de> Deserialize<'de> for ServerAddress {
 
 /// How to rewrite the domain in the Minecraft handshake
 /// before forwarding it to the backend.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum DomainRewrite {

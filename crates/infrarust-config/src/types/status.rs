@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::defaults;
 
 /// Status ping cache configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StatusCacheConfig {
     /// Time-to-live for a cache entry.
@@ -30,7 +30,7 @@ impl Default for StatusCacheConfig {
 }
 
 /// MOTD per server state.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MotdConfig {
     pub online: Option<MotdEntry>,
@@ -43,7 +43,7 @@ pub struct MotdConfig {
 }
 
 /// A MOTD entry.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MotdEntry {
     /// MOTD text (supports Minecraft formatting codes).
