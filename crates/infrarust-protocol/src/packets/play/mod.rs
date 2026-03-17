@@ -6,6 +6,7 @@ pub mod join_game;
 pub mod keepalive;
 pub mod plugin_message;
 pub mod respawn;
+pub mod title;
 pub mod transfer;
 
 pub use chat::CSystemChatMessage;
@@ -15,4 +16,5 @@ pub use join_game::CJoinGame;
 pub use keepalive::{CKeepAlive, SKeepAlive};
 pub use plugin_message::{CPluginMessage, SPluginMessage};
 pub use respawn::CRespawn;
+pub use title::{CSetSubtitle, CSetTitle, CSetTitleTimes};
 pub use transfer::CTransfer;

@@ -1,0 +1,4 @@
+domains = ["limbo.example.com"]
+addresses = ["10.0.1.10:25565"]
+proxy_mode = "offline"
+limbo_handlers = ["auth", "antibot"]

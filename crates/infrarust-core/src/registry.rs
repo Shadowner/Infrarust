@@ -1,40 +1,20 @@
+//! Thread-safe registry of active proxy sessions.
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use tokio::time::Instant;
-
 use dashmap::DashMap;
-use infrarust_config::ProxyMode;
-use tokio_util::sync::CancellationToken;
+use infrarust_api::player::Player;
 use uuid::Uuid;
 
-/// An active proxy session entry.
-#[derive(Debug, Clone)]
-pub struct SessionEntry {
-    /// Unique session identifier.
-    pub session_id: Uuid,
-    /// Player username (set after login start parsing).
-    pub username: Option<String>,
-    /// Player UUID (set after login start parsing, 1.20.2+).
-    pub player_uuid: Option<Uuid>,
-    /// Effective client IP.
-    pub client_ip: IpAddr,
-    /// Identifier of the target server config.
-    pub server_id: String,
-    /// Proxy mode used for this session.
-    pub proxy_mode: ProxyMode,
-    /// When the connection was accepted.
-    pub connected_at: Instant,
-    /// Token to signal shutdown of this session.
-    pub shutdown_token: CancellationToken,
-}
+use crate::player::PlayerSession;
 
 /// Thread-safe registry of active proxy sessions.
 ///
 /// Pure data structure backed by `DashMap` — no background tasks.
-/// Passthrough handler calls `register()` at start, `unregister()` at end.
+/// Handlers call `register()` at start, `unregister()` at end.
 pub struct ConnectionRegistry {
-    sessions: DashMap<Uuid, Arc<SessionEntry>>,
+    sessions: DashMap<Uuid, Arc<PlayerSession>>,
 }
 
 impl ConnectionRegistry {
@@ -45,36 +25,49 @@ impl ConnectionRegistry {
         }
     }
 
-    /// Registers a new session, returning its UUID.
-    pub fn register(&self, entry: SessionEntry) -> Uuid {
-        let id = entry.session_id;
-        self.sessions.insert(id, Arc::new(entry));
-        id
+    /// Registers a player session, keyed by profile UUID.
+    pub fn register(&self, session: Arc<PlayerSession>) -> Uuid {
+        let uuid = session.profile().uuid;
+        if self.sessions.contains_key(&uuid) {
+            tracing::warn!(
+                uuid = %uuid,
+                username = %session.profile().username,
+                "overwriting existing session for UUID (reconnect?)"
+            );
+        }
+        self.sessions.insert(uuid, session);
+        uuid
     }
 
-    /// Removes a session by ID, returning the entry if it existed.
-    pub fn unregister(&self, session_id: &Uuid) -> Option<Arc<SessionEntry>> {
-        self.sessions.remove(session_id).map(|(_, v)| v)
+    /// Removes a session by UUID, marking it as disconnected.
+    pub fn unregister(&self, session_uuid: &Uuid) -> Option<Arc<PlayerSession>> {
+        self.sessions.remove(session_uuid).map(|(_, session)| {
+            session.set_disconnected();
+            session
+        })
     }
 
-    /// Returns a reference-counted handle to the session entry.
-    pub fn get(&self, session_id: &Uuid) -> Option<Arc<SessionEntry>> {
-        self.sessions.get(session_id).map(|r| Arc::clone(&r))
+    /// Returns a reference-counted handle to the session.
+    pub fn get(&self, session_uuid: &Uuid) -> Option<Arc<PlayerSession>> {
+        self.sessions.get(session_uuid).map(|r| Arc::clone(&r))
     }
 
     /// Finds the first session matching the given username.
-    pub fn find_by_username(&self, username: &str) -> Option<Arc<SessionEntry>> {
+    pub fn find_by_username(&self, username: &str) -> Option<Arc<PlayerSession>> {
         self.sessions
             .iter()
-            .find(|r| r.username.as_deref() == Some(username))
+            .find(|r| r.profile().username == username)
             .map(|r| Arc::clone(&r))
     }
 
     /// Returns all sessions connected to the given server.
-    pub fn find_by_server(&self, server_id: &str) -> Vec<Arc<SessionEntry>> {
+    pub fn find_by_server(&self, server_id: &str) -> Vec<Arc<PlayerSession>> {
         self.sessions
             .iter()
-            .filter(|r| r.server_id == server_id)
+            .filter(|r| {
+                r.current_server()
+                    .is_some_and(|s| s.as_str() == server_id)
+            })
             .map(|r| Arc::clone(&r))
             .collect()
     }
@@ -88,30 +81,32 @@ impl ConnectionRegistry {
     pub fn count_by_server(&self, server_id: &str) -> usize {
         self.sessions
             .iter()
-            .filter(|r| r.server_id == server_id)
+            .filter(|r| {
+                r.current_server()
+                    .is_some_and(|s| s.as_str() == server_id)
+            })
             .count()
     }
 
     /// Returns a snapshot of all active sessions.
-    pub fn all(&self) -> Vec<Arc<SessionEntry>> {
+    pub fn all(&self) -> Vec<Arc<PlayerSession>> {
         self.sessions.iter().map(|r| Arc::clone(&r)).collect()
     }
 
     /// Finds all sessions from a given IP (may be multiple for multi-accounts).
-    pub fn find_by_ip(&self, ip: &IpAddr) -> Vec<Arc<SessionEntry>> {
+    pub fn find_by_ip(&self, ip: &IpAddr) -> Vec<Arc<PlayerSession>> {
         self.sessions
             .iter()
-            .filter(|r| r.client_ip == *ip)
+            .filter(|r| r.remote_addr().ip() == *ip)
             .map(|r| Arc::clone(&r))
             .collect()
     }
 
     /// Finds the session with the given Mojang UUID.
-    pub fn find_by_uuid(&self, uuid: &Uuid) -> Option<Arc<SessionEntry>> {
-        self.sessions
-            .iter()
-            .find(|r| r.player_uuid.as_ref() == Some(uuid))
-            .map(|r| Arc::clone(&r))
+    ///
+    /// Delegates to [`get()`](Self::get) — both are keyed by UUID.
+    pub fn find_by_uuid(&self, uuid: &Uuid) -> Option<Arc<PlayerSession>> {
+        self.get(uuid)
     }
 }
 
@@ -131,54 +126,68 @@ impl infrarust_server_manager::PlayerCounter for ConnectionRegistry {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::player::PlayerCommand;
+    use infrarust_api::types::{GameProfile, PlayerId, ServerId};
+    use tokio::sync::mpsc;
+    use tokio_util::sync::CancellationToken;
 
-    fn make_entry(username: &str, server: &str) -> SessionEntry {
-        SessionEntry {
-            session_id: Uuid::new_v4(),
-            username: Some(username.to_string()),
-            player_uuid: None,
-            client_ip: "127.0.0.1".parse().unwrap(),
-            server_id: server.to_string(),
-            proxy_mode: ProxyMode::Passthrough,
-            connected_at: Instant::now(),
-            shutdown_token: CancellationToken::new(),
-        }
+    fn make_session(username: &str, server: &str) -> Arc<PlayerSession> {
+        let (tx, _rx) = mpsc::channel::<PlayerCommand>(32);
+        Arc::new(PlayerSession::new(
+            PlayerId::new(0),
+            GameProfile {
+                uuid: Uuid::new_v4(),
+                username: username.to_string(),
+                properties: vec![],
+            },
+            infrarust_api::types::ProtocolVersion::new(767),
+            "127.0.0.1:12345".parse().unwrap(),
+            Some(ServerId::new(server)),
+            false,
+            tx,
+            CancellationToken::new(),
+        ))
     }
 
     #[test]
     fn register_and_get() {
         let registry = ConnectionRegistry::new();
-        let entry = make_entry("alice", "lobby");
-        let id = registry.register(entry);
-        let found = registry.get(&id).unwrap();
-        assert_eq!(found.username.as_deref(), Some("alice"));
+        let session = make_session("alice", "lobby");
+        let uuid = session.profile().uuid;
+        registry.register(session);
+        let found = registry.get(&uuid).unwrap();
+        assert_eq!(found.profile().username, "alice");
     }
 
     #[test]
     fn unregister_removes() {
         let registry = ConnectionRegistry::new();
-        let entry = make_entry("bob", "survival");
-        let id = registry.register(entry);
-        assert!(registry.unregister(&id).is_some());
-        assert!(registry.get(&id).is_none());
+        let session = make_session("bob", "survival");
+        let uuid = session.profile().uuid;
+        registry.register(session);
+        assert!(registry.unregister(&uuid).is_some());
+        assert!(registry.get(&uuid).is_none());
     }
 
     #[test]
     fn find_by_username() {
         let registry = ConnectionRegistry::new();
-        registry.register(make_entry("alice", "lobby"));
-        registry.register(make_entry("bob", "survival"));
+        registry.register(make_session("alice", "lobby"));
+        registry.register(make_session("bob", "survival"));
         let found = registry.find_by_username("bob").unwrap();
-        assert_eq!(found.server_id, "survival");
+        assert_eq!(
+            found.current_server().unwrap().as_str(),
+            "survival"
+        );
         assert!(registry.find_by_username("charlie").is_none());
     }
 
     #[test]
     fn count_by_server() {
         let registry = ConnectionRegistry::new();
-        registry.register(make_entry("alice", "lobby"));
-        registry.register(make_entry("bob", "lobby"));
-        registry.register(make_entry("charlie", "survival"));
+        registry.register(make_session("alice", "lobby"));
+        registry.register(make_session("bob", "lobby"));
+        registry.register(make_session("charlie", "survival"));
         assert_eq!(registry.count(), 3);
         assert_eq!(registry.count_by_server("lobby"), 2);
         assert_eq!(registry.count_by_server("survival"), 1);
@@ -196,8 +205,8 @@ mod tests {
         for i in 0..10 {
             let reg = Arc::clone(&registry);
             handles.push(thread::spawn(move || {
-                let entry = make_entry(&format!("player_{i}"), "lobby");
-                reg.register(entry);
+                let session = make_session(&format!("player_{i}"), "lobby");
+                reg.register(session);
             }));
         }
 

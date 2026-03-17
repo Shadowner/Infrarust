@@ -5,7 +5,7 @@ use crate::types::{Component, GameProfile, PlayerId, TitleData};
 
 use super::handler::HandlerResult;
 
-mod private {
+pub mod private {
     /// Sealed — only the proxy implements [`LimboSession`](super::LimboSession).
     pub trait Sealed {}
 }

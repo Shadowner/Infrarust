@@ -21,8 +21,8 @@ pub use login::{
 };
 pub use opaque::OpaquePacket;
 pub use play::{
-    CDisconnect, CJoinGame, CKeepAlive, CPluginMessage, CRespawn, CSystemChatMessage, CTransfer,
-    SChatSessionUpdate, SKeepAlive, SPluginMessage,
+    CDisconnect, CJoinGame, CKeepAlive, CPluginMessage, CRespawn, CSetSubtitle, CSetTitle,
+    CSetTitleTimes, CSystemChatMessage, CTransfer, SChatSessionUpdate, SKeepAlive, SPluginMessage,
 };
 pub use status::{CPingResponse, CStatusResponse, SPingRequest, SStatusRequest};
 

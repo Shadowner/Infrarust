@@ -57,7 +57,7 @@ pub trait CommandHandler: Send + Sync {
     }
 }
 
-mod private {
+pub mod private {
     /// Sealed — only the proxy implements [`CommandManager`](super::CommandManager).
     pub trait Sealed {}
 }

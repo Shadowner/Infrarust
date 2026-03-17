@@ -3,12 +3,13 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use infrarust_config::ProxyMode;
+use infrarust_api::types::{GameProfile, PlayerId, ProtocolVersion, ServerId};
 use infrarust_core::ban::file_storage::FileBanStorage;
 use infrarust_core::ban::manager::BanManager;
 use infrarust_core::ban::types::BanTarget;
-use infrarust_core::registry::{ConnectionRegistry, SessionEntry};
-use tokio::time::Instant;
+use infrarust_core::player::PlayerSession;
+use infrarust_core::registry::ConnectionRegistry;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -21,19 +22,28 @@ async fn temp_manager() -> (Arc<BanManager>, Arc<ConnectionRegistry>, tempfile::
     (manager, registry, dir)
 }
 
-fn make_session(username: &str, ip: IpAddr) -> (SessionEntry, CancellationToken) {
+fn make_session(
+    username: &str,
+    ip: IpAddr,
+) -> (Arc<PlayerSession>, CancellationToken) {
     let token = CancellationToken::new();
-    let entry = SessionEntry {
-        session_id: Uuid::new_v4(),
-        username: Some(username.to_string()),
-        player_uuid: None,
-        client_ip: ip,
-        server_id: "test-server".into(),
-        proxy_mode: ProxyMode::Passthrough,
-        connected_at: Instant::now(),
-        shutdown_token: token.clone(),
-    };
-    (entry, token)
+    let (tx, _rx) = mpsc::channel(32);
+    let uuid = Uuid::new_v4();
+    let session = Arc::new(PlayerSession::new(
+        PlayerId::new(uuid.as_u128() as u64),
+        GameProfile {
+            uuid,
+            username: username.to_string(),
+            properties: vec![],
+        },
+        ProtocolVersion::new(767),
+        std::net::SocketAddr::new(ip, 12345),
+        Some(ServerId::new("test-server")),
+        false,
+        tx,
+        token.clone(),
+    ));
+    (session, token)
 }
 
 #[tokio::test]

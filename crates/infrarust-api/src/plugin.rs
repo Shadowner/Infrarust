@@ -89,7 +89,7 @@ pub trait Plugin: Send + Sync {
     }
 }
 
-mod private {
+pub mod private {
     /// Sealed — only the proxy implements [`PluginContext`](super::PluginContext).
     pub trait Sealed {}
 }

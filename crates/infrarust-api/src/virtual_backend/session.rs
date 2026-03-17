@@ -4,7 +4,7 @@ use crate::error::PlayerError;
 use crate::event::BoxFuture;
 use crate::types::{Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId};
 
-mod private {
+pub mod private {
     /// Sealed — only the proxy implements [`VirtualBackendSession`](super::VirtualBackendSession).
     pub trait Sealed {}
 }

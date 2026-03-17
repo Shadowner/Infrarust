@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_transport::BackendConnector;
@@ -15,7 +14,8 @@ use infrarust_transport::BackendConnector;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
-use crate::registry::{ConnectionRegistry, SessionEntry};
+use crate::player::PlayerSession;
+use crate::registry::ConnectionRegistry;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
@@ -114,17 +114,34 @@ impl OfflineHandler {
 
         // 5. Register session
         let session_token = CancellationToken::new();
-        let session_id = Uuid::new_v4();
-        let _ = self.connection_registry.register(SessionEntry {
-            session_id,
-            username: login_data.as_ref().map(|d| d.username.clone()),
-            player_uuid: login_data.as_ref().and_then(|d| d.player_uuid),
-            client_ip: ctx.client_ip,
-            server_id: routing.config_id.clone(),
-            proxy_mode: server_config.proxy_mode,
-            connected_at: ctx.connected_at,
-            shutdown_token: session_token.clone(),
-        });
+        let (cmd_tx, cmd_rx) = PlayerSession::channel();
+        let player_uuid = login_data
+            .as_ref()
+            .and_then(|d| d.player_uuid)
+            .unwrap_or_else(uuid::Uuid::new_v4);
+        let username = login_data
+            .as_ref()
+            .map(|d| d.username.clone())
+            .unwrap_or_default();
+
+        let api_profile = infrarust_api::types::GameProfile {
+            uuid: player_uuid,
+            username: username.clone(),
+            properties: vec![],
+        };
+
+        let player_session = Arc::new(PlayerSession::new(
+            infrarust_api::types::PlayerId::new(player_uuid.as_u128() as u64),
+            api_profile,
+            infrarust_api::types::ProtocolVersion::new(handshake.protocol_version.0),
+            ctx.peer_addr,
+            Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
+            true, // active: Offline mode supports packet injection
+            cmd_tx,
+            session_token.clone(),
+        ));
+
+        let session_id = self.connection_registry.register(player_session);
 
         tracing::info!(
             session = %session_id,
@@ -156,7 +173,7 @@ impl OfflineHandler {
 
         // 7. Proxy loop (Login → Config → Play)
         let outcome =
-            proxy_loop(&mut client, &mut backend, &self.registry, combined_shutdown).await;
+            proxy_loop(&mut client, &mut backend, &self.registry, combined_shutdown, cmd_rx).await;
 
         // 8. Cleanup
         let _ = self.connection_registry.unregister(&session_id);

@@ -4,7 +4,7 @@ use crate::error::ServiceError;
 use crate::event::{BoxFuture, ListenerHandle};
 use crate::types::ServerId;
 
-mod private {
+pub mod private {
     /// Sealed — only the proxy implements [`ServerManager`](super::ServerManager).
     pub trait Sealed {}
 }

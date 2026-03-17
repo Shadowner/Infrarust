@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::player::Player;
 use crate::types::{PlayerId, ServerId};
 
-mod private {
+pub mod private {
     /// Sealed — only the proxy implements [`PlayerRegistry`](super::PlayerRegistry).
     pub trait Sealed {}
 }

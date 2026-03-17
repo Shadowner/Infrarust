@@ -15,6 +15,7 @@ fn make_config(id: &str, domains: &[&str], addr: &str) -> ServerConfig {
         max_players: 0,
         ip_filter: None,
         disconnect_message: None,
+        limbo_handlers: vec![],
     }
 }
 

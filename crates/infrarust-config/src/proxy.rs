@@ -1,5 +1,6 @@
 //! Global proxy configuration (`infrarust.toml`).
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -74,4 +75,25 @@ pub struct ProxyConfig {
     /// Present in the TOML even without the `docker` feature compiled.
     #[serde(default)]
     pub docker: Option<DockerProviderConfig>,
+
+    /// Plugin configurations keyed by plugin ID.
+    #[serde(default)]
+    pub plugins: HashMap<String, PluginConfig>,
+}
+
+/// Configuration for a single plugin.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginConfig {
+    /// Path to the plugin binary/library.
+    #[serde(default)]
+    pub path: Option<String>,
+
+    /// Permissions granted to this plugin.
+    #[serde(default)]
+    pub permissions: Vec<String>,
+
+    /// Whether the plugin is enabled (default: true).
+    #[serde(default)]
+    pub enabled: Option<bool>,
 }

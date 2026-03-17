@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-mod private {
+pub mod private {
     /// Sealed — only the proxy implements [`Scheduler`](super::Scheduler).
     pub trait Sealed {}
 }

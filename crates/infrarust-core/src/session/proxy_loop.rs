@@ -5,6 +5,7 @@
 //! packets (`SetCompression`, `LoginSuccess`, Disconnect, `FinishConfig`),
 //! and forwards everything else opaquely.
 
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_protocol::io::PacketFrame;
@@ -18,6 +19,7 @@ use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction};
 
 use crate::error::CoreError;
+use crate::player::PlayerCommand;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 
@@ -63,6 +65,7 @@ pub async fn proxy_loop(
     backend: &mut BackendBridge,
     registry: &PacketRegistry,
     shutdown: CancellationToken,
+    mut command_rx: mpsc::Receiver<PlayerCommand>,
 ) -> ProxyLoopOutcome {
     loop {
         tokio::select! {
@@ -92,11 +95,71 @@ pub async fn proxy_loop(
                     Err(e) => return ProxyLoopOutcome::Error(e),
                 }
             }
+            Some(cmd) = command_rx.recv() => {
+                match handle_player_command(client, cmd, registry).await {
+                    Ok(true) => return ProxyLoopOutcome::ClientDisconnected, // Kick
+                    Ok(false) => {} // Continue
+                    Err(e) => {
+                        tracing::warn!("failed to handle player command: {e}");
+                    }
+                }
+            }
             () = shutdown.cancelled() => {
                 return ProxyLoopOutcome::Shutdown;
             }
         }
     }
+}
+
+/// Handles a player command from the plugin system.
+///
+/// Returns `Ok(true)` if the connection should be terminated (kick),
+/// `Ok(false)` to continue normally.
+async fn handle_player_command(
+    client: &mut ClientBridge,
+    cmd: PlayerCommand,
+    registry: &PacketRegistry,
+) -> Result<bool, CoreError> {
+    use crate::player::packets;
+
+    let version = client.protocol_version;
+
+    match cmd {
+        PlayerCommand::SendMessage(component) => {
+            let frame = packets::build_system_chat_message(&component, version, registry)?;
+            client.write_frame(&frame).await?;
+        }
+        PlayerCommand::SendActionBar(component) => {
+            let frame = packets::build_action_bar(&component, version, registry)?;
+            client.write_frame(&frame).await?;
+        }
+        PlayerCommand::SendTitle(title_data) => {
+            let frames = packets::build_title_packets(&title_data, version, registry)?;
+            for frame in &frames {
+                client.write_frame(frame).await?;
+            }
+        }
+        PlayerCommand::SendPacket(raw_packet) => {
+            let frame = PacketFrame {
+                id: raw_packet.packet_id,
+                payload: raw_packet.data,
+            };
+            client.write_frame(&frame).await?;
+        }
+        PlayerCommand::Kick(reason) => {
+            let frame = packets::build_disconnect(&reason, version, registry)?;
+            client.write_frame(&frame).await?;
+            return Ok(true);
+        }
+        PlayerCommand::SwitchServer(target) => {
+            tracing::warn!(
+                target = %target,
+                "SwitchServer not implemented in Phase 0"
+            );
+        }
+    }
+
+    Ok(false)
 }
 
 /// Handles a packet from the client, forwarding it to the backend.

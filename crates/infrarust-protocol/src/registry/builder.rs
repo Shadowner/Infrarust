@@ -447,6 +447,54 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x73, ProtocolVersion::V1_21_2, true)
     .register(&mut registry);
 
+    // SetTitle Clientbound (encode-only: injected by plugin system)
+    PacketRegistration::<crate::packets::CSetTitle>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x59, ProtocolVersion::V1_17, true)
+    .map(0x5D, ProtocolVersion::V1_19, true)
+    .map(0x5F, ProtocolVersion::V1_19_1, true)
+    .map(0x5D, ProtocolVersion::V1_19_3, true)
+    .map(0x61, ProtocolVersion::V1_19_4, true)
+    .map(0x63, ProtocolVersion::V1_20_2, true)
+    .map(0x65, ProtocolVersion::V1_20_3, true)
+    .map(0x68, ProtocolVersion::V1_20_5, true)
+    .map(0x6F, ProtocolVersion::V1_21_2, true)
+    .register(&mut registry);
+
+    // SetSubtitle Clientbound (encode-only: injected by plugin system)
+    PacketRegistration::<crate::packets::CSetSubtitle>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x57, ProtocolVersion::V1_17, true)
+    .map(0x5B, ProtocolVersion::V1_19, true)
+    .map(0x5D, ProtocolVersion::V1_19_1, true)
+    .map(0x5B, ProtocolVersion::V1_19_3, true)
+    .map(0x5F, ProtocolVersion::V1_19_4, true)
+    .map(0x61, ProtocolVersion::V1_20_2, true)
+    .map(0x63, ProtocolVersion::V1_20_3, true)
+    .map(0x66, ProtocolVersion::V1_20_5, true)
+    .map(0x6D, ProtocolVersion::V1_21_2, true)
+    .register(&mut registry);
+
+    // SetTitleTimes Clientbound (encode-only: injected by plugin system)
+    PacketRegistration::<crate::packets::CSetTitleTimes>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x5A, ProtocolVersion::V1_17, true)
+    .map(0x5E, ProtocolVersion::V1_19, true)
+    .map(0x60, ProtocolVersion::V1_19_1, true)
+    .map(0x5E, ProtocolVersion::V1_19_3, true)
+    .map(0x62, ProtocolVersion::V1_19_4, true)
+    .map(0x64, ProtocolVersion::V1_20_2, true)
+    .map(0x66, ProtocolVersion::V1_20_3, true)
+    .map(0x69, ProtocolVersion::V1_20_5, true)
+    .map(0x70, ProtocolVersion::V1_21_2, true)
+    .register(&mut registry);
+
     // Transfer Clientbound (encode-only: proxy doesn't intercept)
     PacketRegistration::<crate::packets::CTransfer>::new(
         ConnectionState::Play,

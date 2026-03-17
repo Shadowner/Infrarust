@@ -58,6 +58,10 @@ pub struct ServerConfig {
     /// Disconnect message sent to the player when the backend is unreachable.
     #[serde(default)]
     pub disconnect_message: Option<String>,
+
+    /// Limbo handler chain for this server (plugin IDs, executed in order).
+    #[serde(default)]
+    pub limbo_handlers: Vec<String>,
 }
 
 impl ServerConfig {

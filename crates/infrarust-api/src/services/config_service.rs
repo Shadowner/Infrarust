@@ -2,7 +2,7 @@
 
 use crate::types::ServerId;
 
-mod private {
+pub mod private {
     /// Sealed — only the proxy implements [`ConfigService`](super::ConfigService).
     pub trait Sealed {}
 }

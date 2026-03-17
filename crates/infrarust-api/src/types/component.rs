@@ -175,6 +175,94 @@ impl Component {
     }
 }
 
+impl Component {
+    /// Serializes this component to Minecraft's JSON text component format.
+    ///
+    /// Produces a JSON string suitable for pre-1.20.3 packet encoding.
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        let mut out = String::from("{");
+        // text field is always present
+        out.push_str(&format!("\"text\":\"{}\"", Self::escape_json(&self.text)));
+
+        if let Some(ref color) = self.color {
+            out.push_str(&format!(",\"color\":\"{}\"", Self::escape_json(color)));
+        }
+        if self.bold == Some(true) {
+            out.push_str(",\"bold\":true");
+        }
+        if self.italic == Some(true) {
+            out.push_str(",\"italic\":true");
+        }
+        if self.underlined == Some(true) {
+            out.push_str(",\"underlined\":true");
+        }
+        if self.strikethrough == Some(true) {
+            out.push_str(",\"strikethrough\":true");
+        }
+        if self.obfuscated == Some(true) {
+            out.push_str(",\"obfuscated\":true");
+        }
+
+        if let Some(ref click) = self.click_event {
+            let (action, value) = match click {
+                ClickEvent::OpenUrl(url) => ("open_url", url.as_str()),
+                ClickEvent::SuggestCommand(cmd) => ("suggest_command", cmd.as_str()),
+                ClickEvent::RunCommand(cmd) => ("run_command", cmd.as_str()),
+                ClickEvent::CopyToClipboard(text) => ("copy_to_clipboard", text.as_str()),
+            };
+            out.push_str(&format!(
+                ",\"clickEvent\":{{\"action\":\"{action}\",\"value\":\"{}\"}}",
+                Self::escape_json(value)
+            ));
+        }
+
+        if let Some(ref hover) = self.hover_event {
+            match hover {
+                HoverEvent::ShowText(component) => {
+                    out.push_str(&format!(
+                        ",\"hoverEvent\":{{\"action\":\"show_text\",\"contents\":{}}}",
+                        component.to_json()
+                    ));
+                }
+            }
+        }
+
+        if !self.extra.is_empty() {
+            out.push_str(",\"extra\":[");
+            for (i, child) in self.extra.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&child.to_json());
+            }
+            out.push(']');
+        }
+
+        out.push('}');
+        out
+    }
+
+    /// Escapes a string for JSON embedding.
+    fn escape_json(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if c < '\x20' => {
+                    out.push_str(&format!("\\u{:04x}", c as u32));
+                }
+                c => out.push(c),
+            }
+        }
+        out
+    }
+}
+
 impl fmt::Display for Component {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.text)?;

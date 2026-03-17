@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 use infrarust_protocol::packets::login::{
     CLoginDisconnect, CLoginSuccess, CSetCompression, Property, SLoginAcknowledged,
@@ -20,7 +19,8 @@ use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
-use crate::registry::{ConnectionRegistry, SessionEntry};
+use crate::player::PlayerSession;
+use crate::registry::ConnectionRegistry;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
@@ -198,19 +198,33 @@ impl ClientOnlyHandler {
         // ── Phase 3: Session ──
 
         let session_token = CancellationToken::new();
-        let session_id = Uuid::new_v4();
-        let player_uuid = game_profile.uuid().ok();
+        let player_uuid = game_profile.uuid().unwrap_or_else(|_| uuid::Uuid::new_v4());
+        let (cmd_tx, cmd_rx) = PlayerSession::channel();
 
-        let _ = self.connection_registry.register(SessionEntry {
-            session_id,
-            username: Some(game_profile.name.clone()),
-            player_uuid,
-            client_ip: ctx.client_ip,
-            server_id: routing.config_id.clone(),
-            proxy_mode: server_config.proxy_mode,
-            connected_at: ctx.connected_at,
-            shutdown_token: session_token.clone(),
-        });
+        let api_profile = infrarust_api::types::GameProfile {
+            uuid: player_uuid,
+            username: game_profile.name.clone(),
+            properties: game_profile.properties.iter().map(|p| {
+                infrarust_api::types::ProfileProperty {
+                    name: p.name.clone(),
+                    value: p.value.clone(),
+                    signature: p.signature.clone(),
+                }
+            }).collect(),
+        };
+
+        let player_session = Arc::new(PlayerSession::new(
+            infrarust_api::types::PlayerId::new(player_uuid.as_u128() as u64),
+            api_profile,
+            infrarust_api::types::ProtocolVersion::new(version.0),
+            ctx.peer_addr,
+            Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
+            true, // active: ClientOnly supports packet injection
+            cmd_tx,
+            session_token.clone(),
+        ));
+
+        let session_id = self.connection_registry.register(player_session);
 
         tracing::info!(
             session = %session_id,
@@ -242,7 +256,7 @@ impl ClientOnlyHandler {
 
         // Proxy loop (Config → Play for 1.20.2+, or Play for older)
         let outcome =
-            proxy_loop(&mut client, &mut backend, &self.registry, combined_shutdown).await;
+            proxy_loop(&mut client, &mut backend, &self.registry, combined_shutdown, cmd_rx).await;
 
         // Cleanup
         let _ = self.connection_registry.unregister(&session_id);

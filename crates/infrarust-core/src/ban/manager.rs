@@ -7,6 +7,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use infrarust_api::player::Player;
+
 use crate::ban::storage::BanStorage;
 use crate::ban::types::{BanEntry, BanTarget};
 use crate::error::CoreError;
@@ -76,10 +78,10 @@ impl BanManager {
         for session in &sessions_to_kick {
             tracing::info!(
                 ban_target = %target,
-                username = ?session.username,
+                username = %session.profile().username,
                 "kicking connected player due to ban"
             );
-            session.shutdown_token.cancel();
+            session.shutdown_token().cancel();
         }
 
         if !sessions_to_kick.is_empty() {

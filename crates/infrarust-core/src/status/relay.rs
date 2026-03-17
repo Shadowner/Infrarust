@@ -352,6 +352,7 @@ mod tests {
             max_players: 0,
             ip_filter: None,
             disconnect_message: None,
+            limbo_handlers: vec![],
         }
     }
 

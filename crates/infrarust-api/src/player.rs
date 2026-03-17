@@ -8,7 +8,7 @@ use crate::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
 };
 
-mod private {
+pub mod private {
     /// Sealed — only the proxy implements [`Player`](super::Player).
     pub trait Sealed {}
 }
@@ -40,7 +40,7 @@ pub trait Player: Send + Sync + private::Sealed {
     fn remote_addr(&self) -> SocketAddr;
 
     /// Returns the ID of the backend server the player is currently on, if any.
-    fn current_server(&self) -> Option<&ServerId>;
+    fn current_server(&self) -> Option<ServerId>;
 
     /// Returns `true` if the player is still connected to the proxy.
     fn is_connected(&self) -> bool;

@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::error::ServiceError;
 use crate::event::BoxFuture;
 
-mod private {
+pub mod private {
     /// Sealed — only the proxy implements [`BanService`](super::BanService).
     pub trait Sealed {}
 }
