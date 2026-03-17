@@ -51,6 +51,7 @@
 //! - [`types`] — Domain types (identifiers, components, packets)
 //! - [`event`] — Event system infrastructure
 //! - [`events`] — Concrete event definitions
+//! - [`filter`] — Codec and transport filter system
 //! - [`plugin`] — Plugin trait and lifecycle
 //! - [`player`] — Player trait
 //! - [`services`] — Proxy service traits
@@ -64,6 +65,7 @@ pub mod command;
 pub mod error;
 pub mod event;
 pub mod events;
+pub mod filter;
 pub mod limbo;
 pub mod player;
 pub mod plugin;

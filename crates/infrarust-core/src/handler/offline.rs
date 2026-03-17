@@ -227,9 +227,19 @@ impl OfflineHandler {
             }
         });
 
-        // 7. Proxy loop (Login → Config → Play)
+        // 7. Build codec filter chains
+        let (mut client_codec_chain, mut server_codec_chain) =
+            crate::filter::codec_chain::build_codec_chains(
+                &self.services.codec_filter_registry,
+                infrarust_api::types::ProtocolVersion::new(version.0),
+                player_id.as_u64(),
+                ctx.peer_addr,
+                Some(ctx.client_ip),
+            );
+
+        // 8. Proxy loop (Login → Config → Play)
         let outcome =
-            proxy_loop(&mut client, &mut backend, &self.services.packet_registry, combined_shutdown, cmd_rx, &self.services, player_id).await;
+            proxy_loop(&mut client, &mut backend, &self.services.packet_registry, combined_shutdown, cmd_rx, &self.services, player_id, &mut client_codec_chain, &mut server_codec_chain).await;
 
         // ── KickedFromServerEvent (on backend disconnect) ──
         if let ProxyLoopOutcome::BackendDisconnected { ref reason } = outcome {

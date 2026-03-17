@@ -5,6 +5,7 @@
 //! protocol versions, raw packets, and permissions.
 
 mod component;
+mod extensions;
 mod permission;
 mod player_id;
 mod protocol_version;
@@ -12,6 +13,7 @@ mod raw_packet;
 mod server_id;
 
 pub use component::{ClickEvent, Component, HoverEvent, TitleData};
+pub use extensions::Extensions;
 pub use permission::Permission;
 pub use player_id::PlayerId;
 pub use protocol_version::ProtocolVersion;

@@ -8,6 +8,8 @@ use infrarust_server_manager::ServerManagerService;
 
 use crate::ban::manager::BanManager;
 use crate::event_bus::EventBusImpl;
+use crate::filter::codec_registry::CodecFilterRegistryImpl;
+use crate::filter::transport_chain::TransportFilterChain;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
@@ -38,4 +40,8 @@ pub struct ProxyServices {
     pub config: Arc<ProxyConfig>,
     /// Domain router for resolving server configs by domain.
     pub domain_router: Arc<DomainRouter>,
+    /// Codec filter registry for building per-connection filter chains.
+    pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
+    /// Transport filter chain applied to accepted connections.
+    pub transport_filter_chain: TransportFilterChain,
 }

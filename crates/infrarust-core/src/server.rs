@@ -205,6 +205,10 @@ impl ProxyServer {
         let player_registry = Arc::new(PlayerRegistryImpl::new(Arc::clone(&registry)));
         let command_manager = Arc::new(CommandManagerImpl::new());
 
+        let codec_filter_registry = Arc::new(
+            crate::filter::codec_registry::CodecFilterRegistryImpl::new(),
+        );
+
         let services = ProxyServices {
             event_bus: Arc::clone(&event_bus),
             player_registry,
@@ -215,6 +219,8 @@ impl ProxyServer {
             ban_manager: Arc::clone(&ban_manager),
             config: Arc::new(config.clone()),
             domain_router: Arc::clone(&domain_router),
+            codec_filter_registry: Arc::clone(&codec_filter_registry),
+            transport_filter_chain: crate::filter::transport_chain::TransportFilterChain::empty(),
         };
 
         // Build common pipeline: IpFilter → BanIpCheck → HandshakeParser → RateLimiter → DomainRouter
@@ -335,7 +341,41 @@ impl ProxyServer {
 
             let shutdown = self.shutdown.clone();
             let peer = accepted.connection.peer_addr();
+            let local = accepted.connection.local_addr();
             tracing::debug!(peer = %peer, "new connection");
+
+            // Transport filter: on_accept
+            // Runs BEFORE the connection pipeline — real_ip is not yet available
+            // (set by PROXY protocol middleware later) and connection_id is 0
+            // (assigned per-session, not per-accept).
+            if !self.services.transport_filter_chain.is_empty() {
+                use infrarust_api::filter::{FilterVerdict, TransportContext};
+                use infrarust_api::types::Extensions;
+
+                let mut transport_ctx = TransportContext {
+                    remote_addr: peer,
+                    local_addr: local,
+                    real_ip: None,
+                    connection_time: std::time::Instant::now(),
+                    bytes_received: 0,
+                    bytes_sent: 0,
+                    connection_id: 0,
+                    extensions: Extensions::new(),
+                };
+
+                if matches!(
+                    self.services.transport_filter_chain.on_accept(&mut transport_ctx).await,
+                    FilterVerdict::Reject
+                ) {
+                    tracing::debug!(peer = %peer, "Connection rejected by transport filter");
+                    drop(accepted);
+                    continue;
+                }
+            }
+
+            // TODO: on_client_data/on_server_data wrapping
+            // These require wrapping the TCP stream to intercept raw bytes.
+            // Will be implemented when a real use case demands it.
 
             if let Err(e) = self.handle_connection(accepted, shutdown).await {
                 tracing::warn!(peer = %peer, error = %e, "connection error");
@@ -498,6 +538,17 @@ impl ProxyServer {
     /// Returns the domain router.
     pub fn domain_router(&self) -> &Arc<DomainRouter> {
         &self.services.domain_router
+    }
+
+    /// Rebuilds the transport filter chain from a registry.
+    ///
+    /// Call this after plugins have been loaded and may have registered
+    /// transport filters.
+    pub fn rebuild_transport_filter_chain(
+        &mut self,
+        registry: &crate::filter::transport_registry::TransportFilterRegistryImpl,
+    ) {
+        self.services.transport_filter_chain = registry.build_chain();
     }
 
     /// Returns the shutdown token.

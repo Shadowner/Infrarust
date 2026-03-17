@@ -4,10 +4,12 @@
 //! both sides concurrently via `tokio::select!`, intercepts special
 //! packets (`SetCompression`, `LoginSuccess`, Disconnect, `FinishConfig`),
 //! and forwards everything else opaquely.
+//!
+//! Codec filters are applied to every packet BEFORE the EventBus.
 
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::event::bus::EventBus;
-use infrarust_api::types::PlayerId;
+use infrarust_api::types::{PlayerId, RawPacket};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -24,6 +26,7 @@ use infrarust_protocol::version::{ConnectionState, Direction};
 
 use crate::error::CoreError;
 use crate::event_bus::conversion::{protocol_direction_to_api, protocol_state_to_api};
+use crate::filter::codec_chain::{CodecFilterChain, FilterResult};
 use crate::player::PlayerCommand;
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
@@ -62,6 +65,21 @@ enum ChatAction {
     Message(String),
 }
 
+// --- PacketFrame <-> RawPacket conversions ---
+
+#[inline]
+fn frame_to_raw(frame: &PacketFrame) -> RawPacket {
+    RawPacket::new(frame.id, frame.payload.clone())
+}
+
+#[inline]
+fn raw_to_frame(raw: &RawPacket) -> PacketFrame {
+    PacketFrame {
+        id: raw.packet_id,
+        payload: raw.data.clone(),
+    }
+}
+
 /// Runs the bidirectional proxy loop between client and backend.
 ///
 /// Both directions run concurrently via `tokio::select!`.
@@ -71,9 +89,10 @@ enum ChatAction {
 /// - `FinishConfig` / `AcknowledgeFinishConfig`: transitions Config → Play
 /// - `Disconnect`: forwards and terminates
 ///
+/// Codec filters are applied to every packet BEFORE the EventBus.
 /// In Play state, only `CDisconnect` is intercepted. All other packets
-/// are forwarded opaquely for maximum performance and to avoid decode
-/// errors from version-specific packet ID mismatches.
+/// are forwarded opaquely for maximum performance.
+#[allow(clippy::too_many_arguments)]
 pub async fn proxy_loop(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
@@ -82,39 +101,41 @@ pub async fn proxy_loop(
     mut command_rx: mpsc::Receiver<PlayerCommand>,
     services: &ProxyServices,
     player_id: PlayerId,
+    client_codec_chain: &mut CodecFilterChain,
+    server_codec_chain: &mut CodecFilterChain,
 ) -> ProxyLoopOutcome {
-    loop {
+    let outcome = loop {
         tokio::select! {
             frame = client.read_frame() => {
                 match frame {
                     Ok(Some(frame)) => {
-                        if let Err(e) = handle_client_to_backend(client, backend, frame, registry, services, player_id).await {
+                        if let Err(e) = handle_client_to_backend(client, backend, frame, registry, services, player_id, client_codec_chain).await {
 
-                            return ProxyLoopOutcome::Error(e);
+                            break ProxyLoopOutcome::Error(e);
                         }
                     }
-                    Ok(None) => return ProxyLoopOutcome::ClientDisconnected,
-                    Err(e) => return ProxyLoopOutcome::Error(e),
+                    Ok(None) => break ProxyLoopOutcome::ClientDisconnected,
+                    Err(e) => break ProxyLoopOutcome::Error(e),
                 }
             }
             frame = backend.read_frame() => {
                 match frame {
                     Ok(Some(frame)) => {
-                        match handle_backend_to_client(client, backend, frame, registry, services, player_id).await {
+                        match handle_backend_to_client(client, backend, frame, registry, services, player_id, server_codec_chain).await {
                             Ok(BackendAction::Continue) => {}
                             Ok(BackendAction::Disconnected(reason)) => {
-                                return ProxyLoopOutcome::BackendDisconnected { reason };
+                                break ProxyLoopOutcome::BackendDisconnected { reason };
                             }
-                            Err(e) => return ProxyLoopOutcome::Error(e),
+                            Err(e) => break ProxyLoopOutcome::Error(e),
                         }
                     }
-                    Ok(None) => return ProxyLoopOutcome::BackendDisconnected { reason: None },
-                    Err(e) => return ProxyLoopOutcome::Error(e),
+                    Ok(None) => break ProxyLoopOutcome::BackendDisconnected { reason: None },
+                    Err(e) => break ProxyLoopOutcome::Error(e),
                 }
             }
             Some(cmd) = command_rx.recv() => {
                 match handle_player_command(client, cmd, registry).await {
-                    Ok(true) => return ProxyLoopOutcome::ClientDisconnected, // Kick
+                    Ok(true) => break ProxyLoopOutcome::ClientDisconnected, // Kick
                     Ok(false) => {} // Continue
                     Err(e) => {
                         tracing::warn!("failed to handle player command: {e}");
@@ -122,10 +143,16 @@ pub async fn proxy_loop(
                 }
             }
             () = shutdown.cancelled() => {
-                return ProxyLoopOutcome::Shutdown;
+                break ProxyLoopOutcome::Shutdown;
             }
         }
-    }
+    };
+
+    // Cleanup filter chains
+    client_codec_chain.close();
+    server_codec_chain.close();
+
+    outcome
 }
 
 /// Handles a player command from the plugin system.
@@ -157,10 +184,7 @@ async fn handle_player_command(
             }
         }
         PlayerCommand::SendPacket(raw_packet) => {
-            let frame = PacketFrame {
-                id: raw_packet.packet_id,
-                payload: raw_packet.data,
-            };
+            let frame = raw_to_frame(&raw_packet);
             client.write_frame(&frame).await?;
         }
         PlayerCommand::Kick(reason) => {
@@ -225,13 +249,86 @@ fn detect_chat_or_command(
 
 use infrarust_protocol::Packet;
 
+/// Sends injected frames from a codec filter's FrameOutput.
+async fn send_injected_frames(
+    writer: &mut impl FrameWriter,
+    output: &mut infrarust_api::filter::FrameOutput,
+    send_before: bool,
+    send_after: bool,
+) -> Result<(), CoreError> {
+    if send_before {
+        for raw in output.take_before() {
+            writer.write_frame(&raw_to_frame(&raw)).await?;
+        }
+    }
+    if send_after {
+        for raw in output.take_after() {
+            writer.write_frame(&raw_to_frame(&raw)).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Helper trait to abstract over client/backend bridge for writing.
+trait FrameWriter {
+    fn write_frame(
+        &mut self,
+        frame: &PacketFrame,
+    ) -> impl std::future::Future<Output = Result<(), CoreError>> + Send;
+}
+
+impl FrameWriter for ClientBridge {
+    async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
+        ClientBridge::write_frame(self, frame).await
+    }
+}
+
+impl FrameWriter for BackendBridge {
+    async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
+        BackendBridge::write_frame(self, frame).await
+    }
+}
+
+/// Applies codec filter chain to a frame and handles the result.
+///
+/// Returns `Ok(true)` if the frame was consumed (dropped/replaced) and should
+/// NOT be forwarded further. Returns `Ok(false)` if processing should continue
+/// with the (possibly modified) frame.
+async fn apply_codec_filter(
+    chain: &mut CodecFilterChain,
+    frame: &mut PacketFrame,
+    writer: &mut impl FrameWriter,
+) -> Result<bool, CoreError> {
+    if chain.is_empty() {
+        return Ok(false);
+    }
+
+    let mut raw = frame_to_raw(frame);
+    match chain.process(&mut raw) {
+        FilterResult::Pass => {
+            // Update the frame in case a filter modified it in place
+            *frame = raw_to_frame(&raw);
+            Ok(false)
+        }
+        FilterResult::Dropped => Ok(true),
+        FilterResult::Replaced(mut output) => {
+            send_injected_frames(writer, &mut output, true, true).await?;
+            Ok(true) // Original frame is NOT sent
+        }
+        FilterResult::PassWithInjections(mut output) => {
+            // Send before-injections, then the (possibly modified) original, then after-injections
+            send_injected_frames(writer, &mut output, true, false).await?;
+            *frame = raw_to_frame(&raw);
+            writer.write_frame(frame).await?;
+            send_injected_frames(writer, &mut output, false, true).await?;
+            Ok(true) // Frame already sent with injections
+        }
+    }
+}
+
 /// Handles a packet from the client, forwarding it to the backend.
 ///
-/// - In Login/Config state: decodes for state transition detection
-///   (`SLoginAcknowledged`, `SAcknowledgeFinishConfig`).
-/// - In Play state: intercepts chat/commands, fires RawPacketEvent for
-///   packets with listeners, drops `SChatSessionUpdate`, and forwards
-///   everything else opaquely.
+/// Order: CodecFilter → Chat/Command interception → EventBus → forward.
 async fn handle_client_to_backend(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
@@ -239,12 +336,18 @@ async fn handle_client_to_backend(
     registry: &PacketRegistry,
     services: &ProxyServices,
     player_id: PlayerId,
+    codec_chain: &mut CodecFilterChain,
 ) -> Result<(), CoreError> {
     let version = client.protocol_version;
     let state = client.state();
 
-    // In Play state: chat/command interception + RawPacketEvent + opaque forward
+    // In Play state: CodecFilter → chat/command → RawPacketEvent → forward
     if state == ConnectionState::Play {
+        // --- CodecFilter (BEFORE EventBus) ---
+        if apply_codec_filter(codec_chain, &mut frame, backend).await? {
+            return Ok(()); // Frame consumed by filter
+        }
+
         // Drop SChatSessionUpdate (offline backends can't validate signatures)
         let chat_session_id = registry.get_packet_id::<SChatSessionUpdate>(
             ConnectionState::Play,
@@ -347,6 +450,7 @@ async fn handle_client_to_backend(
                 backend.write_frame(&frame).await?;
                 client.set_state(ConnectionState::Config);
                 backend.set_state(ConnectionState::Config);
+                codec_chain.notify_state_change(protocol_state_to_api(ConnectionState::Config));
                 tracing::debug!("state transition: Login → Config (LoginAcknowledged)");
                 return Ok(());
             }
@@ -360,6 +464,7 @@ async fn handle_client_to_backend(
                 backend.write_frame(&frame).await?;
                 client.set_state(ConnectionState::Play);
                 backend.set_state(ConnectionState::Play);
+                codec_chain.notify_state_change(protocol_state_to_api(ConnectionState::Play));
                 tracing::debug!("state transition: Config → Play (AcknowledgeFinishConfig)");
                 return Ok(());
             }
@@ -378,11 +483,7 @@ async fn handle_client_to_backend(
 
 /// Handles a packet from the backend, forwarding it to the client.
 ///
-/// - In Login/Config state: intercepts `SetCompression`, `LoginSuccess`,
-///   `Disconnect`, and `FinishConfig` for state management.
-/// - In Play state: fires RawPacketEvent for packets with listeners,
-///   only intercepts `CDisconnect` for disconnect reason logging.
-///   All other packets are forwarded opaquely.
+/// Order: CodecFilter → EventBus → state interception → forward.
 async fn handle_backend_to_client(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
@@ -390,12 +491,18 @@ async fn handle_backend_to_client(
     registry: &PacketRegistry,
     services: &ProxyServices,
     player_id: PlayerId,
+    codec_chain: &mut CodecFilterChain,
 ) -> Result<BackendAction, CoreError> {
     let version = client.protocol_version;
     let state = backend.state;
 
-    // In Play state: RawPacketEvent + disconnect detection
+    // In Play state: CodecFilter → RawPacketEvent → disconnect detection
     if state == ConnectionState::Play {
+        // --- CodecFilter (BEFORE EventBus) ---
+        if apply_codec_filter(codec_chain, &mut frame, client).await? {
+            return Ok(BackendAction::Continue); // Frame consumed by filter
+        }
+
         // RawPacketEvent — only fire if someone is listening
         let api_state = protocol_state_to_api(state);
         let api_direction = protocol_direction_to_api(Direction::Clientbound);
@@ -463,6 +570,7 @@ async fn handle_backend_to_client(
                 backend.set_compression(threshold);
                 client.set_compression(threshold);
                 client.write_frame(&frame).await?;
+                codec_chain.notify_compression_change(threshold);
                 tracing::debug!(threshold, "compression activated");
                 return Ok(BackendAction::Continue);
             }
@@ -475,6 +583,7 @@ async fn handle_backend_to_client(
                 if version.less_than(infrarust_protocol::version::ProtocolVersion::V1_20_2) {
                     client.set_state(ConnectionState::Play);
                     backend.set_state(ConnectionState::Play);
+                    codec_chain.notify_state_change(protocol_state_to_api(ConnectionState::Play));
                     tracing::debug!("state transition: Login → Play (pre-1.20.2)");
                 }
                 // For 1.20.2+, transition happens in handle_client_to_backend

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use infrarust_api::command::CommandManager;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::event::ListenerHandle;
+use infrarust_api::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use infrarust_api::limbo::LimboHandler;
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::scheduler::{Scheduler, TaskHandle};
@@ -12,6 +13,9 @@ use infrarust_api::services::{
     ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
     server_manager::ServerManager,
 };
+
+use crate::filter::codec_registry::CodecFilterRegistryImpl;
+use crate::filter::transport_registry::TransportFilterRegistryImpl;
 
 use super::tracking::{TrackingCommandManager, TrackingEventBus, TrackingScheduler};
 
@@ -30,6 +34,8 @@ pub struct PluginContextImpl {
     command_manager: Arc<TrackingCommandManager>,
     scheduler: Arc<TrackingScheduler>,
     limbo_handlers: Mutex<Vec<Box<dyn LimboHandler>>>,
+    codec_filter_registry: Arc<CodecFilterRegistryImpl>,
+    transport_filter_registry: Arc<TransportFilterRegistryImpl>,
     plugin_id: String,
 
     // Shared tracking state (also held by the wrappers)
@@ -50,6 +56,8 @@ impl PluginContextImpl {
         config_service: Arc<dyn ConfigService>,
         command_manager: Arc<dyn CommandManager>,
         scheduler: Arc<dyn Scheduler>,
+        codec_filter_registry: Arc<CodecFilterRegistryImpl>,
+        transport_filter_registry: Arc<TransportFilterRegistryImpl>,
     ) -> Self {
         let registered_handles = Arc::new(Mutex::new(Vec::new()));
         let registered_commands = Arc::new(Mutex::new(Vec::new()));
@@ -73,6 +81,8 @@ impl PluginContextImpl {
             command_manager: tracking_cmd,
             scheduler: tracking_sched,
             limbo_handlers: Mutex::new(Vec::new()),
+            codec_filter_registry,
+            transport_filter_registry,
             plugin_id,
             registered_handles,
             registered_commands,
@@ -163,6 +173,14 @@ impl PluginContext for PluginContextImpl {
     fn register_limbo_handler(&self, handler: Box<dyn LimboHandler>) {
         let mut handlers = self.limbo_handlers.lock().unwrap_or_else(|e| e.into_inner());
         handlers.push(handler);
+    }
+
+    fn codec_filters(&self) -> Option<&dyn CodecFilterRegistry> {
+        Some(self.codec_filter_registry.as_ref())
+    }
+
+    fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry> {
+        Some(self.transport_filter_registry.as_ref())
     }
 
     fn plugin_id(&self) -> &str {

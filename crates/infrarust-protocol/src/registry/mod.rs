@@ -202,8 +202,10 @@ impl PacketRegistry {
     }
 
     /// Inserts a decoder function for a `packet_id`.
-    /// Used internally by the builder.
-    pub(crate) fn insert_decoder(
+    ///
+    /// Used by the builder and extensible for plugins that register
+    /// custom packet decoders via `PacketRegistryExt` (future).
+    pub fn insert_decoder(
         &mut self,
         key: (ConnectionState, Direction, ProtocolVersion),
         packet_id: i32,

@@ -10,6 +10,7 @@ use crate::command::CommandManager;
 use crate::error::PluginError;
 use crate::event::bus::EventBus;
 use crate::event::BoxFuture;
+use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use crate::limbo::LimboHandler;
 use crate::services::{
     ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
@@ -175,6 +176,16 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     /// The handler's [`name()`](LimboHandler::name) must match the name
     /// referenced in server configuration `limbo_handlers` lists.
     fn register_limbo_handler(&self, handler: Box<dyn LimboHandler>);
+
+    /// Returns the codec filter registry for registering packet-level filters.
+    ///
+    /// Returns `Some` for native plugins, `None` for WASM plugins (future).
+    fn codec_filters(&self) -> Option<&dyn CodecFilterRegistry>;
+
+    /// Returns the transport filter registry for registering TCP-level filters.
+    ///
+    /// Returns `Some` for native plugins, `None` for WASM plugins.
+    fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry>;
 
     /// Returns this plugin's unique ID.
     fn plugin_id(&self) -> &str;

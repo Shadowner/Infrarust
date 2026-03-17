@@ -13,6 +13,9 @@ use infrarust_api::services::{
     scheduler::Scheduler, server_manager::ServerManager,
 };
 
+use crate::filter::codec_registry::CodecFilterRegistryImpl;
+use crate::filter::transport_registry::TransportFilterRegistryImpl;
+
 use super::PluginState;
 use super::context::PluginContextImpl;
 use super::dependency::resolve_load_order;
@@ -26,6 +29,8 @@ pub struct PluginServices {
     pub command_manager: Arc<dyn CommandManager>,
     pub scheduler: Arc<dyn Scheduler>,
     pub config_service: Arc<dyn ConfigService>,
+    pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
+    pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
     pub plugins_dir: PathBuf,
 }
 
@@ -105,6 +110,8 @@ impl PluginManager {
                 Arc::clone(&services.config_service),
                 Arc::clone(&services.command_manager),
                 Arc::clone(&services.scheduler),
+                Arc::clone(&services.codec_filter_registry),
+                Arc::clone(&services.transport_filter_registry),
             ));
 
             match loaded.plugin.on_enable(ctx.as_ref()).await {

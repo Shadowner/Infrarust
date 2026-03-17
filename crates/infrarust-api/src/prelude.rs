@@ -44,5 +44,12 @@ pub use crate::virtual_backend::{VirtualBackendHandler, VirtualBackendSession};
 // Commands
 pub use crate::command::{CommandContext, CommandHandler, CommandManager};
 
+// Filters
+pub use crate::filter::{
+    CodecContext, CodecFilterError, CodecFilterFactory, CodecFilterInstance, CodecFilterRegistry,
+    CodecSessionInit, CodecVerdict, ConnectionSide, FilterMetadata, FilterPriority, FilterVerdict,
+    FrameOutput, PlayerInfo, TransportContext, TransportFilter, TransportFilterRegistry,
+};
+
 // Standard library
 pub use std::sync::Arc;

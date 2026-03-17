@@ -66,6 +66,12 @@ async fn test_plugin_receives_events_end_to_end() {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        codec_filter_registry: Arc::new(
+            infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
+        ),
+        transport_filter_registry: Arc::new(
+            infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
+        ),
         plugins_dir: PathBuf::from("plugins"),
     };
 
@@ -131,6 +137,12 @@ async fn test_dependency_order_end_to_end() {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        codec_filter_registry: Arc::new(
+            infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
+        ),
+        transport_filter_registry: Arc::new(
+            infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
+        ),
         plugins_dir: PathBuf::from("plugins"),
     };
 

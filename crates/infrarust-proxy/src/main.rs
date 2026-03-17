@@ -168,7 +168,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     });
 
     // Build and run the proxy server
-    let server = ProxyServer::new(config, shutdown.clone())
+    let mut server = ProxyServer::new(config, shutdown.clone())
         .await
         .context("failed to initialize proxy server")?;
 
@@ -184,6 +184,10 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
             None => Arc::new(NoopServerManager),
         };
 
+    let transport_filter_registry = Arc::new(
+        infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
+    );
+
     let plugin_services = PluginServices {
         event_bus: Arc::clone(&services.event_bus) as Arc<dyn infrarust_api::event::bus::EventBus>,
         player_registry: Arc::clone(&services.player_registry)
@@ -194,6 +198,8 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
             as Arc<dyn infrarust_api::command::CommandManager>,
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(ConfigServiceImpl::new(Arc::clone(&services.domain_router))),
+        codec_filter_registry: Arc::clone(&services.codec_filter_registry),
+        transport_filter_registry: Arc::clone(&transport_filter_registry),
         plugins_dir: PathBuf::from("plugins"),
     };
 
@@ -201,6 +207,9 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     if !errors.is_empty() {
         tracing::warn!(count = errors.len(), "Some plugins failed to enable");
     }
+
+    // Rebuild transport filter chain now that plugins may have registered filters
+    server.rebuild_transport_filter_chain(&transport_filter_registry);
 
     tracing::info!("infrarust is ready, accepting connections");
 
