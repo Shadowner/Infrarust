@@ -213,9 +213,14 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
 
     tracing::info!("infrarust is ready, accepting connections");
 
+    let server = Arc::new(server);
+
     server.event_bus().fire(ProxyInitializeEvent).await;
 
-    server.run().await.context("proxy server error")?;
+    Arc::clone(&server)
+        .run()
+        .await
+        .context("proxy server error")?;
 
     plugin_manager.disable_all().await;
 

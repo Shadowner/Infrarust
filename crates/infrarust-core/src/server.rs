@@ -288,7 +288,7 @@ impl ProxyServer {
     ///
     /// # Errors
     /// Returns `CoreError` if the listener fails to bind.
-    pub async fn run(&self) -> Result<(), CoreError> {
+    pub async fn run(self: Arc<Self>) -> Result<(), CoreError> {
         // Bind listener
         let config = &self.services.config;
         let listener_config = ListenerConfig {
@@ -377,9 +377,12 @@ impl ProxyServer {
             // These require wrapping the TCP stream to intercept raw bytes.
             // Will be implemented when a real use case demands it.
 
-            if let Err(e) = self.handle_connection(accepted, shutdown).await {
-                tracing::warn!(peer = %peer, error = %e, "connection error");
-            }
+            let server = Arc::clone(&self);
+            tokio::spawn(async move {
+                if let Err(e) = server.handle_connection(accepted, shutdown).await {
+                    tracing::warn!(peer = %peer, error = %e, "connection error");
+                }
+            });
         }
 
         Ok(())
