@@ -341,6 +341,8 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x24, ProtocolVersion::V1_20_2, false)
     .map(0x26, ProtocolVersion::V1_20_5, false)
     .map(0x27, ProtocolVersion::V1_21_2, false)
+    .map(0x26, ProtocolVersion::V1_21_5, false)
+    .map(0x2B, ProtocolVersion::V1_21_9, false)
     .register(&mut registry);
 
     // Disconnect Clientbound (Play)
@@ -362,6 +364,8 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x1A, ProtocolVersion::V1_19_4, false)
     .map(0x1B, ProtocolVersion::V1_20_2, false)
     .map(0x1D, ProtocolVersion::V1_20_5, false)
+    .map(0x1C, ProtocolVersion::V1_21_5, false)
+    .map(0x20, ProtocolVersion::V1_21_9, false)
     .register(&mut registry);
 
     // JoinGame Clientbound (encode-only: proxy doesn't intercept)
@@ -384,6 +388,8 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x29, ProtocolVersion::V1_20_2, true)
     .map(0x2B, ProtocolVersion::V1_20_5, true)
     .map(0x2C, ProtocolVersion::V1_21_2, true)
+    .map(0x2B, ProtocolVersion::V1_21_5, true)
+    .map(0x30, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
 
     // Respawn Clientbound (encode-only: proxy doesn't intercept)
@@ -409,6 +415,8 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x45, ProtocolVersion::V1_20_3, true)
     .map(0x47, ProtocolVersion::V1_20_5, true)
     .map(0x4C, ProtocolVersion::V1_21_2, true)
+    .map(0x4B, ProtocolVersion::V1_21_5, true)
+    .map(0x50, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
 
     // PluginMessage Clientbound (encode-only: proxy doesn't intercept)
@@ -430,6 +438,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x17, ProtocolVersion::V1_19_4, true)
     .map(0x18, ProtocolVersion::V1_20_2, true)
     .map(0x19, ProtocolVersion::V1_20_5, true)
+    .map(0x18, ProtocolVersion::V1_21_5, true)
     .register(&mut registry);
 
     // SystemChatMessage Clientbound (encode-only: proxy doesn't intercept)
@@ -455,14 +464,16 @@ pub fn build_default_registry() -> PacketRegistry {
         Direction::Clientbound,
     )
     .map(0x59, ProtocolVersion::V1_17, true)
-    .map(0x5D, ProtocolVersion::V1_19, true)
-    .map(0x5F, ProtocolVersion::V1_19_1, true)
-    .map(0x5D, ProtocolVersion::V1_19_3, true)
-    .map(0x61, ProtocolVersion::V1_19_4, true)
-    .map(0x63, ProtocolVersion::V1_20_2, true)
-    .map(0x65, ProtocolVersion::V1_20_3, true)
-    .map(0x68, ProtocolVersion::V1_20_5, true)
-    .map(0x6F, ProtocolVersion::V1_21_2, true)
+    .map(0x5A, ProtocolVersion::V1_18, true)
+    .map(0x5D, ProtocolVersion::V1_19_1, true)
+    .map(0x5B, ProtocolVersion::V1_19_3, true)
+    .map(0x5F, ProtocolVersion::V1_19_4, true)
+    .map(0x61, ProtocolVersion::V1_20_2, true)
+    .map(0x63, ProtocolVersion::V1_20_3, true)
+    .map(0x65, ProtocolVersion::V1_20_5, true)
+    .map(0x6C, ProtocolVersion::V1_21_2, true)
+    .map(0x6B, ProtocolVersion::V1_21_5, true)
+    .map(0x70, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
 
     // SetSubtitle Clientbound (encode-only: injected by plugin system)
@@ -471,14 +482,16 @@ pub fn build_default_registry() -> PacketRegistry {
         Direction::Clientbound,
     )
     .map(0x57, ProtocolVersion::V1_17, true)
-    .map(0x5B, ProtocolVersion::V1_19, true)
-    .map(0x5D, ProtocolVersion::V1_19_1, true)
-    .map(0x5B, ProtocolVersion::V1_19_3, true)
-    .map(0x5F, ProtocolVersion::V1_19_4, true)
-    .map(0x61, ProtocolVersion::V1_20_2, true)
-    .map(0x63, ProtocolVersion::V1_20_3, true)
-    .map(0x66, ProtocolVersion::V1_20_5, true)
-    .map(0x6D, ProtocolVersion::V1_21_2, true)
+    .map(0x58, ProtocolVersion::V1_18, true)
+    .map(0x5B, ProtocolVersion::V1_19_1, true)
+    .map(0x59, ProtocolVersion::V1_19_3, true)
+    .map(0x5D, ProtocolVersion::V1_19_4, true)
+    .map(0x5F, ProtocolVersion::V1_20_2, true)
+    .map(0x61, ProtocolVersion::V1_20_3, true)
+    .map(0x63, ProtocolVersion::V1_20_5, true)
+    .map(0x6A, ProtocolVersion::V1_21_2, true)
+    .map(0x69, ProtocolVersion::V1_21_5, true)
+    .map(0x6E, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
 
     // SetTitleTimes Clientbound (encode-only: injected by plugin system)
@@ -487,14 +500,16 @@ pub fn build_default_registry() -> PacketRegistry {
         Direction::Clientbound,
     )
     .map(0x5A, ProtocolVersion::V1_17, true)
-    .map(0x5E, ProtocolVersion::V1_19, true)
-    .map(0x60, ProtocolVersion::V1_19_1, true)
-    .map(0x5E, ProtocolVersion::V1_19_3, true)
-    .map(0x62, ProtocolVersion::V1_19_4, true)
-    .map(0x64, ProtocolVersion::V1_20_2, true)
-    .map(0x66, ProtocolVersion::V1_20_3, true)
-    .map(0x69, ProtocolVersion::V1_20_5, true)
-    .map(0x70, ProtocolVersion::V1_21_2, true)
+    .map(0x5B, ProtocolVersion::V1_18, true)
+    .map(0x5E, ProtocolVersion::V1_19_1, true)
+    .map(0x5C, ProtocolVersion::V1_19_3, true)
+    .map(0x60, ProtocolVersion::V1_19_4, true)
+    .map(0x62, ProtocolVersion::V1_20_2, true)
+    .map(0x64, ProtocolVersion::V1_20_3, true)
+    .map(0x66, ProtocolVersion::V1_20_5, true)
+    .map(0x6D, ProtocolVersion::V1_21_2, true)
+    .map(0x6C, ProtocolVersion::V1_21_5, true)
+    .map(0x71, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
 
     // Transfer Clientbound (encode-only: proxy doesn't intercept)
@@ -504,6 +519,7 @@ pub fn build_default_registry() -> PacketRegistry {
     )
     .map(0x73, ProtocolVersion::V1_20_5, true)
     .map(0x7A, ProtocolVersion::V1_21_2, true)
+    .map(0x7F, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
 
     // ── Play (Serverbound) ────────────────────────────────────────
@@ -529,6 +545,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x15, ProtocolVersion::V1_20_3, false)
     .map(0x18, ProtocolVersion::V1_20_5, false)
     .map(0x1A, ProtocolVersion::V1_21_2, false)
+    .map(0x1B, ProtocolVersion::V1_21_6, false)
     .register(&mut registry);
 
     // ChatMessage Serverbound — registered as encode_only because the proxy
@@ -603,6 +620,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x10, ProtocolVersion::V1_20_3, true)
     .map(0x12, ProtocolVersion::V1_20_5, true)
     .map(0x14, ProtocolVersion::V1_21_2, true)
+    .map(0x15, ProtocolVersion::V1_21_6, true)
     .register(&mut registry);
 
     registry
