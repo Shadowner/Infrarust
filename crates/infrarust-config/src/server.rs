@@ -7,55 +7,55 @@ use crate::types::{
     TimeoutConfig,
 };
 
-/// Configuration d'un serveur backend Minecraft.
-/// Chaque fichier dans `servers_dir/` désérialise vers ce type.
+/// Configuration for a Minecraft backend server.
+/// Each file in `servers_dir/` deserializes into this type.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
-    /// Identifiant unique. Dérivé du nom de fichier si absent.
+    /// Unique identifier. Derived from the filename if absent.
     #[serde(default)]
     pub id: Option<String>,
 
-    /// Domaines qui routent vers ce serveur.
-    /// Supporte les wildcards : "*.mc.example.com"
+    /// Domains that route to this server.
+    /// Supports wildcards: "*.mc.example.com"
     pub domains: Vec<String>,
 
-    /// Adresses du backend (host:port). Plusieurs = load balancing futur.
+    /// Backend addresses (host:port). Multiple = future load balancing.
     pub addresses: Vec<ServerAddress>,
 
-    /// Mode de proxy pour ce serveur
+    /// Proxy mode for this server
     #[serde(default)]
     pub proxy_mode: ProxyMode,
 
-    /// Envoyer le proxy protocol au backend
+    /// Sends proxy protocol to the backend
     #[serde(default)]
     pub send_proxy_protocol: bool,
 
-    /// Réécriture du domaine dans le handshake
+    /// Domain rewrite in the handshake
     #[serde(default)]
     pub domain_rewrite: DomainRewrite,
 
-    /// MOTD par état du serveur
+    /// MOTD per server state
     #[serde(default)]
     pub motd: MotdConfig,
 
-    /// Gestion automatique du serveur (start/stop)
+    /// Automatic server management (start/stop)
     #[serde(default)]
     pub server_manager: Option<ServerManagerConfig>,
 
-    /// Timeouts spécifiques (override global)
+    /// Server-specific timeouts (overrides global settings)
     #[serde(default)]
     pub timeouts: Option<TimeoutConfig>,
 
-    /// Nombre max de joueurs (0 = illimité)
+    /// Maximum number of players (0 = unlimited)
     #[serde(default)]
     pub max_players: u32,
 
-    /// Filtres IP spécifiques
+    /// Server-specific IP filters
     #[serde(default)]
     pub ip_filter: Option<IpFilterConfig>,
 
-    /// Message de déconnexion envoyé au joueur quand le backend est injoignable.
+    /// Disconnect message sent to the player when the backend is unreachable.
     #[serde(default)]
     pub disconnect_message: Option<String>,
 }

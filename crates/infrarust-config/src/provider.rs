@@ -5,13 +5,13 @@ use tokio::sync::mpsc;
 use crate::error::ConfigError;
 use crate::server::ServerConfig;
 
-/// Source de configuration des serveurs.
+/// Server configuration source.
 ///
-/// Implémenté par `FileProvider`, `DockerProvider`, etc.
-/// Les implémentations concrètes vivent hors de ce crate
-/// (elles tirent des dépendances lourdes comme `notify` ou `bollard`).
+/// Implemented by `FileProvider`, `DockerProvider`, etc.
+/// Concrete implementations live outside this crate
+/// (they pull heavy dependencies like `notify` or `bollard`).
 pub trait ConfigProvider: Send + Sync {
-    /// Charge toutes les configurations serveurs.
+    /// Loads all server configurations.
     ///
     /// # Errors
     ///
@@ -19,24 +19,24 @@ pub trait ConfigProvider: Send + Sync {
     /// or the configuration data is invalid.
     fn load_configs(&self) -> Result<Vec<ServerConfig>, ConfigError>;
 
-    /// S'abonne aux changements de configuration.
+    /// Subscribes to configuration changes.
     ///
-    /// Retourne `Some(receiver)` si le provider supporte le hot-reload,
-    /// `None` sinon. Le receiver émet des `ConfigChange` au fil du temps.
+    /// Returns `Some(receiver)` if the provider supports hot-reload,
+    /// `None` otherwise. The receiver emits `ConfigChange` events over time.
     fn watch(&self) -> Option<mpsc::Receiver<ConfigChange>>;
 }
 
-/// Un changement de configuration détecté par un provider.
+/// A configuration change detected by a provider.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum ConfigChange {
-    /// Un nouveau serveur a été ajouté.
+    /// A new server has been added.
     Added(ServerConfig),
-    /// Un serveur existant a été modifié.
+    /// An existing server has been modified.
     Updated { id: String, config: ServerConfig },
-    /// Un serveur a été supprimé.
+    /// A server has been removed.
     Removed { id: String },
-    /// Rechargement complet (tous les serveurs).
-    /// Utilisé quand le provider ne peut pas calculer un diff.
+    /// Full reload (all servers).
+    /// Used when the provider cannot compute a diff.
     FullReload(Vec<ServerConfig>),
 }

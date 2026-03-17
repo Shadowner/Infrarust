@@ -11,38 +11,38 @@ use serde::Deserialize;
 use crate::defaults;
 use crate::error::ConfigError;
 
-/// Port Minecraft par défaut.
+/// Default Minecraft port.
 pub const DEFAULT_MC_PORT: u16 = 25565;
 
 // ─────────────────────────── Proxy Mode ───────────────────────────
 
-/// Les modes de proxy supportés.
+/// Supported proxy modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ProxyMode {
-    /// Forward brut via `tokio::io::copy_bidirectional`.
+    /// Raw forwarding via `tokio::io::copy_bidirectional`.
     #[default]
     Passthrough,
-    /// Forward brut via `splice(2)` sur Linux.
+    /// Raw forwarding via `splice(2)` on Linux.
     ZeroCopy,
-    /// Auth Mojang côté proxy, backend en `online_mode=false`.
+    /// Mojang auth on the proxy side, backend in `online_mode=false`.
     ClientOnly,
-    /// Pas d'auth, relais transparent.
+    /// No authentication, transparent relay.
     Offline,
-    /// Auth gérée par le backend.
+    /// Authentication handled by the backend.
     ServerOnly,
-    /// Chiffrement des deux côtés (nouveau V2).
+    /// Encryption on both sides (new in V2).
     Full,
 }
 
 impl ProxyMode {
-    /// `true` si le proxy parse les paquets au-delà du handshake.
+    /// Returns `true` if the proxy parses packets beyond the handshake.
     pub const fn is_intercepted(&self) -> bool {
         matches!(self, Self::ClientOnly | Self::Offline | Self::Full)
     }
 
-    /// `true` si le proxy fait du forward brut après le handshake.
+    /// Returns `true` if the proxy performs raw forwarding after the handshake.
     pub const fn is_forwarding(&self) -> bool {
         matches!(self, Self::Passthrough | Self::ZeroCopy | Self::ServerOnly)
     }
@@ -50,9 +50,9 @@ impl ProxyMode {
 
 // ─────────────────────────── Server Address ───────────────────────
 
-/// Adresse d'un serveur backend.
+/// Address of a backend server.
 ///
-/// Se désérialise depuis une string `"host:port"` ou `"host"` (port par défaut = 25565).
+/// Deserializes from a string `"host:port"` or `"host"` (default port = 25565).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ServerAddress {
     pub host: String,
@@ -63,7 +63,7 @@ impl FromStr for ServerAddress {
     type Err = ConfigError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Tente de parser comme SocketAddr d'abord (IP:port)
+        // Try to parse as SocketAddr first (IP:port)
         if let Ok(sock) = s.parse::<SocketAddr>() {
             return Ok(Self {
                 host: sock.ip().to_string(),
@@ -71,7 +71,7 @@ impl FromStr for ServerAddress {
             });
         }
 
-        // Sinon, split sur le dernier ':'
+        // Otherwise, split on the last ':'
         if let Some((host, port_str)) = s.rsplit_once(':')
             && let Ok(port) = port_str.parse::<u16>()
         {
@@ -81,7 +81,7 @@ impl FromStr for ServerAddress {
             });
         }
 
-        // Pas de port → défaut 25565
+        // No port → default 25565
         if s.is_empty() {
             return Err(ConfigError::InvalidAddress(s.to_string()));
         }
@@ -99,7 +99,7 @@ impl fmt::Display for ServerAddress {
     }
 }
 
-/// Désérialisation serde depuis un string.
+/// Serde deserialization from a string.
 impl<'de> Deserialize<'de> for ServerAddress {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -112,41 +112,41 @@ impl<'de> Deserialize<'de> for ServerAddress {
 
 // ─────────────────────────── Domain Rewrite ───────────────────────
 
-/// Comment réécrire le domaine dans le handshake Minecraft
-/// avant de le transmettre au backend.
+/// How to rewrite the domain in the Minecraft handshake
+/// before forwarding it to the backend.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum DomainRewrite {
-    /// Pas de réécriture — le domaine original est transmis tel quel.
+    /// No rewrite — the original domain is forwarded as-is.
     #[default]
     None,
-    /// Réécrire avec un domaine explicite.
+    /// Rewrites with an explicit domain.
     Explicit(String),
-    /// Extraire le domaine depuis l'adresse du premier backend.
+    /// Extracts the domain from the first backend address.
     FromBackend,
 }
 
 // ─────────────────────────── Rate Limit ───────────────────────────
 
-/// Configuration du rate limiting.
+/// Rate limiting configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RateLimitConfig {
-    /// Connexions login max par IP par fenêtre.
+    /// Maximum login connections per IP per window.
     #[serde(default = "defaults::rate_limit_max")]
     pub max_connections: u32,
 
-    /// Durée de la fenêtre pour les logins.
+    /// Window duration for logins.
     #[serde(default = "defaults::rate_limit_window")]
     #[serde(with = "humantime_serde")]
     pub window: Duration,
 
-    /// Limite séparée pour les status pings (plus permissif).
+    /// Separate limit for status pings (more permissive).
     #[serde(default = "defaults::rate_limit_status_max")]
     pub status_max: u32,
 
-    /// Durée de la fenêtre pour les status pings.
+    /// Window duration for status pings.
     #[serde(default = "defaults::rate_limit_status_window")]
     #[serde(with = "humantime_serde")]
     pub status_window: Duration,
@@ -165,16 +165,16 @@ impl Default for RateLimitConfig {
 
 // ─────────────────────────── Status Cache ─────────────────────────
 
-/// Configuration du cache de status ping.
+/// Status ping cache configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StatusCacheConfig {
-    /// Durée de vie d'une entrée en cache.
+    /// Time-to-live for a cache entry.
     #[serde(default = "defaults::status_cache_ttl")]
     #[serde(with = "humantime_serde")]
     pub ttl: Duration,
 
-    /// Nombre max d'entrées.
+    /// Maximum number of entries.
     #[serde(default = "defaults::status_cache_max_entries")]
     pub max_entries: usize,
 }
@@ -190,7 +190,7 @@ impl Default for StatusCacheConfig {
 
 // ─────────────────────────── MOTD ─────────────────────────────────
 
-/// MOTD par état du serveur.
+/// MOTD per server state.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MotdConfig {
@@ -203,26 +203,26 @@ pub struct MotdConfig {
     pub unreachable: Option<MotdEntry>,
 }
 
-/// Une entrée MOTD.
+/// A MOTD entry.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MotdEntry {
-    /// Texte du MOTD (supporte les codes Minecraft §).
+    /// MOTD text (supports Minecraft formatting codes).
     pub text: String,
-    /// Chemin vers le favicon (PNG), base64, ou URL.
+    /// Path to the favicon (PNG), base64 string, or URL.
     #[serde(default)]
     pub favicon: Option<String>,
-    /// Version affichée dans le client.
+    /// Version displayed in the client.
     #[serde(default)]
     pub version_name: Option<String>,
-    /// Nombre de joueurs max affiché.
+    /// Maximum player count displayed.
     #[serde(default)]
     pub max_players: Option<u32>,
 }
 
 // ─────────────────────────── Timeouts ─────────────────────────────
 
-/// Timeouts spécifiques à un serveur (override global).
+/// Server-specific timeouts (overrides global settings).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimeoutConfig {
@@ -241,24 +241,24 @@ pub struct TimeoutConfig {
 
 // ─────────────────────────── Keepalive ────────────────────────────
 
-/// Configuration TCP keepalive.
+/// TCP keepalive configuration.
 ///
-/// Contrôle les sondes keepalive envoyées sur les connexions TCP
-/// pour détecter les connexions mortes.
+/// Controls the keepalive probes sent on TCP connections
+/// to detect dead connections.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeepaliveConfig {
-    /// Durée d'inactivité avant la première sonde.
+    /// Idle duration before the first probe.
     #[serde(default = "defaults::keepalive_time")]
     #[serde(with = "humantime_serde")]
     pub time: Duration,
 
-    /// Intervalle entre les sondes.
+    /// Interval between probes.
     #[serde(default = "defaults::keepalive_interval")]
     #[serde(with = "humantime_serde")]
     pub interval: Duration,
 
-    /// Nombre de sondes échouées avant fermeture.
+    /// Number of failed probes before closing the connection.
     #[serde(default = "defaults::keepalive_retries")]
     pub retries: u32,
 }
@@ -275,11 +275,11 @@ impl Default for KeepaliveConfig {
 
 // ─────────────────────────── IP Filter ────────────────────────────
 
-/// Filtrage IP par CIDR.
+/// IP filtering by CIDR.
 ///
-/// Si `whitelist` est non-vide, seules les IPs dans la whitelist sont autorisées.
-/// Si `blacklist` est non-vide, les IPs dans la blacklist sont refusées.
-/// La whitelist est évaluée en premier.
+/// If `whitelist` is non-empty, only IPs in the whitelist are allowed.
+/// If `blacklist` is non-empty, IPs in the blacklist are rejected.
+/// The whitelist is evaluated first.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IpFilterConfig {
@@ -290,7 +290,7 @@ pub struct IpFilterConfig {
 }
 
 impl IpFilterConfig {
-    /// Vérifie si une IP est autorisée par ce filtre.
+    /// Checks whether an IP is allowed by this filter.
     pub fn is_allowed(&self, ip: &std::net::IpAddr) -> bool {
         if !self.whitelist.is_empty() {
             return self.whitelist.iter().any(|net| net.contains(ip));
@@ -304,7 +304,7 @@ impl IpFilterConfig {
 
 // ─────────────────────────── Server Manager ───────────────────────
 
-/// Configuration du server manager (auto start/stop).
+/// Server manager configuration (auto start/stop).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerManagerConfig {
@@ -313,71 +313,71 @@ pub enum ServerManagerConfig {
     Crafty(CraftyManagerConfig),
 }
 
-/// Provider Local : lance un processus Java local.
+/// Local provider: launches a local Java process.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocalManagerConfig {
-    /// Commande à exécuter (ex: "java")
+    /// Command to execute (e.g., "java")
     pub command: String,
-    /// Répertoire de travail
+    /// Working directory
     pub working_dir: std::path::PathBuf,
     /// Arguments (ex: `["-Xmx4G", "-jar", "server.jar", "nogui"]`)
     #[serde(default)]
     pub args: Vec<String>,
-    /// Pattern dans stdout qui indique que le serveur est prêt
+    /// Pattern in stdout indicating the server is ready
     #[serde(default = "defaults::ready_pattern")]
     pub ready_pattern: String,
-    /// Timeout pour le shutdown graceful
+    /// Timeout for graceful shutdown
     #[serde(default = "defaults::shutdown_timeout")]
     #[serde(with = "humantime_serde")]
     pub shutdown_timeout: Duration,
-    /// Durée d'inactivité avant shutdown auto (None = désactivé)
+    /// Idle duration before automatic shutdown (None = disabled)
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub shutdown_after: Option<Duration>,
-    /// Timeout pour le démarrage du serveur
+    /// Timeout for server startup
     #[serde(default = "defaults::start_timeout")]
     #[serde(with = "humantime_serde")]
     pub start_timeout: Duration,
 }
 
-/// Provider Pterodactyl : API REST.
+/// Pterodactyl provider: REST API.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PterodactylManagerConfig {
     pub api_url: String,
     pub api_key: String,
     pub server_id: String,
-    /// Durée d'inactivité avant shutdown auto (None = désactivé)
+    /// Idle duration before automatic shutdown (None = disabled)
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub shutdown_after: Option<Duration>,
-    /// Timeout pour le démarrage du serveur
+    /// Timeout for server startup
     #[serde(default = "defaults::start_timeout")]
     #[serde(with = "humantime_serde")]
     pub start_timeout: Duration,
-    /// Intervalle de polling pour vérifier l'état
+    /// Polling interval to check server state
     #[serde(default = "defaults::poll_interval")]
     #[serde(with = "humantime_serde")]
     pub poll_interval: Duration,
 }
 
-/// Provider Crafty Controller : API REST.
+/// Crafty Controller provider: REST API.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CraftyManagerConfig {
     pub api_url: String,
     pub api_key: String,
     pub server_id: String,
-    /// Durée d'inactivité avant shutdown auto (None = désactivé)
+    /// Idle duration before automatic shutdown (None = disabled)
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub shutdown_after: Option<Duration>,
-    /// Timeout pour le démarrage du serveur
+    /// Timeout for server startup
     #[serde(default = "defaults::start_timeout")]
     #[serde(with = "humantime_serde")]
     pub start_timeout: Duration,
-    /// Intervalle de polling pour vérifier l'état
+    /// Polling interval to check server state
     #[serde(default = "defaults::poll_interval")]
     #[serde(with = "humantime_serde")]
     pub poll_interval: Duration,
@@ -385,13 +385,13 @@ pub struct CraftyManagerConfig {
 
 // ─────────────────────────── Telemetry ────────────────────────────
 
-/// Configuration de la télémétrie OpenTelemetry.
+/// OpenTelemetry telemetry configuration.
 ///
-/// Sous-sections : `[telemetry.metrics]`, `[telemetry.traces]`, `[telemetry.resource]`.
-/// Absent du TOML → `None` dans `ProxyConfig` (pas de télémétrie).
+/// Sub-sections: `[telemetry.metrics]`, `[telemetry.traces]`, `[telemetry.resource]`.
+/// Absent from the TOML file means `None` in `ProxyConfig` (no telemetry).
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelemetryConfig {
-    /// Active la télémétrie. `false` = initialisé mais pas d'export.
+    /// Enables telemetry. `false` = initialized but no export.
     #[serde(default)]
     pub enabled: bool,
 
@@ -399,19 +399,19 @@ pub struct TelemetryConfig {
     #[serde(default)]
     pub endpoint: Option<String>,
 
-    /// Protocole d'export : "grpc" ou "http".
+    /// Export protocol: "grpc" or "http".
     #[serde(default = "defaults::telemetry_protocol")]
     pub protocol: String,
 
-    /// Configuration des métriques.
+    /// Metrics configuration.
     #[serde(default)]
     pub metrics: MetricsConfig,
 
-    /// Configuration des traces.
+    /// Traces configuration.
     #[serde(default)]
     pub traces: TracesConfig,
 
-    /// Attributs de ressource `OTel`.
+    /// `OTel` resource attributes.
     #[serde(default)]
     pub resource: ResourceConfig,
 }
@@ -429,15 +429,15 @@ impl Default for TelemetryConfig {
     }
 }
 
-/// Configuration des métriques `OTel`.
+/// `OTel` metrics configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
-    /// Active l'export des métriques.
+    /// Enables metrics export.
     #[serde(default = "defaults::true_val")]
     pub enabled: bool,
 
-    /// Intervalle d'export des métriques.
+    /// Metrics export interval.
     #[serde(default = "defaults::metrics_export_interval")]
     #[serde(with = "humantime_serde")]
     pub export_interval: Duration,
@@ -452,16 +452,16 @@ impl Default for MetricsConfig {
     }
 }
 
-/// Configuration des traces `OTel`.
+/// `OTel` traces configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TracesConfig {
-    /// Active l'export des traces.
+    /// Enables traces export.
     #[serde(default = "defaults::true_val")]
     pub enabled: bool,
 
-    /// Ratio d'échantillonnage pour les status pings (0.0-1.0).
-    /// Les connexions login sont toujours tracées à 100%.
+    /// Sampling ratio for status pings (0.0-1.0).
+    /// Login connections are always traced at 100%.
     #[serde(default = "defaults::sampling_ratio")]
     pub sampling_ratio: f64,
 }
@@ -475,15 +475,15 @@ impl Default for TracesConfig {
     }
 }
 
-/// Attributs de ressource `OTel`.
+/// `OTel` resource attributes.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceConfig {
-    /// Nom du service `OTel`.
+    /// `OTel` service name.
     #[serde(default = "defaults::service_name")]
     pub service_name: String,
 
-    /// Version du service `OTel`.
+    /// `OTel` service version.
     #[serde(default = "defaults::service_version")]
     pub service_version: String,
 }
@@ -499,20 +499,20 @@ impl Default for ResourceConfig {
 
 // ─────────────────────────── Ban ────────────────────────────────
 
-/// Configuration du système de ban.
+/// Ban system configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BanConfig {
-    /// Chemin du fichier de bans JSON.
+    /// Path to the JSON bans file.
     #[serde(default = "defaults::ban_file")]
     pub file: std::path::PathBuf,
 
-    /// Intervalle de purge automatique des bans expirés.
+    /// Automatic purge interval for expired bans.
     #[serde(default = "defaults::ban_purge_interval")]
     #[serde(with = "humantime_serde")]
     pub purge_interval: Duration,
 
-    /// Activer l'audit log (trace des opérations ban/unban).
+    /// Enables the audit log (tracks ban/unban operations).
     #[serde(default = "defaults::ban_audit_log")]
     pub enable_audit_log: bool,
 }
@@ -529,12 +529,12 @@ impl Default for BanConfig {
 
 // ─────────────────────────── Docker Provider ───────────────────────
 
-/// Configuration du provider Docker.
+/// Docker provider configuration.
 ///
-/// Ce type est toujours compilé (pas de feature gate) pour que
-/// `ProxyConfig` puisse parser une section `[docker]` quelle que
-/// soit la configuration de compilation. Le `DockerProvider` lui-même
-/// est feature-gated dans `infrarust-core`.
+/// This type is always compiled (no feature gate) so that
+/// `ProxyConfig` can parse a `[docker]` section regardless of
+/// the build configuration. The `DockerProvider` itself
+/// is feature-gated in `infrarust-core`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DockerProviderConfig {
@@ -542,16 +542,16 @@ pub struct DockerProviderConfig {
     #[serde(default = "defaults::docker_endpoint")]
     pub endpoint: String,
 
-    /// Réseau Docker préféré pour la résolution d'adresse.
+    /// Preferred Docker network for address resolution.
     #[serde(default)]
     pub network: Option<String>,
 
-    /// Intervalle de polling de fallback.
+    /// Fallback polling interval.
     #[serde(default = "defaults::docker_poll_interval")]
     #[serde(with = "humantime_serde")]
     pub poll_interval: Duration,
 
-    /// Délai de reconnexion après coupure du daemon Docker.
+    /// Reconnection delay after Docker daemon disconnection.
     #[serde(default = "defaults::docker_reconnect_delay")]
     #[serde(with = "humantime_serde")]
     pub reconnect_delay: Duration,

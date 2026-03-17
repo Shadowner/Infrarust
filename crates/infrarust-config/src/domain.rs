@@ -6,30 +6,30 @@ use wildmatch::WildMatch;
 
 use crate::server::ServerConfig;
 
-/// Index pré-compilé pour la résolution de domaines.
+/// Pre-compiled index for domain resolution.
 ///
-/// Résout le problème V1 du O(n×m) avec recompilation du `WildMatch`
-/// à chaque requête. Ici les patterns sont compilés une seule fois
-/// au chargement (et recompilés au hot-reload).
+/// Solves the V1 problem of O(n*m) with `WildMatch` recompilation
+/// on every request. Here patterns are compiled once
+/// at load time (and recompiled on hot-reload).
 ///
-/// Stratégie :
-/// - Les domaines exacts vont dans un `HashMap` → O(1)
-/// - Les patterns wildcard sont pré-compilés et testés séquentiellement
-///   (rarement plus de 10-20 patterns en pratique)
-/// - Les domaines exacts sont prioritaires sur les wildcards
+/// Strategy:
+/// - Exact domains go into a `HashMap` for O(1) lookup
+/// - Wildcard patterns are pre-compiled and tested sequentially
+///   (rarely more than 10-20 patterns in practice)
+/// - Exact domains take priority over wildcards
 pub struct DomainIndex {
-    /// Domaines exacts → `config_id`. Lookup O(1).
+    /// Exact domains to `config_id`. O(1) lookup.
     exact: HashMap<String, String>,
-    /// Patterns wildcard pré-compilés, testés dans l'ordre d'insertion.
+    /// Pre-compiled wildcard patterns, tested in insertion order.
     wildcards: Vec<CompiledPattern>,
 }
 
 struct CompiledPattern {
-    /// Le pattern original (pour debug/affichage).
+    /// The original pattern (for debug/display).
     raw: String,
-    /// Le pattern compilé.
+    /// The compiled pattern.
     matcher: WildMatch,
-    /// L'identifiant de la config associée.
+    /// The associated config identifier.
     config_id: String,
 }
 
@@ -46,11 +46,11 @@ fn strip_fml_marker(domain: &str) -> &str {
 }
 
 impl DomainIndex {
-    /// Construit l'index à partir d'une liste de configs.
+    /// Builds the index from a list of configs.
     ///
-    /// Les domaines sont normalisés en lowercase.
-    /// Les domaines sans wildcard vont dans la `HashMap` exacte.
-    /// Les domaines avec `*` ou `?` vont dans la liste wildcard.
+    /// Domains are normalized to lowercase.
+    /// Domains without wildcards go into the exact `HashMap`.
+    /// Domains with `*` or `?` go into the wildcard list.
     pub fn build(configs: &[ServerConfig]) -> Self {
         let mut exact = HashMap::new();
         let mut wildcards = Vec::new();
@@ -74,11 +74,11 @@ impl DomainIndex {
         Self { exact, wildcards }
     }
 
-    /// Résout un domaine vers l'identifiant de config.
+    /// Resolves a domain to its config identifier.
     ///
-    /// Les domaines exacts sont prioritaires sur les wildcards.
+    /// Exact domains take priority over wildcards.
     /// FML markers are stripped before resolution.
-    /// Retourne `None` si aucun pattern ne matche.
+    /// Returns `None` if no pattern matches.
     pub fn resolve(&self, domain: &str) -> Option<&str> {
         let stripped = strip_fml_marker(domain);
         let normalized = stripped.to_lowercase();
@@ -88,7 +88,7 @@ impl DomainIndex {
             return Some(id.as_str());
         }
 
-        // 2. Wildcard match (séquentiel, patterns pré-compilés)
+        // 2. Wildcard match (sequential, pre-compiled patterns)
         for pattern in &self.wildcards {
             if pattern.matcher.matches(&normalized) {
                 return Some(pattern.config_id.as_str());
@@ -98,12 +98,12 @@ impl DomainIndex {
         None
     }
 
-    /// Nombre total de patterns indexés.
+    /// Returns the total number of indexed patterns.
     pub fn len(&self) -> usize {
         self.exact.len() + self.wildcards.len()
     }
 
-    /// `true` si l'index est vide.
+    /// Returns `true` if the index is empty.
     pub fn is_empty(&self) -> bool {
         self.exact.is_empty() && self.wildcards.is_empty()
     }

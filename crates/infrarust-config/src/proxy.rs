@@ -12,66 +12,66 @@ use crate::types::{
     StatusCacheConfig, TelemetryConfig,
 };
 
-/// Configuration racine du proxy.
-/// Correspond au fichier `infrarust.toml`.
+/// Root proxy configuration.
+/// Corresponds to the `infrarust.toml` file.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProxyConfig {
-    /// Adresse d'écoute, ex: "0.0.0.0:25565"
+    /// Listen address, e.g., "0.0.0.0:25565"
     #[serde(default = "defaults::bind")]
     pub bind: SocketAddr,
 
-    /// Nombre max de connexions simultanées (0 = illimité)
+    /// Maximum number of simultaneous connections (0 = unlimited)
     #[serde(default)]
     pub max_connections: u32,
 
-    /// Timeout de connexion au backend
+    /// Backend connection timeout
     #[serde(default = "defaults::connect_timeout")]
     #[serde(with = "humantime_serde")]
     pub connect_timeout: Duration,
 
-    /// Active la réception du proxy protocol (`HAProxy` v1/v2)
+    /// Enables receiving proxy protocol (`HAProxy` v1/v2)
     #[serde(default)]
     pub receive_proxy_protocol: bool,
 
-    /// Chemin vers le dossier de configs serveurs
+    /// Path to the server configuration directory
     #[serde(default = "defaults::servers_dir")]
     pub servers_dir: PathBuf,
 
-    /// Nombre de worker threads tokio (0 = auto)
+    /// Number of tokio worker threads (0 = auto)
     #[serde(default)]
     pub worker_threads: usize,
 
-    /// Config du rate limiting global
+    /// Global rate limiting configuration
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
 
-    /// Config du cache de status ping
+    /// Status ping cache configuration
     #[serde(default)]
     pub status_cache: StatusCacheConfig,
 
-    /// MOTD par défaut quand aucun serveur ne matche
+    /// Default MOTD when no server matches
     #[serde(default)]
     pub default_motd: Option<MotdConfig>,
 
-    /// Config de la télémétrie (absent = désactivé)
+    /// Telemetry configuration (absent = disabled)
     #[serde(default)]
     pub telemetry: Option<TelemetryConfig>,
 
-    /// Config TCP keepalive
+    /// TCP keepalive configuration
     #[serde(default)]
     pub keepalive: KeepaliveConfig,
 
-    /// Active `SO_REUSEPORT` (Linux uniquement)
+    /// Enables `SO_REUSEPORT` (Linux only)
     #[serde(default)]
     pub so_reuseport: bool,
 
-    /// Configuration du système de ban
+    /// Ban system configuration
     #[serde(default)]
     pub ban: BanConfig,
 
-    /// Configuration du provider Docker (optionnel).
-    /// Présent dans le TOML même sans la feature `docker` compilée.
+    /// Docker provider configuration (optional).
+    /// Present in the TOML even without the `docker` feature compiled.
     #[serde(default)]
     pub docker: Option<DockerProviderConfig>,
 }

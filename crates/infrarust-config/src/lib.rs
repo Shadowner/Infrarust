@@ -9,7 +9,7 @@ pub mod server;
 pub mod types;
 pub mod validation;
 
-// Re-exports principaux pour l'ergonomie
+// Main re-exports for ergonomics
 pub use domain::DomainIndex;
 pub use error::ConfigError;
 pub use provider::{ConfigChange, ConfigProvider};
