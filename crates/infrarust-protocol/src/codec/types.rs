@@ -130,7 +130,6 @@ impl Decode<'_> for String {
 }
 
 /// Encodes a string with `VarInt` length prefix.
-#[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // String byte length bounded by MAX_STRING_CHARS * 4 < i32::MAX
 pub(crate) fn encode_string(s: &str, w: &mut impl Write) -> ProtocolResult<()> {
     let char_len = s.chars().count();
     if char_len > MAX_STRING_CHARS {
@@ -148,7 +147,6 @@ pub(crate) fn decode_string(r: &mut &[u8], max_chars: usize) -> ProtocolResult<S
     if raw_len < 0 {
         return Err(ProtocolError::invalid("negative length"));
     }
-    #[allow(clippy::cast_sign_loss)] // Checked non-negative above
     let byte_len = raw_len as usize;
     // A single UTF-8 char is at most 4 bytes
     let max_bytes = max_chars * 4;
@@ -188,7 +186,6 @@ impl Decode<'_> for Uuid {
 // --- Vec<u8> (byte array with VarInt length prefix) ---
 
 impl Encode for Vec<u8> {
-    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Byte arrays bounded by protocol limits
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         VarInt(self.len() as i32).encode(w)?;
         w.write_all(self)?;
@@ -202,7 +199,6 @@ impl Decode<'_> for Vec<u8> {
         if raw_len < 0 {
             return Err(ProtocolError::invalid("negative length"));
         }
-        #[allow(clippy::cast_sign_loss)] // Checked non-negative above
         let len = raw_len as usize;
         if r.len() < len {
             return Err(ProtocolError::Incomplete {
@@ -256,7 +252,6 @@ pub(crate) fn read_string_bounded_from_reader(
     if raw_len < 0 {
         return Err(ProtocolError::invalid("negative length"));
     }
-    #[allow(clippy::cast_sign_loss)] // Checked non-negative above
     let byte_len = raw_len as usize;
     let max_bytes = max_chars * 4;
     if byte_len > max_bytes {
@@ -305,6 +300,7 @@ pub(crate) fn read_varlong_from_reader(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     // --- bool ---

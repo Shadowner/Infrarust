@@ -1,7 +1,7 @@
 //! Telemetry middleware — creates a root tracing span per login connection.
 //!
 //! NOT feature-gated. Uses only `tracing` — no `opentelemetry::*` imports.
-//! When no OTel subscriber is installed, the span is a no-op (~2ns overhead).
+//! When no `OTel` subscriber is installed, the span is a no-op (~2ns overhead).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -61,8 +61,7 @@ impl Middleware for TelemetryMiddleware {
             let protocol_version = ctx
                 .extensions
                 .get::<HandshakeData>()
-                .map(|h| h.protocol_version.0)
-                .unwrap_or(0);
+                .map_or(0, |h| h.protocol_version.0);
 
             let span = tracing::info_span!(
                 "connection",

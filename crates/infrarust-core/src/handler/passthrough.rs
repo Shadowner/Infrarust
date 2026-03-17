@@ -32,7 +32,7 @@ pub struct PassthroughHandler {
 
 impl PassthroughHandler {
     /// Creates a new passthrough handler.
-    pub fn new(
+    pub const fn new(
         backend_connector: Arc<BackendConnector>,
         packet_registry: Arc<PacketRegistry>,
         registry: Arc<ConnectionRegistry>,
@@ -54,6 +54,9 @@ impl PassthroughHandler {
     }
 
     /// Handles a login connection by forwarding to the backend.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on backend connection failure or I/O errors.
     #[tracing::instrument(name = "proxy.session", skip_all, fields(mode = "passthrough"))]
     pub async fn handle(
         &self,
@@ -103,7 +106,7 @@ impl PassthroughHandler {
         // Register session
         let session_token = CancellationToken::new();
         let session_id = Uuid::new_v4();
-        self.registry.register(SessionEntry {
+        let _ = self.registry.register(SessionEntry {
             session_id,
             username: login_data.as_ref().map(|d| d.username.clone()),
             player_uuid: login_data.as_ref().and_then(|d| d.player_uuid),
@@ -150,7 +153,7 @@ impl PassthroughHandler {
             .await;
 
         // Cleanup
-        self.registry.unregister(&session_id);
+        let _ = self.registry.unregister(&session_id);
 
         // Record end metrics
         #[cfg(feature = "telemetry")]

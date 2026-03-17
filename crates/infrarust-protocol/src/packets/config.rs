@@ -137,7 +137,6 @@ impl Packet for CKnownPacks {
     }
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
-        #[allow(clippy::cast_sign_loss)] // Protocol pack count is non-negative
         let count = r.read_var_int()?.0 as usize;
         let mut packs = Vec::with_capacity(count.min(64));
         for _ in 0..count {
@@ -155,7 +154,6 @@ impl Packet for CKnownPacks {
         mut w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         // Pack count bounded by protocol
         w.write_var_int(&VarInt(self.packs.len() as i32))?;
         for pack in &self.packs {
@@ -189,7 +187,6 @@ impl Packet for SKnownPacks {
     }
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
-        #[allow(clippy::cast_sign_loss)] // Protocol pack count is non-negative
         let count = r.read_var_int()?.0 as usize;
         let mut packs = Vec::with_capacity(count.min(64));
         for _ in 0..count {
@@ -207,7 +204,6 @@ impl Packet for SKnownPacks {
         mut w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         // Pack count bounded by protocol
         w.write_var_int(&VarInt(self.packs.len() as i32))?;
         for pack in &self.packs {
@@ -338,6 +334,7 @@ impl Packet for CConfigDisconnect {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::registry::build_default_registry;
 

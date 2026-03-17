@@ -70,7 +70,6 @@ fn build_kick_packet(payload: &str) -> ProtocolResult<Vec<u8>> {
     }
     let mut out = Vec::with_capacity(1 + 2 + encoded.len());
     out.push(0xFF);
-    #[allow(clippy::cast_possible_truncation)] // Checked above that it fits in u16
     out.extend_from_slice(&(code_unit_count as u16).to_be_bytes());
     out.extend_from_slice(&encoded);
     Ok(out)
@@ -80,6 +79,9 @@ impl LegacyPingResponse {
     /// Builds the kick response for the Beta 1.8 variant.
     ///
     /// Format: `"MOTD§online§max"` — no protocol version or game version.
+    ///
+    /// # Errors
+    /// Returns an error if the response string exceeds the maximum length.
     pub fn build_beta_response(&self) -> ProtocolResult<Vec<u8>> {
         let payload = format!("{}§{}§{}", self.motd, self.online_players, self.max_players);
         build_kick_packet(&payload)
@@ -88,6 +90,9 @@ impl LegacyPingResponse {
     /// Builds the kick response for the 1.4+ variants (including 1.6).
     ///
     /// Format: `"§1\0{protocol}\0{version}\0{motd}\0{online}\0{max}"`
+    ///
+    /// # Errors
+    /// Returns an error if the response string exceeds the maximum length.
     pub fn build_v1_4_response(&self) -> ProtocolResult<Vec<u8>> {
         let payload = format!(
             "\u{00a7}1\0{}\0{}\0{}\0{}\0{}",
@@ -104,6 +109,9 @@ impl LegacyPingResponse {
 /// Parses a legacy ping from the bytes AFTER the initial `0xFE`.
 ///
 /// Determines the variant and extracts hostname/port for `V1_6`.
+///
+/// # Errors
+/// Returns an error if the `V1_6` plugin message is truncated or malformed.
 pub fn parse_legacy_ping(data: &[u8]) -> ProtocolResult<LegacyPingRequest> {
     // Beta variant: no additional data, or first byte is not 0x01
     if data.is_empty() || data[0] != 0x01 {
@@ -201,6 +209,7 @@ fn parse_v1_6_ping(data: &[u8]) -> ProtocolResult<LegacyPingRequest> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::legacy::LegacyDetection;
     use crate::legacy::detect;
@@ -248,7 +257,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cast_possible_truncation)] // Test values are known to fit
     fn test_parse_v1_6_ping() {
         // Build a complete MC|PingHost plugin message
         let mut data = Vec::new();
@@ -287,7 +295,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cast_possible_truncation)] // Test values are known to fit
     fn test_parse_v1_6_hostname_extraction() {
         // Test with a different hostname containing subdomain
         let mut data = Vec::new();

@@ -14,7 +14,7 @@ use crate::state::ServerState;
 ///
 /// Polls the provider for status changes, notifies waiters on transitions,
 /// and triggers auto-shutdown when no players are connected.
-pub(crate) async fn monitor_server(
+pub async fn monitor_server(
     service: Arc<ServerManagerService>,
     server_id: String,
     player_counter: Arc<dyn PlayerCounter>,
@@ -59,13 +59,13 @@ pub(crate) async fn monitor_server(
         if let Some((_old, new_state)) = service.update_state(&server_id, new_status) {
             match new_state {
                 ServerState::Online => {
-                    service.notify_waiters(&server_id, Ok(()));
+                    service.notify_waiters(&server_id, &Ok(()));
                     fast_poll = false;
                 }
                 ServerState::Crashed | ServerState::Sleeping => {
                     service.notify_waiters(
                         &server_id,
-                        Err(ServerManagerError::ProcessExited {
+                        &Err(ServerManagerError::ProcessExited {
                             server_id: server_id.clone(),
                             exit_code: None,
                         }),
@@ -90,9 +90,8 @@ pub(crate) async fn monitor_server(
 /// Checks if a server should be auto-shutdown due to inactivity.
 async fn check_auto_shutdown(service: &ServerManagerService, server_id: &str, player_count: usize) {
     let should_stop = {
-        let mut entry = match service.entries.get_mut(server_id) {
-            Some(e) => e,
-            None => return,
+        let Some(mut entry) = service.entries.get_mut(server_id) else {
+            return;
         };
 
         if player_count > 0 {
@@ -100,20 +99,18 @@ async fn check_auto_shutdown(service: &ServerManagerService, server_id: &str, pl
             return;
         }
 
-        let shutdown_after = match entry.shutdown_after {
-            Some(d) => d,
-            None => return,
+        let Some(shutdown_after) = entry.shutdown_after else {
+            return;
         };
 
-        let last_seen = match entry.last_player_seen {
-            Some(t) => t,
-            None => {
-                entry.last_player_seen = Some(Instant::now());
-                return;
-            }
+        let Some(last_seen) = entry.last_player_seen else {
+            entry.last_player_seen = Some(Instant::now());
+            return;
         };
 
-        last_seen.elapsed() >= shutdown_after
+        let result = last_seen.elapsed() >= shutdown_after;
+        drop(entry);
+        result
     };
 
     if should_stop {

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::net::SocketAddr;
 
 use infrarust_config::PterodactylManagerConfig;
@@ -31,8 +32,7 @@ async fn spawn_mock_http(
                     let (status, body) = responses
                         .iter()
                         .find(|(path_contains, _, _)| first_line.contains(path_contains))
-                        .map(|(_, status, body)| (*status, *body))
-                        .unwrap_or((404, r#"{"error": "not found"}"#));
+                        .map_or((404, r#"{"error": "not found"}"#), |(_, status, body)| (*status, *body));
 
                     let response = format!(
                         "HTTP/1.1 {} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
@@ -43,7 +43,7 @@ async fn spawn_mock_http(
                     let _ = stream.write_all(response.as_bytes()).await;
                     let _ = stream.flush().await;
                 }
-                _ = token.cancelled() => break,
+                () = token.cancelled() => break,
             }
         }
     });
@@ -53,7 +53,7 @@ async fn spawn_mock_http(
 
 fn make_config(addr: SocketAddr) -> PterodactylManagerConfig {
     PterodactylManagerConfig {
-        api_url: format!("http://{}", addr),
+        api_url: format!("http://{addr}"),
         api_key: "test-api-key".to_string(),
         server_id: "abc123".to_string(),
         shutdown_after: None,

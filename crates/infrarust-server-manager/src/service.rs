@@ -61,6 +61,7 @@ impl ServerManagerService {
     ///
     /// For each `(server_id, ServerManagerConfig)`, creates the appropriate provider
     /// and registers it with default state `Sleeping`.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         server_configs: &[(String, ServerManagerConfig)],
         http_client: reqwest::Client,
@@ -165,7 +166,7 @@ impl ServerManagerService {
         *cb = Some(callback);
     }
 
-    /// Fires the state change callback (if set) outside of any DashMap lock.
+    /// Fires the state change callback (if set) outside of any `DashMap` lock.
     fn fire_state_change(&self, server_id: &str, old: ServerState, new: ServerState) {
         let cb = self
             .on_state_change
@@ -185,9 +186,8 @@ impl ServerManagerService {
 
         for server_id in server_ids {
             let provider = {
-                let entry = match self.entries.get(&server_id) {
-                    Some(e) => e,
-                    None => continue,
+                let Some(entry) = self.entries.get(&server_id) else {
+                    continue;
                 };
                 Arc::clone(&entry.provider)
             };
@@ -196,9 +196,8 @@ impl ServerManagerService {
                 Ok(status) => {
                     let new_state = ServerState::from(status);
                     let old_state = {
-                        let mut entry = match self.entries.get_mut(&server_id) {
-                            Some(e) => e,
-                            None => continue,
+                        let Some(mut entry) = self.entries.get_mut(&server_id) else {
+                            continue;
                         };
                         let old = entry.state;
                         entry.state = new_state;
@@ -231,7 +230,12 @@ impl ServerManagerService {
     /// - `Starting` → waits for Online (joins existing waiters)
     /// - `Stopping` → returns an error
     ///
-    /// Returns `Err(StartTimeout)` if the server doesn't start in time.
+    /// # Errors
+    ///
+    /// Returns [`ServerManagerError::ServerNotFound`] if the server ID is unknown,
+    /// [`ServerManagerError::InvalidState`] if the server is stopping,
+    /// [`ServerManagerError::StartTimeout`] if the server doesn't start in time,
+    /// or [`ServerManagerError::Provider`] if the provider fails.
     pub async fn ensure_started(&self, server_id: &str) -> Result<(), ServerManagerError> {
         let (rx, start_timeout) = {
             let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
@@ -333,6 +337,12 @@ impl ServerManagerService {
     }
 
     /// Starts a server manually.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerManagerError::ServerNotFound`] if the server ID is unknown,
+    /// [`ServerManagerError::InvalidState`] if the server is not in a startable state,
+    /// or a provider-specific error if the start command fails.
     pub async fn start_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
         let (provider, old_state) = {
             let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
@@ -360,6 +370,11 @@ impl ServerManagerService {
     }
 
     /// Stops a server manually.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerManagerError::ServerNotFound`] if the server ID is unknown,
+    /// or a provider-specific error if the stop command fails.
     pub async fn stop_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
         let (provider, old_state) = {
             let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
@@ -390,6 +405,7 @@ impl ServerManagerService {
     /// Starts monitoring tasks for all managed servers.
     ///
     /// Returns join handles for the spawned tasks.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn start_monitoring(
         self: &Arc<Self>,
         player_counter: Arc<dyn PlayerCounter>,
@@ -454,6 +470,7 @@ impl ServerManagerService {
             );
 
             entry.state = new_state;
+            drop(entry);
             (old_state, new_state)
         };
 
@@ -464,7 +481,7 @@ impl ServerManagerService {
     }
 
     /// Notifies all waiters for a server with the given result.
-    pub(crate) fn notify_waiters(&self, server_id: &str, result: Result<(), ServerManagerError>) {
+    pub(crate) fn notify_waiters(&self, server_id: &str, result: &Result<(), ServerManagerError>) {
         if let Some(mut entry) = self.entries.get_mut(server_id) {
             let waiters = std::mem::take(&mut entry.waiters);
             drop(entry);
@@ -474,8 +491,7 @@ impl ServerManagerService {
                 tracing::debug!(server = %server_id, count, "notifying waiters");
             }
             for tx in waiters {
-                // Clone the error for each waiter except the last
-                let _ = match &result {
+                let _ = match result {
                     Ok(()) => tx.send(Ok(())),
                     Err(_) => tx.send(Err(ServerManagerError::Provider {
                         server_id: server_id.to_string(),
@@ -490,7 +506,6 @@ impl ServerManagerService {
     pub(crate) fn get_poll_interval(&self, server_id: &str) -> Duration {
         self.entries
             .get(server_id)
-            .map(|e| e.poll_interval)
-            .unwrap_or(Duration::from_secs(5))
+            .map_or(Duration::from_secs(5), |e| e.poll_interval)
     }
 }

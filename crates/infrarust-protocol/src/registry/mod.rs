@@ -122,6 +122,10 @@ impl PacketRegistry {
     /// ).unwrap();
     /// assert!(matches!(decoded, DecodedPacket::Opaque { .. }));
     /// ```
+    ///
+    /// # Errors
+    /// Returns an error only if a registered decoder fails (corrupted data).
+    /// Missing decoder is not an error and returns `DecodedPacket::Opaque`.
     pub fn decode_frame(
         &self,
         frame: &PacketFrame,
@@ -213,6 +217,7 @@ impl Default for PacketRegistry {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use crate::codec::{McBufWriteExt, VarInt};
     use crate::packets::SHandshake;

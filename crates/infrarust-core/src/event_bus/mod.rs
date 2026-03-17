@@ -1,4 +1,4 @@
-//! EventBus — typed event dispatch system for Infrarust.
+//! `EventBus` — typed event dispatch system for Infrarust.
 //!
 //! Provides sequential handler dispatch with priority ordering,
 //! supporting both sync and async handlers. The bus uses a snapshot

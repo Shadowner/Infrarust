@@ -25,7 +25,7 @@ pub struct LegacyHandler {
 
 impl LegacyHandler {
     /// Creates a new legacy handler with shared config state.
-    pub fn new(
+    pub const fn new(
         domain_router: Arc<DomainRouter>,
         default_motd: Option<MotdConfig>,
         server_manager: Option<Arc<ServerManagerService>>,
@@ -40,6 +40,9 @@ impl LegacyHandler {
     }
 
     /// Handles a legacy ping connection.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on I/O or protocol errors.
     pub async fn handle(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
         // Read remaining data after the initial 0xFE byte
         let mut data = Vec::new();
@@ -63,10 +66,10 @@ impl LegacyHandler {
         let request = parse_legacy_ping(&data)?;
 
         // Resolve MOTD and player counts based on variant
-        let (motd, online_players, max_players) = match request.hostname.as_ref() {
-            Some(hostname) => self.resolve_with_hostname(hostname),
-            None => self.resolve_without_hostname(),
-        };
+        let (motd, online_players, max_players) = request.hostname.as_ref().map_or_else(
+            || self.resolve_without_hostname(),
+            |hostname| self.resolve_with_hostname(hostname),
+        );
 
         let response = LegacyPingResponse {
             protocol_version: CURRENT_MC_PROTOCOL,
@@ -124,7 +127,8 @@ impl LegacyHandler {
             .online
             .as_ref()
             .and_then(|m| m.max_players)
-            .unwrap_or(cfg.max_players) as i32;
+            .unwrap_or(cfg.max_players)
+            .cast_signed();
 
         (motd, online, max)
     }
@@ -140,7 +144,7 @@ impl LegacyHandler {
 
         let motd = entry.map_or_else(|| "An Infrarust Proxy".to_string(), |e| e.text.clone());
         let online = self.connection_registry.count() as i32;
-        let max = entry.and_then(|e| e.max_players).unwrap_or(0) as i32;
+        let max = entry.and_then(|e| e.max_players).unwrap_or(0).cast_signed();
 
         (motd, online, max)
     }
@@ -167,7 +171,8 @@ impl LegacyHandler {
         let online = self.connection_registry.count_by_server(config_id) as i32;
         let max = motd_entry
             .and_then(|e| e.max_players)
-            .unwrap_or(cfg.max_players) as i32;
+            .unwrap_or(cfg.max_players)
+            .cast_signed();
 
         (motd, online, max)
     }

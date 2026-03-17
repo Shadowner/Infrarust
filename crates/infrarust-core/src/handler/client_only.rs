@@ -1,4 +1,4 @@
-//! ClientOnly proxy mode handler.
+//! `ClientOnly` proxy mode handler.
 //!
 //! Authenticates the client against Mojang (RSA + AES-128-CFB8 + session server),
 //! then connects to the backend in offline mode. The client-side connection is
@@ -25,14 +25,14 @@ use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
 
-/// Handles connections in ClientOnly proxy mode.
+/// Handles connections in `ClientOnly` proxy mode.
 ///
 /// Flow:
 /// 1. Authenticate client via Mojang (RSA exchange + session server)
-/// 2. Send LoginSuccess to client
+/// 2. Send `LoginSuccess` to client
 /// 3. Connect to backend in offline mode
 /// 4. Consume backend's login response (without forwarding)
-/// 5. Run proxy_loop for bidirectional forwarding
+/// 5. Run `proxy_loop` for bidirectional forwarding
 pub struct ClientOnlyHandler {
     backend_connector: Arc<BackendConnector>,
     registry: Arc<PacketRegistry>,
@@ -43,8 +43,8 @@ pub struct ClientOnlyHandler {
 }
 
 impl ClientOnlyHandler {
-    /// Creates a new ClientOnly handler.
-    pub fn new(
+    /// Creates a new `ClientOnly` handler.
+    pub const fn new(
         backend_connector: Arc<BackendConnector>,
         registry: Arc<PacketRegistry>,
         connection_registry: Arc<ConnectionRegistry>,
@@ -67,7 +67,12 @@ impl ClientOnlyHandler {
         self
     }
 
-    /// Handles a ClientOnly-mode connection.
+    /// Handles a `ClientOnly`-mode connection.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on authentication failure, backend connection
+    /// failure, or I/O errors during the proxy session.
+    #[allow(clippy::too_many_lines)]
     #[tracing::instrument(name = "proxy.session", skip_all, fields(mode = "client_only"))]
     pub async fn handle(
         &self,
@@ -196,7 +201,7 @@ impl ClientOnlyHandler {
         let session_id = Uuid::new_v4();
         let player_uuid = game_profile.uuid().ok();
 
-        self.connection_registry.register(SessionEntry {
+        let _ = self.connection_registry.register(SessionEntry {
             session_id,
             username: Some(game_profile.name.clone()),
             player_uuid,
@@ -239,7 +244,7 @@ impl ClientOnlyHandler {
             proxy_loop(&mut client, &mut backend, &self.registry, combined_shutdown).await;
 
         // Cleanup
-        self.connection_registry.unregister(&session_id);
+        let _ = self.connection_registry.unregister(&session_id);
 
         // Record end metrics
         #[cfg(feature = "telemetry")]

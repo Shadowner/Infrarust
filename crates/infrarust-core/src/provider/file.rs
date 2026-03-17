@@ -37,7 +37,7 @@ impl FileProvider {
 // ---------------------------------------------------------------------------
 
 impl ConfigProvider for FileProvider {
-    fn provider_type(&self) -> &str {
+    fn provider_type(&self) -> &'static str {
         "file"
     }
 
@@ -46,7 +46,7 @@ impl ConfigProvider for FileProvider {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>,
     > {
-        Box::pin(self.do_load_initial())
+        Box::pin(async move { self.do_load_initial() })
     }
 
     fn watch(
@@ -60,7 +60,7 @@ impl ConfigProvider for FileProvider {
 }
 
 impl FileProvider {
-    async fn do_load_initial(&self) -> Result<Vec<ProviderConfig>, CoreError> {
+    fn do_load_initial(&self) -> Result<Vec<ProviderConfig>, CoreError> {
         let dir = &self.servers_dir;
         if !dir.exists() {
             tracing::warn!(dir = %dir.display(), "servers directory not found, returning empty");
@@ -248,8 +248,8 @@ fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<P
 
 /// Compares two configs by their serializable fields to detect changes.
 ///
-/// Uses a simple domain+address comparison since ServerConfig doesn't
-/// derive PartialEq. A content hash would be more robust but this covers
+/// Uses a simple domain+address comparison since `ServerConfig` doesn't
+/// derive `PartialEq`. A content hash would be more robust but this covers
 /// the common cases.
 fn configs_equal(a: &ServerConfig, b: &ServerConfig) -> bool {
     // Compare the most common change indicators

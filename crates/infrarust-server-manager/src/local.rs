@@ -20,7 +20,7 @@ pub struct LocalProvider {
 struct LocalProcess {
     child: Child,
     stdin: ChildStdin,
-    /// True when the ready_pattern has been detected in stdout.
+    /// True when the `ready_pattern` has been detected in stdout.
     ready: Arc<AtomicBool>,
     /// True when the process has exited.
     exited: Arc<AtomicBool>,
@@ -72,9 +72,15 @@ impl ServerProvider for LocalProvider {
 
             let mut child = cmd.spawn().map_err(ServerManagerError::Process)?;
 
-            let stdin = child.stdin.take().expect("stdin piped");
-            let stdout = child.stdout.take().expect("stdout piped");
-            let stderr = child.stderr.take().expect("stderr piped");
+            let stdin = child.stdin.take().ok_or_else(|| {
+                ServerManagerError::Process(std::io::Error::other("stdin not available"))
+            })?;
+            let stdout = child.stdout.take().ok_or_else(|| {
+                ServerManagerError::Process(std::io::Error::other("stdout not available"))
+            })?;
+            let stderr = child.stderr.take().ok_or_else(|| {
+                ServerManagerError::Process(std::io::Error::other("stderr not available"))
+            })?;
 
             let ready = Arc::new(AtomicBool::new(false));
             let exited = Arc::new(AtomicBool::new(false));
@@ -112,6 +118,7 @@ impl ServerProvider for LocalProvider {
                 exited,
                 stdout_task,
             });
+            drop(process_lock);
 
             tracing::info!(server = %self.server_label(), "process spawned");
             Ok(())
@@ -158,6 +165,7 @@ impl ServerProvider for LocalProvider {
             // 3. Cleanup
             process.stdout_task.abort();
             *process_lock = None;
+            drop(process_lock);
 
             Ok(())
         })
@@ -174,7 +182,7 @@ impl ServerProvider for LocalProvider {
     > {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
-            match process_lock.as_mut() {
+            let result = match process_lock.as_mut() {
                 None => Ok(ProviderStatus::Stopped),
                 Some(process) => {
                     // Check if the process has exited by trying try_wait
@@ -204,7 +212,9 @@ impl ServerProvider for LocalProvider {
                         }
                     }
                 }
-            }
+            };
+            drop(process_lock);
+            result
         })
     }
 

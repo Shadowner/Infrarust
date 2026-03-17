@@ -31,6 +31,9 @@ impl Pipeline {
     ///
     /// Returns `Continue` if all middlewares passed, or the first
     /// `ShortCircuit`/`Reject` encountered.
+    ///
+    /// # Errors
+    /// Returns `CoreError` if any middleware returns an error.
     pub async fn execute(
         &self,
         ctx: &mut ConnectionContext,

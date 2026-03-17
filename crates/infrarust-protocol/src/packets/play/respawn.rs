@@ -157,6 +157,7 @@ fn encode_1_20_2_up(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn round_trip_version(packet: &CRespawn, version: ProtocolVersion) -> CRespawn {

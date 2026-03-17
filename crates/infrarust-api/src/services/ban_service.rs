@@ -67,6 +67,7 @@ pub trait BanService: Send + Sync + private::Sealed {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

@@ -64,7 +64,9 @@ impl PacketEncoder {
     ///
     /// This is the most common path for a proxy: the packet was received as a
     /// `PacketFrame` and is forwarded as-is.
-    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Packet sizes validated against MAX_PACKET_SIZE which fits in i32
+    ///
+    /// # Errors
+    /// Returns an error if the packet exceeds size limits or compression fails.
     pub fn append_raw(&mut self, packet_id: i32, payload: &[u8]) -> ProtocolResult<()> {
         let packet_id_varint = VarInt(packet_id);
         let packet_id_size = packet_id_varint.written_size();
@@ -135,6 +137,9 @@ impl PacketEncoder {
     }
 
     /// Encodes a [`PacketFrame`] directly (shortcut for [`append_raw`](Self::append_raw)).
+    ///
+    /// # Errors
+    /// Returns an error if the packet exceeds size limits or compression fails.
     pub fn append_frame(&mut self, frame: &PacketFrame) -> ProtocolResult<()> {
         self.append_raw(frame.id, &frame.payload)
     }
@@ -171,6 +176,7 @@ impl Default for PacketEncoder {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::io::decoder::PacketDecoder;
 

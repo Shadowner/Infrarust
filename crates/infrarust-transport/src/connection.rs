@@ -72,6 +72,10 @@ impl ClientConnection {
     /// without consuming them from the connection.
     ///
     /// Returns a slice of the buffered data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::Forward`] if reading from the stream fails.
     pub async fn peek(&mut self, n: usize) -> Result<&[u8], TransportError> {
         if self.buffered_data.len() < n {
             let needed = n - self.buffered_data.len();

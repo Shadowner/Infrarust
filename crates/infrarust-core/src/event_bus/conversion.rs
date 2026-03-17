@@ -1,4 +1,4 @@
-//! Conversion between core `ServerPingResponse` (serde_json–based) and
+//! Conversion between core `ServerPingResponse` (`serde_json–based`) and
 //! API `PingResponse` (typed fields) for the `ProxyPingEvent`.
 
 use infrarust_api::events::proxy::PingResponse;
@@ -27,9 +27,9 @@ pub fn apply_api_to_core(core: &mut ServerPingResponse, api: &PingResponse) {
     core.description = component_to_json_value(&api.description);
     core.players.max = api.max_players;
     core.players.online = api.online_players;
-    core.version.name = api.version_name.clone();
+    core.version.name.clone_from(&api.version_name);
     core.version.protocol = api.protocol_version.raw();
-    core.favicon = api.favicon.clone();
+    core.favicon.clone_from(&api.favicon);
 }
 
 /// Converts a `serde_json::Value` (Minecraft chat JSON) into a [`Component`].
@@ -49,19 +49,23 @@ pub fn json_value_to_component(value: &serde_json::Value) -> Component {
             if let Some(color) = map.get("color").and_then(|v| v.as_str()) {
                 component = component.color(color);
             }
-            if map.get("bold").and_then(|v| v.as_bool()) == Some(true) {
+            if map.get("bold").and_then(serde_json::Value::as_bool) == Some(true) {
                 component = component.bold();
             }
-            if map.get("italic").and_then(|v| v.as_bool()) == Some(true) {
+            if map.get("italic").and_then(serde_json::Value::as_bool) == Some(true) {
                 component = component.italic();
             }
-            if map.get("underlined").and_then(|v| v.as_bool()) == Some(true) {
+            if map.get("underlined").and_then(serde_json::Value::as_bool) == Some(true) {
                 component = component.underlined();
             }
-            if map.get("strikethrough").and_then(|v| v.as_bool()) == Some(true) {
+            if map
+                .get("strikethrough")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            {
                 component = component.strikethrough();
             }
-            if map.get("obfuscated").and_then(|v| v.as_bool()) == Some(true) {
+            if map.get("obfuscated").and_then(serde_json::Value::as_bool) == Some(true) {
                 component = component.obfuscated();
             }
 
@@ -133,7 +137,7 @@ pub fn component_to_json_value(component: &Component) -> serde_json::Value {
 
 /// Converts `infrarust_server_manager::ServerState` to the API's
 /// `infrarust_api::services::server_manager::ServerState`.
-pub fn convert_server_state(
+pub const fn convert_server_state(
     sm: infrarust_server_manager::ServerState,
 ) -> infrarust_api::services::server_manager::ServerState {
     use infrarust_api::services::server_manager::ServerState as ApiState;
@@ -151,6 +155,7 @@ pub fn convert_server_state(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

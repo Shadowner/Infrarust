@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::collections::HashMap;
 
 use infrarust_core::provider::ProviderId;

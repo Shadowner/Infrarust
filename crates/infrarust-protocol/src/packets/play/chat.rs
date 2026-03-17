@@ -84,6 +84,7 @@ impl Packet for CSystemChatMessage {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {

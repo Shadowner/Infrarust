@@ -30,6 +30,9 @@ use crate::error::ProtocolResult;
 /// - No lifetimes needed since encoding never borrows.
 pub trait Encode {
     /// Writes this value into `w` in Minecraft wire format.
+    ///
+    /// # Errors
+    /// Returns an error if writing to `w` fails or the data is invalid.
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()>;
 }
 
@@ -51,10 +54,14 @@ pub trait Encode {
 /// ```
 pub trait Decode<'a>: Sized {
     /// Reads a value from `r` in Minecraft wire format, advancing the cursor.
+    ///
+    /// # Errors
+    /// Returns an error if the buffer is incomplete or contains invalid data.
     fn decode(r: &mut &'a [u8]) -> ProtocolResult<Self>;
 }
 
 /// Minecraft read methods added to any `impl Read`.
+#[allow(clippy::missing_errors_doc)]
 pub trait McBufReadExt: Read {
     /// Reads a single unsigned byte.
     fn read_u8(&mut self) -> ProtocolResult<u8>;
@@ -99,6 +106,7 @@ pub trait McBufReadExt: Read {
 }
 
 /// Minecraft write methods added to any `impl Write`.
+#[allow(clippy::missing_errors_doc)]
 pub trait McBufWriteExt: Write {
     /// Writes a single unsigned byte.
     fn write_u8(&mut self, value: u8) -> ProtocolResult<()>;
@@ -240,7 +248,6 @@ impl<R: Read> McBufReadExt for R {
         if raw_len < 0 {
             return Err(crate::error::ProtocolError::invalid("negative length"));
         }
-        #[allow(clippy::cast_sign_loss)] // Checked non-negative above
         let len = raw_len as usize;
         if len > max_len {
             return Err(crate::error::ProtocolError::too_large(max_len, len));
@@ -341,7 +348,6 @@ impl<W: Write> McBufWriteExt for W {
         Ok(())
     }
 
-    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // Byte array length bounded by protocol limits
     fn write_byte_array(&mut self, data: &[u8]) -> ProtocolResult<()> {
         VarInt(data.len() as i32).encode(self)?;
         self.write_all(data)?;

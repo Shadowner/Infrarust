@@ -20,6 +20,9 @@ use crate::pipeline::types::{ConnectionIntent, HandshakeData};
 /// - `DomainRewrite::None` → returns the original handshake bytes as-is
 /// - `DomainRewrite::Explicit(domain)` → replaces `server_address` with `domain`
 /// - `DomainRewrite::FromBackend` → replaces with the first backend address
+///
+/// # Errors
+/// Returns `CoreError` if handshake packet encoding fails.
 pub fn rewrite_handshake(
     handshake_data: &HandshakeData,
     server_config: &ServerConfig,
@@ -27,13 +30,10 @@ pub fn rewrite_handshake(
     match &server_config.domain_rewrite {
         DomainRewrite::None => Ok(first_raw_packet(handshake_data)),
         DomainRewrite::Explicit(domain) => encode_handshake_with_domain(handshake_data, domain),
-        DomainRewrite::FromBackend => {
-            if let Some(addr) = server_config.addresses.first() {
-                encode_handshake_with_domain(handshake_data, &addr.host)
-            } else {
-                Ok(first_raw_packet(handshake_data))
-            }
-        }
+        DomainRewrite::FromBackend => server_config.addresses.first().map_or_else(
+            || Ok(first_raw_packet(handshake_data)),
+            |addr| encode_handshake_with_domain(handshake_data, &addr.host),
+        ),
         _ => {
             // Future non-exhaustive variants: pass through
             Ok(first_raw_packet(handshake_data))
@@ -75,6 +75,7 @@ fn encode_handshake_with_domain(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::default_trait_access)]
     use super::*;
     use bytes::BytesMut;
     use infrarust_config::ServerAddress;
@@ -153,7 +154,7 @@ mod tests {
         assert_eq!(decoded.server_address, "backend.local");
     }
 
-    /// Helper: decode a framed handshake packet back into SHandshake.
+    /// Helper: decode a framed handshake packet back into `SHandshake`.
     fn decode_handshake_from_framed(data: &[u8]) -> SHandshake {
         use infrarust_protocol::io::PacketDecoder;
         let mut decoder = PacketDecoder::new();

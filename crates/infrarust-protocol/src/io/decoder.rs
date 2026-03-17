@@ -61,6 +61,10 @@ impl PacketDecoder {
     /// - `Err(...)` — corrupted data or packet too large
     ///
     /// Can be called in a loop until `Ok(None)` to extract all available frames.
+    ///
+    /// # Errors
+    /// Returns an error if the packet data is corrupted, exceeds size limits,
+    /// or decompression fails.
     pub fn try_next_frame(&mut self) -> ProtocolResult<Option<PacketFrame>> {
         // 1. Try to read VarInt(packet_len) without consuming
         let (packet_len_varint, varint_size) = match VarInt::decode_partial(&self.buf) {
@@ -77,7 +81,6 @@ impl PacketDecoder {
         if packet_len <= 0 {
             return Err(ProtocolError::invalid("packet length must be positive"));
         }
-        #[allow(clippy::cast_sign_loss)] // Checked positive above
         let packet_len = packet_len as usize;
         if packet_len > MAX_PACKET_SIZE {
             return Err(ProtocolError::too_large(MAX_PACKET_SIZE, packet_len));
@@ -127,7 +130,6 @@ impl PacketDecoder {
                 }))
             } else {
                 // Compressed
-                #[allow(clippy::cast_sign_loss)] // data_len > 0 checked by the if above
                 let data_len = data_len.0 as usize;
                 if data_len > MAX_PACKET_DATA_SIZE {
                     return Err(ProtocolError::too_large(MAX_PACKET_DATA_SIZE, data_len));
@@ -171,11 +173,11 @@ impl Default for PacketDecoder {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::io::encoder::PacketEncoder;
 
     /// Helper: manually encode a simple uncompressed frame.
-    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
     fn encode_frame(packet_id: i32, payload: &[u8]) -> Vec<u8> {
         let id_varint = VarInt(packet_id);
         let data_len = id_varint.written_size() + payload.len();
@@ -251,7 +253,6 @@ mod tests {
     #[test]
     fn test_decode_packet_too_large() {
         // Encode a VarInt with value > MAX_PACKET_SIZE
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         let big_len = VarInt((MAX_PACKET_SIZE + 1) as i32);
         let mut buf = Vec::new();
         big_len.encode(&mut buf).unwrap();
@@ -312,13 +313,11 @@ mod tests {
     fn test_decode_compressed_zip_bomb_protection() {
         // Manually craft a packet with data_len > MAX_PACKET_DATA_SIZE
         // Format: [VarInt(packet_len)] [VarInt(huge_data_len)] [some bytes]
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         let huge_data_len = VarInt((MAX_PACKET_DATA_SIZE + 1) as i32);
         let mut inner = Vec::new();
         huge_data_len.encode(&mut inner).unwrap();
         inner.extend_from_slice(&[0x00; 10]); // some garbage bytes
 
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         let packet_len = VarInt(inner.len() as i32);
         let mut buf = Vec::new();
         packet_len.encode(&mut buf).unwrap();
@@ -340,7 +339,6 @@ mod tests {
         data_len.encode(&mut inner).unwrap();
         inner.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // garbage
 
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         let packet_len = VarInt(inner.len() as i32);
         let mut buf = Vec::new();
         packet_len.encode(&mut buf).unwrap();

@@ -20,15 +20,18 @@ const DATA_URI_PREFIX: &str = "data:image/png;base64,";
 /// - Data URI (`data:image/png;base64,...`) — returned as-is
 /// - Raw base64 — prefixed with the data URI header
 /// - File path — read, base64-encoded, and prefixed
+///
+/// # Errors
+/// Returns `CoreError::Other` if a file path cannot be read.
 pub async fn load_favicon(value: &str) -> Result<String, CoreError> {
     if value.starts_with(DATA_URI_PREFIX) {
         return Ok(value.to_string());
     }
 
     if is_file_path(value) {
-        let bytes = tokio::fs::read(value).await.map_err(|e| {
-            CoreError::Other(format!("failed to read favicon file '{}': {}", value, e))
-        })?;
+        let bytes = tokio::fs::read(value)
+            .await
+            .map_err(|e| CoreError::Other(format!("failed to read favicon file '{value}': {e}")))?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
         return Ok(format!("{DATA_URI_PREFIX}{encoded}"));
     }
@@ -43,12 +46,14 @@ fn is_file_path(value: &str) -> bool {
     if value.contains('/') || value.contains('\\') {
         return true;
     }
-    let lower = value.to_lowercase();
-    lower.ends_with(".png")
-        || lower.ends_with(".jpg")
-        || lower.ends_with(".jpeg")
-        || lower.ends_with(".gif")
-        || lower.ends_with(".ico")
+    let path = std::path::Path::new(value);
+    path.extension().is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("png")
+            || ext.eq_ignore_ascii_case("jpg")
+            || ext.eq_ignore_ascii_case("jpeg")
+            || ext.eq_ignore_ascii_case("gif")
+            || ext.eq_ignore_ascii_case("ico")
+    })
 }
 
 /// In-memory cache of pre-loaded favicons.
@@ -61,6 +66,10 @@ pub struct FaviconCache {
 
 impl FaviconCache {
     /// Loads favicons from all server configs and the global default MOTD.
+    ///
+    /// # Errors
+    /// This method currently always returns `Ok`; individual favicon
+    /// load failures are logged and skipped.
     pub async fn load_from_configs(
         server_configs: &[(String, Arc<ServerConfig>)],
         default_motd: Option<&MotdConfig>,
@@ -98,6 +107,10 @@ impl FaviconCache {
     }
 
     /// Reloads all favicons after a config hot-reload.
+    ///
+    /// # Errors
+    /// This method currently always returns `Ok`; individual favicon
+    /// load failures are logged and skipped.
     pub async fn reload(
         &self,
         server_configs: &[(String, Arc<ServerConfig>)],
@@ -136,6 +149,7 @@ impl FaviconCache {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

@@ -22,7 +22,7 @@ use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
 
 /// Handles connections in Offline proxy mode.
 ///
-/// Flow: create bridges → send initial packets → proxy_loop → cleanup.
+/// Flow: create bridges → send initial packets → `proxy_loop` → cleanup.
 pub struct OfflineHandler {
     backend_connector: Arc<BackendConnector>,
     registry: Arc<PacketRegistry>,
@@ -33,7 +33,7 @@ pub struct OfflineHandler {
 
 impl OfflineHandler {
     /// Creates a new offline handler.
-    pub fn new(
+    pub const fn new(
         backend_connector: Arc<BackendConnector>,
         registry: Arc<PacketRegistry>,
         connection_registry: Arc<ConnectionRegistry>,
@@ -55,6 +55,9 @@ impl OfflineHandler {
     }
 
     /// Handles an offline-mode connection.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on backend connection failure or I/O errors.
     #[tracing::instrument(name = "proxy.session", skip_all, fields(mode = "offline"))]
     pub async fn handle(
         &self,
@@ -112,7 +115,7 @@ impl OfflineHandler {
         // 5. Register session
         let session_token = CancellationToken::new();
         let session_id = Uuid::new_v4();
-        self.connection_registry.register(SessionEntry {
+        let _ = self.connection_registry.register(SessionEntry {
             session_id,
             username: login_data.as_ref().map(|d| d.username.clone()),
             player_uuid: login_data.as_ref().and_then(|d| d.player_uuid),
@@ -155,7 +158,7 @@ impl OfflineHandler {
             proxy_loop(&mut client, &mut backend, &self.registry, combined_shutdown).await;
 
         // 8. Cleanup
-        self.connection_registry.unregister(&session_id);
+        let _ = self.connection_registry.unregister(&session_id);
 
         // Record end metrics
         #[cfg(feature = "telemetry")]

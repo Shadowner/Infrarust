@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 pub fn bind() -> SocketAddr {
-    "0.0.0.0:25565".parse().unwrap()
+    SocketAddr::from(([0, 0, 0, 0], 25565))
 }
 
 pub const fn connect_timeout() -> Duration {

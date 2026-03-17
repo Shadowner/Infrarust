@@ -10,6 +10,12 @@ use crate::server::ServerConfig;
 /// - At least one domain is defined
 /// - At least one address is defined
 /// - No empty domain strings
+///
+/// # Errors
+///
+/// Returns [`ConfigError::NoDomains`] if no domains are defined,
+/// [`ConfigError::NoAddresses`] if no addresses are defined, or
+/// [`ConfigError::Validation`] if any domain string is empty.
 pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> {
     let id = config.effective_id();
 
@@ -44,6 +50,11 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
 ///
 /// Checks:
 /// - `servers_dir` exists on disk
+///
+/// # Errors
+///
+/// Returns [`ConfigError::DirectoryNotFound`] if `servers_dir` does not
+/// exist or is not a directory.
 pub fn validate_proxy_config(config: &ProxyConfig) -> Result<(), ConfigError> {
     if !config.servers_dir.is_dir() {
         return Err(ConfigError::DirectoryNotFound(config.servers_dir.clone()));

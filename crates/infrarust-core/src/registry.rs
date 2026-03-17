@@ -129,6 +129,7 @@ impl infrarust_server_manager::PlayerCounter for ConnectionRegistry {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn make_entry(username: &str, server: &str) -> SessionEntry {

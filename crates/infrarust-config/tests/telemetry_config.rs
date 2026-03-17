@@ -1,4 +1,5 @@
-//! Tests for the extended TelemetryConfig.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+//! Tests for the extended `TelemetryConfig`.
 
 use std::time::Duration;
 
@@ -58,10 +59,10 @@ fn test_telemetry_config_absent() {
 
 #[test]
 fn test_telemetry_config_disabled() {
-    let toml_str = r#"
+    let toml_str = r"
         [telemetry]
         enabled = false
-    "#;
+    ";
     let config: ProxyConfig = toml::from_str(toml_str).expect("should parse");
     let tc = config.telemetry.expect("telemetry should be Some");
     assert!(!tc.enabled);

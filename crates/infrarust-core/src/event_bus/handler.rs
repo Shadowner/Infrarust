@@ -19,7 +19,7 @@ type SharedAsyncHandler = Arc<dyn Fn(&mut dyn Any) -> BoxFuture<'_, ()> + Send +
 /// Uses `Arc` internally so that `HandlerEntry` is `Clone` —
 /// required by `Arc::make_mut` for the copy-on-write snapshot pattern.
 #[derive(Clone)]
-pub(crate) enum HandlerKind {
+pub enum HandlerKind {
     /// A synchronous handler: `Fn(&mut dyn Any) + Send + Sync`.
     Sync(SharedSyncHandler),
     /// An asynchronous handler: `Fn(&mut dyn Any) -> BoxFuture<'_, ()> + Send + Sync`.
@@ -40,7 +40,7 @@ impl HandlerKind {
 
 /// A single registered handler with its metadata.
 #[derive(Clone)]
-pub(crate) struct HandlerEntry {
+pub struct HandlerEntry {
     /// Opaque handle for unsubscribe.
     pub handle: ListenerHandle,
     /// Dispatch priority (lower value = higher priority = runs first).

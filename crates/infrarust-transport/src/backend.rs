@@ -42,6 +42,12 @@ impl BackendConnector {
     /// sends a proxy protocol v2 header.
     ///
     /// Returns `AllBackendsFailed` if no address could be reached.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::AllBackendsFailed`] if none of the provided
+    /// addresses could be reached, or a connection-specific error from the
+    /// last failed attempt.
     pub async fn connect(
         &self,
         server_id: &str,

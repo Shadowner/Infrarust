@@ -75,6 +75,9 @@ pub trait Packet: Send + Sync + std::fmt::Debug + 'static {
     ///
     /// `r` contains the bytes AFTER the `packet_id` (already read by framing).
     /// `version` is the protocol version of the current connection.
+    ///
+    /// # Errors
+    /// Returns an error if the payload is incomplete, corrupted, or invalid.
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self>
     where
         Self: Sized;
@@ -83,6 +86,9 @@ pub trait Packet: Send + Sync + std::fmt::Debug + 'static {
     ///
     /// Writes the bytes WITHOUT the `packet_id` (added by the encoder/registry).
     /// `version` is the protocol version of the destination connection.
+    ///
+    /// # Errors
+    /// Returns an error if writing to `w` fails or the packet data is invalid.
     fn encode(&self, w: &mut (impl Write + ?Sized), version: ProtocolVersion)
     -> ProtocolResult<()>;
 }
@@ -97,6 +103,9 @@ pub trait ErasedPacket: Send + Sync + std::fmt::Debug {
     fn packet_name(&self) -> &'static str;
 
     /// Encodes the payload into the given writer.
+    ///
+    /// # Errors
+    /// Returns an error if writing to `w` fails or the packet data is invalid.
     fn encode_payload(&self, w: &mut dyn Write, version: ProtocolVersion) -> ProtocolResult<()>;
 
     /// Allows downcasting to the concrete type.

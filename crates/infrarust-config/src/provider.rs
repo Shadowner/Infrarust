@@ -12,6 +12,11 @@ use crate::server::ServerConfig;
 /// (elles tirent des dépendances lourdes comme `notify` ou `bollard`).
 pub trait ConfigProvider: Send + Sync {
     /// Charge toutes les configurations serveurs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if the configuration source cannot be read
+    /// or the configuration data is invalid.
     fn load_configs(&self) -> Result<Vec<ServerConfig>, ConfigError>;
 
     /// S'abonne aux changements de configuration.

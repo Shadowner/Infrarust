@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use infrarust_config::{ProxyMode, ServerConfig, ServerManagerConfig};
 
 fn load_survival() -> ServerConfig {

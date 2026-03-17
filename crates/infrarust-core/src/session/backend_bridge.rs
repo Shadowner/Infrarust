@@ -46,6 +46,9 @@ impl BackendBridge {
     /// Reads the next packet frame from the backend.
     ///
     /// Returns `Ok(None)` on clean disconnect (EOF).
+    ///
+    /// # Errors
+    /// Returns `CoreError` on I/O or protocol decode errors.
     pub async fn read_frame(&mut self) -> Result<Option<PacketFrame>, CoreError> {
         loop {
             if let Some(frame) = self.decoder.try_next_frame()? {
@@ -63,6 +66,9 @@ impl BackendBridge {
     }
 
     /// Writes an encoded packet frame to the backend.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on I/O or encoding errors.
     pub async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
         self.encoder.append_frame(frame)?;
         let data = self.encoder.take();
@@ -71,6 +77,9 @@ impl BackendBridge {
     }
 
     /// Encodes and sends a typed packet to the backend.
+    ///
+    /// # Errors
+    /// Returns `CoreError` if packet ID lookup fails or I/O errors occur.
     pub async fn send_packet<P: Packet>(
         &mut self,
         packet: &P,
@@ -92,13 +101,13 @@ impl BackendBridge {
     }
 
     /// Activates packet compression with the given threshold.
-    pub fn set_compression(&mut self, threshold: i32) {
+    pub const fn set_compression(&mut self, threshold: i32) {
         self.decoder.set_compression(threshold);
         self.encoder.set_compression(threshold);
     }
 
     /// Changes the protocol state.
-    pub fn set_state(&mut self, state: ConnectionState) {
+    pub const fn set_state(&mut self, state: ConnectionState) {
         self.state = state;
     }
 
@@ -106,6 +115,9 @@ impl BackendBridge {
     ///
     /// Applies domain rewrite according to the server config.
     /// Used by `OfflineHandler` where the client's original login is forwarded.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on handshake rewrite or I/O errors.
     pub async fn send_initial_packets(
         &mut self,
         handshake_data: &HandshakeData,
@@ -128,6 +140,9 @@ impl BackendBridge {
     ///
     /// Used by `ClientOnlyHandler` where the proxy authenticates the client
     /// and then connects to the backend in offline mode.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on handshake rewrite, encoding, or I/O errors.
     pub async fn send_initial_packets_offline(
         &mut self,
         handshake_data: &HandshakeData,
@@ -166,7 +181,8 @@ impl BackendBridge {
 
     /// Returns a placeholder protocol version.
     /// In practice, the version is tracked by the handler and passed where needed.
-    fn protocol_version(&self) -> ProtocolVersion {
+    #[allow(clippy::unused_self)] // Kept as method for future per-connection version tracking
+    const fn protocol_version(&self) -> ProtocolVersion {
         // Default to latest; the registry handles version-specific lookups
         ProtocolVersion::V1_21
     }

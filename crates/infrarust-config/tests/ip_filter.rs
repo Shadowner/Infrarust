@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::net::IpAddr;
 
 use infrarust_config::IpFilterConfig;

@@ -106,6 +106,9 @@ impl ConnectionContext {
     ///
     /// Prefer this over `extensions.get::<T>().expect(...)` in production code
     /// to avoid panics on pipeline misconfiguration.
+    ///
+    /// # Errors
+    /// Returns `CoreError::MissingExtension` if the extension is not present.
     pub fn require_extension<T: Send + Sync + 'static>(
         &self,
         name: &'static str,
@@ -119,6 +122,7 @@ impl ConnectionContext {
     ///
     /// # Panics
     /// Panics if the stream has already been taken.
+    #[allow(clippy::expect_used)] // Intentional panic: taking a stream twice is a programming error
     pub const fn stream(&self) -> &TcpStream {
         self.stream.as_ref().expect("stream already taken")
     }
@@ -127,6 +131,7 @@ impl ConnectionContext {
     ///
     /// # Panics
     /// Panics if the stream has already been taken.
+    #[allow(clippy::expect_used)] // Intentional panic: taking a stream twice is a programming error
     pub const fn stream_mut(&mut self) -> &mut TcpStream {
         self.stream.as_mut().expect("stream already taken")
     }
@@ -135,6 +140,7 @@ impl ConnectionContext {
     ///
     /// # Panics
     /// Panics if the stream has already been taken.
+    #[allow(clippy::expect_used)] // Intentional panic: taking a stream twice is a programming error
     pub const fn take_stream(&mut self) -> TcpStream {
         self.stream.take().expect("stream already taken")
     }
@@ -178,6 +184,7 @@ impl ConnectionContext {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

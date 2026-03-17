@@ -2,7 +2,7 @@
 //!
 //! This is the core of intercepted proxy modes. It reads packets from
 //! both sides concurrently via `tokio::select!`, intercepts special
-//! packets (SetCompression, LoginSuccess, Disconnect, FinishConfig),
+//! packets (`SetCompression`, `LoginSuccess`, Disconnect, `FinishConfig`),
 //! and forwards everything else opaquely.
 
 use tokio_util::sync::CancellationToken;
@@ -92,7 +92,7 @@ pub async fn proxy_loop(
                     Err(e) => return ProxyLoopOutcome::Error(e),
                 }
             }
-            _ = shutdown.cancelled() => {
+            () = shutdown.cancelled() => {
                 return ProxyLoopOutcome::Shutdown;
             }
         }

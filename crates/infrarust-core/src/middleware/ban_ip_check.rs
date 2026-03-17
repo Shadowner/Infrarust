@@ -24,7 +24,7 @@ pub struct BanIpCheckMiddleware {
 
 impl BanIpCheckMiddleware {
     /// Creates a new ban IP check middleware.
-    pub fn new(ban_manager: Arc<BanManager>) -> Self {
+    pub const fn new(ban_manager: Arc<BanManager>) -> Self {
         Self { ban_manager }
     }
 }
@@ -41,18 +41,17 @@ impl Middleware for BanIpCheckMiddleware {
         Box::pin(async move {
             let ip = ctx.client_ip;
 
-            match self.ban_manager.is_ip_banned(&ip).await? {
-                Some(_ban_entry) => {
-                    tracing::info!(
-                        ip = %ip,
-                        "connection dropped: IP is banned"
-                    );
-                    // ShortCircuit, not Reject: at this stage the client hasn't
-                    // sent a handshake yet, so we can't send a proper disconnect
-                    // packet. Just close the connection silently.
-                    Ok(MiddlewareResult::ShortCircuit)
-                }
-                None => Ok(MiddlewareResult::Continue),
+            if self.ban_manager.is_ip_banned(&ip).await?.is_some() {
+                tracing::info!(
+                    ip = %ip,
+                    "connection dropped: IP is banned"
+                );
+                // ShortCircuit, not Reject: at this stage the client hasn't
+                // sent a handshake yet, so we can't send a proper disconnect
+                // packet. Just close the connection silently.
+                Ok(MiddlewareResult::ShortCircuit)
+            } else {
+                Ok(MiddlewareResult::Continue)
             }
         })
     }

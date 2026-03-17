@@ -18,7 +18,7 @@ pub struct DomainRouterMiddleware {
 
 impl DomainRouterMiddleware {
     /// Creates a new domain router middleware.
-    pub fn new(domain_router: Arc<DomainRouter>) -> Self {
+    pub const fn new(domain_router: Arc<DomainRouter>) -> Self {
         Self { domain_router }
     }
 }

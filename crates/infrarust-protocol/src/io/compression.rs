@@ -101,7 +101,6 @@ pub struct LibdeflateCompressor {
 #[cfg(feature = "libdeflater")]
 impl LibdeflateCompressor {
     pub fn new(level: u32) -> Self {
-        #[allow(clippy::cast_possible_wrap)] // Compression level values are small positive integers
         let lvl = libdeflater::CompressionLvl::new(level as i32).unwrap_or_default();
         Self {
             compressor: libdeflater::Compressor::new(lvl),
@@ -189,6 +188,7 @@ pub fn new_decompressor() -> Box<dyn ZlibDecompressor + Send + Sync> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]
@@ -216,7 +216,6 @@ mod tests {
         let mut decompressor = new_decompressor();
 
         // 64 KB of patterned data
-        #[allow(clippy::cast_possible_truncation)] // i % 251 always fits in u8
         let original: Vec<u8> = (0..65536).map(|i: u32| (i % 251) as u8).collect();
         let mut compressed = Vec::new();
         compressor.compress(&original, &mut compressed).unwrap();

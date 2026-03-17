@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 

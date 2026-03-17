@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::unused_async,
+    clippy::panic,
+    clippy::items_after_statements
+)]
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,7 +37,7 @@ async fn setup_with_manager() -> (BanCheckMiddleware, Arc<BanManager>, tempfile:
     (middleware, manager, dir)
 }
 
-/// Creates a test ConnectionContext using a loopback TCP connection.
+/// Creates a test `ConnectionContext` using a loopback TCP connection.
 async fn make_context_with_login(ip: IpAddr, username: &str) -> ConnectionContext {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local_addr = listener.local_addr().unwrap();

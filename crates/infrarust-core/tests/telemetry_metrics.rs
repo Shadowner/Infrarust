@@ -1,4 +1,5 @@
-//! Tests for ProxyMetrics (feature-gated).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+//! Tests for `ProxyMetrics` (feature-gated).
 #![cfg(feature = "telemetry")]
 
 use infrarust_core::telemetry::ProxyMetrics;

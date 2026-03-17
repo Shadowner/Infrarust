@@ -1,4 +1,4 @@
-//! File-based ban storage with DashMap indexes and crash-safe JSON persistence.
+//! File-based ban storage with `DashMap` indexes and crash-safe JSON persistence.
 
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -20,9 +20,9 @@ struct BanFileData {
     audit_log: Vec<BanAuditLogEntry>,
 }
 
-/// Ban storage backed by a JSON file with in-memory DashMap indexes.
+/// Ban storage backed by a JSON file with in-memory `DashMap` indexes.
 ///
-/// Three DashMaps for O(1) lookup by target type.
+/// Three `DashMaps` for O(1) lookup by target type.
 /// Crash-safe persistence via temp file + atomic rename.
 pub struct FileBanStorage {
     /// Index by IP address.
@@ -55,13 +55,13 @@ impl FileBanStorage {
     /// Serializes all data to JSON.
     fn serialize_all(&self, audit_log: &[BanAuditLogEntry]) -> Result<String, CoreError> {
         let mut bans = Vec::new();
-        for entry in self.ip_bans.iter() {
+        for entry in &self.ip_bans {
             bans.push(entry.value().clone());
         }
-        for entry in self.username_bans.iter() {
+        for entry in &self.username_bans {
             bans.push(entry.value().clone());
         }
-        for entry in self.uuid_bans.iter() {
+        for entry in &self.uuid_bans {
             bans.push(entry.value().clone());
         }
 
@@ -73,7 +73,7 @@ impl FileBanStorage {
         serde_json::to_string_pretty(&data).map_err(|e| CoreError::Other(e.to_string()))
     }
 
-    /// Populates the DashMaps from a list of ban entries.
+    /// Populates the `DashMaps` from a list of ban entries.
     fn populate_maps(&self, bans: Vec<BanEntry>) {
         for entry in bans {
             match &entry.target {
@@ -100,16 +100,12 @@ impl FileBanStorage {
     /// Serialized with a mutex to prevent concurrent temp file conflicts.
     /// Uses a timeout to avoid blocking indefinitely on slow I/O.
     async fn persist(&self) -> Result<(), CoreError> {
-        let _guard =
-            match tokio::time::timeout(std::time::Duration::from_secs(5), self.write_lock.lock())
-                .await
-            {
-                Ok(guard) => guard,
-                Err(_) => {
-                    tracing::warn!("ban persistence lock timed out, skipping this persist cycle");
-                    return Ok(());
-                }
-            };
+        let Ok(_guard) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), self.write_lock.lock()).await
+        else {
+            tracing::warn!("ban persistence lock timed out, skipping this persist cycle");
+            return Ok(());
+        };
         let audit_log = self.audit_log.read().await;
         let data = self.serialize_all(&audit_log)?;
         drop(audit_log);
@@ -132,8 +128,10 @@ impl BanStorage for FileBanStorage {
                     let data: BanFileData = serde_json::from_str(&contents)
                         .map_err(|e| CoreError::Other(format!("failed to parse ban file: {e}")))?;
                     self.populate_maps(data.bans);
-                    let mut log = self.audit_log.write().await;
-                    *log = data.audit_log;
+                    {
+                        let mut log = self.audit_log.write().await;
+                        *log = data.audit_log;
+                    }
                     tracing::info!(
                         path = %self.file_path.display(),
                         ip_bans = self.ip_bans.len(),
@@ -316,17 +314,17 @@ impl BanStorage for FileBanStorage {
     {
         Box::pin(async move {
             let mut active = Vec::new();
-            for entry in self.ip_bans.iter() {
+            for entry in &self.ip_bans {
                 if !entry.is_expired() {
                     active.push(entry.clone());
                 }
             }
-            for entry in self.username_bans.iter() {
+            for entry in &self.username_bans {
                 if !entry.is_expired() {
                     active.push(entry.clone());
                 }
             }
-            for entry in self.uuid_bans.iter() {
+            for entry in &self.uuid_bans {
                 if !entry.is_expired() {
                     active.push(entry.clone());
                 }

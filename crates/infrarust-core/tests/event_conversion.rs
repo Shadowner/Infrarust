@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Tests for core ↔ API ping response conversion.
 
 use infrarust_api::events::proxy::PingResponse;

@@ -52,9 +52,9 @@ fn is_wildcard(domain: &str) -> bool {
 ///
 /// Exact matches always take priority over wildcard matches.
 pub struct DomainRouter {
-    /// ProviderId → config + registered domains.
+    /// `ProviderId` → config + registered domains.
     configs: DashMap<ProviderId, RouterEntry>,
-    /// Exact domain (normalized lowercase) → ProviderId.
+    /// Exact domain (normalized lowercase) → `ProviderId`.
     exact_domains: DashMap<String, ProviderId>,
     /// Wildcard patterns, rebuilt when wildcard configs change.
     wildcard_patterns: RwLock<Vec<WildcardEntry>>,
@@ -100,7 +100,7 @@ impl DomainRouter {
         }
 
         self.configs.insert(
-            id.clone(),
+            id,
             RouterEntry {
                 config: Arc::new(config),
                 domains: registered_domains,
@@ -173,15 +173,17 @@ impl DomainRouter {
         }
 
         // 2. Wildcard match (sequential scan)
-        let patterns = self
-            .wildcard_patterns
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
-        for wc in patterns.iter() {
-            if wc.matcher.matches(&normalized)
-                && let Some(entry) = self.configs.get(&wc.provider_id)
-            {
-                return Some((wc.provider_id.clone(), Arc::clone(&entry.config)));
+        {
+            let patterns = self
+                .wildcard_patterns
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for wc in patterns.iter() {
+                if wc.matcher.matches(&normalized)
+                    && let Some(entry) = self.configs.get(&wc.provider_id)
+                {
+                    return Some((wc.provider_id.clone(), Arc::clone(&entry.config)));
+                }
             }
         }
 
@@ -204,7 +206,7 @@ impl DomainRouter {
     /// Counts configs grouped by provider type.
     pub fn count_by_provider(&self) -> HashMap<String, usize> {
         let mut counts = HashMap::new();
-        for entry in self.configs.iter() {
+        for entry in &self.configs {
             *counts.entry(entry.key().provider_type.clone()).or_insert(0) += 1;
         }
         counts
@@ -224,7 +226,7 @@ impl DomainRouter {
     fn rebuild_wildcards(&self) {
         let mut patterns = Vec::new();
 
-        for entry in self.configs.iter() {
+        for entry in &self.configs {
             for domain in &entry.value().domains {
                 if is_wildcard(domain) {
                     patterns.push(WildcardEntry {
@@ -239,7 +241,7 @@ impl DomainRouter {
         let mut lock = self
             .wildcard_patterns
             .write()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *lock = patterns;
     }
 }

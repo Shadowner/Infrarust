@@ -1,16 +1,17 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::collections::HashMap;
 
 use infrarust_config::ServerConfig;
 use infrarust_core::provider::ProviderId;
 use infrarust_core::routing::DomainRouter;
 
-/// Helper: build a minimal ServerConfig with the given domains.
+/// Helper: build a minimal `ServerConfig` with the given domains.
 fn make_config(domains: &[&str]) -> ServerConfig {
     toml::from_str(&format!(
         "domains = [{}]\naddresses = [\"127.0.0.1:25565\"]",
         domains
             .iter()
-            .map(|d| format!("\"{}\"", d))
+            .map(|d| format!("\"{d}\""))
             .collect::<Vec<_>>()
             .join(", ")
     ))
@@ -66,7 +67,7 @@ fn test_update_config_changes_domains() {
     assert!(router.resolve("old.mc.com").is_some());
 
     // Update with different domain
-    router.update(id.clone(), make_config(&["new.mc.com"]));
+    router.update(id, make_config(&["new.mc.com"]));
     assert!(router.resolve("old.mc.com").is_none());
     assert!(router.resolve("new.mc.com").is_some());
 }
@@ -89,7 +90,7 @@ fn test_remove_only_own_configs() {
     let id_file = ProviderId::file("survival.toml");
     let id_docker = ProviderId::docker("mc-creative-1");
 
-    router.add(id_file.clone(), make_config(&["survival.mc.com"]));
+    router.add(id_file, make_config(&["survival.mc.com"]));
     router.add(id_docker.clone(), make_config(&["creative.mc.com"]));
 
     router.remove(&id_docker);
@@ -201,7 +202,7 @@ fn test_domain_conflict_last_write_wins() {
     let id_a = ProviderId::file("a.toml");
     let id_b = ProviderId::file("b.toml");
 
-    router.add(id_a.clone(), make_config(&["shared.mc.com"]));
+    router.add(id_a, make_config(&["shared.mc.com"]));
     router.add(id_b.clone(), make_config(&["shared.mc.com"]));
 
     // Last writer (b) should own the domain

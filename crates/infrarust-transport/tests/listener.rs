@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;

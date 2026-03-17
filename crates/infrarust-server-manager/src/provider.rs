@@ -16,7 +16,7 @@ pub trait ServerProvider: Send + Sync {
     ///
     /// Non-blocking: returns as soon as the start request is sent.
     /// The actual "Online" detection is handled by `check_status()` or
-    /// internal monitoring (e.g., ready_pattern for Local).
+    /// internal monitoring (e.g., `ready_pattern` for Local).
     fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>>;
 
     /// Stops the server gracefully.
@@ -48,11 +48,11 @@ pub enum ProviderStatus {
 impl From<ProviderStatus> for ServerState {
     fn from(status: ProviderStatus) -> Self {
         match status {
-            ProviderStatus::Running => ServerState::Online,
-            ProviderStatus::Stopped => ServerState::Sleeping,
-            ProviderStatus::Starting => ServerState::Starting,
-            ProviderStatus::Stopping => ServerState::Stopping,
-            ProviderStatus::Unknown => ServerState::Unknown,
+            ProviderStatus::Running => Self::Online,
+            ProviderStatus::Stopped => Self::Sleeping,
+            ProviderStatus::Starting => Self::Starting,
+            ProviderStatus::Stopping => Self::Stopping,
+            ProviderStatus::Unknown => Self::Unknown,
         }
     }
 }

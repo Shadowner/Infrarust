@@ -29,7 +29,6 @@ impl VarInt {
     /// Returns the number of bytes this `VarInt` will occupy when encoded.
     ///
     /// Computed in O(1) without loops.
-    #[allow(clippy::cast_possible_truncation)] // leading_zeros returns u32, always fits in usize
     pub const fn written_size(self) -> usize {
         match self.0 {
             0 => 1,
@@ -42,7 +41,9 @@ impl VarInt {
     /// The algorithm spreads 7-bit groups into a u64 with gaps, computes the
     /// byte count via `leading_zeros`, inserts continuation bits in one OR, then
     /// writes the necessary bytes in little-endian order.
-    #[allow(clippy::cast_sign_loss)] // VarInt encoding intentionally reinterprets bits as unsigned
+    ///
+    /// # Errors
+    /// Returns an error if writing to `w` fails.
     pub fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         let x = self.0 as u64;
         let stage1 = (x & 0x7f)
@@ -52,7 +53,6 @@ impl VarInt {
             | ((x & 0xf000_0000) << 4);
 
         let leading = stage1.leading_zeros();
-        #[allow(clippy::cast_possible_truncation)] // leading_zeros returns u32, always < 64
         let unused_bytes = (leading - 1) >> 3;
         let bytes_needed = (8 - unused_bytes) as usize;
 
@@ -70,6 +70,9 @@ impl VarInt {
     ///
     /// Returns `ProtocolError::Incomplete` if the buffer is too short,
     /// or `ProtocolError::Invalid` if the `VarInt` exceeds 5 bytes.
+    ///
+    /// # Errors
+    /// Returns an error if the buffer is incomplete or the `VarInt` exceeds 5 bytes.
     pub fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
         let mut val = 0i32;
         for i in 0..Self::MAX_SIZE {
@@ -92,6 +95,10 @@ impl VarInt {
     /// length `VarInt` without advancing the cursor if it's incomplete.
     ///
     /// Returns `(value, bytes_consumed)` on success.
+    ///
+    /// # Errors
+    /// Returns `VarIntDecodeStatus::Incomplete` if the buffer is too short,
+    /// or `VarIntDecodeStatus::TooLarge` if the `VarInt` exceeds 5 bytes.
     pub fn decode_partial(buf: &[u8]) -> Result<(Self, usize), VarIntDecodeStatus> {
         let mut val = 0i32;
         for i in 0..Self::MAX_SIZE {
@@ -140,6 +147,7 @@ impl fmt::Display for VarInt {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     const ROUND_TRIP_VALUES: &[i32] = &[

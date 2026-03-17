@@ -1,4 +1,5 @@
-//! Tests for the TelemetryMiddleware (NOT feature-gated — uses only tracing).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+//! Tests for the `TelemetryMiddleware` (NOT feature-gated — uses only tracing).
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
@@ -10,23 +11,22 @@ use infrarust_core::pipeline::middleware::{Middleware, MiddlewareResult};
 use infrarust_core::pipeline::types::{ConnectionIntent, HandshakeData, LoginData, RoutingData};
 use infrarust_protocol::version::ProtocolVersion;
 
-/// Helper to create a minimal ServerConfig for tests.
+/// Helper to create a minimal `ServerConfig` for tests.
 fn test_server_config(proxy_mode: ProxyMode) -> infrarust_config::ServerConfig {
     let toml_str = format!(
         r#"
         domains = ["test.example.com"]
         addresses = ["127.0.0.1:25565"]
-        proxy_mode = "{:?}"
+        proxy_mode = "{proxy_mode:?}"
         max_players = 20
-        "#,
-        proxy_mode
+        "#
     );
     // ProxyMode serializes as snake_case
     let toml_str = toml_str.replace("Passthrough", "passthrough");
     toml::from_str(&toml_str).expect("valid test server config")
 }
 
-/// Helper to create a test ConnectionContext with a dummy TCP stream.
+/// Helper to create a test `ConnectionContext` with a dummy TCP stream.
 async fn make_test_ctx() -> ConnectionContext {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

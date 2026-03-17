@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use infrarust_config::{DomainIndex, DomainRewrite, MotdConfig, ProxyMode, ServerConfig};
 
 fn make_config(id: &str, domains: &[&str], addr: &str) -> ServerConfig {

@@ -31,6 +31,7 @@ struct Cli {
     log_level: String,
 }
 
+#[allow(clippy::print_stderr)] // eprintln used before tracing is initialized
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
@@ -205,6 +206,8 @@ async fn signal_handler() {
 
     #[cfg(unix)]
     {
+        #[allow(clippy::expect_used)]
+        // Fatal: if we can't install the signal handler, there's no recovery
         let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
             .expect("failed to install SIGTERM handler");
         tokio::select! {

@@ -33,6 +33,9 @@ impl BanManager {
     }
 
     /// Loads ban data from the storage backend.
+    ///
+    /// # Errors
+    /// Returns `CoreError` if the storage backend fails to load.
     pub async fn load(&self) -> Result<(), CoreError> {
         self.storage.load().await
     }
@@ -42,6 +45,9 @@ impl BanManager {
     /// 1. Adds the ban to storage
     /// 2. Looks up the player in the connection registry
     /// 3. If found, cancels their session token (kick)
+    ///
+    /// # Errors
+    /// Returns `CoreError` if the storage backend fails to add the ban.
     pub async fn ban(
         &self,
         target: BanTarget,
@@ -88,16 +94,25 @@ impl BanManager {
     }
 
     /// Lifts a ban. Returns `true` if a ban existed.
+    ///
+    /// # Errors
+    /// Returns `CoreError` if the storage backend fails.
     pub async fn unban(&self, target: &BanTarget) -> Result<bool, CoreError> {
         self.storage.remove_ban(target).await
     }
 
     /// Checks if an IP is banned (called by `BanIpCheckMiddleware` in the common pipeline).
+    ///
+    /// # Errors
+    /// Returns `CoreError` if the storage backend fails.
     pub async fn is_ip_banned(&self, ip: &IpAddr) -> Result<Option<BanEntry>, CoreError> {
         self.storage.is_banned(&BanTarget::Ip(*ip)).await
     }
 
     /// Checks a player against the ban storage (called by `BanCheckMiddleware`).
+    ///
+    /// # Errors
+    /// Returns `CoreError` if the storage backend fails.
     pub async fn check_player(
         &self,
         ip: &IpAddr,
@@ -108,6 +123,9 @@ impl BanManager {
     }
 
     /// Lists all active bans.
+    ///
+    /// # Errors
+    /// Returns `CoreError` if the storage backend fails.
     pub async fn get_all_bans(&self) -> Result<Vec<BanEntry>, CoreError> {
         self.storage.get_all_active().await
     }

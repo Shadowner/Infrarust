@@ -24,9 +24,17 @@ pub trait VirtualBackendSession: Send + Sync + private::Sealed {
     fn protocol_version(&self) -> ProtocolVersion;
 
     /// Sends a raw packet to the client.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(PlayerError::SendFailed)` if the packet could not be delivered.
     fn send_packet(&self, packet: &RawPacket) -> Result<(), PlayerError>;
 
     /// Sends a chat message to the player (convenience wrapper).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(PlayerError::SendFailed)` if the message could not be delivered.
     fn send_message(&self, message: Component) -> Result<(), PlayerError>;
 
     /// Switches the player to a real backend server.

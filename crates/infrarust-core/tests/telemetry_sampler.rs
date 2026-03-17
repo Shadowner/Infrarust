@@ -1,4 +1,5 @@
-//! Tests for InfrarustSampler (feature-gated).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+//! Tests for `InfrarustSampler` (feature-gated).
 #![cfg(feature = "telemetry")]
 
 use opentelemetry::trace::{SamplingDecision, SpanKind, TraceId};

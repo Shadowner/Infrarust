@@ -128,7 +128,6 @@ fn decode_1_20_2_up(
     let is_hardcore = r.read_bool()?;
 
     // Level names
-    #[allow(clippy::cast_sign_loss)] // Protocol level count is non-negative
     let level_count = r.read_var_int()?.0 as usize;
     let mut level_names = Vec::with_capacity(level_count.min(64));
     for _ in 0..level_count {
@@ -203,7 +202,6 @@ fn encode_1_20_2_up(
     w.write_bool(pkt.is_hardcore)?;
 
     // Level names
-    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
     // Level name count bounded by protocol
     w.write_var_int(&VarInt(pkt.level_names.len() as i32))?;
     for name in &pkt.level_names {
@@ -244,6 +242,7 @@ fn encode_1_20_2_up(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn round_trip_version(packet: &CJoinGame, version: ProtocolVersion) -> CJoinGame {

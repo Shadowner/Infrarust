@@ -1,7 +1,7 @@
 //! Status relay client.
 //!
 //! Connects to a backend Minecraft server, performs the full status handshake
-//! (Handshake → StatusRequest → StatusResponse → Ping → Pong), and returns
+//! (Handshake → `StatusRequest` → `StatusResponse` → Ping → Pong), and returns
 //! the parsed response with measured latency.
 
 use std::sync::Arc;
@@ -42,7 +42,7 @@ pub struct StatusRelayClient {
 }
 
 impl StatusRelayClient {
-    pub fn new(
+    pub const fn new(
         backend_connector: Arc<BackendConnector>,
         registry: Arc<PacketRegistry>,
         timeout: Duration,
@@ -55,6 +55,9 @@ impl StatusRelayClient {
     }
 
     /// Relays a status ping to the backend and returns the parsed response.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on connection failure, protocol error, or timeout.
     pub async fn relay(
         &self,
         server_id: &str,
@@ -150,7 +153,7 @@ impl StatusRelayClient {
 
         // 6. Parse JSON
         let response: ServerPingResponse = serde_json::from_str(&json_response).map_err(|e| {
-            CoreError::Other(format!("invalid status JSON from '{}': {}", server_id, e))
+            CoreError::Other(format!("invalid status JSON from '{server_id}': {e}"))
         })?;
 
         // 7. Ping/Pong for latency measurement
@@ -200,13 +203,11 @@ impl StatusRelayClient {
 /// Applies domain rewrite for the relay handshake.
 fn resolve_relay_domain(handshake_domain: &str, server_config: &ServerConfig) -> String {
     match &server_config.domain_rewrite {
-        DomainRewrite::None => handshake_domain.to_string(),
         DomainRewrite::Explicit(domain) => domain.clone(),
         DomainRewrite::FromBackend => server_config
             .addresses
             .first()
-            .map(|a| a.host.clone())
-            .unwrap_or_else(|| handshake_domain.to_string()),
+            .map_or_else(|| handshake_domain.to_string(), |a| a.host.clone()),
         _ => handshake_domain.to_string(),
     }
 }
@@ -258,6 +259,14 @@ async fn read_next_frame(
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::items_after_statements,
+        clippy::default_trait_access,
+        clippy::similar_names
+    )]
     use super::*;
     use infrarust_config::{KeepaliveConfig, ServerAddress};
     use infrarust_protocol::build_default_registry;
@@ -319,7 +328,7 @@ mod tests {
                             send_packet(&registry, &mut stream, &pong, version).await.unwrap();
                         });
                     }
-                    _ = s.cancelled() => break,
+                    () = s.cancelled() => break,
                 }
             }
         });

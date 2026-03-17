@@ -17,6 +17,11 @@ use crate::error::TransportError;
 ///
 /// Sets `SO_REUSEADDR` (always), `SO_REUSEPORT` (Linux, if requested),
 /// nonblocking mode, then binds and listens with a backlog of 1024.
+///
+/// # Errors
+///
+/// Returns [`TransportError::SocketConfig`] if socket creation or
+/// configuration fails, or [`TransportError::Bind`] if binding fails.
 pub fn configure_listener_socket(
     addr: SocketAddr,
     reuseport: bool,
@@ -60,6 +65,11 @@ pub fn configure_listener_socket(
 }
 
 /// Configures a stream socket with `TCP_NODELAY` and keepalive.
+///
+/// # Errors
+///
+/// Returns [`TransportError::SocketConfig`] if setting `TCP_NODELAY` or
+/// keepalive options fails.
 pub fn configure_stream_socket(
     socket: &Socket,
     keepalive: &KeepaliveConfig,
@@ -87,6 +97,10 @@ pub fn configure_stream_socket(
 /// Converts a `socket2::Socket` into a `tokio::net::TcpListener`.
 ///
 /// The socket must already be in nonblocking mode and bound+listening.
+///
+/// # Errors
+///
+/// Returns [`TransportError::SocketConfig`] if the conversion fails.
 pub fn into_tokio_listener(socket: Socket) -> Result<TcpListener, TransportError> {
     let std_listener: std::net::TcpListener = socket.into();
     TcpListener::from_std(std_listener).map_err(TransportError::SocketConfig)
@@ -95,6 +109,10 @@ pub fn into_tokio_listener(socket: Socket) -> Result<TcpListener, TransportError
 /// Converts a `socket2::Socket` into a `tokio::net::TcpStream`.
 ///
 /// The socket must already be in nonblocking mode.
+///
+/// # Errors
+///
+/// Returns [`TransportError::SocketConfig`] if the conversion fails.
 pub fn into_tokio_stream(socket: Socket) -> Result<TcpStream, TransportError> {
     let std_stream: std::net::TcpStream = socket.into();
     TcpStream::from_std(std_stream).map_err(TransportError::SocketConfig)

@@ -20,7 +20,7 @@ pub struct BanCheckMiddleware {
 
 impl BanCheckMiddleware {
     /// Creates a new ban check middleware.
-    pub fn new(ban_manager: Arc<BanManager>) -> Self {
+    pub const fn new(ban_manager: Arc<BanManager>) -> Self {
         Self { ban_manager }
     }
 }
@@ -38,12 +38,11 @@ impl Middleware for BanCheckMiddleware {
             let ip = ctx.client_ip;
 
             // Username from LoginData (inserted by LoginStartParser)
-            let username = match ctx.extensions.get::<LoginData>() {
-                Some(data) => data.username.as_str(),
-                None => {
-                    tracing::warn!("ban_check: LoginData not found in extensions, skipping check");
-                    return Ok(MiddlewareResult::Continue);
-                }
+            let username = if let Some(data) = ctx.extensions.get::<LoginData>() {
+                data.username.as_str()
+            } else {
+                tracing::warn!("ban_check: LoginData not found in extensions, skipping check");
+                return Ok(MiddlewareResult::Continue);
             };
 
             // No UUID check in Phase 2B (will be added in Phase 3 post-auth)

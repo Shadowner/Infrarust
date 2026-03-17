@@ -20,7 +20,6 @@ impl VarLong {
     /// Returns the number of bytes this `VarLong` will occupy when encoded.
     ///
     /// Computed in O(1) without loops.
-    #[allow(clippy::cast_possible_truncation)] // leading_zeros returns u32, always fits in usize
     pub const fn written_size(self) -> usize {
         match self.0 {
             0 => 1,
@@ -29,11 +28,12 @@ impl VarLong {
     }
 
     /// Encodes this `VarLong` using a classic byte-by-byte loop.
-    #[allow(clippy::cast_sign_loss)] // VarLong encoding intentionally reinterprets bits as unsigned
+    ///
+    /// # Errors
+    /// Returns an error if writing to `w` fails.
     pub fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         let mut val = self.0 as u64;
         loop {
-            #[allow(clippy::cast_possible_truncation)] // Masked to 7 bits, always fits in u8
             let byte = (val & 0x7F) as u8;
             val >>= 7;
             if val == 0 {
@@ -45,6 +45,9 @@ impl VarLong {
     }
 
     /// Decodes a `VarLong` from a byte slice, advancing the cursor.
+    ///
+    /// # Errors
+    /// Returns an error if the buffer is incomplete or the `VarLong` exceeds 10 bytes.
     pub fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
         let mut val = 0i64;
         for i in 0..Self::MAX_SIZE {
@@ -94,6 +97,7 @@ impl fmt::Display for VarLong {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

@@ -1,4 +1,5 @@
-//! Tests for the EventBus dispatch engine.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+//! Tests for the `EventBus` dispatch engine.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

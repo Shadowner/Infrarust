@@ -49,7 +49,7 @@ pub struct ProxyProtocolInfo {
 /// # Errors
 ///
 /// Returns an error if the header is missing, malformed, or uses an
-/// unsupported address family. This is fatal — the connection should
+/// unsupported address family. This is fatal -- the connection should
 /// be closed.
 pub async fn decode_proxy_protocol(
     stream: &mut TcpStream,
@@ -206,6 +206,11 @@ fn extract_v1_addresses(
 ///
 /// Uses the client's real address (from proxy protocol) if available,
 /// otherwise uses the peer address.
+///
+/// # Errors
+///
+/// Returns [`TransportError::ProxyProtocolDecode`] if header construction
+/// fails, or [`TransportError::Forward`] if writing to the stream fails.
 pub async fn encode_proxy_protocol_v2(
     stream: &mut TcpStream,
     client_info: &ConnectionInfo,

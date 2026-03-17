@@ -65,6 +65,11 @@ impl std::fmt::Debug for AcceptedConnection {
 
 impl Listener {
     /// Binds to the configured address and prepares the listener.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::Bind`] if the socket cannot be bound, or
+    /// [`TransportError::SocketConfig`] if socket configuration fails.
     #[allow(clippy::unused_async)] // Kept async for API consistency; callers already await this.
     pub async fn bind(
         config: ListenerConfig,
@@ -97,6 +102,13 @@ impl Listener {
     ///
     /// Transient errors (EMFILE, ENOMEM) are retried with backoff.
     /// Returns `TransportError::Shutdown` when the shutdown token is cancelled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::Shutdown`] if the shutdown token is
+    /// cancelled, [`TransportError::Accept`] on a non-transient accept
+    /// error, or [`TransportError::SocketConfig`] if socket configuration
+    /// fails.
     pub async fn accept(&self) -> Result<AcceptedConnection, TransportError> {
         loop {
             // Acquire permit before accepting
@@ -164,6 +176,11 @@ impl Listener {
     }
 
     /// Returns the local address the listener is bound to.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::SocketConfig`] if the address cannot be
+    /// retrieved from the underlying socket.
     pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
         self.inner
             .local_addr()

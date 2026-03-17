@@ -70,6 +70,11 @@ pub struct ProxyServer {
 
 impl ProxyServer {
     /// Builds the proxy server from config, loading server configs from disk.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on favicon loading, provider initialization,
+    /// or Mojang auth key generation failures.
+    #[allow(clippy::too_many_lines)]
     pub async fn new(config: ProxyConfig, shutdown: CancellationToken) -> Result<Self, CoreError> {
         // Create domain router (initially empty — providers populate it)
         let domain_router = Arc::new(DomainRouter::new());
@@ -271,6 +276,9 @@ impl ProxyServer {
     }
 
     /// Runs the proxy server, accepting connections until shutdown.
+    ///
+    /// # Errors
+    /// Returns `CoreError` if the listener fails to bind.
     pub async fn run(&self) -> Result<(), CoreError> {
         // Bind listener
         let listener_config = ListenerConfig {
@@ -385,16 +393,9 @@ impl ProxyServer {
                 let span = ctx
                     .extensions
                     .remove::<ConnectionSpan>()
-                    .map(|cs| cs.0)
-                    .unwrap_or_else(tracing::Span::none);
+                    .map_or_else(tracing::Span::none, |cs| cs.0);
 
                 match proxy_mode {
-                    ProxyMode::Passthrough | ProxyMode::ZeroCopy | ProxyMode::ServerOnly => {
-                        self.passthrough_handler
-                            .handle(ctx, shutdown.child_token())
-                            .instrument(span)
-                            .await?;
-                    }
                     ProxyMode::Offline => {
                         self.offline_handler
                             .handle(ctx, shutdown.child_token())
@@ -473,17 +474,17 @@ impl ProxyServer {
     }
 
     /// Returns a reference to the ban manager.
-    pub fn ban_manager(&self) -> &Arc<BanManager> {
+    pub const fn ban_manager(&self) -> &Arc<BanManager> {
         &self.ban_manager
     }
 
     /// Returns the event bus.
-    pub fn event_bus(&self) -> &Arc<EventBusImpl> {
+    pub const fn event_bus(&self) -> &Arc<EventBusImpl> {
         &self.event_bus
     }
 
     /// Returns the domain router.
-    pub fn domain_router(&self) -> &Arc<DomainRouter> {
+    pub const fn domain_router(&self) -> &Arc<DomainRouter> {
         &self.domain_router
     }
 

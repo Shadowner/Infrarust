@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::io::Write;
 
 use infrarust_config::LocalManagerConfig;

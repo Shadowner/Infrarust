@@ -1,4 +1,4 @@
-//! Mojang authentication for ClientOnly proxy mode.
+//! Mojang authentication for `ClientOnly` proxy mode.
 //!
 //! Handles RSA key exchange, SHA-1 server hash computation,
 //! and session verification against `sessionserver.mojang.com`.
@@ -19,7 +19,7 @@ use crate::session::client_bridge::ClientBridge;
 
 const DEFAULT_SESSION_URL: &str = "https://sessionserver.mojang.com/session/minecraft/hasJoined";
 
-/// Handles Mojang authentication for the ClientOnly proxy mode.
+/// Handles Mojang authentication for the `ClientOnly` proxy mode.
 ///
 /// A single instance is shared across all connections (via `Arc`).
 /// The RSA key and HTTP client are reused for every authentication.
@@ -32,11 +32,17 @@ pub struct MojangAuth {
 
 impl MojangAuth {
     /// Creates a new `MojangAuth` with a fresh RSA-1024 key.
+    ///
+    /// # Errors
+    /// Returns `CoreError::Auth` if RSA key generation or DER encoding fails.
     pub fn new() -> Result<Self, CoreError> {
         Self::build(DEFAULT_SESSION_URL.to_string())
     }
 
     /// Creates a `MojangAuth` with a custom session server URL (for testing).
+    ///
+    /// # Errors
+    /// Returns `CoreError::Auth` if RSA key generation or DER encoding fails.
     pub fn with_session_url(session_url: String) -> Result<Self, CoreError> {
         Self::build(session_url)
     }
@@ -70,6 +76,14 @@ impl MojangAuth {
     /// 4. Computes server hash and calls Mojang session server
     /// 5. Enables encryption on the client bridge
     /// 6. Returns the authenticated `GameProfile`
+    ///
+    /// # Errors
+    /// Returns `CoreError::Auth` on RSA decrypt failure, token mismatch,
+    /// or session server verification failure.
+    ///
+    /// # Panics
+    /// Panics if the shared secret is validated as 16 bytes but the
+    /// `try_into` conversion still fails (should be unreachable).
     pub async fn authenticate(
         &self,
         client: &mut ClientBridge,
@@ -152,6 +166,7 @@ impl MojangAuth {
         let profile = self.verify_session(username, &server_hash).await?;
 
         // Enable encryption on client bridge
+        #[allow(clippy::expect_used)] // Length already validated above
         let key: [u8; 16] = shared_secret
             .try_into()
             .expect("shared secret length already validated as 16");
@@ -192,11 +207,10 @@ impl MojangAuth {
 
 /// Computes the Minecraft server hash (non-standard SHA-1).
 ///
-/// The result is a signed BigInt in hexadecimal — negative values
+/// The result is a signed `BigInt` in hexadecimal — negative values
 /// are prefixed with `-`. This matches the Minecraft protocol spec
-/// documented on wiki.vg/Protocol_Encryption.
+/// documented on `https://minecraft.wiki/w/Java_Edition_protocol/Encryption`.
 ///
-/// # Examples (wiki.vg test vectors)
 ///
 /// ```
 /// use infrarust_core::auth::mojang::minecraft_server_hash;
@@ -225,6 +239,7 @@ pub fn minecraft_server_hash(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

@@ -1,6 +1,6 @@
 //! OpenTelemetry telemetry module.
 //!
-//! All OTel code is centralized here. Feature-gated under `telemetry`.
+//! All `OTel` code is centralized here. Feature-gated under `telemetry`.
 //! Business code uses only `tracing` — never `opentelemetry::*` directly.
 
 #[cfg(feature = "telemetry")]

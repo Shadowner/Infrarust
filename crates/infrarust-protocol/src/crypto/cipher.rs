@@ -31,6 +31,10 @@ impl EncryptCipher {
     /// Creates an encryption cipher from a 16-byte shared secret.
     ///
     /// The IV is set equal to the key, as per the Minecraft protocol.
+    ///
+    /// # Panics
+    /// Cannot panic: the key and IV are always exactly 16 bytes.
+    #[allow(clippy::expect_used)]
     pub fn new(key: &[u8; 16]) -> Self {
         Self {
             inner: Cfb8Encryptor::<Aes128>::new_from_slices(key, key)
@@ -55,6 +59,10 @@ impl DecryptCipher {
     /// Creates a decryption cipher from a 16-byte shared secret.
     ///
     /// The IV is set equal to the key, as per the Minecraft protocol.
+    ///
+    /// # Panics
+    /// Cannot panic: the key and IV are always exactly 16 bytes.
+    #[allow(clippy::expect_used)]
     pub fn new(key: &[u8; 16]) -> Self {
         Self {
             inner: Cfb8Decryptor::<Aes128>::new_from_slices(key, key)
@@ -76,6 +84,7 @@ impl DecryptCipher {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]
@@ -165,7 +174,6 @@ mod tests {
     #[test]
     fn test_encrypt_large_data() {
         let key = [0x77u8; 16];
-        #[allow(clippy::cast_possible_truncation)] // i % 256 always fits in u8
         let original: Vec<u8> = (0..1_000_000).map(|i: u32| (i % 256) as u8).collect();
         let mut data = original.clone();
 

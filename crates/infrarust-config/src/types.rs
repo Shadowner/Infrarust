@@ -395,7 +395,7 @@ pub struct TelemetryConfig {
     #[serde(default)]
     pub enabled: bool,
 
-    /// Endpoint OTLP (ex: "http://localhost:4317"). `None` = SDK default.
+    /// Endpoint OTLP (ex: "<http://localhost:4317>"). `None` = SDK default.
     #[serde(default)]
     pub endpoint: Option<String>,
 
@@ -411,7 +411,7 @@ pub struct TelemetryConfig {
     #[serde(default)]
     pub traces: TracesConfig,
 
-    /// Attributs de ressource OTel.
+    /// Attributs de ressource `OTel`.
     #[serde(default)]
     pub resource: ResourceConfig,
 }
@@ -429,7 +429,7 @@ impl Default for TelemetryConfig {
     }
 }
 
-/// Configuration des métriques OTel.
+/// Configuration des métriques `OTel`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
@@ -452,7 +452,7 @@ impl Default for MetricsConfig {
     }
 }
 
-/// Configuration des traces OTel.
+/// Configuration des traces `OTel`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TracesConfig {
@@ -475,15 +475,15 @@ impl Default for TracesConfig {
     }
 }
 
-/// Attributs de ressource OTel.
+/// Attributs de ressource `OTel`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceConfig {
-    /// Nom du service OTel.
+    /// Nom du service `OTel`.
     #[serde(default = "defaults::service_name")]
     pub service_name: String,
 
-    /// Version du service OTel.
+    /// Version du service `OTel`.
     #[serde(default = "defaults::service_version")]
     pub service_version: String,
 }
@@ -538,7 +538,7 @@ impl Default for BanConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DockerProviderConfig {
-    /// Endpoint Docker (ex: "unix:///var/run/docker.sock").
+    /// Endpoint Docker (ex: "<unix:///var/run/docker.sock>").
     #[serde(default = "defaults::docker_endpoint")]
     pub endpoint: String,
 

@@ -83,14 +83,17 @@ impl ServerPingResponse {
             self.favicon = Some(fav.clone());
         }
         if let Some(ref name) = motd.version_name {
-            self.version.name = name.clone();
+            self.version.name.clone_from(name);
         }
         if let Some(max) = motd.max_players {
-            self.players.max = max as i32;
+            self.players.max = max.cast_signed();
         }
     }
 
     /// Serializes to a JSON string for the `CStatusResponse` packet.
+    ///
+    /// # Errors
+    /// Returns `serde_json::Error` if serialization fails.
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
@@ -98,6 +101,7 @@ impl ServerPingResponse {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     const VANILLA_JSON: &str = r#"{

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use infrarust_config::ServerAddress;
 
 #[test]

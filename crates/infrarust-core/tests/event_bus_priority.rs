@@ -1,4 +1,9 @@
-//! Tests for EventBus handler priority ordering.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::significant_drop_tightening
+)]
+//! Tests for `EventBus` handler priority ordering.
 
 use std::sync::{Arc, Mutex};
 
@@ -9,6 +14,7 @@ use infrarust_core::event_bus::EventBusImpl;
 
 struct TraceEvent {
     value: i32,
+    #[allow(dead_code)]
     order: Vec<&'static str>,
 }
 impl Event for TraceEvent {}

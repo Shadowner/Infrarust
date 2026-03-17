@@ -27,6 +27,9 @@ pub struct ProfileProperty {
 
 impl GameProfile {
     /// Parses the Mojang UUID (no-dash hex format) into a proper `Uuid`.
+    ///
+    /// # Errors
+    /// Returns `CoreError::Auth` if the id string is not a valid UUID.
     pub fn uuid(&self) -> Result<Uuid, CoreError> {
         Uuid::parse_str(&self.id).map_err(|e| CoreError::Auth(format!("invalid uuid: {e}")))
     }
@@ -44,6 +47,7 @@ pub fn offline_uuid(username: &str) -> Uuid {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

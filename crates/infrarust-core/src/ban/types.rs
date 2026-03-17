@@ -14,6 +14,8 @@ pub mod epoch_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+    /// # Errors
+    /// Returns the serializer's error type on failure.
     pub fn serialize<S: Serializer>(time: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
         let epoch = time
             .duration_since(UNIX_EPOCH)
@@ -22,6 +24,8 @@ pub mod epoch_serde {
         epoch.serialize(s)
     }
 
+    /// # Errors
+    /// Returns the deserializer's error type on failure.
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<SystemTime, D::Error> {
         let epoch = u64::deserialize(d)?;
         Ok(UNIX_EPOCH + Duration::from_secs(epoch))
@@ -33,6 +37,8 @@ pub mod option_epoch_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+    /// # Errors
+    /// Returns the serializer's error type on failure.
     pub fn serialize<S: Serializer>(time: &Option<SystemTime>, s: S) -> Result<S::Ok, S::Error> {
         match time {
             Some(t) => {
@@ -43,6 +49,8 @@ pub mod option_epoch_serde {
         }
     }
 
+    /// # Errors
+    /// Returns the deserializer's error type on failure.
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<SystemTime>, D::Error> {
         let opt = Option::<u64>::deserialize(d)?;
         Ok(opt.map(|epoch| UNIX_EPOCH + Duration::from_secs(epoch)))
@@ -66,11 +74,11 @@ pub enum BanTarget {
 
 impl BanTarget {
     /// Returns a human-readable type name for logs and messages.
-    pub fn display_type(&self) -> &'static str {
+    pub const fn display_type(&self) -> &'static str {
         match self {
-            BanTarget::Ip(_) => "IP",
-            BanTarget::Username(_) => "username",
-            BanTarget::Uuid(_) => "UUID",
+            Self::Ip(_) => "IP",
+            Self::Username(_) => "username",
+            Self::Uuid(_) => "UUID",
         }
     }
 }
@@ -78,9 +86,9 @@ impl BanTarget {
 impl fmt::Display for BanTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BanTarget::Ip(ip) => write!(f, "IP:{ip}"),
-            BanTarget::Username(name) => write!(f, "username:{name}"),
-            BanTarget::Uuid(uuid) => write!(f, "UUID:{uuid}"),
+            Self::Ip(ip) => write!(f, "IP:{ip}"),
+            Self::Username(name) => write!(f, "username:{name}"),
+            Self::Uuid(uuid) => write!(f, "UUID:{uuid}"),
         }
     }
 }
@@ -124,13 +132,11 @@ impl BanEntry {
 
     /// Returns `true` if this ban has expired.
     pub fn is_expired(&self) -> bool {
-        self.expires_at
-            .map(|exp| SystemTime::now() >= exp)
-            .unwrap_or(false)
+        self.expires_at.is_some_and(|exp| SystemTime::now() >= exp)
     }
 
     /// Returns `true` if this ban is permanent (no expiration).
-    pub fn is_permanent(&self) -> bool {
+    pub const fn is_permanent(&self) -> bool {
         self.expires_at.is_none()
     }
 
@@ -144,8 +150,9 @@ impl BanEntry {
     /// Builds the kick message shown to the player.
     pub fn kick_message(&self) -> String {
         let reason = self.reason.as_deref().unwrap_or("Banned by administrator");
-        match self.remaining() {
-            Some(remaining) => {
+        self.remaining().map_or_else(
+            || format!("{reason}\n\nThis ban is permanent."),
+            |remaining| {
                 let hours = remaining.as_secs() / 3600;
                 let minutes = (remaining.as_secs() % 3600) / 60;
                 if hours > 24 {
@@ -156,9 +163,8 @@ impl BanEntry {
                 } else {
                     format!("{reason}\n\nExpires in {minutes} minute(s)")
                 }
-            }
-            None => format!("{reason}\n\nThis ban is permanent."),
-        }
+            },
+        )
     }
 }
 

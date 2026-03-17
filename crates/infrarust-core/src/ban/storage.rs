@@ -13,7 +13,7 @@ use crate::error::CoreError;
 ///
 /// The trait is dyn-compatible, using `Pin<Box<dyn Future>>` return types.
 /// Implemented by `FileBanStorage` (JSON file).
-/// Future: Redis, SQLite.
+/// Future: Redis, `SQLite`.
 pub trait BanStorage: Send + Sync {
     /// Adds a ban. If a ban already exists for this target, it is replaced.
     fn add_ban(

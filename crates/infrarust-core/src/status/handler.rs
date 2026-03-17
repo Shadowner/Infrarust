@@ -43,7 +43,7 @@ pub struct StatusHandler {
 
 impl StatusHandler {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub const fn new(
         relay_client: StatusRelayClient,
         cache: Arc<StatusCache>,
         favicon_cache: Arc<FaviconCache>,
@@ -64,16 +64,19 @@ impl StatusHandler {
     }
 
     /// Returns a reference to the status cache (for hot-reload invalidation).
-    pub fn cache(&self) -> &Arc<StatusCache> {
+    pub const fn cache(&self) -> &Arc<StatusCache> {
         &self.cache
     }
 
     /// Returns a reference to the favicon cache (for hot-reload).
-    pub fn favicon_cache(&self) -> &Arc<FaviconCache> {
+    pub const fn favicon_cache(&self) -> &Arc<FaviconCache> {
         &self.favicon_cache
     }
 
     /// Handles a status request on the given connection context.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on I/O or protocol errors during the status exchange.
     #[tracing::instrument(name = "status.ping", skip_all)]
     pub async fn handle(
         &self,
@@ -92,7 +95,12 @@ impl StatusHandler {
 
         // Resolve the status response
         let mut response = self
-            .resolve_response(ctx, &routing, &handshake, connection_registry)
+            .resolve_response(
+                ctx,
+                routing.as_ref(),
+                handshake.as_ref(),
+                connection_registry,
+            )
             .await;
 
         // Fire ProxyPingEvent — handlers can modify the response
@@ -125,8 +133,8 @@ impl StatusHandler {
     async fn resolve_response(
         &self,
         ctx: &ConnectionContext,
-        routing: &Option<RoutingData>,
-        handshake: &Option<HandshakeData>,
+        routing: Option<&RoutingData>,
+        handshake: Option<&HandshakeData>,
         connection_registry: &ConnectionRegistry,
     ) -> ServerPingResponse {
         let Some(routing) = routing else {
@@ -146,7 +154,7 @@ impl StatusHandler {
                     // Fall through to relay
                 }
                 Some(state) => {
-                    return self.build_state_motd(config, state);
+                    return Self::build_state_motd(config, state);
                 }
             }
         }
@@ -177,7 +185,7 @@ impl StatusHandler {
         ctx: &ConnectionContext,
         config: &ServerConfig,
         config_id: &str,
-        handshake: &Option<HandshakeData>,
+        handshake: Option<&HandshakeData>,
         connection_registry: &ConnectionRegistry,
     ) -> ServerPingResponse {
         // 1. Check fresh cache
@@ -186,12 +194,9 @@ impl StatusHandler {
         }
 
         // 2. Attempt relay
-        let domain = handshake
-            .as_ref()
-            .map_or("localhost", |h| h.domain.as_str());
-        let protocol_version = handshake
-            .as_ref()
-            .map_or(ProtocolVersion(CURRENT_MC_PROTOCOL), |h| h.protocol_version);
+        let domain = handshake.map_or("localhost", |h| h.domain.as_str());
+        let protocol_version =
+            handshake.map_or(ProtocolVersion(CURRENT_MC_PROTOCOL), |h| h.protocol_version);
         let client_info = ctx.connection_info();
 
         match self
@@ -227,7 +232,7 @@ impl StatusHandler {
     }
 
     /// Builds a synthetic MOTD for the given server manager state.
-    fn build_state_motd(&self, config: &ServerConfig, state: ServerState) -> ServerPingResponse {
+    fn build_state_motd(config: &ServerConfig, state: ServerState) -> ServerPingResponse {
         let (motd_entry, default_text) = match state {
             ServerState::Sleeping => (
                 config.motd.sleeping.as_ref(),
@@ -245,32 +250,34 @@ impl StatusHandler {
             _ => (None, "A Minecraft Server"),
         };
 
-        if let Some(entry) = motd_entry {
-            ServerPingResponse::synthetic(
-                &entry.text,
-                entry.favicon.as_deref(),
-                entry.version_name.as_deref(),
-                entry.max_players.map(|m| m as i32),
-            )
-        } else {
-            ServerPingResponse::synthetic(default_text, None, None, None)
-        }
+        motd_entry.map_or_else(
+            || ServerPingResponse::synthetic(default_text, None, None, None),
+            |entry| {
+                ServerPingResponse::synthetic(
+                    &entry.text,
+                    entry.favicon.as_deref(),
+                    entry.version_name.as_deref(),
+                    entry.max_players.map(u32::cast_signed),
+                )
+            },
+        )
     }
 
     /// Builds a response from the global `default_motd` (unknown domain).
     fn build_default_motd_response(&self) -> ServerPingResponse {
         let entry = self.default_motd.as_ref().and_then(|m| m.online.as_ref());
 
-        if let Some(entry) = entry {
-            ServerPingResponse::synthetic(
-                &entry.text,
-                entry.favicon.as_deref(),
-                entry.version_name.as_deref(),
-                entry.max_players.map(|m| m as i32),
-            )
-        } else {
-            ServerPingResponse::synthetic("An Infrarust Proxy", None, None, None)
-        }
+        entry.map_or_else(
+            || ServerPingResponse::synthetic("An Infrarust Proxy", None, None, None),
+            |entry| {
+                ServerPingResponse::synthetic(
+                    &entry.text,
+                    entry.favicon.as_deref(),
+                    entry.version_name.as_deref(),
+                    entry.max_players.map(u32::cast_signed),
+                )
+            },
+        )
     }
 
     /// Builds a synthetic "unreachable" MOTD.
@@ -285,7 +292,7 @@ impl StatusHandler {
                 &entry.text,
                 entry.favicon.as_deref(),
                 entry.version_name.as_deref(),
-                entry.max_players.map(|m| m as i32),
+                entry.max_players.map(u32::cast_signed),
             );
         }
 
@@ -299,7 +306,7 @@ impl StatusHandler {
                 &entry.text,
                 entry.favicon.as_deref(),
                 entry.version_name.as_deref(),
-                entry.max_players.map(|m| m as i32),
+                entry.max_players.map(u32::cast_signed),
             );
         }
 
@@ -308,13 +315,14 @@ impl StatusHandler {
             "\u{00a7}cServer unreachable",
             None,
             None,
-            Some(config.max_players as i32),
+            Some(config.max_players.cast_signed()),
         );
-        resp.players.online = connection_registry.count_by_server(config_id) as i32;
+        let online = connection_registry.count_by_server(config_id) as i32;
+        resp.players.online = online;
         resp
     }
 
-    /// Reads the SStatusRequest frame from the client.
+    /// Reads the `SStatusRequest` frame from the client.
     async fn read_status_request(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
         let mut decoder = PacketDecoder::new();
         loop {
@@ -331,6 +339,7 @@ impl StatusHandler {
     }
 
     /// Handles the ping/pong exchange after status response.
+    #[allow(clippy::similar_names)] // decoder vs decoded are contextually different
     async fn handle_ping_pong(
         &self,
         ctx: &mut ConnectionContext,

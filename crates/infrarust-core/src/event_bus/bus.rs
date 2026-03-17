@@ -64,7 +64,10 @@ impl EventBusImpl {
 
         // Snapshot: clone the Arc, then release the lock immediately.
         let snapshot = {
-            let map = self.handlers.read().unwrap_or_else(|e| e.into_inner());
+            let map = self
+                .handlers
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             map.get(&type_id).cloned()
         };
 
@@ -98,22 +101,25 @@ impl EventBusImpl {
 
     /// Internal helper: inserts a handler entry into the sorted vec for
     /// the given event type.
+    #[allow(clippy::significant_drop_tightening)] // map is used for multiple ops on vec_arc
     fn insert_handler(&self, event_type: TypeId, entry: HandlerEntry) -> ListenerHandle {
         let handle = entry.handle;
-        let mut map = self.handlers.write().unwrap_or_else(|e| e.into_inner());
-        let vec_arc = map
-            .entry(event_type)
-            .or_insert_with(|| Arc::new(Vec::new()));
+        {
+            let mut map = self
+                .handlers
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let vec_arc = map.entry(event_type).or_default();
 
-        // Copy-on-write: if a dispatch holds the old Arc, this clones the Vec.
-        let vec = Arc::make_mut(vec_arc);
+            // Copy-on-write: if a dispatch holds the old Arc, this clones the Vec.
+            let vec = Arc::make_mut(vec_arc);
 
-        // Insert sorted by priority ascending (FIRST=0 first, LAST=255 last).
-        // partition_point finds the first index where priority > entry's priority,
-        // ensuring same-priority handlers preserve insertion order.
-        let pos = vec.partition_point(|h| h.priority.value() <= entry.priority.value());
-        vec.insert(pos, entry);
-
+            // Insert sorted by priority ascending (FIRST=0 first, LAST=255 last).
+            // partition_point finds the first index where priority > entry's priority,
+            // ensuring same-priority handlers preserve insertion order.
+            let pos = vec.partition_point(|h| h.priority.value() <= entry.priority.value());
+            vec.insert(pos, entry);
+        }
         handle
     }
 
@@ -162,7 +168,10 @@ impl EventBus for EventBusImpl {
     }
 
     fn unsubscribe(&self, handle: ListenerHandle) {
-        let mut map = self.handlers.write().unwrap_or_else(|e| e.into_inner());
+        let mut map = self
+            .handlers
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for vec_arc in map.values_mut() {
             let vec = Arc::make_mut(vec_arc);
             if let Some(pos) = vec.iter().position(|h| h.handle == handle) {

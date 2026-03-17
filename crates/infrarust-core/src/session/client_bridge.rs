@@ -41,6 +41,7 @@ impl ClientBridge {
     ///
     /// `buffered_data` contains bytes already read by the pipeline middlewares
     /// (handshake, login start). These are fed to the decoder first.
+    #[allow(clippy::needless_pass_by_value)] // BytesMut is logically consumed here
     pub fn new(
         stream: TcpStream,
         buffered_data: BytesMut,
@@ -67,6 +68,9 @@ impl ClientBridge {
     ///
     /// Returns `Ok(None)` on clean disconnect (EOF).
     /// Handles decryption if encryption is active.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on I/O or protocol decode errors.
     pub async fn read_frame(&mut self) -> Result<Option<PacketFrame>, CoreError> {
         loop {
             if let Some(frame) = self.decoder.try_next_frame()? {
@@ -89,6 +93,9 @@ impl ClientBridge {
     /// Writes an encoded packet frame to the client.
     ///
     /// Handles encryption if active.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on I/O or encoding errors.
     pub async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
         self.encoder.append_frame(frame)?;
         let mut data = self.encoder.take();
@@ -109,22 +116,25 @@ impl ClientBridge {
     }
 
     /// Activates packet compression with the given threshold.
-    pub fn set_compression(&mut self, threshold: i32) {
+    pub const fn set_compression(&mut self, threshold: i32) {
         self.decoder.set_compression(threshold);
         self.encoder.set_compression(threshold);
     }
 
     /// Changes the protocol state (Login → Config → Play).
-    pub fn set_state(&mut self, state: ConnectionState) {
+    pub const fn set_state(&mut self, state: ConnectionState) {
         self.state = state;
     }
 
     /// Returns the current protocol state.
-    pub fn state(&self) -> ConnectionState {
+    pub const fn state(&self) -> ConnectionState {
         self.state
     }
 
     /// Encodes and sends a typed packet to the client.
+    ///
+    /// # Errors
+    /// Returns `CoreError` if packet ID lookup fails or I/O errors occur.
     pub async fn send_packet<P: Packet>(
         &mut self,
         packet: &P,
@@ -159,6 +169,9 @@ impl ClientBridge {
     /// - Login: `CLoginDisconnect` (JSON string)
     /// - Config: `CConfigDisconnect` (JSON for 1.20.2, NBT for 1.20.3+)
     /// - Play: `CDisconnect` (JSON for <1.20.3, NBT for 1.20.3+)
+    ///
+    /// # Errors
+    /// Returns `CoreError` on encoding or I/O errors.
     pub async fn disconnect(
         &mut self,
         reason: &str,
@@ -207,11 +220,10 @@ impl ClientBridge {
 
 /// Encodes a plain-text message as an NBT text component for 1.20.3+.
 ///
-/// Produces a TAG_Compound with a "text" TAG_String field, using
+/// Produces a `TAG_Compound` with a "text" `TAG_String` field, using
 /// standard NBT encoding (empty root name).
 fn encode_nbt_text_component(text: &str) -> Vec<u8> {
     let text_bytes = text.as_bytes();
-    #[allow(clippy::cast_possible_truncation)]
     let text_len = text_bytes.len() as u16;
 
     let mut buf = Vec::with_capacity(3 + 7 + text_bytes.len() + 1);

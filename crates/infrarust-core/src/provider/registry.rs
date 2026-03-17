@@ -61,6 +61,9 @@ impl ProviderRegistry {
     ///
     /// Consumes `self` to transfer ownership of providers to spawned tasks.
     /// Returns the `JoinHandle` of the event loop task.
+    ///
+    /// # Errors
+    /// Returns `CoreError` if any provider fails to load initial configs fatally.
     pub async fn start(self) -> Result<JoinHandle<()>, CoreError> {
         let (tx, rx) = mpsc::channel::<ProviderEvent>(256);
 

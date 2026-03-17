@@ -150,7 +150,6 @@ mod splice_impl {
 
             // Try to set pipe size
             // Pipe size is always a reasonable value (e.g. 64 KiB), safe to truncate to i32.
-            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             let _ = nix::fcntl::fcntl(
                 write_fd.as_raw_fd(),
                 nix::fcntl::FcntlArg::F_SETPIPE_SZ(size as i32),
@@ -165,7 +164,7 @@ mod splice_impl {
     /// Uses the `TcpStream`'s readiness methods to avoid double epoll registration.
     /// When the source reaches EOF, the destination's write half is shut down to
     /// propagate the EOF signal to the other direction.
-    /// Converts a nix errno to a std::io::Error, preserving the OS error code.
+    /// Converts a nix errno to a `std::io::Error`, preserving the OS error code.
     ///
     /// Unlike `Error::other()`, this correctly maps EAGAIN to `ErrorKind::WouldBlock`,
     /// which is required for `try_io`'s readiness-clearing contract.
@@ -240,7 +239,6 @@ mod splice_impl {
             }
 
             // pumped is a byte count from splice, always fits in u64.
-            #[allow(clippy::cast_possible_truncation)]
             {
                 total += pumped as u64;
             }
