@@ -1,3 +1,8 @@
+//! Version-aware packet registry that maps packet IDs to decode functions.
+//!
+//! Supports multiple protocol versions and connection states, providing O(1) lookup
+//! for both decoding (packet ID to decoder) and encoding (type to packet ID).
+
 pub mod builder;
 
 pub use builder::{PacketMapping, PacketRegistration, build_default_registry};

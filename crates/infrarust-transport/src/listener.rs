@@ -114,11 +114,12 @@ impl Listener {
             // Acquire permit before accepting
             let permit = if let Some(sem) = &self.semaphore {
                 let permit = tokio::select! {
-                    result = sem.clone().acquire_owned() => {
-                        result.map_err(|_| TransportError::Shutdown)?
-                    }
+                    biased;
                     () = self.shutdown.cancelled() => {
                         return Err(TransportError::Shutdown);
+                    }
+                    result = sem.clone().acquire_owned() => {
+                        result.map_err(|_| TransportError::Shutdown)?
                     }
                 };
                 Some(permit)
@@ -128,6 +129,10 @@ impl Listener {
 
             // Accept connection
             let (stream, peer_addr) = tokio::select! {
+                biased;
+                () = self.shutdown.cancelled() => {
+                    return Err(TransportError::Shutdown);
+                }
                 result = self.inner.accept() => {
                     match result {
                         Ok((stream, addr)) => (stream, addr),
@@ -138,9 +143,6 @@ impl Listener {
                         }
                         Err(e) => return Err(TransportError::Accept(e)),
                     }
-                }
-                () = self.shutdown.cancelled() => {
-                    return Err(TransportError::Shutdown);
                 }
             };
 

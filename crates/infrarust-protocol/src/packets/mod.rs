@@ -1,3 +1,8 @@
+//! Minecraft packet definitions organized by connection state (handshake, login, status, config, play).
+//!
+//! Each packet implements the [`Packet`] trait for version-aware encoding and decoding,
+//! with packet IDs managed externally by the registry rather than embedded in the type.
+
 pub mod config;
 pub mod handshake;
 pub mod login;

@@ -211,8 +211,9 @@ async fn signal_handler() {
         let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
             .expect("failed to install SIGTERM handler");
         tokio::select! {
-            _ = ctrl_c => {}
+            biased;
             _ = sigterm.recv() => {}
+            _ = ctrl_c => {}
         }
     }
 

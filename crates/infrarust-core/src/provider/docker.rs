@@ -164,8 +164,9 @@ impl DockerProvider {
                         "failed to connect to docker, retrying"
                     );
                     tokio::select! {
-                        () = tokio::time::sleep(reconnect_delay) => {}
+                        biased;
                         () = shutdown.cancelled() => return Ok(()),
+                        () = tokio::time::sleep(reconnect_delay) => {}
                     }
                     reconnect_delay = (reconnect_delay * 2).min(max_delay);
                     continue;
@@ -187,8 +188,9 @@ impl DockerProvider {
                         "docker event stream disconnected, reconnecting"
                     );
                     tokio::select! {
-                        () = tokio::time::sleep(reconnect_delay) => {}
+                        biased;
                         () = shutdown.cancelled() => return Ok(()),
+                        () = tokio::time::sleep(reconnect_delay) => {}
                     }
                     reconnect_delay = (reconnect_delay * 2).min(max_delay);
 
@@ -231,6 +233,10 @@ impl DockerProvider {
 
         loop {
             tokio::select! {
+                biased;
+                () = shutdown.cancelled() => {
+                    return Ok(());
+                }
                 event = stream.next() => {
                     match event {
                         Some(Ok(event)) => {
@@ -243,9 +249,6 @@ impl DockerProvider {
                             return Err(CoreError::DockerConnection("event stream ended".to_string()));
                         }
                     }
-                }
-                () = shutdown.cancelled() => {
-                    return Ok(());
                 }
             }
         }

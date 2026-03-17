@@ -32,11 +32,12 @@ pub async fn monitor_server(
         };
 
         tokio::select! {
-            () = tokio::time::sleep(interval) => {}
+            biased;
             () = shutdown.cancelled() => {
                 tracing::info!(server = %server_id, "monitoring task shutting down");
                 break;
             }
+            () = tokio::time::sleep(interval) => {}
         }
 
         // Skip polling if server is Crashed (wait for ensure_started)

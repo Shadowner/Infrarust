@@ -137,6 +137,11 @@ async fn event_loop(
 ) {
     loop {
         tokio::select! {
+            biased;
+            () = shutdown.cancelled() => {
+                tracing::debug!("provider registry shutting down");
+                break;
+            }
             event = rx.recv() => {
                 match event {
                     Some(ProviderEvent::Added(pc)) => {
@@ -159,10 +164,6 @@ async fn event_loop(
                         break;
                     }
                 }
-            }
-            () = shutdown.cancelled() => {
-                tracing::debug!("provider registry shutting down");
-                break;
             }
         }
     }

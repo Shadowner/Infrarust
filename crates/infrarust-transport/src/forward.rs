@@ -71,6 +71,14 @@ async fn copy_forward(
     shutdown: CancellationToken,
 ) -> ForwardResult {
     tokio::select! {
+        biased;
+        () = shutdown.cancelled() => {
+            ForwardResult {
+                client_to_backend: 0,
+                backend_to_client: 0,
+                reason: ForwardEndReason::Shutdown,
+            }
+        }
         result = tokio::io::copy_bidirectional(&mut client, &mut backend) => {
             match result {
                 Ok((c2b, b2c)) => ForwardResult {
@@ -83,13 +91,6 @@ async fn copy_forward(
                     backend_to_client: 0,
                     reason: ForwardEndReason::Error(e),
                 },
-            }
-        }
-        () = shutdown.cancelled() => {
-            ForwardResult {
-                client_to_backend: 0,
-                backend_to_client: 0,
-                reason: ForwardEndReason::Shutdown,
             }
         }
     }
@@ -188,6 +189,8 @@ mod splice_impl {
         loop {
             // Drain: source → pipe
             let drained = tokio::select! {
+                biased;
+                () = shutdown.cancelled() => break,
                 result = src.ready(Interest::READABLE) => {
                     let _ = result?;
                     // SAFETY: `TcpStream` owns a valid file descriptor for its entire lifetime.
@@ -210,7 +213,6 @@ mod splice_impl {
                         Err(e) => return Err(e),
                     }
                 }
-                () = shutdown.cancelled() => break,
             };
 
             // Pump: pipe → destination (always drain fully to avoid data loss)

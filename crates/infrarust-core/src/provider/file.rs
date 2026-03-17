@@ -149,6 +149,11 @@ impl FileProvider {
 
         loop {
             tokio::select! {
+                biased;
+                () = shutdown.cancelled() => {
+                    tracing::debug!("file provider watch shutting down");
+                    break;
+                }
                 recv = notify_rx.recv() => {
                     if recv.is_none() {
                         break; // Channel closed
@@ -165,10 +170,6 @@ impl FileProvider {
                             return Ok(()); // Receiver dropped
                         }
                     }
-                }
-                () = shutdown.cancelled() => {
-                    tracing::debug!("file provider watch shutting down");
-                    break;
                 }
             }
         }

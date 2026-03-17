@@ -234,6 +234,7 @@ impl ClientOnlyHandler {
         let session = session_token.clone();
         tokio::spawn(async move {
             tokio::select! {
+                biased;
                 () = global.cancelled() => combined.cancel(),
                 () = session.cancelled() => combined.cancel(),
             }

@@ -143,16 +143,17 @@ impl BanManager {
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => {
+                        tracing::debug!("ban purge task stopped");
+                        break;
+                    }
                     _ = ticker.tick() => {
                         match storage.purge_expired().await {
                             Ok(0) => {}
                             Ok(n) => tracing::debug!(count = n, "purged expired bans"),
                             Err(e) => tracing::warn!(error = %e, "failed to purge expired bans"),
                         }
-                    }
-                    () = shutdown.cancelled() => {
-                        tracing::debug!("ban purge task stopped");
-                        break;
                     }
                 }
             }

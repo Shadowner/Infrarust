@@ -312,6 +312,11 @@ impl ProxyServer {
         // Accept loop
         loop {
             let accepted = tokio::select! {
+                biased;
+                () = self.shutdown.cancelled() => {
+                    tracing::info!("proxy server shutting down");
+                    break;
+                }
                 result = listener.accept() => {
                     match result {
                         Ok(conn) => conn,
@@ -320,10 +325,6 @@ impl ProxyServer {
                             continue;
                         }
                     }
-                }
-                () = self.shutdown.cancelled() => {
-                    tracing::info!("proxy server shutting down");
-                    break;
                 }
             };
 
