@@ -2,7 +2,9 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -12,7 +14,14 @@ use tracing_subscriber::EnvFilter;
 
 use infrarust_api::events::proxy::{ProxyInitializeEvent, ProxyShutdownEvent};
 use infrarust_config::ProxyConfig;
+use infrarust_core::plugin::manager::{PluginManager, PluginServices};
 use infrarust_core::server::ProxyServer;
+use infrarust_core::services::ban_bridge::BanServiceBridge;
+use infrarust_core::services::config_service::ConfigServiceImpl;
+use infrarust_core::services::scheduler::SchedulerImpl;
+use infrarust_core::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};
+
+mod plugins;
 
 /// Infrarust — A Minecraft reverse proxy
 #[derive(Parser)]
@@ -163,11 +172,43 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         .await
         .context("failed to initialize proxy server")?;
 
+    // Collect and load plugins
+    let static_plugins = plugins::collect_static_plugins();
+    let mut plugin_manager = PluginManager::new(static_plugins)
+        .context("failed to resolve plugin dependencies")?;
+
+    let services = server.services();
+    let server_manager: Arc<dyn infrarust_api::services::server_manager::ServerManager> =
+        match &services.server_manager {
+            Some(sm) => Arc::new(ServerManagerBridge::new(Arc::clone(sm))),
+            None => Arc::new(NoopServerManager),
+        };
+
+    let plugin_services = PluginServices {
+        event_bus: Arc::clone(&services.event_bus) as Arc<dyn infrarust_api::event::bus::EventBus>,
+        player_registry: Arc::clone(&services.player_registry)
+            as Arc<dyn infrarust_api::services::player_registry::PlayerRegistry>,
+        server_manager,
+        ban_service: Arc::new(BanServiceBridge::new(Arc::clone(&services.ban_manager))),
+        command_manager: Arc::clone(&services.command_manager)
+            as Arc<dyn infrarust_api::command::CommandManager>,
+        scheduler: Arc::new(SchedulerImpl::new()),
+        config_service: Arc::new(ConfigServiceImpl::new(Arc::clone(&services.domain_router))),
+        plugins_dir: PathBuf::from("plugins"),
+    };
+
+    let errors = plugin_manager.enable_all(&plugin_services).await;
+    if !errors.is_empty() {
+        tracing::warn!(count = errors.len(), "Some plugins failed to enable");
+    }
+
     tracing::info!("infrarust is ready, accepting connections");
 
     server.event_bus().fire(ProxyInitializeEvent).await;
 
     server.run().await.context("proxy server error")?;
+
+    plugin_manager.disable_all().await;
 
     server.event_bus().fire(ProxyShutdownEvent).await;
 

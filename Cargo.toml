@@ -12,6 +12,7 @@ members = [
     "crates/infrarust-proxy",
     "plugins/infrarust-plugin-auth",
     "plugins/infrarust-plugin-antibot",
+    "plugins/infrarust-plugin-hello",
     "plugins/infrarust-plugin-server-wake",
     "plugins/infrarust-plugin-queue",
     "tools/infrarust-motd",
@@ -26,10 +27,10 @@ serde_json = "1"
 serde_yml = "0.0.12"
 thiserror = "2"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "registry"] }
 uuid = { version = "1", features = ["v3", "v4", "serde"] }
 arc-swap = "1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4.6.0", features = ["derive"] }
 anyhow = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 notify = "7"

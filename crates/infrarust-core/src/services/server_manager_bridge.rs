@@ -78,6 +78,39 @@ impl ServerManager for ServerManagerBridge {
     }
 }
 
+// ---------------------------------------------------------------------------
+// NoopServerManager — used when no managed servers are configured
+// ---------------------------------------------------------------------------
+
+/// A no-op [`ServerManager`] for proxies with no managed servers.
+pub struct NoopServerManager;
+
+impl infrarust_api::services::server_manager::private::Sealed for NoopServerManager {}
+
+impl ServerManager for NoopServerManager {
+    fn get_state(&self, _server: &ServerId) -> Option<ServerState> {
+        None
+    }
+
+    fn start(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {
+        let id = server.as_str().to_string();
+        Box::pin(async move { Err(ServiceError::NotFound(id)) })
+    }
+
+    fn stop(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {
+        let id = server.as_str().to_string();
+        Box::pin(async move { Err(ServiceError::NotFound(id)) })
+    }
+
+    fn on_state_change(&self, _callback: StateChangeCallback) -> ListenerHandle {
+        ListenerHandle::new(0)
+    }
+
+    fn get_all_servers(&self) -> Vec<(ServerId, ServerState)> {
+        Vec::new()
+    }
+}
+
 /// Converts core server state to API server state.
 fn convert_state(state: CoreServerState) -> ServerState {
     match state {

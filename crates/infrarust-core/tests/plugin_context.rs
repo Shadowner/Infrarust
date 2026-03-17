@@ -77,11 +77,11 @@ async fn test_per_plugin_ids() {
 struct NoopHandler;
 
 impl infrarust_api::command::CommandHandler for NoopHandler {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         _ctx: infrarust_api::command::CommandContext,
-        _player_registry: &dyn infrarust_api::services::player_registry::PlayerRegistry,
-    ) -> infrarust_api::event::BoxFuture<'_, ()> {
+        _player_registry: &'a dyn infrarust_api::services::player_registry::PlayerRegistry,
+    ) -> infrarust_api::event::BoxFuture<'a, ()> {
         Box::pin(async {})
     }
 }

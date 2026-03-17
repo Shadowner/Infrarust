@@ -30,7 +30,7 @@ pub struct CommandContext {
 /// struct PingCommand;
 ///
 /// impl CommandHandler for PingCommand {
-///     fn execute(&self, ctx: CommandContext, players: &dyn PlayerRegistry) -> BoxFuture<'_, ()> {
+///     fn execute<'a>(&'a self, ctx: CommandContext, players: &'a dyn PlayerRegistry) -> BoxFuture<'a, ()> {
 ///         Box::pin(async move {
 ///             if let Some(id) = ctx.player_id {
 ///                 if let Some(player) = players.get_player_by_id(id) {
@@ -43,11 +43,11 @@ pub struct CommandContext {
 /// ```
 pub trait CommandHandler: Send + Sync {
     /// Executes the command.
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         ctx: CommandContext,
-        player_registry: &dyn PlayerRegistry,
-    ) -> BoxFuture<'_, ()>;
+        player_registry: &'a dyn PlayerRegistry,
+    ) -> BoxFuture<'a, ()>;
 
     /// Returns tab-completion suggestions for partial arguments.
     ///

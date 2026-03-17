@@ -445,6 +445,8 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x69, ProtocolVersion::V1_20_3, true)
     .map(0x6C, ProtocolVersion::V1_20_5, true)
     .map(0x73, ProtocolVersion::V1_21_2, true)
+    .map(0x72, ProtocolVersion::V1_21_5, true)
+    .map(0x77, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
 
     // SetTitle Clientbound (encode-only: injected by plugin system)

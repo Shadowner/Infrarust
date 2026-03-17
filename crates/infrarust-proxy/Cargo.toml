@@ -10,7 +10,9 @@ name = "infrarust"
 path = "src/main.rs"
 
 [features]
+default = []
 telemetry = ["infrarust-core/telemetry", "dep:opentelemetry", "dep:tracing-opentelemetry"]
+plugin-hello = ["dep:infrarust-plugin-hello"]
 
 [dependencies]
 tokio = { workspace = true }
@@ -27,6 +29,9 @@ infrarust-core = { workspace = true }
 infrarust-limbo = { workspace = true }
 infrarust-ban = { workspace = true }
 infrarust-server-manager = { workspace = true }
+
+# Plugins (optional)
+infrarust-plugin-hello = { path = "../../plugins/infrarust-plugin-hello", optional = true }
 
 # Telemetry (optional)
 opentelemetry = { version = "0.31", optional = true }

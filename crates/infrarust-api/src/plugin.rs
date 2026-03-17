@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::command::CommandManager;
 use crate::error::PluginError;
 use crate::event::bus::EventBus;
+use crate::event::BoxFuture;
 use crate::limbo::LimboHandler;
 use crate::services::{
     ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
@@ -51,19 +52,16 @@ pub struct PluginDependency {
 ///
 /// impl Plugin for MyPlugin {
 ///     fn metadata(&self) -> PluginMetadata {
-///         PluginMetadata {
-///             id: "my_plugin".into(),
-///             name: "My Plugin".into(),
-///             version: "1.0.0".into(),
-///             authors: vec!["Author".into()],
-///             description: Some("A cool plugin".into()),
-///             dependencies: vec![],
-///         }
+///         PluginMetadata::new("my_plugin", "My Plugin", "1.0.0")
+///             .author("Author")
+///             .description("A cool plugin")
 ///     }
 ///
-///     async fn on_enable(&self, ctx: &dyn PluginContext) -> Result<(), PluginError> {
-///         // Register event listeners, commands, etc.
-///         Ok(())
+///     fn on_enable<'a>(&'a self, ctx: &'a dyn PluginContext) -> BoxFuture<'a, Result<(), PluginError>> {
+///         Box::pin(async move {
+///             // Register event listeners, commands, etc.
+///             Ok(())
+///         })
 ///     }
 /// }
 /// ```
@@ -75,17 +73,65 @@ pub trait Plugin: Send + Sync {
     ///
     /// Use the [`PluginContext`] to register event listeners, commands,
     /// limbo handlers, and access proxy services.
-    fn on_enable(
-        &self,
-        ctx: &dyn PluginContext,
-    ) -> impl std::future::Future<Output = Result<(), PluginError>> + Send;
+    fn on_enable<'a>(
+        &'a self,
+        ctx: &'a dyn PluginContext,
+    ) -> BoxFuture<'a, Result<(), PluginError>>;
 
     /// Called when the plugin is disabled (proxy shutdown or hot-unload).
     ///
     /// Override this to clean up resources. The default implementation
     /// does nothing.
-    fn on_disable(&self) -> impl std::future::Future<Output = Result<(), PluginError>> + Send {
-        async { Ok(()) }
+    fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+impl PluginMetadata {
+    /// Creates plugin metadata with the required fields.
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        version: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            version: version.into(),
+            authors: vec![],
+            description: None,
+            dependencies: vec![],
+        }
+    }
+
+    /// Adds an author.
+    pub fn author(mut self, author: impl Into<String>) -> Self {
+        self.authors.push(author.into());
+        self
+    }
+
+    /// Sets the description.
+    pub fn description(mut self, desc: impl Into<String>) -> Self {
+        self.description = Some(desc.into());
+        self
+    }
+
+    /// Adds a required dependency.
+    pub fn depends_on(mut self, id: impl Into<String>) -> Self {
+        self.dependencies.push(PluginDependency {
+            id: id.into(),
+            optional: false,
+        });
+        self
+    }
+
+    /// Adds an optional dependency.
+    pub fn optional_dependency(mut self, id: impl Into<String>) -> Self {
+        self.dependencies.push(PluginDependency {
+            id: id.into(),
+            optional: true,
+        });
+        self
     }
 }
 
@@ -132,4 +178,40 @@ pub trait PluginContext: Send + Sync + private::Sealed {
 
     /// Returns this plugin's unique ID.
     fn plugin_id(&self) -> &str;
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn test_metadata_builder_minimal() {
+        let meta = PluginMetadata::new("test", "Test Plugin", "1.0.0");
+        assert_eq!(meta.id, "test");
+        assert_eq!(meta.name, "Test Plugin");
+        assert_eq!(meta.version, "1.0.0");
+        assert!(meta.authors.is_empty());
+        assert!(meta.description.is_none());
+        assert!(meta.dependencies.is_empty());
+    }
+
+    #[test]
+    fn test_metadata_builder_full() {
+        let meta = PluginMetadata::new("my_plugin", "My Plugin", "2.0.0")
+            .author("Alice")
+            .author("Bob")
+            .description("A great plugin")
+            .depends_on("core_plugin")
+            .optional_dependency("extra_plugin");
+
+        assert_eq!(meta.id, "my_plugin");
+        assert_eq!(meta.authors, vec!["Alice", "Bob"]);
+        assert_eq!(meta.description.as_deref(), Some("A great plugin"));
+        assert_eq!(meta.dependencies.len(), 2);
+        assert_eq!(meta.dependencies[0].id, "core_plugin");
+        assert!(!meta.dependencies[0].optional);
+        assert_eq!(meta.dependencies[1].id, "extra_plugin");
+        assert!(meta.dependencies[1].optional);
+    }
 }
