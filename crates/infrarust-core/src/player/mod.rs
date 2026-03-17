@@ -7,7 +7,7 @@ pub(crate) mod packets;
 pub mod registry;
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::RwLock;
 
 use tokio::sync::mpsc;
@@ -22,6 +22,11 @@ use infrarust_api::types::{
 
 /// Channel buffer size for player commands.
 const COMMAND_CHANNEL_SIZE: usize = 32;
+
+static NEXT_PLAYER_ID: AtomicU64 = AtomicU64::new(1);
+pub fn next_player_id() -> PlayerId {
+    PlayerId::new(NEXT_PLAYER_ID.fetch_add(1, Ordering::Relaxed))
+}
 
 /// Commands sent to the proxy loop for a specific player.
 #[derive(Debug)]

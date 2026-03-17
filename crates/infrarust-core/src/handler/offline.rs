@@ -86,7 +86,7 @@ impl OfflineHandler {
             .as_ref()
             .map(|d| d.username.clone())
             .unwrap_or_default();
-        let player_id = infrarust_api::types::PlayerId::new(player_uuid.as_u128() as u64);
+        let player_id = crate::player::next_player_id();
         let api_profile = infrarust_api::types::GameProfile {
             uuid: player_uuid,
             username: username.clone(),
@@ -183,7 +183,7 @@ impl OfflineHandler {
         });
 
         // 5. Register session
-        let session_token = CancellationToken::new();
+        let session_token = shutdown.child_token();
         let (cmd_tx, cmd_rx) = PlayerSession::channel();
 
         let player_session = Arc::new(PlayerSession::new(
@@ -214,19 +214,6 @@ impl OfflineHandler {
             metrics.record_player_join(&routing.config_id);
         }
 
-        // 6. Combine shutdown tokens
-        let combined_shutdown = CancellationToken::new();
-        let combined = combined_shutdown.clone();
-        let global = shutdown.clone();
-        let session = session_token.clone();
-        tokio::spawn(async move {
-            tokio::select! {
-                biased;
-                () = global.cancelled() => combined.cancel(),
-                () = session.cancelled() => combined.cancel(),
-            }
-        });
-
         // 7. Build codec filter chains
         let (mut client_codec_chain, mut server_codec_chain) =
             crate::filter::codec_chain::build_codec_chains(
@@ -239,7 +226,7 @@ impl OfflineHandler {
 
         // 8. Proxy loop (Login → Config → Play)
         let outcome =
-            proxy_loop(&mut client, &mut backend, &self.services.packet_registry, combined_shutdown, cmd_rx, &self.services, player_id, &mut client_codec_chain, &mut server_codec_chain).await;
+            proxy_loop(&mut client, &mut backend, &self.services.packet_registry, session_token.clone(), cmd_rx, &self.services, player_id, &mut client_codec_chain, &mut server_codec_chain).await;
 
         // ── KickedFromServerEvent (on backend disconnect) ──
         if let ProxyLoopOutcome::BackendDisconnected { ref reason } = outcome {

@@ -77,7 +77,7 @@ impl PassthroughHandler {
             .as_ref()
             .map(|d| d.username.clone())
             .unwrap_or_default();
-        let player_id = infrarust_api::types::PlayerId::new(player_uuid.as_u128() as u64);
+        let player_id = crate::player::next_player_id();
         let api_profile = infrarust_api::types::GameProfile {
             uuid: player_uuid,
             username: username.clone(),
@@ -153,7 +153,7 @@ impl PassthroughHandler {
         });
 
         // Register session
-        let session_token = CancellationToken::new();
+        let session_token = shutdown.child_token();
         let (cmd_tx, _cmd_rx) = PlayerSession::channel();
 
         let player_session = Arc::new(PlayerSession::new(
@@ -188,21 +188,8 @@ impl PassthroughHandler {
         let backend_stream = backend.into_stream();
         let forwarder = select_forwarder(server_config.proxy_mode);
 
-        // Combine session and global shutdown tokens
-        let combined_shutdown = CancellationToken::new();
-        let combined = combined_shutdown.clone();
-        let global = shutdown.clone();
-        let session = session_token.clone();
-        tokio::spawn(async move {
-            tokio::select! {
-                biased;
-                () = global.cancelled() => combined.cancel(),
-                () = session.cancelled() => combined.cancel(),
-            }
-        });
-
         let result = forwarder
-            .forward(client_stream, backend_stream, combined_shutdown)
+            .forward(client_stream, backend_stream, session_token.clone())
             .await;
 
         // ── DisconnectEvent (always) ──
