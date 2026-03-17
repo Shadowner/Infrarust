@@ -408,7 +408,7 @@ async fn handle_client_to_backend(
         {
             let raw_packet = infrarust_api::types::RawPacket::new(
                 frame.id,
-                bytes::Bytes::copy_from_slice(&frame.payload),
+                frame.payload.clone(),
             );
             let mut event = infrarust_api::events::packet::RawPacketEvent::new(
                 player_id,
@@ -512,7 +512,7 @@ async fn handle_backend_to_client(
         {
             let raw_packet = infrarust_api::types::RawPacket::new(
                 frame.id,
-                bytes::Bytes::copy_from_slice(&frame.payload),
+                frame.payload.clone(),
             );
             let mut event = infrarust_api::events::packet::RawPacketEvent::new(
                 player_id,

@@ -28,14 +28,15 @@ impl ConnectionRegistry {
     /// Registers a player session, keyed by profile UUID.
     pub fn register(&self, session: Arc<PlayerSession>) -> Uuid {
         let uuid = session.profile().uuid;
-        if self.sessions.contains_key(&uuid) {
+        if let Some(previous) = self.sessions.insert(uuid, Arc::clone(&session)) {
+            previous.shutdown_token().cancel();
+            previous.set_disconnected();
             tracing::warn!(
                 uuid = %uuid,
                 username = %session.profile().username,
-                "overwriting existing session for UUID (reconnect?)"
+                "replaced existing session for UUID; previous session was cancelled"
             );
         }
-        self.sessions.insert(uuid, session);
         uuid
     }
 

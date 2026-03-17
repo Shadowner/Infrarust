@@ -135,9 +135,11 @@ impl PlayerSession {
 
     /// Updates the current server (called by the proxy loop on server switch).
     pub fn set_current_server(&self, server: ServerId) {
-        if let Ok(mut guard) = self.current_server.write() {
-            *guard = Some(server);
-        }
+        let mut guard = self
+            .current_server
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = Some(server);
     }
 
     /// Returns the shutdown token for this session.

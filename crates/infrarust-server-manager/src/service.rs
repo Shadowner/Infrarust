@@ -168,11 +168,14 @@ impl ServerManagerService {
 
     /// Fires the state change callback (if set) outside of any `DashMap` lock.
     fn fire_state_change(&self, server_id: &str, old: ServerState, new: ServerState) {
-        let cb = self
-            .on_state_change
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(ref callback) = *cb {
+        let callback = {
+            let cb = self
+                .on_state_change
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
+            cb.clone()
+        };
+        if let Some(callback) = callback {
             callback(server_id, old, new);
         }
     }

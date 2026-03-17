@@ -66,31 +66,98 @@ impl Forwarder for CopyForwarder {
 }
 
 async fn copy_forward(
-    mut client: TcpStream,
-    mut backend: TcpStream,
+    client: TcpStream,
+    backend: TcpStream,
     shutdown: CancellationToken,
 ) -> ForwardResult {
+    use tokio::io::AsyncWriteExt;
+
+    let (mut client_read, mut client_write) = client.into_split();
+    let (mut backend_read, mut backend_write) = backend.into_split();
+
+    let mut c2b = tokio::spawn(async move {
+        let copied = tokio::io::copy(&mut client_read, &mut backend_write).await;
+        let _ = backend_write.shutdown().await;
+        copied
+    });
+
+    let mut b2c = tokio::spawn(async move {
+        let copied = tokio::io::copy(&mut backend_read, &mut client_write).await;
+        let _ = client_write.shutdown().await;
+        copied
+    });
+
     tokio::select! {
         biased;
         () = shutdown.cancelled() => {
+            c2b.abort();
+            b2c.abort();
             ForwardResult {
                 client_to_backend: 0,
                 backend_to_client: 0,
                 reason: ForwardEndReason::Shutdown,
             }
         }
-        result = tokio::io::copy_bidirectional(&mut client, &mut backend) => {
-            match result {
-                Ok((c2b, b2c)) => ForwardResult {
-                    client_to_backend: c2b,
-                    backend_to_client: b2c,
-                    reason: ForwardEndReason::ClientClosed,
-                },
-                Err(e) => ForwardResult {
-                    client_to_backend: 0,
-                    backend_to_client: 0,
-                    reason: ForwardEndReason::Error(e),
-                },
+        c2b_result = &mut c2b => {
+            match c2b_result {
+                Ok(Ok(client_to_backend)) => {
+                    let backend_to_client = match b2c.await {
+                        Ok(Ok(n)) => n,
+                        _ => 0,
+                    };
+                    ForwardResult {
+                        client_to_backend,
+                        backend_to_client,
+                        reason: ForwardEndReason::ClientClosed,
+                    }
+                }
+                Ok(Err(e)) => {
+                    b2c.abort();
+                    ForwardResult {
+                        client_to_backend: 0,
+                        backend_to_client: 0,
+                        reason: ForwardEndReason::Error(e),
+                    }
+                }
+                Err(e) => {
+                    b2c.abort();
+                    ForwardResult {
+                        client_to_backend: 0,
+                        backend_to_client: 0,
+                        reason: ForwardEndReason::Error(std::io::Error::other(e.to_string())),
+                    }
+                }
+            }
+        }
+        b2c_result = &mut b2c => {
+            match b2c_result {
+                Ok(Ok(backend_to_client)) => {
+                    let client_to_backend = match c2b.await {
+                        Ok(Ok(n)) => n,
+                        _ => 0,
+                    };
+                    ForwardResult {
+                        client_to_backend,
+                        backend_to_client,
+                        reason: ForwardEndReason::BackendClosed,
+                    }
+                }
+                Ok(Err(e)) => {
+                    c2b.abort();
+                    ForwardResult {
+                        client_to_backend: 0,
+                        backend_to_client: 0,
+                        reason: ForwardEndReason::Error(e),
+                    }
+                }
+                Err(e) => {
+                    c2b.abort();
+                    ForwardResult {
+                        client_to_backend: 0,
+                        backend_to_client: 0,
+                        reason: ForwardEndReason::Error(std::io::Error::other(e.to_string())),
+                    }
+                }
             }
         }
     }
