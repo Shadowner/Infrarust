@@ -26,6 +26,11 @@ impl CDisconnect {
         }
     }
 
+    /// Creates a disconnect packet from pre-encoded NBT bytes (1.20.3+).
+    pub fn from_nbt(nbt: Vec<u8>) -> Self {
+        Self { reason: nbt }
+    }
+
     /// Returns the reason as a JSON string, if the content is valid UTF-8.
     pub fn as_json(&self) -> Option<&str> {
         std::str::from_utf8(&self.reason).ok()

@@ -11,21 +11,20 @@ impl Plugin for HelloPlugin {
             .description("Example plugin: logs connections and provides /hello command")
     }
 
-    fn on_enable<'a>(&'a self, ctx: &'a dyn PluginContext) -> BoxFuture<'a, Result<(), PluginError>> {
+    fn on_enable<'a>(
+        &'a self,
+        ctx: &'a dyn PluginContext,
+    ) -> BoxFuture<'a, Result<(), PluginError>> {
         Box::pin(async move {
-            ctx.event_bus().subscribe(
-                EventPriority::NORMAL,
-                |event: &mut PostLoginEvent| {
+            ctx.event_bus()
+                .subscribe(EventPriority::NORMAL, |event: &mut PostLoginEvent| {
                     tracing::info!("[HelloPlugin] {} joined the proxy!", event.profile.username);
-                },
-            );
+                });
 
-            ctx.event_bus().subscribe(
-                EventPriority::NORMAL,
-                |event: &mut DisconnectEvent| {
+            ctx.event_bus()
+                .subscribe(EventPriority::NORMAL, |event: &mut DisconnectEvent| {
                     tracing::info!("[HelloPlugin] {} left the proxy", event.username);
-                },
-            );
+                });
 
             ctx.command_manager().register(
                 "hello",
@@ -34,6 +33,27 @@ impl Plugin for HelloPlugin {
                 Box::new(HelloCommand),
             );
 
+            ctx.event_bus()
+                .subscribe(EventPriority::NORMAL, |event: &mut ChatMessageEvent| {
+                    if event.message.contains("hello") {
+                        tracing::info!(
+                            "[HelloPlugin] Detected 'hello' in a chat message: {}",
+                            event.message
+                        );
+                        tracing::info!("[HelloPlugin] Rejecting the message");
+                        event.deny(Component::text("Test"));
+                    }
+                });
+            let player_registry = ctx.player_registry_handle();
+            ctx.scheduler().interval(
+                std::time::Duration::from_secs(60),
+                Box::new(move || {
+                    tracing::info!("[HelloPlugin] 60 seconds have passed!");
+                    player_registry.get_all_players().iter().for_each(|player| {
+                        let _ = player.send_message(Component::text("Hello from the scheduler!"));
+                    });
+                }),
+            );
             tracing::info!("[HelloPlugin] Enabled successfully");
             Ok(())
         })

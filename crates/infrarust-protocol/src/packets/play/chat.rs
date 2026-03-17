@@ -29,6 +29,14 @@ impl CSystemChatMessage {
             overlay,
         }
     }
+
+    /// Creates a system chat message from pre-encoded NBT bytes (1.20.3+).
+    pub fn from_nbt(nbt: Vec<u8>, overlay: bool) -> Self {
+        Self {
+            content: nbt,
+            overlay,
+        }
+    }
 }
 
 impl Packet for CSystemChatMessage {

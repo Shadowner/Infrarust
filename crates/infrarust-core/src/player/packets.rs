@@ -17,36 +17,56 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use crate::error::CoreError;
 
 /// Builds a system chat message packet frame.
+///
+/// Encodes the component as JSON for pre-1.20.3 or Network NBT for 1.20.3+.
 pub fn build_system_chat_message(
     component: &Component,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<PacketFrame, CoreError> {
-    let packet = CSystemChatMessage::from_json(&component.to_json(), false);
+    let packet = if version.less_than(ProtocolVersion::V1_20_3) {
+        CSystemChatMessage::from_json(&component.to_json(), false)
+    } else {
+        CSystemChatMessage::from_nbt(component.to_nbt_network(), false)
+    };
     encode_packet(&packet, version, registry)
 }
 
 /// Builds an action bar packet frame (system chat with `overlay: true`).
+///
+/// Encodes the component as JSON for pre-1.20.3 or Network NBT for 1.20.3+.
 pub fn build_action_bar(
     component: &Component,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<PacketFrame, CoreError> {
-    let packet = CSystemChatMessage::from_json(&component.to_json(), true);
+    let packet = if version.less_than(ProtocolVersion::V1_20_3) {
+        CSystemChatMessage::from_json(&component.to_json(), true)
+    } else {
+        CSystemChatMessage::from_nbt(component.to_nbt_network(), true)
+    };
     encode_packet(&packet, version, registry)
 }
 
 /// Builds a play-state disconnect packet frame.
+///
+/// Encodes the reason as JSON for pre-1.20.3 or Network NBT for 1.20.3+.
 pub fn build_disconnect(
     reason: &Component,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<PacketFrame, CoreError> {
-    let packet = CDisconnect::from_json(&reason.to_json());
+    let packet = if version.less_than(ProtocolVersion::V1_20_3) {
+        CDisconnect::from_json(&reason.to_json())
+    } else {
+        CDisconnect::from_nbt(reason.to_nbt_network())
+    };
     encode_packet(&packet, version, registry)
 }
 
 /// Builds the three title packets (title text, subtitle text, timing).
+///
+/// Encodes components as JSON for pre-1.20.3 or Network NBT for 1.20.3+.
 pub fn build_title_packets(
     title: &TitleData,
     version: ProtocolVersion,
@@ -63,11 +83,19 @@ pub fn build_title_packets(
     frames.push(encode_packet(&times, version, registry)?);
 
     // 2. Subtitle (sent before title so it's visible when title appears)
-    let subtitle = CSetSubtitle::from_json(&title.subtitle.to_json());
+    let subtitle = if version.less_than(ProtocolVersion::V1_20_3) {
+        CSetSubtitle::from_json(&title.subtitle.to_json())
+    } else {
+        CSetSubtitle::from_nbt(title.subtitle.to_nbt_network())
+    };
     frames.push(encode_packet(&subtitle, version, registry)?);
 
     // 3. Title text (triggers the display)
-    let title_pkt = CSetTitle::from_json(&title.title.to_json());
+    let title_pkt = if version.less_than(ProtocolVersion::V1_20_3) {
+        CSetTitle::from_json(&title.title.to_json())
+    } else {
+        CSetTitle::from_nbt(title.title.to_nbt_network())
+    };
     frames.push(encode_packet(&title_pkt, version, registry)?);
 
     Ok(frames)

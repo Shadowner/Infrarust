@@ -243,6 +243,107 @@ impl Component {
         out
     }
 
+    /// Serializes this component to Minecraft Network NBT format (1.20.3+).
+    ///
+    /// Network NBT differs from standard NBT: the root compound has only a
+    /// type byte (`0x0A`) with no name length or name bytes.
+    #[must_use]
+    pub fn to_nbt_network(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(64);
+        buf.push(0x0A); // TAG_Compound (root, no name for Network NBT)
+        self.write_nbt_compound_content(&mut buf);
+        buf
+    }
+
+    /// Writes the compound fields and TAG_End for this component.
+    /// Used for both the root compound and nested compounds (extra, hover).
+    fn write_nbt_compound_content(&self, buf: &mut Vec<u8>) {
+        // text (always present)
+        Self::write_nbt_string_field(buf, "text", &self.text);
+
+        if let Some(ref color) = self.color {
+            Self::write_nbt_string_field(buf, "color", color);
+        }
+        if self.bold == Some(true) {
+            Self::write_nbt_byte_field(buf, "bold", 1);
+        }
+        if self.italic == Some(true) {
+            Self::write_nbt_byte_field(buf, "italic", 1);
+        }
+        if self.underlined == Some(true) {
+            Self::write_nbt_byte_field(buf, "underlined", 1);
+        }
+        if self.strikethrough == Some(true) {
+            Self::write_nbt_byte_field(buf, "strikethrough", 1);
+        }
+        if self.obfuscated == Some(true) {
+            Self::write_nbt_byte_field(buf, "obfuscated", 1);
+        }
+
+        if let Some(ref click) = self.click_event {
+            let (action, value) = match click {
+                ClickEvent::OpenUrl(url) => ("open_url", url.as_str()),
+                ClickEvent::SuggestCommand(cmd) => ("suggest_command", cmd.as_str()),
+                ClickEvent::RunCommand(cmd) => ("run_command", cmd.as_str()),
+                ClickEvent::CopyToClipboard(text) => ("copy_to_clipboard", text.as_str()),
+            };
+            buf.push(0x0A); // TAG_Compound
+            Self::write_nbt_name(buf, "clickEvent");
+            Self::write_nbt_string_field(buf, "action", action);
+            Self::write_nbt_string_field(buf, "value", value);
+            buf.push(0x00); // TAG_End
+        }
+
+        if let Some(ref hover) = self.hover_event {
+            match hover {
+                HoverEvent::ShowText(component) => {
+                    buf.push(0x0A); // TAG_Compound
+                    Self::write_nbt_name(buf, "hoverEvent");
+                    Self::write_nbt_string_field(buf, "action", "show_text");
+                    buf.push(0x0A); // TAG_Compound (contents)
+                    Self::write_nbt_name(buf, "contents");
+                    component.write_nbt_compound_content(buf);
+                    buf.push(0x00); // TAG_End (hoverEvent)
+                }
+            }
+        }
+
+        if !self.extra.is_empty() {
+            buf.push(0x09); // TAG_List
+            Self::write_nbt_name(buf, "extra");
+            buf.push(0x0A); // element type = TAG_Compound
+            buf.extend_from_slice(&(self.extra.len() as i32).to_be_bytes());
+            for child in &self.extra {
+                child.write_nbt_compound_content(buf);
+            }
+        }
+
+        buf.push(0x00); // TAG_End
+    }
+
+    /// Writes an NBT TAG_String field (type byte + name + value).
+    fn write_nbt_string_field(buf: &mut Vec<u8>, name: &str, value: &str) {
+        buf.push(0x08); // TAG_String
+        Self::write_nbt_name(buf, name);
+        let bytes = value.as_bytes();
+        buf.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
+        buf.extend_from_slice(bytes);
+    }
+
+    /// Writes an NBT TAG_Byte field (type byte + name + value).
+    fn write_nbt_byte_field(buf: &mut Vec<u8>, name: &str, value: u8) {
+        buf.push(0x01); // TAG_Byte
+        Self::write_nbt_name(buf, name);
+        buf.push(value);
+    }
+
+    /// Writes an NBT field name (u16 length + UTF-8 bytes).
+    fn write_nbt_name(buf: &mut Vec<u8>, name: &str) {
+        let bytes = name.as_bytes();
+        buf.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
+        buf.extend_from_slice(bytes);
+    }
+
     /// Escapes a string for JSON embedding.
     fn escape_json(s: &str) -> String {
         let mut out = String::with_capacity(s.len());
@@ -418,6 +519,79 @@ mod tests {
         assert_eq!(t.fade_in_ticks, 5);
         assert_eq!(t.stay_ticks, 100);
         assert_eq!(t.fade_out_ticks, 10);
+    }
+
+    #[test]
+    fn nbt_network_plain_text() {
+        let c = Component::text("Hello");
+        let nbt = c.to_nbt_network();
+        // Root TAG_Compound (0x0A), no name
+        assert_eq!(nbt[0], 0x0A);
+        // TAG_String (0x08) for "text" field
+        assert_eq!(nbt[1], 0x08);
+        // name length = 4 ("text")
+        assert_eq!(&nbt[2..4], &[0x00, 0x04]);
+        assert_eq!(&nbt[4..8], b"text");
+        // value length = 5 ("Hello")
+        assert_eq!(&nbt[8..10], &[0x00, 0x05]);
+        assert_eq!(&nbt[10..15], b"Hello");
+        // TAG_End
+        assert_eq!(nbt[15], 0x00);
+        assert_eq!(nbt.len(), 16);
+    }
+
+    #[test]
+    fn nbt_network_with_color_and_bold() {
+        let c = Component::text("Hi").color("red").bold();
+        let nbt = c.to_nbt_network();
+        assert_eq!(nbt[0], 0x0A); // root compound
+        // Should contain "text", "color", "bold" fields + TAG_End
+        // Find "color" TAG_String (0x08)
+        let nbt_str = String::from_utf8_lossy(&nbt);
+        assert!(nbt_str.contains("text"));
+        assert!(nbt_str.contains("color"));
+        assert!(nbt_str.contains("red"));
+        assert!(nbt_str.contains("bold"));
+        // Last byte is TAG_End
+        assert_eq!(*nbt.last().unwrap(), 0x00);
+    }
+
+    #[test]
+    fn nbt_network_with_extra() {
+        let c = Component::text("Hello ")
+            .append(Component::text("World").color("gold"));
+        let nbt = c.to_nbt_network();
+        assert_eq!(nbt[0], 0x0A); // root compound
+        // Should contain TAG_List (0x09) for "extra"
+        assert!(nbt.contains(&0x09));
+        let nbt_str = String::from_utf8_lossy(&nbt);
+        assert!(nbt_str.contains("extra"));
+        assert!(nbt_str.contains("World"));
+        assert!(nbt_str.contains("gold"));
+    }
+
+    #[test]
+    fn nbt_network_with_click_event() {
+        let c = Component::text("Click me")
+            .click(ClickEvent::OpenUrl("https://example.com".into()));
+        let nbt = c.to_nbt_network();
+        assert_eq!(nbt[0], 0x0A);
+        let nbt_str = String::from_utf8_lossy(&nbt);
+        assert!(nbt_str.contains("clickEvent"));
+        assert!(nbt_str.contains("open_url"));
+        assert!(nbt_str.contains("https://example.com"));
+    }
+
+    #[test]
+    fn nbt_network_with_hover_event() {
+        let c = Component::text("Hover me")
+            .hover(HoverEvent::ShowText(Box::new(Component::text("Tooltip"))));
+        let nbt = c.to_nbt_network();
+        assert_eq!(nbt[0], 0x0A);
+        let nbt_str = String::from_utf8_lossy(&nbt);
+        assert!(nbt_str.contains("hoverEvent"));
+        assert!(nbt_str.contains("show_text"));
+        assert!(nbt_str.contains("Tooltip"));
     }
 
     #[test]

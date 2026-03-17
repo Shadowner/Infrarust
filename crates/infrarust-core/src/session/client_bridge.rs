@@ -8,6 +8,7 @@ use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+use infrarust_api::types::Component;
 use infrarust_protocol::Packet;
 use infrarust_protocol::codec::McBufWriteExt;
 use infrarust_protocol::crypto::{DecryptCipher, EncryptCipher};
@@ -190,8 +191,8 @@ impl ClientBridge {
                     buf.write_string(&json)?;
                     buf
                 } else {
-                    // 1.20.3+: NBT text component
-                    encode_nbt_text_component(reason)
+                    // 1.20.3+: Network NBT text component
+                    Component::text(reason).to_nbt_network()
                 };
                 let pkt = CConfigDisconnect {
                     reason: reason_bytes,
@@ -203,8 +204,8 @@ impl ClientBridge {
                     // JSON bytes — CDisconnect.encode() adds the VarInt length prefix
                     json.into_bytes()
                 } else {
-                    // NBT text component
-                    encode_nbt_text_component(reason)
+                    // 1.20.3+: Network NBT text component
+                    Component::text(reason).to_nbt_network()
                 };
                 let pkt = CDisconnect {
                     reason: reason_bytes,
@@ -216,24 +217,4 @@ impl ClientBridge {
         self.stream.shutdown().await.ok();
         Ok(())
     }
-}
-
-/// Encodes a plain-text message as an NBT text component for 1.20.3+.
-///
-/// Produces a `TAG_Compound` with a "text" `TAG_String` field, using
-/// standard NBT encoding (empty root name).
-fn encode_nbt_text_component(text: &str) -> Vec<u8> {
-    let text_bytes = text.as_bytes();
-    let text_len = text_bytes.len() as u16;
-
-    let mut buf = Vec::with_capacity(3 + 7 + text_bytes.len() + 1);
-    buf.push(0x0A); // TAG_Compound (root)
-    buf.extend_from_slice(&[0x00, 0x00]); // empty root name
-    buf.push(0x08); // TAG_String
-    buf.extend_from_slice(&4u16.to_be_bytes()); // field name "text" (length 4)
-    buf.extend_from_slice(b"text");
-    buf.extend_from_slice(&text_len.to_be_bytes()); // string value length
-    buf.extend_from_slice(text_bytes);
-    buf.push(0x00); // TAG_End
-    buf
 }

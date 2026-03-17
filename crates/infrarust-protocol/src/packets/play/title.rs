@@ -27,6 +27,11 @@ impl CSetTitle {
             text: json.as_bytes().to_vec(),
         }
     }
+
+    /// Creates a title packet from pre-encoded NBT bytes (1.20.3+).
+    pub fn from_nbt(nbt: Vec<u8>) -> Self {
+        Self { text: nbt }
+    }
 }
 
 impl Packet for CSetTitle {
@@ -82,6 +87,11 @@ impl CSetSubtitle {
         Self {
             text: json.as_bytes().to_vec(),
         }
+    }
+
+    /// Creates a subtitle packet from pre-encoded NBT bytes (1.20.3+).
+    pub fn from_nbt(nbt: Vec<u8>) -> Self {
+        Self { text: nbt }
     }
 }
 
