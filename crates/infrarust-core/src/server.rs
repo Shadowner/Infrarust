@@ -146,7 +146,7 @@ impl ProxyServer {
 
             // Wire state change callback to fire ServerStateChangeEvent
             let bus = Arc::clone(&event_bus);
-            service.set_on_state_change(Arc::new(move |server_id, old, new| {
+            service.add_on_state_change(Arc::new(move |server_id, old, new| {
                 let api_old = convert_server_state(old);
                 let api_new = convert_server_state(new);
                 bus.fire_and_forget_arc(ServerStateChangeEvent {

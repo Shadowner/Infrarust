@@ -1,6 +1,5 @@
 //! [`ServerManager`] bridge — delegates to [`ServerManagerService`].
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use infrarust_api::error::ServiceError;
@@ -14,16 +13,12 @@ use infrarust_server_manager::state::ServerState as CoreServerState;
 /// Bridges the API-level [`ServerManager`] trait to the core [`ServerManagerService`].
 pub struct ServerManagerBridge {
     service: Arc<ServerManagerService>,
-    next_listener_id: AtomicU64,
 }
 
 impl ServerManagerBridge {
     /// Creates a new bridge.
     pub fn new(service: Arc<ServerManagerService>) -> Self {
-        Self {
-            service,
-            next_listener_id: AtomicU64::new(1),
-        }
+        Self { service }
     }
 }
 
@@ -57,16 +52,14 @@ impl ServerManager for ServerManagerBridge {
     }
 
     fn on_state_change(&self, callback: StateChangeCallback) -> ListenerHandle {
-        let handle = ListenerHandle::new(self.next_listener_id.fetch_add(1, Ordering::Relaxed));
-
-        self.service.set_on_state_change(Arc::new(
+        let id = self.service.add_on_state_change(Arc::new(
             move |server_id: &str, old: CoreServerState, new: CoreServerState| {
                 let server = ServerId::new(server_id);
                 callback(&server, convert_state(old), convert_state(new));
             },
         ));
 
-        handle
+        ListenerHandle::new(id)
     }
 
     fn get_all_servers(&self) -> Vec<(ServerId, ServerState)> {

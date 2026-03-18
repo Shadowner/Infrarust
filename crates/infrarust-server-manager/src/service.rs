@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -33,8 +34,8 @@ pub type StateChangeCallback = Arc<dyn Fn(&str, ServerState, ServerState) + Send
 /// adaptive polling, and auto-shutdown after idle.
 pub struct ServerManagerService {
     pub(crate) entries: DashMap<String, ServerEntry>,
-    /// Optional callback fired on every state transition.
-    on_state_change: std::sync::RwLock<Option<StateChangeCallback>>,
+    listeners: std::sync::RwLock<Vec<(u64, StateChangeCallback)>>,
+    next_listener_id: AtomicU64,
 }
 
 pub(crate) struct ServerEntry {
@@ -114,7 +115,8 @@ impl ServerManagerService {
 
         Self {
             entries,
-            on_state_change: std::sync::RwLock::new(None),
+            listeners: std::sync::RwLock::new(Vec::new()),
+            next_listener_id: AtomicU64::new(1),
         }
     }
 
@@ -158,24 +160,34 @@ impl ServerManagerService {
     /// Registers a callback that fires on every state transition.
     ///
     /// The callback receives `(server_id, old_state, new_state)`.
-    pub fn set_on_state_change(&self, callback: StateChangeCallback) {
-        let mut cb = self
-            .on_state_change
+    pub fn add_on_state_change(&self, callback: StateChangeCallback) -> u64 {
+        let id = self.next_listener_id.fetch_add(1, Ordering::Relaxed);
+        let mut listeners = self
+            .listeners
             .write()
             .unwrap_or_else(|e| e.into_inner());
-        *cb = Some(callback);
+        listeners.push((id, callback));
+        id
     }
 
-    /// Fires the state change callback (if set) outside of any `DashMap` lock.
+    /// Removes a previously registered state change listener.
+    pub fn remove_on_state_change(&self, listener_id: u64) {
+        let mut listeners = self
+            .listeners
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        listeners.retain(|(id, _)| *id != listener_id);
+    }
+
     fn fire_state_change(&self, server_id: &str, old: ServerState, new: ServerState) {
-        let callback = {
-            let cb = self
-                .on_state_change
+        let snapshot = {
+            let listeners = self
+                .listeners
                 .read()
                 .unwrap_or_else(|e| e.into_inner());
-            cb.clone()
+            listeners.clone()
         };
-        if let Some(callback) = callback {
+        for (_, callback) in &snapshot {
             callback(server_id, old, new);
         }
     }
