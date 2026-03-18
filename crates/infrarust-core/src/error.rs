@@ -20,6 +20,12 @@ pub enum CoreError {
     #[error("connection closed")]
     ConnectionClosed,
 
+    #[error("connection timeout: {0}")]
+    Timeout(String),
+
+    #[error("backend unreachable: {0}")]
+    BackendUnreachable(String),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -40,4 +46,22 @@ pub enum CoreError {
 
     #[error("{0}")]
     Other(String),
+}
+
+impl CoreError {
+    /// Returns `true` if this error represents a normal disconnect
+    /// (connection reset, broken pipe, EOF) that should be logged at debug level.
+    pub fn is_expected_disconnect(&self) -> bool {
+        match self {
+            Self::Io(e) => matches!(
+                e.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::UnexpectedEof
+            ),
+            Self::ConnectionClosed | Self::Transport(_) => true,
+            _ => false,
+        }
+    }
 }

@@ -15,6 +15,8 @@ use crate::pipeline::types::RoutingData;
 /// and triggers wake-up if the server is not online.
 ///
 /// Placed after `BanCheckMiddleware` in the login pipeline.
+///
+/// **Requires**: `RoutingData` (from `DomainRouterMiddleware`)
 pub struct ServerManagerMiddleware {
     server_manager: Arc<ServerManagerService>,
 }

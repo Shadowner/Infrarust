@@ -12,6 +12,9 @@ use crate::routing::DomainRouter;
 ///
 /// Uses the `DomainRouter` for lock-free concurrent domain resolution
 /// with incremental add/update/remove support.
+///
+/// **Requires**: `HandshakeData` (from `HandshakeParserMiddleware`)
+/// **Inserts**: `RoutingData` (server config + config ID)
 pub struct DomainRouterMiddleware {
     domain_router: Arc<DomainRouter>,
 }

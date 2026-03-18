@@ -173,15 +173,13 @@ impl PassthroughHandler {
             session = %session_id,
             server = %routing.config_id,
             username = ?login_data.as_ref().map(|d| &d.username),
+            mode = "passthrough",
             "session started"
         );
 
         // Record metrics
         #[cfg(feature = "telemetry")]
-        if let Some(ref metrics) = self.metrics {
-            metrics.record_connection_start(&routing.config_id, "passthrough");
-            metrics.record_player_join(&routing.config_id);
-        }
+        super::helpers::record_session_start(&self.metrics, &routing.config_id, "passthrough");
 
         // Bidirectional forward
         let client_stream = ctx.take_stream();
@@ -193,23 +191,19 @@ impl PassthroughHandler {
             .await;
 
         // ── DisconnectEvent (always) ──
-        let disconnect = infrarust_api::events::lifecycle::DisconnectEvent {
+        super::helpers::fire_disconnect_event(
+            &self.services.event_bus,
             player_id,
             username,
-            last_server: Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
-        };
-        let _ = self.services.event_bus.fire(disconnect).await;
+            Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
+        ).await;
 
         // Cleanup
         let _ = self.services.connection_registry.unregister(&session_id);
 
         // Record end metrics
         #[cfg(feature = "telemetry")]
-        if let Some(ref metrics) = self.metrics {
-            let duration_secs = ctx.connected_at.elapsed().as_secs_f64();
-            metrics.record_connection_end(duration_secs, &routing.config_id, "passthrough");
-            metrics.record_player_leave(&routing.config_id);
-        }
+        super::helpers::record_session_end(&self.metrics, ctx.connection_duration(), &routing.config_id, "passthrough");
 
         tracing::info!(
             session = %session_id,

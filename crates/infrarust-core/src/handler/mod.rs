@@ -1,3 +1,5 @@
+pub(crate) mod helpers;
+
 pub mod client_only;
 pub mod legacy;
 pub mod offline;

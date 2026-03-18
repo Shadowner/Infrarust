@@ -14,6 +14,8 @@ use crate::pipeline::types::LoginData;
 ///
 /// Checks the player's IP and username against the ban storage.
 /// Placed after `LoginStartParserMiddleware` in the login pipeline.
+///
+/// **Requires**: `LoginData` (from `LoginStartParserMiddleware`)
 pub struct BanCheckMiddleware {
     ban_manager: Arc<BanManager>,
 }

@@ -1,3 +1,3 @@
-pub mod backend_bridge;
-pub mod client_bridge;
-pub mod proxy_loop;
+pub(crate) mod backend_bridge;
+pub(crate) mod client_bridge;
+pub(crate) mod proxy_loop;

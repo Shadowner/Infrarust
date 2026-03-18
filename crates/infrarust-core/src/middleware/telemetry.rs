@@ -20,6 +20,9 @@ pub struct ConnectionSpan(pub tracing::Span);
 ///
 /// Placed in the login pipeline after `BanCheck` (so `LoginData` is available)
 /// and before `ServerManager` (to include server startup time in the span).
+///
+/// **Reads**: `HandshakeData`, `RoutingData`, `LoginData` (all optional, degrades gracefully)
+/// **Inserts**: `ConnectionSpan` (tracing span for the connection)
 pub struct TelemetryMiddleware;
 
 impl Middleware for TelemetryMiddleware {

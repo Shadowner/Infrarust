@@ -1,6 +1,7 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 
 use bytes::BytesMut;
 use tokio::net::TcpStream;
@@ -168,6 +169,10 @@ impl ConnectionContext {
             buffered_data: BytesMut::new(),
             extensions: Extensions::new(),
         }
+    }
+
+    pub fn connection_duration(&self) -> Duration {
+        self.connected_at.elapsed()
     }
 
     /// Builds a `ConnectionInfo` for passing to `BackendConnector`.

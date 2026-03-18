@@ -209,10 +209,7 @@ impl OfflineHandler {
 
         // Record metrics
         #[cfg(feature = "telemetry")]
-        if let Some(ref metrics) = self.metrics {
-            metrics.record_connection_start(&routing.config_id, "offline");
-            metrics.record_player_join(&routing.config_id);
-        }
+        super::helpers::record_session_start(&self.metrics, &routing.config_id, "offline");
 
         // 7. Build codec filter chains
         let (mut client_codec_chain, mut server_codec_chain) =
@@ -241,38 +238,21 @@ impl OfflineHandler {
         }
 
         // ── DisconnectEvent (always) ──
-        let disconnect = infrarust_api::events::lifecycle::DisconnectEvent {
+        super::helpers::fire_disconnect_event(
+            &self.services.event_bus,
             player_id,
-            username: username.clone(),
-            last_server: Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
-        };
-        let _ = self.services.event_bus.fire(disconnect).await;
+            username.clone(),
+            Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
+        ).await;
 
         // 8. Cleanup
         let _ = self.services.connection_registry.unregister(&session_id);
 
         // Record end metrics
         #[cfg(feature = "telemetry")]
-        if let Some(ref metrics) = self.metrics {
-            let duration_secs = ctx.connected_at.elapsed().as_secs_f64();
-            metrics.record_connection_end(duration_secs, &routing.config_id, "offline");
-            metrics.record_player_leave(&routing.config_id);
-        }
+        super::helpers::record_session_end(&self.metrics, ctx.connection_duration(), &routing.config_id, "offline");
 
-        match &outcome {
-            ProxyLoopOutcome::ClientDisconnected => {
-                tracing::info!(session = %session_id, "client disconnected");
-            }
-            ProxyLoopOutcome::BackendDisconnected { reason } => {
-                tracing::info!(session = %session_id, ?reason, "backend disconnected");
-            }
-            ProxyLoopOutcome::Shutdown => {
-                tracing::debug!(session = %session_id, "shutdown");
-            }
-            ProxyLoopOutcome::Error(e) => {
-                tracing::warn!(session = %session_id, error = %e, "session error");
-            }
-        }
+        super::helpers::log_proxy_loop_outcome(&session_id, &outcome);
 
         Ok(())
     }

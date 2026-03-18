@@ -20,6 +20,9 @@ use crate::pipeline::types::{HandshakeData, LoginData};
 /// Runs in the login pipeline after the common pipeline has completed.
 /// Appends the raw login packet bytes to `HandshakeData.raw_packets`
 /// for forwarding to the backend in passthrough mode.
+///
+/// **Requires**: `HandshakeData` (from `HandshakeParserMiddleware`)
+/// **Inserts**: `LoginData` (username + optional UUID)
 #[derive(Default)]
 pub struct LoginStartParserMiddleware;
 
