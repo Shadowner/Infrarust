@@ -1,13 +1,10 @@
 use std::sync::Arc;
 
-use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_config::{ProxyConfig, ProxyMode};
-use infrarust_protocol::io::PacketEncoder;
-use infrarust_protocol::packets::login::CLoginDisconnect;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
-use infrarust_protocol::{Packet, build_default_registry};
+use infrarust_protocol::build_default_registry;
+use infrarust_protocol::version::ProtocolVersion;
 use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
 use tracing::Instrument;
 
@@ -484,38 +481,18 @@ impl ProxyServer {
 
     /// Sends a disconnect/kick packet to the client.
     async fn send_kick(&self, ctx: &mut ConnectionContext, reason: &str) -> Result<(), CoreError> {
-        let json_reason = serde_json::json!({"text": reason}).to_string();
-
-        let packet = CLoginDisconnect {
-            reason: json_reason,
-        };
-
         let version = ctx.extensions.get::<HandshakeData>().map_or(
             ProtocolVersion(infrarust_protocol::CURRENT_MC_PROTOCOL),
             |h| h.protocol_version,
         );
 
-        let packet_id = self
-            .services
-            .packet_registry
-            .get_packet_id::<CLoginDisconnect>(
-                ConnectionState::Login,
-                Direction::Clientbound,
-                version,
-            )
-            .unwrap_or(0x00);
-
-        let mut payload = Vec::new();
-        packet.encode(&mut payload, version)?;
-
-        let mut encoder = PacketEncoder::new();
-        encoder.append_raw(packet_id, &payload)?;
-        let bytes = encoder.take();
-
-        ctx.stream_mut().write_all(&bytes).await?;
-        ctx.stream_mut().flush().await?;
-
-        Ok(())
+        crate::handler::helpers::send_login_disconnect(
+            ctx.stream_mut(),
+            reason,
+            version,
+            &self.services.packet_registry,
+        )
+        .await
     }
 
     /// Returns the shared services.

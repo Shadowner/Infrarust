@@ -7,8 +7,7 @@ use tokio_util::sync::CancellationToken;
 use infrarust_config::DomainRewrite;
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::packets::handshake::SHandshake;
-use infrarust_protocol::packets::login::CLoginDisconnect;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::ProtocolVersion;
 use infrarust_protocol::{Packet, VarInt};
 use infrarust_transport::{BackendConnector, select_forwarder};
 
@@ -93,22 +92,14 @@ impl PassthroughHandler {
         match pre_connect.result() {
             infrarust_api::events::connection::ServerPreConnectResult::Allowed => {}
             infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
-                let json_reason = reason.to_json();
-                let packet = CLoginDisconnect { reason: json_reason };
-                let packet_id = self.services.packet_registry
-                    .get_packet_id::<CLoginDisconnect>(
-                        ConnectionState::Login,
-                        Direction::Clientbound,
-                        handshake.protocol_version,
-                    )
-                    .unwrap_or(0x00);
-                let mut payload = Vec::new();
-                packet.encode(&mut payload, handshake.protocol_version)?;
-                let mut encoder = PacketEncoder::new();
-                encoder.append_raw(packet_id, &payload)?;
-                let bytes = encoder.take();
-                ctx.stream_mut().write_all(&bytes).await?;
-                ctx.stream_mut().flush().await?;
+                super::helpers::send_login_disconnect(
+                    ctx.stream_mut(),
+                    &reason.to_json(),
+                    handshake.protocol_version,
+                    &self.services.packet_registry,
+                )
+                .await
+                .ok();
                 return Ok(());
             }
             _ => {} // ConnectTo, SendToLimbo, VirtualBackend — Phase 4
@@ -268,31 +259,13 @@ impl PassthroughHandler {
         reason: &str,
         version: ProtocolVersion,
     ) -> Result<(), CoreError> {
-        let json_reason = serde_json::json!({"text": reason}).to_string();
-        let packet = CLoginDisconnect {
-            reason: json_reason,
-        };
-
-        let packet_id = self
-            .services
-            .packet_registry
-            .get_packet_id::<CLoginDisconnect>(
-                ConnectionState::Login,
-                Direction::Clientbound,
-                version,
-            )
-            .unwrap_or(0x00);
-
-        let mut payload = Vec::new();
-        packet.encode(&mut payload, version)?;
-
-        let mut encoder = PacketEncoder::new();
-        encoder.append_raw(packet_id, &payload)?;
-        let bytes = encoder.take();
-
-        stream.write_all(&bytes).await?;
-        stream.flush().await?;
-        Ok(())
+        super::helpers::send_login_disconnect(
+            stream,
+            reason,
+            version,
+            &self.services.packet_registry,
+        )
+        .await
     }
 
     /// Re-encodes the handshake packet with a new domain and forwards all packets.
