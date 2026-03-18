@@ -15,6 +15,7 @@ pub mod error;
 pub mod io;
 pub mod legacy;
 pub mod packets;
+pub mod prelude;
 pub mod registry;
 pub mod version;
 

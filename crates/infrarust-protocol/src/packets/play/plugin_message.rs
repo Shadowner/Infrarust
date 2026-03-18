@@ -1,7 +1,6 @@
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
-use crate::version::{ConnectionState, Direction, ProtocolVersion};
+use crate::version::ConnectionState;
 
 /// Shared decode for plugin message packets.
 fn decode_plugin_message(r: &mut &[u8]) -> ProtocolResult<(String, Vec<u8>)> {
@@ -21,85 +20,31 @@ fn encode_plugin_message(
     Ok(())
 }
 
-// ── CPluginMessage ─────────────────────────────────────────────────
-
-/// Plugin message packet (Clientbound).
-///
-/// Used for structured communication between proxy and backends.
-/// Common channels: `minecraft:brand`, `velocity:player_info`.
-///
-/// The `data` field contains all remaining bytes after the channel string.
-#[derive(Debug, Clone)]
-pub struct CPluginMessage {
-    pub channel: String,
-    pub data: Vec<u8>,
-}
-
-impl Packet for CPluginMessage {
-    const NAME: &'static str = "CPluginMessage";
-
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
-
-    fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
+// Plugin message packets carry custom channel data (e.g. `minecraft:brand`, `velocity:player_info`).
+// The `data` field contains all remaining bytes after the channel string.
+define_twin_packets! {
+    clientbound: CPluginMessage,
+    serverbound: SPluginMessage,
+    state: ConnectionState::Play,
+    fields: {
+        pub channel: String,
+        pub data: Vec<u8>,
+    },
+    decode(r, _version): {
         let (channel, data) = decode_plugin_message(r)?;
         Ok(Self { channel, data })
-    }
-
-    fn encode(
-        &self,
-        w: &mut (impl std::io::Write + ?Sized),
-        _version: ProtocolVersion,
-    ) -> ProtocolResult<()> {
+    },
+    encode(self, w, _version): {
         encode_plugin_message(w, &self.channel, &self.data)
-    }
-}
-
-// ── SPluginMessage ─────────────────────────────────────────────────
-
-/// Plugin message packet (Serverbound).
-///
-/// Client's plugin message to the server/proxy.
-#[derive(Debug, Clone)]
-pub struct SPluginMessage {
-    pub channel: String,
-    pub data: Vec<u8>,
-}
-
-impl Packet for SPluginMessage {
-    const NAME: &'static str = "SPluginMessage";
-
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
-
-    fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
-        let (channel, data) = decode_plugin_message(r)?;
-        Ok(Self { channel, data })
-    }
-
-    fn encode(
-        &self,
-        w: &mut (impl std::io::Write + ?Sized),
-        _version: ProtocolVersion,
-    ) -> ProtocolResult<()> {
-        encode_plugin_message(w, &self.channel, &self.data)
-    }
+    },
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::packets::Packet;
+    use crate::version::ProtocolVersion;
 
     fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
         let mut buf = Vec::new();

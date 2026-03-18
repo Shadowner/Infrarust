@@ -267,36 +267,38 @@ pub(crate) fn read_string_bounded_from_reader(
     Ok(s)
 }
 
-/// Reads a `VarInt` from a `Read` source (byte-by-byte).
-pub(crate) fn read_varint_from_reader(reader: &mut impl Read) -> ProtocolResult<VarInt> {
-    let mut val = 0i32;
-    for i in 0..VarInt::MAX_SIZE {
-        let mut byte = [0u8; 1];
-        reader.read_exact(&mut byte)?;
-        val |= (i32::from(byte[0]) & 0x7F) << (i * 7);
-        if byte[0] & 0x80 == 0 {
-            return Ok(VarInt(val));
+macro_rules! impl_var_reader {
+    ($fn_name:ident, $int_ty:ty, $wrapper:path, $max_size:expr, $err:literal) => {
+        pub(crate) fn $fn_name(reader: &mut impl Read) -> ProtocolResult<$wrapper> {
+            let mut val: $int_ty = 0;
+            for i in 0..$max_size {
+                let mut byte = [0u8; 1];
+                reader.read_exact(&mut byte)?;
+                val |= (<$int_ty>::from(byte[0]) & 0x7F) << (i * 7);
+                if byte[0] & 0x80 == 0 {
+                    return Ok($wrapper(val));
+                }
+            }
+            Err(ProtocolError::invalid($err))
         }
-    }
-    Err(ProtocolError::invalid("VarInt too large (> 5 bytes)"))
+    };
 }
 
-/// Reads a `VarLong` from a `Read` source (byte-by-byte).
-pub(crate) fn read_varlong_from_reader(
-    reader: &mut impl Read,
-) -> ProtocolResult<crate::codec::varlong::VarLong> {
-    use crate::codec::varlong::VarLong;
-    let mut val = 0i64;
-    for i in 0..VarLong::MAX_SIZE {
-        let mut byte = [0u8; 1];
-        reader.read_exact(&mut byte)?;
-        val |= (i64::from(byte[0]) & 0x7F) << (i * 7);
-        if byte[0] & 0x80 == 0 {
-            return Ok(VarLong(val));
-        }
-    }
-    Err(ProtocolError::invalid("VarLong too large (> 10 bytes)"))
-}
+impl_var_reader!(
+    read_varint_from_reader,
+    i32,
+    VarInt,
+    VarInt::MAX_SIZE,
+    "VarInt too large (> 5 bytes)"
+);
+
+impl_var_reader!(
+    read_varlong_from_reader,
+    i64,
+    crate::codec::varlong::VarLong,
+    crate::codec::varlong::VarLong::MAX_SIZE,
+    "VarLong too large (> 10 bytes)"
+);
 
 #[cfg(test)]
 mod tests {

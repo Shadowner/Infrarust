@@ -115,28 +115,16 @@ impl Packet for CRegistryData {
     }
 }
 
-// ── CKnownPacks ─────────────────────────────────────────────────────
+// ── KnownPacks (twin pair) ─────────────────────────────────────────
 
-/// Known packs packet (Clientbound).
-///
-/// Sent by the server to declare which data packs it knows about.
-#[derive(Debug, Clone)]
-pub struct CKnownPacks {
-    pub packs: Vec<KnownPack>,
-}
-
-impl Packet for CKnownPacks {
-    const NAME: &'static str = "CKnownPacks";
-
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
-
-    fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
+define_twin_packets! {
+    clientbound: CKnownPacks,
+    serverbound: SKnownPacks,
+    state: ConnectionState::Config,
+    fields: {
+        pub packs: Vec<KnownPack>,
+    },
+    decode(r, _version): {
         let count = r.read_var_int()?.0 as usize;
         let mut packs = Vec::with_capacity(count.min(64));
         for _ in 0..count {
@@ -147,14 +135,8 @@ impl Packet for CKnownPacks {
             });
         }
         Ok(Self { packs })
-    }
-
-    fn encode(
-        &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
-        _version: ProtocolVersion,
-    ) -> ProtocolResult<()> {
-        // Pack count bounded by protocol
+    },
+    encode(self, w, _version): {
         w.write_var_int(&VarInt(self.packs.len() as i32))?;
         for pack in &self.packs {
             w.write_string(&pack.namespace)?;
@@ -162,134 +144,29 @@ impl Packet for CKnownPacks {
             w.write_string(&pack.version)?;
         }
         Ok(())
-    }
+    },
 }
 
-// ── SKnownPacks ─────────────────────────────────────────────────────
+// ── ConfigPluginMessage (twin pair) ─────────────────────────────────
 
-/// Known packs packet (Serverbound).
-///
-/// Client response declaring which data packs it has.
-#[derive(Debug, Clone)]
-pub struct SKnownPacks {
-    pub packs: Vec<KnownPack>,
-}
-
-impl Packet for SKnownPacks {
-    const NAME: &'static str = "SKnownPacks";
-
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
-
-    fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
-        let count = r.read_var_int()?.0 as usize;
-        let mut packs = Vec::with_capacity(count.min(64));
-        for _ in 0..count {
-            packs.push(KnownPack {
-                namespace: r.read_string()?,
-                id: r.read_string()?,
-                version: r.read_string()?,
-            });
-        }
-        Ok(Self { packs })
-    }
-
-    fn encode(
-        &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
-        _version: ProtocolVersion,
-    ) -> ProtocolResult<()> {
-        // Pack count bounded by protocol
-        w.write_var_int(&VarInt(self.packs.len() as i32))?;
-        for pack in &self.packs {
-            w.write_string(&pack.namespace)?;
-            w.write_string(&pack.id)?;
-            w.write_string(&pack.version)?;
-        }
-        Ok(())
-    }
-}
-
-// ── CConfigPluginMessage ────────────────────────────────────────────
-
-/// Plugin message packet in config state (Clientbound).
-///
-/// Carries custom channel data. The `data` field is the remaining bytes
-/// after the channel string.
-#[derive(Debug, Clone)]
-pub struct CConfigPluginMessage {
-    pub channel: String,
-    pub data: Vec<u8>,
-}
-
-impl Packet for CConfigPluginMessage {
-    const NAME: &'static str = "CConfigPluginMessage";
-
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
-
-    fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
+define_twin_packets! {
+    clientbound: CConfigPluginMessage,
+    serverbound: SConfigPluginMessage,
+    state: ConnectionState::Config,
+    fields: {
+        pub channel: String,
+        pub data: Vec<u8>,
+    },
+    decode(r, _version): {
         let channel = r.read_string()?;
         let data = r.read_remaining()?;
         Ok(Self { channel, data })
-    }
-
-    fn encode(
-        &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
-        _version: ProtocolVersion,
-    ) -> ProtocolResult<()> {
+    },
+    encode(self, w, _version): {
         w.write_string(&self.channel)?;
         w.write_all(&self.data)?;
         Ok(())
-    }
-}
-
-// ── SConfigPluginMessage ────────────────────────────────────────────
-
-/// Plugin message packet in config state (Serverbound).
-#[derive(Debug, Clone)]
-pub struct SConfigPluginMessage {
-    pub channel: String,
-    pub data: Vec<u8>,
-}
-
-impl Packet for SConfigPluginMessage {
-    const NAME: &'static str = "SConfigPluginMessage";
-
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
-
-    fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
-        let channel = r.read_string()?;
-        let data = r.read_remaining()?;
-        Ok(Self { channel, data })
-    }
-
-    fn encode(
-        &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
-        _version: ProtocolVersion,
-    ) -> ProtocolResult<()> {
-        w.write_string(&self.channel)?;
-        w.write_all(&self.data)?;
-        Ok(())
-    }
+    },
 }
 
 // ── CConfigDisconnect ───────────────────────────────────────────────

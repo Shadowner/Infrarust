@@ -1,83 +1,6 @@
 use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
-use crate::version::{ConnectionState, Direction, ProtocolVersion};
-
-// ── CKeepAlive ─────────────────────────────────────────────────────
-
-/// Keep-alive packet (Clientbound).
-///
-/// Sent periodically by the server. The client must respond with `SKeepAlive`
-/// containing the same ID within 15 seconds or get disconnected.
-///
-/// Wire format varies by version:
-/// - 1.7.2 - 1.7.6: `i32`
-/// - 1.8 - 1.12.1: `VarInt`
-/// - 1.12.2+: `i64`
-#[derive(Debug, Clone)]
-pub struct CKeepAlive {
-    pub id: i64,
-}
-
-impl Packet for CKeepAlive {
-    const NAME: &'static str = "CKeepAlive";
-
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
-
-    fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
-        let id = decode_keepalive_id(r, version)?;
-        Ok(Self { id })
-    }
-
-    fn encode(
-        &self,
-        w: &mut (impl std::io::Write + ?Sized),
-        version: ProtocolVersion,
-    ) -> ProtocolResult<()> {
-        encode_keepalive_id(w, self.id, version)
-    }
-}
-
-// ── SKeepAlive ─────────────────────────────────────────────────────
-
-/// Keep-alive packet (Serverbound).
-///
-/// Client's response to `CKeepAlive` with the same ID.
-#[derive(Debug, Clone)]
-pub struct SKeepAlive {
-    pub id: i64,
-}
-
-impl Packet for SKeepAlive {
-    const NAME: &'static str = "SKeepAlive";
-
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
-
-    fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
-        let id = decode_keepalive_id(r, version)?;
-        Ok(Self { id })
-    }
-
-    fn encode(
-        &self,
-        w: &mut (impl std::io::Write + ?Sized),
-        version: ProtocolVersion,
-    ) -> ProtocolResult<()> {
-        encode_keepalive_id(w, self.id, version)
-    }
-}
+use crate::version::{ConnectionState, ProtocolVersion};
 
 // ── Shared encode/decode ───────────────────────────────────────────
 
@@ -107,10 +30,32 @@ fn encode_keepalive_id(
     Ok(())
 }
 
+// Wire format varies by version:
+// - 1.7.2 - 1.7.6: i32
+// - 1.8 - 1.12.1: VarInt
+// - 1.12.2+: i64
+define_twin_packets! {
+    clientbound: CKeepAlive,
+    serverbound: SKeepAlive,
+    state: ConnectionState::Play,
+    fields: {
+        pub id: i64,
+    },
+    decode(r, version): {
+        let id = decode_keepalive_id(r, version)?;
+        Ok(Self { id })
+    },
+    encode(self, w, version): {
+        encode_keepalive_id(w, self.id, version)
+    },
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::packets::Packet;
+    use crate::version::ProtocolVersion;
 
     fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
         let mut buf = Vec::new();

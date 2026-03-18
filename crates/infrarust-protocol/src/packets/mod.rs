@@ -3,6 +3,92 @@
 //! Each packet implements the [`Packet`] trait for version-aware encoding and decoding,
 //! with packet IDs managed externally by the registry rather than embedded in the type.
 
+/// Generates a Clientbound + Serverbound packet pair that share identical fields
+/// and encode/decode logic, differing only in name and direction.
+///
+/// Parameter names for `decode` and `encode` are passed through the macro to satisfy
+/// Rust 2024 macro hygiene (the body can only reference identifiers it receives).
+///
+/// # Example
+/// ```ignore
+/// define_twin_packets! {
+///     clientbound: CMyPacket,
+///     serverbound: SMyPacket,
+///     state: ConnectionState::Play,
+///     fields: { pub value: i64 },
+///     decode(r, _version): { Ok(Self { value: r.read_i64_be()? }) },
+///     encode(self, w, _version): { w.write_i64_be(self.value)?; Ok(()) },
+/// }
+/// ```
+macro_rules! define_twin_packets {
+    (
+        clientbound: $c_name:ident,
+        serverbound: $s_name:ident,
+        state: $state:expr,
+        fields: { $( pub $field:ident : $ty:ty ),* $(,)? },
+        decode($r:ident, $decode_ver:ident): $decode_body:expr,
+        encode($self_:ident, $w:ident, $encode_ver:ident): $encode_body:expr $(,)?
+    ) => {
+        #[derive(Debug, Clone)]
+        pub struct $c_name {
+            $( pub $field : $ty, )*
+        }
+
+        impl $crate::packets::Packet for $c_name {
+            const NAME: &'static str = stringify!($c_name);
+
+            fn state() -> $crate::version::ConnectionState { $state }
+            fn direction() -> $crate::version::Direction {
+                $crate::version::Direction::Clientbound
+            }
+
+            fn decode($r: &mut &[u8], $decode_ver: $crate::version::ProtocolVersion)
+                -> $crate::error::ProtocolResult<Self>
+            {
+                $decode_body
+            }
+
+            #[allow(unused_mut)]
+            fn encode(
+                &$self_,
+                mut $w: &mut (impl std::io::Write + ?Sized),
+                $encode_ver: $crate::version::ProtocolVersion,
+            ) -> $crate::error::ProtocolResult<()> {
+                $encode_body
+            }
+        }
+
+        #[derive(Debug, Clone)]
+        pub struct $s_name {
+            $( pub $field : $ty, )*
+        }
+
+        impl $crate::packets::Packet for $s_name {
+            const NAME: &'static str = stringify!($s_name);
+
+            fn state() -> $crate::version::ConnectionState { $state }
+            fn direction() -> $crate::version::Direction {
+                $crate::version::Direction::Serverbound
+            }
+
+            fn decode($r: &mut &[u8], $decode_ver: $crate::version::ProtocolVersion)
+                -> $crate::error::ProtocolResult<Self>
+            {
+                $decode_body
+            }
+
+            #[allow(unused_mut)]
+            fn encode(
+                &$self_,
+                mut $w: &mut (impl std::io::Write + ?Sized),
+                $encode_ver: $crate::version::ProtocolVersion,
+            ) -> $crate::error::ProtocolResult<()> {
+                $encode_body
+            }
+        }
+    };
+}
+
 pub mod config;
 pub mod handshake;
 pub mod login;
