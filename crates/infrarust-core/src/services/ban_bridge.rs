@@ -57,62 +57,22 @@ impl BanService for BanServiceBridge {
     fn is_banned(&self, target: &BanTarget) -> BoxFuture<'_, Result<bool, ServiceError>> {
         let core_target = to_core_target(target);
         Box::pin(async move {
-            match &core_target {
-                core_ban::BanTarget::Ip(ip) => self
-                    .manager
-                    .is_ip_banned(ip)
-                    .await
-                    .map(|entry| entry.is_some())
-                    .map_err(|e| ServiceError::OperationFailed(e.to_string())),
-                core_ban::BanTarget::Username(name) => self
-                    .manager
-                    .check_player(
-                        &std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
-                        name,
-                        None,
-                    )
-                    .await
-                    .map(|entry| entry.is_some())
-                    .map_err(|e| ServiceError::OperationFailed(e.to_string())),
-                core_ban::BanTarget::Uuid(uuid) => self
-                    .manager
-                    .check_player(
-                        &std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
-                        "",
-                        Some(uuid),
-                    )
-                    .await
-                    .map(|entry| entry.is_some())
-                    .map_err(|e| ServiceError::OperationFailed(e.to_string())),
-            }
+            self.manager
+                .is_banned(&core_target)
+                .await
+                .map(|entry| entry.is_some())
+                .map_err(|e| ServiceError::OperationFailed(e.to_string()))
         })
     }
 
     fn get_ban(&self, target: &BanTarget) -> BoxFuture<'_, Result<Option<BanEntry>, ServiceError>> {
         let core_target = to_core_target(target);
         Box::pin(async move {
-            // The core BanManager doesn't have a direct get_ban method,
-            // so we check via the available methods
-            match &core_target {
-                core_ban::BanTarget::Ip(ip) => self
-                    .manager
-                    .is_ip_banned(ip)
-                    .await
-                    .map(|entry| entry.map(|e| from_core_entry(&e)))
-                    .map_err(|e| ServiceError::OperationFailed(e.to_string())),
-                _ => {
-                    // For username/uuid bans, iterate all bans
-                    let all = self
-                        .manager
-                        .get_all_bans()
-                        .await
-                        .map_err(|e| ServiceError::OperationFailed(e.to_string()))?;
-                    Ok(all
-                        .iter()
-                        .find(|entry| entry.target == core_target)
-                        .map(from_core_entry))
-                }
-            }
+            self.manager
+                .is_banned(&core_target)
+                .await
+                .map(|entry| entry.map(|e| from_core_entry(&e)))
+                .map_err(|e| ServiceError::OperationFailed(e.to_string()))
         })
     }
 
