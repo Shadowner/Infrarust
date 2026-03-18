@@ -25,6 +25,7 @@ impl ConfigServiceImpl {
     ) -> ServerConfig {
         ServerConfig {
             id: ServerId::new(id),
+            network: config.network.clone(),
             addresses: config
                 .addresses
                 .iter()

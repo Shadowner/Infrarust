@@ -4,6 +4,8 @@ use infrarust_config::{DomainIndex, DomainRewrite, MotdConfig, ProxyMode, Server
 fn make_config(id: &str, domains: &[&str], addr: &str) -> ServerConfig {
     ServerConfig {
         id: Some(id.to_string()),
+        name: None,
+        network: None,
         domains: domains.iter().map(ToString::to_string).collect(),
         addresses: vec![addr.parse().unwrap()],
         proxy_mode: ProxyMode::default(),

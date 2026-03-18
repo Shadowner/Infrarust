@@ -6,6 +6,7 @@
 
 mod config_phase;
 mod switch_packets;
+mod validation;
 
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::types::{GameProfile, PlayerId, ServerId};
@@ -55,6 +56,16 @@ pub async fn perform_switch(
         .ok_or_else(|| {
             CoreError::Rejected(format!("unknown server: {}", target.as_str()))
         })?;
+
+    let current_config = services
+        .domain_router
+        .find_by_server_id(current_server.as_str())
+        .ok_or_else(|| {
+            CoreError::Rejected(format!("unknown current server: {}", current_server.as_str()))
+        })?;
+
+    validation::validate_switch_allowed(&current_config, &server_config)
+        .map_err(|e| CoreError::Rejected(e.to_string()))?;
 
     // 2. Fire ServerPreConnectEvent (awaited — can deny/redirect)
     let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(

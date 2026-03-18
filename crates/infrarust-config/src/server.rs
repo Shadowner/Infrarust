@@ -16,6 +16,16 @@ pub struct ServerConfig {
     #[serde(default)]
     pub id: Option<String>,
 
+    /// Human-readable server name. If set, becomes the effective ServerId
+    /// (takes priority over `id`). Must match `[a-z0-9_-]+`.
+    #[serde(default)]
+    pub name: Option<String>,
+
+    /// Network this server belongs to. Only servers in the same network
+    /// can switch between each other. `None` = isolated, no switch allowed.
+    #[serde(default)]
+    pub network: Option<String>,
+
     /// Domains that route to this server.
     /// Supports wildcards: "*.mc.example.com"
     pub domains: Vec<String>,
@@ -67,11 +77,14 @@ pub struct ServerConfig {
 impl ServerConfig {
     /// Returns the effective identifier for this config.
     ///
-    /// If `id` is `None`, returns `"unknown"`. In practice the `FileProvider`
-    /// sets `id` from the filename (without extension) before handing the
-    /// config to the rest of the system.
+    /// Priority: `name` > `id` > `"unknown"`.
+    /// If `name` is set, it becomes the server's identity (used as `ServerId`).
+    /// Otherwise falls back to `id` (typically set by the provider from the filename).
     pub fn effective_id(&self) -> String {
-        self.id.clone().unwrap_or_else(|| "unknown".to_string())
+        self.name
+            .clone()
+            .or_else(|| self.id.clone())
+            .unwrap_or_else(|| "unknown".to_string())
     }
 
     /// Returns the disconnect message for when the backend is unreachable.

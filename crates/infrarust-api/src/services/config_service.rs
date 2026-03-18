@@ -28,6 +28,9 @@ pub enum ProxyMode {
 pub struct ServerConfig {
     /// The server's unique identifier.
     pub id: ServerId,
+    /// Network this server belongs to. Only servers in the same network
+    /// can switch between each other. `None` = isolated.
+    pub network: Option<String>,
     /// Network addresses for this server.
     pub addresses: Vec<crate::types::ServerAddress>,
     /// Domain names that route to this server.

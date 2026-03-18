@@ -12,12 +12,14 @@ use crate::server::ServerConfig;
 /// - At least one domain is defined
 /// - At least one address is defined
 /// - No empty domain strings
+/// - `name` (if set) matches `[a-z0-9_-]+`
+/// - `network` (if set) matches `[a-z0-9_-]+`
 ///
 /// # Errors
 ///
 /// Returns [`ConfigError::NoDomains`] if no domains are defined,
 /// [`ConfigError::NoAddresses`] if no addresses are defined, or
-/// [`ConfigError::Validation`] if any domain string is empty.
+/// [`ConfigError::Validation`] if any domain string is empty or name/network are invalid.
 pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> {
     let id = config.effective_id();
 
@@ -37,6 +39,14 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
         }
     }
 
+    if let Some(name) = &config.name {
+        validate_identifier(name, "name", &id)?;
+    }
+
+    if let Some(network) = &config.network {
+        validate_identifier(network, "network", &id)?;
+    }
+
     #[cfg(not(target_os = "linux"))]
     if config.proxy_mode == crate::types::ProxyMode::ZeroCopy {
         tracing::warn!(
@@ -45,6 +55,25 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
         );
     }
 
+    Ok(())
+}
+
+fn validate_identifier(value: &str, field: &str, server_id: &str) -> Result<(), ConfigError> {
+    if value.is_empty() {
+        return Err(ConfigError::Validation(format!(
+            "server '{server_id}': {field} must not be empty"
+        )));
+    }
+    if value.len() > 64 {
+        return Err(ConfigError::Validation(format!(
+            "server '{server_id}': {field} must be at most 64 characters"
+        )));
+    }
+    if !value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-') {
+        return Err(ConfigError::Validation(format!(
+            "server '{server_id}': {field} '{value}' contains invalid characters (allowed: a-z, 0-9, _, -)"
+        )));
+    }
     Ok(())
 }
 

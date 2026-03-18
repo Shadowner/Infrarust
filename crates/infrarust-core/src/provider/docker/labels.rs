@@ -35,6 +35,9 @@ pub fn labels_to_server_config(
         })
         .unwrap_or(ProxyMode::Passthrough);
 
+    let name = labels.get("infrarust.name").cloned();
+    let network = labels.get("infrarust.network").cloned();
+
     let send_proxy_protocol = labels
         .get("infrarust.send_proxy_protocol")
         .map(|v| v == "true" || v == "1")
@@ -59,6 +62,14 @@ pub fn labels_to_server_config(
         send_proxy_protocol,
     );
 
+    if let Some(ref name) = name {
+        toml_str.push_str(&format!("\nname = \"{name}\""));
+    }
+
+    if let Some(ref network) = network {
+        toml_str.push_str(&format!("\nnetwork = \"{network}\""));
+    }
+
     // Add MOTD text if specified
     if let Some(motd_text) = labels.get("infrarust.motd.text") {
         toml_str.push_str(&format!("\n\n[motd.online]\ntext = \"{}\"", motd_text));
@@ -69,6 +80,8 @@ pub fn labels_to_server_config(
         // Manual fallback — less complete but functional
         ServerConfig {
             id: Some(container_name.to_string()),
+            name,
+            network,
             domains,
             addresses: vec![server_address],
             proxy_mode,
@@ -80,6 +93,7 @@ pub fn labels_to_server_config(
             max_players: 0,
             ip_filter: None,
             disconnect_message: None,
+            limbo_handlers: Vec::new(),
         }
     })
 }
