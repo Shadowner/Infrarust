@@ -522,7 +522,31 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x7F, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
 
+    // StartConfiguration Clientbound (encode-only: proxy sends during server switch)
+    PacketRegistration::<crate::packets::CStartConfiguration>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x65, ProtocolVersion::V1_20_2, true)
+    .map(0x67, ProtocolVersion::V1_20_3, true)
+    .map(0x69, ProtocolVersion::V1_20_5, true)
+    .map(0x70, ProtocolVersion::V1_21_2, true)
+    .map(0x6F, ProtocolVersion::V1_21_5, true)
+    .map(0x74, ProtocolVersion::V1_21_9, true)
+    .register(&mut registry);
+
     // ── Play (Serverbound) ────────────────────────────────────────
+
+    // AcknowledgeConfiguration Serverbound (client ack for StartConfiguration)
+    PacketRegistration::<crate::packets::SAcknowledgeConfiguration>::new(
+        ConnectionState::Play,
+        Direction::Serverbound,
+    )
+    .map(0x0B, ProtocolVersion::V1_20_2, false)
+    .map(0x0C, ProtocolVersion::V1_20_5, false)
+    .map(0x0E, ProtocolVersion::V1_21_2, false)
+    .map(0x0F, ProtocolVersion::V1_21_6, false)
+    .register(&mut registry);
 
     // KeepAlive Serverbound
     PacketRegistration::<crate::packets::SKeepAlive>::new(

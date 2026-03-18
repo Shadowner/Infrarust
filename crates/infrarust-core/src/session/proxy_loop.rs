@@ -9,7 +9,7 @@
 
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::event::bus::EventBus;
-use infrarust_api::types::{PlayerId, RawPacket};
+use infrarust_api::types::{PlayerId, RawPacket, ServerId};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -45,6 +45,8 @@ pub enum ProxyLoopOutcome {
     Shutdown,
     /// I/O or protocol error.
     Error(CoreError),
+    /// Server switch requested by plugin/command — handler should perform the switch.
+    SwitchRequested { target: ServerId },
 }
 
 /// Action to take after processing a backend → client packet.
@@ -98,7 +100,7 @@ pub async fn proxy_loop(
     backend: &mut BackendBridge,
     registry: &PacketRegistry,
     shutdown: CancellationToken,
-    mut command_rx: mpsc::Receiver<PlayerCommand>,
+    command_rx: &mut mpsc::Receiver<PlayerCommand>,
     services: &ProxyServices,
     player_id: PlayerId,
     client_codec_chain: &mut CodecFilterChain,
@@ -135,8 +137,11 @@ pub async fn proxy_loop(
             }
             Some(cmd) = command_rx.recv() => {
                 match handle_player_command(client, cmd, registry).await {
-                    Ok(true) => break ProxyLoopOutcome::ClientDisconnected, // Kick
-                    Ok(false) => {} // Continue
+                    Ok(CommandResult::Continue) => {}
+                    Ok(CommandResult::Kick) => break ProxyLoopOutcome::ClientDisconnected,
+                    Ok(CommandResult::Switch(target)) => {
+                        break ProxyLoopOutcome::SwitchRequested { target };
+                    }
                     Err(e) => {
                         tracing::warn!("failed to handle player command: {e}");
                     }
@@ -155,15 +160,22 @@ pub async fn proxy_loop(
     outcome
 }
 
+/// What `handle_player_command` resolved to.
+enum CommandResult {
+    /// Continue the loop normally.
+    Continue,
+    /// Kick the player — terminate the connection.
+    Kick,
+    /// Switch to a different server.
+    Switch(ServerId),
+}
+
 /// Handles a player command from the plugin system.
-///
-/// Returns `Ok(true)` if the connection should be terminated (kick),
-/// `Ok(false)` to continue normally.
 async fn handle_player_command(
     client: &mut ClientBridge,
     cmd: PlayerCommand,
     registry: &PacketRegistry,
-) -> Result<bool, CoreError> {
+) -> Result<CommandResult, CoreError> {
     use crate::player::packets;
 
     let version = client.protocol_version;
@@ -190,17 +202,14 @@ async fn handle_player_command(
         PlayerCommand::Kick(reason) => {
             let frame = packets::build_disconnect(&reason, version, registry)?;
             client.write_frame(&frame).await?;
-            return Ok(true);
+            return Ok(CommandResult::Kick);
         }
         PlayerCommand::SwitchServer(target) => {
-            tracing::warn!(
-                target = %target,
-                "SwitchServer not implemented in Phase 0"
-            );
+            return Ok(CommandResult::Switch(target));
         }
     }
 
-    Ok(false)
+    Ok(CommandResult::Continue)
 }
 
 /// Detects if a frame is a chat message or slash command.

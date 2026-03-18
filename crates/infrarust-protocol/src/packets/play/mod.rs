@@ -1,20 +1,25 @@
 pub mod chat;
 pub mod chat_session;
 pub(crate) mod common;
+pub mod dimension;
 pub mod disconnect;
 pub mod join_game;
 pub mod keepalive;
 pub mod plugin_message;
 pub mod respawn;
+pub mod respawn_switch;
+pub mod start_configuration;
 pub mod title;
 pub mod transfer;
 
 pub use chat::{CSystemChatMessage, SChatCommand, SChatMessage};
 pub use chat_session::SChatSessionUpdate;
+pub use dimension::{DimensionInfo, extract_dimension_from_join_game};
 pub use disconnect::CDisconnect;
 pub use join_game::CJoinGame;
 pub use keepalive::{CKeepAlive, SKeepAlive};
 pub use plugin_message::{CPluginMessage, SPluginMessage};
 pub use respawn::CRespawn;
+pub use start_configuration::{CStartConfiguration, SAcknowledgeConfiguration};
 pub use title::{CSetSubtitle, CSetTitle, CSetTitleTimes};
 pub use transfer::CTransfer;

@@ -14,6 +14,7 @@ pub mod crypto;
 pub mod error;
 pub mod io;
 pub mod legacy;
+pub mod nbt;
 pub mod packets;
 pub mod prelude;
 pub mod registry;
@@ -30,8 +31,9 @@ pub use legacy::{
 pub use packets::{
     CConfigDisconnect, CConfigPluginMessage, CDisconnect, CEncryptionRequest, CFinishConfig,
     CJoinGame, CKeepAlive, CKnownPacks, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess,
-    CPingResponse, CPluginMessage, CRegistryData, CRespawn, CSetCompression, CStatusResponse,
-    CSystemChatMessage, CTransfer, ErasedPacket, KnownPack, OpaquePacket, Packet, Property,
+    CPingResponse, CPluginMessage, CRegistryData, CRespawn, CSetCompression,
+    CStartConfiguration, CStatusResponse, CSystemChatMessage, CTransfer, DimensionInfo,
+    ErasedPacket, KnownPack, OpaquePacket, Packet, Property, SAcknowledgeConfiguration,
     SAcknowledgeFinishConfig, SConfigPluginMessage, SEncryptionResponse, SHandshake, SKeepAlive,
     SKnownPacks, SLoginAcknowledged, SLoginPluginResponse, SLoginStart, SPingRequest,
     SPluginMessage, SStatusRequest,

@@ -169,7 +169,7 @@ impl OfflineHandler {
         };
 
         // 3. Create backend bridge
-        let mut backend = BackendBridge::new(backend_conn.into_stream());
+        let mut backend = BackendBridge::new(backend_conn.into_stream(), version);
 
         // 4. Send initial packets (handshake + login start with domain rewrite)
         backend
@@ -222,8 +222,9 @@ impl OfflineHandler {
             );
 
         // 8. Proxy loop (Login → Config → Play)
+        let mut cmd_rx = cmd_rx;
         let outcome =
-            proxy_loop(&mut client, &mut backend, &self.services.packet_registry, session_token.clone(), cmd_rx, &self.services, player_id, &mut client_codec_chain, &mut server_codec_chain).await;
+            proxy_loop(&mut client, &mut backend, &self.services.packet_registry, session_token.clone(), &mut cmd_rx, &self.services, player_id, &mut client_codec_chain, &mut server_codec_chain).await;
 
         // ── KickedFromServerEvent (on backend disconnect) ──
         if let ProxyLoopOutcome::BackendDisconnected { ref reason } = outcome {

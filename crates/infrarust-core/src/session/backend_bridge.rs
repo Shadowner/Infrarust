@@ -10,8 +10,8 @@ use tokio::net::TcpStream;
 use infrarust_config::ServerConfig;
 use infrarust_protocol::Packet;
 use infrarust_protocol::io::{PacketDecoder, PacketEncoder, PacketFrame};
-use infrarust_protocol::packets::login::SLoginStart;
-use infrarust_protocol::registry::PacketRegistry;
+use infrarust_protocol::packets::login::{CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginStart};
+use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use crate::auth::game_profile::offline_uuid;
@@ -21,24 +21,27 @@ use crate::util::domain_rewrite::rewrite_handshake;
 
 /// The backend side of a proxied connection.
 ///
-/// Can be replaced during a server switch (future Phase 4+).
+/// Can be replaced during a server switch (Phase 4+).
 pub struct BackendBridge {
     stream: TcpStream,
     decoder: PacketDecoder,
     encoder: PacketEncoder,
     /// Current protocol state.
     pub state: ConnectionState,
+    /// Protocol version of this connection.
+    pub protocol_version: ProtocolVersion,
     read_buf: BytesMut,
 }
 
 impl BackendBridge {
     /// Creates a new backend bridge from an established connection.
-    pub fn new(stream: TcpStream) -> Self {
+    pub fn new(stream: TcpStream, protocol_version: ProtocolVersion) -> Self {
         Self {
             stream,
             decoder: PacketDecoder::new(),
             encoder: PacketEncoder::new(),
             state: ConnectionState::Login,
+            protocol_version,
             read_buf: BytesMut::with_capacity(4096),
         }
     }
@@ -86,13 +89,13 @@ impl BackendBridge {
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
         let packet_id = registry
-            .get_packet_id::<P>(self.state, P::direction(), self.protocol_version())
+            .get_packet_id::<P>(self.state, P::direction(), self.protocol_version)
             .ok_or_else(|| {
                 CoreError::Auth(format!("no packet ID for {} in {:?}", P::NAME, self.state,))
             })?;
 
         let mut payload = Vec::new();
-        packet.encode(&mut payload, self.protocol_version())?;
+        packet.encode(&mut payload, self.protocol_version)?;
 
         self.encoder.append_raw(packet_id, &payload)?;
         let data = self.encoder.take();
@@ -179,11 +182,66 @@ impl BackendBridge {
         Ok(())
     }
 
-    /// Returns a placeholder protocol version.
-    /// In practice, the version is tracked by the handler and passed where needed.
-    #[allow(clippy::unused_self)] // Kept as method for future per-connection version tracking
-    const fn protocol_version(&self) -> ProtocolVersion {
-        // Default to latest; the registry handles version-specific lookups
-        ProtocolVersion::V1_21
+    /// Consumes the backend's login response without forwarding to the client.
+    ///
+    /// Reads `SetCompression` (activates compression on backend) and `LoginSuccess`
+    /// (consumed without forwarding). Returns error on `LoginDisconnect`.
+    ///
+    /// After this call, the backend is ready for the next phase
+    /// (Config for 1.20.2+, or Play for older versions).
+    ///
+    /// # Errors
+    /// Returns `CoreError` on I/O errors, protocol errors, or backend rejection.
+    pub async fn consume_backend_login(
+        &mut self,
+        registry: &PacketRegistry,
+        version: ProtocolVersion,
+    ) -> Result<(), CoreError> {
+        loop {
+            let frame = self
+                .read_frame()
+                .await?
+                .ok_or(CoreError::ConnectionClosed)?;
+
+            let decoded = registry.decode_frame(
+                &frame,
+                ConnectionState::Login,
+                Direction::Clientbound,
+                version,
+            )?;
+
+            match decoded {
+                DecodedPacket::Typed { packet, .. } => {
+                    if let Some(set_comp) = packet.as_any().downcast_ref::<CSetCompression>() {
+                        self.set_compression(set_comp.threshold.0);
+                        tracing::debug!(
+                            threshold = set_comp.threshold.0,
+                            "backend compression activated"
+                        );
+                        continue;
+                    }
+
+                    if packet.as_any().downcast_ref::<CLoginSuccess>().is_some() {
+                        if version.less_than(ProtocolVersion::V1_20_2) {
+                            self.set_state(ConnectionState::Play);
+                        }
+                        tracing::debug!("consumed backend LoginSuccess");
+                        break;
+                    }
+
+                    if let Some(disconnect) = packet.as_any().downcast_ref::<CLoginDisconnect>() {
+                        return Err(CoreError::Rejected(format!(
+                            "backend refused login: {}",
+                            disconnect.reason
+                        )));
+                    }
+                }
+                DecodedPacket::Opaque { id, .. } => {
+                    tracing::debug!(id, "ignoring opaque packet during backend login");
+                }
+            }
+        }
+
+        Ok(())
     }
 }

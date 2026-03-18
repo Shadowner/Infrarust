@@ -9,9 +9,7 @@ use std::sync::Arc;
 use infrarust_api::event::ResultedEvent;
 use tokio_util::sync::CancellationToken;
 
-use infrarust_protocol::packets::login::{
-    CLoginDisconnect, CLoginSuccess, CSetCompression, Property, SLoginAcknowledged,
-};
+use infrarust_protocol::packets::login::{CLoginSuccess, Property, SLoginAcknowledged};
 use infrarust_protocol::registry::DecodedPacket;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_transport::BackendConnector;
@@ -237,7 +235,7 @@ impl ClientOnlyHandler {
             }
         };
 
-        let mut backend = BackendBridge::new(backend_conn.into_stream());
+        let mut backend = BackendBridge::new(backend_conn.into_stream(), version);
 
         // Send handshake + login start with offline UUID
         backend
@@ -251,8 +249,13 @@ impl ClientOnlyHandler {
 
         // Consume backend's login response (SetCompression + LoginSuccess)
         // without forwarding to client (client already got ours)
-        self.consume_backend_login(&mut client, &mut backend, version)
-            .await?;
+        if let Err(e) = backend.consume_backend_login(&self.services.packet_registry, version).await {
+            client
+                .disconnect("Backend refused connection", &self.services.packet_registry)
+                .await
+                .ok();
+            return Err(e);
+        }
 
         // For 1.20.2+: send LoginAcknowledged to backend to transition it to Config
         if version.no_less_than(ProtocolVersion::V1_20_2) {
@@ -308,20 +311,85 @@ impl ClientOnlyHandler {
                 Some(ctx.client_ip),
             );
 
-        // Proxy loop (Config → Play for 1.20.2+, or Play for older)
-        let outcome =
-            proxy_loop(&mut client, &mut backend, &self.services.packet_registry, session_token.clone(), cmd_rx, &self.services, player_id, &mut client_codec_chain, &mut server_codec_chain).await;
+        // Proxy loop with server switch support
+        let mut cmd_rx = cmd_rx;
+        let mut current_server_id = target_server_id;
+
+        let outcome = loop {
+            let outcome = proxy_loop(
+                &mut client,
+                &mut backend,
+                &self.services.packet_registry,
+                session_token.clone(),
+                &mut cmd_rx,
+                &self.services,
+                player_id,
+                &mut client_codec_chain,
+                &mut server_codec_chain,
+            )
+            .await;
+
+            match outcome {
+                ProxyLoopOutcome::SwitchRequested { target } => {
+                    match crate::session::server_switch::perform_switch(
+                        &mut client,
+                        &current_server_id,
+                        target,
+                        &handshake,
+                        &game_profile.name,
+                        player_id,
+                        &api_profile,
+                        &self.services,
+                        &self.backend_connector,
+                        ctx.peer_addr,
+                        version,
+                    )
+                    .await
+                    {
+                        Ok(success) => {
+                            backend = success.new_backend;
+                            // Update player session's current_server
+                            if let Some(session) =
+                                self.services.connection_registry.get(&session_id)
+                            {
+                                session.set_current_server(success.new_server_id.clone());
+                            }
+                            current_server_id = success.new_server_id;
+                            tracing::debug!("re-entering proxy loop after switch");
+                            continue;
+                        }
+                        Err(e) => {
+                            tracing::warn!("server switch failed: {e}");
+                            // Send error message to client, continue on current server
+                            let error_msg = infrarust_api::types::Component::text(
+                                &format!("Server switch failed: {e}"),
+                            );
+                            let frame = crate::player::packets::build_system_chat_message(
+                                &error_msg,
+                                version,
+                                &self.services.packet_registry,
+                            );
+                            if let Ok(frame) = frame {
+                                let _ = client.write_frame(&frame).await;
+                            }
+                            continue;
+                        }
+                    }
+                }
+                other => break other,
+            }
+        };
 
         // ── KickedFromServerEvent (on backend disconnect) ──
         if let ProxyLoopOutcome::BackendDisconnected { ref reason } = outcome {
             let kick_reason = reason.as_deref().unwrap_or("Disconnected");
             let kicked = infrarust_api::events::connection::KickedFromServerEvent::new(
                 player_id,
-                infrarust_api::types::ServerId::new(routing.config_id.clone()),
+                current_server_id.clone(),
                 infrarust_api::types::Component::text(kick_reason),
             );
             let _kicked = self.services.event_bus.fire(kicked).await;
-            // For now, always disconnect. Phase 4 will handle RedirectTo/SendToLimbo.
+            // For now, always disconnect. Phase 4B will handle RedirectTo/SendToLimbo.
         }
 
         // ── DisconnectEvent (always) ──
@@ -329,7 +397,7 @@ impl ClientOnlyHandler {
             &self.services.event_bus,
             player_id,
             game_profile.name.clone(),
-            Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
+            Some(current_server_id.clone()),
         ).await;
 
         // Cleanup
@@ -377,68 +445,4 @@ impl ClientOnlyHandler {
         Ok(())
     }
 
-    /// Consumes the backend's login response without forwarding to the client.
-    ///
-    /// The client already received our own `LoginSuccess`. We read the backend's
-    /// `SetCompression` (activate compression on backend only) and `LoginSuccess`
-    /// (consume without forwarding), then the backend login is complete.
-    async fn consume_backend_login(
-        &self,
-        client: &mut ClientBridge,
-        backend: &mut BackendBridge,
-        version: ProtocolVersion,
-    ) -> Result<(), CoreError> {
-        loop {
-            let frame = backend
-                .read_frame()
-                .await?
-                .ok_or(CoreError::ConnectionClosed)?;
-
-            let decoded = self.services.packet_registry.decode_frame(
-                &frame,
-                ConnectionState::Login,
-                Direction::Clientbound,
-                version,
-            )?;
-
-            match decoded {
-                DecodedPacket::Typed { packet, .. } => {
-                    if let Some(set_comp) = packet.as_any().downcast_ref::<CSetCompression>() {
-                        // Activate compression on backend side only
-                        backend.set_compression(set_comp.threshold.0);
-                        tracing::debug!(
-                            threshold = set_comp.threshold.0,
-                            "backend compression activated"
-                        );
-                        continue;
-                    }
-
-                    if packet.as_any().downcast_ref::<CLoginSuccess>().is_some() {
-                        // Backend login complete — consume without forwarding
-                        if version.less_than(ProtocolVersion::V1_20_2) {
-                            backend.set_state(ConnectionState::Play);
-                        }
-                        // For 1.20.2+, transition happens after we send LoginAcknowledged
-                        tracing::debug!("consumed backend LoginSuccess");
-                        break;
-                    }
-
-                    if let Some(disconnect) = packet.as_any().downcast_ref::<CLoginDisconnect>() {
-                        client
-                            .disconnect("Backend refused connection", &self.services.packet_registry)
-                            .await?;
-                        return Err(CoreError::Rejected(format!(
-                            "backend refused login: {}",
-                            disconnect.reason
-                        )));
-                    }
-                }
-                DecodedPacket::Opaque { id, .. } => {
-                    tracing::debug!(id, "ignoring opaque packet during backend login");
-                }
-            }
-        }
-
-        Ok(())
-    }
 }
