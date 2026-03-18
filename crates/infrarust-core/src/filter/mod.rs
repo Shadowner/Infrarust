@@ -6,5 +6,6 @@
 pub mod codec_chain;
 pub mod codec_registry;
 pub mod ordering;
+mod registry_base;
 pub mod transport_chain;
 pub mod transport_registry;

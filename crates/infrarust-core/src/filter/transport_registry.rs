@@ -1,17 +1,22 @@
 //! Concrete implementation of [`TransportFilterRegistry`].
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use infrarust_api::filter::{FilterMetadata, TransportFilter, TransportFilterRegistry};
 
-use super::ordering::resolve_filter_order;
+use super::registry_base::{FilterRegistryBase, HasFilterMetadata};
 use super::transport_chain::TransportFilterChain;
+
+impl HasFilterMetadata for Arc<dyn TransportFilter> {
+    fn metadata(&self) -> FilterMetadata {
+        TransportFilter::metadata(self.as_ref())
+    }
+}
 
 /// Stores registered [`TransportFilter`] instances and maintains
 /// a resolved execution order.
 pub struct TransportFilterRegistryImpl {
-    filters: RwLock<Vec<Arc<dyn TransportFilter>>>,
-    ordered_ids: RwLock<Vec<String>>,
+    base: FilterRegistryBase<Arc<dyn TransportFilter>>,
 }
 
 impl TransportFilterRegistryImpl {
@@ -19,42 +24,20 @@ impl TransportFilterRegistryImpl {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            filters: RwLock::new(Vec::new()),
-            ordered_ids: RwLock::new(Vec::new()),
+            base: FilterRegistryBase::new("transport"),
         }
     }
 
     /// Builds a [`TransportFilterChain`] with the current filters in resolved order.
     pub fn build_chain(&self) -> TransportFilterChain {
-        let filters = self.filters.read().unwrap_or_else(|e| e.into_inner());
-        let ordered = self.ordered_ids.read().unwrap_or_else(|e| e.into_inner());
+        self.base.with_ordered(|filters, ordered| {
+            let ordered_filters: Vec<Arc<dyn TransportFilter>> = ordered
+                .iter()
+                .filter_map(|id| filters.iter().find(|f| TransportFilter::metadata(f.as_ref()).id == id).cloned())
+                .collect();
 
-        let ordered_filters: Vec<Arc<dyn TransportFilter>> = ordered
-            .iter()
-            .filter_map(|id| filters.iter().find(|f| f.metadata().id == id).cloned())
-            .collect();
-
-        TransportFilterChain::new(ordered_filters)
-    }
-
-    /// Recalculates the ordered_ids from current filters.
-    ///
-    /// On cycle detection failure, logs an error and preserves the previous
-    /// order. This allows the proxy to continue operating with a stale order
-    /// rather than crashing.
-    fn recalculate_order(&self) {
-        let filters = self.filters.read().unwrap_or_else(|e| e.into_inner());
-        let metadata: Vec<FilterMetadata> = filters.iter().map(|f| f.metadata()).collect();
-
-        match resolve_filter_order(&metadata) {
-            Ok(order) => {
-                let mut ordered = self.ordered_ids.write().unwrap_or_else(|e| e.into_inner());
-                *ordered = order;
-            }
-            Err(e) => {
-                tracing::error!("Failed to resolve transport filter order: {e}");
-            }
-        }
+            TransportFilterChain::new(ordered_filters)
+        })
     }
 }
 
@@ -68,27 +51,11 @@ impl infrarust_api::filter::registry::private::Sealed for TransportFilterRegistr
 
 impl TransportFilterRegistry for TransportFilterRegistryImpl {
     fn register(&self, filter: Box<dyn TransportFilter>) {
-        let id = filter.metadata().id;
-        tracing::debug!(filter_id = id, "Registering transport filter");
-
-        {
-            let mut filters = self.filters.write().unwrap_or_else(|e| e.into_inner());
-            filters.retain(|f| f.metadata().id != id);
-            filters.push(Arc::from(filter));
-        }
-
-        self.recalculate_order();
+        self.base.register(Arc::from(filter));
     }
 
     fn unregister(&self, filter_id: &str) {
-        tracing::debug!(filter_id, "Unregistering transport filter");
-
-        {
-            let mut filters = self.filters.write().unwrap_or_else(|e| e.into_inner());
-            filters.retain(|f| f.metadata().id != filter_id);
-        }
-
-        self.recalculate_order();
+        self.base.unregister(filter_id);
     }
 }
 

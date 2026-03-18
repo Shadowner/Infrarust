@@ -1,11 +1,16 @@
 //! Concrete implementation of [`CodecFilterRegistry`].
 
 use std::collections::HashMap;
-use std::sync::RwLock;
 
 use infrarust_api::filter::{CodecFilterFactory, CodecFilterRegistry, FilterMetadata};
 
-use super::ordering::resolve_filter_order;
+use super::registry_base::{FilterRegistryBase, HasFilterMetadata};
+
+impl HasFilterMetadata for Box<dyn CodecFilterFactory> {
+    fn metadata(&self) -> FilterMetadata {
+        CodecFilterFactory::metadata(self.as_ref())
+    }
+}
 
 /// Stores registered [`CodecFilterFactory`] instances and maintains
 /// a resolved execution order.
@@ -13,8 +18,7 @@ use super::ordering::resolve_filter_order;
 /// The order is recalculated on each `register`/`unregister` call,
 /// not on every packet.
 pub struct CodecFilterRegistryImpl {
-    factories: RwLock<Vec<Box<dyn CodecFilterFactory>>>,
-    ordered_ids: RwLock<Vec<String>>,
+    base: FilterRegistryBase<Box<dyn CodecFilterFactory>>,
 }
 
 impl CodecFilterRegistryImpl {
@@ -22,8 +26,7 @@ impl CodecFilterRegistryImpl {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            factories: RwLock::new(Vec::new()),
-            ordered_ids: RwLock::new(Vec::new()),
+            base: FilterRegistryBase::new("codec"),
         }
     }
 
@@ -34,49 +37,24 @@ impl CodecFilterRegistryImpl {
         &self,
         init: &infrarust_api::filter::CodecSessionInit,
     ) -> Vec<Box<dyn infrarust_api::filter::CodecFilterInstance>> {
-        let factories = self.factories.read().unwrap_or_else(|e| e.into_inner());
-        let ordered = self.ordered_ids.read().unwrap_or_else(|e| e.into_inner());
+        self.base.with_ordered(|factories, ordered| {
+            let factory_map: HashMap<&str, &dyn CodecFilterFactory> = factories
+                .iter()
+                .map(|f| (CodecFilterFactory::metadata(f.as_ref()).id, f.as_ref()))
+                .collect();
 
-        let factory_map: HashMap<&str, &dyn CodecFilterFactory> = factories
-            .iter()
-            .map(|f| (f.metadata().id, f.as_ref()))
-            .collect();
-
-        ordered
-            .iter()
-            .filter_map(|id| factory_map.get(id.as_str()))
-            .map(|f| f.create(init))
-            .collect()
+            ordered
+                .iter()
+                .filter_map(|id| factory_map.get(id.as_str()))
+                .map(|f| f.create(init))
+                .collect()
+        })
     }
 
     /// Returns `true` if no factories are registered.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.factories
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty()
-    }
-
-    /// Recalculates the ordered_ids from current factories.
-    ///
-    /// On cycle detection failure, logs an error and preserves the previous
-    /// order. This allows the proxy to continue operating with a stale order
-    /// rather than crashing.
-    fn recalculate_order(&self) {
-        let factories = self.factories.read().unwrap_or_else(|e| e.into_inner());
-        let metadata: Vec<FilterMetadata> = factories.iter().map(|f| f.metadata()).collect();
-
-        match resolve_filter_order(&metadata) {
-            Ok(order) => {
-                let mut ordered = self.ordered_ids.write().unwrap_or_else(|e| e.into_inner());
-                *ordered = order;
-            }
-            Err(e) => {
-                tracing::error!("Failed to resolve codec filter order: {e}");
-                // Keep previous order on error
-            }
-        }
+        self.base.is_empty()
     }
 }
 
@@ -90,28 +68,11 @@ impl infrarust_api::filter::registry::private::Sealed for CodecFilterRegistryImp
 
 impl CodecFilterRegistry for CodecFilterRegistryImpl {
     fn register(&self, factory: Box<dyn CodecFilterFactory>) {
-        let id = factory.metadata().id;
-        tracing::debug!(filter_id = id, "Registering codec filter factory");
-
-        {
-            let mut factories = self.factories.write().unwrap_or_else(|e| e.into_inner());
-            // Remove existing factory with same id
-            factories.retain(|f| f.metadata().id != id);
-            factories.push(factory);
-        }
-
-        self.recalculate_order();
+        self.base.register(factory);
     }
 
     fn unregister(&self, filter_id: &str) {
-        tracing::debug!(filter_id, "Unregistering codec filter factory");
-
-        {
-            let mut factories = self.factories.write().unwrap_or_else(|e| e.into_inner());
-            factories.retain(|f| f.metadata().id != filter_id);
-        }
-
-        self.recalculate_order();
+        self.base.unregister(filter_id);
     }
 }
 
