@@ -16,4 +16,4 @@ pub use provider::{ConfigChange, ConfigProvider};
 pub use proxy::ProxyConfig;
 pub use server::ServerConfig;
 pub use types::*;
-pub use validation::{validate_proxy_config, validate_server_config};
+pub use validation::{validate_proxy_config, validate_server_config, validate_server_configs};

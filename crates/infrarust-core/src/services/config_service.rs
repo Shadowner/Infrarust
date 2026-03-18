@@ -36,6 +36,9 @@ impl ConfigServiceImpl {
             domains: config.domains.clone(),
             proxy_mode: convert_proxy_mode(config.proxy_mode),
             limbo_handlers: config.limbo_handlers.clone(),
+            max_players: config.max_players,
+            disconnect_message: config.disconnect_message.clone(),
+            send_proxy_protocol: config.send_proxy_protocol,
         }
     }
 }
@@ -46,10 +49,8 @@ impl ConfigService for ConfigServiceImpl {
     fn get_server_config(&self, server: &ServerId) -> Option<ServerConfig> {
         let server_id = server.as_str();
         self.router
-            .list_all()
-            .into_iter()
-            .find(|(_, cfg)| cfg.effective_id() == server_id)
-            .map(|(_, cfg)| Self::convert_config(server_id, &cfg))
+            .find_by_server_id(server_id)
+            .map(|cfg| Self::convert_config(server_id, &cfg))
     }
 
     fn get_all_server_configs(&self) -> Vec<ServerConfig> {
@@ -76,6 +77,10 @@ fn convert_proxy_mode(mode: infrarust_config::ProxyMode) -> ProxyMode {
         infrarust_config::ProxyMode::ClientOnly => ProxyMode::ClientOnly,
         infrarust_config::ProxyMode::Offline => ProxyMode::Offline,
         infrarust_config::ProxyMode::ServerOnly => ProxyMode::ServerOnly,
-        _ => ProxyMode::Passthrough,
+        infrarust_config::ProxyMode::Full => ProxyMode::Full,
+        _ => {
+            tracing::warn!(?mode, "unmapped ProxyMode variant, defaulting to Passthrough");
+            ProxyMode::Passthrough
+        }
     }
 }

@@ -36,6 +36,12 @@ pub struct ServerConfig {
     pub proxy_mode: ProxyMode,
     /// Ordered list of limbo handler names to apply.
     pub limbo_handlers: Vec<String>,
+    /// Maximum number of players (0 = unlimited).
+    pub max_players: u32,
+    /// Disconnect message sent when the backend is unreachable.
+    pub disconnect_message: Option<String>,
+    /// Whether PROXY protocol is sent to the backend.
+    pub send_proxy_protocol: bool,
 }
 
 /// Read-only access to proxy configuration.

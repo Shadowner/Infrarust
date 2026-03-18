@@ -195,6 +195,13 @@ impl DomainRouter {
         self.resolve(domain).map(|(_, cfg)| cfg)
     }
 
+    pub fn find_by_server_id(&self, server_id: &str) -> Option<Arc<ServerConfig>> {
+        self.configs
+            .iter()
+            .find(|entry| entry.value().config.effective_id() == server_id)
+            .map(|entry| Arc::clone(&entry.value().config))
+    }
+
     /// Returns all configs with their provider ids.
     pub fn list_all(&self) -> Vec<(ProviderId, Arc<ServerConfig>)> {
         self.configs

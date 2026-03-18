@@ -72,6 +72,15 @@ impl ProviderRegistry {
             match provider.load_initial().await {
                 Ok(configs) => {
                     let count = configs.len();
+                    let server_configs: Vec<_> =
+                        configs.iter().map(|pc| &pc.config).cloned().collect();
+                    if let Err(e) = infrarust_config::validate_server_configs(&server_configs) {
+                        tracing::warn!(
+                            provider = provider.provider_type(),
+                            error = %e,
+                            "duplicate server ID detected"
+                        );
+                    }
                     for pc in configs {
                         self.domain_router.add(pc.id, pc.config);
                     }

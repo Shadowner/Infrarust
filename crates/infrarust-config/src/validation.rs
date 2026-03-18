@@ -1,5 +1,7 @@
 //! Validation helpers for configuration structs.
 
+use std::collections::HashSet;
+
 use crate::error::ConfigError;
 use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
@@ -43,6 +45,23 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
         );
     }
 
+    Ok(())
+}
+
+/// Validates a batch of server configurations for duplicate IDs.
+///
+/// # Errors
+///
+/// Returns [`ConfigError::DuplicateId`] if two or more configs share the
+/// same `effective_id()`.
+pub fn validate_server_configs(configs: &[ServerConfig]) -> Result<(), ConfigError> {
+    let mut seen = HashSet::with_capacity(configs.len());
+    for config in configs {
+        let id = config.effective_id();
+        if !seen.insert(id.clone()) {
+            return Err(ConfigError::DuplicateId(id));
+        }
+    }
     Ok(())
 }
 
