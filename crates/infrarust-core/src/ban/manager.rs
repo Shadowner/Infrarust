@@ -73,6 +73,7 @@ impl BanManager {
                 .find_by_uuid(uuid)
                 .into_iter()
                 .collect(),
+            _ => Vec::new(),
         };
 
         for session in &sessions_to_kick {

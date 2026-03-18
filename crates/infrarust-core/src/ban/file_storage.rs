@@ -88,6 +88,9 @@ impl FileBanStorage {
                 BanTarget::Uuid(uuid) => {
                     self.uuid_bans.insert(*uuid, entry);
                 }
+                _ => {
+                    tracing::warn!(target = %entry.target, "unknown ban target type, skipping");
+                }
             }
         }
     }
@@ -178,6 +181,12 @@ impl BanStorage for FileBanStorage {
                 BanTarget::Uuid(uuid) => {
                     self.uuid_bans.insert(*uuid, entry.clone());
                 }
+                _ => {
+                    return Err(CoreError::Other(format!(
+                        "unsupported ban target type: {}",
+                        entry.target
+                    )));
+                }
             }
 
             self.add_audit_entry(BanAuditLogEntry {
@@ -208,6 +217,7 @@ impl BanStorage for FileBanStorage {
                     self.username_bans.remove(&name.to_lowercase()).is_some()
                 }
                 BanTarget::Uuid(uuid) => self.uuid_bans.remove(uuid).is_some(),
+                _ => false,
             };
 
             if removed {
@@ -270,6 +280,7 @@ impl BanStorage for FileBanStorage {
                         return Ok(Some(entry.clone()));
                     }
                 }
+                _ => {}
             }
             Ok(None)
         })
