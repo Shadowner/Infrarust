@@ -16,7 +16,7 @@ telemetry = [
 ]
 
 [dependencies]
-infrarust-api = { workspace = true }
+infrarust-api = { workspace = true, features = ["serde"] }
 infrarust-config = { workspace = true }
 infrarust-protocol = { workspace = true }
 infrarust-transport = { workspace = true }

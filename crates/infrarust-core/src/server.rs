@@ -206,6 +206,10 @@ impl ProxyServer {
             crate::filter::codec_registry::CodecFilterRegistryImpl::new(),
         );
 
+        let limbo_handler_registry = Arc::new(
+            crate::limbo::registry::LimboHandlerRegistry::new(),
+        );
+
         let services = ProxyServices {
             event_bus: Arc::clone(&event_bus),
             player_registry,
@@ -218,6 +222,7 @@ impl ProxyServer {
             domain_router: Arc::clone(&domain_router),
             codec_filter_registry: Arc::clone(&codec_filter_registry),
             transport_filter_chain: crate::filter::transport_chain::TransportFilterChain::empty(),
+            limbo_handler_registry,
         };
 
         // Build common pipeline: IpFilter → BanIpCheck → HandshakeParser → RateLimiter → DomainRouter

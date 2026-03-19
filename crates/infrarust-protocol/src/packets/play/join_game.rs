@@ -141,12 +141,12 @@ fn decode_1_20_2_up(
     let enable_respawn_screen = r.read_bool()?;
     let do_limited_crafting = r.read_bool()?;
 
-    // Dimension: VarInt for 1.20.5+, String (identifier) for 1.20.2–1.20.3
-    let dimension = if version.no_less_than(ProtocolVersion::V1_20_5) {
+    // Dimension: VarInt for 1.21.2+, String (identifier) for 1.20.2–1.21.1
+    let dimension = if version.no_less_than(ProtocolVersion::V1_21_2) {
         r.read_var_int()?.0
     } else {
-        // For 1.20.2–1.20.3, dimension is a String identifier.
-        // We store 0 and the string is lost (proxy primarily targets 1.20.5+).
+        // For 1.20.2–1.21.1, dimension is a String identifier.
+        // We store 0 and the string is lost (proxy primarily targets 1.21.2+).
         let _dim_key = r.read_string()?;
         0
     };
@@ -161,11 +161,7 @@ fn decode_1_20_2_up(
     let (death_dimension, death_position) = super::common::decode_death_location(r)?;
     let (portal_cooldown, sea_level) = super::common::decode_world_info(r, version)?;
 
-    let enforces_secure_chat = if version.no_less_than(ProtocolVersion::V1_20_5) {
-        r.read_bool()?
-    } else {
-        false
-    };
+    let enforces_secure_chat = r.read_bool()?;
 
     Ok(CJoinGame {
         entity_id,
@@ -215,11 +211,11 @@ fn encode_1_20_2_up(
     w.write_bool(pkt.enable_respawn_screen)?;
     w.write_bool(pkt.do_limited_crafting)?;
 
-    // Dimension
-    if version.no_less_than(ProtocolVersion::V1_20_5) {
+    // Dimension: VarInt for 1.21.2+, String identifier for 1.20.2–1.21.1
+    if version.no_less_than(ProtocolVersion::V1_21_2) {
         w.write_var_int(&VarInt(pkt.dimension))?;
     } else {
-        // 1.20.2–1.20.3: dimension as String identifier
+        // 1.20.2–1.21.1: dimension as String identifier
         w.write_string("minecraft:overworld")?;
     }
 
@@ -233,9 +229,7 @@ fn encode_1_20_2_up(
     super::common::encode_death_location(w, pkt.death_dimension.as_deref(), pkt.death_position)?;
     super::common::encode_world_info(w, pkt.portal_cooldown, pkt.sea_level, version)?;
 
-    if version.no_less_than(ProtocolVersion::V1_20_5) {
-        w.write_bool(pkt.enforces_secure_chat)?;
-    }
+    w.write_bool(pkt.enforces_secure_chat)?;
 
     Ok(())
 }

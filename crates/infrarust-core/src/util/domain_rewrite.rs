@@ -109,6 +109,8 @@ mod tests {
     fn make_server_config(rewrite: DomainRewrite) -> ServerConfig {
         ServerConfig {
             id: Some("test".to_string()),
+            name: None,
+            network: None,
             domains: vec!["play.example.com".to_string()],
             addresses: vec!["backend.local:25565".parse::<ServerAddress>().unwrap()],
             proxy_mode: Default::default(),

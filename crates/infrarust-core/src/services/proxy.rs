@@ -10,6 +10,7 @@ use crate::ban::manager::BanManager;
 use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_chain::TransportFilterChain;
+use crate::limbo::registry::LimboHandlerRegistry;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
@@ -44,4 +45,6 @@ pub struct ProxyServices {
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     /// Transport filter chain applied to accepted connections.
     pub transport_filter_chain: TransportFilterChain,
+    /// Registry of limbo handler instances, keyed by name.
+    pub limbo_handler_registry: Arc<LimboHandlerRegistry>,
 }

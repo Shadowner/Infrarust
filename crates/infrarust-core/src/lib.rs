@@ -10,6 +10,7 @@ pub mod error;
 pub mod event_bus;
 pub mod filter;
 pub mod handler;
+pub(crate) mod limbo;
 pub mod middleware;
 pub mod pipeline;
 pub mod player;

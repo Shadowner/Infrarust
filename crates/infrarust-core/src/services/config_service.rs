@@ -78,7 +78,6 @@ fn convert_proxy_mode(mode: infrarust_config::ProxyMode) -> ProxyMode {
         infrarust_config::ProxyMode::ClientOnly => ProxyMode::ClientOnly,
         infrarust_config::ProxyMode::Offline => ProxyMode::Offline,
         infrarust_config::ProxyMode::ServerOnly => ProxyMode::ServerOnly,
-        infrarust_config::ProxyMode::Full => ProxyMode::Full,
         _ => {
             tracing::warn!(?mode, "unmapped ProxyMode variant, defaulting to Passthrough");
             ProxyMode::Passthrough

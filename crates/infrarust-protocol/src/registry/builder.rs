@@ -535,6 +535,126 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x74, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
 
+    // GameEvent Clientbound (encode-only: used by Limbo engine)
+    PacketRegistration::<crate::packets::CGameEvent>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x1B, ProtocolVersion::V1_9, true)
+    .map(0x1E, ProtocolVersion::V1_13, true)
+    .map(0x1D, ProtocolVersion::V1_14, true)
+    .map(0x1E, ProtocolVersion::V1_15, true)
+    .map(0x1D, ProtocolVersion::V1_16, true)
+    .map(0x1C, ProtocolVersion::V1_16_2, true)
+    .map(0x1D, ProtocolVersion::V1_17, true)
+    .map(0x1B, ProtocolVersion::V1_19, true)
+    .map(0x1D, ProtocolVersion::V1_19_1, true)
+    .map(0x1C, ProtocolVersion::V1_19_3, true)
+    .map(0x20, ProtocolVersion::V1_19_4, true)
+    .map(0x20, ProtocolVersion::V1_20_2, true)
+    .map(0x22, ProtocolVersion::V1_20_5, true)
+    .map(0x23, ProtocolVersion::V1_21_2, true)
+    .map(0x22, ProtocolVersion::V1_21_5, true)
+    .map(0x26, ProtocolVersion::V1_21_9, true)
+    .register(&mut registry);
+
+    // SetCenterChunk Clientbound (encode-only: used by Limbo engine, 1.14+)
+    PacketRegistration::<crate::packets::CSetCenterChunk>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x40, ProtocolVersion::V1_14, true)
+    .map(0x41, ProtocolVersion::V1_15, true)
+    .map(0x40, ProtocolVersion::V1_16, true)
+    .map(0x49, ProtocolVersion::V1_17, true)
+    .map(0x4A, ProtocolVersion::V1_18, true)
+    .map(0x48, ProtocolVersion::V1_19, true)
+    .map(0x4B, ProtocolVersion::V1_19_1, true)
+    .map(0x4A, ProtocolVersion::V1_19_3, true)
+    .map(0x4E, ProtocolVersion::V1_19_4, true)
+    .map(0x50, ProtocolVersion::V1_20_2, true)
+    .map(0x52, ProtocolVersion::V1_20_3, true)
+    .map(0x54, ProtocolVersion::V1_20_5, true)
+    .map(0x58, ProtocolVersion::V1_21_2, true)
+    .map(0x57, ProtocolVersion::V1_21_5, true)
+    .map(0x5C, ProtocolVersion::V1_21_9, true)
+    .register(&mut registry);
+
+    // ChunkBatchStart Clientbound (encode-only: used by Limbo engine, 1.20.2+)
+    PacketRegistration::<crate::packets::CChunkBatchStart>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x0C, ProtocolVersion::V1_20_2, true)
+    .map(0x0D, ProtocolVersion::V1_20_5, true)
+    .map(0x0C, ProtocolVersion::V1_21_5, true)
+    .map(0x0C, ProtocolVersion::V1_21_9, true)
+    .register(&mut registry);
+
+    // ChunkBatchFinished Clientbound (encode-only: used by Limbo engine, 1.20.2+)
+    PacketRegistration::<crate::packets::CChunkBatchFinished>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x0C, ProtocolVersion::V1_20_2, true)
+    .map(0x0C, ProtocolVersion::V1_20_5, true)
+    .map(0x0B, ProtocolVersion::V1_21_5, true)
+    .map(0x0B, ProtocolVersion::V1_21_9, true)
+    .register(&mut registry);
+
+    // SetDefaultSpawnPosition Clientbound (encode-only: used by Limbo engine)
+    PacketRegistration::<crate::packets::CSetDefaultSpawnPosition>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x05, ProtocolVersion::V1_7_2, true)
+    .map(0x43, ProtocolVersion::V1_9, true)
+    .map(0x46, ProtocolVersion::V1_12, true)
+    .map(0x49, ProtocolVersion::V1_13, true)
+    .map(0x4D, ProtocolVersion::V1_14, true)
+    .map(0x4E, ProtocolVersion::V1_15, true)
+    .map(0x42, ProtocolVersion::V1_16, true)
+    .map(0x4B, ProtocolVersion::V1_17, true)
+    .map(0x4C, ProtocolVersion::V1_18, true)
+    .map(0x4A, ProtocolVersion::V1_19, true)
+    .map(0x4D, ProtocolVersion::V1_19_1, true)
+    .map(0x4C, ProtocolVersion::V1_19_3, true)
+    .map(0x50, ProtocolVersion::V1_19_4, true)
+    .map(0x52, ProtocolVersion::V1_20_2, true)
+    .map(0x54, ProtocolVersion::V1_20_3, true)
+    .map(0x56, ProtocolVersion::V1_20_5, true)
+    .map(0x5B, ProtocolVersion::V1_21_2, true)
+    .map(0x5A, ProtocolVersion::V1_21_5, true)
+    .map(0x5F, ProtocolVersion::V1_21_9, true)
+    .register(&mut registry);
+
+    // SynchronizePlayerPosition Clientbound (encode-only: used by Limbo engine)
+    PacketRegistration::<crate::packets::CSynchronizePlayerPosition>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x08, ProtocolVersion::V1_7_2, true)
+    .map(0x2E, ProtocolVersion::V1_9, true)
+    .map(0x2F, ProtocolVersion::V1_12_1, true)
+    .map(0x32, ProtocolVersion::V1_13, true)
+    .map(0x35, ProtocolVersion::V1_14, true)
+    .map(0x36, ProtocolVersion::V1_15, true)
+    .map(0x35, ProtocolVersion::V1_16, true)
+    .map(0x34, ProtocolVersion::V1_16_2, true)
+    .map(0x38, ProtocolVersion::V1_17, true)
+    .map(0x39, ProtocolVersion::V1_18, true)
+    .map(0x36, ProtocolVersion::V1_19, true)
+    .map(0x39, ProtocolVersion::V1_19_1, true)
+    .map(0x38, ProtocolVersion::V1_19_3, true)
+    .map(0x3C, ProtocolVersion::V1_19_4, true)
+    .map(0x3E, ProtocolVersion::V1_20_2, true)
+    .map(0x40, ProtocolVersion::V1_20_3, true)
+    .map(0x42, ProtocolVersion::V1_20_5, true)
+    .map(0x42, ProtocolVersion::V1_21_2, true)
+    .map(0x41, ProtocolVersion::V1_21_5, true)
+    .map(0x46, ProtocolVersion::V1_21_9, true)
+    .register(&mut registry);
+
     // ── Play (Serverbound) ────────────────────────────────────────
 
     // AcknowledgeConfiguration Serverbound (client ack for StartConfiguration)

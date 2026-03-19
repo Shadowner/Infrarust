@@ -7,12 +7,6 @@ use infrarust_config::ServerConfig;
 /// Error when a switch is not allowed due to network constraints.
 #[derive(Debug, thiserror::Error)]
 pub enum SwitchValidationError {
-    #[error("current server '{0}' is not part of any network — switch not allowed")]
-    SourceNotInNetwork(String),
-
-    #[error("target server '{0}' is not part of any network — switch not allowed")]
-    TargetNotInNetwork(String),
-
     #[error("servers are in different networks: '{current}' vs '{target}'")]
     DifferentNetworks { current: String, target: String },
 }
@@ -27,17 +21,17 @@ pub fn validate_switch_allowed(
     target: &ServerConfig,
 ) -> Result<(), SwitchValidationError> {
     match (&current.network, &target.network) {
+        // Same network: always allowed.
         (Some(a), Some(b)) if a == b => Ok(()),
-        (None, _) => Err(SwitchValidationError::SourceNotInNetwork(
-            current.effective_id(),
-        )),
-        (_, None) => Err(SwitchValidationError::TargetNotInNetwork(
-            target.effective_id(),
-        )),
+        // Different networks: blocked.
         (Some(a), Some(b)) => Err(SwitchValidationError::DifferentNetworks {
             current: a.clone(),
             target: b.clone(),
         }),
+        // Either has no network: allowed (no network = no restriction).
+        // TODO: In future, only allow this when the source is a limbo or virtual backend,
+        // not for arbitrary servers without a network declaration.
+        _ => Ok(()),
     }
 }
 
@@ -62,19 +56,17 @@ mod tests {
     }
 
     #[test]
-    fn test_switch_source_no_network() {
+    fn test_switch_source_no_network_allowed() {
         let a = config_with_network("lobby", None);
         let b = config_with_network("survival", Some("my-network"));
-        let err = validate_switch_allowed(&a, &b).unwrap_err();
-        assert!(matches!(err, SwitchValidationError::SourceNotInNetwork(_)));
+        assert!(validate_switch_allowed(&a, &b).is_ok());
     }
 
     #[test]
-    fn test_switch_target_no_network() {
+    fn test_switch_target_no_network_allowed() {
         let a = config_with_network("lobby", Some("my-network"));
         let b = config_with_network("survival", None);
-        let err = validate_switch_allowed(&a, &b).unwrap_err();
-        assert!(matches!(err, SwitchValidationError::TargetNotInNetwork(_)));
+        assert!(validate_switch_allowed(&a, &b).is_ok());
     }
 
     #[test]
@@ -89,10 +81,9 @@ mod tests {
     }
 
     #[test]
-    fn test_switch_both_no_network() {
+    fn test_switch_both_no_network_allowed() {
         let a = config_with_network("lobby", None);
         let b = config_with_network("survival", None);
-        let err = validate_switch_allowed(&a, &b).unwrap_err();
-        assert!(matches!(err, SwitchValidationError::SourceNotInNetwork(_)));
+        assert!(validate_switch_allowed(&a, &b).is_ok());
     }
 }

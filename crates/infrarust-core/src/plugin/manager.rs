@@ -163,6 +163,20 @@ impl PluginManager {
         }
     }
 
+    /// Collects all limbo handlers registered by enabled plugins.
+    ///
+    /// Each plugin's context is drained via `take_limbo_handlers()`, so this
+    /// should be called exactly once after `enable_all()`.
+    pub fn collect_limbo_handlers(&self) -> Vec<Box<dyn infrarust_api::limbo::LimboHandler>> {
+        let mut all = Vec::new();
+        for loaded in &self.plugins {
+            if let Some(ctx) = &loaded.context {
+                all.extend(ctx.take_limbo_handlers());
+            }
+        }
+        all
+    }
+
     /// Returns `true` if the plugin is loaded and currently enabled.
     pub fn is_plugin_loaded(&self, id: &str) -> bool {
         matches!(self.states.get(id), Some(PluginState::Enabled))

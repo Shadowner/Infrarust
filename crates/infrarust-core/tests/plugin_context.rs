@@ -2,15 +2,12 @@
 
 use std::sync::Arc;
 
-use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::scheduler::Scheduler;
 use infrarust_core::event_bus::bus::EventBusImpl;
 use infrarust_core::player::registry::PlayerRegistryImpl;
-use infrarust_core::plugin::context::PluginContextImpl;
 use infrarust_core::registry::ConnectionRegistry;
 use infrarust_core::services::command_manager::CommandManagerImpl;
-use infrarust_core::services::config_service::ConfigServiceImpl;
 use infrarust_core::services::scheduler::SchedulerImpl;
 
 // For the full test we'd need BanManager and ServerManagerService which require

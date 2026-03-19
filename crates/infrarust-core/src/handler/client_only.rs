@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use infrarust_api::event::ResultedEvent;
+use infrarust_api::limbo::handler::LimboHandler;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_protocol::packets::login::{CLoginSuccess, Property, SLoginAcknowledged};
@@ -16,6 +17,7 @@ use infrarust_transport::BackendConnector;
 
 use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
+use crate::limbo::engine::{enter_limbo, LimboExitResult};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::player::PlayerSession;
@@ -23,6 +25,18 @@ use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
+
+/// Active connection mode within the proxy session loop.
+///
+/// The loop alternates between modes as the player is switched between
+/// backend servers and limbo. Each variant owns the resources needed
+/// for that mode.
+enum ConnectionMode {
+    /// Proxying to a real backend server.
+    Backend(BackendBridge),
+    /// In limbo (virtual world, no backend).
+    Limbo(Vec<Arc<dyn LimboHandler>>),
+}
 
 /// Handles connections in `ClientOnly` proxy mode.
 ///
@@ -205,7 +219,14 @@ impl ClientOnlyHandler {
                 client.disconnect(&reason_json, &self.services.packet_registry).await.ok();
                 return Ok(());
             }
-            _ => {} // ConnectTo, SendToLimbo, VirtualBackend — Phase 4
+            infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo => {
+                // SendToLimbo at initial connect: can't enter limbo without a prior
+                // Play-state session (login-without-backend is not implemented yet).
+                tracing::warn!("SendToLimbo at initial connect is not yet supported, disconnecting");
+                client.disconnect("Cannot enter limbo at initial connect", &self.services.packet_registry).await.ok();
+                return Ok(());
+            }
+            _ => {} // ConnectTo, VirtualBackend — Phase 4
         }
 
         // ── Phase 2: Backend Login (Offline Mode) ──
@@ -311,86 +332,277 @@ impl ClientOnlyHandler {
                 Some(ctx.client_ip),
             );
 
-        // Proxy loop with server switch support
+        // Proxy loop with server switch and limbo support
         let mut cmd_rx = cmd_rx;
         let mut current_server_id = target_server_id;
+        let mut mode = ConnectionMode::Backend(backend);
 
         let outcome = loop {
-            let outcome = proxy_loop(
-                &mut client,
-                &mut backend,
-                &self.services.packet_registry,
-                session_token.clone(),
-                &mut cmd_rx,
-                &self.services,
-                player_id,
-                &mut client_codec_chain,
-                &mut server_codec_chain,
-            )
-            .await;
-
-            match outcome {
-                ProxyLoopOutcome::SwitchRequested { target } => {
-                    match crate::session::server_switch::perform_switch(
+            match mode {
+                ConnectionMode::Backend(ref mut backend) => {
+                    let outcome = proxy_loop(
                         &mut client,
-                        &current_server_id,
-                        target,
-                        &handshake,
-                        &game_profile.name,
-                        player_id,
-                        &api_profile,
+                        backend,
+                        &self.services.packet_registry,
+                        session_token.clone(),
+                        &mut cmd_rx,
                         &self.services,
-                        &self.backend_connector,
-                        ctx.peer_addr,
-                        version,
+                        player_id,
+                        &mut client_codec_chain,
+                        &mut server_codec_chain,
                     )
-                    .await
-                    {
-                        Ok(success) => {
-                            backend = success.new_backend;
-                            // Update player session's current_server
-                            if let Some(session) =
-                                self.services.connection_registry.get(&session_id)
+                    .await;
+
+                    match outcome {
+                        ProxyLoopOutcome::SwitchRequested { target } if target.as_str() == "$limbo" => {
+                            // Sentinel: enter limbo for current server's handlers
+                            let server_config = self
+                                .services
+                                .domain_router
+                                .find_by_server_id(current_server_id.as_str());
+                            let handler_names = server_config
+                                .map(|c| c.limbo_handlers.clone())
+                                .unwrap_or_default();
+                            match self
+                                .services
+                                .limbo_handler_registry
+                                .resolve_handlers(&handler_names)
                             {
-                                session.set_current_server(success.new_server_id.clone());
+                                Ok(handlers) if !handlers.is_empty() => {
+                                    mode = ConnectionMode::Limbo(handlers);
+                                    continue;
+                                }
+                                _ => {
+                                    let msg = infrarust_api::types::Component::text(
+                                        "No limbo handlers configured for this server",
+                                    );
+                                    if let Ok(frame) =
+                                        crate::player::packets::build_system_chat_message(
+                                            &msg,
+                                            version,
+                                            &self.services.packet_registry,
+                                        )
+                                    {
+                                        let _ = client.write_frame(&frame).await;
+                                    }
+                                    continue;
+                                }
                             }
-                            current_server_id = success.new_server_id;
-                            tracing::debug!("re-entering proxy loop after switch");
-                            continue;
                         }
-                        Err(e) => {
-                            tracing::warn!("server switch failed: {e}");
-                            // Send error message to client, continue on current server
-                            let error_msg = infrarust_api::types::Component::text(
-                                &format!("Server switch failed: {e}"),
-                            );
-                            let frame = crate::player::packets::build_system_chat_message(
-                                &error_msg,
+                        ProxyLoopOutcome::SwitchRequested { target } => {
+                            match crate::session::server_switch::perform_switch(
+                                &mut client,
+                                &current_server_id,
+                                target,
+                                &handshake,
+                                &game_profile.name,
+                                player_id,
+                                &api_profile,
+                                &self.services,
+                                &self.backend_connector,
+                                ctx.peer_addr,
                                 version,
-                                &self.services.packet_registry,
-                            );
-                            if let Ok(frame) = frame {
-                                let _ = client.write_frame(&frame).await;
+                            )
+                            .await
+                            {
+                                Ok(success) => {
+                                    mode = ConnectionMode::Backend(success.new_backend);
+                                    if let Some(session) =
+                                        self.services.connection_registry.get(&session_id)
+                                    {
+                                        session
+                                            .set_current_server(success.new_server_id.clone());
+                                    }
+                                    current_server_id = success.new_server_id;
+                                    tracing::debug!("re-entering proxy loop after switch");
+                                    continue;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("server switch failed: {e}");
+                                    let error_msg = infrarust_api::types::Component::text(
+                                        &format!("Server switch failed: {e}"),
+                                    );
+                                    if let Ok(frame) =
+                                        crate::player::packets::build_system_chat_message(
+                                            &error_msg,
+                                            version,
+                                            &self.services.packet_registry,
+                                        )
+                                    {
+                                        let _ = client.write_frame(&frame).await;
+                                    }
+                                    continue;
+                                }
                             }
-                            continue;
+                        }
+                        ProxyLoopOutcome::BackendDisconnected { reason } => {
+                            let kick_reason = reason.as_deref().unwrap_or("Disconnected");
+                            let kicked =
+                                infrarust_api::events::connection::KickedFromServerEvent::new(
+                                    player_id,
+                                    current_server_id.clone(),
+                                    infrarust_api::types::Component::text(kick_reason),
+                                );
+                            let kicked = self.services.event_bus.fire(kicked).await;
+
+                            match kicked.result() {
+                                infrarust_api::events::connection::KickedFromServerResult::DisconnectPlayer { reason } => {
+                                    if let Ok(frame) = crate::player::packets::build_disconnect(
+                                        reason,
+                                        version,
+                                        &self.services.packet_registry,
+                                    ) {
+                                        let _ = client.write_frame(&frame).await;
+                                    }
+                                    break ProxyLoopOutcome::ClientDisconnected;
+                                }
+                                infrarust_api::events::connection::KickedFromServerResult::RedirectTo(server) => {
+                                    match crate::session::server_switch::perform_switch(
+                                        &mut client,
+                                        &current_server_id,
+                                        server.clone(),
+                                        &handshake,
+                                        &game_profile.name,
+                                        player_id,
+                                        &api_profile,
+                                        &self.services,
+                                        &self.backend_connector,
+                                        ctx.peer_addr,
+                                        version,
+                                    )
+                                    .await
+                                    {
+                                        Ok(success) => {
+                                            mode = ConnectionMode::Backend(success.new_backend);
+                                            if let Some(session) =
+                                                self.services.connection_registry.get(&session_id)
+                                            {
+                                                session.set_current_server(
+                                                    success.new_server_id.clone(),
+                                                );
+                                            }
+                                            current_server_id = success.new_server_id;
+                                            continue;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("redirect after kick failed: {e}");
+                                            break ProxyLoopOutcome::BackendDisconnected {
+                                                reason: Some(e.to_string()),
+                                            };
+                                        }
+                                    }
+                                }
+                                infrarust_api::events::connection::KickedFromServerResult::SendToLimbo => {
+                                    let server_config = self
+                                        .services
+                                        .domain_router
+                                        .find_by_server_id(current_server_id.as_str());
+                                    let handler_names = server_config
+                                        .map(|c| c.limbo_handlers.clone())
+                                        .unwrap_or_default();
+                                    match self
+                                        .services
+                                        .limbo_handler_registry
+                                        .resolve_handlers(&handler_names)
+                                    {
+                                        Ok(handlers) => {
+                                            mode = ConnectionMode::Limbo(handlers);
+                                            continue;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "failed to resolve limbo handlers: {e}"
+                                            );
+                                            break ProxyLoopOutcome::BackendDisconnected {
+                                                reason: Some(e.to_string()),
+                                            };
+                                        }
+                                    }
+                                }
+                                infrarust_api::events::connection::KickedFromServerResult::Notify { message } => {
+                                    if let Ok(frame) =
+                                        crate::player::packets::build_system_chat_message(
+                                            message,
+                                            version,
+                                            &self.services.packet_registry,
+                                        )
+                                    {
+                                        let _ = client.write_frame(&frame).await;
+                                    }
+                                    break ProxyLoopOutcome::BackendDisconnected { reason: None };
+                                }
+                                _ => {
+                                    break ProxyLoopOutcome::BackendDisconnected { reason };
+                                }
+                            }
+                        }
+                        other => break other,
+                    }
+                }
+                ConnectionMode::Limbo(ref handlers) => {
+                    let exit = enter_limbo(
+                        &mut client,
+                        handlers.clone(),
+                        player_id,
+                        api_profile.clone(),
+                        version,
+                        &self.services.packet_registry,
+                        &self.services,
+                        session_token.clone(),
+                    )
+                    .await;
+
+                    match exit {
+                        LimboExitResult::Completed | LimboExitResult::SwitchedTo(_) => {
+                            let target = match exit {
+                                LimboExitResult::SwitchedTo(ref s) => s.clone(),
+                                _ => current_server_id.clone(),
+                            };
+                            match crate::session::server_switch::perform_switch(
+                                &mut client,
+                                &current_server_id,
+                                target,
+                                &handshake,
+                                &game_profile.name,
+                                player_id,
+                                &api_profile,
+                                &self.services,
+                                &self.backend_connector,
+                                ctx.peer_addr,
+                                version,
+                            )
+                            .await
+                            {
+                                Ok(success) => {
+                                    mode = ConnectionMode::Backend(success.new_backend);
+                                    if let Some(session) =
+                                        self.services.connection_registry.get(&session_id)
+                                    {
+                                        session
+                                            .set_current_server(success.new_server_id.clone());
+                                    }
+                                    current_server_id = success.new_server_id;
+                                    continue;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("switch after limbo failed: {e}");
+                                    break ProxyLoopOutcome::ClientDisconnected;
+                                }
+                            }
+                        }
+                        LimboExitResult::Kicked | LimboExitResult::Timeout => {
+                            break ProxyLoopOutcome::ClientDisconnected;
+                        }
+                        LimboExitResult::ClientDisconnected => {
+                            break ProxyLoopOutcome::ClientDisconnected;
+                        }
+                        LimboExitResult::Shutdown => {
+                            break ProxyLoopOutcome::Shutdown;
                         }
                     }
                 }
-                other => break other,
             }
         };
-
-        // ── KickedFromServerEvent (on backend disconnect) ──
-        if let ProxyLoopOutcome::BackendDisconnected { ref reason } = outcome {
-            let kick_reason = reason.as_deref().unwrap_or("Disconnected");
-            let kicked = infrarust_api::events::connection::KickedFromServerEvent::new(
-                player_id,
-                current_server_id.clone(),
-                infrarust_api::types::Component::text(kick_reason),
-            );
-            let _kicked = self.services.event_bus.fire(kicked).await;
-            // For now, always disconnect. Phase 4B will handle RedirectTo/SendToLimbo.
-        }
 
         // ── DisconnectEvent (always) ──
         super::helpers::fire_disconnect_event(

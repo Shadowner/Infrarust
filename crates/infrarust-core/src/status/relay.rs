@@ -341,6 +341,8 @@ mod tests {
     fn make_server_config(addresses: Vec<ServerAddress>) -> ServerConfig {
         ServerConfig {
             id: Some("test".to_string()),
+            name: None,
+            network: None,
             domains: vec!["test.mc".to_string()],
             addresses,
             proxy_mode: Default::default(),

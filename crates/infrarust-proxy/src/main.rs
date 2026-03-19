@@ -208,6 +208,13 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         tracing::warn!(count = errors.len(), "Some plugins failed to enable");
     }
 
+    // Collect limbo handlers registered by plugins and populate the registry
+    for handler in plugin_manager.collect_limbo_handlers() {
+        services
+            .limbo_handler_registry
+            .register(std::sync::Arc::from(handler));
+    }
+
     // Rebuild transport filter chain now that plugins may have registered filters
     server.rebuild_transport_filter_chain(&transport_filter_registry);
 

@@ -102,7 +102,7 @@ pub fn build_title_packets(
 }
 
 /// Encodes a typed packet into a `PacketFrame`.
-fn encode_packet<P: Packet + 'static>(
+pub(crate) fn encode_packet<P: Packet + 'static>(
     packet: &P,
     version: ProtocolVersion,
     registry: &PacketRegistry,
