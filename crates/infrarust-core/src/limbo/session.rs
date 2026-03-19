@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 
 use infrarust_api::error::PlayerError;
+use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::HandlerResult;
 use infrarust_api::limbo::session::{LimboSession, private};
 use infrarust_api::types::{Component, GameProfile, PlayerId, TitleData};
@@ -25,6 +26,7 @@ pub(crate) struct LimboSessionImpl {
     player_id: PlayerId,
     profile: GameProfile,
     protocol_version: ProtocolVersion,
+    entry_context: LimboEntryContext,
     client_sender: mpsc::Sender<PacketFrame>,
     complete_sender: watch::Sender<Option<HandlerResult>>,
     packet_registry: Arc<PacketRegistry>,
@@ -35,6 +37,7 @@ impl LimboSessionImpl {
         player_id: PlayerId,
         profile: GameProfile,
         protocol_version: ProtocolVersion,
+        entry_context: LimboEntryContext,
         client_sender: mpsc::Sender<PacketFrame>,
         complete_sender: watch::Sender<Option<HandlerResult>>,
         packet_registry: Arc<PacketRegistry>,
@@ -43,6 +46,7 @@ impl LimboSessionImpl {
             player_id,
             profile,
             protocol_version,
+            entry_context,
             client_sender,
             complete_sender,
             packet_registry,
@@ -59,6 +63,10 @@ impl LimboSession for LimboSessionImpl {
 
     fn profile(&self) -> &GameProfile {
         &self.profile
+    }
+
+    fn entry_context(&self) -> &LimboEntryContext {
+        &self.entry_context
     }
 
     fn send_message(&self, message: Component) -> Result<(), PlayerError> {
@@ -127,6 +135,7 @@ mod tests {
             PlayerId::new(1),
             test_profile(),
             ProtocolVersion::V1_21,
+            LimboEntryContext::PluginRedirect { from_server: None },
             tx,
             complete_tx,
             registry,
@@ -144,6 +153,15 @@ mod tests {
     fn profile_returns_correct_username() {
         let (session, _rx, _crx) = make_session();
         assert_eq!(session.profile().username, "LimboTester");
+    }
+
+    #[test]
+    fn entry_context_returns_plugin_redirect() {
+        let (session, _rx, _crx) = make_session();
+        assert!(matches!(
+            session.entry_context(),
+            LimboEntryContext::PluginRedirect { from_server: None }
+        ));
     }
 
     #[test]
@@ -191,6 +209,7 @@ mod tests {
             PlayerId::new(2),
             test_profile(),
             ProtocolVersion::V1_21,
+            LimboEntryContext::PluginRedirect { from_server: None },
             tx,
             complete_tx,
             registry,

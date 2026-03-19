@@ -36,7 +36,7 @@ pub use crate::services::{
 };
 
 // Limbo
-pub use crate::limbo::{HandlerResult, LimboHandler, LimboSession};
+pub use crate::limbo::{HandlerResult, LimboEntryContext, LimboHandler, LimboSession};
 
 // Virtual backend
 pub use crate::virtual_backend::{VirtualBackendHandler, VirtualBackendSession};

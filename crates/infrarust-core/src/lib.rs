@@ -17,6 +17,7 @@ pub mod player;
 pub mod plugin;
 pub mod provider;
 pub mod registry;
+pub mod registry_data;
 pub mod routing;
 pub mod server;
 pub mod services;

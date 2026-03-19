@@ -222,6 +222,11 @@ impl ProxyServer {
             codec_filter_registry: Arc::clone(&codec_filter_registry),
             transport_filter_chain: crate::filter::transport_chain::TransportFilterChain::empty(),
             limbo_handler_registry,
+            registry_codec_cache: Arc::new(
+                crate::limbo::registry_cache::RegistryCodecCache::new(
+                    Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider),
+                ),
+            ),
         };
 
         // Build common pipeline: IpFilter → BanIpCheck → HandshakeParser → RateLimiter → DomainRouter

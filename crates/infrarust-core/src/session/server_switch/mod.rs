@@ -8,7 +8,11 @@ mod config_phase;
 mod switch_packets;
 mod validation;
 
+use std::sync::Arc;
+
 use infrarust_api::event::ResultedEvent;
+use infrarust_api::limbo::context::LimboEntryContext;
+use infrarust_api::limbo::handler::LimboHandler;
 use infrarust_api::types::{GameProfile, PlayerId, ServerId};
 use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
@@ -26,6 +30,11 @@ pub struct SwitchSuccess {
     pub new_backend: BackendBridge,
     /// The server ID that was switched to.
     pub new_server_id: ServerId,
+}
+
+pub enum SwitchResult {
+    Backend(SwitchSuccess),
+    Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
 }
 
 /// Performs a server switch: connects to a new backend, sends the appropriate
@@ -46,7 +55,7 @@ pub async fn perform_switch(
     backend_connector: &BackendConnector,
     peer_addr: std::net::SocketAddr,
     protocol_version: ProtocolVersion,
-) -> Result<SwitchSuccess, CoreError> {
+) -> Result<SwitchResult, CoreError> {
     let version = protocol_version;
 
     // 1. Resolve target server config
@@ -67,7 +76,7 @@ pub async fn perform_switch(
     validation::validate_switch_allowed(&current_config, &server_config)
         .map_err(|e| CoreError::Rejected(e.to_string()))?;
 
-    // 2. Fire ServerPreConnectEvent (awaited — can deny/redirect)
+    // 2. Fire ServerPreConnectEvent (awaited — can deny/redirect/send to limbo)
     let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(
         player_id,
         api_profile.clone(),
@@ -91,7 +100,22 @@ pub async fn perform_switch(
                 reason.to_json()
             )));
         }
-        _ => target.clone(), // SendToLimbo, VirtualBackend — not implemented yet
+        infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo { limbo_handlers } => {
+            tracing::info!("server switch redirected to limbo by event");
+            let handler_names = if limbo_handlers.is_empty() {
+                server_config.limbo_handlers.clone()
+            } else {
+                limbo_handlers.clone()
+            };
+            let handlers = services
+                .limbo_handler_registry
+                .resolve_handlers_lenient(&handler_names);
+            let ctx = LimboEntryContext::PluginRedirect {
+                from_server: Some(current_server.clone()),
+            };
+            return Ok(SwitchResult::Limbo(handlers, ctx));
+        }
+        _ => target.clone(), // VirtualBackend — not implemented yet
     };
 
     // Re-resolve if redirected
@@ -203,8 +227,8 @@ pub async fn perform_switch(
         "server switch complete"
     );
 
-    Ok(SwitchSuccess {
+    Ok(SwitchResult::Backend(SwitchSuccess {
         new_backend,
         new_server_id: effective_target,
-    })
+    }))
 }

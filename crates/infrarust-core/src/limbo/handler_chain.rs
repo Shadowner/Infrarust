@@ -40,6 +40,7 @@ pub(crate) enum LimboChainResult {
     Shutdown,
     /// KeepAlive timeout.
     Timeout,
+    SendToLimbo(Vec<String>),
 }
 
 /// KeepAlive interval in the limbo loop.
@@ -102,6 +103,7 @@ fn process_handler_result(result: HandlerResult) -> HandlerAction {
         HandlerResult::Accept => HandlerAction::Continue,
         HandlerResult::Deny(reason) => HandlerAction::Exit(LimboChainResult::Kick(reason)),
         HandlerResult::Redirect(server) => HandlerAction::Exit(LimboChainResult::Switch(server)),
+        HandlerResult::SendToLimbo(handlers) => HandlerAction::Exit(LimboChainResult::SendToLimbo(handlers)),
         HandlerResult::Hold => HandlerAction::Hold,
         // HandlerResult is #[non_exhaustive]; treat unknown variants as Accept.
         _ => HandlerAction::Continue,

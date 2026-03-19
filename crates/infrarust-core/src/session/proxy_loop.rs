@@ -493,11 +493,15 @@ async fn handle_backend_to_client(
         // Disconnect detection
         match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
             Ok(DecodedPacket::Typed { packet, .. }) => {
-                if packet.as_any().downcast_ref::<CDisconnect>().is_some() {
+                if let Some(disc) = packet.as_any().downcast_ref::<CDisconnect>() {
                     client.write_frame(&frame).await?;
-                    return Ok(BackendAction::Disconnected(Some(
-                        "backend disconnect".to_string(),
-                    )));
+                    let reason = disc
+                        .as_json()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| {
+                            String::from_utf8_lossy(&disc.reason).to_string()
+                        });
+                    return Ok(BackendAction::Disconnected(Some(reason)));
                 }
                 // KeepAlive or other typed: forward
                 client.write_frame(&frame).await?;
@@ -559,16 +563,42 @@ async fn handle_backend_to_client(
 
             // FinishConfig — forward, state transition happens when client ACKs
             if packet.as_any().downcast_ref::<CFinishConfig>().is_some() {
+                services.registry_codec_cache.finalize(version);
                 client.write_frame(&frame).await?;
                 // Transition happens in handle_client_to_backend
                 // when SAcknowledgeFinishConfig is received
                 return Ok(BackendAction::Continue);
             }
 
+            if state == ConnectionState::Config {
+                let is_known_packs = registry
+                    .get_packet_id::<infrarust_protocol::CKnownPacks>(
+                        ConnectionState::Config,
+                        Direction::Clientbound,
+                        version,
+                    )
+                    .is_some_and(|id| id == frame.id);
+
+                if is_known_packs {
+                    services
+                        .registry_codec_cache
+                        .collect_known_packs_frame(version, frame.clone());
+                } else {
+                    services
+                        .registry_codec_cache
+                        .collect_registry_frame(version, frame.clone());
+                }
+            }
+
             // All other typed packets: forward
             client.write_frame(&frame).await?;
         }
         Ok(DecodedPacket::Opaque { .. }) => {
+            if state == ConnectionState::Config {
+                services
+                    .registry_codec_cache
+                    .collect_registry_frame(version, frame.clone());
+            }
             client.write_frame(&frame).await?;
         }
         Err(e) => {

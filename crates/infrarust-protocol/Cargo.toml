@@ -11,6 +11,8 @@ default = []
 libdeflater = ["dep:libdeflater"]
 
 [dependencies]
+fastnbt = "2"
+serde = { workspace = true }
 thiserror = "2.0.18"
 uuid = { version = "1.22.0", features = ["v3", "v4"] }
 bytes = "1.11.1"

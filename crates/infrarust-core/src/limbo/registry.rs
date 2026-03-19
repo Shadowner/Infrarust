@@ -55,6 +55,19 @@ impl LimboHandlerRegistry {
             })
             .collect()
     }
+
+    pub fn resolve_handlers_lenient(&self, names: &[String]) -> Vec<Arc<dyn LimboHandler>> {
+        names
+            .iter()
+            .filter_map(|name| match self.get(name) {
+                Some(h) => Some(h),
+                None => {
+                    tracing::warn!(handler = %name, "limbo handler not found, skipping");
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 impl Default for LimboHandlerRegistry {

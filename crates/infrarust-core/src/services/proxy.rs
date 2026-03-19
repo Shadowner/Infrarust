@@ -11,6 +11,7 @@ use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_chain::TransportFilterChain;
 use crate::limbo::registry::LimboHandlerRegistry;
+use crate::limbo::registry_cache::RegistryCodecCache;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
@@ -47,4 +48,6 @@ pub struct ProxyServices {
     pub transport_filter_chain: TransportFilterChain,
     /// Registry of limbo handler instances, keyed by name.
     pub limbo_handler_registry: Arc<LimboHandlerRegistry>,
+    /// Multi-version registry data cache for limbo login.
+    pub registry_codec_cache: Arc<RegistryCodecCache>,
 }

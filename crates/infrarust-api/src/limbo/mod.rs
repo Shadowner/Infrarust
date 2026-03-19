@@ -8,8 +8,10 @@
 //! - [`LimboSession`] — proxy-provided session handle (sealed).
 //! - [`HandlerResult`] — the outcome of a limbo handler action.
 
+pub mod context;
 pub mod handler;
 pub mod session;
 
+pub use context::LimboEntryContext;
 pub use handler::{HandlerResult, LimboHandler};
 pub use session::LimboSession;

@@ -3,6 +3,7 @@
 use crate::error::PlayerError;
 use crate::types::{Component, GameProfile, PlayerId, TitleData};
 
+use super::context::LimboEntryContext;
 use super::handler::HandlerResult;
 
 pub mod private {
@@ -20,6 +21,8 @@ pub trait LimboSession: Send + Sync + private::Sealed {
     fn player_id(&self) -> PlayerId;
 
     fn profile(&self) -> &GameProfile;
+
+    fn entry_context(&self) -> &LimboEntryContext;
 
     /// Sends a chat message to the player.
     ///

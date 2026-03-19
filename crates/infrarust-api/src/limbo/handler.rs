@@ -18,6 +18,7 @@ pub enum HandlerResult {
     Hold,
     /// Redirect — send the player to a specific server.
     Redirect(ServerId),
+    SendToLimbo(Vec<String>),
 }
 
 /// A handler for a limbo stage (Tier 2).

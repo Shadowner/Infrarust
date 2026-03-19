@@ -16,6 +16,7 @@ members = [
     "plugins/infrarust-plugin-server-wake",
     "plugins/infrarust-plugin-queue",
     "tools/infrarust-motd",
+    "tools/registry-extractor",
 ]
 
 [workspace.dependencies]

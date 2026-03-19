@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use infrarust_api::event::ResultedEvent;
+use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
 use tokio_util::sync::CancellationToken;
 
@@ -27,7 +28,7 @@ enum ConnectionMode {
     /// Proxying to a real backend server.
     Backend(BackendBridge),
     /// In limbo (virtual world, no backend).
-    Limbo(Vec<Arc<dyn LimboHandler>>),
+    Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
 }
 
 /// Handles connections in Offline proxy mode.
@@ -143,7 +144,7 @@ impl OfflineHandler {
                 client.disconnect(&reason_json, &self.services.packet_registry).await.ok();
                 return Ok(());
             }
-            infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo => {
+            infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo { .. } => {
                 tracing::warn!("SendToLimbo at initial connect is not yet supported, disconnecting");
                 client.disconnect("Cannot enter limbo at initial connect", &self.services.packet_registry).await.ok();
                 return Ok(());
@@ -266,23 +267,24 @@ impl OfflineHandler {
                                 .resolve_handlers(&handler_names)
                             {
                                 Ok(handlers) if !handlers.is_empty() => {
-                                    mode = ConnectionMode::Limbo(handlers);
+                                    mode = ConnectionMode::Limbo(handlers, LimboEntryContext::PluginRedirect {
+                                        from_server: Some(current_server_id.clone()),
+                                    });
                                     continue;
                                 }
                                 _ => {
-                                    let msg = infrarust_api::types::Component::text(
+                                    tracing::warn!("no limbo handlers configured, disconnecting");
+                                    let reason = infrarust_api::types::Component::text(
                                         "No limbo handlers configured for this server",
                                     );
-                                    if let Ok(frame) =
-                                        crate::player::packets::build_system_chat_message(
-                                            &msg,
-                                            version,
-                                            &self.services.packet_registry,
-                                        )
-                                    {
+                                    if let Ok(frame) = crate::player::packets::build_disconnect(
+                                        &reason,
+                                        version,
+                                        &self.services.packet_registry,
+                                    ) {
                                         let _ = client.write_frame(&frame).await;
                                     }
-                                    continue;
+                                    break ProxyLoopOutcome::ClientDisconnected;
                                 }
                             }
                         }
@@ -302,7 +304,7 @@ impl OfflineHandler {
                             )
                             .await
                             {
-                                Ok(success) => {
+                                Ok(crate::session::server_switch::SwitchResult::Backend(success)) => {
                                     mode = ConnectionMode::Backend(success.new_backend);
                                     if let Some(session) =
                                         self.services.connection_registry.get(&session_id)
@@ -312,6 +314,14 @@ impl OfflineHandler {
                                     }
                                     current_server_id = success.new_server_id;
                                     tracing::debug!("re-entering proxy loop after switch");
+                                    continue;
+                                }
+                                Ok(crate::session::server_switch::SwitchResult::Limbo(handlers, ctx)) => {
+                                    if handlers.is_empty() {
+                                        tracing::warn!("SendToLimbo during switch but no handlers, staying on current server");
+                                        continue;
+                                    }
+                                    mode = ConnectionMode::Limbo(handlers, ctx);
                                     continue;
                                 }
                                 Err(e) => {
@@ -369,7 +379,7 @@ impl OfflineHandler {
                                     )
                                     .await
                                     {
-                                        Ok(success) => {
+                                        Ok(crate::session::server_switch::SwitchResult::Backend(success)) => {
                                             mode = ConnectionMode::Backend(success.new_backend);
                                             if let Some(session) =
                                                 self.services.connection_registry.get(&session_id)
@@ -381,6 +391,13 @@ impl OfflineHandler {
                                             current_server_id = success.new_server_id;
                                             continue;
                                         }
+                                        Ok(crate::session::server_switch::SwitchResult::Limbo(handlers, ctx)) => {
+                                            if handlers.is_empty() {
+                                                break ProxyLoopOutcome::ClientDisconnected;
+                                            }
+                                            mode = ConnectionMode::Limbo(handlers, ctx);
+                                            continue;
+                                        }
                                         Err(e) => {
                                             tracing::warn!("redirect after kick failed: {e}");
                                             break ProxyLoopOutcome::BackendDisconnected {
@@ -389,31 +406,37 @@ impl OfflineHandler {
                                         }
                                     }
                                 }
-                                infrarust_api::events::connection::KickedFromServerResult::SendToLimbo => {
-                                    let server_config = self
-                                        .services
-                                        .domain_router
-                                        .find_by_server_id(current_server_id.as_str());
-                                    let handler_names = server_config
-                                        .map(|c| c.limbo_handlers.clone())
-                                        .unwrap_or_default();
-                                    match self
-                                        .services
-                                        .limbo_handler_registry
-                                        .resolve_handlers(&handler_names)
-                                    {
-                                        Ok(handlers) => {
-                                            mode = ConnectionMode::Limbo(handlers);
-                                            continue;
+                                infrarust_api::events::connection::KickedFromServerResult::SendToLimbo { limbo_handlers } => {
+                                    let handler_names = if limbo_handlers.is_empty() {
+                                        self.services
+                                            .domain_router
+                                            .find_by_server_id(current_server_id.as_str())
+                                            .map(|c| c.limbo_handlers.clone())
+                                            .unwrap_or_default()
+                                    } else {
+                                        limbo_handlers.clone()
+                                    };
+                                    let handlers = self.services.limbo_handler_registry
+                                        .resolve_handlers_lenient(&handler_names);
+                                    if !handlers.is_empty() {
+                                        mode = ConnectionMode::Limbo(handlers, LimboEntryContext::KickedFromServer {
+                                            server: current_server_id.clone(),
+                                            reason: infrarust_api::types::Component::text(kick_reason),
+                                        });
+                                        continue;
+                                    } else {
+                                        tracing::warn!(
+                                            "SendToLimbo but no limbo handlers resolved, disconnecting"
+                                        );
+                                        let kick_component = infrarust_api::types::Component::text(kick_reason);
+                                        if let Ok(frame) = crate::player::packets::build_disconnect(
+                                            &kick_component,
+                                            version,
+                                            &self.services.packet_registry,
+                                        ) {
+                                            let _ = client.write_frame(&frame).await;
                                         }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                "failed to resolve limbo handlers: {e}"
-                                            );
-                                            break ProxyLoopOutcome::BackendDisconnected {
-                                                reason: Some(e.to_string()),
-                                            };
-                                        }
+                                        break ProxyLoopOutcome::ClientDisconnected;
                                     }
                                 }
                                 infrarust_api::events::connection::KickedFromServerResult::Notify { message } => {
@@ -436,13 +459,14 @@ impl OfflineHandler {
                         other => break other,
                     }
                 }
-                ConnectionMode::Limbo(ref handlers) => {
+                ConnectionMode::Limbo(ref handlers, ref entry_ctx) => {
                     let exit = enter_limbo(
                         &mut client,
                         handlers.clone(),
                         player_id,
                         api_profile.clone(),
                         version,
+                        entry_ctx.clone(),
                         &self.services.packet_registry,
                         &self.services,
                         session_token.clone(),
@@ -470,7 +494,7 @@ impl OfflineHandler {
                             )
                             .await
                             {
-                                Ok(success) => {
+                                Ok(crate::session::server_switch::SwitchResult::Backend(success)) => {
                                     mode = ConnectionMode::Backend(success.new_backend);
                                     if let Some(session) =
                                         self.services.connection_registry.get(&session_id)
@@ -481,11 +505,30 @@ impl OfflineHandler {
                                     current_server_id = success.new_server_id;
                                     continue;
                                 }
+                                Ok(crate::session::server_switch::SwitchResult::Limbo(handlers, ctx)) => {
+                                    if handlers.is_empty() {
+                                        break ProxyLoopOutcome::ClientDisconnected;
+                                    }
+                                    mode = ConnectionMode::Limbo(handlers, ctx);
+                                    continue;
+                                }
                                 Err(e) => {
                                     tracing::warn!("switch after limbo failed: {e}");
                                     break ProxyLoopOutcome::ClientDisconnected;
                                 }
                             }
+                        }
+                        LimboExitResult::SendToLimbo(handler_names) => {
+                            let handlers = self.services.limbo_handler_registry
+                                .resolve_handlers_lenient(&handler_names);
+                            if handlers.is_empty() {
+                                tracing::warn!("limbo-to-limbo but no valid handlers resolved, disconnecting");
+                                break ProxyLoopOutcome::ClientDisconnected;
+                            }
+                            mode = ConnectionMode::Limbo(handlers, LimboEntryContext::PluginRedirect {
+                                from_server: Some(current_server_id.clone()),
+                            });
+                            continue;
                         }
                         LimboExitResult::Kicked | LimboExitResult::Timeout => {
                             break ProxyLoopOutcome::ClientDisconnected;

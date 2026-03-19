@@ -11,6 +11,7 @@ pub(crate) mod chat;            // Client message parsing
 pub(crate) mod session;         // LimboSessionImpl
 pub(crate) mod handler_chain;   // Limbo-specific dispatch loop
 pub(crate) mod registry;        // LimboHandlerRegistry
+pub(crate) mod registry_cache;  // Config-phase frame cache for limbo login
 pub(crate) mod engine;          // enter_limbo() orchestrator
 pub(crate) mod login;           // Login without backend
 

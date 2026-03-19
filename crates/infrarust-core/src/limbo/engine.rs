@@ -9,6 +9,7 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
+use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
 use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
@@ -40,6 +41,7 @@ pub(crate) enum LimboExitResult {
     Shutdown,
     /// KeepAlive timed out -- the client stopped responding.
     Timeout,
+    SendToLimbo(Vec<String>),
 }
 
 /// Enters the limbo world for a player.
@@ -60,6 +62,7 @@ pub(crate) async fn enter_limbo(
     player_id: PlayerId,
     profile: GameProfile,
     version: ProtocolVersion,
+    entry_context: LimboEntryContext,
     registry: &PacketRegistry,
     services: &ProxyServices,
     cancel: CancellationToken,
@@ -89,6 +92,7 @@ pub(crate) async fn enter_limbo(
         player_id,
         core.profile.clone(),
         version,
+        entry_context,
         core.outgoing_tx.clone(),
         complete_tx,
         Arc::clone(&services.packet_registry),
@@ -144,6 +148,8 @@ async fn map_chain_result(
         LimboChainResult::Shutdown => LimboExitResult::Shutdown,
 
         LimboChainResult::Timeout => LimboExitResult::Timeout,
+
+        LimboChainResult::SendToLimbo(handler_names) => LimboExitResult::SendToLimbo(handler_names),
     }
 }
 
