@@ -54,6 +54,12 @@ pub struct AcceptedConnection {
     permit: Option<OwnedSemaphorePermit>,
 }
 
+impl AcceptedConnection {
+    pub fn into_parts(self) -> (ClientConnection, Option<OwnedSemaphorePermit>) {
+        (self.connection, self.permit)
+    }
+}
+
 impl std::fmt::Debug for AcceptedConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AcceptedConnection")

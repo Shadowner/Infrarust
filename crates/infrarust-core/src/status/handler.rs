@@ -6,8 +6,11 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
+use dashmap::DashMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Mutex as TokioMutex;
 
 use infrarust_api::events::proxy::ProxyPingEvent;
 use infrarust_config::{MotdConfig, ServerConfig};
@@ -39,11 +42,13 @@ pub struct StatusHandler {
     registry: Arc<PacketRegistry>,
     default_motd: Option<MotdConfig>,
     event_bus: Arc<EventBusImpl>,
+    /// Only one relay runs at a time per server; concurrent requests wait.
+    inflight_locks: DashMap<String, Arc<TokioMutex<()>>>,
 }
 
 impl StatusHandler {
     #[allow(clippy::too_many_arguments)]
-    pub const fn new(
+    pub fn new(
         relay_client: StatusRelayClient,
         cache: Arc<StatusCache>,
         favicon_cache: Arc<FaviconCache>,
@@ -60,6 +65,7 @@ impl StatusHandler {
             registry,
             default_motd,
             event_bus,
+            inflight_locks: DashMap::new(),
         }
     }
 
@@ -90,10 +96,8 @@ impl StatusHandler {
             .as_ref()
             .map_or(ProtocolVersion(CURRENT_MC_PROTOCOL), |h| h.protocol_version);
 
-        // Wait for SStatusRequest
         self.read_status_request(ctx).await?;
 
-        // Resolve the status response
         let mut response = self
             .resolve_response(
                 ctx,
@@ -103,7 +107,6 @@ impl StatusHandler {
             )
             .await;
 
-        // Fire ProxyPingEvent — handlers can modify the response
         let api_response = core_to_api_ping_response(&response);
         let remote_addr = SocketAddr::new(ctx.client_ip, ctx.peer_addr.port());
         let event = ProxyPingEvent {
@@ -113,7 +116,6 @@ impl StatusHandler {
         let event = self.event_bus.fire(event).await;
         apply_api_to_core(&mut response, &event.response);
 
-        // Send CStatusResponse
         let json = response
             .to_json()
             .map_err(|e| CoreError::Other(format!("failed to serialize status JSON: {e}")))?;
@@ -123,7 +125,6 @@ impl StatusHandler {
         self.send_packet(ctx, &status_resp, protocol_version)
             .await?;
 
-        // Wait for SPingRequest and echo back
         self.handle_ping_pong(ctx, protocol_version).await?;
 
         Ok(())
@@ -138,38 +139,31 @@ impl StatusHandler {
         connection_registry: &ConnectionRegistry,
     ) -> ServerPingResponse {
         let Some(routing) = routing else {
-            // Unknown domain → default MOTD
             return self.build_default_motd_response();
         };
 
         let config = &routing.server_config;
         let config_id = &routing.config_id;
 
-        // Check server manager state
         if config.server_manager.is_some()
             && let Some(ref sm) = self.server_manager
         {
             match sm.get_state(config_id) {
-                Some(ServerState::Online) | None => {
-                    // Fall through to relay
-                }
+                Some(ServerState::Online) | None => {}
                 Some(state) => {
                     return Self::build_state_motd(config, state);
                 }
             }
         }
 
-        // Relay path
         let mut response = self
             .relay_or_cache(ctx, config, config_id, handshake, connection_registry)
             .await;
 
-        // Apply online overrides if configured
         if let Some(ref online) = config.motd.online {
             response.apply_overrides(online);
         }
 
-        // Apply favicon from cache if not already set
         if response.favicon.is_none()
             && let Some(fav) = self.favicon_cache.get(config_id)
         {
@@ -180,6 +174,9 @@ impl StatusHandler {
     }
 
     /// Attempts relay → cache → stale → synthetic fallback.
+    ///
+    /// Uses per-server locking to prevent cache stampede: only one relay
+    /// runs at a time per server, concurrent requests wait and re-check cache.
     async fn relay_or_cache(
         &self,
         ctx: &ConnectionContext,
@@ -188,12 +185,21 @@ impl StatusHandler {
         handshake: Option<&HandshakeData>,
         connection_registry: &ConnectionRegistry,
     ) -> ServerPingResponse {
-        // 1. Check fresh cache
         if let Some((response, _latency)) = self.cache.get_fresh(config_id) {
             return response;
         }
 
-        // 2. Attempt relay
+        let lock = self
+            .inflight_locks
+            .entry(config_id.to_string())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+
+        if let Some((response, _latency)) = self.cache.get_fresh(config_id) {
+            return response;
+        }
+
         let domain = handshake.map_or("localhost", |h| h.domain.as_str());
         let protocol_version =
             handshake.map_or(ProtocolVersion(CURRENT_MC_PROTOCOL), |h| h.protocol_version);
@@ -218,7 +224,6 @@ impl StatusHandler {
             }
         }
 
-        // 3. Stale cache fallback
         if let Some((response, _latency)) = self.cache.get_stale(config_id) {
             tracing::warn!(
                 server = config_id,
@@ -227,7 +232,6 @@ impl StatusHandler {
             return response;
         }
 
-        // 4. Synthetic unreachable MOTD
         self.build_unreachable_motd(config, connection_registry, config_id)
     }
 
@@ -296,7 +300,6 @@ impl StatusHandler {
             );
         }
 
-        // Check default_motd.unreachable
         if let Some(entry) = self
             .default_motd
             .as_ref()
@@ -310,7 +313,6 @@ impl StatusHandler {
             );
         }
 
-        // Hardcoded fallback
         let mut resp = ServerPingResponse::synthetic(
             "\u{00a7}cServer unreachable",
             None,
@@ -322,20 +324,28 @@ impl StatusHandler {
         resp
     }
 
-    /// Reads the `SStatusRequest` frame from the client.
+    /// Reads the `SStatusRequest` frame from the client (with timeout).
     async fn read_status_request(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
-        let mut decoder = PacketDecoder::new();
-        loop {
-            if decoder.try_next_frame()?.is_some() {
-                return Ok(());
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut decoder = PacketDecoder::new();
+            if !ctx.buffered_data.is_empty() {
+                decoder.queue_bytes(&ctx.buffered_data);
+                ctx.buffered_data.clear();
             }
-            let mut buf = [0u8; 512];
-            let n = ctx.stream_mut().read(&mut buf).await?;
-            if n == 0 {
-                return Err(CoreError::ConnectionClosed);
+            loop {
+                if decoder.try_next_frame()?.is_some() {
+                    return Ok(());
+                }
+                let mut buf = [0u8; 512];
+                let n = ctx.stream_mut().read(&mut buf).await?;
+                if n == 0 {
+                    return Err(CoreError::ConnectionClosed);
+                }
+                decoder.queue_bytes(&buf[..n]);
             }
-            decoder.queue_bytes(&buf[..n]);
-        }
+        })
+        .await
+        .map_err(|_| CoreError::Timeout("status request read timed out".into()))?
     }
 
     /// Handles the ping/pong exchange after status response.
@@ -345,18 +355,22 @@ impl StatusHandler {
         ctx: &mut ConnectionContext,
         protocol_version: ProtocolVersion,
     ) -> Result<(), CoreError> {
-        let mut decoder = PacketDecoder::new();
-        let frame = loop {
-            if let Some(frame) = decoder.try_next_frame()? {
-                break frame;
+        let frame = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut decoder = PacketDecoder::new();
+            loop {
+                if let Some(frame) = decoder.try_next_frame()? {
+                    return Ok(frame);
+                }
+                let mut buf = [0u8; 512];
+                let n = ctx.stream_mut().read(&mut buf).await?;
+                if n == 0 {
+                    return Err(CoreError::ConnectionClosed);
+                }
+                decoder.queue_bytes(&buf[..n]);
             }
-            let mut buf = [0u8; 512];
-            let n = ctx.stream_mut().read(&mut buf).await?;
-            if n == 0 {
-                return Err(CoreError::ConnectionClosed);
-            }
-            decoder.queue_bytes(&buf[..n]);
-        };
+        })
+        .await
+        .map_err(|_| CoreError::Timeout("ping request read timed out".into()))??;
 
         let decoded = self.registry.decode_frame(
             &frame,

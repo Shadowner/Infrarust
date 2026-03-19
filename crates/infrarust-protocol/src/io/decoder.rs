@@ -161,6 +161,10 @@ impl PacketDecoder {
     pub const fn compression_threshold(&self) -> Option<i32> {
         self.compression_threshold
     }
+
+    pub fn into_remaining(self) -> BytesMut {
+        self.buf
+    }
 }
 
 impl Default for PacketDecoder {

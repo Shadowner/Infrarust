@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 
@@ -49,102 +50,96 @@ impl Middleware for HandshakeParserMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
-            // Read first byte to detect legacy vs modern
-            let first_byte = if ctx.buffered_data.is_empty() {
-                let mut buf = [0u8; 1];
-                let n = ctx.stream_mut().read(&mut buf).await?;
-                if n == 0 {
-                    return Err(CoreError::ConnectionClosed);
+            tokio::time::timeout(Duration::from_secs(10), async {
+                let first_byte = if ctx.buffered_data.is_empty() {
+                    let mut buf = [0u8; 1];
+                    let n = ctx.stream_mut().read(&mut buf).await?;
+                    if n == 0 {
+                        return Err(CoreError::ConnectionClosed);
+                    }
+                    ctx.buffered_data.extend_from_slice(&buf[..n]);
+                    buf[0]
+                } else {
+                    ctx.buffered_data[0]
+                };
+
+                match legacy::detect(first_byte) {
+                    legacy::LegacyDetection::LegacyPing => {
+                        tracing::debug!("legacy ping detected (0xFE)");
+                        ctx.extensions.insert(LegacyDetected);
+                        return Ok(MiddlewareResult::ShortCircuit);
+                    }
+                    legacy::LegacyDetection::LegacyLogin => {
+                        tracing::debug!("legacy login detected (0x02) — unsupported");
+                        ctx.extensions.insert(LegacyDetected);
+                        return Ok(MiddlewareResult::ShortCircuit);
+                    }
+                    legacy::LegacyDetection::Modern => {}
                 }
-                ctx.buffered_data.extend_from_slice(&buf[..n]);
-                buf[0]
-            } else {
-                ctx.buffered_data[0]
-            };
 
-            // Legacy detection
-            match legacy::detect(first_byte) {
-                legacy::LegacyDetection::LegacyPing => {
-                    tracing::debug!("legacy ping detected (0xFE)");
-                    ctx.extensions.insert(LegacyDetected);
-                    return Ok(MiddlewareResult::ShortCircuit);
+                let mut decoder = PacketDecoder::new();
+                decoder.queue_bytes(&ctx.buffered_data);
+
+                let mut raw_data = ctx.buffered_data.clone();
+                let frame = loop {
+                    if let Some(frame) = decoder.try_next_frame()? {
+                        break frame;
+                    }
+                    let mut buf = [0u8; 1024];
+                    let n = ctx.stream_mut().read(&mut buf).await?;
+                    if n == 0 {
+                        return Err(CoreError::ConnectionClosed);
+                    }
+                    decoder.queue_bytes(&buf[..n]);
+                    raw_data.extend_from_slice(&buf[..n]);
+                };
+
+                // Separate handshake bytes from trailing data (e.g. LoginStart, SStatusRequest)
+                let remaining = decoder.into_remaining();
+                raw_data.truncate(raw_data.len() - remaining.len());
+                ctx.buffered_data = remaining;
+
+                if frame.id != 0x00 {
+                    return Err(CoreError::Protocol(
+                        infrarust_protocol::ProtocolError::invalid(format!(
+                            "expected handshake (0x00), got 0x{:02X}",
+                            frame.id,
+                        )),
+                    ));
                 }
-                legacy::LegacyDetection::LegacyLogin => {
-                    tracing::debug!("legacy login detected (0x02) — unsupported");
-                    ctx.extensions.insert(LegacyDetected);
-                    return Ok(MiddlewareResult::ShortCircuit);
-                }
-                legacy::LegacyDetection::Modern => {}
-            }
+                let handshake =
+                    SHandshake::decode(&mut frame.payload.as_ref(), ProtocolVersion::V1_7_2)?;
 
-            // Modern handshake: read enough data to decode
-            // Keep reading until we can decode a full packet frame
-            let mut decoder = PacketDecoder::new();
-            decoder.queue_bytes(&ctx.buffered_data);
+                let domain = strip_fml_markers(&handshake.server_address).to_lowercase();
+                let port = handshake.server_port;
+                let protocol_version = ProtocolVersion(handshake.protocol_version.0);
 
-            let mut raw_data = ctx.buffered_data.clone();
-            let frame = loop {
-                if let Some(frame) = decoder.try_next_frame()? {
-                    break frame;
-                }
-                // Need more data from the stream
-                let mut buf = [0u8; 1024];
-                let n = ctx.stream_mut().read(&mut buf).await?;
-                if n == 0 {
-                    return Err(CoreError::ConnectionClosed);
-                }
-                decoder.queue_bytes(&buf[..n]);
-                raw_data.extend_from_slice(&buf[..n]);
-            };
+                let intent = match handshake.next_state {
+                    ConnectionState::Status => ConnectionIntent::Status,
+                    ConnectionState::Login => ConnectionIntent::Login,
+                    _ => ConnectionIntent::Transfer,
+                };
 
-            // Store all raw bytes read so far for forwarding
-            let raw_packet = raw_data;
+                tracing::debug!(
+                    domain = %domain,
+                    port,
+                    protocol = protocol_version.0,
+                    ?intent,
+                    "handshake parsed"
+                );
 
-            // Decode the handshake directly — always packet ID 0x00,
-            // format stable since MC 1.7, no registry needed.
-            if frame.id != 0x00 {
-                return Err(CoreError::Protocol(
-                    infrarust_protocol::ProtocolError::invalid(format!(
-                        "expected handshake (0x00), got 0x{:02X}",
-                        frame.id,
-                    )),
-                ));
-            }
-            let handshake =
-                SHandshake::decode(&mut frame.payload.as_ref(), ProtocolVersion::V1_7_2)?;
+                ctx.extensions.insert(HandshakeData {
+                    domain,
+                    port,
+                    protocol_version,
+                    intent,
+                    raw_packets: vec![raw_data],
+                });
 
-            // Extract and clean domain
-            let domain = strip_fml_markers(&handshake.server_address).to_lowercase();
-            let port = handshake.server_port;
-            let protocol_version = ProtocolVersion(handshake.protocol_version.0);
-
-            // Map next_state to ConnectionIntent
-            let intent = match handshake.next_state {
-                ConnectionState::Status => ConnectionIntent::Status,
-                ConnectionState::Login => ConnectionIntent::Login,
-                _ => ConnectionIntent::Transfer,
-            };
-
-            tracing::debug!(
-                domain = %domain,
-                port,
-                protocol = protocol_version.0,
-                ?intent,
-                "handshake parsed"
-            );
-
-            ctx.extensions.insert(HandshakeData {
-                domain,
-                port,
-                protocol_version,
-                intent,
-                raw_packets: vec![raw_packet],
-            });
-
-            // Update buffered_data to only contain unprocessed bytes
-            ctx.buffered_data.clear();
-
-            Ok(MiddlewareResult::Continue)
+                Ok(MiddlewareResult::Continue)
+            })
+            .await
+            .map_err(|_| CoreError::Timeout("handshake read timed out".into()))?
         })
     }
 }

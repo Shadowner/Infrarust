@@ -412,7 +412,13 @@ impl ProxyServer {
                 return Ok(());
             }
             MiddlewareResult::Reject(msg) => {
-                self.send_kick(&mut ctx, &msg).await.ok();
+                let is_status = ctx
+                    .extensions
+                    .get::<HandshakeData>()
+                    .is_some_and(|h| h.intent == ConnectionIntent::Status);
+                if !is_status {
+                    self.send_kick(&mut ctx, &msg).await.ok();
+                }
                 return Ok(());
             }
         }

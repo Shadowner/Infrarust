@@ -46,10 +46,7 @@ impl Middleware for LoginStartParserMiddleware {
                 .require_extension::<HandshakeData>("HandshakeData")?
                 .protocol_version;
 
-            // Read the login start packet
             let mut decoder = PacketDecoder::new();
-
-            // Feed any buffered data first
             if !ctx.buffered_data.is_empty() {
                 decoder.queue_bytes(&ctx.buffered_data);
             }
@@ -68,8 +65,6 @@ impl Middleware for LoginStartParserMiddleware {
                 raw_data.extend_from_slice(&buf[..n]);
             };
 
-            // Decode the login start packet directly — always packet ID 0x00
-            // in Login state, no registry needed for forward-compatibility.
             if frame.id != 0x00 {
                 return Err(CoreError::Protocol(
                     infrarust_protocol::ProtocolError::invalid(format!(
@@ -91,12 +86,14 @@ impl Middleware for LoginStartParserMiddleware {
                 player_uuid: login_start.uuid,
             });
 
-            // Append raw login packet bytes for passthrough forwarding
+            let remaining = decoder.into_remaining();
+            raw_data.truncate(raw_data.len() - remaining.len());
+
             if let Some(handshake) = ctx.extensions.get_mut::<HandshakeData>() {
                 handshake.raw_packets.push(raw_data);
             }
 
-            ctx.buffered_data.clear();
+            ctx.buffered_data = remaining;
 
             Ok(MiddlewareResult::Continue)
         })

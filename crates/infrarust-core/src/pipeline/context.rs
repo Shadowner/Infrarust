@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use bytes::BytesMut;
 use tokio::net::TcpStream;
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::Instant;
 
 use infrarust_transport::{AcceptedConnection, ConnectionInfo};
@@ -81,6 +82,7 @@ pub struct ConnectionContext {
     pub buffered_data: BytesMut,
     /// Type-erased data accumulated by middlewares.
     pub extensions: Extensions,
+    _permit: Option<OwnedSemaphorePermit>,
 }
 
 impl ConnectionContext {
@@ -90,7 +92,8 @@ impl ConnectionContext {
         let client_ip = accepted.connection.client_addr();
         let local_addr = accepted.connection.local_addr();
         let connected_at = accepted.connection.connected_at();
-        let (stream, buffered_data, _info) = accepted.connection.into_parts();
+        let (connection, permit) = accepted.into_parts();
+        let (stream, buffered_data, _info) = connection.into_parts();
 
         Self {
             stream: Some(stream),
@@ -100,6 +103,7 @@ impl ConnectionContext {
             connected_at,
             buffered_data,
             extensions: Extensions::new(),
+            _permit: permit,
         }
     }
 
@@ -168,6 +172,7 @@ impl ConnectionContext {
             connected_at: Instant::now(),
             buffered_data: BytesMut::new(),
             extensions: Extensions::new(),
+            _permit: None,
         }
     }
 
