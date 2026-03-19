@@ -20,9 +20,8 @@ use crate::ban::file_storage::FileBanStorage;
 use crate::ban::manager::BanManager;
 use crate::ban::storage::BanStorage;
 use crate::error::CoreError;
-use crate::handler::client_only::ClientOnlyHandler;
+use crate::handler::InterceptedHandler;
 use crate::handler::legacy::LegacyHandler;
-use crate::handler::offline::OfflineHandler;
 use crate::handler::passthrough::PassthroughHandler;
 use crate::middleware::ban_check::BanCheckMiddleware;
 use crate::middleware::ban_ip_check::BanIpCheckMiddleware;
@@ -55,8 +54,8 @@ pub struct ProxyServer {
     status_handler: StatusHandler,
     legacy_handler: LegacyHandler,
     passthrough_handler: PassthroughHandler,
-    offline_handler: OfflineHandler,
-    client_only_handler: ClientOnlyHandler,
+    offline_handler: InterceptedHandler,
+    client_only_handler: InterceptedHandler,
     services: ProxyServices,
     shutdown: CancellationToken,
 }
@@ -261,7 +260,7 @@ impl ProxyServer {
         #[cfg(feature = "telemetry")]
         let passthrough_handler = passthrough_handler.with_metrics(Arc::clone(&proxy_metrics));
 
-        let offline_handler = OfflineHandler::new(
+        let offline_handler = InterceptedHandler::offline(
             Arc::clone(&backend_connector),
             services.clone(),
         );
@@ -269,7 +268,7 @@ impl ProxyServer {
         let offline_handler = offline_handler.with_metrics(Arc::clone(&proxy_metrics));
 
         let auth = Arc::new(MojangAuth::new()?);
-        let client_only_handler = ClientOnlyHandler::new(
+        let client_only_handler = InterceptedHandler::client_only(
             Arc::clone(&backend_connector),
             services.clone(),
             auth,

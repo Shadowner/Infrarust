@@ -1,6 +1,7 @@
 pub(crate) mod helpers;
 
-pub mod client_only;
+pub mod intercepted;
 pub mod legacy;
-pub mod offline;
 pub mod passthrough;
+
+pub use intercepted::InterceptedHandler;
