@@ -1,9 +1,16 @@
 //! Plugin context and lifecycle management.
 
 pub mod context;
+pub mod context_factory;
 pub mod dependency;
+pub mod loader;
 pub mod manager;
+pub mod static_loader;
 pub mod tracking;
+
+pub use context_factory::{PluginContextFactory, PluginContextFactoryImpl, PluginPermissions};
+pub use loader::{LoaderError, PluginLoader};
+pub use static_loader::{PluginFactory, StaticPluginLoader};
 
 /// Tracks the lifecycle state of a plugin.
 #[derive(Debug, Clone)]

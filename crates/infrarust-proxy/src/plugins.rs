@@ -1,18 +1,22 @@
-//! Static plugin collection via Cargo features.
+//! Static plugin registration via Cargo features.
 
-use infrarust_api::plugin::Plugin;
+use infrarust_core::plugin::StaticPluginLoader;
 
-/// Collects plugins that were compiled in via Cargo features.
-pub fn collect_static_plugins() -> Vec<Box<dyn Plugin>> {
-    #[allow(unused_mut)]
-    let mut plugins: Vec<Box<dyn Plugin>> = vec![];
+pub fn build_static_loader() -> StaticPluginLoader {
+    let loader = StaticPluginLoader::new();
 
     #[cfg(feature = "plugin-hello")]
     {
-        plugins.push(Box::new(infrarust_plugin_hello::HelloPlugin));
+        use infrarust_api::plugin::PluginMetadata;
+        loader.register(
+            PluginMetadata::new("hello", "Hello Plugin", "0.1.0")
+                .author("Infrarust")
+                .description("Example plugin: logs connections, /hello command, limbo test gate"),
+            || Box::new(infrarust_plugin_hello::HelloPlugin),
+        );
         tracing::debug!("Registered static plugin: hello");
     }
 
-    tracing::info!(count = plugins.len(), "Static plugins collected");
-    plugins
+    tracing::info!(count = loader.registered_count(), "Static plugins registered");
+    loader
 }

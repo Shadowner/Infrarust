@@ -2,7 +2,7 @@
 
 //! End-to-end plugin lifecycle integration test.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -14,6 +14,8 @@ use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::types::{GameProfile, PlayerId, ProtocolVersion};
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::manager::{PluginManager, PluginServices};
+use infrarust_core::plugin::static_loader::StaticPluginLoader;
+use infrarust_core::plugin::PluginContextFactoryImpl;
 use infrarust_core::services::command_manager::CommandManagerImpl;
 use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::NoopServerManager;
@@ -52,10 +54,6 @@ impl Plugin for TestPlugin {
 async fn test_plugin_receives_events_end_to_end() {
     let handler_called = Arc::new(AtomicBool::new(false));
 
-    let plugin = TestPlugin {
-        handler_called: Arc::clone(&handler_called),
-    };
-
     let event_bus = Arc::new(EventBusImpl::new());
 
     let services = PluginServices {
@@ -75,10 +73,24 @@ async fn test_plugin_receives_events_end_to_end() {
         plugins_dir: PathBuf::from("plugins"),
     };
 
-    // 1. Create manager and enable
-    let plugins: Vec<Box<dyn Plugin>> = vec![Box::new(plugin)];
-    let mut manager = PluginManager::new(plugins).unwrap();
-    let errors = manager.enable_all(&services).await;
+    let factory = PluginContextFactoryImpl::new(services, std::collections::HashMap::new());
+
+    // Register plugin in a StaticPluginLoader
+    let loader = StaticPluginLoader::new();
+    let called_clone = handler_called.clone();
+    loader.register(
+        PluginMetadata::new("test_plugin", "Test Plugin", "1.0.0"),
+        move || {
+            Box::new(TestPlugin {
+                handler_called: called_clone.clone(),
+            })
+        },
+    );
+
+    // 1. Create manager, discover and enable
+    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    manager.discover_all(Path::new("plugins")).await.unwrap();
+    let errors = manager.load_and_enable_all(&factory).await;
     assert!(errors.is_empty());
     assert!(manager.is_plugin_loaded("test_plugin"));
 
@@ -100,8 +112,8 @@ async fn test_plugin_receives_events_end_to_end() {
         "Plugin handler should have been called on PostLoginEvent"
     );
 
-    // 4. Disable and verify
-    manager.disable_all().await;
+    // 4. Shutdown and verify
+    manager.shutdown().await;
     assert!(!manager.is_plugin_loaded("test_plugin"));
 }
 
@@ -146,19 +158,35 @@ async fn test_dependency_order_end_to_end() {
         plugins_dir: PathBuf::from("plugins"),
     };
 
-    let plugins: Vec<Box<dyn Plugin>> = vec![
-        Box::new(OrderPlugin {
-            meta: PluginMetadata::new("child", "Child", "1.0").depends_on("parent"),
-            order: Arc::clone(&order),
-        }),
-        Box::new(OrderPlugin {
-            meta: PluginMetadata::new("parent", "Parent", "1.0"),
-            order: Arc::clone(&order),
-        }),
-    ];
+    let factory = PluginContextFactoryImpl::new(services, std::collections::HashMap::new());
 
-    let mut manager = PluginManager::new(plugins).unwrap();
-    manager.enable_all(&services).await;
+    let loader = StaticPluginLoader::new();
+    let order_child = order.clone();
+    let order_parent = order.clone();
+
+    loader.register(
+        PluginMetadata::new("child", "Child", "1.0").depends_on("parent"),
+        move || {
+            Box::new(OrderPlugin {
+                meta: PluginMetadata::new("child", "Child", "1.0").depends_on("parent"),
+                order: order_child.clone(),
+            })
+        },
+    );
+
+    loader.register(
+        PluginMetadata::new("parent", "Parent", "1.0"),
+        move || {
+            Box::new(OrderPlugin {
+                meta: PluginMetadata::new("parent", "Parent", "1.0"),
+                order: order_parent.clone(),
+            })
+        },
+    );
+
+    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    manager.discover_all(Path::new("plugins")).await.unwrap();
+    manager.load_and_enable_all(&factory).await;
 
     let enable_order = order.lock().unwrap();
     assert_eq!(*enable_order, vec!["parent", "child"]);

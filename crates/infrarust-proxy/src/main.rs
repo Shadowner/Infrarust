@@ -172,12 +172,19 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         .await
         .context("failed to initialize proxy server")?;
 
-    // Collect and load plugins
-    let static_plugins = plugins::collect_static_plugins();
-    let mut plugin_manager = PluginManager::new(static_plugins)
-        .context("failed to resolve plugin dependencies")?;
+    let static_loader = plugins::build_static_loader();
+    let loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> =
+        vec![Box::new(static_loader)];
+
+    let mut plugin_manager = PluginManager::new(loaders);
 
     let services = server.services();
+
+    plugin_manager
+        .discover_all(std::path::Path::new("plugins"))
+        .await
+        .context("failed to discover plugins")?;
+
     let server_manager: Arc<dyn infrarust_api::services::server_manager::ServerManager> =
         match &services.server_manager {
             Some(sm) => Arc::new(ServerManagerBridge::new(Arc::clone(sm))),
@@ -203,7 +210,12 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         plugins_dir: PathBuf::from("plugins"),
     };
 
-    let errors = plugin_manager.enable_all(&plugin_services).await;
+    let context_factory = infrarust_core::plugin::PluginContextFactoryImpl::new(
+        plugin_services,
+        std::collections::HashMap::new(),
+    );
+
+    let errors = plugin_manager.load_and_enable_all(&context_factory).await;
     if !errors.is_empty() {
         tracing::warn!(count = errors.len(), "Some plugins failed to enable");
     }
@@ -229,7 +241,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         .await
         .context("proxy server error")?;
 
-    plugin_manager.disable_all().await;
+    plugin_manager.shutdown().await;
 
     server.event_bus().fire(ProxyShutdownEvent).await;
 

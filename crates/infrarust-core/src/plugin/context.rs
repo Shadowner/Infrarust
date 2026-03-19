@@ -137,6 +137,10 @@ impl PluginContextImpl {
 impl infrarust_api::plugin::private::Sealed for PluginContextImpl {}
 
 impl PluginContext for PluginContextImpl {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn event_bus(&self) -> &dyn EventBus {
         self.event_bus.as_ref()
     }
