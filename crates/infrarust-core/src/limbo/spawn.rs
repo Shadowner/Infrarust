@@ -16,42 +16,15 @@ use infrarust_protocol::packets::play::spawn_position::CSetDefaultSpawnPosition;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
-use super::chunk::build_chunk_data_frame;
+use infrarust_protocol::chunk::build_chunk_data_frame;
 use crate::error::CoreError;
 use crate::player::packets::encode_packet;
 use crate::session::client_bridge::ClientBridge;
 
-/// The End dimension — used for limbo to avoid same-dimension issues with overworld.
 const LIMBO_DIMENSION_NAME: &str = "minecraft:the_end";
 const LIMBO_DIMENSION_ID: i32 = 2;
-/// The End has 16 sections (height 0-255).
 const LIMBO_NUM_SECTIONS: usize = 16;
 
-/// Sends the spawn sequence that makes the client enter the limbo world.
-///
-/// # Arguments
-/// - `client` -- the client bridge to write packets to.
-/// - `version` -- the client's protocol version.
-/// - `registry` -- the packet registry for encoding.
-/// - `needs_join_game` -- `true` for fresh joins (send `JoinGame` first),
-///   `false` when switching into limbo from an existing backend (the client
-///   is already in Play state).
-///
-/// # Version branches
-///
-/// **1.20.3+ (protocol >= 765) with JoinGame**: full sequence including
-/// `CJoinGame`, spawn position, player position, center chunk, game event,
-/// chunk batch, and chunk data.
-///
-/// **1.20.3+ without JoinGame**: abbreviated sequence for server-switch.
-///
-/// **Pre-1.20.3 with JoinGame**: `CJoinGame` + position + chunk.
-///
-/// **Pre-1.20.3 without JoinGame**: position + chunk only.
-///
-/// # Errors
-/// Returns [`CoreError`] if packet encoding or writing fails, or if
-/// pre-1.20.2 `JoinGame` construction is attempted (not yet supported).
 pub(crate) async fn send_spawn_sequence(
     client: &mut ClientBridge,
     version: ProtocolVersion,
@@ -70,11 +43,9 @@ pub(crate) async fn send_spawn_sequence(
         send_legacy_switch(client, version, registry).await?;
     }
 
-    // Clear player inventory (all 46 slots empty)
     send_clear_inventory(client, version).await
 }
 
-/// 1.20.3+ fresh join -- full spawn sequence with `CJoinGame`.
 async fn send_modern_with_join(
     client: &mut ClientBridge,
     version: ProtocolVersion,
@@ -86,7 +57,6 @@ async fn send_modern_with_join(
     send_modern_chunk_setup(client, version, registry).await
 }
 
-/// 1.20.3+ switch into limbo (no JoinGame -- client already in Play state).
 async fn send_modern_switch(
     client: &mut ClientBridge,
     version: ProtocolVersion,
@@ -96,7 +66,6 @@ async fn send_modern_switch(
     send_player_position(client, version, registry).await
 }
 
-/// Pre-1.20.3 fresh join -- JoinGame + position + chunk.
 async fn send_legacy_with_join(
     client: &mut ClientBridge,
     version: ProtocolVersion,
@@ -107,7 +76,6 @@ async fn send_legacy_with_join(
     send_chunk(client, version, registry).await
 }
 
-/// Pre-1.20.3 switch into limbo (no JoinGame).
 async fn send_legacy_switch(
     client: &mut ClientBridge,
     version: ProtocolVersion,
@@ -117,9 +85,6 @@ async fn send_legacy_switch(
     send_chunk(client, version, registry).await
 }
 
-// -- Packet helpers (each sends a single logical unit) -------------------------
-
-/// Sends JoinGame for the limbo world.
 async fn send_join_game(
     client: &mut ClientBridge,
     version: ProtocolVersion,
@@ -130,7 +95,6 @@ async fn send_join_game(
     client.write_frame(&frame).await
 }
 
-/// Sends the default spawn position for limbo.
 async fn send_spawn_position(
     client: &mut ClientBridge,
     version: ProtocolVersion,
@@ -141,7 +105,6 @@ async fn send_spawn_position(
     client.write_frame(&frame).await
 }
 
-/// Sends the player position / teleport packet for limbo spawn.
 async fn send_player_position(
     client: &mut ClientBridge,
     version: ProtocolVersion,
@@ -152,49 +115,38 @@ async fn send_player_position(
     client.write_frame(&frame).await
 }
 
-/// Sends a single empty chunk at (0, 0).
 async fn send_chunk(
     client: &mut ClientBridge,
     version: ProtocolVersion,
-    registry: &PacketRegistry,
+    _registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let frame = build_chunk_data_frame(0, 0, LIMBO_NUM_SECTIONS, version, registry)?;
+    let frame = build_chunk_data_frame(0, 0, LIMBO_NUM_SECTIONS, version)?;
     client.write_frame(&frame).await
 }
 
-/// Sends the full modern chunk setup sequence (1.20.3+):
-/// center chunk, game event, chunk batch start, chunk data, chunk batch finished.
 async fn send_modern_chunk_setup(
     client: &mut ClientBridge,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    // Center chunk at origin
     let center = CSetCenterChunk { chunk_x: 0, chunk_z: 0 };
     let frame = encode_packet(&center, version, registry)?;
     client.write_frame(&frame).await?;
 
-    // Game event -- start waiting for chunks
     let event = CGameEvent { event: START_WAITING_CHUNKS, value: 0.0 };
     let frame = encode_packet(&event, version, registry)?;
     client.write_frame(&frame).await?;
 
-    // Chunk batch start
     let frame = encode_packet(&CChunkBatchStart, version, registry)?;
     client.write_frame(&frame).await?;
 
-    // Chunk data
     send_chunk(client, version, registry).await?;
 
-    // Chunk batch finished
     let batch_done = CChunkBatchFinished { batch_size: 1 };
     let frame = encode_packet(&batch_done, version, registry)?;
     client.write_frame(&frame).await
 }
 
-// -- Helpers ------------------------------------------------------------------
-
-/// Builds the synchronize-player-position packet for limbo spawn (0, 64, 0).
 fn limbo_player_position() -> CSynchronizePlayerPosition {
     CSynchronizePlayerPosition {
         x: 0.0,
@@ -210,11 +162,6 @@ fn limbo_player_position() -> CSynchronizePlayerPosition {
     }
 }
 
-/// Builds a minimal `CJoinGame` for the limbo world.
-///
-/// Only 1.20.2+ is supported (structured fields). For pre-1.20.2, the packet
-/// requires `raw_payload` bytes whose format is complex and version-dependent;
-/// support will be added later when needed.
 fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGame, CoreError> {
     if version.less_than(ProtocolVersion::V1_20_2) {
         return Err(CoreError::Other(
@@ -248,10 +195,7 @@ fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGame, CoreErro
     })
 }
 
-/// Sends a `CSetContainerContent` to clear the player's inventory.
-///
-/// The packet is built as raw bytes since we don't need a full Packet impl.
-/// Player inventory = window 0, 46 slots, all empty (VarInt(0) per slot).
+/// Raw CSetContainerContent: window 0, 46 empty slots.
 async fn send_clear_inventory(
     client: &mut ClientBridge,
     version: ProtocolVersion,
@@ -259,18 +203,13 @@ async fn send_clear_inventory(
     let packet_id = container_set_content_packet_id(version);
 
     let mut buf = Vec::with_capacity(96);
-    // window_id = 0 (player inventory)
-    super::chunk::write_varint(&mut buf, 0);
-    // state_id = 0
-    super::chunk::write_varint(&mut buf, 0);
-    // slot_count = 46
-    super::chunk::write_varint(&mut buf, 46);
-    // 46 empty slots: each is VarInt(0) = "no item"
+    infrarust_protocol::chunk::write_varint(&mut buf, 0);  // window_id
+    infrarust_protocol::chunk::write_varint(&mut buf, 0);  // state_id
+    infrarust_protocol::chunk::write_varint(&mut buf, 46); // slot_count
     for _ in 0..46 {
-        super::chunk::write_varint(&mut buf, 0);
+        infrarust_protocol::chunk::write_varint(&mut buf, 0); // empty slot
     }
-    // carried_item = empty
-    super::chunk::write_varint(&mut buf, 0);
+    infrarust_protocol::chunk::write_varint(&mut buf, 0);  // carried_item
 
     let frame = PacketFrame {
         id: packet_id,
@@ -280,7 +219,6 @@ async fn send_clear_inventory(
     Ok(())
 }
 
-/// Returns the CSetContainerContent packet ID for a given version.
 fn container_set_content_packet_id(version: ProtocolVersion) -> i32 {
     if version.no_less_than(ProtocolVersion::V1_21_5) {
         0x12

@@ -10,6 +10,7 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
 
 use crate::error::CoreError;
+use crate::limbo::registry::LimboHandlerRegistry;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
@@ -29,6 +30,36 @@ pub(super) enum InitialMode {
     },
     /// Disconnect already sent.
     Denied,
+}
+
+fn resolve_limbo_strict(
+    registry: &LimboHandlerRegistry,
+    names: &[String],
+) -> Option<Vec<Arc<dyn LimboHandler>>> {
+    match registry.resolve_handlers(names) {
+        Ok(h) if !h.is_empty() => Some(h),
+        _ => None,
+    }
+}
+
+fn resolve_limbo_lenient(
+    registry: &LimboHandlerRegistry,
+    names: &[String],
+) -> Option<Vec<Arc<dyn LimboHandler>>> {
+    let handlers = registry.resolve_handlers_lenient(names);
+    if handlers.is_empty() { None } else { Some(handlers) }
+}
+
+async fn deny_no_limbo_handlers(
+    client: &mut ClientBridge,
+    services: &ProxyServices,
+) -> Result<InitialMode, CoreError> {
+    tracing::warn!("SendToLimbo at initial connect but no handlers resolved");
+    client
+        .disconnect("No limbo handlers configured", &services.packet_registry)
+        .await
+        .ok();
+    Ok(InitialMode::Denied)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -68,28 +99,11 @@ pub(super) async fn resolve_initial_mode(
         } => {
             prepare_client_for_limbo(client, auth_result, login_completed, version, services)
                 .await?;
-
-            let handlers =
-                match services
-                    .limbo_handler_registry
-                    .resolve_handlers(limbo_handlers)
-                {
-                    Ok(h) if !h.is_empty() => h,
-                    _ => {
-                        tracing::warn!(
-                            "SendToLimbo at initial connect but no handlers resolved"
-                        );
-                        client
-                            .disconnect(
-                                "No limbo handlers configured",
-                                &services.packet_registry,
-                            )
-                            .await
-                            .ok();
-                        return Ok(InitialMode::Denied);
-                    }
-                };
-
+            let Some(handlers) = resolve_limbo_strict(
+                &services.limbo_handler_registry, limbo_handlers,
+            ) else {
+                return deny_no_limbo_handlers(client, services).await;
+            };
             initial_mode = Some(ConnectionMode::Limbo(
                 handlers,
                 LimboEntryContext::InitialConnection,
@@ -119,37 +133,18 @@ pub(super) async fn resolve_initial_mode(
             infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo {
                 limbo_handlers,
             } => {
-                prepare_client_for_limbo(
-                    client,
-                    auth_result,
-                    login_completed,
-                    version,
-                    services,
-                )
-                .await?;
-
+                prepare_client_for_limbo(client, auth_result, login_completed, version, services)
+                    .await?;
                 let handler_names = if limbo_handlers.is_empty() {
                     server_config.limbo_handlers.clone()
                 } else {
                     limbo_handlers.clone()
                 };
-                let handlers = services
-                    .limbo_handler_registry
-                    .resolve_handlers_lenient(&handler_names);
-                if handlers.is_empty() {
-                    tracing::warn!(
-                        "SendToLimbo at initial connect but no handlers resolved"
-                    );
-                    client
-                        .disconnect(
-                            "No limbo handlers configured",
-                            &services.packet_registry,
-                        )
-                        .await
-                        .ok();
-                    return Ok(InitialMode::Denied);
-                }
-
+                let Some(handlers) = resolve_limbo_lenient(
+                    &services.limbo_handler_registry, &handler_names,
+                ) else {
+                    return deny_no_limbo_handlers(client, services).await;
+                };
                 initial_mode = Some(ConnectionMode::Limbo(
                     handlers,
                     LimboEntryContext::InitialConnection,
@@ -161,11 +156,9 @@ pub(super) async fn resolve_initial_mode(
 
     if initial_mode.is_none() && !server_config.limbo_handlers.is_empty() {
         prepare_client_for_limbo(client, auth_result, login_completed, version, services).await?;
-
-        let handlers = services
-            .limbo_handler_registry
-            .resolve_handlers_lenient(&server_config.limbo_handlers);
-        if !handlers.is_empty() {
+        if let Some(handlers) = resolve_limbo_lenient(
+            &services.limbo_handler_registry, &server_config.limbo_handlers,
+        ) {
             initial_mode = Some(ConnectionMode::Limbo(
                 handlers,
                 LimboEntryContext::InitialConnection,
@@ -198,19 +191,11 @@ pub(super) async fn resolve_initial_mode(
                         "backend unreachable, falling back to limbo"
                     );
 
-                    prepare_client_for_limbo(
-                        client,
-                        auth_result,
-                        login_completed,
-                        version,
-                        services,
-                    )
-                    .await?;
-
-                    let handlers = services
-                        .limbo_handler_registry
-                        .resolve_handlers_lenient(&server_config.limbo_handlers);
-                    if !handlers.is_empty() {
+                    prepare_client_for_limbo(client, auth_result, login_completed, version, services)
+                        .await?;
+                    if let Some(handlers) = resolve_limbo_lenient(
+                        &services.limbo_handler_registry, &server_config.limbo_handlers,
+                    ) {
                         ConnectionMode::Limbo(
                             handlers,
                             LimboEntryContext::KickedFromServer {
@@ -260,9 +245,6 @@ pub(super) async fn resolve_initial_mode(
     })
 }
 
-/// Branches on `login_completed`:
-/// - `true`: craft offline LoginStart, consume backend's login response, send LoginAcknowledged.
-/// - `false`: forward raw handshake + login packets.
 #[allow(clippy::too_many_arguments)]
 async fn connect_to_backend(
     client: &mut ClientBridge,
@@ -327,8 +309,6 @@ async fn connect_to_backend(
     Ok(backend)
 }
 
-/// Prepares the client for limbo entry: ensures login handshake is complete,
-/// then runs the config phase. Disconnects on failure and returns `InitialMode::Denied`.
 async fn prepare_client_for_limbo(
     client: &mut ClientBridge,
     auth_result: &AuthResult,
@@ -358,9 +338,6 @@ async fn prepare_client_for_limbo(
     Ok(())
 }
 
-/// No-op if login already completed. Otherwise sends a synthetic LoginSuccess
-/// and consumes LoginAcknowledged, then flips `login_completed` so subsequent
-/// backend connections use the "already authenticated" flow.
 async fn ensure_login_complete_for_limbo(
     client: &mut ClientBridge,
     auth_result: &AuthResult,

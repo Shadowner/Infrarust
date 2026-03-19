@@ -9,6 +9,7 @@
 //! - [`error`] — Unified error type for all protocol operations.
 //! - [`version`] — Protocol version identifiers, connection states, and packet directions.
 
+pub mod chunk;
 pub mod codec;
 pub mod crypto;
 pub mod error;

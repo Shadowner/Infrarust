@@ -24,37 +24,19 @@ use crate::player::packets::build_disconnect;
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 
-/// Clean status returned after the limbo engine finishes.
-///
-/// The caller (connection handler) uses this to decide the next step:
-/// reconnect to a backend, disconnect the client, or clean up.
+#[derive(Debug)]
 pub(crate) enum LimboExitResult {
-    /// All handlers returned Accept -- caller switches to the original target.
     Completed,
-    /// A handler returned Redirect -- caller switches to the specified server.
     SwitchedTo(ServerId),
-    /// A handler returned Deny -- disconnect packet already sent.
+    /// Disconnect packet already sent.
     Kicked,
-    /// The client disconnected during limbo.
     ClientDisconnected,
-    /// The proxy is shutting down.
     Shutdown,
-    /// KeepAlive timed out -- the client stopped responding.
     Timeout,
     SendToLimbo(Vec<String>),
 }
 
-/// Enters the limbo world for a player.
-///
-/// This is the main entry point for the limbo engine. It:
-/// 1. Optionally sends the spawn sequence (JoinGame, chunks, etc.).
-/// 2. Creates the virtual session and handler chain plumbing.
-/// 3. Runs the handler chain to completion.
-/// 4. Maps the chain result to a clean exit status.
-///
-/// # Errors
-/// Spawn-sequence failures are logged and mapped to [`LimboExitResult::Kicked`]
-/// (the client cannot render the world, so staying in limbo is pointless).
+/// Spawn-sequence failures are mapped to [`LimboExitResult::Kicked`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn enter_limbo(
     client: &mut ClientBridge,
@@ -67,16 +49,12 @@ pub(crate) async fn enter_limbo(
     services: &ProxyServices,
     cancel: CancellationToken,
 ) -> LimboExitResult {
-    // 1. Always send the spawn sequence with JoinGame.
-    //    The JoinGame packet resets the client's world state (unloads all
-    //    chunks and entities). For 1.20.2+ this is sufficient; pre-1.20.2
-    //    would also need the Respawn trick (handled inside send_spawn_sequence).
+    // JoinGame resets client world state (unloads chunks/entities).
     if let Err(e) = send_spawn_sequence(client, version, registry, true).await {
         warn!(player = %profile.username, error = %e, "failed to send limbo spawn sequence");
         return LimboExitResult::Kicked;
     }
 
-    // 2. Create the virtual session core (identity + outgoing channel).
     let mut core = VirtualSessionCore::new(
         player_id,
         profile,
@@ -84,10 +62,7 @@ pub(crate) async fn enter_limbo(
         Arc::clone(&services.packet_registry),
     );
 
-    // 3. Create the completion watch channel.
     let (complete_tx, complete_rx) = watch::channel::<Option<HandlerResult>>(None);
-
-    // 4. Build the LimboSessionImpl (bridges API trait to packet encoding).
     let session = LimboSessionImpl::new(
         player_id,
         core.profile.clone(),
@@ -98,13 +73,11 @@ pub(crate) async fn enter_limbo(
         Arc::clone(&services.packet_registry),
     );
 
-    // 5. Build the loop state.
     let mut limbo_state = LimboLoopState {
         complete_rx,
         keepalive: KeepAliveState::new(),
     };
 
-    // 6. Run the handler chain.
     let chain_result = run_handler_chain(
         &handlers,
         Arc::new(session),
@@ -116,12 +89,9 @@ pub(crate) async fn enter_limbo(
     )
     .await;
 
-    // 7. Map chain result to exit result.
     map_chain_result(chain_result, client, version, registry, &handlers, player_id).await
 }
 
-/// Maps a [`LimboChainResult`] to a [`LimboExitResult`], performing any
-/// necessary side effects (sending disconnect, firing on_disconnect).
 async fn map_chain_result(
     result: LimboChainResult,
     client: &mut ClientBridge,
@@ -153,9 +123,6 @@ async fn map_chain_result(
     }
 }
 
-/// Sends a play-state disconnect packet to the client.
-///
-/// Errors are silently ignored -- the client is about to be dropped anyway.
 async fn send_disconnect(
     client: &mut ClientBridge,
     reason: &Component,
@@ -167,9 +134,109 @@ async fn send_disconnect(
     }
 }
 
-/// Fires `on_disconnect` for all handlers in the chain.
 async fn fire_on_disconnect(handlers: &[Arc<dyn LimboHandler>], player_id: PlayerId) {
     for handler in handlers {
         handler.on_disconnect(player_id).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::sync::Arc;
+
+    use infrarust_api::limbo::handler::HandlerResult;
+    use infrarust_api::types::{Component, PlayerId, ServerId};
+    use infrarust_protocol::version::ProtocolVersion;
+
+    use super::*;
+    use super::super::handler_chain::LimboChainResult;
+    use super::super::test_helpers::*;
+
+    #[tokio::test]
+    async fn test_map_completed() {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = Arc::new(test_registry());
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
+        let result = map_chain_result(
+            LimboChainResult::Completed, &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
+        ).await;
+        assert!(matches!(result, LimboExitResult::Completed));
+    }
+
+    #[tokio::test]
+    async fn test_map_switch() {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = Arc::new(test_registry());
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
+        let result = map_chain_result(
+            LimboChainResult::Switch(ServerId::new("lobby")), &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
+        ).await;
+        match result {
+            LimboExitResult::SwitchedTo(s) => assert_eq!(s, ServerId::new("lobby")),
+            other => panic!("expected SwitchedTo, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_map_kick() {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = Arc::new(test_registry());
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
+        let result = map_chain_result(
+            LimboChainResult::Kick(Component::text("bye")), &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
+        ).await;
+        assert!(matches!(result, LimboExitResult::Kicked));
+    }
+
+    #[tokio::test]
+    async fn test_map_client_disconnected() {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = Arc::new(test_registry());
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![
+            Arc::new(FixedHandler { name: "h1", result: HandlerResult::Accept }),
+        ];
+        let result = map_chain_result(
+            LimboChainResult::ClientDisconnected, &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
+        ).await;
+        assert!(matches!(result, LimboExitResult::ClientDisconnected));
+    }
+
+    #[tokio::test]
+    async fn test_map_shutdown() {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = Arc::new(test_registry());
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
+        let result = map_chain_result(
+            LimboChainResult::Shutdown, &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
+        ).await;
+        assert!(matches!(result, LimboExitResult::Shutdown));
+    }
+
+    #[tokio::test]
+    async fn test_map_timeout() {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = Arc::new(test_registry());
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
+        let result = map_chain_result(
+            LimboChainResult::Timeout, &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
+        ).await;
+        assert!(matches!(result, LimboExitResult::Timeout));
+    }
+
+    #[tokio::test]
+    async fn test_map_send_to_limbo() {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = Arc::new(test_registry());
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
+        let names = vec!["auth".to_string(), "lobby".to_string()];
+        let result = map_chain_result(
+            LimboChainResult::SendToLimbo(names), &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
+        ).await;
+        match result {
+            LimboExitResult::SendToLimbo(n) => assert_eq!(n, vec!["auth", "lobby"]),
+            other => panic!("expected SendToLimbo, got {other:?}"),
+        }
     }
 }
