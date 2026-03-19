@@ -18,7 +18,6 @@ pub struct SchedulerImpl {
 }
 
 impl SchedulerImpl {
-    /// Creates a new scheduler.
     pub fn new() -> Self {
         Self {
             tasks: DashMap::new(),

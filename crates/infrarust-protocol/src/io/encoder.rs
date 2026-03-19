@@ -50,7 +50,6 @@ pub struct PacketEncoder {
 }
 
 impl PacketEncoder {
-    /// Creates a new encoder with no compression.
     pub fn new() -> Self {
         Self {
             buf: BytesMut::new(),
@@ -162,7 +161,6 @@ impl PacketEncoder {
         self.compression_threshold = Some(threshold);
     }
 
-    /// Returns the current compression threshold, or `None` if compression is disabled.
     pub const fn compression_threshold(&self) -> Option<i32> {
         self.compression_threshold
     }

@@ -16,17 +16,15 @@ use crate::provider::ProviderId;
 
 /// Entry stored per provider in the router.
 struct RouterEntry {
-    /// The server configuration.
     config: Arc<ServerConfig>,
     /// Normalized domains registered by this config (for cleanup on remove).
     domains: Vec<String>,
 }
 
 /// Pre-compiled wildcard pattern entry.
-#[allow(dead_code)] // `raw` kept for diagnostics
 struct WildcardEntry {
     /// The original pattern string (for debug / rebuild).
-    raw: String,
+    _raw: String,
     /// Compiled matcher.
     matcher: WildMatch,
     /// The provider that owns this pattern.
@@ -61,7 +59,6 @@ pub struct DomainRouter {
 }
 
 impl DomainRouter {
-    /// Creates an empty router.
     pub fn new() -> Self {
         Self {
             configs: DashMap::new(),
@@ -202,7 +199,6 @@ impl DomainRouter {
             .map(|entry| Arc::clone(&entry.value().config))
     }
 
-    /// Returns all configs with their provider ids.
     pub fn list_all(&self) -> Vec<(ProviderId, Arc<ServerConfig>)> {
         self.configs
             .iter()
@@ -210,7 +206,6 @@ impl DomainRouter {
             .collect()
     }
 
-    /// Counts configs grouped by provider type.
     pub fn count_by_provider(&self) -> HashMap<String, usize> {
         let mut counts = HashMap::new();
         for entry in &self.configs {
@@ -219,12 +214,10 @@ impl DomainRouter {
         counts
     }
 
-    /// Total number of registered configs.
     pub fn len(&self) -> usize {
         self.configs.len()
     }
 
-    /// Returns `true` if no configs are registered.
     pub fn is_empty(&self) -> bool {
         self.configs.is_empty()
     }
@@ -237,7 +230,7 @@ impl DomainRouter {
             for domain in &entry.value().domains {
                 if is_wildcard(domain) {
                     patterns.push(WildcardEntry {
-                        raw: domain.clone(),
+                        _raw: domain.clone(),
                         matcher: WildMatch::new(domain),
                         provider_id: entry.key().clone(),
                     });

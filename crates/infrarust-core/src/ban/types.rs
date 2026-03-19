@@ -8,8 +8,6 @@ pub use infrarust_api::services::ban_service::{BanEntry, BanTarget};
 #[allow(unused_imports)] // used by serde(with) on BanAuditLogEntry
 use infrarust_api::services::ban_service::epoch_serde;
 
-// ─────────────────────────── Audit Log ───────────────────────────
-
 /// Type of action in the audit log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

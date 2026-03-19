@@ -34,7 +34,6 @@ pub struct BackendBridge {
 }
 
 impl BackendBridge {
-    /// Creates a new backend bridge from an established connection.
     pub fn new(stream: TcpStream, protocol_version: ProtocolVersion) -> Self {
         Self {
             stream,

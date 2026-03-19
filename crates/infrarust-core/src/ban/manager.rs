@@ -19,14 +19,12 @@ use crate::registry::ConnectionRegistry;
 /// Orchestrates the storage backend, runtime kick of connected players,
 /// and periodic purge of expired bans.
 pub struct BanManager {
-    /// The storage backend.
     storage: Arc<dyn BanStorage>,
     /// The connection registry (for runtime kick).
     connection_registry: Arc<ConnectionRegistry>,
 }
 
 impl BanManager {
-    /// Creates a new ban manager.
     pub fn new(storage: Arc<dyn BanStorage>, connection_registry: Arc<ConnectionRegistry>) -> Self {
         Self {
             storage,

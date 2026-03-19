@@ -31,7 +31,6 @@ pub(crate) struct LimboSessionImpl {
 }
 
 impl LimboSessionImpl {
-    /// Creates a new limbo session implementation.
     pub fn new(
         player_id: PlayerId,
         profile: GameProfile,

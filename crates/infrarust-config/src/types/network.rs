@@ -23,8 +23,6 @@ pub struct TimeoutConfig {
     pub write: Duration,
 }
 
-/// TCP keepalive configuration.
-///
 /// Controls the keepalive probes sent on TCP connections
 /// to detect dead connections.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

@@ -74,7 +74,6 @@ impl std::fmt::Debug for PlayerSession {
 }
 
 impl PlayerSession {
-    /// Creates a new player session.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         player_id: PlayerId,
@@ -123,7 +122,6 @@ impl PlayerSession {
         (session, rx)
     }
 
-    /// Creates a new command channel pair for use by handlers.
     pub fn channel() -> (mpsc::Sender<PlayerCommand>, mpsc::Receiver<PlayerCommand>) {
         mpsc::channel(COMMAND_CHANNEL_SIZE)
     }
@@ -138,16 +136,14 @@ impl PlayerSession {
         let mut guard = self
             .current_server
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .expect("lock poisoned");
         *guard = Some(server);
     }
 
-    /// Returns the shutdown token for this session.
     pub fn shutdown_token(&self) -> &CancellationToken {
         &self.shutdown_token
     }
 
-    /// Returns the profile.
     pub fn game_profile(&self) -> &GameProfile {
         &self.profile
     }
@@ -189,7 +185,7 @@ impl Player for PlayerSession {
     fn current_server(&self) -> Option<ServerId> {
         self.current_server
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .expect("lock poisoned")
             .clone()
     }
 

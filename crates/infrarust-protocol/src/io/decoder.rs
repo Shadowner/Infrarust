@@ -35,7 +35,6 @@ pub struct PacketDecoder {
 }
 
 impl PacketDecoder {
-    /// Creates a new decoder with no compression.
     pub fn new() -> Self {
         Self {
             buf: BytesMut::new(),
@@ -159,7 +158,6 @@ impl PacketDecoder {
         self.compression_threshold = Some(threshold);
     }
 
-    /// Returns the current compression threshold, or `None` if compression is disabled.
     pub const fn compression_threshold(&self) -> Option<i32> {
         self.compression_threshold
     }
@@ -177,7 +175,7 @@ mod tests {
     use super::*;
     use crate::io::encoder::PacketEncoder;
 
-    /// Helper: manually encode a simple uncompressed frame.
+    /// Manually encode a simple uncompressed frame.
     fn encode_frame(packet_id: i32, payload: &[u8]) -> Vec<u8> {
         let id_varint = VarInt(packet_id);
         let data_len = id_varint.written_size() + payload.len();

@@ -15,7 +15,6 @@ pub struct BanServiceBridge {
 }
 
 impl BanServiceBridge {
-    /// Creates a new bridge.
     pub fn new(manager: Arc<BanManager>) -> Self {
         Self { manager }
     }

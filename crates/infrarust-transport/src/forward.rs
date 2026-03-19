@@ -163,8 +163,6 @@ async fn copy_forward(
     }
 }
 
-// ─────────────────────── Linux splice forwarder ──────────────────────
-
 #[cfg(target_os = "linux")]
 mod splice_impl {
     use super::{

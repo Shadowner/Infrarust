@@ -24,7 +24,6 @@ pub struct Extensions {
 }
 
 impl Extensions {
-    /// Creates an empty extension map.
     #[must_use]
     pub fn new() -> Self {
         Self::default()

@@ -11,8 +11,6 @@ use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
 
-// ── Hardcoded ChunkData packet IDs (clientbound, Play state) ───────────
-
 /// Returns the ChunkData (Level Chunk) packet ID for a given protocol version.
 ///
 /// These are hardcoded because ChunkData is never decoded by the proxy,
@@ -110,8 +108,6 @@ fn chunk_data_packet_id(version: ProtocolVersion) -> i32 {
     }
 }
 
-// ── Public API ──────────────────────────────────────────────────────────
-
 /// Builds a complete ChunkData packet for an all-air chunk, wrapped in a
 /// [`PacketFrame`] ready for sending.
 ///
@@ -131,8 +127,6 @@ pub(crate) fn build_chunk_data_frame(
         payload: Bytes::from(payload),
     })
 }
-
-// ── Payload construction ────────────────────────────────────────────────
 
 /// Builds the full ChunkData packet payload (everything after the packet ID).
 ///
@@ -171,8 +165,6 @@ fn build_chunk_data_payload(chunk_x: i32, chunk_z: i32, num_sections: usize, ver
     buf
 }
 
-// ── Section encoding ────────────────────────────────────────────────────
-
 /// Encodes all chunk sections as empty (all-air).
 ///
 /// Returns 24 sections for 1.18+ (protocol >= 757), 16 for older versions.
@@ -209,8 +201,6 @@ fn encode_empty_section(buf: &mut Vec<u8>, version: ProtocolVersion) {
         write_varint(buf, 0);                     // data_array_length = 0 (pre-1.21.5 only)
     }
 }
-
-// ── Heightmaps ──────────────────────────────────────────────────────────
 
 /// Encodes the heightmaps for an all-air chunk.
 ///
@@ -269,8 +259,6 @@ fn encode_nbt_long_array(buf: &mut Vec<u8>, name: &str, count: i32) {
     }
 }
 
-// ── Light data ──────────────────────────────────────────────────────────
-
 /// Encodes light data for an all-air chunk (1.18+).
 ///
 /// For an empty chunk we mark all sections as having empty light (no arrays):
@@ -326,8 +314,6 @@ fn encode_light_data(buf: &mut Vec<u8>, num_sections: usize, _version: ProtocolV
     write_varint(buf, 0);
 }
 
-// ── VarInt helper ───────────────────────────────────────────────────────
-
 /// Encodes a VarInt directly into a `Vec<u8>`.
 ///
 /// This is a local helper to avoid pulling in the full codec trait machinery
@@ -343,8 +329,6 @@ pub(super) fn write_varint(buf: &mut Vec<u8>, value: i32) {
         val >>= 7;
     }
 }
-
-// ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

@@ -5,7 +5,7 @@ use infrarust_config::ServerConfig;
 use infrarust_core::provider::ProviderId;
 use infrarust_core::routing::DomainRouter;
 
-/// Helper: build a minimal `ServerConfig` with the given domains.
+/// Build a minimal `ServerConfig` with the given domains.
 fn make_config(domains: &[&str]) -> ServerConfig {
     toml::from_str(&format!(
         "domains = [{}]\naddresses = [\"127.0.0.1:25565\"]",

@@ -2,7 +2,6 @@ use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
 use crate::version::{ConnectionState, ProtocolVersion};
 
-// ── Shared encode/decode ───────────────────────────────────────────
 
 fn decode_keepalive_id(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<i64> {
     if version.no_less_than(ProtocolVersion::V1_12_2) {

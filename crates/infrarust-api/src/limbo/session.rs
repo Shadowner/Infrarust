@@ -17,10 +17,8 @@ pub mod private {
 ///
 /// Obtained in [`LimboHandler`](super::handler::LimboHandler) callbacks.
 pub trait LimboSession: Send + Sync + private::Sealed {
-    /// Returns the player's session ID.
     fn player_id(&self) -> PlayerId;
 
-    /// Returns the player's game profile.
     fn profile(&self) -> &GameProfile;
 
     /// Sends a chat message to the player.

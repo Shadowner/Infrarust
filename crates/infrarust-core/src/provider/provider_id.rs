@@ -23,7 +23,6 @@ pub struct ProviderId {
 }
 
 impl ProviderId {
-    /// Creates a new provider id.
     pub fn new(provider_type: impl Into<String>, unique_id: impl Into<String>) -> Self {
         Self {
             provider_type: provider_type.into(),

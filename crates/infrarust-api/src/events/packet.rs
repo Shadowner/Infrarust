@@ -20,15 +20,12 @@ pub enum PacketDirection {
 pub struct RawPacketEvent {
     /// The player this packet belongs to.
     pub player_id: PlayerId,
-    /// The direction of the packet.
     pub direction: PacketDirection,
-    /// The original packet.
     pub packet: RawPacket,
     result: RawPacketResult,
 }
 
 impl RawPacketEvent {
-    /// Creates a new `RawPacketEvent`.
     pub fn new(player_id: PlayerId, direction: PacketDirection, packet: RawPacket) -> Self {
         Self {
             player_id,
@@ -58,7 +55,6 @@ pub enum RawPacketResult {
     Pass,
     /// Replace the packet with a modified version.
     Modify {
-        /// The replacement packet.
         packet: RawPacket,
     },
     /// Drop the packet entirely.

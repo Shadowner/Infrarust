@@ -60,8 +60,6 @@ enum BackendAction {
 
 use super::chat_utils::{ChatAction, detect_chat_or_command};
 
-// --- PacketFrame <-> RawPacket conversions ---
-
 #[inline]
 fn frame_to_raw(frame: &PacketFrame) -> RawPacket {
     RawPacket::new(frame.id, frame.payload.clone())
@@ -299,7 +297,6 @@ async fn handle_client_to_backend(
 
     // In Play state: CodecFilter → chat/command → RawPacketEvent → forward
     if state == ConnectionState::Play {
-        // --- CodecFilter (BEFORE EventBus) ---
         if apply_codec_filter(codec_chain, &mut frame, backend).await? {
             return Ok(()); // Frame consumed by filter
         }
@@ -454,7 +451,6 @@ async fn handle_backend_to_client(
 
     // In Play state: CodecFilter → RawPacketEvent → disconnect detection
     if state == ConnectionState::Play {
-        // --- CodecFilter (BEFORE EventBus) ---
         if apply_codec_filter(codec_chain, &mut frame, client).await? {
             return Ok(BackendAction::Continue); // Frame consumed by filter
         }

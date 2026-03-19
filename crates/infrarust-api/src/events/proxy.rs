@@ -16,7 +16,6 @@ pub struct ProxyPingEvent {
 }
 
 impl ProxyPingEvent {
-    /// Returns a mutable reference to the ping response.
     pub const fn response_mut(&mut self) -> &mut PingResponse {
         &mut self.response
     }
@@ -68,9 +67,7 @@ impl Event for ConfigReloadEvent {}
 pub struct ServerStateChangeEvent {
     /// The server whose state changed.
     pub server: ServerId,
-    /// The previous state.
     pub old_state: ServerState,
-    /// The new state.
     pub new_state: ServerState,
 }
 

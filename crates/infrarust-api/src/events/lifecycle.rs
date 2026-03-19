@@ -5,10 +5,6 @@ use std::net::SocketAddr;
 use crate::event::{Event, ResultedEvent};
 use crate::types::{Component, GameProfile, PlayerId, ProtocolVersion, ServerId};
 
-// ---------------------------------------------------------------------------
-// PreLoginEvent
-// ---------------------------------------------------------------------------
-
 /// Fired before authentication, when a player initiates a connection.
 ///
 /// Listeners can deny the connection, force offline/online mode, or
@@ -26,7 +22,6 @@ pub struct PreLoginEvent {
 }
 
 impl PreLoginEvent {
-    /// Creates a new `PreLoginEvent`.
     pub fn new(
         profile: GameProfile,
         remote_addr: SocketAddr,
@@ -79,10 +74,6 @@ impl ResultedEvent for PreLoginEvent {
     }
 }
 
-// ---------------------------------------------------------------------------
-// PostLoginEvent
-// ---------------------------------------------------------------------------
-
 /// Fired after a player has successfully authenticated.
 ///
 /// This is informational — the login cannot be cancelled at this point.
@@ -96,10 +87,6 @@ pub struct PostLoginEvent {
 }
 
 impl Event for PostLoginEvent {}
-
-// ---------------------------------------------------------------------------
-// DisconnectEvent
-// ---------------------------------------------------------------------------
 
 /// Fired when a player disconnects from the proxy.
 ///

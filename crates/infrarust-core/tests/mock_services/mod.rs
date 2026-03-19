@@ -10,10 +10,6 @@ use infrarust_api::services::config_service::ServerConfig;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{PlayerId, ServerId};
 
-// ---------------------------------------------------------------------------
-// MockPlayerRegistry
-// ---------------------------------------------------------------------------
-
 pub struct MockPlayerRegistry;
 
 impl infrarust_api::services::player_registry::private::Sealed for MockPlayerRegistry {}
@@ -51,10 +47,6 @@ impl PlayerRegistry for MockPlayerRegistry {
     }
 }
 
-// ---------------------------------------------------------------------------
-// MockBanService
-// ---------------------------------------------------------------------------
-
 pub struct MockBanService;
 
 impl infrarust_api::services::ban_service::private::Sealed for MockBanService {}
@@ -84,10 +76,6 @@ impl infrarust_api::services::ban_service::BanService for MockBanService {
         Box::pin(async { Ok(vec![]) })
     }
 }
-
-// ---------------------------------------------------------------------------
-// MockConfigService
-// ---------------------------------------------------------------------------
 
 pub struct MockConfigService;
 

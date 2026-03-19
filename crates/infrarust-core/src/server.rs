@@ -89,7 +89,6 @@ impl ProxyServer {
         let favicon_cache =
             Arc::new(FaviconCache::load_from_configs(&[], config.default_motd.as_ref()).await?);
 
-        // --- Provider Registry: load initial configs ---
         let mut provider_registry = ProviderRegistry::new(
             Arc::clone(&domain_router),
             Arc::clone(&event_bus),
@@ -500,27 +499,22 @@ impl ProxyServer {
         .await
     }
 
-    /// Returns the shared services.
     pub const fn services(&self) -> &ProxyServices {
         &self.services
     }
 
-    /// Returns a reference to the connection registry.
     pub fn registry(&self) -> &ConnectionRegistry {
         &self.services.connection_registry
     }
 
-    /// Returns a reference to the ban manager.
     pub fn ban_manager(&self) -> &Arc<BanManager> {
         &self.services.ban_manager
     }
 
-    /// Returns the event bus.
     pub fn event_bus(&self) -> &Arc<EventBusImpl> {
         &self.services.event_bus
     }
 
-    /// Returns the domain router.
     pub fn domain_router(&self) -> &Arc<DomainRouter> {
         &self.services.domain_router
     }
@@ -536,7 +530,6 @@ impl ProxyServer {
         self.services.transport_filter_chain = registry.build_chain();
     }
 
-    /// Returns the shutdown token.
     pub const fn shutdown(&self) -> &CancellationToken {
         &self.shutdown
     }

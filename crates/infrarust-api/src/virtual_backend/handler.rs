@@ -43,7 +43,6 @@ use super::session::VirtualBackendSession;
 /// }
 /// ```
 pub trait VirtualBackendHandler: Send + Sync {
-    /// Returns the name of this virtual backend handler.
     fn name(&self) -> &str;
 
     /// Called when a player session starts on this virtual backend.

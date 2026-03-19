@@ -35,9 +35,7 @@ pub enum ProtocolError {
     /// Size exceeds a protocol limit. Potential attack vector.
     #[error("too large: {actual} bytes exceeds maximum of {max}")]
     TooLarge {
-        /// The maximum allowed size.
         max: usize,
-        /// The actual size encountered.
         actual: usize,
     },
 

@@ -6,8 +6,6 @@ use serde::Deserialize;
 
 use crate::defaults;
 
-/// Docker provider configuration.
-///
 /// This type is always compiled (no feature gate) so that
 /// `ProxyConfig` can parse a `[docker]` section regardless of
 /// the build configuration. The `DockerProvider` itself

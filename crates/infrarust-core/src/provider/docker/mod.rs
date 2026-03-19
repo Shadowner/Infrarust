@@ -38,7 +38,6 @@ pub struct DockerProvider {
 }
 
 impl DockerProvider {
-    /// Creates a new Docker provider from the given configuration.
     pub fn new(config: &DockerProviderConfig) -> Result<Self, CoreError> {
         Ok(Self {
             config: config.clone(),

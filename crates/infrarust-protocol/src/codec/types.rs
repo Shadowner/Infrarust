@@ -23,7 +23,6 @@ fn cautious_capacity(size_hint: usize) -> usize {
     size_hint.min(MAX_PREALLOC_BYTES)
 }
 
-// --- bool ---
 
 impl Encode for bool {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
@@ -43,7 +42,6 @@ impl Decode<'_> for bool {
     }
 }
 
-// --- u8 ---
 
 impl Encode for u8 {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
@@ -63,7 +61,6 @@ impl Decode<'_> for u8 {
     }
 }
 
-// --- i8 ---
 
 impl Encode for i8 {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
@@ -79,7 +76,6 @@ impl Decode<'_> for i8 {
     }
 }
 
-// --- Macro for fixed-size big-endian numeric types ---
 
 macro_rules! impl_codec_be {
     ($ty:ty, $size:literal, $ctx:literal) => {
@@ -115,7 +111,6 @@ impl_codec_be!(u128, 16, "u128");
 impl_codec_be!(f32, 4, "f32");
 impl_codec_be!(f64, 8, "f64");
 
-// --- String ---
 
 impl Encode for String {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
@@ -168,7 +163,6 @@ pub(crate) fn decode_string(r: &mut &[u8], max_chars: usize) -> ProtocolResult<S
     Ok(s)
 }
 
-// --- uuid::Uuid ---
 
 impl Encode for Uuid {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
@@ -183,7 +177,6 @@ impl Decode<'_> for Uuid {
     }
 }
 
-// --- Vec<u8> (byte array with VarInt length prefix) ---
 
 impl Encode for Vec<u8> {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
@@ -213,7 +206,6 @@ impl Decode<'_> for Vec<u8> {
     }
 }
 
-// --- Option<T> ---
 
 impl<T: Encode> Encode for Option<T> {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
@@ -241,7 +233,6 @@ impl<'a, T: Decode<'a>> Decode<'a> for Option<T> {
     }
 }
 
-// --- McBufReadExt / McBufWriteExt helper functions used by codec/mod.rs ---
 
 /// Reads a bounded string from a `Read` source.
 pub(crate) fn read_string_bounded_from_reader(
@@ -305,7 +296,6 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
-    // --- bool ---
 
     #[test]
     fn test_bool_round_trip() {
@@ -325,7 +315,6 @@ mod tests {
         assert!(err.is_fatal());
     }
 
-    // --- numerics ---
 
     #[test]
     fn test_u8_round_trip() {
@@ -384,7 +373,6 @@ mod tests {
         }
     }
 
-    // --- String ---
 
     #[test]
     fn test_string_round_trip() {
@@ -424,7 +412,6 @@ mod tests {
         assert!(err.is_fatal());
     }
 
-    // --- UUID ---
 
     #[test]
     fn test_uuid_round_trip() {
@@ -444,7 +431,6 @@ mod tests {
         assert_eq!(buf[0], 0xFF, "first byte should be MSB of u128");
     }
 
-    // --- Vec<u8> ---
 
     #[test]
     fn test_byte_array_round_trip() {
@@ -467,7 +453,6 @@ mod tests {
         assert_eq!(Vec::<u8>::decode(&mut slice).unwrap(), data);
     }
 
-    // --- Option ---
 
     #[test]
     fn test_option_some_round_trip() {
@@ -489,7 +474,6 @@ mod tests {
         assert_eq!(Option::<i32>::decode(&mut slice).unwrap(), None);
     }
 
-    // --- Extension trait consistency ---
 
     #[test]
     fn test_mcbuf_read_write_consistency() {

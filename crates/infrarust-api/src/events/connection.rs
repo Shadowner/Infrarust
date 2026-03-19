@@ -4,10 +4,6 @@ use crate::event::{Event, ResultedEvent};
 use crate::types::{Component, GameProfile, PlayerId, ServerId};
 use crate::virtual_backend::VirtualBackendHandler;
 
-// ---------------------------------------------------------------------------
-// ServerPreConnectEvent
-// ---------------------------------------------------------------------------
-
 /// Fired before the proxy connects a player to a backend server.
 ///
 /// Listeners can redirect the player to a different server, send them
@@ -24,7 +20,6 @@ pub struct ServerPreConnectEvent {
 }
 
 impl ServerPreConnectEvent {
-    /// Creates a new `ServerPreConnectEvent`.
     pub fn new(player_id: PlayerId, profile: GameProfile, original_server: ServerId) -> Self {
         Self {
             player_id,
@@ -78,10 +73,6 @@ impl ResultedEvent for ServerPreConnectEvent {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ServerConnectedEvent
-// ---------------------------------------------------------------------------
-
 /// Fired after a player has successfully connected to a backend server.
 ///
 /// Informational — the connection is already established.
@@ -93,10 +84,6 @@ pub struct ServerConnectedEvent {
 }
 
 impl Event for ServerConnectedEvent {}
-
-// ---------------------------------------------------------------------------
-// ServerSwitchEvent
-// ---------------------------------------------------------------------------
 
 /// Fired after a player switches from one server to another.
 ///
@@ -111,10 +98,6 @@ pub struct ServerSwitchEvent {
 }
 
 impl Event for ServerSwitchEvent {}
-
-// ---------------------------------------------------------------------------
-// KickedFromServerEvent
-// ---------------------------------------------------------------------------
 
 /// Fired when a backend server kicks a player.
 ///
@@ -131,7 +114,6 @@ pub struct KickedFromServerEvent {
 }
 
 impl KickedFromServerEvent {
-    /// Creates a new `KickedFromServerEvent`.
     pub fn new(player_id: PlayerId, server: ServerId, reason: Component) -> Self {
         Self {
             player_id,
@@ -188,10 +170,6 @@ impl ResultedEvent for KickedFromServerEvent {
     }
 }
 
-// ---------------------------------------------------------------------------
-// PlayerChooseInitialServerEvent
-// ---------------------------------------------------------------------------
-
 /// Dispatched after PostLoginEvent, before ServerPreConnectEvent.
 /// Allows a plugin to redirect the player to a different server
 /// than the one resolved by the DomainRouter.
@@ -219,7 +197,6 @@ pub enum PlayerChooseInitialServerResult {
 }
 
 impl PlayerChooseInitialServerEvent {
-    /// Creates a new event.
     pub fn new(player_id: PlayerId, profile: GameProfile, initial_server: ServerId) -> Self {
         Self {
             player_id,
@@ -229,12 +206,10 @@ impl PlayerChooseInitialServerEvent {
         }
     }
 
-    /// Returns the current result.
     pub fn result(&self) -> &PlayerChooseInitialServerResult {
         &self.result
     }
 
-    /// Sets the result.
     pub fn set_result(&mut self, result: PlayerChooseInitialServerResult) {
         self.result = result;
     }

@@ -73,12 +73,10 @@ impl ConnectionRegistry {
             .collect()
     }
 
-    /// Returns the total number of active sessions.
     pub fn count(&self) -> usize {
         self.sessions.len()
     }
 
-    /// Returns the number of sessions connected to the given server.
     pub fn count_by_server(&self, server_id: &str) -> usize {
         self.sessions
             .iter()

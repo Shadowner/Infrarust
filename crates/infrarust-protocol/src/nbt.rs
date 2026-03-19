@@ -55,8 +55,7 @@ pub fn skip_nbt_compound(r: &mut &[u8]) -> ProtocolResult<()> {
 /// 1.20.2+ network NBT:
 /// - Tag type byte (must be 0x0A = Compound)
 /// - Compound payload (children terminated by TAG_End) — NO root name
-#[allow(dead_code)]
-pub fn skip_nbt_compound_nameless(r: &mut &[u8]) -> ProtocolResult<()> {
+pub fn _skip_nbt_compound_nameless(r: &mut &[u8]) -> ProtocolResult<()> {
     let tag_type = r.read_u8()?;
     if tag_type != TAG_COMPOUND {
         return Err(ProtocolError::invalid(format!(

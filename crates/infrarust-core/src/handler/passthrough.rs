@@ -29,7 +29,6 @@ pub struct PassthroughHandler {
 }
 
 impl PassthroughHandler {
-    /// Creates a new passthrough handler.
     pub fn new(
         backend_connector: Arc<BackendConnector>,
         services: ProxyServices,
@@ -83,7 +82,6 @@ impl PassthroughHandler {
             properties: vec![],
         };
 
-        // ── ServerPreConnectEvent ──
         let initial_server = infrarust_api::types::ServerId::new(routing.config_id.clone());
         let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(
             player_id, api_profile.clone(), initial_server,
@@ -137,7 +135,6 @@ impl PassthroughHandler {
         self.forward_initial_packets(backend.stream_mut(), &handshake, server_config)
             .await?;
 
-        // ── ServerConnectedEvent (fire-and-forget) ──
         self.services.event_bus.fire_and_forget_arc(infrarust_api::events::connection::ServerConnectedEvent {
             player_id,
             server: infrarust_api::types::ServerId::new(routing.config_id.clone()),
@@ -181,7 +178,6 @@ impl PassthroughHandler {
             .forward(client_stream, backend_stream, session_token.clone())
             .await;
 
-        // ── DisconnectEvent (always) ──
         super::helpers::fire_disconnect_event(
             &self.services.event_bus,
             player_id,

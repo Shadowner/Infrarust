@@ -16,7 +16,6 @@ pub struct ServerManagerBridge {
 }
 
 impl ServerManagerBridge {
-    /// Creates a new bridge.
     pub fn new(service: Arc<ServerManagerService>) -> Self {
         Self { service }
     }
@@ -70,10 +69,6 @@ impl ServerManager for ServerManagerBridge {
             .collect()
     }
 }
-
-// ---------------------------------------------------------------------------
-// NoopServerManager — used when no managed servers are configured
-// ---------------------------------------------------------------------------
 
 /// A no-op [`ServerManager`] for proxies with no managed servers.
 pub struct NoopServerManager;

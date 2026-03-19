@@ -67,7 +67,6 @@ pub struct PluginDependency {
 /// }
 /// ```
 pub trait Plugin: Send + Sync {
-    /// Returns the plugin's metadata.
     fn metadata(&self) -> PluginMetadata;
 
     /// Called when the plugin is enabled (proxy startup or hot-load).
@@ -89,7 +88,6 @@ pub trait Plugin: Send + Sync {
 }
 
 impl PluginMetadata {
-    /// Creates plugin metadata with the required fields.
     pub fn new(
         id: impl Into<String>,
         name: impl Into<String>,
@@ -146,29 +144,22 @@ pub mod private {
 /// Gives access to all proxy services and registration methods.
 /// The proxy is the sole implementor.
 pub trait PluginContext: Send + Sync + private::Sealed {
-    /// Returns the event bus for subscribing to proxy events.
     fn event_bus(&self) -> &dyn EventBus;
 
-    /// Returns the player registry for looking up connected players.
     fn player_registry(&self) -> &dyn PlayerRegistry;
 
     /// Returns an `Arc` handle to the player registry, suitable for
     /// capturing in closures and event handlers.
     fn player_registry_handle(&self) -> Arc<dyn PlayerRegistry>;
 
-    /// Returns the server manager for controlling backend servers.
     fn server_manager(&self) -> &dyn ServerManager;
 
-    /// Returns the ban service for managing bans.
     fn ban_service(&self) -> &dyn BanService;
 
-    /// Returns the config service for reading proxy configuration.
     fn config_service(&self) -> &dyn ConfigService;
 
-    /// Returns the command manager for registering commands.
     fn command_manager(&self) -> &dyn CommandManager;
 
-    /// Returns the task scheduler.
     fn scheduler(&self) -> &dyn Scheduler;
 
     /// Registers a limbo handler for this plugin.
@@ -187,7 +178,6 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     /// Returns `Some` for native plugins, `None` for WASM plugins.
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry>;
 
-    /// Returns this plugin's unique ID.
     fn plugin_id(&self) -> &str;
 }
 

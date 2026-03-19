@@ -55,7 +55,6 @@ pub struct EventBusImpl {
 }
 
 impl EventBusImpl {
-    /// Creates a new, empty event bus.
     pub fn new() -> Self {
         Self {
             handlers: RwLock::new(HashMap::new()),

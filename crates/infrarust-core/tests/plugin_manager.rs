@@ -14,10 +14,6 @@ use infrarust_core::services::command_manager::CommandManagerImpl;
 use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::NoopServerManager;
 
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
 mod mock_services;
 use mock_services::{MockBanService, MockConfigService, MockPlayerRegistry};
 
@@ -110,10 +106,6 @@ fn make_services() -> PluginServices {
         plugins_dir: PathBuf::from("plugins"),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_enable_all_calls_on_enable() {

@@ -6,7 +6,6 @@ use serde::Deserialize;
 
 use crate::defaults;
 
-/// Rate limiting configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RateLimitConfig {

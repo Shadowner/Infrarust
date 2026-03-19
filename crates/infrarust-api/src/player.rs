@@ -27,26 +27,21 @@ pub mod private {
 ///
 /// Use [`is_active()`](Player::is_active) to check before calling these methods.
 pub trait Player: Send + Sync + private::Sealed {
-    /// Returns the player's unique session ID.
     fn id(&self) -> PlayerId;
 
-    /// Returns the player's authenticated game profile.
     fn profile(&self) -> &GameProfile;
 
-    /// Returns the Minecraft protocol version used by this player's client.
     fn protocol_version(&self) -> ProtocolVersion;
 
-    /// Returns the player's remote (client) address.
     fn remote_addr(&self) -> SocketAddr;
 
-    /// Returns the ID of the backend server the player is currently on, if any.
+    /// `None` if the player hasn't been routed to a backend yet.
     fn current_server(&self) -> Option<ServerId>;
 
-    /// Returns `true` if the player is still connected to the proxy.
     fn is_connected(&self) -> bool;
 
-    /// Returns `true` if the player is on an active proxy path where
-    /// packet injection and message sending are supported.
+    /// Active means the proxy path supports packet injection and
+    /// message sending (ClientOnly, Offline, or Full mode).
     fn is_active(&self) -> bool;
 
     /// Disconnects the player from the proxy with a reason message.
@@ -91,6 +86,5 @@ pub trait Player: Send + Sync + private::Sealed {
     /// `Err(PlayerError::ServerNotFound)` if the target doesn't exist.
     fn switch_server(&self, target: ServerId) -> BoxFuture<'_, Result<(), PlayerError>>;
 
-    /// Returns `true` if the player has the given permission.
     fn has_permission(&self, permission: &str) -> bool;
 }

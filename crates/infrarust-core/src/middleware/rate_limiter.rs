@@ -25,7 +25,6 @@ pub struct RateLimiterMiddleware {
 }
 
 impl RateLimiterMiddleware {
-    /// Creates a new rate limiter from the given config.
     pub fn new(config: &RateLimitConfig) -> Self {
         let login_limiter = Self::build_limiter(config.max_connections, config.window);
         let status_limiter = Self::build_limiter(config.status_max, config.status_window);

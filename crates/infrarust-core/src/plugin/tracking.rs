@@ -8,15 +8,6 @@ use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus};
 use infrarust_api::event::{ConnectionState, ListenerHandle, PacketDirection, PacketFilter};
 use infrarust_api::services::scheduler::{Scheduler, TaskHandle};
 
-/// Recovers a potentially poisoned mutex lock.
-fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-// ---------------------------------------------------------------------------
-// TrackingEventBus
-// ---------------------------------------------------------------------------
-
 /// Wraps an [`EventBus`] and records all [`ListenerHandle`]s for later cleanup.
 pub struct TrackingEventBus {
     inner: Arc<dyn EventBus>,
@@ -29,7 +20,7 @@ impl TrackingEventBus {
     }
 
     fn track(&self, handle: ListenerHandle) -> ListenerHandle {
-        lock_or_recover(&self.handles).push(handle);
+        self.handles.lock().expect("lock poisoned").push(handle);
         handle
     }
 }
@@ -94,10 +85,6 @@ impl EventBus for TrackingEventBus {
     }
 }
 
-// ---------------------------------------------------------------------------
-// TrackingCommandManager
-// ---------------------------------------------------------------------------
-
 /// Wraps a [`CommandManager`] and records registered command names for cleanup.
 pub struct TrackingCommandManager {
     inner: Arc<dyn CommandManager>,
@@ -121,17 +108,13 @@ impl CommandManager for TrackingCommandManager {
         handler: Box<dyn CommandHandler>,
     ) {
         self.inner.register(name, aliases, description, handler);
-        lock_or_recover(&self.commands).push(name.to_string());
+        self.commands.lock().expect("lock poisoned").push(name.to_string());
     }
 
     fn unregister(&self, name: &str) {
         self.inner.unregister(name);
     }
 }
-
-// ---------------------------------------------------------------------------
-// TrackingScheduler
-// ---------------------------------------------------------------------------
 
 /// Wraps a [`Scheduler`] and records [`TaskHandle`]s for cleanup.
 pub struct TrackingScheduler {
@@ -154,7 +137,7 @@ impl Scheduler for TrackingScheduler {
         task: Box<dyn FnOnce() + Send>,
     ) -> TaskHandle {
         let handle = self.inner.delay(duration, task);
-        lock_or_recover(&self.tasks).push(handle);
+        self.tasks.lock().expect("lock poisoned").push(handle);
         handle
     }
 
@@ -164,7 +147,7 @@ impl Scheduler for TrackingScheduler {
         task: Box<dyn Fn() + Send + Sync>,
     ) -> TaskHandle {
         let handle = self.inner.interval(period, task);
-        lock_or_recover(&self.tasks).push(handle);
+        self.tasks.lock().expect("lock poisoned").push(handle);
         handle
     }
 

@@ -28,7 +28,6 @@ pub(crate) struct KeepAliveState {
 }
 
 impl KeepAliveState {
-    /// Creates a new state with no pending keepalive.
     pub fn new() -> Self {
         Self {
             last_sent_id: 0,

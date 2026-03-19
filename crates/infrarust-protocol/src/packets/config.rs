@@ -4,7 +4,6 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 use super::Packet;
 
-// ── KnownPack ───────────────────────────────────────────────────────
 
 /// A known data pack entry used in `CKnownPacks` / `SKnownPacks`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,7 +13,6 @@ pub struct KnownPack {
     pub version: String,
 }
 
-// ── CFinishConfig ───────────────────────────────────────────────────
 
 /// Finish configuration packet (Clientbound).
 ///
@@ -46,7 +44,6 @@ impl Packet for CFinishConfig {
     }
 }
 
-// ── SAcknowledgeFinishConfig ────────────────────────────────────────
 
 /// Acknowledge finish configuration packet (Serverbound).
 ///
@@ -78,7 +75,6 @@ impl Packet for SAcknowledgeFinishConfig {
     }
 }
 
-// ── CRegistryData ───────────────────────────────────────────────────
 
 /// Registry data packet (Clientbound).
 ///
@@ -115,7 +111,6 @@ impl Packet for CRegistryData {
     }
 }
 
-// ── KnownPacks (twin pair) ─────────────────────────────────────────
 
 define_twin_packets! {
     clientbound: CKnownPacks,
@@ -147,7 +142,6 @@ define_twin_packets! {
     },
 }
 
-// ── ConfigPluginMessage (twin pair) ─────────────────────────────────
 
 define_twin_packets! {
     clientbound: CConfigPluginMessage,
@@ -169,7 +163,6 @@ define_twin_packets! {
     },
 }
 
-// ── CConfigDisconnect ───────────────────────────────────────────────
 
 /// Disconnect packet in config state (Clientbound).
 ///

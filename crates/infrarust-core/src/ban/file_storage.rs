@@ -42,7 +42,6 @@ pub struct FileBanStorage {
 const MAX_AUDIT_LOG_ENTRIES: usize = 10_000;
 
 impl FileBanStorage {
-    /// Creates a new empty file ban storage.
     pub fn new(file_path: PathBuf) -> Self {
         Self {
             ip_bans: DashMap::new(),

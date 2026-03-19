@@ -32,7 +32,7 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
         tracing::debug!(filter_id = id, kind = self.label, "Registering filter");
 
         {
-            let mut items = self.items.write().unwrap_or_else(|e| e.into_inner());
+            let mut items = self.items.write().expect("lock poisoned");
             items.retain(|f| f.metadata().id != id);
             items.push(item);
         }
@@ -44,26 +44,25 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
         tracing::debug!(filter_id, kind = self.label, "Unregistering filter");
 
         {
-            let mut items = self.items.write().unwrap_or_else(|e| e.into_inner());
+            let mut items = self.items.write().expect("lock poisoned");
             items.retain(|f| f.metadata().id != filter_id);
         }
 
         self.recalculate_order();
     }
 
-    /// Returns `true` if no filters are registered.
     pub fn is_empty(&self) -> bool {
         self.items
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .expect("lock poisoned")
             .is_empty()
     }
 
     /// Provides read access to the items and ordered IDs for building
     /// output structures (chains, instance lists, etc.).
     pub fn with_ordered<R>(&self, f: impl FnOnce(&[F], &[String]) -> R) -> R {
-        let items = self.items.read().unwrap_or_else(|e| e.into_inner());
-        let ordered = self.ordered_ids.read().unwrap_or_else(|e| e.into_inner());
+        let items = self.items.read().expect("lock poisoned");
+        let ordered = self.ordered_ids.read().expect("lock poisoned");
         f(&items, &ordered)
     }
 
@@ -72,12 +71,12 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
     /// On cycle detection failure, logs an error and preserves the previous
     /// order so the proxy continues operating with a stale order.
     fn recalculate_order(&self) {
-        let items = self.items.read().unwrap_or_else(|e| e.into_inner());
+        let items = self.items.read().expect("lock poisoned");
         let metadata: Vec<FilterMetadata> = items.iter().map(|f| f.metadata()).collect();
 
         match resolve_filter_order(&metadata) {
             Ok(order) => {
-                let mut ordered = self.ordered_ids.write().unwrap_or_else(|e| e.into_inner());
+                let mut ordered = self.ordered_ids.write().expect("lock poisoned");
                 *ordered = order;
             }
             Err(e) => {

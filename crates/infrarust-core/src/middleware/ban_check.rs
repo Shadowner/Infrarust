@@ -21,7 +21,6 @@ pub struct BanCheckMiddleware {
 }
 
 impl BanCheckMiddleware {
-    /// Creates a new ban check middleware.
     pub const fn new(ban_manager: Arc<BanManager>) -> Self {
         Self { ban_manager }
     }

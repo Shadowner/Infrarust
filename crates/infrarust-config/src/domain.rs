@@ -27,9 +27,7 @@ pub struct DomainIndex {
 struct CompiledPattern {
     /// The original pattern (for debug/display).
     raw: String,
-    /// The compiled pattern.
     matcher: WildMatch,
-    /// The associated config identifier.
     config_id: String,
 }
 
@@ -98,12 +96,10 @@ impl DomainIndex {
         None
     }
 
-    /// Returns the total number of indexed patterns.
     pub fn len(&self) -> usize {
         self.exact.len() + self.wildcards.len()
     }
 
-    /// Returns `true` if the index is empty.
     pub fn is_empty(&self) -> bool {
         self.exact.is_empty() && self.wildcards.is_empty()
     }

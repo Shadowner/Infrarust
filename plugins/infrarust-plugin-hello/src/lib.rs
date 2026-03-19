@@ -17,7 +17,6 @@ impl Plugin for HelloPlugin {
         ctx: &'a dyn PluginContext,
     ) -> BoxFuture<'a, Result<(), PluginError>> {
         Box::pin(async move {
-            // ── Event listeners ────────────────────────────────────────
             ctx.event_bus()
                 .subscribe(EventPriority::NORMAL, |event: &mut PostLoginEvent| {
                     tracing::info!("[HelloPlugin] {} joined the proxy!", event.profile.username);
@@ -40,7 +39,6 @@ impl Plugin for HelloPlugin {
                     }
                 });
 
-            // ── Commands ───────────────────────────────────────────────
             ctx.command_manager().register(
                 "hello",
                 &["hi", "hey"],
@@ -55,10 +53,8 @@ impl Plugin for HelloPlugin {
                 Box::new(LimboCommand),
             );
 
-            // ── Limbo handler ──────────────────────────────────────────
             ctx.register_limbo_handler(Box::new(TestGateHandler));
 
-            // ── Scheduler ──────────────────────────────────────────────
             let player_registry = ctx.player_registry_handle();
             ctx.scheduler().interval(
                 std::time::Duration::from_secs(60),
@@ -83,8 +79,6 @@ impl Plugin for HelloPlugin {
     }
 }
 
-// ── /hello command ─────────────────────────────────────────────────────
-
 struct HelloCommand;
 
 impl CommandHandler for HelloCommand {
@@ -108,8 +102,6 @@ impl CommandHandler for HelloCommand {
     }
 }
 
-// ── /limbo command ─────────────────────────────────────────────────────
-
 struct LimboCommand;
 
 impl CommandHandler for LimboCommand {
@@ -132,8 +124,6 @@ impl CommandHandler for LimboCommand {
         })
     }
 }
-
-// ── Limbo handler: test-gate ───────────────────────────────────────────
 
 /// A test limbo handler that holds the player in a void world until they
 /// type `/success`. Demonstrates send_message, send_title, on_command,

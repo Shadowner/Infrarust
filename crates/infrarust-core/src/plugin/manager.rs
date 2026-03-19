@@ -182,7 +182,6 @@ impl PluginManager {
         matches!(self.states.get(id), Some(PluginState::Enabled))
     }
 
-    /// Returns the current state of a plugin.
     pub fn plugin_state(&self, id: &str) -> Option<&PluginState> {
         self.states.get(id)
     }

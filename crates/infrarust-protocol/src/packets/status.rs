@@ -4,7 +4,6 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 use super::Packet;
 
-// ── SStatusRequest ──────────────────────────────────────────────────
 
 /// Status request packet (Serverbound, 0x00).
 ///
@@ -36,7 +35,6 @@ impl Packet for SStatusRequest {
     }
 }
 
-// ── CStatusResponse ────────────────────────────────────────────────
 
 /// Status response packet (Clientbound, 0x00).
 ///
@@ -74,7 +72,6 @@ impl Packet for CStatusResponse {
     }
 }
 
-// ── SPingRequest ────────────────────────────────────────────────────
 
 /// Ping request packet (Serverbound, 0x01).
 ///
@@ -110,7 +107,6 @@ impl Packet for SPingRequest {
     }
 }
 
-// ── CPingResponse ───────────────────────────────────────────────────
 
 /// Ping response packet (Clientbound, 0x01).
 ///

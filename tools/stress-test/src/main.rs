@@ -7,10 +7,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
-// ─── Minecraft Protocol Helpers ──────────────────────────────────────────────
-
 fn write_varint(value: i32) -> Vec<u8> {
-    let mut val = value as u32;2
+    let mut val = value as u32;
     let mut buf = Vec::with_capacity(5);
     loop {
         if (val & !0x7F) == 0 {
@@ -72,8 +70,6 @@ fn build_status_request() -> Vec<u8> {
     build_packet(0x00, &[])
 }
 
-// ─── CLI ─────────────────────────────────────────────────────────────────────
-
 #[derive(Parser)]
 #[command(name = "infrarust-stress-test", about = "Stress test tool for Infrarust Minecraft proxy")]
 struct Cli {
@@ -118,8 +114,6 @@ enum Command {
     },
 }
 
-// ─── Shared Stats ────────────────────────────────────────────────────────────
-
 struct Stats {
     success: AtomicU64,
     errors: AtomicU64,
@@ -142,24 +136,14 @@ impl Stats {
     }
 
     fn record_latency(&self, latency_ms: u64) {
-        if let Ok(mut v) = self.latencies.lock() {
-            v.push(latency_ms);
-        }
-        if let Ok(mut v) = self.all_latencies.lock() {
-            v.push(latency_ms);
-        }
+        self.latencies.lock().unwrap_or_else(|e| e.into_inner()).push(latency_ms);
+        self.all_latencies.lock().unwrap_or_else(|e| e.into_inner()).push(latency_ms);
     }
 
     fn drain_latencies(&self) -> Vec<u64> {
-        if let Ok(mut v) = self.latencies.lock() {
-            std::mem::take(&mut *v)
-        } else {
-            Vec::new()
-        }
+        std::mem::take(&mut *self.latencies.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
-
-// ─── Workers ─────────────────────────────────────────────────────────────────
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const PROTOCOL_VERSION: i32 = 767; // 1.21.x
@@ -335,8 +319,6 @@ async fn malformed_worker(
     }
 }
 
-// ─── Reporter ────────────────────────────────────────────────────────────────
-
 async fn reporter(stats: Arc<Stats>, stop: Arc<AtomicBool>, start_time: Instant) {
     let mut prev_success = 0u64;
     let mut prev_errors = 0u64;
@@ -410,8 +392,6 @@ fn print_summary(stats: &Stats, duration: Duration) {
     println!("Latence p99    : {p99_latency}ms");
     println!("Débit moyen    : {throughput:.1}/s");
 }
-
-// ─── Main ────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() {

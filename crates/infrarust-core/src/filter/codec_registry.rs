@@ -51,7 +51,6 @@ impl CodecFilterRegistryImpl {
         })
     }
 
-    /// Returns `true` if no factories are registered.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.base.is_empty()

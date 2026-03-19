@@ -15,7 +15,6 @@ pub struct ChatMessageEvent {
 }
 
 impl ChatMessageEvent {
-    /// Creates a new `ChatMessageEvent`.
     pub fn new(player_id: PlayerId, message: String) -> Self {
         Self {
             player_id,

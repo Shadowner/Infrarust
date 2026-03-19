@@ -13,7 +13,6 @@ pub struct TransportFilterChain {
 }
 
 impl TransportFilterChain {
-    /// Creates a new chain from an ordered list of filters.
     pub fn new(filters: Vec<Arc<dyn TransportFilter>>) -> Self {
         Self {
             filters: Arc::new(filters),
@@ -53,7 +52,6 @@ impl TransportFilterChain {
         }
     }
 
-    /// Returns `true` if the chain has no filters.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.filters.is_empty()

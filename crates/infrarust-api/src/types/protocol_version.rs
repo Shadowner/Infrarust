@@ -18,8 +18,6 @@ use std::fmt;
 pub struct ProtocolVersion(i32);
 
 impl ProtocolVersion {
-    // --- Named constants for common Minecraft versions ---
-
     /// Minecraft 1.20.4 / 1.20.3 (protocol 765)
     pub const MINECRAFT_1_20_4: Self = Self(765);
     /// Minecraft 1.20.5 / 1.20.6 (protocol 766)
@@ -41,7 +39,6 @@ impl ProtocolVersion {
         Self(version)
     }
 
-    /// Returns the raw protocol version number.
     pub const fn raw(self) -> i32 {
         self.0
     }

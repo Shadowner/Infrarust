@@ -26,15 +26,10 @@ pub struct FileProvider {
 }
 
 impl FileProvider {
-    /// Creates a new file provider for the given directory.
     pub const fn new(servers_dir: PathBuf) -> Self {
         Self { servers_dir }
     }
 }
-
-// ---------------------------------------------------------------------------
-// ConfigProvider trait implementation
-// ---------------------------------------------------------------------------
 
 impl ConfigProvider for FileProvider {
     fn provider_type(&self) -> &'static str {
@@ -255,10 +250,6 @@ fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<P
 fn configs_equal(a: &ServerConfig, b: &ServerConfig) -> bool {
     a == b
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Loads a single server config from a TOML file.
 fn load_server_config(path: &Path) -> Result<ServerConfig, ConfigError> {

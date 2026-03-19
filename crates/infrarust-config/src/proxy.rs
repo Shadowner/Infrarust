@@ -13,7 +13,6 @@ use crate::types::{
     StatusCacheConfig, TelemetryConfig,
 };
 
-/// Root proxy configuration.
 /// Corresponds to the `infrarust.toml` file.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,7 +80,6 @@ pub struct ProxyConfig {
     pub plugins: HashMap<String, PluginConfig>,
 }
 
-/// Configuration for a single plugin.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginConfig {

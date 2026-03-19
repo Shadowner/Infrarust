@@ -29,7 +29,6 @@ struct LocalProcess {
 }
 
 impl LocalProvider {
-    /// Creates a new local provider from config.
     pub fn new(config: LocalManagerConfig) -> Self {
         Self {
             config,

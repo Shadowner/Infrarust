@@ -23,7 +23,6 @@ pub struct BanIpCheckMiddleware {
 }
 
 impl BanIpCheckMiddleware {
-    /// Creates a new ban IP check middleware.
     pub const fn new(ban_manager: Arc<BanManager>) -> Self {
         Self { ban_manager }
     }

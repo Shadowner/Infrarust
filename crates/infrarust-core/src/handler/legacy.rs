@@ -24,7 +24,6 @@ pub struct LegacyHandler {
 }
 
 impl LegacyHandler {
-    /// Creates a new legacy handler with shared config state.
     pub const fn new(
         domain_router: Arc<DomainRouter>,
         default_motd: Option<MotdConfig>,

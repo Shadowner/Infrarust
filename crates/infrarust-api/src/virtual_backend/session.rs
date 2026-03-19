@@ -14,13 +14,10 @@ pub mod private {
 /// Provides full packet-level control over the client connection.
 /// Obtained in [`VirtualBackendHandler`](super::handler::VirtualBackendHandler) callbacks.
 pub trait VirtualBackendSession: Send + Sync + private::Sealed {
-    /// Returns the player's session ID.
     fn player_id(&self) -> PlayerId;
 
-    /// Returns the player's game profile.
     fn profile(&self) -> &GameProfile;
 
-    /// Returns the player's protocol version.
     fn protocol_version(&self) -> ProtocolVersion;
 
     /// Sends a raw packet to the client.

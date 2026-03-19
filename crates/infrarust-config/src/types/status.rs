@@ -6,7 +6,6 @@ use serde::Deserialize;
 
 use crate::defaults;
 
-/// Status ping cache configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StatusCacheConfig {
@@ -42,7 +41,6 @@ pub struct MotdConfig {
     pub unreachable: Option<MotdEntry>,
 }
 
-/// A MOTD entry.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MotdEntry {

@@ -153,7 +153,6 @@ impl<P: Packet + 'static> PacketRegistration<P> {
 pub fn build_default_registry() -> PacketRegistry {
     let mut registry = PacketRegistry::new();
 
-    // ── Handshake ───────────────────────────────────────────────────
     PacketRegistration::<crate::packets::SHandshake>::new(
         ConnectionState::Handshake,
         Direction::Serverbound,
@@ -161,7 +160,6 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x00, ProtocolVersion::V1_7_2, false)
     .register(&mut registry);
 
-    // ── Status ──────────────────────────────────────────────────────
     PacketRegistration::<crate::packets::SStatusRequest>::new(
         ConnectionState::Status,
         Direction::Serverbound,
@@ -190,7 +188,6 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x01, ProtocolVersion::V1_7_2, false)
     .register(&mut registry);
 
-    // ── Login (Serverbound) ─────────────────────────────────────────
     PacketRegistration::<crate::packets::SLoginStart>::new(
         ConnectionState::Login,
         Direction::Serverbound,
@@ -219,7 +216,6 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x03, ProtocolVersion::V1_20_2, false)
     .register(&mut registry);
 
-    // ── Login (Clientbound) ─────────────────────────────────────────
     PacketRegistration::<crate::packets::CLoginDisconnect>::new(
         ConnectionState::Login,
         Direction::Clientbound,
@@ -255,7 +251,6 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x04, ProtocolVersion::V1_13, false)
     .register(&mut registry);
 
-    // ── Config (Serverbound) ────────────────────────────────────────
     PacketRegistration::<crate::packets::SConfigPluginMessage>::new(
         ConnectionState::Config,
         Direction::Serverbound,
@@ -279,7 +274,6 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x07, ProtocolVersion::V1_20_5, false)
     .register(&mut registry);
 
-    // ── Config (Clientbound) ────────────────────────────────────────
     PacketRegistration::<crate::packets::CConfigPluginMessage>::new(
         ConnectionState::Config,
         Direction::Clientbound,
@@ -319,7 +313,6 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x0E, ProtocolVersion::V1_20_5, false)
     .register(&mut registry);
 
-    // ── Play (Clientbound) ──────────────────────────────────────────
 
     // KeepAlive Clientbound
     PacketRegistration::<crate::packets::CKeepAlive>::new(
@@ -655,7 +648,6 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x46, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
 
-    // ── Play (Serverbound) ────────────────────────────────────────
 
     // AcknowledgeConfiguration Serverbound (client ack for StartConfiguration)
     PacketRegistration::<crate::packets::SAcknowledgeConfiguration>::new(

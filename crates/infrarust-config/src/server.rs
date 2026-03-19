@@ -7,7 +7,6 @@ use crate::types::{
     TimeoutConfig,
 };
 
-/// Configuration for a Minecraft backend server.
 /// Each file in `servers_dir/` deserializes into this type.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -16,7 +16,6 @@ use crate::provider::ProviderId;
 pub struct ProviderConfig {
     /// Unique identifier for this config (e.g. `file@survival.toml`).
     pub id: ProviderId,
-    /// The server configuration.
     pub config: ServerConfig,
 }
 

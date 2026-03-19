@@ -18,12 +18,10 @@ use std::fmt;
 pub struct ServerId(String);
 
 impl ServerId {
-    /// Creates a new `ServerId` from a string.
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 
-    /// Returns the underlying string slice.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -50,20 +48,15 @@ impl From<String> for ServerId {
 /// Information about a backend server.
 #[derive(Debug, Clone)]
 pub struct ServerInfo {
-    /// The server's unique identifier.
     pub id: ServerId,
-    /// Optional human-readable display name.
     pub display_name: Option<String>,
-    /// Network addresses for this server.
     pub addresses: Vec<ServerAddress>,
 }
 
 /// A network address for a backend server.
 #[derive(Debug, Clone)]
 pub struct ServerAddress {
-    /// Hostname or IP address.
     pub host: String,
-    /// Port number.
     pub port: u16,
 }
 

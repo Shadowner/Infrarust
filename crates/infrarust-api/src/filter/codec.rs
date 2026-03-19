@@ -144,7 +144,6 @@ pub struct FrameOutput {
 }
 
 impl FrameOutput {
-    /// Creates an empty `FrameOutput`.
     #[must_use]
     pub fn new() -> Self {
         Self::default()

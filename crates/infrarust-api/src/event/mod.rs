@@ -47,7 +47,6 @@ impl EventPriority {
         Self(value)
     }
 
-    /// Returns the raw priority value.
     pub const fn value(self) -> u8 {
         self.0
     }
@@ -61,12 +60,10 @@ impl EventPriority {
 pub struct ListenerHandle(u64);
 
 impl ListenerHandle {
-    /// Creates a new listener handle from a raw ID.
     pub const fn new(id: u64) -> Self {
         Self(id)
     }
 
-    /// Returns the raw handle ID.
     pub const fn as_u64(self) -> u64 {
         self.0
     }

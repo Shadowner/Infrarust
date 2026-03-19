@@ -12,7 +12,6 @@ pub struct PterodactylProvider {
 }
 
 impl PterodactylProvider {
-    /// Creates a new Pterodactyl provider from config and a shared HTTP client.
     pub fn new(config: &PterodactylManagerConfig, http_client: reqwest::Client) -> Self {
         Self {
             http_client,

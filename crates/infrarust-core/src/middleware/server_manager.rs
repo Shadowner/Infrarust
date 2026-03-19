@@ -22,7 +22,6 @@ pub struct ServerManagerMiddleware {
 }
 
 impl ServerManagerMiddleware {
-    /// Creates a new server manager middleware.
     pub const fn new(server_manager: Arc<ServerManagerService>) -> Self {
         Self { server_manager }
     }

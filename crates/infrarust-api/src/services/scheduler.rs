@@ -14,12 +14,10 @@ pub mod private {
 pub struct TaskHandle(u64);
 
 impl TaskHandle {
-    /// Creates a new task handle from a raw ID.
     pub const fn new(id: u64) -> Self {
         Self(id)
     }
 
-    /// Returns the raw handle ID.
     pub const fn as_u64(self) -> u64 {
         self.0
     }

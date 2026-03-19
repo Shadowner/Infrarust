@@ -157,7 +157,7 @@ mod tests {
         assert_eq!(decoded.server_address, "backend.local");
     }
 
-    /// Helper: decode a framed handshake packet back into `SHandshake`.
+    /// Decode a framed handshake packet back into `SHandshake`.
     fn decode_handshake_from_framed(data: &[u8]) -> SHandshake {
         use infrarust_protocol::io::PacketDecoder;
         let mut decoder = PacketDecoder::new();

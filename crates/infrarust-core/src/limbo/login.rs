@@ -25,8 +25,7 @@ use crate::session::client_bridge::ClientBridge;
 ///
 /// # Errors
 /// Always returns [`CoreError::Other`] until implemented.
-#[allow(dead_code)] // Will be used when initial-connection SendToLimbo is implemented
-pub(crate) async fn complete_login_without_backend(
+pub(crate) async fn _complete_login_without_backend(
     _client: &mut ClientBridge,
     _player_uuid: uuid::Uuid,
     _username: &str,

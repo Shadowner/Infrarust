@@ -8,8 +8,6 @@ use infrarust_core::pipeline::Pipeline;
 use infrarust_core::pipeline::context::ConnectionContext;
 use infrarust_core::pipeline::middleware::{Middleware, MiddlewareResult};
 
-// --- Test helpers ---
-
 /// Creates a minimal `ConnectionContext` for testing (no real TCP stream).
 ///
 /// Uses a connected loopback TCP pair so the context has a valid stream.
@@ -105,8 +103,6 @@ impl Middleware for MarkerMiddleware {
         })
     }
 }
-
-// --- Tests ---
 
 #[tokio::test]
 async fn test_empty_pipeline_continues() {

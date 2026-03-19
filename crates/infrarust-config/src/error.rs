@@ -2,7 +2,6 @@
 
 use std::path::PathBuf;
 
-/// Erreur de configuration.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConfigError {

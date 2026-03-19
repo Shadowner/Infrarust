@@ -41,7 +41,6 @@ pub struct OfflineHandler {
 }
 
 impl OfflineHandler {
-    /// Creates a new offline handler.
     pub fn new(
         backend_connector: Arc<BackendConnector>,
         services: ProxyServices,
@@ -103,7 +102,6 @@ impl OfflineHandler {
             properties: vec![],
         };
 
-        // ── PreLoginEvent ──
         let pre_login = infrarust_api::events::lifecycle::PreLoginEvent::new(
             api_profile.clone(),
             ctx.peer_addr,
@@ -117,14 +115,12 @@ impl OfflineHandler {
             return Ok(());
         }
 
-        // ── PostLoginEvent (fire-and-forget) ──
         self.services.event_bus.fire_and_forget_arc(infrarust_api::events::lifecycle::PostLoginEvent {
             profile: api_profile.clone(),
             player_id,
             protocol_version: infrarust_api::types::ProtocolVersion::new(version.0),
         });
 
-        // ── PlayerChooseInitialServerEvent ──
         let initial_server = infrarust_api::types::ServerId::new(routing.config_id.clone());
         let choose = infrarust_api::events::connection::PlayerChooseInitialServerEvent::new(
             player_id, api_profile.clone(), initial_server.clone(),
@@ -136,7 +132,6 @@ impl OfflineHandler {
             _ => initial_server,
         };
 
-        // ── ServerPreConnectEvent ──
         let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(
             player_id, api_profile.clone(), target_server_id.clone(),
         );
@@ -191,7 +186,6 @@ impl OfflineHandler {
             .send_initial_packets(&handshake, server_config)
             .await?;
 
-        // ── ServerConnectedEvent (fire-and-forget) ──
         self.services.event_bus.fire_and_forget_arc(infrarust_api::events::connection::ServerConnectedEvent {
             player_id,
             server: target_server_id.clone(),
@@ -507,7 +501,6 @@ impl OfflineHandler {
             }
         };
 
-        // ── DisconnectEvent (always) ──
         super::helpers::fire_disconnect_event(
             &self.services.event_bus,
             player_id,

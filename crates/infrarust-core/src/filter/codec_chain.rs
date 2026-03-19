@@ -81,7 +81,6 @@ impl CodecFilterChain {
         }
     }
 
-    /// Returns `true` if there are no filter instances.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.instances.is_empty()
@@ -151,8 +150,6 @@ mod tests {
     use infrarust_api::filter::*;
 
     use super::*;
-
-    // --- Mock infrastructure ---
 
     struct MockFactory {
         id: &'static str,
@@ -237,8 +234,6 @@ mod tests {
             },
         }
     }
-
-    // --- Tests ---
 
     #[test]
     fn test_empty_chain_passes() {

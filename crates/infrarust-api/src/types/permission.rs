@@ -18,12 +18,10 @@ use std::fmt;
 pub struct Permission(String);
 
 impl Permission {
-    /// Creates a new permission from a string.
     pub fn new(name: impl Into<String>) -> Self {
         Self(name.into())
     }
 
-    /// Returns the permission string.
     pub fn as_str(&self) -> &str {
         &self.0
     }

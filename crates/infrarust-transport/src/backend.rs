@@ -27,7 +27,6 @@ pub struct BackendConnector {
 }
 
 impl BackendConnector {
-    /// Creates a new backend connector.
     pub const fn new(default_timeout: Duration, keepalive: KeepaliveConfig) -> Self {
         Self {
             default_timeout,

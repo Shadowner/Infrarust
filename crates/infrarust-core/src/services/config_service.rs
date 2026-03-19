@@ -13,7 +13,6 @@ pub struct ConfigServiceImpl {
 }
 
 impl ConfigServiceImpl {
-    /// Creates a new config service backed by the given router.
     pub fn new(router: Arc<DomainRouter>) -> Self {
         Self { router }
     }

@@ -165,7 +165,7 @@ impl ServerManagerService {
         let mut listeners = self
             .listeners
             .write()
-            .unwrap_or_else(|e| e.into_inner());
+            .expect("lock poisoned");
         listeners.push((id, callback));
         id
     }
@@ -175,7 +175,7 @@ impl ServerManagerService {
         let mut listeners = self
             .listeners
             .write()
-            .unwrap_or_else(|e| e.into_inner());
+            .expect("lock poisoned");
         listeners.retain(|(id, _)| *id != listener_id);
     }
 
@@ -184,7 +184,7 @@ impl ServerManagerService {
             let listeners = self
                 .listeners
                 .read()
-                .unwrap_or_else(|e| e.into_inner());
+                .expect("lock poisoned");
             listeners.clone()
         };
         for (_, callback) in &snapshot {

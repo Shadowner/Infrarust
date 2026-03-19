@@ -14,8 +14,7 @@ use infrarust_core::event_bus::EventBusImpl;
 
 struct TraceEvent {
     value: i32,
-    #[allow(dead_code)]
-    order: Vec<&'static str>,
+    _order: Vec<&'static str>,
 }
 impl Event for TraceEvent {}
 
@@ -39,7 +38,7 @@ async fn test_priority_order_first_last() {
 
     bus.fire(TraceEvent {
         value: 0,
-        order: vec![],
+        _order: vec![],
     })
     .await;
 
@@ -77,7 +76,7 @@ async fn test_priority_order_sequential() {
 
     bus.fire(TraceEvent {
         value: 0,
-        order: vec![],
+        _order: vec![],
     })
     .await;
 
@@ -103,7 +102,7 @@ async fn test_handler_sees_previous_changes() {
     let event = bus
         .fire(TraceEvent {
             value: 0,
-            order: vec![],
+            _order: vec![],
         })
         .await;
     assert_eq!(event.value, 20);
@@ -131,7 +130,7 @@ async fn test_same_priority_insertion_order() {
 
     bus.fire(TraceEvent {
         value: 0,
-        order: vec![],
+        _order: vec![],
     })
     .await;
 

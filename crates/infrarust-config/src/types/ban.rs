@@ -6,7 +6,6 @@ use serde::Deserialize;
 
 use crate::defaults;
 
-/// Ban system configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BanConfig {

@@ -37,9 +37,7 @@ pub enum DecodedPacket {
     },
     /// Unknown packet or no registered parser. Forward as-is.
     Opaque {
-        /// The packet ID.
         id: i32,
-        /// The raw payload.
         payload: Bytes,
     },
 }

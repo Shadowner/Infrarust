@@ -10,8 +10,6 @@ use infrarust_api::event::{BoxFuture, Event, EventPriority, ResultedEvent};
 
 use infrarust_core::event_bus::EventBusImpl;
 
-// --- Test event types ---
-
 struct TestEvent {
     value: i32,
 }
@@ -21,8 +19,6 @@ struct OtherEvent {
     flag: bool,
 }
 impl Event for OtherEvent {}
-
-// --- Tests ---
 
 #[tokio::test]
 async fn test_fire_no_handlers() {
@@ -182,8 +178,6 @@ async fn test_concurrent_fire_and_subscribe() {
     let other = bus.fire(OtherEvent { flag: false }).await;
     assert!(other.flag);
 }
-
-// --- Packet handler tests ---
 
 use infrarust_api::event::{ConnectionState, PacketDirection, PacketFilter};
 use infrarust_api::events::packet::{RawPacketEvent, RawPacketResult};

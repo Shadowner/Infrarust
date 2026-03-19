@@ -27,7 +27,6 @@ pub trait ZlibDecompressor {
     ) -> ProtocolResult<()>;
 }
 
-// --- flate2 backend (always available) ---
 
 #[cfg_attr(feature = "libdeflater", allow(dead_code))]
 pub struct Flate2Compressor {
@@ -91,7 +90,6 @@ impl ZlibDecompressor for Flate2Decompressor {
     }
 }
 
-// --- libdeflater backend (behind feature flag) ---
 
 #[cfg(feature = "libdeflater")]
 pub struct LibdeflateCompressor {
@@ -160,7 +158,6 @@ impl ZlibDecompressor for LibdeflateDecompressor {
     }
 }
 
-// --- Factory functions ---
 
 /// Creates the default compressor based on enabled features.
 pub fn new_compressor(level: u32) -> Box<dyn ZlibCompressor + Send + Sync> {

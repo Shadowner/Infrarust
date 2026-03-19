@@ -12,7 +12,6 @@ pub struct CraftyProvider {
 }
 
 impl CraftyProvider {
-    /// Creates a new Crafty provider from config and a shared HTTP client.
     pub fn new(config: &CraftyManagerConfig, http_client: reqwest::Client) -> Self {
         Self {
             http_client,

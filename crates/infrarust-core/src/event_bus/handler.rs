@@ -41,10 +41,8 @@ impl HandlerKind {
 /// A single registered handler with its metadata.
 #[derive(Clone)]
 pub struct HandlerEntry {
-    /// Opaque handle for unsubscribe.
     pub handle: ListenerHandle,
     /// Dispatch priority (lower value = higher priority = runs first).
     pub priority: EventPriority,
-    /// The type-erased handler closure.
     pub kind: HandlerKind,
 }

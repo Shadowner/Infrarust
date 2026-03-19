@@ -98,7 +98,6 @@ impl fmt::Display for BanTarget {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BanEntry {
-    /// The ban target.
     pub target: BanTarget,
     /// Reason for the ban (shown to the player on kick).
     pub reason: Option<String>,
@@ -113,7 +112,6 @@ pub struct BanEntry {
 }
 
 impl BanEntry {
-    /// Creates a new ban entry.
     pub fn new(
         target: BanTarget,
         reason: Option<String>,
@@ -130,17 +128,14 @@ impl BanEntry {
         }
     }
 
-    /// Returns `true` if this ban has expired.
     pub fn is_expired(&self) -> bool {
         self.expires_at.is_some_and(|exp| SystemTime::now() >= exp)
     }
 
-    /// Returns `true` if this ban is permanent (no expiration).
     pub const fn is_permanent(&self) -> bool {
         self.expires_at.is_none()
     }
 
-    /// Returns the remaining duration before expiration.
     /// `None` if permanent or already expired.
     pub fn remaining(&self) -> Option<Duration> {
         self.expires_at
@@ -167,8 +162,6 @@ impl BanEntry {
         )
     }
 }
-
-// ─────────────────────────── BanService ──────────────────────────
 
 /// Service for managing player bans.
 ///

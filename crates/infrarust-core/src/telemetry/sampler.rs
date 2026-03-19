@@ -16,8 +16,6 @@ pub struct InfrarustSampler {
 }
 
 impl InfrarustSampler {
-    /// Creates a new sampler.
-    ///
     /// `status_ratio` is clamped to `[0.0, 1.0]`.
     pub fn new(status_ratio: f64) -> Self {
         Self {

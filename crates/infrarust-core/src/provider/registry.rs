@@ -34,7 +34,6 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
-    /// Creates a new registry wired to the given subsystems.
     pub fn new(
         domain_router: Arc<DomainRouter>,
         event_bus: Arc<EventBusImpl>,

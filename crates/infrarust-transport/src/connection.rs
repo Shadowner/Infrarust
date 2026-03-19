@@ -27,7 +27,6 @@ pub struct ClientConnection {
 }
 
 impl ClientConnection {
-    /// Creates a new client connection.
     pub fn new(stream: TcpStream, peer_addr: SocketAddr, local_addr: SocketAddr) -> Self {
         Self {
             stream,

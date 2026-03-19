@@ -15,7 +15,6 @@ pub struct PlayerRegistryImpl {
 }
 
 impl PlayerRegistryImpl {
-    /// Creates a new registry wrapper.
     pub fn new(registry: Arc<ConnectionRegistry>) -> Self {
         Self { registry }
     }

@@ -390,7 +390,6 @@ impl fmt::Display for Component {
 pub struct TitleData {
     /// The main title text.
     pub title: Component,
-    /// The subtitle text.
     pub subtitle: Component,
     /// Fade-in duration in ticks (default: 10).
     pub fade_in_ticks: i32,

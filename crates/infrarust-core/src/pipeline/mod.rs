@@ -57,12 +57,10 @@ impl Pipeline {
         Ok(MiddlewareResult::Continue)
     }
 
-    /// Returns the number of middlewares in the pipeline.
     pub fn len(&self) -> usize {
         self.middlewares.len()
     }
 
-    /// Returns `true` if the pipeline has no middlewares.
     pub fn is_empty(&self) -> bool {
         self.middlewares.is_empty()
     }

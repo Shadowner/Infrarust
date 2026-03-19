@@ -19,12 +19,10 @@ use std::fmt;
 pub struct PlayerId(u64);
 
 impl PlayerId {
-    /// Creates a new `PlayerId` from a raw `u64`.
     pub const fn new(id: u64) -> Self {
         Self(id)
     }
 
-    /// Returns the underlying `u64` value.
     pub const fn as_u64(self) -> u64 {
         self.0
     }

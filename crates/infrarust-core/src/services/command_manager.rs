@@ -11,8 +11,7 @@ use infrarust_api::types::PlayerId;
 struct RegisteredCommand {
     handler: Arc<dyn CommandHandler>,
     aliases: Vec<String>,
-    #[allow(dead_code)]
-    description: String,
+    _description: String,
 }
 
 /// Concrete [`CommandManager`] implementation.
@@ -24,7 +23,6 @@ pub struct CommandManagerImpl {
 }
 
 impl CommandManagerImpl {
-    /// Creates a new empty command manager.
     pub fn new() -> Self {
         Self {
             commands: RwLock::new(HashMap::new()),
@@ -52,13 +50,13 @@ impl CommandManagerImpl {
 
         // Resolve alias → canonical name
         let canonical = {
-            let aliases = self.aliases.read().unwrap_or_else(|e| e.into_inner());
+            let aliases = self.aliases.read().expect("lock poisoned");
             aliases.get(&name_lower).cloned().unwrap_or(name_lower)
         };
 
         // Look up handler
         let handler_exists = {
-            let commands = self.commands.read().unwrap_or_else(|e| e.into_inner());
+            let commands = self.commands.read().expect("lock poisoned");
             commands.contains_key(&canonical)
         };
 
@@ -80,7 +78,7 @@ impl CommandManagerImpl {
 
         // Clone the handler Arc so we can drop the lock before awaiting.
         let handler = {
-            let commands = self.commands.read().unwrap_or_else(|e| e.into_inner());
+            let commands = self.commands.read().expect("lock poisoned");
             commands.get(&canonical).map(|cmd| Arc::clone(&cmd.handler))
         };
 
@@ -119,7 +117,7 @@ impl CommandManager for CommandManagerImpl {
 
         // Register aliases
         {
-            let mut alias_map = self.aliases.write().unwrap_or_else(|e| e.into_inner());
+            let mut alias_map = self.aliases.write().expect("lock poisoned");
             for alias in &alias_list {
                 alias_map.insert(alias.clone(), name_lower.clone());
             }
@@ -127,13 +125,13 @@ impl CommandManager for CommandManagerImpl {
 
         // Register command
         {
-            let mut commands = self.commands.write().unwrap_or_else(|e| e.into_inner());
+            let mut commands = self.commands.write().expect("lock poisoned");
             commands.insert(
                 name_lower,
                 RegisteredCommand {
                     handler: Arc::from(handler),
                     aliases: alias_list,
-                    description: description.to_string(),
+                    _description: description.to_string(),
                 },
             );
         }
@@ -144,7 +142,7 @@ impl CommandManager for CommandManagerImpl {
 
         // Remove aliases first
         let alias_list = {
-            let commands = self.commands.read().unwrap_or_else(|e| e.into_inner());
+            let commands = self.commands.read().expect("lock poisoned");
             commands
                 .get(&name_lower)
                 .map(|cmd| cmd.aliases.clone())
@@ -152,7 +150,7 @@ impl CommandManager for CommandManagerImpl {
         };
 
         {
-            let mut alias_map = self.aliases.write().unwrap_or_else(|e| e.into_inner());
+            let mut alias_map = self.aliases.write().expect("lock poisoned");
             for alias in &alias_list {
                 alias_map.remove(alias);
             }
@@ -160,7 +158,7 @@ impl CommandManager for CommandManagerImpl {
 
         // Remove command
         {
-            let mut commands = self.commands.write().unwrap_or_else(|e| e.into_inner());
+            let mut commands = self.commands.write().expect("lock poisoned");
             commands.remove(&name_lower);
         }
     }

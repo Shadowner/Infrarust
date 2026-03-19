@@ -45,7 +45,6 @@ pub struct PluginContextImpl {
 }
 
 impl PluginContextImpl {
-    /// Creates a new plugin context with tracking wrappers.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         plugin_id: String,
@@ -92,7 +91,7 @@ impl PluginContextImpl {
 
     /// Returns registered limbo handlers (consumed during proxy setup).
     pub fn take_limbo_handlers(&self) -> Vec<Box<dyn LimboHandler>> {
-        let mut handlers = self.limbo_handlers.lock().unwrap_or_else(|e| e.into_inner());
+        let mut handlers = self.limbo_handlers.lock().expect("lock poisoned");
         std::mem::take(&mut *handlers)
     }
 
@@ -103,7 +102,7 @@ impl PluginContextImpl {
             &mut *self
                 .registered_handles
                 .lock()
-                .unwrap_or_else(|e| e.into_inner()),
+                .expect("lock poisoned"),
         );
         for handle in handles {
             self.event_bus.unsubscribe(handle);
@@ -114,7 +113,7 @@ impl PluginContextImpl {
             &mut *self
                 .registered_commands
                 .lock()
-                .unwrap_or_else(|e| e.into_inner()),
+                .expect("lock poisoned"),
         );
         for cmd in commands {
             self.command_manager.unregister(&cmd);
@@ -125,7 +124,7 @@ impl PluginContextImpl {
             &mut *self
                 .registered_tasks
                 .lock()
-                .unwrap_or_else(|e| e.into_inner()),
+                .expect("lock poisoned"),
         );
         for task in tasks {
             self.scheduler.cancel(task);
@@ -171,7 +170,7 @@ impl PluginContext for PluginContextImpl {
     }
 
     fn register_limbo_handler(&self, handler: Box<dyn LimboHandler>) {
-        let mut handlers = self.limbo_handlers.lock().unwrap_or_else(|e| e.into_inner());
+        let mut handlers = self.limbo_handlers.lock().expect("lock poisoned");
         handlers.push(handler);
     }
 

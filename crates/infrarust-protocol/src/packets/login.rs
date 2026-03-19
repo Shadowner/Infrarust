@@ -4,7 +4,6 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 use super::Packet;
 
-// ── Helper types ────────────────────────────────────────────────────
 
 /// A game profile property (textures, skin data, etc.).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,7 +13,6 @@ pub struct Property {
     pub signature: Option<String>,
 }
 
-// ── Helper functions for 1.7.x short-prefixed byte arrays ───────────
 
 fn read_byte_array_short(r: &mut &[u8]) -> ProtocolResult<Vec<u8>> {
     let len = r.read_i16_be()? as usize;
@@ -30,7 +28,6 @@ fn write_byte_array_short(
     Ok(())
 }
 
-// ── Helper functions for UUID int array (1.16-1.18.2) ───────────────
 
 #[allow(clippy::many_single_char_names)] // UUID components are conventionally named a/b/c/d
 fn read_uuid_int_array(r: &mut &[u8]) -> ProtocolResult<uuid::Uuid> {
@@ -59,7 +56,6 @@ fn write_uuid_int_array(
     Ok(())
 }
 
-// ── SLoginStart ─────────────────────────────────────────────────────
 
 /// Login start packet (Serverbound, 0x00).
 ///
@@ -175,7 +171,6 @@ impl Packet for SLoginStart {
     }
 }
 
-// ── CEncryptionRequest ──────────────────────────────────────────────
 
 /// Encryption request packet (Clientbound, 0x01).
 ///
@@ -251,7 +246,6 @@ impl Packet for CEncryptionRequest {
     }
 }
 
-// ── SEncryptionResponse ─────────────────────────────────────────────
 
 /// Encryption response packet (Serverbound, 0x01).
 ///
@@ -343,7 +337,6 @@ impl Packet for SEncryptionResponse {
     }
 }
 
-// ── CSetCompression ─────────────────────────────────────────────────
 
 /// Set compression packet (Clientbound, 0x03).
 ///
@@ -380,7 +373,6 @@ impl Packet for CSetCompression {
     }
 }
 
-// ── CLoginSuccess ───────────────────────────────────────────────────
 
 /// Login success packet (Clientbound, 0x02).
 ///
@@ -511,7 +503,6 @@ impl Packet for CLoginSuccess {
     }
 }
 
-// ── CLoginDisconnect ────────────────────────────────────────────────
 
 /// Login disconnect packet (Clientbound, 0x00).
 ///
@@ -547,7 +538,6 @@ impl Packet for CLoginDisconnect {
     }
 }
 
-// ── CLoginPluginRequest ─────────────────────────────────────────────
 
 /// Login plugin request packet (Clientbound, 0x04, 1.13+).
 ///
@@ -593,7 +583,6 @@ impl Packet for CLoginPluginRequest {
     }
 }
 
-// ── SLoginPluginResponse ────────────────────────────────────────────
 
 /// Login plugin response packet (Serverbound, 0x02, 1.13+).
 ///
@@ -639,7 +628,6 @@ impl Packet for SLoginPluginResponse {
     }
 }
 
-// ── SLoginAcknowledged ──────────────────────────────────────────────
 
 /// Login acknowledged packet (Serverbound, 0x03, 1.20.2+).
 ///

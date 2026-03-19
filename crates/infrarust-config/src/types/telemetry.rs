@@ -6,8 +6,6 @@ use serde::Deserialize;
 
 use crate::defaults;
 
-/// OpenTelemetry telemetry configuration.
-///
 /// Sub-sections: `[telemetry.metrics]`, `[telemetry.traces]`, `[telemetry.resource]`.
 /// Absent from the TOML file means `None` in `ProxyConfig` (no telemetry).
 #[derive(Debug, Clone, Deserialize)]
@@ -50,7 +48,6 @@ impl Default for TelemetryConfig {
     }
 }
 
-/// `OTel` metrics configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
@@ -73,7 +70,6 @@ impl Default for MetricsConfig {
     }
 }
 
-/// `OTel` traces configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TracesConfig {
@@ -96,7 +92,6 @@ impl Default for TracesConfig {
     }
 }
 
-/// `OTel` resource attributes.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceConfig {

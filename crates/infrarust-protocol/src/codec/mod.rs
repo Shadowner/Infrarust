@@ -144,7 +144,6 @@ pub trait McBufWriteExt: Write {
     fn write_byte_array(&mut self, data: &[u8]) -> ProtocolResult<()>;
 }
 
-// --- Blanket implementation for McBufReadExt ---
 
 impl<R: Read> McBufReadExt for R {
     fn read_u8(&mut self) -> ProtocolResult<u8> {
@@ -268,7 +267,6 @@ impl<R: Read> McBufReadExt for R {
     }
 }
 
-// --- Blanket implementation for McBufWriteExt ---
 
 impl<W: Write> McBufWriteExt for W {
     fn write_u8(&mut self, value: u8) -> ProtocolResult<()> {

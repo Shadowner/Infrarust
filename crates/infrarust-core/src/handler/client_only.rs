@@ -55,7 +55,6 @@ pub struct ClientOnlyHandler {
 }
 
 impl ClientOnlyHandler {
-    /// Creates a new `ClientOnly` handler.
     pub fn new(
         backend_connector: Arc<BackendConnector>,
         services: ProxyServices,
@@ -98,11 +97,8 @@ impl ClientOnlyHandler {
         let server_config = &routing.server_config;
         let version = handshake.protocol_version;
 
-        // ── Phase 1: Client Authentication ──
-
         let mut client = ClientBridge::new(ctx.take_stream(), ctx.buffered_data.split(), version);
 
-        // ── PreLoginEvent ──
         let pre_login_profile = infrarust_api::types::GameProfile {
             uuid: uuid::Uuid::nil(),
             username: login_data.username.clone(),
@@ -152,14 +148,11 @@ impl ClientOnlyHandler {
         self.send_login_success(&mut client, &game_profile, version)
             .await?;
 
-        // ── PostLoginEvent (fire-and-forget) ──
         self.services.event_bus.fire_and_forget_arc(infrarust_api::events::lifecycle::PostLoginEvent {
             profile: api_profile.clone(),
             player_id,
             protocol_version: infrarust_api::types::ProtocolVersion::new(version.0),
         });
-
-        // ── Handle LoginAcknowledged (1.20.2+) ──
 
         if version.no_less_than(ProtocolVersion::V1_20_2) {
             // Wait for client to acknowledge login success
@@ -195,7 +188,6 @@ impl ClientOnlyHandler {
             client.set_state(ConnectionState::Play);
         }
 
-        // ── PlayerChooseInitialServerEvent ──
         let initial_server = infrarust_api::types::ServerId::new(routing.config_id.clone());
         let choose = infrarust_api::events::connection::PlayerChooseInitialServerEvent::new(
             player_id, api_profile.clone(), initial_server.clone(),
@@ -207,7 +199,6 @@ impl ClientOnlyHandler {
             _ => initial_server,
         };
 
-        // ── ServerPreConnectEvent ──
         let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(
             player_id, api_profile.clone(), target_server_id.clone(),
         );
@@ -228,8 +219,6 @@ impl ClientOnlyHandler {
             }
             _ => {} // ConnectTo, VirtualBackend — Phase 4
         }
-
-        // ── Phase 2: Backend Login (Offline Mode) ──
 
         // TODO: Phase 4 — resolve target_server_id to addresses for backend connection
         let backend_conn = match self
@@ -286,13 +275,10 @@ impl ClientOnlyHandler {
             tracing::debug!("backend LoginAcknowledged → Config");
         }
 
-        // ── ServerConnectedEvent (fire-and-forget) ──
         self.services.event_bus.fire_and_forget_arc(infrarust_api::events::connection::ServerConnectedEvent {
             player_id,
             server: target_server_id.clone(),
         });
-
-        // ── Phase 3: Session ──
 
         let session_token = shutdown.child_token();
         let (cmd_tx, cmd_rx) = PlayerSession::channel();
@@ -604,7 +590,6 @@ impl ClientOnlyHandler {
             }
         };
 
-        // ── DisconnectEvent (always) ──
         super::helpers::fire_disconnect_event(
             &self.services.event_bus,
             player_id,

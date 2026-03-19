@@ -70,8 +70,6 @@ impl ProxyMetrics {
         }
     }
 
-    // ── Helper methods ── keep KeyValue out of handler code ──
-
     /// Records the start of a new connection.
     pub fn record_connection_start(&self, server: &str, mode: &str) {
         self.connections_total.add(
