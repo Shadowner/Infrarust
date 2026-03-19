@@ -1,0 +1,22 @@
+[package]
+name = "registry-extractor"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "registry-extractor"
+path = "src/main.rs"
+
+[dependencies]
+infrarust-protocol = { workspace = true }
+infrarust-core = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+chrono = "0.4"
