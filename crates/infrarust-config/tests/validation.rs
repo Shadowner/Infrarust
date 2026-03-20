@@ -101,3 +101,46 @@ fn test_toml_with_domains_still_works() {
     assert_eq!(config.domains[0], "mc.example.com");
     assert_eq!(config.domains[1], "*.mc.example.com");
 }
+
+#[test]
+fn test_passthrough_with_network_is_invalid() {
+    let config = from_toml(r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "passthrough"
+        network = "main"
+    "#);
+    assert!(validate_server_config(&config).is_err());
+}
+
+#[test]
+fn test_zerocopy_with_network_is_invalid() {
+    let config = from_toml(r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "zero_copy"
+        network = "main"
+    "#);
+    assert!(validate_server_config(&config).is_err());
+}
+
+#[test]
+fn test_server_only_with_network_is_invalid() {
+    let config = from_toml(r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "server_only"
+        network = "main"
+    "#);
+    assert!(validate_server_config(&config).is_err());
+}
+
+#[test]
+fn test_client_only_with_network_is_valid() {
+    let config = from_toml(r#"
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "client_only"
+        network = "main"
+    "#);
+    assert!(validate_server_config(&config).is_ok());
+}

@@ -10,6 +10,7 @@ use crate::server::ServerConfig;
 ///
 /// Checks:
 /// - Forwarding modes (Passthrough, ZeroCopy, ServerOnly) have at least one domain
+/// - Forwarding modes cannot belong to a network (no server switching support)
 /// - At least one address is defined
 /// - No empty domain strings
 /// - `name` (if set) matches `[a-z0-9_-]+`
@@ -23,11 +24,20 @@ use crate::server::ServerConfig;
 pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> {
     let id = config.effective_id();
 
-    if config.domains.is_empty() && config.proxy_mode.is_forwarding() {
-        return Err(ConfigError::NoDomains {
-            id: id.clone(),
-            proxy_mode: config.proxy_mode,
-        });
+    if config.proxy_mode.is_forwarding() {
+        if config.domains.is_empty() {
+            return Err(ConfigError::NoDomains {
+                id: id.clone(),
+                proxy_mode: config.proxy_mode,
+            });
+        }
+        if config.network.is_some() {
+            return Err(ConfigError::Validation(format!(
+                "server '{id}' uses {:?} mode which cannot belong to a network \
+                 (forwarding modes don't support server switching)",
+                config.proxy_mode
+            )));
+        }
     }
 
     if config.addresses.is_empty() {
