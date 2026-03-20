@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.91.1
+ARG RUST_VERSION=1.94
 ARG ALPINE_VERSION=3.21
 
 # Build stage - builds natively for the target platform
@@ -18,7 +18,9 @@ WORKDIR /usr/crates/infrarust
 # Copy source code
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
-
+COPY plugins/ ./plugins/
+COPY tools/ ./tools/
+COPY data/ ./data/
 # Set environment variables for static linking
 ENV OPENSSL_STATIC=1
 ENV RUSTFLAGS="-C target-feature=+crt-static"
@@ -41,7 +43,7 @@ RUN ARCH=$(uname -m) && \
     esac && \
     echo "Building for target: $TARGET on architecture: $ARCH" && \
     rustup target add "$TARGET" && \
-    cargo build --release --target "$TARGET" && \
+    cargo build --release --target "$TARGET" -p infrarust-proxy && \
     cp "target/$TARGET/release/infrarust" /usr/local/bin/infrarust && \
     strip /usr/local/bin/infrarust && \
     echo "Build completed successfully"

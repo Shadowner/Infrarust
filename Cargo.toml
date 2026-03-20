@@ -32,11 +32,11 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "registry"]
 uuid = { version = "1", features = ["v3", "v4", "serde"] }
 arc-swap = "1"
 clap = { version = "4.6.0", features = ["derive"] }
-anyhow = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-notify = "7"
+anyhow = "1.0.102"
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json"] }
+notify = "8.2.0"
 dashmap = "6"
-governor = "0.8"
+governor = "0.10.4"
 nonzero_ext = "0.3"
 toml = "0.8"
 
@@ -57,6 +57,8 @@ license = "AGPL-3.0"
 repository = "https://github.com/Shadowner/Infrarust"
 
 [profile.release]
-lto = true
+opt-level = 3
+lto = "fat"
 codegen-units = 1
-strip = true
+strip = "symbols"
+panic = "unwind"
