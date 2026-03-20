@@ -90,6 +90,63 @@ impl Packet for CSystemChatMessage {
     }
 }
 
+/// Legacy clientbound chat message packet (pre-1.19).
+///
+/// Replaced by [`CSystemChatMessage`] in 1.19+. The `position` byte controls
+/// where the message is displayed: 0 = chat box, 1 = system message, 2 = action bar.
+/// From 1.16+, a sender UUID is appended (all-zero for system messages).
+#[derive(Debug, Clone)]
+pub struct CChatMessage {
+    /// JSON text component.
+    pub json: String,
+    /// 0 = chat, 1 = system message, 2 = action bar.
+    pub position: u8,
+}
+
+impl CChatMessage {
+    pub fn system(json: &str) -> Self {
+        Self { json: json.to_string(), position: 1 }
+    }
+
+    pub fn action_bar(json: &str) -> Self {
+        Self { json: json.to_string(), position: 2 }
+    }
+}
+
+impl Packet for CChatMessage {
+    const NAME: &'static str = "CChatMessage";
+
+    fn state() -> ConnectionState {
+        ConnectionState::Play
+    }
+
+    fn direction() -> Direction {
+        Direction::Clientbound
+    }
+
+    fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
+        let json = r.read_string()?;
+        let position = r.read_u8()?;
+        if version.no_less_than(ProtocolVersion::V1_16) {
+            let _sender = r.read_uuid()?; // sender UUID, not used
+        }
+        Ok(Self { json, position })
+    }
+
+    fn encode(
+        &self,
+        mut w: &mut (impl std::io::Write + ?Sized),
+        version: ProtocolVersion,
+    ) -> ProtocolResult<()> {
+        w.write_string(&self.json)?;
+        w.write_u8(self.position)?;
+        if version.no_less_than(ProtocolVersion::V1_16) {
+            w.write_uuid(&uuid::Uuid::nil())?; // system message: all-zero sender
+        }
+        Ok(())
+    }
+}
+
 /// Serverbound chat message packet.
 ///
 /// Sent by the client when typing a chat message. Pre-1.19, this is also

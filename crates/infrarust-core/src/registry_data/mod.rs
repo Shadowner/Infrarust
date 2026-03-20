@@ -1,6 +1,9 @@
 //! Registry data for limbo and the config phase.
 pub(crate) mod embedded;
+pub(crate) mod entry_lists;
 pub mod extractor_format;
+pub(crate) mod known_packs;
+pub(crate) mod version_router;
 
 use crate::error::CoreError;
 use infrarust_protocol::io::PacketFrame;

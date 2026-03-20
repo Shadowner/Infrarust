@@ -434,6 +434,20 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x18, ProtocolVersion::V1_21_5, true)
     .register(&mut registry);
 
+    // ChatMessage Clientbound (legacy, pre-1.19, encode-only)
+    PacketRegistration::<crate::packets::CChatMessage>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x02, ProtocolVersion::V1_7_2, true)
+    .map(0x0F, ProtocolVersion::V1_9, true)
+    .map(0x0E, ProtocolVersion::V1_13, true)
+    .map(0x0F, ProtocolVersion::V1_15, true)
+    .map(0x0E, ProtocolVersion::V1_16, true)
+    .map(0x0F, ProtocolVersion::V1_17, true)
+    .map(0x0F, ProtocolVersion::V1_18, true)
+    .register(&mut registry);
+
     // SystemChatMessage Clientbound (encode-only: proxy doesn't intercept)
     PacketRegistration::<crate::packets::CSystemChatMessage>::new(
         ConnectionState::Play,

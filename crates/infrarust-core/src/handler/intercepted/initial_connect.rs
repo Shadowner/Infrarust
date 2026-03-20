@@ -319,20 +319,22 @@ async fn prepare_client_for_limbo(
     ensure_login_complete_for_limbo(client, auth_result, login_completed, version, services)
         .await?;
 
-    if let Err(e) = crate::limbo::login::complete_config_for_limbo(
-        client,
-        version,
-        &services.packet_registry,
-        &services.registry_codec_cache,
-    )
-    .await
-    {
-        tracing::warn!("limbo config phase failed: {e}");
-        client
-            .disconnect(&e.to_string(), &services.packet_registry)
-            .await
-            .ok();
-        return Err(e);
+    if version.no_less_than(ProtocolVersion::V1_20_2) {
+        if let Err(e) = crate::limbo::login::complete_config_for_limbo(
+            client,
+            version,
+            &services.packet_registry,
+            &services.registry_codec_cache,
+        )
+        .await
+        {
+            tracing::warn!("limbo config phase failed: {e}");
+            client
+                .disconnect(&e.to_string(), &services.packet_registry)
+                .await
+                .ok();
+            return Err(e);
+        }
     }
 
     Ok(())
