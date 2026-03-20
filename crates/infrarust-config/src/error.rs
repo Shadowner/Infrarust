@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use crate::types::ProxyMode;
+
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConfigError {
@@ -20,8 +22,9 @@ pub enum ConfigError {
     #[error("invalid server address: {0}")]
     InvalidAddress(String),
 
-    #[error("server config {id} has no domains defined")]
-    NoDomains { id: String },
+    #[error("server '{id}' uses {proxy_mode:?} mode which requires at least one domain \
+             (forwarding modes are only accessible via direct domain connection)")]
+    NoDomains { id: String, proxy_mode: ProxyMode },
 
     #[error("server config {id} has no addresses defined")]
     NoAddresses { id: String },

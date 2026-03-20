@@ -9,7 +9,7 @@ use crate::server::ServerConfig;
 /// Validates a single server configuration.
 ///
 /// Checks:
-/// - At least one domain is defined
+/// - Forwarding modes (Passthrough, ZeroCopy, ServerOnly) have at least one domain
 /// - At least one address is defined
 /// - No empty domain strings
 /// - `name` (if set) matches `[a-z0-9_-]+`
@@ -17,14 +17,17 @@ use crate::server::ServerConfig;
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::NoDomains`] if no domains are defined,
+/// Returns [`ConfigError::NoDomains`] if a forwarding-mode server has no domains,
 /// [`ConfigError::NoAddresses`] if no addresses are defined, or
 /// [`ConfigError::Validation`] if any domain string is empty or name/network are invalid.
 pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> {
     let id = config.effective_id();
 
-    if config.domains.is_empty() {
-        return Err(ConfigError::NoDomains { id });
+    if config.domains.is_empty() && config.proxy_mode.is_forwarding() {
+        return Err(ConfigError::NoDomains {
+            id: id.clone(),
+            proxy_mode: config.proxy_mode,
+        });
     }
 
     if config.addresses.is_empty() {

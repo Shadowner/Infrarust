@@ -27,6 +27,8 @@ pub struct ServerConfig {
 
     /// Domains that route to this server.
     /// Supports wildcards: "*.mc.example.com"
+    /// Empty = no domain routing (server accessible only via server switch).
+    #[serde(default)]
     pub domains: Vec<String>,
 
     /// Backend addresses (host:port). Multiple = future load balancing.

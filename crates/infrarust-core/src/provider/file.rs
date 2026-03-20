@@ -264,6 +264,8 @@ fn load_server_config(path: &Path) -> Result<ServerConfig, ConfigError> {
             source,
         })?;
 
+    infrarust_config::validate_server_config(&config)?;
+
     // Set id from filename if not explicitly set
     if config.id.is_none()
         && let Some(stem) = path.file_stem().and_then(|s| s.to_str())

@@ -18,6 +18,25 @@ fn make_config(domains: &[&str]) -> ServerConfig {
     .unwrap()
 }
 
+fn make_named_config(name: &str, domains: &[&str]) -> ServerConfig {
+    let domains_str = if domains.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "domains = [{}]\n",
+            domains
+                .iter()
+                .map(|d| format!("\"{d}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    toml::from_str(&format!(
+        "name = \"{name}\"\n{domains_str}addresses = [\"127.0.0.1:25565\"]\nproxy_mode = \"client_only\""
+    ))
+    .unwrap()
+}
+
 #[test]
 fn test_add_config_resolves() {
     let router = DomainRouter::new();
@@ -215,4 +234,43 @@ fn test_count_by_provider_empty() {
     let router = DomainRouter::new();
     let counts: HashMap<String, usize> = router.count_by_provider();
     assert!(counts.is_empty());
+}
+
+#[test]
+fn test_server_without_domain_not_in_domain_index() {
+    let router = DomainRouter::new();
+    let id = ProviderId::file("survival.toml");
+
+    router.add(id, make_named_config("survival", &[]));
+
+    // No domain was registered, so resolve should return None for anything
+    assert!(router.resolve("survival").is_none());
+    assert!(router.resolve("anything.com").is_none());
+    // But the server is still stored
+    assert_eq!(router.len(), 1);
+}
+
+#[test]
+fn test_server_without_domain_findable_by_name() {
+    let router = DomainRouter::new();
+    let id = ProviderId::file("survival.toml");
+
+    router.add(id, make_named_config("survival", &[]));
+
+    let config = router.find_by_server_id("survival");
+    assert!(config.is_some());
+    assert_eq!(config.unwrap().effective_id(), "survival");
+}
+
+#[test]
+fn test_server_with_domain_findable_by_both() {
+    let router = DomainRouter::new();
+    let id = ProviderId::file("lobby.toml");
+
+    router.add(id, make_named_config("lobby", &["play.mc.com"]));
+
+    assert!(router.resolve("play.mc.com").is_some());
+    let config = router.find_by_server_id("lobby");
+    assert!(config.is_some());
+    assert_eq!(config.unwrap().effective_id(), "lobby");
 }
