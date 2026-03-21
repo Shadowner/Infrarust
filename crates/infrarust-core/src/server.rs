@@ -190,6 +190,8 @@ impl ProxyServer {
             config.default_motd.clone(),
             server_manager.as_ref().map(Arc::clone),
             Arc::clone(&registry),
+            Arc::clone(&backend_connector),
+            shutdown.clone(),
         );
 
         // Ban system

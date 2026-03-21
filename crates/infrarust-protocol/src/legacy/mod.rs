@@ -4,8 +4,10 @@
 //! modern (1.7+) Minecraft. This module provides detection, parsing, and
 //! response construction for legacy ping and login connections.
 
+pub mod handshake;
 pub mod ping;
 
+pub use handshake::{LegacyHandshakeRequest, build_legacy_kick, parse_legacy_handshake};
 pub use ping::{LegacyPingRequest, LegacyPingResponse, LegacyPingVariant, parse_legacy_ping};
 
 /// Type of connection detected by the first byte of the TCP stream.
