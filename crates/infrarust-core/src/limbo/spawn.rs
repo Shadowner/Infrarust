@@ -31,7 +31,7 @@ pub(crate) async fn send_spawn_sequence(
     registry: &PacketRegistry,
     needs_join_game: bool,
 ) -> Result<(), CoreError> {
-    let is_modern = version.no_less_than(ProtocolVersion::V1_20_3);
+    let is_modern = version.no_less_than(ProtocolVersion::V1_20_2);
 
     if is_modern && needs_join_game {
         send_modern_with_join(client, version, registry).await?;

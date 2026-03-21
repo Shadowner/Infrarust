@@ -1,7 +1,7 @@
 //! Game Event packet (Clientbound).
 //!
 //! Notifies the client of game state changes. Event 13 (`START_WAITING_CHUNKS`)
-//! is critical for 1.20.3+ — without it the client stays on "Loading Terrain".
+//! is critical for 1.20.2+ — without it the client stays on "Loading Terrain".
 
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;

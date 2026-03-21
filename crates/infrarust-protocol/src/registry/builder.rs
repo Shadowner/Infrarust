@@ -578,7 +578,7 @@ pub fn build_default_registry() -> PacketRegistry {
         ConnectionState::Play,
         Direction::Clientbound,
     )
-    .map(0x0C, ProtocolVersion::V1_20_2, true)
+    .map(0x0D, ProtocolVersion::V1_20_2, true)
     .map(0x0D, ProtocolVersion::V1_20_5, true)
     .map(0x0C, ProtocolVersion::V1_21_5, true)
     .map(0x0C, ProtocolVersion::V1_21_9, true)
