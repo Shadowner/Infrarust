@@ -96,7 +96,11 @@ fn chunk_data_packet_id(version: ProtocolVersion) -> i32 {
         }
         // 1.21.9 (773)+
         v if v.no_less_than(ProtocolVersion::V1_21_9) => 0x2C,
-        // Fallback for older versions (pre-1.14)
+        // 1.13 (393) .. 1.13.2 (404)
+        v if v.no_less_than(ProtocolVersion::V1_13) => 0x22,
+        // 1.9 (107) .. 1.12.2 (340)
+        v if v.no_less_than(ProtocolVersion::V1_9) => 0x20,
+        // 1.7 (4) .. 1.8 (47)
         _ => 0x21,
     }
 }
@@ -116,13 +120,20 @@ pub fn build_chunk_data_frame(
     })
 }
 
-/// Wire layout: chunk X/Z (i32 BE), heightmaps, section data, block entities, light data (1.18+).
+/// Wire layout varies by version. 1.14+: heightmaps, sections, block entities.
+/// Pre-1.14: ground_up_continuous, bit mask, biome data only (empty chunk).
 fn build_chunk_data_payload(chunk_x: i32, chunk_z: i32, num_sections: usize, version: ProtocolVersion) -> Vec<u8> {
-    let sections = encode_empty_chunk_sections(num_sections, version);
-    let mut buf = Vec::with_capacity(256 + sections.len());
+    let mut buf = Vec::with_capacity(300);
 
     buf.extend_from_slice(&chunk_x.to_be_bytes());
     buf.extend_from_slice(&chunk_z.to_be_bytes());
+
+    if version.less_than(ProtocolVersion::V1_14) {
+        build_pre_1_14_empty_chunk(&mut buf, version);
+        return buf;
+    }
+
+    let sections = encode_empty_chunk_sections(num_sections, version);
     encode_empty_heightmaps(&mut buf, version);
     write_varint(&mut buf, sections.len() as i32);
     buf.extend_from_slice(&sections);
@@ -133,6 +144,42 @@ fn build_chunk_data_payload(chunk_x: i32, chunk_z: i32, num_sections: usize, ver
     }
 
     buf
+}
+
+fn build_pre_1_14_empty_chunk(buf: &mut Vec<u8>, version: ProtocolVersion) {
+    buf.push(1);
+
+    if version.less_than(ProtocolVersion::V1_8) {
+        // 1.7: u16 primary_bit_mask + u16 add_bit_mask + zlib-compressed data
+        buf.extend_from_slice(&0_u16.to_be_bytes()); // primary_bit_mask
+        buf.extend_from_slice(&0_u16.to_be_bytes()); // add_bit_mask
+        let biome_data = [0u8; 256];
+        let compressed = zlib_compress(&biome_data);
+        #[allow(clippy::cast_possible_truncation)]
+        buf.extend_from_slice(&(compressed.len() as i32).to_be_bytes());
+        buf.extend_from_slice(&compressed);
+    } else if version.less_than(ProtocolVersion::V1_9) {
+        // 1.8: u16 primary_bit_mask + VarInt size + raw data
+        buf.extend_from_slice(&0_u16.to_be_bytes()); // primary_bit_mask
+        write_varint(buf, 256); // size
+        buf.extend_from_slice(&[0u8; 256]); // biome data
+    } else {
+        // 1.9–1.13: VarInt primary_bit_mask + VarInt size + raw data + VarInt block_entities_count
+        write_varint(buf, 0); // primary_bit_mask
+        write_varint(buf, 256); // size
+        buf.extend_from_slice(&[0u8; 256]); // biome data
+        write_varint(buf, 0); // number_of_block_entities
+    }
+}
+
+fn zlib_compress(data: &[u8]) -> Vec<u8> {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(data).expect("zlib compression should not fail");
+    encoder.finish().expect("zlib finish should not fail")
 }
 
 fn encode_empty_chunk_sections(num_sections: usize, version: ProtocolVersion) -> Vec<u8> {
@@ -299,5 +346,53 @@ mod tests {
         let payload = build_chunk_data_payload(3, -7, 16, ProtocolVersion::V1_21);
         assert_eq!(&payload[0..4], &3_i32.to_be_bytes());
         assert_eq!(&payload[4..8], &(-7_i32).to_be_bytes());
+    }
+
+    #[test]
+    fn test_pre_1_14_empty_chunk_1_8() {
+        let frame = build_chunk_data_frame(0, 0, 16, ProtocolVersion::V1_8).unwrap();
+        assert_eq!(frame.id, 0x21);
+        assert_eq!(frame.payload.len(), 4 + 4 + 1 + 2 + 2 + 256);
+    }
+
+    #[test]
+    fn test_pre_1_14_empty_chunk_1_9() {
+        let frame = build_chunk_data_frame(0, 0, 16, ProtocolVersion::V1_9).unwrap();
+        assert_eq!(frame.id, 0x20);
+        assert_eq!(frame.payload.len(), 4 + 4 + 1 + 1 + 2 + 256 + 1);
+    }
+
+    #[test]
+    fn test_pre_1_14_empty_chunk_1_12() {
+        let frame = build_chunk_data_frame(0, 0, 16, ProtocolVersion::V1_12).unwrap();
+        assert_eq!(frame.id, 0x20);
+        assert_eq!(frame.payload.len(), 4 + 4 + 1 + 1 + 2 + 256 + 1);
+    }
+
+    #[test]
+    fn test_pre_1_14_empty_chunk_1_13() {
+        let frame = build_chunk_data_frame(0, 0, 16, ProtocolVersion::V1_13).unwrap();
+        assert_eq!(frame.id, 0x22);
+        assert_eq!(frame.payload.len(), 4 + 4 + 1 + 1 + 2 + 256 + 1);
+    }
+
+    #[test]
+    fn test_pre_1_14_empty_chunk_1_7() {
+        let frame = build_chunk_data_frame(0, 0, 16, ProtocolVersion::V1_7_2).unwrap();
+        assert_eq!(frame.id, 0x21);
+        let payload = frame.payload.as_ref();
+        assert_eq!(&payload[0..4], &0_i32.to_be_bytes()); // chunk_x
+        assert_eq!(&payload[4..8], &0_i32.to_be_bytes()); // chunk_z
+        assert_eq!(payload[8], 1); // ground_up_continuous
+        assert!(payload.len() > 17); // header + compressed data
+    }
+
+    #[test]
+    fn test_chunk_packet_id_pre_1_14_versions() {
+        assert_eq!(chunk_data_packet_id(ProtocolVersion::V1_7_2), 0x21);
+        assert_eq!(chunk_data_packet_id(ProtocolVersion::V1_8), 0x21);
+        assert_eq!(chunk_data_packet_id(ProtocolVersion::V1_9), 0x20);
+        assert_eq!(chunk_data_packet_id(ProtocolVersion::V1_12), 0x20);
+        assert_eq!(chunk_data_packet_id(ProtocolVersion::V1_13), 0x22);
     }
 }
