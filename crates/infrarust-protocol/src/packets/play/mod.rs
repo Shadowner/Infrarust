@@ -18,7 +18,7 @@ pub mod title;
 pub mod transfer;
 
 pub use center_chunk::CSetCenterChunk;
-pub use chat::{CChatMessage, CSystemChatMessage, SChatCommand, SChatMessage};
+pub use chat::{CSystemChatMessage, SChatCommand, SChatMessage};
 pub use chat_session::SChatSessionUpdate;
 pub use chunk_batch::{CChunkBatchFinished, CChunkBatchStart};
 pub use dimension::{DimensionInfo, extract_dimension_from_join_game};

@@ -7,7 +7,7 @@ use bytes::Bytes;
 
 use infrarust_api::types::{Component, TitleData};
 use infrarust_protocol::io::PacketFrame;
-use infrarust_protocol::packets::play::chat::{CChatMessage, CSystemChatMessage};
+use infrarust_protocol::packets::play::chat::CSystemChatMessage;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
 use infrarust_protocol::packets::play::title::{CSetSubtitle, CSetTitle, CSetTitleTimes};
 use infrarust_protocol::packets::Packet;
@@ -17,16 +17,13 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use crate::error::CoreError;
 
 /// Builds a system chat message packet frame.
-/// Pre-1.19: legacy `CChatMessage`. 1.19+: `CSystemChatMessage`.
+///
+/// Encodes the component as JSON for pre-1.20.3 or Network NBT for 1.20.3+.
 pub fn build_system_chat_message(
     component: &Component,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<PacketFrame, CoreError> {
-    if version.less_than(ProtocolVersion::V1_19) {
-        let packet = CChatMessage::system(&component.to_json());
-        return encode_packet(&packet, version, registry);
-    }
     let packet = if version.less_than(ProtocolVersion::V1_20_3) {
         CSystemChatMessage::from_json(&component.to_json(), false)
     } else {
@@ -35,17 +32,14 @@ pub fn build_system_chat_message(
     encode_packet(&packet, version, registry)
 }
 
-/// Builds an action bar packet frame.
-/// Pre-1.19: legacy `CChatMessage`. 1.19+: `CSystemChatMessage`.
+/// Builds an action bar packet frame (system chat with `overlay: true`).
+///
+/// Encodes the component as JSON for pre-1.20.3 or Network NBT for 1.20.3+.
 pub fn build_action_bar(
     component: &Component,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<PacketFrame, CoreError> {
-    if version.less_than(ProtocolVersion::V1_19) {
-        let packet = CChatMessage::action_bar(&component.to_json());
-        return encode_packet(&packet, version, registry);
-    }
     let packet = if version.less_than(ProtocolVersion::V1_20_3) {
         CSystemChatMessage::from_json(&component.to_json(), true)
     } else {
