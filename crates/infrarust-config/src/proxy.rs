@@ -13,6 +13,14 @@ use crate::types::{
     StatusCacheConfig, TelemetryConfig,
 };
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnknownDomainBehavior {
+    #[default]
+    DefaultMotd,
+    Drop,
+}
+
 /// Corresponds to the `infrarust.toml` file.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +82,9 @@ pub struct ProxyConfig {
     /// Present in the TOML even without the `docker` feature compiled.
     #[serde(default)]
     pub docker: Option<DockerProviderConfig>,
+
+    #[serde(default)]
+    pub unknown_domain_behavior: UnknownDomainBehavior,
 
     /// Plugin configurations keyed by plugin ID.
     #[serde(default)]
