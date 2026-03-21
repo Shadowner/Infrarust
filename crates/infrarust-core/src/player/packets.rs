@@ -7,9 +7,11 @@ use bytes::Bytes;
 
 use infrarust_api::types::{Component, TitleData};
 use infrarust_protocol::io::PacketFrame;
-use infrarust_protocol::packets::play::chat::CSystemChatMessage;
+use infrarust_protocol::packets::play::chat::{CChatMessageLegacy, CSystemChatMessage};
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
-use infrarust_protocol::packets::play::title::{CSetSubtitle, CSetTitle, CSetTitleTimes};
+use infrarust_protocol::packets::play::title::{
+    CSetSubtitle, CSetTitle, CSetTitleTimes, CTitleLegacy,
+};
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
@@ -18,12 +20,20 @@ use crate::error::CoreError;
 
 /// Builds a system chat message packet frame.
 ///
-/// Encodes the component as JSON for pre-1.20.3 or Network NBT for 1.20.3+.
+/// Pre-1.19: legacy chat packet with position=1 (system message).
+/// 1.19+: CSystemChatMessage (JSON for pre-1.20.3, NBT for 1.20.3+).
 pub fn build_system_chat_message(
     component: &Component,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<PacketFrame, CoreError> {
+    if version.less_than(ProtocolVersion::V1_19) {
+        let packet = CChatMessageLegacy {
+            content: component.to_json(),
+            position: 1, // system message
+        };
+        return encode_packet(&packet, version, registry);
+    }
     let packet = if version.less_than(ProtocolVersion::V1_20_3) {
         CSystemChatMessage::from_json(&component.to_json(), false)
     } else {
@@ -32,14 +42,27 @@ pub fn build_system_chat_message(
     encode_packet(&packet, version, registry)
 }
 
-/// Builds an action bar packet frame (system chat with `overlay: true`).
+/// Builds an action bar packet frame.
 ///
-/// Encodes the component as JSON for pre-1.20.3 or Network NBT for 1.20.3+.
+/// Pre-1.19: legacy chat packet with position=2 (game info / action bar).
+/// 1.19+: CSystemChatMessage with `overlay: true`.
 pub fn build_action_bar(
     component: &Component,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<PacketFrame, CoreError> {
+    if version.less_than(ProtocolVersion::V1_19) {
+        let position = if version.no_less_than(ProtocolVersion::V1_8) {
+            2
+        } else {
+            1
+        };
+        let packet = CChatMessageLegacy {
+            content: component.to_json(),
+            position,
+        };
+        return encode_packet(&packet, version, registry);
+    }
     let packet = if version.less_than(ProtocolVersion::V1_20_3) {
         CSystemChatMessage::from_json(&component.to_json(), true)
     } else {
@@ -64,14 +87,44 @@ pub fn build_disconnect(
     encode_packet(&packet, version, registry)
 }
 
-/// Builds the three title packets (title text, subtitle text, timing).
+/// Builds the title packets (title text, subtitle text, timing).
 ///
-/// Encodes components as JSON for pre-1.20.3 or Network NBT for 1.20.3+.
+/// Pre-1.8: no title support, returns empty vec.
+/// 1.8–1.16: legacy combined title packet with action discriminator.
+/// 1.17+: separate CSetTitle/CSetSubtitle/CSetTitleTimes packets.
 pub fn build_title_packets(
     title: &TitleData,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<Vec<PacketFrame>, CoreError> {
+    if version.less_than(ProtocolVersion::V1_8) {
+        return Ok(Vec::new());
+    }
+
+    if version.less_than(ProtocolVersion::V1_17) {
+        let mut frames = Vec::with_capacity(3);
+        frames.push(encode_packet(
+            &CTitleLegacy::SetTimes {
+                fade_in: title.fade_in_ticks,
+                stay: title.stay_ticks,
+                fade_out: title.fade_out_ticks,
+            },
+            version,
+            registry,
+        )?);
+        frames.push(encode_packet(
+            &CTitleLegacy::SetSubtitle(title.subtitle.to_json()),
+            version,
+            registry,
+        )?);
+        frames.push(encode_packet(
+            &CTitleLegacy::SetTitle(title.title.to_json()),
+            version,
+            registry,
+        )?);
+        return Ok(frames);
+    }
+
     let mut frames = Vec::with_capacity(3);
 
     // 1. Title times (sent first so they apply before the title shows)

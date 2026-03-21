@@ -90,6 +90,61 @@ impl Packet for CSystemChatMessage {
     }
 }
 
+/// Before 1.19, chat and system messages used a single packet with a
+/// `position` byte to distinguish the display location.
+///
+/// Wire format varies:
+/// - 1.7: JSON String only
+/// - 1.8–1.15: JSON String + position(u8)
+/// - 1.16–1.18: JSON String + position(u8) + sender(UUID)
+#[derive(Debug, Clone)]
+pub struct CChatMessageLegacy {
+    /// JSON text component.
+    pub content: String,
+    /// 0 = chat box, 1 = system message, 2 = game info (action bar).
+    pub position: u8,
+}
+
+impl Packet for CChatMessageLegacy {
+    const NAME: &'static str = "CChatMessageLegacy";
+
+    fn state() -> ConnectionState {
+        ConnectionState::Play
+    }
+
+    fn direction() -> Direction {
+        Direction::Clientbound
+    }
+
+    fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
+        let content = r.read_string()?;
+        let position = if version.no_less_than(ProtocolVersion::V1_8) {
+            r.read_u8()?
+        } else {
+            0
+        };
+        if version.no_less_than(ProtocolVersion::V1_16) {
+            let _ = r.read_uuid()?;
+        }
+        Ok(Self { content, position })
+    }
+
+    fn encode(
+        &self,
+        mut w: &mut (impl std::io::Write + ?Sized),
+        version: ProtocolVersion,
+    ) -> ProtocolResult<()> {
+        w.write_string(&self.content)?;
+        if version.no_less_than(ProtocolVersion::V1_8) {
+            w.write_u8(self.position)?;
+        }
+        if version.no_less_than(ProtocolVersion::V1_16) {
+            w.write_uuid(&uuid::Uuid::nil())?;
+        }
+        Ok(())
+    }
+}
+
 /// Serverbound chat message packet.
 ///
 /// Sent by the client when typing a chat message. Pre-1.19, this is also
@@ -260,5 +315,38 @@ mod tests {
         let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
         assert_eq!(decoded.command, "tp Player1");
         assert_eq!(decoded.remaining, vec![0xFF, 0x00, 0x42]);
+    }
+
+    #[test]
+    fn test_legacy_chat_1_7() {
+        let pkt = CChatMessageLegacy {
+            content: r#"{"text":"Hello"}"#.to_string(),
+            position: 1,
+        };
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_7_2);
+        assert_eq!(decoded.content, r#"{"text":"Hello"}"#);
+        assert_eq!(decoded.position, 0);
+    }
+
+    #[test]
+    fn test_legacy_chat_1_8() {
+        let pkt = CChatMessageLegacy {
+            content: r#"{"text":"Hello"}"#.to_string(),
+            position: 2,
+        };
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_8);
+        assert_eq!(decoded.content, r#"{"text":"Hello"}"#);
+        assert_eq!(decoded.position, 2);
+    }
+
+    #[test]
+    fn test_legacy_chat_1_16() {
+        let pkt = CChatMessageLegacy {
+            content: r#"{"text":"Hello"}"#.to_string(),
+            position: 1,
+        };
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_16);
+        assert_eq!(decoded.content, r#"{"text":"Hello"}"#);
+        assert_eq!(decoded.position, 1);
     }
 }
