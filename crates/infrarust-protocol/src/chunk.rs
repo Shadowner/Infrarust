@@ -166,15 +166,17 @@ fn encode_empty_section(buf: &mut Vec<u8>, version: ProtocolVersion) {
 /// Pre-1.21.5: NBT compound. 1.21.5+: map format.
 fn encode_empty_heightmaps(buf: &mut Vec<u8>, version: ProtocolVersion) {
     if version.less_than(ProtocolVersion::V1_21_5) {
-        encode_empty_heightmaps_nbt(buf);
+        encode_empty_heightmaps_nbt(buf, version);
     } else {
         encode_empty_heightmaps_map(buf);
     }
 }
 
-fn encode_empty_heightmaps_nbt(buf: &mut Vec<u8>) {
+fn encode_empty_heightmaps_nbt(buf: &mut Vec<u8>, version: ProtocolVersion) {
     buf.push(0x0A);                               // TAG_Compound
-    buf.extend_from_slice(&0_u16.to_be_bytes());   // empty name
+    if version.less_than(ProtocolVersion::V1_20_2) {
+        buf.extend_from_slice(&0_u16.to_be_bytes()); // named root 
+    }
     encode_nbt_long_array(buf, "MOTION_BLOCKING", 37);
     encode_nbt_long_array(buf, "WORLD_SURFACE", 37);
     buf.push(0x00);                                // TAG_End
@@ -272,6 +274,24 @@ mod tests {
     fn test_empty_chunk_16_sections_end_1_21_5() {
         let data = encode_empty_chunk_sections(16, ProtocolVersion::V1_21_5);
         assert_eq!(data.len(), 16 * 6, "16 sections * 6 bytes = 96");
+    }
+
+    #[test]
+    fn test_heightmap_nbt_network_format_1_20_2() {
+        let mut buf = Vec::new();
+        encode_empty_heightmaps_nbt(&mut buf, ProtocolVersion::V1_20_2);
+        assert_eq!(buf[0], 0x0A, "must start with TAG_Compound");
+        assert_eq!(buf[1], 0x0C, "1.20.2+ network NBT: no name bytes after TAG_Compound");
+    }
+
+    #[test]
+    fn test_heightmap_nbt_standard_format_pre_1_20_2() {
+        let mut buf = Vec::new();
+        encode_empty_heightmaps_nbt(&mut buf, ProtocolVersion::V1_19_4);
+        assert_eq!(buf[0], 0x0A, "must start with TAG_Compound");
+        assert_eq!(buf[1], 0x00, "pre-1.20.2 standard NBT: name length high byte");
+        assert_eq!(buf[2], 0x00, "pre-1.20.2 standard NBT: name length low byte");
+        assert_eq!(buf[3], 0x0C, "first inner tag after name");
     }
 
     #[test]

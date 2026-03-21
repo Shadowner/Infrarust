@@ -16,6 +16,7 @@ static EMBEDDED_DATA: LazyLock<HashMap<i32, ExtractedRegistryData>> = LazyLock::
     let mut map = HashMap::new();
 
     load_embedded(&mut map, include_bytes!("../../../../data/registry/v774.bin"));
+    load_embedded(&mut map, include_bytes!("../../../../data/registry/v764.bin"));
     map
 });
 
