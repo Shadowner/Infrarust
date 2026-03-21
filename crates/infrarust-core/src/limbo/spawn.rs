@@ -6,6 +6,7 @@
 //! from an existing backend connection.
 
 use bytes::Bytes;
+use infrarust_protocol::codec::{McBufWriteExt, VarInt};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::play::center_chunk::CSetCenterChunk;
 use infrarust_protocol::packets::play::chunk_batch::{CChunkBatchFinished, CChunkBatchStart};
@@ -32,18 +33,30 @@ pub(crate) async fn send_spawn_sequence(
     needs_join_game: bool,
 ) -> Result<(), CoreError> {
     let is_modern = version.no_less_than(ProtocolVersion::V1_20_2);
+    let is_pre_1_16 = version.less_than(ProtocolVersion::V1_16);
 
     if is_modern && needs_join_game {
         send_modern_with_join(client, version, registry).await?;
     } else if is_modern {
         send_modern_switch(client, version, registry).await?;
+    } else if is_pre_1_16 && needs_join_game {
+        send_pre_1_16_with_join(client, version, registry).await?;
+    } else if is_pre_1_16 {
+        send_pre_1_16_switch(client, version, registry).await?;
     } else if needs_join_game {
         send_legacy_with_join(client, version, registry).await?;
     } else {
         send_legacy_switch(client, version, registry).await?;
     }
 
-    send_clear_inventory(client, version).await
+    // Inventory clear uses hardcoded packet IDs that are only valid for 1.16+.
+    // Pre-1.16 has a different wire format; skip it (inventory starts empty on
+    // fresh JoinGame, and adventure mode prevents interaction anyway).
+    if !is_pre_1_16 {
+        send_clear_inventory(client, version).await?;
+    }
+
+    Ok(())
 }
 
 async fn send_modern_with_join(
@@ -63,6 +76,24 @@ async fn send_modern_switch(
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
     send_modern_chunk_setup(client, version, registry).await?;
+    send_player_position(client, version, registry).await
+}
+
+/// Pre-1.16 fresh join: JoinGame + PlayerPosition only.
+async fn send_pre_1_16_with_join(
+    client: &mut ClientBridge,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<(), CoreError> {
+    send_join_game(client, version, registry).await?;
+    send_player_position(client, version, registry).await
+}
+
+async fn send_pre_1_16_switch(
+    client: &mut ClientBridge,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<(), CoreError> {
     send_player_position(client, version, registry).await
 }
 
@@ -110,7 +141,7 @@ async fn send_player_position(
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let pos = limbo_player_position();
+    let pos = limbo_player_position(version);
     let frame = encode_packet(&pos, version, registry)?;
     client.write_frame(&frame).await
 }
@@ -147,10 +178,18 @@ async fn send_modern_chunk_setup(
     client.write_frame(&frame).await
 }
 
-fn limbo_player_position() -> CSynchronizePlayerPosition {
+fn limbo_player_position(version: ProtocolVersion) -> CSynchronizePlayerPosition {
+    // Pre-1.16: y=400 (above old build limit 256, no chunks needed).
+    // 1.16+: y=64 (normal; chunk data is sent).
+    let y = if version.less_than(ProtocolVersion::V1_16) {
+        400.0
+    } else {
+        64.0
+    };
+
     CSynchronizePlayerPosition {
         x: 0.0,
-        y: 64.0,
+        y,
         z: 0.0,
         delta_x: 0.0,
         delta_y: 0.0,
@@ -163,9 +202,19 @@ fn limbo_player_position() -> CSynchronizePlayerPosition {
 }
 
 fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGame, CoreError> {
+    if version.less_than(ProtocolVersion::V1_16) {
+        let raw_payload = build_pre_1_16_join_game_payload(version)?;
+        return Ok(CJoinGame {
+            entity_id: 0,
+            raw_payload: Some(raw_payload),
+            ..Default::default()
+        });
+    }
+
     if version.less_than(ProtocolVersion::V1_20_2) {
         return Err(CoreError::Other(
-            "limbo JoinGame construction for pre-1.20.2 is not yet implemented".to_string(),
+            "limbo JoinGame construction for 1.16\u{2013}1.20.1 is not yet implemented"
+                .to_string(),
         ));
     }
 
@@ -193,6 +242,72 @@ fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGame, CoreErro
         death_position: None,
         raw_payload: None,
     })
+}
+
+/// Builds the JoinGame raw payload (everything after `entity_id`) for pre-1.16.
+///
+/// - 1.7: gamemode(u8) dimension(i8) difficulty(u8) max_players(u8) level_type(String)
+/// - 1.8: + reduced_debug_info(bool)
+/// - 1.9–1.13: dimension becomes i32
+/// - 1.14: no difficulty, max_players is VarInt, + view_distance(VarInt)
+/// - 1.15: + hashed_seed(i64), max_players back to u8, + enable_respawn_screen(bool)
+fn build_pre_1_16_join_game_payload(
+    version: ProtocolVersion,
+) -> Result<Vec<u8>, CoreError> {
+    let mut buf = Vec::with_capacity(32);
+
+    // gamemode always u8, adventure mode (2)
+    buf.write_u8(2)?;
+
+    // dimension — The End (1)
+    if version.less_than(ProtocolVersion::V1_9) {
+        // 1.7–1.8: dimension as i8
+        buf.write_i8(1)?;
+    } else {
+        // 1.9+: dimension as i32
+        buf.write_i32_be(1)?;
+    }
+
+    // difficulty removed in 1.14
+    if version.less_than(ProtocolVersion::V1_14) {
+        buf.write_u8(0)?; // peaceful
+    }
+
+    // hashed_seed added in 1.15 (between difficulty removal and max_players)
+    if version.no_less_than(ProtocolVersion::V1_15) {
+        buf.write_i64_be(0)?;
+    }
+
+    // max_players
+    if version.no_less_than(ProtocolVersion::V1_14)
+        && version.less_than(ProtocolVersion::V1_15)
+    {
+        // 1.14 only: VarInt
+        buf.write_var_int(&VarInt(1))?;
+    } else {
+        // 1.7–1.13 and 1.15: u8
+        buf.write_u8(1)?;
+    }
+
+    // level_type
+    buf.write_string("default")?;
+
+    // view_distance added in 1.14
+    if version.no_less_than(ProtocolVersion::V1_14) {
+        buf.write_var_int(&VarInt(2))?;
+    }
+
+    // reduced_debug_info added in 1.8
+    if version.no_less_than(ProtocolVersion::V1_8) {
+        buf.write_bool(false)?;
+    }
+
+    // enable_respawn_screen added in 1.15
+    if version.no_less_than(ProtocolVersion::V1_15) {
+        buf.write_bool(false)?;
+    }
+
+    Ok(buf)
 }
 
 /// Raw CSetContainerContent: window 0, 46 empty slots.
@@ -224,5 +339,86 @@ fn container_set_content_packet_id(version: ProtocolVersion) -> i32 {
         0x12
     } else {
         0x13
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    #[test]
+    fn test_pre_1_16_join_game_v1_7() {
+        let result = build_limbo_join_game(ProtocolVersion::V1_7_2);
+        assert!(result.is_ok(), "JoinGame 1.7 should build: {:?}", result.err());
+        let pkt = result.unwrap();
+        assert_eq!(pkt.entity_id, 0);
+        let raw = pkt.raw_payload.expect("should have raw_payload");
+        assert_eq!(raw.len(), 12);
+    }
+
+    #[test]
+    fn test_pre_1_16_join_game_v1_8() {
+        let result = build_limbo_join_game(ProtocolVersion::V1_8);
+        assert!(result.is_ok(), "JoinGame 1.8 should build: {:?}", result.err());
+        let pkt = result.unwrap();
+        let raw = pkt.raw_payload.expect("should have raw_payload");
+        assert_eq!(raw.len(), 13);
+    }
+
+    #[test]
+    fn test_pre_1_16_join_game_v1_9() {
+        let result = build_limbo_join_game(ProtocolVersion::V1_9);
+        assert!(result.is_ok(), "JoinGame 1.9 should build: {:?}", result.err());
+        let pkt = result.unwrap();
+        let raw = pkt.raw_payload.expect("should have raw_payload");
+        assert_eq!(raw.len(), 16);
+    }
+
+    #[test]
+    fn test_pre_1_16_join_game_v1_14() {
+        let result = build_limbo_join_game(ProtocolVersion::V1_14);
+        assert!(result.is_ok(), "JoinGame 1.14 should build: {:?}", result.err());
+        let pkt = result.unwrap();
+        let raw = pkt.raw_payload.expect("should have raw_payload");
+        assert_eq!(raw.len(), 16);
+    }
+
+    #[test]
+    fn test_pre_1_16_join_game_v1_15() {
+        let result = build_limbo_join_game(ProtocolVersion::V1_15);
+        assert!(result.is_ok(), "JoinGame 1.15 should build: {:?}", result.err());
+        let pkt = result.unwrap();
+        let raw = pkt.raw_payload.expect("should have raw_payload");
+        assert_eq!(raw.len(), 25);
+    }
+
+    #[test]
+    fn test_join_game_1_16_to_1_20_1_still_errors() {
+        for version in [ProtocolVersion::V1_16, ProtocolVersion::V1_19, ProtocolVersion::V1_20] {
+            let result = build_limbo_join_game(version);
+            assert!(result.is_err(), "version {:?} should error", version);
+        }
+    }
+
+    #[test]
+    fn test_join_game_1_20_2_plus_ok() {
+        for version in [ProtocolVersion::V1_20_2, ProtocolVersion::V1_21, ProtocolVersion::V1_21_5] {
+            let result = build_limbo_join_game(version);
+            assert!(result.is_ok(), "version {:?} should succeed: {:?}", version, result.err());
+            assert!(result.unwrap().raw_payload.is_none());
+        }
+    }
+
+    #[test]
+    fn test_player_position_y_pre_1_16() {
+        let pos = limbo_player_position(ProtocolVersion::V1_8);
+        assert!((pos.y - 400.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_player_position_y_post_1_16() {
+        let pos = limbo_player_position(ProtocolVersion::V1_21);
+        assert!((pos.y - 64.0).abs() < f64::EPSILON);
     }
 }
