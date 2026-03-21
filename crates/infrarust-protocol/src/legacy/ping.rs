@@ -40,12 +40,12 @@ pub struct LegacyPingResponse {
 }
 
 /// Encodes a Rust string into UTF-16 Big-Endian bytes.
-fn encode_utf16be(s: &str) -> Vec<u8> {
+pub(crate) fn encode_utf16be(s: &str) -> Vec<u8> {
     s.encode_utf16().flat_map(u16::to_be_bytes).collect()
 }
 
 /// Decodes UTF-16 Big-Endian bytes into a Rust string.
-fn decode_utf16be(data: &[u8]) -> ProtocolResult<String> {
+pub(crate) fn decode_utf16be(data: &[u8]) -> ProtocolResult<String> {
     if !data.len().is_multiple_of(2) {
         return Err(ProtocolError::invalid("UTF-16BE data has odd length"));
     }
@@ -59,7 +59,7 @@ fn decode_utf16be(data: &[u8]) -> ProtocolResult<String> {
 /// Builds a legacy kick packet from a payload string.
 ///
 /// Format: `0xFF` + `u16 BE` (string length in UTF-16 code units) + UTF-16BE payload.
-fn build_kick_packet(payload: &str) -> ProtocolResult<Vec<u8>> {
+pub(crate) fn build_kick_packet(payload: &str) -> ProtocolResult<Vec<u8>> {
     let encoded = encode_utf16be(payload);
     let code_unit_count = encoded.len() / 2;
     if code_unit_count > usize::from(u16::MAX) {
