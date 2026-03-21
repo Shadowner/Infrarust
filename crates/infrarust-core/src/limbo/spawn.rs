@@ -10,12 +10,16 @@ use infrarust_protocol::codec::{McBufWriteExt, VarInt};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::play::center_chunk::CSetCenterChunk;
 use infrarust_protocol::packets::play::chunk_batch::{CChunkBatchFinished, CChunkBatchStart};
+use infrarust_protocol::packets::play::dimension::DimensionInfo;
 use infrarust_protocol::packets::play::game_event::{CGameEvent, START_WAITING_CHUNKS};
 use infrarust_protocol::packets::play::join_game::CJoinGame;
 use infrarust_protocol::packets::play::player_position::CSynchronizePlayerPosition;
+use infrarust_protocol::packets::play::respawn::CRespawn;
+use infrarust_protocol::packets::play::respawn_switch;
 use infrarust_protocol::packets::play::spawn_position::CSetDefaultSpawnPosition;
+use infrarust_protocol::packets::Packet;
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::ProtocolVersion;
+use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use infrarust_protocol::chunk::build_chunk_data_frame;
 use crate::error::CoreError;
@@ -25,6 +29,7 @@ use crate::session::client_bridge::ClientBridge;
 const LIMBO_DIMENSION_NAME: &str = "minecraft:the_end";
 const LIMBO_DIMENSION_ID: i32 = 2;
 const LIMBO_NUM_SECTIONS: usize = 16;
+const LIMBO_DIM: DimensionInfo = DimensionInfo::Legacy(1);
 
 pub(crate) async fn send_spawn_sequence(
     client: &mut ClientBridge,
@@ -79,14 +84,22 @@ async fn send_modern_switch(
     send_player_position(client, version, registry).await
 }
 
-/// Pre-1.16 fresh join: JoinGame + PlayerPosition only.
+/// Pre-1.16 fresh join: JoinGame + double-Respawn trick + PlayerPosition + Chunk.
+///
+/// The double-Respawn forces the client to reload the world (dimension change
+/// to Overworld then back to The End). Without it, the client stays stuck on
+/// "Loading terrain". The chunk at (0,0) is also sent so the client has at
+/// least one column loaded.
 async fn send_pre_1_16_with_join(
     client: &mut ClientBridge,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
     send_join_game(client, version, registry).await?;
-    send_player_position(client, version, registry).await
+    send_limbo_respawn(client, &DimensionInfo::Legacy(0), version, registry).await?;
+    send_limbo_respawn(client, &LIMBO_DIM, version, registry).await?;
+    send_player_position(client, version, registry).await?;
+    send_chunk(client, version, registry).await
 }
 
 async fn send_pre_1_16_switch(
@@ -94,7 +107,10 @@ async fn send_pre_1_16_switch(
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    send_player_position(client, version, registry).await
+    send_limbo_respawn(client, &DimensionInfo::Legacy(0), version, registry).await?;
+    send_limbo_respawn(client, &LIMBO_DIM, version, registry).await?;
+    send_player_position(client, version, registry).await?;
+    send_chunk(client, version, registry).await
 }
 
 async fn send_legacy_with_join(
@@ -152,6 +168,27 @@ async fn send_chunk(
     _registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
     let frame = build_chunk_data_frame(0, 0, LIMBO_NUM_SECTIONS, version)?;
+    client.write_frame(&frame).await
+}
+
+async fn send_limbo_respawn(
+    client: &mut ClientBridge,
+    dimension: &DimensionInfo,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<(), CoreError> {
+    let respawn = respawn_switch::for_switch(dimension, version);
+    let packet_id = registry
+        .get_packet_id::<CRespawn>(ConnectionState::Play, Direction::Clientbound, version)
+        .ok_or_else(|| CoreError::Other("no Respawn packet ID".to_string()))?;
+
+    let mut payload = Vec::new();
+    respawn.encode(&mut payload, version)?;
+
+    let frame = PacketFrame {
+        id: packet_id,
+        payload: payload.into(),
+    };
     client.write_frame(&frame).await
 }
 
