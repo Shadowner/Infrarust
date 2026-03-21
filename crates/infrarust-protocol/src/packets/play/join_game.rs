@@ -161,7 +161,11 @@ fn decode_1_20_2_up(
     let (death_dimension, death_position) = super::common::decode_death_location(r)?;
     let (portal_cooldown, sea_level) = super::common::decode_world_info(r, version)?;
 
-    let enforces_secure_chat = r.read_bool()?;
+    let enforces_secure_chat = if version.no_less_than(ProtocolVersion::V1_20_5) {
+        r.read_bool()?
+    } else {
+        false
+    };
 
     Ok(CJoinGame {
         entity_id,
@@ -229,7 +233,9 @@ fn encode_1_20_2_up(
     super::common::encode_death_location(w, pkt.death_dimension.as_deref(), pkt.death_position)?;
     super::common::encode_world_info(w, pkt.portal_cooldown, pkt.sea_level, version)?;
 
-    w.write_bool(pkt.enforces_secure_chat)?;
+    if version.no_less_than(ProtocolVersion::V1_20_5) {
+        w.write_bool(pkt.enforces_secure_chat)?;
+    }
 
     Ok(())
 }
@@ -288,6 +294,52 @@ mod tests {
         assert_eq!(decoded.hashed_seed, 123_456_789);
         assert_eq!(decoded.portal_cooldown, 20);
         assert!(decoded.enforces_secure_chat);
+        assert!(decoded.raw_payload.is_none());
+    }
+
+    #[test]
+    fn test_join_game_round_trip_1_20_2() {
+        let pkt = CJoinGame {
+            entity_id: 42,
+            is_hardcore: true,
+            gamemode: 1,
+            previous_gamemode: 0,
+            max_players: 100,
+            view_distance: 16,
+            simulation_distance: 12,
+            reduced_debug_info: false,
+            enable_respawn_screen: true,
+            do_limited_crafting: false,
+            level_names: vec![
+                "minecraft:overworld".to_string(),
+                "minecraft:the_nether".to_string(),
+            ],
+            level_name: "minecraft:overworld".to_string(),
+            hashed_seed: 123_456_789,
+            is_debug: false,
+            is_flat: false,
+            dimension: 0,
+            portal_cooldown: 20,
+            sea_level: 63,
+            enforces_secure_chat: true, // intentionally true to verify it is NOT encoded
+            death_dimension: None,
+            death_position: None,
+            raw_payload: None,
+        };
+        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_20_2);
+        assert_eq!(decoded.entity_id, 42);
+        assert!(decoded.is_hardcore);
+        assert_eq!(decoded.gamemode, 1);
+        assert_eq!(decoded.previous_gamemode, 0);
+        assert_eq!(decoded.max_players, 100);
+        assert_eq!(decoded.view_distance, 16);
+        assert_eq!(decoded.simulation_distance, 12);
+        assert!(decoded.enable_respawn_screen);
+        assert_eq!(decoded.level_names.len(), 2);
+        assert_eq!(decoded.level_name, "minecraft:overworld");
+        assert_eq!(decoded.hashed_seed, 123_456_789);
+        assert_eq!(decoded.portal_cooldown, 20);
+        assert!(!decoded.enforces_secure_chat);
         assert!(decoded.raw_payload.is_none());
     }
 
