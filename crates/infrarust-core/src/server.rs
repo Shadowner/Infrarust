@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use infrarust_config::{ProxyConfig, ProxyMode};
+use infrarust_config::{ProxyConfig, ProxyMode, UnknownDomainBehavior};
 use infrarust_protocol::build_default_registry;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
@@ -57,6 +57,7 @@ pub struct ProxyServer {
     offline_handler: InterceptedHandler,
     client_only_handler: InterceptedHandler,
     services: ProxyServices,
+    unknown_domain_behavior: UnknownDomainBehavior,
     shutdown: CancellationToken,
 }
 
@@ -285,6 +286,7 @@ impl ProxyServer {
             offline_handler,
             client_only_handler,
             services,
+            unknown_domain_behavior: config.unknown_domain_behavior,
             shutdown,
         })
     }
@@ -412,6 +414,10 @@ impl ProxyServer {
                 return Ok(());
             }
             MiddlewareResult::Reject(msg) => {
+                if self.unknown_domain_behavior == UnknownDomainBehavior::Drop {
+                    tracing::debug!("dropping connection: {msg}");
+                    return Ok(());
+                }
                 let is_status = ctx
                     .extensions
                     .get::<HandshakeData>()

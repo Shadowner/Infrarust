@@ -13,7 +13,7 @@ pub mod validation;
 pub use domain::DomainIndex;
 pub use error::ConfigError;
 pub use provider::{ConfigChange, ConfigProvider};
-pub use proxy::ProxyConfig;
+pub use proxy::{ProxyConfig, UnknownDomainBehavior};
 pub use server::ServerConfig;
 pub use types::*;
 pub use validation::{validate_proxy_config, validate_server_config, validate_server_configs};
