@@ -434,7 +434,20 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x18, ProtocolVersion::V1_21_5, true)
     .register(&mut registry);
 
-    // SystemChatMessage Clientbound (encode-only: proxy doesn't intercept)
+    // Legacy Chat Message Clientbound (pre-1.19, encode-only)
+    PacketRegistration::<crate::packets::CChatMessageLegacy>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x02, ProtocolVersion::V1_7_2, true)
+    .map(0x0F, ProtocolVersion::V1_9, true)
+    .map(0x0E, ProtocolVersion::V1_13, true)
+    .map(0x0F, ProtocolVersion::V1_15, true)
+    .map(0x0E, ProtocolVersion::V1_16, true)
+    .map(0x0F, ProtocolVersion::V1_17, true)
+    .register(&mut registry);
+
+    // SystemChatMessage Clientbound (1.19+, encode-only: proxy doesn't intercept)
     PacketRegistration::<crate::packets::CSystemChatMessage>::new(
         ConnectionState::Play,
         Direction::Clientbound,
@@ -451,7 +464,21 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x77, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
 
-    // SetTitle Clientbound (encode-only: injected by plugin system)
+    // Legacy Title Clientbound (pre-1.17, 1.8+, encode-only)
+    PacketRegistration::<crate::packets::CTitleLegacy>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x45, ProtocolVersion::V1_8, true)
+    .map(0x47, ProtocolVersion::V1_9, true)
+    .map(0x48, ProtocolVersion::V1_12, true)
+    .map(0x4B, ProtocolVersion::V1_13, true)
+    .map(0x4F, ProtocolVersion::V1_14, true)
+    .map(0x50, ProtocolVersion::V1_15, true)
+    .map(0x4F, ProtocolVersion::V1_16, true)
+    .register(&mut registry);
+
+    // SetTitle Clientbound (1.17+, encode-only: injected by plugin system)
     PacketRegistration::<crate::packets::CSetTitle>::new(
         ConnectionState::Play,
         Direction::Clientbound,

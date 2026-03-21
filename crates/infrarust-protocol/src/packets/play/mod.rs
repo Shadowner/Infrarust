@@ -18,7 +18,7 @@ pub mod title;
 pub mod transfer;
 
 pub use center_chunk::CSetCenterChunk;
-pub use chat::{CSystemChatMessage, SChatCommand, SChatMessage};
+pub use chat::{CChatMessageLegacy, CSystemChatMessage, SChatCommand, SChatMessage};
 pub use chat_session::SChatSessionUpdate;
 pub use chunk_batch::{CChunkBatchFinished, CChunkBatchStart};
 pub use dimension::{DimensionInfo, extract_dimension_from_join_game};
@@ -31,5 +31,5 @@ pub use plugin_message::{CPluginMessage, SPluginMessage};
 pub use respawn::CRespawn;
 pub use spawn_position::CSetDefaultSpawnPosition;
 pub use start_configuration::{CStartConfiguration, SAcknowledgeConfiguration};
-pub use title::{CSetSubtitle, CSetTitle, CSetTitleTimes};
+pub use title::{CTitleLegacy, CSetSubtitle, CSetTitle, CSetTitleTimes};
 pub use transfer::CTransfer;
