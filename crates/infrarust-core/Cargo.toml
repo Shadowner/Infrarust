@@ -38,6 +38,7 @@ serde = { workspace = true }
 toml = { workspace = true }
 reqwest = { workspace = true }
 wildmatch = "2.6"
+flate2 = "1.1.9"
 
 # Docker provider (optional)
 bollard = { version = "0.18", optional = true }
@@ -55,6 +56,9 @@ sha1 = "0.10"
 rand = "0.8"
 num-bigint = "0.4"
 base64 = "0.22"
+
+[build-dependencies]
+flate2 = "1.1.9"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
