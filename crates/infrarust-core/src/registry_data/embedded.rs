@@ -20,6 +20,7 @@ static EMBEDDED_DATA: LazyLock<HashMap<i32, ExtractedRegistryData>> = LazyLock::
         load_embedded(&mut map, bin);
     }
     map
+    
 });
 
 fn load_embedded(map: &mut HashMap<i32, ExtractedRegistryData>, data: &[u8]) {

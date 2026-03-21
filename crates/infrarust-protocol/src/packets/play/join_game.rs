@@ -220,7 +220,7 @@ fn encode_1_20_2_up(
         w.write_var_int(&VarInt(pkt.dimension))?;
     } else {
         // 1.20.2–1.21.1: dimension as String identifier
-        w.write_string("minecraft:overworld")?;
+        w.write_string(&pkt.level_name)?;
     }
 
     w.write_string(&pkt.level_name)?;
