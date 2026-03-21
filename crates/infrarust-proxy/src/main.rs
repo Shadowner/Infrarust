@@ -15,6 +15,7 @@ use tracing_subscriber::EnvFilter;
 use infrarust_api::events::proxy::{ProxyInitializeEvent, ProxyShutdownEvent};
 use infrarust_config::ProxyConfig;
 use infrarust_core::plugin::manager::{PluginManager, PluginServices};
+use infrarust_core::telemetry::formatter::InfrarustFormatter;
 use infrarust_core::server::ProxyServer;
 use infrarust_core::services::ban_bridge::BanServiceBridge;
 use infrarust_core::services::config_service::ConfigServiceImpl;
@@ -57,6 +58,8 @@ fn main() -> ExitCode {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
 
+    let formatter = InfrarustFormatter::new();
+
     #[cfg(feature = "telemetry")]
     let _otel_guard = {
         use tracing_subscriber::layer::SubscriberExt;
@@ -71,7 +74,10 @@ fn main() -> ExitCode {
 
                         tracing_subscriber::registry()
                             .with(filter)
-                            .with(tracing_subscriber::fmt::layer().with_target(true))
+                            .with(
+                                tracing_subscriber::fmt::layer()
+                                    .event_format(formatter),
+                            )
                             .with(otel_layer)
                             .init();
                         Some(guard)
@@ -79,8 +85,8 @@ fn main() -> ExitCode {
                     Err(e) => {
                         // Fall back to fmt-only subscriber
                         tracing_subscriber::fmt()
+                            .event_format(formatter)
                             .with_env_filter(filter)
-                            .with_target(true)
                             .init();
                         tracing::warn!(
                             "failed to initialize OpenTelemetry: {e}, continuing without telemetry"
@@ -90,15 +96,15 @@ fn main() -> ExitCode {
                 }
             } else {
                 tracing_subscriber::fmt()
+                    .event_format(formatter)
                     .with_env_filter(filter)
-                    .with_target(true)
                     .init();
                 None
             }
         } else {
             tracing_subscriber::fmt()
+                .event_format(formatter)
                 .with_env_filter(filter)
-                .with_target(true)
                 .init();
             None
         }
@@ -106,9 +112,11 @@ fn main() -> ExitCode {
 
     #[cfg(not(feature = "telemetry"))]
     tracing_subscriber::fmt()
+        .event_format(formatter)
         .with_env_filter(filter)
-        .with_target(true)
         .init();
+
+    infrarust_core::telemetry::formatter::print_banner();
 
     tracing::info!(
         bind = %config.bind,
@@ -227,8 +235,33 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
             .register(std::sync::Arc::from(handler));
     }
 
+    // Clone Arcs for console before releasing the immutable borrow on `server`
+    let console_player_registry = Arc::clone(&services.player_registry);
+    let console_connection_registry = Arc::clone(&services.connection_registry);
+    let console_ban_manager = Arc::clone(&services.ban_manager);
+    let console_server_manager = services.server_manager.clone();
+    let console_domain_router = Arc::clone(&services.domain_router);
+
     // Rebuild transport filter chain now that plugins may have registered filters
     server.rebuild_transport_filter_chain(&transport_filter_registry);
+
+    // Wrap PluginManager in Arc<RwLock> for shared read access from console
+    let plugin_manager = Arc::new(tokio::sync::RwLock::new(plugin_manager));
+
+    // Start interactive console
+    let console_services = Arc::new(infrarust_core::console::ConsoleServices::new(
+        console_player_registry,
+        console_connection_registry,
+        console_ban_manager,
+        console_server_manager,
+        Arc::new(ConfigServiceImpl::new(console_domain_router)),
+        Arc::clone(&plugin_manager),
+        shutdown.clone(),
+        std::time::Instant::now(),
+    ));
+
+    let console_task = infrarust_core::console::ConsoleTask::new(console_services);
+    let console_handle = tokio::spawn(console_task.run());
 
     tracing::info!("infrarust is ready, accepting connections");
 
@@ -241,7 +274,9 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         .await
         .context("proxy server error")?;
 
-    plugin_manager.shutdown().await;
+    console_handle.abort();
+
+    plugin_manager.write().await.shutdown().await;
 
     server.event_bus().fire(ProxyShutdownEvent).await;
 

@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod ban;
+pub mod console;
 pub mod error;
 pub mod event_bus;
 pub mod filter;

@@ -20,7 +20,7 @@ members = [
 ]
 
 [workspace.dependencies]
-tokio = { version = "1", features = ["net", "io-util", "sync", "time", "macros", "rt", "rt-multi-thread", "signal", "process", "fs"] }
+tokio = { version = "1", features = ["net", "io-util", "io-std", "sync", "time", "macros", "rt", "rt-multi-thread", "signal", "process", "fs"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
@@ -39,6 +39,10 @@ dashmap = "6"
 governor = "0.10.4"
 nonzero_ext = "0.3"
 toml = "0.8"
+comfy-table = { version = "7", features = ["tty"] }
+console = "0.16"
+minus = { version = "5", features = ["static_output"] }
+humantime = "2"
 
 # Internal crates
 infrarust-protocol = { path = "crates/infrarust-protocol" }
