@@ -23,8 +23,18 @@ static EMBEDDED_DATA: LazyLock<HashMap<i32, ExtractedRegistryData>> = LazyLock::
     
 });
 
-fn load_embedded(map: &mut HashMap<i32, ExtractedRegistryData>, data: &[u8]) {
-    match ExtractedRegistryData::from_binary(data) {
+fn load_embedded(map: &mut HashMap<i32, ExtractedRegistryData>, compressed: &[u8]) {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+
+    let mut decoder = GzDecoder::new(compressed);
+    let mut decompressed = Vec::new();
+    if let Err(e) = decoder.read_to_end(&mut decompressed) {
+        tracing::error!("Failed to decompress embedded registry data: {e}");
+        return;
+    }
+
+    match ExtractedRegistryData::from_binary(&decompressed) {
         Ok(extracted) => {
             map.insert(extracted.protocol_version, extracted);
         }
