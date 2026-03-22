@@ -374,6 +374,147 @@ impl fmt::Display for Component {
     }
 }
 
+/// Maps a Minecraft `&` format code character to its color name.
+fn legacy_color_name(c: char) -> Option<&'static str> {
+    match c {
+        '0' => Some("black"),
+        '1' => Some("dark_blue"),
+        '2' => Some("dark_green"),
+        '3' => Some("dark_aqua"),
+        '4' => Some("dark_red"),
+        '5' => Some("dark_purple"),
+        '6' => Some("gold"),
+        '7' => Some("gray"),
+        '8' => Some("dark_gray"),
+        '9' => Some("blue"),
+        'a' => Some("green"),
+        'b' => Some("aqua"),
+        'c' => Some("red"),
+        'd' => Some("light_purple"),
+        'e' => Some("yellow"),
+        'f' => Some("white"),
+        _ => None,
+    }
+}
+
+/// Accumulated formatting state while parsing legacy `&` codes.
+#[derive(Clone)]
+struct LegacyFmt {
+    color: Option<&'static str>,
+    bold: bool,
+    italic: bool,
+    underlined: bool,
+}
+
+impl LegacyFmt {
+    fn new() -> Self {
+        Self { color: None, bold: false, italic: false, underlined: false }
+    }
+
+    fn apply(&self, text: &str) -> Component {
+        let mut c = Component::text(text);
+        if let Some(color) = self.color { c = c.color(color); }
+        if self.bold { c = c.bold(); }
+        if self.italic { c = c.italic(); }
+        if self.underlined { c = c.underlined(); }
+        c
+    }
+}
+
+impl Component {
+    /// Parses Minecraft legacy `&` color and format codes into a [`Component`] tree.
+    ///
+    /// Supports color codes `&0`–`&f`, formatting codes `&l` (bold),
+    /// `&o` (italic), `&n` (underlined), and `&r` (reset).
+    ///
+    /// # Example
+    /// ```
+    /// use infrarust_api::types::Component;
+    ///
+    /// let c = Component::from_legacy("&aGreen &cRed");
+    /// assert_eq!(c.color.as_deref(), Some("green"));
+    /// assert_eq!(c.extra[0].color.as_deref(), Some("red"));
+    /// ```
+    #[must_use]
+    pub fn from_legacy(text: &str) -> Self {
+        let mut parts: Vec<Self> = Vec::new();
+        let mut segment = String::new();
+        let mut fmt = LegacyFmt::new();
+        let mut chars = text.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '&' {
+                if let Some(&code) = chars.peek() {
+                    let is_format_code = matches!(code, 'l' | 'o' | 'n' | 'r')
+                        || legacy_color_name(code).is_some();
+
+                    if is_format_code {
+                        chars.next();
+
+                        if !segment.is_empty() {
+                            parts.push(fmt.apply(&segment));
+                            segment.clear();
+                        }
+
+                        match code {
+                            'l' => fmt.bold = true,
+                            'o' => fmt.italic = true,
+                            'n' => fmt.underlined = true,
+                            'r' => fmt = LegacyFmt::new(),
+                            c => fmt.color = legacy_color_name(c),
+                        }
+                        continue;
+                    }
+                }
+                segment.push('&');
+            } else {
+                segment.push(ch);
+            }
+        }
+
+        if !segment.is_empty() {
+            parts.push(fmt.apply(&segment));
+        }
+
+        match parts.len() {
+            0 => Self::text(""),
+            1 => parts.remove(0),
+            _ => {
+                let mut root = parts.remove(0);
+                for part in parts {
+                    root = root.append(part);
+                }
+                root
+            }
+        }
+    }
+
+    /// Convenience: replaces `{key}` placeholders, then parses legacy color codes.
+    #[must_use]
+    pub fn from_legacy_format(template: &str, vars: &[(&str, &str)]) -> Self {
+        Self::from_legacy(&format_placeholders(template, vars))
+    }
+}
+
+/// Replaces `{key}` placeholders in a template string.
+///
+/// Each `(key, value)` pair replaces all occurrences of `{key}` with `value`.
+///
+/// # Example
+/// ```
+/// use infrarust_api::types::format_placeholders;
+///
+/// let msg = format_placeholders("{count} waiting for {server}", &[("count", "3"), ("server", "survival")]);
+/// assert_eq!(msg, "3 waiting for survival");
+/// ```
+pub fn format_placeholders(template: &str, vars: &[(&str, &str)]) -> String {
+    let mut result = template.to_string();
+    for (key, value) in vars {
+        result = result.replace(&format!("{{{key}}}"), value);
+    }
+    result
+}
+
 /// Data for a title display (title + subtitle + timing).
 ///
 /// # Example
@@ -604,5 +745,91 @@ mod tests {
             | ClickEvent::CopyToClipboard(_)
             | _ => {}
         }
+    }
+
+    #[test]
+    fn from_legacy_plain_text() {
+        let c = Component::from_legacy("Hello world");
+        assert_eq!(c.text, "Hello world");
+        assert!(c.color.is_none());
+    }
+
+    #[test]
+    fn from_legacy_single_color() {
+        let c = Component::from_legacy("&aGreen text");
+        assert_eq!(c.text, "Green text");
+        assert_eq!(c.color.as_deref(), Some("green"));
+    }
+
+    #[test]
+    fn from_legacy_multiple_segments() {
+        let c = Component::from_legacy("&aGreen &cRed");
+        assert_eq!(c.text, "Green ");
+        assert_eq!(c.color.as_deref(), Some("green"));
+        assert_eq!(c.extra.len(), 1);
+        assert_eq!(c.extra[0].text, "Red");
+        assert_eq!(c.extra[0].color.as_deref(), Some("red"));
+    }
+
+    #[test]
+    fn from_legacy_bold() {
+        let c = Component::from_legacy("&lBold text");
+        assert_eq!(c.text, "Bold text");
+        assert_eq!(c.bold, Some(true));
+    }
+
+    #[test]
+    fn from_legacy_reset() {
+        let c = Component::from_legacy("&c&lBold Red &rPlain");
+        assert_eq!(c.color.as_deref(), Some("red"));
+        assert_eq!(c.bold, Some(true));
+        assert_eq!(c.extra[0].text, "Plain");
+        assert!(c.extra[0].color.is_none());
+        assert!(c.extra[0].bold.is_none());
+    }
+
+    #[test]
+    fn from_legacy_unknown_code() {
+        let c = Component::from_legacy("&zUnknown");
+        assert_eq!(c.text, "&zUnknown");
+    }
+
+    #[test]
+    fn from_legacy_trailing_ampersand() {
+        let c = Component::from_legacy("end&");
+        assert_eq!(c.text, "end&");
+    }
+
+    #[test]
+    fn from_legacy_empty() {
+        let c = Component::from_legacy("");
+        assert_eq!(c.text, "");
+    }
+
+    #[test]
+    fn format_placeholders_basic() {
+        let msg = format_placeholders("{count} waiting for {server}", &[
+            ("count", "3"),
+            ("server", "survival"),
+        ]);
+        assert_eq!(msg, "3 waiting for survival");
+    }
+
+    #[test]
+    fn format_placeholders_missing_key() {
+        let msg = format_placeholders("Hello {name}", &[("other", "value")]);
+        assert_eq!(msg, "Hello {name}");
+    }
+
+    #[test]
+    fn from_legacy_format_combined() {
+        let c = Component::from_legacy_format("&e{server} starting&f{dots}", &[
+            ("server", "survival"),
+            ("dots", "..."),
+        ]);
+        assert_eq!(c.text, "survival starting");
+        assert_eq!(c.color.as_deref(), Some("yellow"));
+        assert_eq!(c.extra[0].text, "...");
+        assert_eq!(c.extra[0].color.as_deref(), Some("white"));
     }
 }

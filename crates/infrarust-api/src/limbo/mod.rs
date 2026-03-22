@@ -9,9 +9,11 @@
 //! - [`HandlerResult`] — the outcome of a limbo handler action.
 
 pub mod context;
+pub mod handle;
 pub mod handler;
 pub mod session;
 
 pub use context::LimboEntryContext;
+pub use handle::SessionHandle;
 pub use handler::{HandlerResult, LimboHandler};
 pub use session::LimboSession;

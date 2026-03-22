@@ -4,6 +4,7 @@ use crate::error::PlayerError;
 use crate::types::{Component, GameProfile, PlayerId, TitleData};
 
 use super::context::LimboEntryContext;
+use super::handle::SessionHandle;
 use super::handler::HandlerResult;
 
 pub mod private {
@@ -50,4 +51,10 @@ pub trait LimboSession: Send + Sync + private::Sealed {
     /// Call this when the handler returned [`HandlerResult::Hold`] and
     /// is now ready to release the player.
     fn complete(&self, result: HandlerResult);
+
+    /// Returns a cloneable, `'static` handle to this session.
+    ///
+    /// The handle can be stored in shared state (`DashMap`, `Arc<..>`),
+    /// captured in `tokio::spawn` closures, or passed to event-listener
+    fn handle(&self) -> SessionHandle;
 }

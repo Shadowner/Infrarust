@@ -3,12 +3,13 @@
 //! Bridges the API-level [`LimboSession`] trait to concrete packet encoding
 //! and an mpsc channel that the limbo engine loop drains.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
 use tokio::sync::{mpsc, watch};
 
 use infrarust_api::error::PlayerError;
 use infrarust_api::limbo::context::LimboEntryContext;
+use infrarust_api::limbo::handle::SessionHandle;
 use infrarust_api::limbo::handler::HandlerResult;
 use infrarust_api::limbo::session::{LimboSession, private};
 use infrarust_api::types::{Component, GameProfile, PlayerId, TitleData};
@@ -30,6 +31,7 @@ pub(crate) struct LimboSessionImpl {
     client_sender: mpsc::Sender<PacketFrame>,
     complete_sender: watch::Sender<Option<HandlerResult>>,
     packet_registry: Arc<PacketRegistry>,
+    self_ref: OnceLock<Weak<Self>>,
 }
 
 impl LimboSessionImpl {
@@ -50,7 +52,12 @@ impl LimboSessionImpl {
             client_sender,
             complete_sender,
             packet_registry,
+            self_ref: OnceLock::new(),
         }
+    }
+
+    pub(crate) fn set_self_ref(&self, weak: Weak<Self>) {
+        let _ = self.self_ref.set(weak);
     }
 }
 
@@ -113,6 +120,17 @@ impl LimboSession for LimboSessionImpl {
 
     fn complete(&self, result: HandlerResult) {
         let _ = self.complete_sender.send(Some(result));
+    }
+
+    fn handle(&self) -> SessionHandle {
+        let weak = self
+            .self_ref
+            .get()
+            .expect("LimboSessionImpl::set_self_ref must be called before handle()");
+        let arc = weak
+            .upgrade()
+            .expect("session Arc must be alive while session is in use");
+        SessionHandle::new(arc as Arc<dyn LimboSession>)
     }
 }
 
