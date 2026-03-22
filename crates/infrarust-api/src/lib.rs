@@ -70,6 +70,7 @@ pub mod limbo;
 pub mod player;
 pub mod plugin;
 pub mod prelude;
+pub mod provider;
 pub mod services;
 pub mod types;
 pub mod virtual_backend;

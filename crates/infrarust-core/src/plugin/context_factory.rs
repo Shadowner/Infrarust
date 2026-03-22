@@ -55,6 +55,7 @@ impl PluginContextFactory for PluginContextFactoryImpl {
             Arc::clone(&self.services.scheduler),
             Arc::clone(&self.services.codec_filter_registry),
             Arc::clone(&self.services.transport_filter_registry),
+            Arc::clone(&self.services.domain_router),
         ))
     }
 }

@@ -70,6 +70,7 @@ async fn test_plugin_receives_events_end_to_end() {
         transport_filter_registry: Arc::new(
             infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
         ),
+        domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
         plugins_dir: PathBuf::from("plugins"),
     };
 
@@ -155,6 +156,7 @@ async fn test_dependency_order_end_to_end() {
         transport_filter_registry: Arc::new(
             infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
         ),
+        domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
         plugins_dir: PathBuf::from("plugins"),
     };
 

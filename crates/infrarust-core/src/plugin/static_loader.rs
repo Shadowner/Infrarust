@@ -204,6 +204,13 @@ mod tests {
             unimplemented!("mock")
         }
 
+        fn register_config_provider(
+            &self,
+            _provider: Box<dyn infrarust_api::provider::PluginConfigProvider>,
+        ) {
+            // no-op for tests
+        }
+
         fn codec_filters(
             &self,
         ) -> Option<&dyn infrarust_api::filter::registry::CodecFilterRegistry> {

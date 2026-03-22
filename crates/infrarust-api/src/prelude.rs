@@ -51,5 +51,7 @@ pub use crate::filter::{
     FrameOutput, PlayerInfo, TransportContext, TransportFilter, TransportFilterRegistry,
 };
 
+pub use crate::provider::{PluginConfigProvider, PluginProviderEvent, PluginProviderSender};
+
 // Standard library
 pub use std::sync::Arc;

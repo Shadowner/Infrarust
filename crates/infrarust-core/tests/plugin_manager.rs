@@ -58,6 +58,12 @@ impl PluginContext for MockPluginContext {
     fn register_limbo_handler(&self, _handler: Box<dyn infrarust_api::limbo::LimboHandler>) {
         unimplemented!("mock")
     }
+    fn register_config_provider(
+        &self,
+        _provider: Box<dyn infrarust_api::provider::PluginConfigProvider>,
+    ) {
+        // no-op for tests
+    }
     fn codec_filters(
         &self,
     ) -> Option<&dyn infrarust_api::filter::registry::CodecFilterRegistry> {
@@ -108,6 +114,7 @@ fn make_services() -> PluginServices {
         transport_filter_registry: Arc::new(
             infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
         ),
+        domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
         plugins_dir: PathBuf::from("plugins"),
     }
 }
@@ -381,6 +388,7 @@ async fn test_cleanup_on_disable() {
         transport_filter_registry: Arc::new(
             infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
         ),
+        domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
         plugins_dir: PathBuf::from("plugins"),
     };
 
