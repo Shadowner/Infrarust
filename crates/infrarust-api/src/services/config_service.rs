@@ -45,6 +45,8 @@ pub struct ServerConfig {
     pub disconnect_message: Option<String>,
     /// Whether PROXY protocol is sent to the backend.
     pub send_proxy_protocol: bool,
+    /// Whether this server has a server manager configured (auto start/stop).
+    pub has_server_manager: bool,
 }
 
 /// Read-only access to proxy configuration.

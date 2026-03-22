@@ -163,7 +163,7 @@ impl LimboHandler for TestGateHandler {
 
         // Display entry context — handlers know WHY the player is here
         let context_msg = match session.entry_context() {
-            LimboEntryContext::InitialConnection => {
+            LimboEntryContext::InitialConnection { .. } => {
                 tracing::info!("[TestGate] {username} entered limbo (initial connection)");
                 Component::text("You entered limbo at initial connection.")
                     .color("aqua")

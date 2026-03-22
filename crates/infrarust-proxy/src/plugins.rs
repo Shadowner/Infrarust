@@ -21,6 +21,15 @@ pub fn build_static_loader() -> StaticPluginLoader {
         loader.register(hello.metadata(), || Box::new(infrarust_plugin_hello::HelloPlugin));
     }
 
+    #[cfg(feature = "plugin-server-wake")]
+    {
+        use infrarust_api::plugin::Plugin;
+        let wake = infrarust_plugin_server_wake::ServerWakePlugin::default();
+        loader.register(wake.metadata(), || {
+            Box::new(infrarust_plugin_server_wake::ServerWakePlugin::default())
+        });
+    }
+
     tracing::info!(count = loader.registered_count(), "Static plugins registered");
     loader
 }

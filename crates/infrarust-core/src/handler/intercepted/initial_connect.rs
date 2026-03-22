@@ -106,7 +106,7 @@ pub(super) async fn resolve_initial_mode(
             };
             initial_mode = Some(ConnectionMode::Limbo(
                 handlers,
-                LimboEntryContext::InitialConnection,
+                LimboEntryContext::InitialConnection { target_server: initial_server.clone() },
             ));
             initial_server.clone()
         }
@@ -147,7 +147,7 @@ pub(super) async fn resolve_initial_mode(
                 };
                 initial_mode = Some(ConnectionMode::Limbo(
                     handlers,
-                    LimboEntryContext::InitialConnection,
+                    LimboEntryContext::InitialConnection { target_server: initial_server.clone() },
                 ));
             }
             _ => {} // ConnectTo, VirtualBackend -- Phase 4
@@ -161,7 +161,7 @@ pub(super) async fn resolve_initial_mode(
         ) {
             initial_mode = Some(ConnectionMode::Limbo(
                 handlers,
-                LimboEntryContext::InitialConnection,
+                LimboEntryContext::InitialConnection { target_server: initial_server.clone() },
             ));
         }
     }

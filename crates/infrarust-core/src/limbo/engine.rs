@@ -78,9 +78,12 @@ pub(crate) async fn enter_limbo(
         keepalive: KeepAliveState::new(),
     };
 
+    let session = Arc::new(session);
+    session.set_self_ref(Arc::downgrade(&session));
+
     let chain_result = run_handler_chain(
         &handlers,
-        Arc::new(session),
+        session,
         client,
         &mut core,
         &mut limbo_state,

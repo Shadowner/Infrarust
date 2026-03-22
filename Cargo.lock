@@ -1353,7 +1353,13 @@ dependencies = [
 name = "infrarust-plugin-server-wake"
 version = "2.0.0-alpha.1"
 dependencies = [
+ "dashmap",
  "infrarust-api",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -1385,6 +1391,7 @@ dependencies = [
  "infrarust-limbo",
  "infrarust-plugin-auth",
  "infrarust-plugin-hello",
+ "infrarust-plugin-server-wake",
  "infrarust-protocol",
  "infrarust-server-manager",
  "mimalloc",

@@ -207,7 +207,7 @@ pub(super) async fn run_session_loop(
 
                 // Prevent re-entry into limbo after initial connection gate
                 let from_initial =
-                    matches!(entry_ctx, LimboEntryContext::InitialConnection);
+                    matches!(entry_ctx, LimboEntryContext::InitialConnection { .. });
 
                 match exit {
                     LimboExitResult::Completed | LimboExitResult::SwitchedTo(_) => {

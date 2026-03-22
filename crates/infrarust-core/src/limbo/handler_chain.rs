@@ -264,7 +264,7 @@ mod tests {
             player_id,
             profile,
             version,
-            LimboEntryContext::InitialConnection,
+            LimboEntryContext::InitialConnection { target_server: ServerId::new("test") },
             core.outgoing_tx.clone(),
             complete_tx.clone(),
             Arc::clone(&registry),

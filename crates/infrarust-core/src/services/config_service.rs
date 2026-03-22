@@ -39,6 +39,7 @@ impl ConfigServiceImpl {
             max_players: config.max_players,
             disconnect_message: config.disconnect_message.clone(),
             send_proxy_protocol: config.send_proxy_protocol,
+            has_server_manager: config.server_manager.is_some(),
         }
     }
 }
