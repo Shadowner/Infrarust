@@ -128,6 +128,10 @@ async fn send_legacy_switch(
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
+    if version.no_less_than(ProtocolVersion::V1_16) {
+        send_limbo_respawn(client, &DimensionInfo::Named("minecraft:overworld".to_string()), version, registry).await?;
+        send_limbo_respawn(client, &DimensionInfo::Named(LIMBO_DIMENSION_NAME.to_string()), version, registry).await?;
+    }
     send_player_position(client, version, registry).await?;
     send_chunk(client, version, registry).await
 }
@@ -249,10 +253,12 @@ fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGame, CoreErro
     }
 
     if version.less_than(ProtocolVersion::V1_20_2) {
-        return Err(CoreError::Other(
-            "limbo JoinGame construction for 1.16\u{2013}1.20.1 is not yet implemented"
-                .to_string(),
-        ));
+        let raw_payload = build_1_16_to_1_20_1_join_game_payload(version)?;
+        return Ok(CJoinGame {
+            entity_id: 0,
+            raw_payload: Some(raw_payload),
+            ..Default::default()
+        });
     }
 
     Ok(CJoinGame {
@@ -342,6 +348,82 @@ fn build_pre_1_16_join_game_payload(
     // enable_respawn_screen added in 1.15
     if version.no_less_than(ProtocolVersion::V1_15) {
         buf.write_bool(false)?;
+    }
+
+    Ok(buf)
+}
+
+fn build_1_16_to_1_20_1_join_game_payload(
+    version: ProtocolVersion,
+) -> Result<Vec<u8>, CoreError> {
+    use super::registry_nbt;
+
+    let pvn = version.0;
+    let mut buf = Vec::with_capacity(512);
+
+    // 1.16.2+: is_hardcore as separate bool (1.16.0–1.16.1 encodes it in gamemode byte)
+    if pvn >= 751 {
+        buf.write_bool(false)?; // is_hardcore
+    }
+
+    // gamemode (adventure=2), previous_gamemode (-1)
+    buf.write_u8(2)?;
+    buf.write_i8(-1)?;
+
+    // dimension_names list (VarInt count + Identifier strings)
+    buf.write_var_int(&VarInt(1))?;
+    buf.write_string(LIMBO_DIMENSION_NAME)?;
+
+    // registry_codec (NBT compound, named root)
+    let registry_codec = registry_nbt::build_registry_codec(pvn);
+    buf.extend_from_slice(&registry_codec);
+
+    // 1.16.2–1.18.2: dimension_codec (separate NBT compound for the dimension type)
+    if (751..=758).contains(&pvn) {
+        let dimension_codec = registry_nbt::build_dimension_codec(pvn);
+        buf.extend_from_slice(&dimension_codec);
+    }
+
+    // dimension_name / dimension_type identifier
+    if pvn >= 759 {
+        // 1.19+: "dimension_type" identifier (references registry entry)
+        buf.write_string(LIMBO_DIMENSION_NAME)?;
+    } else {
+        // 1.16–1.18.2: "dimension_name" identifier
+        buf.write_string(LIMBO_DIMENSION_NAME)?;
+    }
+
+    // world_name
+    buf.write_string(LIMBO_DIMENSION_NAME)?;
+
+    // hashed_seed
+    buf.write_i64_be(0)?;
+
+    // max_players (VarInt)
+    buf.write_var_int(&VarInt(1))?;
+
+    // view_distance (VarInt)
+    buf.write_var_int(&VarInt(2))?;
+
+    // 1.18+ (pvn >= 757): simulation_distance
+    if pvn >= 757 {
+        buf.write_var_int(&VarInt(2))?;
+    }
+
+    // reduced_debug_info, enable_respawn_screen, is_debug, is_flat
+    buf.write_bool(false)?; // reduced_debug_info
+    buf.write_bool(true)?;  // enable_respawn_screen
+    buf.write_bool(false)?; // is_debug
+    buf.write_bool(false)?; // is_flat
+
+    // 1.19+ (pvn >= 759): death location (optional)
+    if pvn >= 759 {
+        buf.write_bool(false)?; // has_death_location = false
+    }
+
+    // 1.19.4+ (pvn >= 762): portal_cooldown
+    if pvn >= 762 {
+        buf.write_var_int(&VarInt(0))?;
     }
 
     Ok(buf)
@@ -461,10 +543,15 @@ mod tests {
     }
 
     #[test]
-    fn test_join_game_1_16_to_1_20_1_still_errors() {
-        for version in [ProtocolVersion::V1_16, ProtocolVersion::V1_19, ProtocolVersion::V1_20] {
+    fn test_join_game_1_16_to_1_20_1_ok() {
+        for version in [ProtocolVersion::V1_16, ProtocolVersion::V1_16_2, ProtocolVersion::V1_17,
+                        ProtocolVersion::V1_18, ProtocolVersion::V1_19, ProtocolVersion::V1_19_3,
+                        ProtocolVersion::V1_19_4, ProtocolVersion::V1_20] {
             let result = build_limbo_join_game(version);
-            assert!(result.is_err(), "version {:?} should error", version);
+            assert!(result.is_ok(), "version {:?} should succeed: {:?}", version, result.err());
+            let pkt = result.unwrap();
+            assert_eq!(pkt.entity_id, 0);
+            assert!(pkt.raw_payload.is_some(), "version {:?} should use raw_payload", version);
         }
     }
 

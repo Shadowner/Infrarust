@@ -11,6 +11,7 @@ pub(crate) mod session;         // LimboSessionImpl
 pub(crate) mod handler_chain;   // Limbo-specific dispatch loop
 pub(crate) mod registry;        // LimboHandlerRegistry
 pub(crate) mod registry_cache;  // Config-phase frame cache for limbo login
+pub(crate) mod registry_nbt;    // Minimal NBT registry codec for 1.16–1.20.1
 pub(crate) mod engine;          // enter_limbo() orchestrator
 pub(crate) mod login;           // Login without backend
 
