@@ -39,7 +39,7 @@ pub enum HandlerResult {
 /// impl LimboHandler for AuthHandler {
 ///     fn name(&self) -> &str { "auth" }
 ///
-///     fn on_player_enter(&self, session: &dyn LimboSession) -> BoxFuture<'_, HandlerResult> {
+///     fn on_player_enter<'a>(&'a self, session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
 ///         Box::pin(async move {
 ///             session.send_title(TitleData::new(
 ///                 Component::text("Please login").color("gold"),
@@ -58,24 +58,32 @@ pub trait LimboHandler: Send + Sync {
     ///
     /// Return [`HandlerResult::Hold`] to keep the player in limbo until
     /// [`LimboSession::complete`] is called.
-    fn on_player_enter(&self, session: &dyn LimboSession) -> BoxFuture<'_, HandlerResult>;
+    fn on_player_enter<'a>(
+        &'a self,
+        session: &'a dyn LimboSession,
+    ) -> BoxFuture<'a, HandlerResult>;
 
     /// Called when the player sends a `/command args` while in this limbo stage.
     ///
+    /// The session can be captured in the returned future for async work.
     /// The default implementation does nothing.
-    fn on_command(
-        &self,
-        _session: &dyn LimboSession,
-        _command: &str,
-        _args: &[&str],
-    ) -> BoxFuture<'_, ()> {
+    fn on_command<'a>(
+        &'a self,
+        _session: &'a dyn LimboSession,
+        _command: &'a str,
+        _args: &'a [&'a str],
+    ) -> BoxFuture<'a, ()> {
         Box::pin(async {})
     }
 
     /// Called when the player sends a chat message (not a command).
     ///
     /// The default implementation does nothing.
-    fn on_chat(&self, _session: &dyn LimboSession, _message: &str) -> BoxFuture<'_, ()> {
+    fn on_chat<'a>(
+        &'a self,
+        _session: &'a dyn LimboSession,
+        _message: &'a str,
+    ) -> BoxFuture<'a, ()> {
         Box::pin(async {})
     }
 

@@ -7,3 +7,19 @@ repository.workspace = true
 
 [dependencies]
 infrarust-api = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+dashmap = { workspace = true }
+toml = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+argon2 = { version = "0.5", features = ["std"] }
+password-hash = "0.5"
+bcrypt = "0.16"
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+[dev-dependencies]
+tempfile = "3"

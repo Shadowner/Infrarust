@@ -209,12 +209,24 @@ impl PluginContext for PluginContextImpl {
         self.server_manager.as_ref()
     }
 
+    fn server_manager_handle(&self) -> Arc<dyn ServerManager> {
+        Arc::clone(&self.server_manager)
+    }
+
     fn ban_service(&self) -> &dyn BanService {
         self.ban_service.as_ref()
     }
 
+    fn ban_service_handle(&self) -> Arc<dyn BanService> {
+        Arc::clone(&self.ban_service)
+    }
+
     fn config_service(&self) -> &dyn ConfigService {
         self.config_service.as_ref()
+    }
+
+    fn config_service_handle(&self) -> Arc<dyn ConfigService> {
+        Arc::clone(&self.config_service)
     }
 
     fn command_manager(&self) -> &dyn CommandManager {
@@ -223,6 +235,10 @@ impl PluginContext for PluginContextImpl {
 
     fn scheduler(&self) -> &dyn Scheduler {
         self.scheduler.as_ref()
+    }
+
+    fn event_bus_handle(&self) -> Arc<dyn EventBus> {
+        Arc::clone(&self.event_bus) as Arc<dyn EventBus>
     }
 
     fn register_limbo_handler(&self, handler: Box<dyn LimboHandler>) {

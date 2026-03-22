@@ -5,6 +5,15 @@ use infrarust_core::plugin::StaticPluginLoader;
 pub fn build_static_loader() -> StaticPluginLoader {
     let loader = StaticPluginLoader::new();
 
+    #[cfg(feature = "plugin-auth")]
+    {
+        use infrarust_api::plugin::Plugin;
+        let auth = infrarust_plugin_auth::AuthPlugin::default();
+        loader.register(auth.metadata(), || {
+            Box::new(infrarust_plugin_auth::AuthPlugin::default())
+        });
+    }
+
     #[cfg(feature = "plugin-hello")]
     {
         use infrarust_api::plugin::Plugin;

@@ -157,13 +157,21 @@ pub trait PluginContext: Send + Sync + private::Sealed {
 
     fn server_manager(&self) -> &dyn ServerManager;
 
+    fn server_manager_handle(&self) -> Arc<dyn ServerManager>;
+
     fn ban_service(&self) -> &dyn BanService;
 
+    fn ban_service_handle(&self) -> Arc<dyn BanService>;
+
     fn config_service(&self) -> &dyn ConfigService;
+
+    fn config_service_handle(&self) -> Arc<dyn ConfigService>;
 
     fn command_manager(&self) -> &dyn CommandManager;
 
     fn scheduler(&self) -> &dyn Scheduler;
+
+    fn event_bus_handle(&self) -> Arc<dyn EventBus>;
 
     /// Registers a limbo handler for this plugin.
     ///
