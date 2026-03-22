@@ -12,6 +12,7 @@ path = "src/main.rs"
 [features]
 default = []
 telemetry = ["infrarust-core/telemetry", "dep:opentelemetry", "dep:tracing-opentelemetry"]
+plugin-auth = ["dep:infrarust-plugin-auth"]
 plugin-hello = ["dep:infrarust-plugin-hello"]
 
 [dependencies]
@@ -31,6 +32,7 @@ infrarust-ban = { workspace = true }
 infrarust-server-manager = { workspace = true }
 
 # Plugins (optional)
+infrarust-plugin-auth = { path = "../../plugins/infrarust-plugin-auth", optional = true }
 infrarust-plugin-hello = { path = "../../plugins/infrarust-plugin-hello", optional = true }
 
 # Telemetry (optional)

@@ -39,6 +39,29 @@ impl Plugin for HelloPlugin {
                     }
                 });
 
+            // Catch first connections → send to limbo
+            // ctx.event_bus()
+            //     .subscribe(EventPriority::NORMAL, |event: &mut PlayerChooseInitialServerEvent| {
+            //         tracing::info!(
+            //             "[HelloPlugin] {} connecting to {} — redirecting to limbo",
+            //             event.profile.username,
+            //         );
+            //         event.set_result(PlayerChooseInitialServerResult::Allowed {
+            //             limbo_handlers: vec!["test-gate".to_string()],
+            //         });
+            //     });
+
+            // Catch kicks → send to limbo instead of disconnecting
+            // ctx.event_bus()
+            //     .subscribe(EventPriority::NORMAL, |event: &mut KickedFromServerEvent| {
+            //         tracing::info!(
+            //             "[HelloPlugin] {} was kicked from {} — catching in limbo",
+            //             event.player_id,
+            //             event.server,
+            //         );
+            //         event.set_result(KickedFromServerResult::SendToLimbo { limbo_handlers: vec![] });
+            //     });
+
             ctx.command_manager().register(
                 "hello",
                 &["hi", "hey"],
@@ -126,8 +149,8 @@ impl CommandHandler for LimboCommand {
 }
 
 /// A test limbo handler that holds the player in a void world until they
-/// type `/success`. Demonstrates send_message, send_title, on_command,
-/// and the Hold → complete(Accept) flow.
+/// type `/success`. Shows entry context metadata and demonstrates
+/// send_message, send_title, on_command, and the Hold → complete(Accept) flow.
 struct TestGateHandler;
 
 impl LimboHandler for TestGateHandler {
@@ -135,9 +158,44 @@ impl LimboHandler for TestGateHandler {
         "test-gate"
     }
 
-    fn on_player_enter(&self, session: &dyn LimboSession) -> BoxFuture<'_, HandlerResult> {
+    fn on_player_enter<'a>(&'a self, session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
         let username = session.profile().username.clone();
-        tracing::info!("[TestGate] {username} entered limbo");
+
+        // Display entry context — handlers know WHY the player is here
+        let context_msg = match session.entry_context() {
+            LimboEntryContext::InitialConnection => {
+                tracing::info!("[TestGate] {username} entered limbo (initial connection)");
+                Component::text("You entered limbo at initial connection.")
+                    .color("aqua")
+            }
+            LimboEntryContext::KickedFromServer { server, reason } => {
+                tracing::info!(
+                    "[TestGate] {username} entered limbo (kicked from {server})"
+                );
+                Component::text("You were kicked from ")
+                    .color("red")
+                    .append(Component::text(server.as_str()).color("yellow").bold())
+                    .append(Component::text(": ").color("red"))
+                    .append(reason.clone())
+            }
+            LimboEntryContext::PluginRedirect { from_server } => {
+                let from = from_server
+                    .as_ref()
+                    .map_or("none", |s| s.as_str());
+                tracing::info!(
+                    "[TestGate] {username} entered limbo (plugin redirect from {from})"
+                );
+                Component::text("A plugin sent you to limbo from: ")
+                    .color("yellow")
+                    .append(Component::text(from).color("white").bold())
+            }
+            _ => {
+                tracing::info!("[TestGate] {username} entered limbo (unknown reason)");
+                Component::text("You entered limbo.").color("gray")
+            }
+        };
+
+        let _ = session.send_message(context_msg);
 
         let _ = session.send_title(TitleData::new(
             Component::text("Limbo").color("gold").bold(),
@@ -145,8 +203,7 @@ impl LimboHandler for TestGateHandler {
         ));
 
         let _ = session.send_message(
-            Component::text("You are in the limbo test gate. ").color("yellow")
-                .append(Component::text("Type ").color("gray"))
+            Component::text("Type ").color("gray")
                 .append(Component::text("/success").color("green").bold())
                 .append(Component::text(" to proceed to the server.").color("gray")),
         );
@@ -154,12 +211,12 @@ impl LimboHandler for TestGateHandler {
         Box::pin(async { HandlerResult::Hold })
     }
 
-    fn on_command(
-        &self,
-        session: &dyn LimboSession,
-        command: &str,
-        _args: &[&str],
-    ) -> BoxFuture<'_, ()> {
+    fn on_command<'a>(
+        &'a self,
+        session: &'a dyn LimboSession,
+        command: &'a str,
+        _args: &'a [&'a str],
+    ) -> BoxFuture<'a, ()> {
         let player_id = session.player_id();
 
         if command == "success" {
@@ -167,7 +224,6 @@ impl LimboHandler for TestGateHandler {
             let _ = session.send_message(
                 Component::text("Redirecting to server...").color("green"),
             );
-            // complete() is synchronous — call it before the async block
             session.complete(HandlerResult::Accept);
         } else {
             let _ = session.send_message(
@@ -178,7 +234,7 @@ impl LimboHandler for TestGateHandler {
         Box::pin(async {})
     }
 
-    fn on_chat(&self, session: &dyn LimboSession, message: &str) -> BoxFuture<'_, ()> {
+    fn on_chat<'a>(&'a self, session: &'a dyn LimboSession, message: &'a str) -> BoxFuture<'a, ()> {
         let msg = message.to_string();
         let _ = session.send_message(
             Component::text("You said: ").color("gray")

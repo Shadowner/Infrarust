@@ -148,7 +148,7 @@ impl LimboHandler for FixedHandler {
         self.name
     }
 
-    fn on_player_enter(&self, _session: &dyn LimboSession) -> BoxFuture<'_, HandlerResult> {
+    fn on_player_enter<'a>(&'a self, _session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
         let result = self.result.clone();
         Box::pin(async move { result })
     }
@@ -169,7 +169,7 @@ impl LimboHandler for TrackingHandler {
         self.name
     }
 
-    fn on_player_enter(&self, _session: &dyn LimboSession) -> BoxFuture<'_, HandlerResult> {
+    fn on_player_enter<'a>(&'a self, _session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
         self.called.store(true, Ordering::SeqCst);
         let result = self.result.clone();
         Box::pin(async move { result })
@@ -189,7 +189,7 @@ impl LimboHandler for HoldHandler {
         self.name
     }
 
-    fn on_player_enter(&self, _session: &dyn LimboSession) -> BoxFuture<'_, HandlerResult> {
+    fn on_player_enter<'a>(&'a self, _session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
         Box::pin(async { HandlerResult::Hold })
     }
 

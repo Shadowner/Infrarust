@@ -94,7 +94,7 @@ mod tests {
             self.handler_name
         }
 
-        fn on_player_enter(&self, _session: &dyn LimboSession) -> BoxFuture<'_, HandlerResult> {
+        fn on_player_enter<'a>(&'a self, _session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
             Box::pin(async { HandlerResult::Accept })
         }
     }
