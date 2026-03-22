@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
 
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
@@ -18,7 +17,6 @@ use infrarust_protocol::version::ProtocolVersion;
 use super::handler_chain::{LimboChainResult, LimboLoopState, run_handler_chain};
 use super::keepalive::KeepAliveState;
 use super::session::LimboSessionImpl;
-use super::spawn::send_spawn_sequence;
 use super::virtual_session::VirtualSessionCore;
 use crate::player::packets::build_disconnect;
 use crate::services::ProxyServices;
@@ -36,7 +34,6 @@ pub(crate) enum LimboExitResult {
     SendToLimbo(Vec<String>),
 }
 
-/// Spawn-sequence failures are mapped to [`LimboExitResult::Kicked`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn enter_limbo(
     client: &mut ClientBridge,
@@ -49,12 +46,6 @@ pub(crate) async fn enter_limbo(
     services: &ProxyServices,
     cancel: CancellationToken,
 ) -> LimboExitResult {
-    // JoinGame resets client world state (unloads chunks/entities).
-    if let Err(e) = send_spawn_sequence(client, version, registry, true).await {
-        warn!(player = %profile.username, error = %e, "failed to send limbo spawn sequence");
-        return LimboExitResult::Kicked;
-    }
-
     let mut core = VirtualSessionCore::new(
         player_id,
         profile,
@@ -89,6 +80,9 @@ pub(crate) async fn enter_limbo(
         &mut limbo_state,
         services,
         cancel,
+        version,
+        registry,
+        true,
     )
     .await;
 
