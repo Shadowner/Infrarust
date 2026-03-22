@@ -51,10 +51,14 @@ impl KeepAliveState {
             return Ok(None); // Client timed out
         }
 
-        let id = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
+        let id = if version.less_than(ProtocolVersion::V1_12_2) {
+            i64::from(rand::random::<i32>())
+        } else {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64
+        };
 
         self.last_sent_id = id;
         self.last_sent_at = Instant::now();
