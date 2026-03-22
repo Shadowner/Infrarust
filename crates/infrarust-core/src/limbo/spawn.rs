@@ -355,13 +355,25 @@ async fn send_clear_inventory(
     let packet_id = container_set_content_packet_id(version);
 
     let mut buf = Vec::with_capacity(96);
-    infrarust_protocol::chunk::write_varint(&mut buf, 0);  // window_id
-    infrarust_protocol::chunk::write_varint(&mut buf, 0);  // state_id
-    infrarust_protocol::chunk::write_varint(&mut buf, 46); // slot_count
-    for _ in 0..46 {
-        infrarust_protocol::chunk::write_varint(&mut buf, 0); // empty slot
+
+    if version.no_less_than(ProtocolVersion::V1_17) {
+        // 1.17.1+ format: window_id(u8) + state_id(VarInt) + count(VarInt) + slots + carried(Slot)
+        buf.push(0); // window_id (u8)
+        infrarust_protocol::chunk::write_varint(&mut buf, 0);  // state_id
+        infrarust_protocol::chunk::write_varint(&mut buf, 46); // slot_count
+        for _ in 0..46 {
+            // Empty slot: present=false (1.13+) or count=0 (1.20.5+) — both encode as 0x00
+            buf.push(0);
+        }
+        buf.push(0); // carried_item: empty slot
+    } else {
+        // Pre-1.17.1 format: window_id(u8) + count(i16 BE) + slots
+        buf.push(0); // window_id (u8)
+        buf.extend_from_slice(&46_i16.to_be_bytes()); // count (i16)
+        for _ in 0..46 {
+            buf.push(0); // empty slot: present=false
+        }
     }
-    infrarust_protocol::chunk::write_varint(&mut buf, 0);  // carried_item
 
     let frame = PacketFrame {
         id: packet_id,
@@ -372,10 +384,28 @@ async fn send_clear_inventory(
 }
 
 fn container_set_content_packet_id(version: ProtocolVersion) -> i32 {
-    if version.no_less_than(ProtocolVersion::V1_21_5) {
-        0x12
-    } else {
-        0x13
+    let pvn = version.0;
+    match pvn {
+        // 1.21.5 (770)+
+        770.. => 0x12,
+        // 1.20.2 (764) .. 1.21.4 (769)
+        764..=769 => 0x13,
+        // 1.19.4 (762) .. 1.20.1 (763)
+        762..=763 => 0x12,
+        // 1.19.3 (761)
+        761 => 0x11,
+        // 1.19.1 (760)
+        760 => 0x12,
+        // 1.19 (759)
+        759 => 0x13,
+        // 1.17 (755) .. 1.18.2 (758)
+        755..=758 => 0x14,
+        // 1.16.2 (751) .. 1.16.4 (754)
+        751..=754 => 0x13,
+        // 1.16 (735) .. 1.16.1 (736)
+        735..=750 => 0x14,
+        // Pre-1.16 is skipped by caller; fallback for safety
+        _ => 0x13,
     }
 }
 
