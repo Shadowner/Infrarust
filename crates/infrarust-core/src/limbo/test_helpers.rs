@@ -98,6 +98,7 @@ pub fn test_proxy_services() -> ProxyServices {
         transport_filter_chain: TransportFilterChain::empty(),
         limbo_handler_registry: Arc::new(LimboHandlerRegistry::new()),
         registry_codec_cache: Arc::new(RegistryCodecCache::new(provider)),
+        provider_event_sender: tokio::sync::mpsc::channel(1).0,
     }
 }
 

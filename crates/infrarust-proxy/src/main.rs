@@ -215,6 +215,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         config_service: Arc::new(ConfigServiceImpl::new(Arc::clone(&services.domain_router))),
         codec_filter_registry: Arc::clone(&services.codec_filter_registry),
         transport_filter_registry: Arc::clone(&transport_filter_registry),
+        domain_router: Arc::clone(&services.domain_router),
         plugins_dir: PathBuf::from("plugins"),
     };
 
@@ -233,6 +234,19 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         services
             .limbo_handler_registry
             .register(std::sync::Arc::from(handler));
+    }
+
+    let plugin_providers = plugin_manager.collect_config_providers();
+    if !plugin_providers.is_empty() {
+        tracing::info!(count = plugin_providers.len(), "activating plugin config providers");
+        let results = infrarust_core::provider::plugin_adapter::activate_plugin_providers(
+            plugin_providers,
+            services.provider_event_sender.clone(),
+            &services.domain_router,
+            shutdown.clone(),
+        )
+        .await;
+        plugin_manager.store_provider_cleanup(results);
     }
 
     // Clone Arcs for console before releasing the immutable borrow on `server`

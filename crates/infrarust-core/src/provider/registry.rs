@@ -59,11 +59,12 @@ impl ProviderRegistry {
     /// Starts all providers: loads initial configs and spawns watchers.
     ///
     /// Consumes `self` to transfer ownership of providers to spawned tasks.
-    /// Returns the `JoinHandle` of the event loop task.
+    /// Returns the `JoinHandle` of the event loop task and a sender that
+    /// can be used to inject events from plugin config providers.
     ///
     /// # Errors
     /// Returns `CoreError` if any provider fails to load initial configs fatally.
-    pub async fn start(self) -> Result<JoinHandle<()>, CoreError> {
+    pub async fn start(self) -> Result<(JoinHandle<()>, mpsc::Sender<ProviderEvent>), CoreError> {
         let (tx, rx) = mpsc::channel::<ProviderEvent>(256);
 
         // Phase 1: load initial configs from each provider
@@ -116,8 +117,7 @@ impl ProviderRegistry {
             });
         }
 
-        // Drop our copy of the sender so the channel closes when all
-        // provider watch tasks have exited.
+        let plugin_tx = tx.clone();
         drop(tx);
 
         // Phase 3: spawn the event loop
@@ -130,7 +130,7 @@ impl ProviderRegistry {
             self.shutdown,
         ));
 
-        Ok(handle)
+        Ok((handle, plugin_tx))
     }
 }
 

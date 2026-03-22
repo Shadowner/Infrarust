@@ -33,6 +33,7 @@ pub struct PluginServices {
     pub config_service: Arc<dyn ConfigService>,
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
+    pub domain_router: Arc<crate::routing::DomainRouter>,
     pub plugins_dir: PathBuf,
 }
 
@@ -231,6 +232,43 @@ impl PluginManager {
         all
     }
 
+    pub fn collect_config_providers(
+        &self,
+    ) -> Vec<(String, Box<dyn infrarust_api::provider::PluginConfigProvider>)> {
+        let mut all = Vec::new();
+        for loaded in &self.plugins {
+            if let Some(ctx_impl) = loaded.context.as_any().downcast_ref::<PluginContextImpl>() {
+                let providers = ctx_impl.take_config_providers();
+                for provider in providers {
+                    all.push((loaded.metadata.id.clone(), provider));
+                }
+            }
+        }
+        all
+    }
+
+    pub fn store_provider_cleanup(
+        &self,
+        results: Vec<(
+            String,
+            crate::provider::plugin_adapter::ActivatedProvider,
+        )>,
+    ) {
+        for (plugin_id, activated) in results {
+            for loaded in &self.plugins {
+                if loaded.metadata.id == plugin_id {
+                    if let Some(ctx_impl) =
+                        loaded.context.as_any().downcast_ref::<PluginContextImpl>()
+                    {
+                        ctx_impl.register_active_provider_ids(activated.config_ids);
+                        ctx_impl.register_provider_token(activated.watch_token);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     pub fn is_plugin_loaded(&self, id: &str) -> bool {
         matches!(self.states.get(id), Some(PluginState::Enabled))
     }
@@ -337,6 +375,13 @@ mod tests {
             _handler: Box<dyn infrarust_api::limbo::LimboHandler>,
         ) {
             unimplemented!("mock")
+        }
+
+        fn register_config_provider(
+            &self,
+            _provider: Box<dyn infrarust_api::provider::PluginConfigProvider>,
+        ) {
+            // no-op for tests
         }
 
         fn codec_filters(

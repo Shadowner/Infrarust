@@ -7,6 +7,7 @@
 #[cfg(feature = "docker")]
 pub mod docker;
 pub mod file;
+pub mod plugin_adapter;
 pub mod provider_id;
 pub mod registry;
 pub mod traits;

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use infrarust_config::ProxyConfig;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_server_manager::ServerManagerService;
+use tokio::sync::mpsc;
 
 use crate::ban::manager::BanManager;
 use crate::event_bus::EventBusImpl;
@@ -13,6 +14,7 @@ use crate::filter::transport_chain::TransportFilterChain;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::limbo::registry_cache::RegistryCodecCache;
 use crate::player::registry::PlayerRegistryImpl;
+use crate::provider::ProviderEvent;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
 use crate::services::command_manager::CommandManagerImpl;
@@ -50,4 +52,5 @@ pub struct ProxyServices {
     pub limbo_handler_registry: Arc<LimboHandlerRegistry>,
     /// Multi-version registry data cache for limbo login.
     pub registry_codec_cache: Arc<RegistryCodecCache>,
+    pub provider_event_sender: mpsc::Sender<ProviderEvent>,
 }

@@ -181,6 +181,11 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     /// Returns `Some` for native plugins, `None` for WASM plugins.
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry>;
 
+    fn register_config_provider(
+        &self,
+        provider: Box<dyn crate::provider::PluginConfigProvider>,
+    );
+
     fn plugin_id(&self) -> &str;
 }
 

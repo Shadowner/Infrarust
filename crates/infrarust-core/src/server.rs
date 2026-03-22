@@ -121,7 +121,7 @@ impl ProxyServer {
         }
 
         // Start all providers (loads initial configs + starts watchers)
-        let _provider_handle = provider_registry.start().await?;
+        let (_provider_handle, provider_event_sender) = provider_registry.start().await?;
 
         // Build server manager from configs that have a server_manager
         let managed_configs: Vec<(String, infrarust_config::ServerManagerConfig)> = domain_router
@@ -229,6 +229,7 @@ impl ProxyServer {
                     Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider),
                 ),
             ),
+            provider_event_sender,
         };
 
         // Build common pipeline: IpFilter → BanIpCheck → HandshakeParser → RateLimiter → DomainRouter
