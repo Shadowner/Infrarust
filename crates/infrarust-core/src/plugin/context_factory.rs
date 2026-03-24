@@ -3,14 +3,10 @@ use std::sync::Arc;
 
 use infrarust_api::plugin::PluginContext;
 
+pub use infrarust_api::loader::PluginContextFactory;
+
 use super::context::PluginContextImpl;
 use super::manager::PluginServices;
-
-/// Passed to loaders during `load()` so they can bind proxy services
-/// to the plugin runtime (e.g., WASM host functions).
-pub trait PluginContextFactory: Send + Sync {
-    fn create_context(&self, plugin_id: &str) -> Arc<dyn PluginContext>;
-}
 
 /// Per-plugin permissions extracted from proxy configuration.
 #[derive(Debug, Clone, Default)]

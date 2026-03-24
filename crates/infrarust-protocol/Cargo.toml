@@ -3,7 +3,6 @@ name = "infrarust-protocol"
 version.workspace = true
 edition.workspace = true
 license = "MIT"
-license-file = "./LICENSE-MIT"
 repository.workspace = true
 description = "Minecraft protocol codec for the Infrarust proxy"
 
