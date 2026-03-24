@@ -26,6 +26,11 @@ function dismiss() {
   sessionStorage.setItem(STORAGE_KEY, 'true')
   updateBannerHeight(false)
 }
+
+function goToV2(e) {
+  e.preventDefault()
+  window.location.href = '/v2/'
+}
 </script>
 
 <template>
@@ -33,7 +38,7 @@ function dismiss() {
     <div class="v2-banner-content">
       <span>
         🚀 <strong>Infrarust V2 is now in alpha!</strong>
-        Check out the <a href="/v2/">new documentation</a>.
+        Check out the <a href="/v2/" @click="goToV2">new documentation</a>.
         V1 will be archived once V2 is released.
       </span>
       <button class="v2-banner-close" aria-label="Dismiss banner" @click="dismiss">✕</button>
