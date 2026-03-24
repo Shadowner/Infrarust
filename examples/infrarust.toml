@@ -1,6 +1,12 @@
 # Minimal Infrarust proxy configuration for smoke testing
 servers_dir = "./examples/servers"
 
+# Web admin API / UI (uncomment to enable)
+# [web]
+# enable_api = true
+# enable_webui = true
+# listen_port = 8080
+
 [ban]
 file = "./examples/bans.json"
 purge_interval = "5m"

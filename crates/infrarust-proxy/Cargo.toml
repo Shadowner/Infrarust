@@ -12,11 +12,10 @@ path = "src/main.rs"
 [features]
 default = []
 telemetry = ["infrarust-core/telemetry", "dep:opentelemetry", "dep:tracing-opentelemetry"]
-default-plugins = ["plugin-auth", "plugin-server-wake", "plugin-admin-api"]
+default-plugins = ["plugin-auth", "plugin-server-wake"]
 plugin-auth = ["dep:infrarust-plugin-auth"]
 plugin-hello = ["dep:infrarust-plugin-hello"]
 plugin-server-wake = ["dep:infrarust-plugin-server-wake"]
-plugin-admin-api = ["dep:infrarust-plugin-admin-api"]
 
 [dependencies]
 tokio = { workspace = true }
@@ -38,7 +37,7 @@ infrarust-server-manager = { workspace = true }
 infrarust-plugin-auth = { path = "../../plugins/infrarust-plugin-auth", optional = true }
 infrarust-plugin-hello = { path = "../../plugins/infrarust-plugin-hello", optional = true }
 infrarust-plugin-server-wake = { path = "../../plugins/infrarust-plugin-server-wake", optional = true }
-infrarust-plugin-admin-api = { path = "../../plugins/infrarust-plugin-admin-api", optional = true }
+infrarust-plugin-admin-api = { path = "../../plugins/infrarust-plugin-admin-api" }
 
 # Telemetry (optional)
 opentelemetry = { version = "0.31", optional = true }

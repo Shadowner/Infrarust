@@ -10,6 +10,7 @@ mod rate_limit;
 mod server_manager;
 mod status;
 mod telemetry;
+mod web;
 
 pub use address::{DomainRewrite, ServerAddress};
 pub use ban::BanConfig;
@@ -23,6 +24,7 @@ pub use server_manager::{
 };
 pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
 pub use telemetry::{MetricsConfig, ResourceConfig, TelemetryConfig, TracesConfig};
+pub use web::WebConfig;
 
 /// Default Minecraft port.
 pub const DEFAULT_MC_PORT: u16 = 25565;

@@ -45,20 +45,20 @@ use crate::state::{ApiEvent, ApiState};
 pub struct AdminApiPlugin {
     server_handle: Mutex<Option<JoinHandle<()>>>,
     shutdown: CancellationToken,
+    listen_port: u16,
+    enable_api: bool,
+    enable_webui: bool,
 }
 
 impl AdminApiPlugin {
-    pub fn new() -> Self {
+    pub fn new(listen_port: u16, enable_api: bool, enable_webui: bool) -> Self {
         Self {
             server_handle: Mutex::new(None),
             shutdown: CancellationToken::new(),
+            listen_port,
+            enable_api,
+            enable_webui,
         }
-    }
-}
-
-impl Default for AdminApiPlugin {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -75,7 +75,8 @@ impl Plugin for AdminApiPlugin {
     ) -> BoxFuture<'a, Result<(), PluginError>> {
         Box::pin(async move {
             let data_dir = PathBuf::from("plugins/admin_api");
-            let config = load_config(&data_dir).await?;
+            let mut config = load_config(&data_dir).await?;
+            config.bind = format!("127.0.0.1:{}", self.listen_port);
 
             let (event_tx, _) = broadcast::channel::<ApiEvent>(EVENT_CHANNEL_CAPACITY);
 
@@ -166,7 +167,7 @@ impl Plugin for AdminApiPlugin {
             );
             tokio::spawn(ticker.run());
 
-            let app = build_router(state);
+            let app = build_router(state, self.enable_webui);
 
             let listener = tokio::net::TcpListener::bind(&config.bind)
                 .await
@@ -446,7 +447,7 @@ mod tests {
 
     async fn auth_get(uri: &str) -> (StatusCode, serde_json::Value) {
         let state = test_state();
-        let app = build_router(state);
+        let app = build_router(state, true);
         let (name, value) = auth_header();
 
         let request = Request::builder()
@@ -463,7 +464,7 @@ mod tests {
 
     async fn auth_post(uri: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
         let state = test_state();
-        let app = build_router(state);
+        let app = build_router(state, true);
         let (name, value) = auth_header();
 
         let request = Request::builder()
@@ -482,7 +483,7 @@ mod tests {
 
     async fn auth_delete(uri: &str) -> (StatusCode, serde_json::Value) {
         let state = test_state();
-        let app = build_router(state);
+        let app = build_router(state, true);
         let (name, value) = auth_header();
 
         let request = Request::builder()
@@ -503,7 +504,7 @@ mod tests {
     #[tokio::test]
     async fn test_health_returns_200_without_auth() {
         let state = test_state();
-        let app = build_router(state);
+        let app = build_router(state, true);
 
         let request = Request::builder()
             .uri("/api/v1/health")
@@ -526,7 +527,7 @@ mod tests {
     #[tokio::test]
     async fn test_proxy_status_returns_401_without_auth_with_error_body() {
         let state = test_state();
-        let app = build_router(state);
+        let app = build_router(state, true);
 
         let request = Request::builder()
             .uri("/api/v1/proxy")
@@ -544,7 +545,7 @@ mod tests {
     #[tokio::test]
     async fn test_proxy_status_returns_401_with_bad_key() {
         let state = test_state();
-        let app = build_router(state);
+        let app = build_router(state, true);
 
         let request = Request::builder()
             .uri("/api/v1/proxy")
@@ -563,7 +564,7 @@ mod tests {
     #[tokio::test]
     async fn test_proxy_status_returns_401_with_non_bearer() {
         let state = test_state();
-        let app = build_router(state);
+        let app = build_router(state, true);
 
         let request = Request::builder()
             .uri("/api/v1/proxy")
@@ -593,7 +594,7 @@ mod tests {
     #[tokio::test]
     async fn test_unknown_route_returns_404() {
         let state = test_state();
-        let app = build_router(state);
+        let app = build_router(state, true);
 
         let request = Request::builder()
             .uri("/api/v1/unknown")
@@ -745,7 +746,7 @@ mod tests {
 
         for uri in endpoints {
             let state = test_state();
-            let app = build_router(state);
+            let app = build_router(state, true);
 
             let request = Request::builder()
                 .uri(uri)
@@ -924,7 +925,7 @@ mod tests {
         ];
 
         for (method, uri) in endpoints {
-            let app = build_router(test_state());
+            let app = build_router(test_state(), true);
             let request = Request::builder()
                 .method(method)
                 .uri(uri)
