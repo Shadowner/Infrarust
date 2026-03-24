@@ -82,6 +82,7 @@ export default
               items: [
                 { text: 'Changelog', link: 'https://github.com/Shadowner/Infrarust/blob/main/CHANGELOG.md' },
                 { text: 'Contributing', link: 'https://github.com/Shadowner/Infrarust/blob/main/CONTRIBUTING.md' },
+                { text: 'Acknowledgements', link: '/thank-you-open-source' },
               ],
             },
             {

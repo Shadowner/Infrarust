@@ -15,7 +15,7 @@ const stars = useGitHubStars(GITHUB_REPO)
     </ClientOnly>
 
     <div class="hero-content">
-      <span class="hero-badge">Open Source &middot; Written in Rust</span>
+      <a :href="withBase('/thank-you-open-source')" class="hero-badge">Open Source &middot; Written in Rust</a>
 
       <h1 class="hero-title">
         One port.<br />
@@ -75,6 +75,13 @@ const stars = useGitHubStars(GITHUB_REPO)
   border-radius: 999px;
   padding: 6px 14px;
   margin-bottom: 28px;
+  text-decoration: none;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.hero-badge:hover {
+  background: rgba(232, 131, 42, 0.08);
+  border-color: rgba(232, 131, 42, 0.6);
 }
 
 .hero-title {

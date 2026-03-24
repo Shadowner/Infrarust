@@ -1,4 +1,5 @@
 <script setup>
+import { withBase } from 'vitepress'
 import { useGitHubStars } from '../composables/useGitHubStars'
 import { GITHUB_REPO, GITHUB_URL, DISCORD_URL } from '../constants'
 import IconGitHub from '../icons/IconGitHub.vue'
@@ -47,12 +48,14 @@ const floatingBlocks = [
       />
 
       <div class="cta-content">
-        <div class="cta-badge">
+        <a :href="withBase('/thank-you-open-source')" class="cta-badge">
           <img width="20" height="20" src="/images/creeper.svg" />
           <span>Community project</span>
-        </div>
+        </a>
 
-        <h2 class="cta-heading">Open source &amp;<br/>free forever.</h2>
+        <a :href="withBase('/thank-you-open-source')" class="cta-heading-link">
+          <h2 class="cta-heading">Open source &amp;<br/>free forever.</h2>
+        </a>
 
         <p class="cta-text">
           Built for the Minecraft community. Core is AGPL-3.0.
@@ -277,6 +280,22 @@ const floatingBlocks = [
   padding: 5px 12px;
   border-radius: 6px;
   margin-bottom: 24px;
+  text-decoration: none;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.cta-badge:hover {
+  background: rgba(74, 124, 63, 0.18);
+  border-color: rgba(74, 124, 63, 0.4);
+}
+
+.cta-heading-link {
+  text-decoration: none;
+  display: block;
+}
+
+.cta-heading-link:hover .cta-heading {
+  color: var(--ir-accent);
 }
 
 .cta-heading {
@@ -287,6 +306,7 @@ const floatingBlocks = [
   letter-spacing: -0.03em;
   color: var(--ir-text);
   margin: 0 0 18px;
+  transition: color 0.2s;
 }
 
 .cta-text {

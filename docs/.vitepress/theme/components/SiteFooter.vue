@@ -15,6 +15,10 @@ const year = new Date().getFullYear()
           <IconShield :size="11" />
           AGPL-3.0 + Plugin Exception
         </a>
+        <a :href="withBase('/thank-you-open-source')" class="footer-license footer-oss">
+          &#9829;
+          Open Source
+        </a>
       </div>
       <div class="footer-links">
         <a :href="GITHUB_URL" target="_blank" rel="noopener">GitHub</a>
@@ -72,6 +76,16 @@ const year = new Date().getFullYear()
 .footer-license:hover {
   color: var(--ir-accent);
   border-color: rgba(232, 131, 42, 0.4);
+}
+
+.footer-oss {
+  color: rgba(93, 175, 80, 0.55);
+  border-color: rgba(93, 175, 80, 0.15);
+}
+
+.footer-oss:hover {
+  color: var(--ir-green);
+  border-color: rgba(93, 175, 80, 0.4);
 }
 
 .footer-links {
