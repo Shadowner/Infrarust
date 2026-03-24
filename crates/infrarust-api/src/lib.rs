@@ -67,6 +67,7 @@ pub mod event;
 pub mod events;
 pub mod filter;
 pub mod limbo;
+pub mod loader;
 pub mod player;
 pub mod plugin;
 pub mod prelude;
