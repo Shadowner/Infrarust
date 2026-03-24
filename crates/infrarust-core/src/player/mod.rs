@@ -9,6 +9,7 @@ pub mod registry;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::time::SystemTime;
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -58,6 +59,7 @@ pub struct PlayerSession {
     current_server: RwLock<Option<ServerId>>,
     connected: AtomicBool,
     active: bool,
+    connected_at: SystemTime,
     command_tx: mpsc::Sender<PlayerCommand>,
     shutdown_token: CancellationToken,
 }
@@ -93,6 +95,7 @@ impl PlayerSession {
             current_server: RwLock::new(current_server),
             connected: AtomicBool::new(true),
             active,
+            connected_at: SystemTime::now(),
             command_tx,
             shutdown_token,
         }
@@ -237,5 +240,9 @@ impl Player for PlayerSession {
 
     fn has_permission(&self, _permission: &str) -> bool {
         true // Phase future
+    }
+
+    fn connected_at(&self) -> SystemTime {
+        self.connected_at
     }
 }

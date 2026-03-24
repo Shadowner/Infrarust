@@ -77,6 +77,29 @@ impl PluginContext for MockPluginContext {
     fn plugin_id(&self) -> &str {
         &self.plugin_id
     }
+    fn plugin_registry(&self) -> &dyn infrarust_api::services::plugin_registry::PluginRegistry {
+        unimplemented!("mock")
+    }
+    fn plugin_registry_handle(
+        &self,
+    ) -> Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry> {
+        unimplemented!("mock")
+    }
+    fn server_manager_handle(&self) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
+        unimplemented!("mock")
+    }
+    fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
+        unimplemented!("mock")
+    }
+    fn config_service_handle(&self) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
+        unimplemented!("mock")
+    }
+    fn event_bus_handle(&self) -> Arc<dyn infrarust_api::event::bus::EventBus> {
+        unimplemented!("mock")
+    }
+    fn proxy_shutdown(&self) -> tokio_util::sync::CancellationToken {
+        tokio_util::sync::CancellationToken::new()
+    }
 }
 
 struct MockPluginContextFactory;
@@ -108,6 +131,7 @@ fn make_services() -> PluginServices {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
         ),
@@ -115,6 +139,7 @@ fn make_services() -> PluginServices {
             infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
         ),
         domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
+        proxy_shutdown: tokio_util::sync::CancellationToken::new(),
         plugins_dir: PathBuf::from("plugins"),
     }
 }
@@ -382,6 +407,7 @@ async fn test_cleanup_on_disable() {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
         ),
@@ -389,6 +415,7 @@ async fn test_cleanup_on_disable() {
             infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
         ),
         domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
+        proxy_shutdown: tokio_util::sync::CancellationToken::new(),
         plugins_dir: PathBuf::from("plugins"),
     };
 

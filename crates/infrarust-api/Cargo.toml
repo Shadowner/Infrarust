@@ -12,6 +12,7 @@ categories = ["game-development", "network-programming"]
 bytes = { workspace = true }
 serde = { workspace = true, optional = true }
 thiserror = { workspace = true }
+tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
 

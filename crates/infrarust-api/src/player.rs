@@ -1,6 +1,7 @@
 //! Player trait — the primary interface for interacting with connected players.
 
 use std::net::SocketAddr;
+use std::time::SystemTime;
 
 use crate::error::PlayerError;
 use crate::event::BoxFuture;
@@ -87,4 +88,6 @@ pub trait Player: Send + Sync + private::Sealed {
     fn switch_server(&self, target: ServerId) -> BoxFuture<'_, Result<(), PlayerError>>;
 
     fn has_permission(&self, permission: &str) -> bool;
+
+    fn connected_at(&self) -> SystemTime;
 }

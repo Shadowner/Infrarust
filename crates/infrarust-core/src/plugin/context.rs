@@ -14,7 +14,7 @@ use infrarust_api::provider::PluginConfigProvider;
 use infrarust_api::services::scheduler::{Scheduler, TaskHandle};
 use infrarust_api::services::{
     ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
-    server_manager::ServerManager,
+    plugin_registry::PluginRegistry, server_manager::ServerManager,
 };
 
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
@@ -36,6 +36,7 @@ pub struct PluginContextImpl {
     server_manager: Arc<dyn ServerManager>,
     ban_service: Arc<dyn BanService>,
     config_service: Arc<dyn ConfigService>,
+    plugin_registry: Arc<dyn PluginRegistry>,
     command_manager: Arc<TrackingCommandManager>,
     scheduler: Arc<TrackingScheduler>,
     limbo_handlers: Mutex<Vec<Box<dyn LimboHandler>>>,
@@ -43,6 +44,7 @@ pub struct PluginContextImpl {
     codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     transport_filter_registry: Arc<TransportFilterRegistryImpl>,
     domain_router: Arc<DomainRouter>,
+    proxy_shutdown: CancellationToken,
     plugin_id: String,
 
     // Shared tracking state (also held by the wrappers)
@@ -62,11 +64,13 @@ impl PluginContextImpl {
         server_manager: Arc<dyn ServerManager>,
         ban_service: Arc<dyn BanService>,
         config_service: Arc<dyn ConfigService>,
+        plugin_registry: Arc<dyn PluginRegistry>,
         command_manager: Arc<dyn CommandManager>,
         scheduler: Arc<dyn Scheduler>,
         codec_filter_registry: Arc<CodecFilterRegistryImpl>,
         transport_filter_registry: Arc<TransportFilterRegistryImpl>,
         domain_router: Arc<DomainRouter>,
+        proxy_shutdown: CancellationToken,
     ) -> Self {
         let registered_handles = Arc::new(Mutex::new(Vec::new()));
         let registered_commands = Arc::new(Mutex::new(Vec::new()));
@@ -87,6 +91,7 @@ impl PluginContextImpl {
             server_manager,
             ban_service,
             config_service,
+            plugin_registry,
             command_manager: tracking_cmd,
             scheduler: tracking_sched,
             limbo_handlers: Mutex::new(Vec::new()),
@@ -94,6 +99,7 @@ impl PluginContextImpl {
             codec_filter_registry,
             transport_filter_registry,
             domain_router,
+            proxy_shutdown,
             plugin_id,
             registered_handles,
             registered_commands,
@@ -246,6 +252,14 @@ impl PluginContext for PluginContextImpl {
         handlers.push(handler);
     }
 
+    fn plugin_registry(&self) -> &dyn PluginRegistry {
+        self.plugin_registry.as_ref()
+    }
+
+    fn plugin_registry_handle(&self) -> Arc<dyn PluginRegistry> {
+        Arc::clone(&self.plugin_registry)
+    }
+
     fn register_config_provider(&self, provider: Box<dyn PluginConfigProvider>) {
         let mut providers = self.config_providers.lock().expect("lock poisoned");
         providers.push(provider);
@@ -261,5 +275,9 @@ impl PluginContext for PluginContextImpl {
 
     fn plugin_id(&self) -> &str {
         &self.plugin_id
+    }
+
+    fn proxy_shutdown(&self) -> CancellationToken {
+        self.proxy_shutdown.clone()
     }
 }
