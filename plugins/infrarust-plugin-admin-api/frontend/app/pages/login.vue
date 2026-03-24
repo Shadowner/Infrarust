@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { KeyIcon } from '@heroicons/vue/24/outline';
+import { KeyIcon, InformationCircleIcon } from '@heroicons/vue/24/outline';
 
 definePageMeta({
   layout: 'auth',
@@ -87,7 +87,15 @@ const connect = async () => {
           </button>
         </div>
 
-        <p class="mt-4 text-center text-[10px] text-[var(--ir-text-muted)]">
+        <div class="mt-4 flex items-start gap-2 rounded-lg border border-[var(--ir-border)] bg-[var(--ir-bg-secondary)] p-3 text-xs text-[var(--ir-text-muted)]">
+          <InformationCircleIcon class="mt-0.5 h-4 w-4 shrink-0 text-[var(--ir-accent)]" />
+          <p>
+            On first launch, the API key is logged in the proxy console and saved to
+            <code class="rounded bg-[var(--ir-bg-tertiary)] px-1 py-0.5 text-[10px]">plugins/admin_api/config.toml</code>.
+          </p>
+        </div>
+
+        <p class="mt-3 text-center text-[10px] text-[var(--ir-text-muted)]">
           Key stored in localStorage for this session.
         </p>
       </div>

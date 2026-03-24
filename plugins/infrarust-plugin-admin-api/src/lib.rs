@@ -3,6 +3,7 @@ pub mod auth;
 pub mod config;
 pub mod dto;
 pub mod error;
+pub mod frontend;
 pub mod handlers;
 pub mod health_cache;
 pub mod health_checker;

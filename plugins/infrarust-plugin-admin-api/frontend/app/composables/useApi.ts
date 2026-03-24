@@ -7,6 +7,7 @@ interface ApiOptions {
 export const useApi = () => {
   const config = useRuntimeConfig();
   const { apiKey, clear } = useAuth();
+  const { show: showRateLimit } = useRateLimit();
 
   const request = async <T>(path: string, options: ApiOptions = {}): Promise<T> => {
     const method = options.method ?? 'GET';
@@ -23,8 +24,11 @@ export const useApi = () => {
           : undefined,
       });
     } catch (error: unknown) {
-      const response = (error as { response?: { status?: number } }).response;
-      if (response?.status === 401) {
+      const response = (error as { response?: { status?: number; headers?: Headers } }).response;
+      if (response?.status === 429) {
+        const retryAfter = parseInt(response.headers?.get('retry-after') ?? '', 10);
+        showRateLimit(Number.isFinite(retryAfter) ? retryAfter : undefined);
+      } else if (response?.status === 401) {
         clear();
         await navigateTo('/login');
       }
