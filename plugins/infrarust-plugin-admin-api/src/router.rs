@@ -18,7 +18,7 @@ use crate::rate_limit;
 use crate::sse;
 use crate::state::ApiState;
 
-pub fn build_router(state: Arc<ApiState>) -> Router {
+pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
     let timeout_layer = TimeoutLayer::with_status_code(
         axum::http::StatusCode::REQUEST_TIMEOUT,
         Duration::from_secs(30),
@@ -127,11 +127,18 @@ pub fn build_router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/events", get(sse::handlers::event_stream))
         .route("/api/v1/logs", get(sse::handlers::log_stream));
 
-    Router::new()
+    let router = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
-        .merge(sse_routes)
-        .fallback(crate::frontend::spa_handler)
+        .merge(sse_routes);
+
+    let router = if enable_webui {
+        router.fallback(crate::frontend::spa_handler)
+    } else {
+        router
+    };
+
+    router
         .with_state(state.clone())
         .layer(
             ServiceBuilder::new()

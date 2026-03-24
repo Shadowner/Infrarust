@@ -60,16 +60,15 @@ fn main() -> ExitCode {
 
     let formatter = InfrarustFormatter::new();
 
-    #[cfg(feature = "plugin-admin-api")]
-    let log_layer = {
+    let log_layer = if config.web.is_some() {
         use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
         let lb = LogBroadcast::new(512, 1000);
         let layer = BroadcastLogLayer::new(lb.tx.clone(), lb.history.clone(), 1000);
         let _ = LogBroadcast::install(lb);
         Some(layer)
+    } else {
+        None
     };
-    #[cfg(not(feature = "plugin-admin-api"))]
-    let log_layer: Option<tracing_subscriber::layer::Identity> = None;
 
     {
         use tracing_subscriber::layer::SubscriberExt;
@@ -202,12 +201,14 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         shutdown_signal.cancel();
     });
 
+    let web_config = config.web.clone();
+
     // Build and run the proxy server
     let mut server = ProxyServer::new(config, shutdown.clone())
         .await
         .context("failed to initialize proxy server")?;
 
-    let static_loader = plugins::build_static_loader();
+    let static_loader = plugins::build_static_loader(web_config.as_ref());
     let loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> =
         vec![Box::new(static_loader)];
 

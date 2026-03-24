@@ -1,8 +1,9 @@
 //! Static plugin registration via Cargo features.
 
+use infrarust_config::WebConfig;
 use infrarust_core::plugin::StaticPluginLoader;
 
-pub fn build_static_loader() -> StaticPluginLoader {
+pub fn build_static_loader(web_config: Option<&WebConfig>) -> StaticPluginLoader {
     let loader = StaticPluginLoader::new();
 
     #[cfg(feature = "plugin-auth")]
@@ -30,12 +31,20 @@ pub fn build_static_loader() -> StaticPluginLoader {
         });
     }
 
-    #[cfg(feature = "plugin-admin-api")]
-    {
+    // Admin API: always compiled, conditionally registered based on [web] config
+    if let Some(web) = web_config {
         use infrarust_api::plugin::Plugin;
-        let admin_api = infrarust_plugin_admin_api::AdminApiPlugin::new();
-        loader.register(admin_api.metadata(), || {
-            Box::new(infrarust_plugin_admin_api::AdminApiPlugin::new())
+        let port = web.listen_port;
+        let enable_api = web.enable_api;
+        let enable_webui = web.enable_webui;
+        let admin_api =
+            infrarust_plugin_admin_api::AdminApiPlugin::new(port, enable_api, enable_webui);
+        loader.register(admin_api.metadata(), move || {
+            Box::new(infrarust_plugin_admin_api::AdminApiPlugin::new(
+                port,
+                enable_api,
+                enable_webui,
+            ))
         });
     }
 
