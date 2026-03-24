@@ -15,6 +15,7 @@ members = [
     "plugins/infrarust-plugin-hello",
     "plugins/infrarust-plugin-server-wake",
     "plugins/infrarust-plugin-queue",
+    "plugins/infrarust-plugin-admin-api",
     "tools/infrarust-motd",
     "tools/registry-extractor",
 ]
@@ -57,7 +58,8 @@ infrarust-server-manager = { path = "crates/infrarust-server-manager" }
 [workspace.package]
 version = "2.0.0-alpha.1"
 edition = "2024"
-license = "AGPL-3.0"
+license = "AGPL-3.0 WITH Plugin-Exceptions"
+# license-file = "LICENSE"
 repository = "https://github.com/Shadowner/Infrarust"
 
 [profile.release]

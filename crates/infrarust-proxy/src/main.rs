@@ -60,61 +60,88 @@ fn main() -> ExitCode {
 
     let formatter = InfrarustFormatter::new();
 
-    #[cfg(feature = "telemetry")]
-    let _otel_guard = {
+    #[cfg(feature = "plugin-admin-api")]
+    let log_layer = {
+        use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
+        let lb = LogBroadcast::new(512, 1000);
+        let layer = BroadcastLogLayer::new(lb.tx.clone(), lb.history.clone(), 1000);
+        let _ = LogBroadcast::install(lb);
+        Some(layer)
+    };
+    #[cfg(not(feature = "plugin-admin-api"))]
+    let log_layer: Option<tracing_subscriber::layer::Identity> = None;
+
+    {
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
 
-        if let Some(ref tc) = config.telemetry {
-            if tc.enabled {
-                match infrarust_core::telemetry::init_telemetry(tc) {
-                    Ok(guard) => {
-                        let tracer = opentelemetry::global::tracer("infrarust");
-                        let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        #[cfg(feature = "telemetry")]
+        let _otel_guard = {
+            if let Some(ref tc) = config.telemetry {
+                if tc.enabled {
+                    match infrarust_core::telemetry::init_telemetry(tc) {
+                        Ok(guard) => {
+                            let tracer = opentelemetry::global::tracer("infrarust");
+                            let otel_layer =
+                                tracing_opentelemetry::layer().with_tracer(tracer);
 
-                        tracing_subscriber::registry()
-                            .with(filter)
-                            .with(
-                                tracing_subscriber::fmt::layer()
-                                    .event_format(formatter),
-                            )
-                            .with(otel_layer)
-                            .init();
-                        Some(guard)
+                            tracing_subscriber::registry()
+                                .with(filter)
+                                .with(
+                                    tracing_subscriber::fmt::layer()
+                                        .event_format(formatter),
+                                )
+                                .with(otel_layer)
+                                .with(log_layer)
+                                .init();
+                            Some(guard)
+                        }
+                        Err(e) => {
+                            tracing_subscriber::registry()
+                                .with(filter)
+                                .with(
+                                    tracing_subscriber::fmt::layer()
+                                        .event_format(formatter),
+                                )
+                                .with(log_layer)
+                                .init();
+                            tracing::warn!(
+                                "failed to initialize OpenTelemetry: {e}, continuing without telemetry"
+                            );
+                            None
+                        }
                     }
-                    Err(e) => {
-                        // Fall back to fmt-only subscriber
-                        tracing_subscriber::fmt()
-                            .event_format(formatter)
-                            .with_env_filter(filter)
-                            .init();
-                        tracing::warn!(
-                            "failed to initialize OpenTelemetry: {e}, continuing without telemetry"
-                        );
-                        None
-                    }
+                } else {
+                    tracing_subscriber::registry()
+                        .with(filter)
+                        .with(
+                            tracing_subscriber::fmt::layer().event_format(formatter),
+                        )
+                        .with(log_layer)
+                        .init();
+                    None
                 }
             } else {
-                tracing_subscriber::fmt()
-                    .event_format(formatter)
-                    .with_env_filter(filter)
+                tracing_subscriber::registry()
+                    .with(filter)
+                    .with(
+                        tracing_subscriber::fmt::layer().event_format(formatter),
+                    )
+                    .with(log_layer)
                     .init();
                 None
             }
-        } else {
-            tracing_subscriber::fmt()
-                .event_format(formatter)
-                .with_env_filter(filter)
-                .init();
-            None
-        }
-    };
+        };
 
-    #[cfg(not(feature = "telemetry"))]
-    tracing_subscriber::fmt()
-        .event_format(formatter)
-        .with_env_filter(filter)
-        .init();
+        #[cfg(not(feature = "telemetry"))]
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(
+                tracing_subscriber::fmt::layer().event_format(formatter),
+            )
+            .with(log_layer)
+            .init();
+    }
 
     infrarust_core::telemetry::formatter::print_banner();
 
@@ -203,6 +230,8 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
     );
 
+    let plugin_registry = Arc::new(infrarust_core::plugin::PluginRegistryImpl::new());
+
     let plugin_services = PluginServices {
         event_bus: Arc::clone(&services.event_bus) as Arc<dyn infrarust_api::event::bus::EventBus>,
         player_registry: Arc::clone(&services.player_registry)
@@ -213,9 +242,12 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
             as Arc<dyn infrarust_api::command::CommandManager>,
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(ConfigServiceImpl::new(Arc::clone(&services.domain_router))),
+        plugin_registry: Arc::clone(&plugin_registry)
+            as Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry>,
         codec_filter_registry: Arc::clone(&services.codec_filter_registry),
         transport_filter_registry: Arc::clone(&transport_filter_registry),
         domain_router: Arc::clone(&services.domain_router),
+        proxy_shutdown: shutdown.clone(),
         plugins_dir: PathBuf::from("plugins"),
     };
 
@@ -228,6 +260,12 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     if !errors.is_empty() {
         tracing::warn!(count = errors.len(), "Some plugins failed to enable");
     }
+
+    // Refresh the plugin registry snapshot so all plugins are visible via the API
+    plugin_registry.update_from(
+        &plugin_manager.list_plugins(),
+        &|id| plugin_manager.plugin_state(id).cloned(),
+    );
 
     // Collect limbo handlers registered by plugins and populate the registry
     for handler in plugin_manager.collect_limbo_handlers() {
