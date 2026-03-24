@@ -1,0 +1,33 @@
+[package]
+name = "infrarust-plugin-admin-api"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "HTTP REST API plugin for Infrarust proxy administration"
+license = "AGPL-3.0"
+
+[dependencies]
+infrarust-api = { path = "../../crates/infrarust-api" }
+infrarust-protocol = { path = "../../crates/infrarust-protocol" }
+
+axum = { version = "0.8" }
+tower = { version = "0.5", features = ["limit"] }
+tower-http = { version = "0.6", features = ["cors", "compression-gzip", "trace", "timeout"] }
+tokio = { version = "1", features = ["sync", "net", "time", "fs", "io-util"] }
+tokio-util = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["registry"] }
+async-stream = "0.3"
+tokio-stream = "0.1"
+subtle = "2"
+toml = "0.8"
+uuid = { version = "1", features = ["v4"] }
+time = { version = "0.3", features = ["formatting", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }

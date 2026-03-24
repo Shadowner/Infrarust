@@ -30,6 +30,15 @@ pub fn build_static_loader() -> StaticPluginLoader {
         });
     }
 
+    #[cfg(feature = "plugin-admin-api")]
+    {
+        use infrarust_api::plugin::Plugin;
+        let admin_api = infrarust_plugin_admin_api::AdminApiPlugin::new();
+        loader.register(admin_api.metadata(), || {
+            Box::new(infrarust_plugin_admin_api::AdminApiPlugin::new())
+        });
+    }
+
     tracing::info!(count = loader.registered_count(), "Static plugins registered");
     loader
 }
