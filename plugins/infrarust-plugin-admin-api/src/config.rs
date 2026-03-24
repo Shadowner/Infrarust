@@ -81,6 +81,10 @@ api_key = "CHANGE-ME"
 # requests_per_minute = 60
 "#;
 
+fn generate_api_key() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 pub async fn load_config(data_dir: &Path) -> Result<ApiConfig, PluginError> {
     let config_path = data_dir.join("config.toml");
 
@@ -89,27 +93,34 @@ pub async fn load_config(data_dir: &Path) -> Result<ApiConfig, PluginError> {
             .await
             .map_err(|e| PluginError::InitFailed(format!("Failed to create data dir: {e}")))?;
 
-        tokio::fs::write(&config_path, DEFAULT_CONFIG)
+        let generated_key = generate_api_key();
+        let config_content = DEFAULT_CONFIG.replace("CHANGE-ME", &generated_key);
+
+        tokio::fs::write(&config_path, &config_content)
             .await
             .map_err(|e| PluginError::InitFailed(format!("Failed to write default config: {e}")))?;
 
-        return Err(PluginError::InitFailed(format!(
-            "Default config created at {}. Please set a secure api_key before restarting.",
-            config_path.display()
-        )));
+        tracing::info!("Generated admin API key: {generated_key}");
+        tracing::info!("Config written to {}", config_path.display());
     }
 
     let content = tokio::fs::read_to_string(&config_path)
         .await
         .map_err(|e| PluginError::InitFailed(format!("Failed to read config: {e}")))?;
 
-    let config: ApiConfig = toml::from_str(&content)
+    let mut config: ApiConfig = toml::from_str(&content)
         .map_err(|e| PluginError::InitFailed(format!("Invalid config: {e}")))?;
 
     if config.api_key == "CHANGE-ME" {
-        return Err(PluginError::InitFailed(
-            "API key is still set to 'CHANGE-ME'. Please configure a secure API key.".into(),
-        ));
+        let generated_key = generate_api_key();
+        let updated_content = content.replace("CHANGE-ME", &generated_key);
+
+        tokio::fs::write(&config_path, &updated_content)
+            .await
+            .map_err(|e| PluginError::InitFailed(format!("Failed to update config: {e}")))?;
+
+        config.api_key = generated_key.clone();
+        tracing::info!("Generated admin API key: {generated_key}");
     }
 
     const MIN_KEY_LENGTH: usize = 16;
