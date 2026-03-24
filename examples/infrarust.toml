@@ -11,3 +11,6 @@ servers_dir = "./examples/servers"
 file = "./examples/bans.json"
 purge_interval = "5m"
 enable_audit_log = true
+
+# Activate the web admin API and UI
+[web]

@@ -10,7 +10,7 @@ name = "infrarust"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["default-plugins"]
 telemetry = ["infrarust-core/telemetry", "dep:opentelemetry", "dep:tracing-opentelemetry"]
 default-plugins = ["plugin-auth", "plugin-server-wake"]
 plugin-auth = ["dep:infrarust-plugin-auth"]

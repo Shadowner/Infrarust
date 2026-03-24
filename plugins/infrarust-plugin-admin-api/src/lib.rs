@@ -46,7 +46,7 @@ pub struct AdminApiPlugin {
     server_handle: Mutex<Option<JoinHandle<()>>>,
     shutdown: CancellationToken,
     listen_port: u16,
-    enable_api: bool,
+    _enable_api: bool, //TODO : make to only have the api without webui
     enable_webui: bool,
 }
 
@@ -56,7 +56,7 @@ impl AdminApiPlugin {
             server_handle: Mutex::new(None),
             shutdown: CancellationToken::new(),
             listen_port,
-            enable_api,
+            _enable_api: enable_api,
             enable_webui,
         }
     }
