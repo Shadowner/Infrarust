@@ -5,20 +5,21 @@ export default
     title: 'Infrarust',
     description: 'High-performance Minecraft reverse proxy written in Rust',
     lang: 'en-US',
+    base: '/v2/',
     cleanUrls: true,
     lastUpdated: true,
     ignoreDeadLinks: true,
 
     head: [
-      ['link', { rel: 'icon', type: 'image/svg+xml', href: '/images/logo.svg' }],
-      ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/images/favicon-32x32.png' }],
+      ['link', { rel: 'icon', type: 'image/svg+xml', href: '/v2/images/logo.svg' }],
+      ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/v2/images/favicon-32x32.png' }],
       ['meta', { name: 'theme-color', content: '#E8832A' }],
       ['meta', { property: 'og:type', content: 'website' }],
       ['meta', { property: 'og:site_name', content: 'Infrarust' }],
       ['meta', { property: 'og:title', content: 'Infrarust — Minecraft Reverse Proxy' }],
       ['meta', { property: 'og:description', content: 'High-performance Minecraft reverse proxy written in Rust' }],
-      ['meta', { property: 'og:url', content: 'https://infrarust.dev/' }],
-      ['meta', { property: 'og:image', content: 'https://infrarust.dev/images/og-banner.png' }],
+      ['meta', { property: 'og:url', content: 'https://infrarust.dev/v2/' }],
+      ['meta', { property: 'og:image', content: 'https://infrarust.dev/v2/images/og-banner.png' }],
       ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
       ['meta', { name: 'twitter:title', content: 'Infrarust — Minecraft Reverse Proxy' }],
       ['meta', { name: 'twitter:description', content: 'High-performance Minecraft reverse proxy written in Rust' }],
@@ -42,7 +43,7 @@ export default
     // },
 
     transformPageData(pageData) {
-      const canonicalUrl = `https://infrarust.dev/${pageData.relativePath}`
+      const canonicalUrl = `https://infrarust.dev/v2/${pageData.relativePath}`
         .replace(/index\.md$/, '')
         .replace(/\.md$/, '')
 
@@ -88,7 +89,7 @@ export default
             {
               text: 'Previous versions',
               items: [
-                { text: 'V1 Documentation', link: 'https://v1.infrarust.dev/' },
+                { text: 'V1 Documentation', link: '/' },
               ],
             },
           ],
@@ -237,7 +238,7 @@ export default
         { icon: 'discord', link: 'https://discord.gg/sqbJhZVSgG' },
       ],
       editLink: {
-        pattern: 'https://github.com/Shadowner/Infrarust/edit/main/docs/:path',
+        pattern: 'https://github.com/Shadowner/Infrarust/edit/main/docs/v2/:path',
         text: 'Edit this page on GitHub',
       },
       search: {
