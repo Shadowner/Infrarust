@@ -47,11 +47,13 @@ impl PluginContextFactory for PluginContextFactoryImpl {
             Arc::clone(&self.services.server_manager),
             Arc::clone(&self.services.ban_service),
             Arc::clone(&self.services.config_service),
+            Arc::clone(&self.services.plugin_registry),
             Arc::clone(&self.services.command_manager),
             Arc::clone(&self.services.scheduler),
             Arc::clone(&self.services.codec_filter_registry),
             Arc::clone(&self.services.transport_filter_registry),
             Arc::clone(&self.services.domain_router),
+            self.services.proxy_shutdown.clone(),
         ))
     }
 }

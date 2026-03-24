@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+use tokio_util::sync::CancellationToken;
+
 use crate::command::CommandManager;
 use crate::error::PluginError;
 use crate::event::bus::EventBus;
@@ -14,7 +16,7 @@ use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use crate::limbo::LimboHandler;
 use crate::services::{
     ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
-    scheduler::Scheduler, server_manager::ServerManager,
+    plugin_registry::PluginRegistry, scheduler::Scheduler, server_manager::ServerManager,
 };
 
 /// Metadata describing a plugin.
@@ -189,12 +191,18 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     /// Returns `Some` for native plugins, `None` for WASM plugins.
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry>;
 
+    fn plugin_registry(&self) -> &dyn PluginRegistry;
+
+    fn plugin_registry_handle(&self) -> Arc<dyn PluginRegistry>;
+
     fn register_config_provider(
         &self,
         provider: Box<dyn crate::provider::PluginConfigProvider>,
     );
 
     fn plugin_id(&self) -> &str;
+
+    fn proxy_shutdown(&self) -> CancellationToken;
 }
 
 #[cfg(test)]

@@ -5,10 +5,12 @@ pub mod context_factory;
 pub mod dependency;
 pub mod loader;
 pub mod manager;
+pub mod plugin_registry_impl;
 pub mod static_loader;
 pub mod tracking;
 
 pub use context_factory::{PluginContextFactory, PluginContextFactoryImpl, PluginPermissions};
+pub use plugin_registry_impl::PluginRegistryImpl;
 pub use loader::{LoaderError, PluginLoader};
 pub use static_loader::{PluginFactory, StaticPluginLoader};
 

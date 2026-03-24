@@ -226,6 +226,29 @@ mod tests {
         fn plugin_id(&self) -> &str {
             &self.plugin_id
         }
+        fn plugin_registry(&self) -> &dyn infrarust_api::services::plugin_registry::PluginRegistry {
+            unimplemented!("mock")
+        }
+        fn plugin_registry_handle(
+            &self,
+        ) -> Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry> {
+            unimplemented!("mock")
+        }
+        fn server_manager_handle(&self) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
+            unimplemented!("mock")
+        }
+        fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
+            unimplemented!("mock")
+        }
+        fn config_service_handle(&self) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
+            unimplemented!("mock")
+        }
+        fn event_bus_handle(&self) -> Arc<dyn infrarust_api::event::bus::EventBus> {
+            unimplemented!("mock")
+        }
+        fn proxy_shutdown(&self) -> tokio_util::sync::CancellationToken {
+            tokio_util::sync::CancellationToken::new()
+        }
     }
 
     struct MockPluginContextFactory;

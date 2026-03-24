@@ -10,8 +10,9 @@ use infrarust_api::event::bus::EventBus;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::{
     ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
-    scheduler::Scheduler, server_manager::ServerManager,
+    plugin_registry::PluginRegistry, scheduler::Scheduler, server_manager::ServerManager,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
@@ -31,9 +32,11 @@ pub struct PluginServices {
     pub command_manager: Arc<dyn CommandManager>,
     pub scheduler: Arc<dyn Scheduler>,
     pub config_service: Arc<dyn ConfigService>,
+    pub plugin_registry: Arc<dyn PluginRegistry>,
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
     pub domain_router: Arc<crate::routing::DomainRouter>,
+    pub proxy_shutdown: CancellationToken,
     pub plugins_dir: PathBuf,
 }
 
@@ -398,6 +401,29 @@ mod tests {
 
         fn plugin_id(&self) -> &str {
             &self.plugin_id
+        }
+        fn plugin_registry(&self) -> &dyn infrarust_api::services::plugin_registry::PluginRegistry {
+            unimplemented!("mock")
+        }
+        fn plugin_registry_handle(
+            &self,
+        ) -> Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry> {
+            unimplemented!("mock")
+        }
+        fn server_manager_handle(&self) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
+            unimplemented!("mock")
+        }
+        fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
+            unimplemented!("mock")
+        }
+        fn config_service_handle(&self) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
+            unimplemented!("mock")
+        }
+        fn event_bus_handle(&self) -> Arc<dyn infrarust_api::event::bus::EventBus> {
+            unimplemented!("mock")
+        }
+        fn proxy_shutdown(&self) -> tokio_util::sync::CancellationToken {
+            tokio_util::sync::CancellationToken::new()
         }
     }
 
