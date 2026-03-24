@@ -3,11 +3,13 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
 use crate::state::ApiState;
+
+const WINDOW_SECS: u64 = 60;
 
 pub struct RateLimiter {
     inner: Mutex<RateLimiterInner>,
@@ -17,6 +19,13 @@ pub struct RateLimiter {
 struct RateLimiterInner {
     count: u64,
     window_start: Instant,
+}
+
+pub struct RateLimitInfo {
+    pub allowed: bool,
+    pub limit: u64,
+    pub remaining: u64,
+    pub reset_in: u64,
 }
 
 impl RateLimiter {
@@ -30,7 +39,7 @@ impl RateLimiter {
         }
     }
 
-    pub fn check(&self) -> bool {
+    pub fn check(&self) -> RateLimitInfo {
         let mut inner = match self.inner.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -40,20 +49,42 @@ impl RateLimiter {
         };
 
         let now = Instant::now();
+        let elapsed = now.duration_since(inner.window_start).as_secs();
 
-        if now.duration_since(inner.window_start).as_secs() >= 60 {
+        if elapsed >= WINDOW_SECS {
             inner.window_start = now;
             inner.count = 1;
-            return true;
+            return RateLimitInfo {
+                allowed: true,
+                limit: self.max_requests,
+                remaining: self.max_requests.saturating_sub(1),
+                reset_in: WINDOW_SECS,
+            };
         }
+
+        let reset_in = WINDOW_SECS.saturating_sub(elapsed);
 
         if inner.count < self.max_requests {
             inner.count += 1;
-            true
+            RateLimitInfo {
+                allowed: true,
+                limit: self.max_requests,
+                remaining: self.max_requests.saturating_sub(inner.count),
+                reset_in,
+            }
         } else {
-            false
+            RateLimitInfo {
+                allowed: false,
+                limit: self.max_requests,
+                remaining: 0,
+                reset_in,
+            }
         }
     }
+}
+
+fn header_value(n: u64) -> HeaderValue {
+    HeaderValue::from_str(&n.to_string()).unwrap()
 }
 
 pub async fn rate_limit_middleware(
@@ -61,8 +92,10 @@ pub async fn rate_limit_middleware(
     request: axum::extract::Request,
     next: Next,
 ) -> Response {
-    if !state.rate_limiter.check() {
-        return (
+    let info = state.rate_limiter.check();
+
+    if !info.allowed {
+        let mut response = (
             StatusCode::TOO_MANY_REQUESTS,
             serde_json::json!({
                 "error": {
@@ -73,7 +106,21 @@ pub async fn rate_limit_middleware(
             .to_string(),
         )
             .into_response();
+
+        let headers = response.headers_mut();
+        headers.insert("X-RateLimit-Limit", header_value(info.limit));
+        headers.insert("X-RateLimit-Remaining", header_value(0));
+        headers.insert("X-RateLimit-Reset", header_value(info.reset_in));
+        headers.insert("Retry-After", header_value(info.reset_in));
+        return response;
     }
 
-    next.run(request).await
+    let mut response = next.run(request).await;
+
+    let headers = response.headers_mut();
+    headers.insert("X-RateLimit-Limit", header_value(info.limit));
+    headers.insert("X-RateLimit-Remaining", header_value(info.remaining));
+    headers.insert("X-RateLimit-Reset", header_value(info.reset_in));
+
+    response
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::http::{Method, Request, header};
+use axum::http::{HeaderName, Method, Request, header};
 use axum::middleware;
 use axum::routing::{delete, get, post};
 use tower::ServiceBuilder;
@@ -131,6 +131,7 @@ pub fn build_router(state: Arc<ApiState>) -> Router {
         .merge(public_routes)
         .merge(protected_routes)
         .merge(sse_routes)
+        .fallback(crate::frontend::spa_handler)
         .with_state(state.clone())
         .layer(
             ServiceBuilder::new()
@@ -157,7 +158,13 @@ fn build_cors_layer(config: &ApiConfig) -> CorsLayer {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT]);
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT])
+        .expose_headers([
+            HeaderName::from_static("x-ratelimit-limit"),
+            HeaderName::from_static("x-ratelimit-remaining"),
+            HeaderName::from_static("x-ratelimit-reset"),
+            HeaderName::from_static("retry-after"),
+        ]);
 
     if config.cors_origins.is_empty() {
         cors

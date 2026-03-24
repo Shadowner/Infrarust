@@ -17,5 +17,6 @@ onMounted(() => connect());
     <!-- Global overlays -->
     <ToastNotification />
     <ConfirmDialog />
+    <RateLimitModal />
   </div>
 </template>
