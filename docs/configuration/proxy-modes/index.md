@@ -1,6 +1,7 @@
 ---
 title: Proxy Modes
 description: How Infrarust handles the connection between players and your backend servers, from raw TCP forwarding to full packet interception.
+outline: [2, 3]
 ---
 
 # Proxy Modes
@@ -20,6 +21,28 @@ Forwarding modes relay raw TCP bytes after the initial handshake. The proxy neve
 | Server switching | No | Yes |
 | Plugin packet injection | No | Yes |
 | Can join a network | No | Yes |
+
+## Comparison table
+
+Here is a side-by-side breakdown of all five modes.
+
+| Feature | passthrough | zero_copy | server_only | client_only | offline |
+|---|---|---|---|---|---|
+| Category | Forwarding | Forwarding | Forwarding | Intercepted | Intercepted |
+| Default | Yes | No | No | No | No |
+| Parses packets | No | No | No | Yes | Yes |
+| Auth handled by | Backend | Backend | Backend | Proxy (Mojang) | None |
+| Backend `online-mode` | `true` | `true` | `true` | `false` | `false` |
+| Server switching | No | No | No | Yes | Yes |
+| Plugin packet injection | No | No | No | Yes | Yes |
+| Can join a network | No | No | No | Yes | Yes |
+| Requires domain | Yes | Yes | Yes | No (if in network) | No (if in network) |
+| OS restriction | None | Linux only | None | None | None |
+| Minecraft version support | All (1.7+) | All (1.7+) | All (1.7+) | Supported versions | Supported versions |
+
+::: tip
+Forwarding modes work with every Minecraft version because they only read the handshake packet. Intercepted modes depend on Infrarust's protocol implementation (currently 1.7 through 1.21.x).
+:::
 
 ## Forwarding modes
 
@@ -42,9 +65,27 @@ The tradeoff is that intercepted modes depend on Infrarust's protocol support. T
 - [Client-only](./client-only.md) performs Mojang authentication at the proxy. The backend must run with `online-mode=false`. This is the mode you need for server networks where players switch between backends without reconnecting.
 - [Offline](./offline.md) skips authentication entirely. The proxy still parses packets and supports server switching, but any username can connect. Use this for cracked servers or local development.
 
-## Picking a mode
+## Decision flowchart
 
-If you're unsure, start with the default (passthrough). Switch to a different mode when you need a specific feature.
+Use these questions to pick the right mode:
+
+```
+Do you need server switching or plugin packet injection?
+├── No
+│   ├── Running on Linux and want lower CPU usage?
+│   │   ├── Yes → zero_copy
+│   │   └── No → passthrough (default)
+│   └── Backend handles its own auth and you want to signal that?
+│       └── Yes → server_only
+└── Yes
+    ├── Do players need Mojang authentication (premium accounts)?
+    │   ├── Yes → client_only
+    │   └── No → offline
+```
+
+Start with `passthrough` if you're unsure. Move to `client_only` when you need server switching or plugins. Move to `zero_copy` if you're on Linux and want to reduce CPU overhead on a high-traffic proxy.
+
+## Quick reference
 
 | You want to... | Use |
 |---|---|
@@ -72,3 +113,7 @@ With Docker labels:
 labels:
   infrarust.proxy_mode: "client_only"
 ```
+
+::: warning
+`zero_copy` only works on Linux. On other operating systems, the proxy logs a warning and falls back to passthrough behavior.
+:::
