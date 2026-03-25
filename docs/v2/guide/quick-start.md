@@ -20,12 +20,14 @@ Infrarust reads its main configuration from `infrarust.toml` in the working dire
 ```toml
 bind = "0.0.0.0:25565"
 servers_dir = "./servers"
+
+[web]
 ```
 
-`bind` sets the address and port Infrarust listens on. `servers_dir` tells it where to find server definitions.
+`bind` sets the address and port Infrarust listens on. `servers_dir` tells it where to find server definitions. The `[web]` section enables the admin REST API and web dashboard on port `8080`.
 
 ::: tip
-These are the defaults. An empty `infrarust.toml` file works too, but writing them out makes the setup explicit.
+`bind` and `servers_dir` are the defaults. The `[web]` section activates the [Admin API & Web UI](../plugins/builtin/admin-api) plugin with all defaults — API and dashboard on `http://127.0.0.1:8080`.
 :::
 
 ## 2. Define a backend server
@@ -64,8 +66,12 @@ You should see output like:
 ```
 INFO starting infrarust v2.0.0-alpha.1
      bind=0.0.0.0:25565 servers_dir=./servers
+INFO Generated admin API key: a1b2c3d4-e5f6-...
+INFO Admin API server starting bind=127.0.0.1:8080
 INFO infrarust is ready, accepting connections
 ```
+
+The admin API key is written to `plugins/admin_api/config.toml`. Open `http://127.0.0.1:8080` in a browser to access the web dashboard.
 
 To use a config file at a different path:
 
@@ -99,14 +105,17 @@ Set `servers_dir` in your `infrarust.toml` to match the container path:
 ```toml
 bind = "0.0.0.0:25565"
 servers_dir = "/app/config/servers"
+
+[web]
 ```
 
-Run the container:
+Run the container, exposing both the Minecraft port and the web dashboard:
 
 ```bash
 docker run -d \
   --name infrarust \
   -p 25565:25565 \
+  -p 8080:8080 \
   -v ./config:/app/config \
   ghcr.io/shadowner/infrarust:latest \
   --config /app/config/infrarust.toml
@@ -131,3 +140,4 @@ The `proxy_mode` field controls how Infrarust handles traffic. The default is `p
 - [Configuration overview](../configuration/) for all global and per-server options
 - [Proxy Modes](../configuration/proxy-modes/) to understand `passthrough`, `client_only`, `offline`, and the others
 - [Server definitions](../configuration/servers.md) for the full set of per-server fields
+- [Admin API & Web UI](../plugins/builtin/admin-api) for the full REST API reference and SSE streaming
