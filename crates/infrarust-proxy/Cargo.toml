@@ -1,0 +1,47 @@
+[package]
+name = "infrarust-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "infrarust"
+path = "src/main.rs"
+
+[features]
+default = ["default-plugins"]
+telemetry = ["infrarust-core/telemetry", "dep:opentelemetry", "dep:tracing-opentelemetry"]
+default-plugins = ["plugin-auth", "plugin-server-wake"]
+plugin-auth = ["dep:infrarust-plugin-auth"]
+plugin-hello = ["dep:infrarust-plugin-hello"]
+plugin-server-wake = ["dep:infrarust-plugin-server-wake"]
+
+[dependencies]
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+toml = { workspace = true }
+infrarust-protocol = { workspace = true }
+infrarust-api = { workspace = true }
+infrarust-config = { workspace = true }
+infrarust-core = { workspace = true }
+infrarust-limbo = { workspace = true }
+infrarust-ban = { workspace = true }
+infrarust-server-manager = { workspace = true }
+
+# Plugins (optional)
+infrarust-plugin-auth = { path = "../../plugins/infrarust-plugin-auth", optional = true }
+infrarust-plugin-hello = { path = "../../plugins/infrarust-plugin-hello", optional = true }
+infrarust-plugin-server-wake = { path = "../../plugins/infrarust-plugin-server-wake", optional = true }
+infrarust-plugin-admin-api = { path = "../../plugins/infrarust-plugin-admin-api" }
+
+# Telemetry (optional)
+opentelemetry = { version = "0.31", optional = true }
+tracing-opentelemetry = { version = "0.32", optional = true }
+
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = "0.1"

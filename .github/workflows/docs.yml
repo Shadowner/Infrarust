@@ -3,7 +3,7 @@ name: Deploy Documentation to GitHub Pages
 on:
   push:
     branches: [main]
-    paths: 
+    paths:
         - 'docs/**'
         - '.github/workflows/docs.yml'
 
@@ -21,9 +21,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: docs
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,22 +31,35 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: yarn 
-          cache-dependency-path: docs/yarn.lock
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Install dependencies
+      - name: Install V1 dependencies
+        working-directory: docs/v1
         run: yarn install --frozen-lockfile
 
-      - name: Build with VitePress
-        run: yarn build 
+      - name: Build V1
+        working-directory: docs/v1
+        run: yarn build
+
+      - name: Install V2 dependencies
+        working-directory: docs/v2
+        run: yarn install --frozen-lockfile
+
+      - name: Build V2
+        working-directory: docs/v2
+        run: yarn docs:build
+
+      - name: Merge V1 and V2 builds
+        run: |
+          mkdir -p docs/v1/.vitepress/dist/v2
+          cp -r docs/v2/.vitepress/dist/* docs/v1/.vitepress/dist/v2/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/.vitepress/dist
+          path: docs/v1/.vitepress/dist
 
   deploy:
     environment:

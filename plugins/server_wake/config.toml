@@ -1,0 +1,15 @@
+[timing]
+start_timeout_seconds = 180
+title_refresh_interval_seconds = 3
+show_waiting_count = true
+
+[messages]
+starting_title = "&eServer Starting"
+starting_subtitle = "&7Please wait&f{dots}"
+stopping_title = "&eServer Restarting"
+stopping_subtitle = "&7Waiting for shutdown&f{dots}"
+ready_title = "&aServer Ready!"
+ready_subtitle = "&7Connecting you now..."
+failed_kick = "&cThe server failed to start. Please try again later."
+timeout_kick = "&cThe server took too long to start. Please try again."
+waiting_action_bar = "&7{count} player(s) waiting for &e{server}"

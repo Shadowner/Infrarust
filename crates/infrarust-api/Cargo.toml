@@ -1,0 +1,21 @@
+[package]
+name = "infrarust-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Plugin API for Infrarust, a Minecraft reverse proxy"
+keywords = ["minecraft", "proxy", "plugin", "api"]
+categories = ["game-development", "network-programming"]
+
+[dependencies]
+bytes = { workspace = true }
+serde = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tokio-util = { workspace = true, features = ["rt"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[features]
+default = []
+serde = ["dep:serde"]

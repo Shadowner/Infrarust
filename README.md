@@ -1,176 +1,164 @@
-<div align="center" >
-    <img width="200" height="auto" src="docs/public/img/logo.svg" alt="Infrarust Logo">
-  
+<div align="center">
+  <img width="200" height="auto" src="docs/v2/public/images/logo.svg" alt="Infrarust Logo">
+
   <h1>Infrarust</h1>
-  <h3>High-Performance Minecraft Reverse Proxy in Rust</h3>
-    <div class="badges-container">
-    <a href="https://crates.io/crates/infrarust" class="badge-link">
-      <img alt="Crates.io" src="https://img.shields.io/crates/v/infrarust?style=flat-square" />
-    </a>
-    <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" />
-  </div>
-  
-  <h4>Compatible with all vanilla, plugin, and modded Minecraft servers</h4>
+
+  <p>Minecraft reverse proxy written in Rust. Route players to backend servers by domain, manage everything from a web dashboard.</p>
+
+  <a href="https://crates.io/crates/infrarust">
+    <img alt="Crates.io" src="https://img.shields.io/crates/v/infrarust?style=flat-square" />
+  </a>
+  <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" />
+  <a href="https://discord.gg/sqbJhZVSgG">
+    <img alt="Discord" src="https://img.shields.io/discord/1330603066478825502?style=flat-square&label=discord" />
+  </a>
 </div>
 
+<br />
+
+<p align="center">
+  <img src="docs/v2/public/web-ui.png" alt="Infrarust web dashboard" width="800" />
+</p>
+
 > [!WARNING]
-> Infrarust is currently in active development. This project is a Rust implementation inspired by [Infrared](https://infrared.dev/), focusing on performance and enhanced features.
+> Infrarust V2 is currently in active development. Excpect bug with every intercepted mode (client_only / offline)
 
-A blazing fast Minecraft reverse proxy that allows you to expose multiple Minecraft servers through a single port. It uses domain/subdomain-based routing to direct clients to specific Minecraft servers.
+## Features
 
-## Key Features
-
-- [x] Efficient Reverse Proxy
-  - [x] Wildcard Domain Support
-  - [x] Multi-Domain Routing
-  - [x] Direct IP Connection Support
-- [x] Authentication Modes
-  - [x] ClientOnly Mode (only works with vanilla < 1.20)
-  - [x] Passthrough Mode
-  - [x] Offline Mode
-  - [x] ServerOnly Mode
-- [x] Performance Optimizations
-  - [x] Connection Pooling
-  - [x] Zero-copy packet forwarding
-  - [x] Status Caching
-- [x] Security Features
-  - [x] Rate Limiting
-  - [x] Basic DDoS Protection
-  - [x] Advanced Ban System (IP, UUID, Username)
-- [x] Container Integration
-  - [x] Docker Auto-Discovery
-  - [x] Real-time Container Monitoring
-- [x] Command Line Interface
-  - [x] Player Management
-  - [x] Ban Management
-  - [x] Status Monitoring
-- [x] Basic Telemetry and Monitoring
+| | |
+|---|---|
+| **Routing** | Domain and subdomain-based routing with wildcard support. One port, many servers. |
+| **Proxy modes** | `passthrough`, `zerocopy`, `client_only`, `offline`, `server_only` - from raw TCP relay to full Mojang auth interception. |
+| **Web dashboard** | Built-in admin panel with REST API, real-time event streaming (SSE), and log viewer. Add `[web]` to your config and it's running. |
+| **Docker** | Auto-discover Minecraft containers via labels - no config files needed for Docker-managed servers. Scratch-based image, multi-arch. |
+| **Plugins** | Event-driven plugin system with built-in auth, server wake, and queue plugins. Write your own in Rust. |
+| **Security** | Rate limiting, IP filtering, ban system (IP / UUID / username). |
+| **Observability** | OpenTelemetry export for metrics, traces, and logs. Ships with a Grafana dashboard. |
+| **Hot reload** | Drop a `.toml` file in `servers/` and the proxy picks it up. No restart. |
 
 ## Quick Start
 
-### Prerequisites
-
-- Rust 1.84+ and Cargo
-
-### Installation
+### Install
 
 ```bash
-# From source
-git clone https://github.com/shadowner/infrarust
-cd infrarust
-cargo build --release
+# Pre-built binary (Linux)
+curl -LO https://github.com/Shadowner/Infrarust/releases/latest/download/infrarust
+chmod +x infrarust && sudo mv infrarust /usr/local/bin/
 
-# Or via cargo
-cargo install infrarust
+# Docker
+docker pull ghcr.io/shadowner/infrarust:latest
+
+# From source (Rust 1.85+)
+git clone https://github.com/Shadowner/Infrarust.git && cd Infrarust
+cargo build --release -p infrarust-proxy
 ```
 
-### Basic Configuration
+### Configure
 
-Create a `config.yaml` file:
+`infrarust.toml`:
+
+```toml
+bind = "0.0.0.0:25565"
+servers_dir = "./servers"
+
+[web]
+```
+
+`servers/survival.toml`:
+
+```toml
+domains = ["survival.example.com"]
+addresses = ["127.0.0.1:25566"]
+```
+
+### Run
+
+```bash
+infrarust
+```
+
+The web dashboard is at `http://localhost:8080`. Your API key is in `plugins/admin_api/config.toml`.
+
+Full docs at **[infrarust.dev](https://infrarust.dev/v2/)**.
+
+## Docker
+
+The Docker image is built from `scratch` - statically linked binary, CA certs, nothing else. Supports amd64 and arm64.
+
+```bash
+docker run -d \
+  --name infrarust \
+  -p 25565:25565 \
+  -p 8080:8080 \
+  -v ./config:/app/config \
+  ghcr.io/shadowner/infrarust:latest \
+  --config /app/config/infrarust.toml
+```
+
+### Auto-discovery
+
+Mount the Docker socket and Infrarust finds your Minecraft containers by label:
 
 ```yaml
-bind: "0.0.0.0:25565"
-file_provider:
-  proxies_path: ["./proxies"]
-  watch: true  # Enable hot-reload
+services:
+  infrarust:
+    image: ghcr.io/shadowner/infrarust:latest
+    command: ["--config", "/app/config/infrarust.toml"]
+    ports:
+      - "25565:25565"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config:/app/config
+
+  survival:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "TRUE"
+    labels:
+      infrarust.enable: "true"
+      infrarust.domains: "survival.example.com"
 ```
 
-And create your server configurations in the `proxies` directory:
+Add `[docker]` to your `infrarust.toml` and containers with `infrarust.enable=true` get registered automatically. When they start or stop, routing updates in real time.
 
-```yaml
-# proxies/my-server.yml
-domains:
-  - "hub.minecraft.example.com"
-addresses:
-  - "localhost:25566"
-proxyMode: "passthrough" # Options: passthrough, client_only, offline, server_only
-```
+## Monitoring
+
+Infrarust exports metrics, traces, and logs via OpenTelemetry. A ready-to-use monitoring stack (Grafana, Prometheus, Tempo) is included in [`docker/monitoring`](docker/monitoring).
+
+<p align="center">
+  <img src="docs/v1/public/img/grafana_dashboard.png" alt="Grafana monitoring dashboard" width="700" />
+</p>
+
+> Need to be updated for V2 dashboards
 
 ## Documentation
 
-Visit [infrarust.dev](https://infrarust.dev) for complete documentation:
+Full documentation at [infrarust.dev](https://infrarust.dev/v2/):
 
-- [Quick Start Guide](https://infrarust.dev/quickstart/)
-- [Configuration Reference](https://infrarust.dev/quickstart/configuration)
-- [Docker Integration](https://infrarust.dev/features/docker)
-- [Ban System](https://infrarust.dev/features/ban-system)
-- [CLI Commands](https://infrarust.dev/features/cli/)
-
-## Docker Integration
-
-Infrarust can automatically detect and proxy Minecraft servers running in Docker containers:
-
-```yaml
-docker_provider:
-  docker_host: "unix:///var/run/docker.sock"
-  label_prefix: "infrarust"
-  watch: true
-```
-
-Container configuration is done through Docker labels:
-```
-infrarust.enable=true
-infrarust.domains=mc.example.com
-```
-
-## Telemetry & Monitoring
-
-Infrarust provides comprehensive telemetry through OpenTelemetry integration, including metrics, traces, and logs. The project includes a ready-to-use monitoring stack in the [docker/monitoring](docker/monitoring) directory.
-
-### Quick Start Monitoring
-
-```bash
-cd docker/monitoring
-docker compose up -d
-```
-
-This will start:
-
-- Grafana (http://localhost:3000)
-- Prometheus (http://localhost:9090)
-- Tempo (Traces)
-- OpenTelemetry Collector
-
-### Available Metrics
-
-- Connection metrics (active connections, errors, latency)
-- Backend metrics (server status, response times)
-- System metrics (CPU, memory, threads)
-- Minecraft-specific metrics (protocol errors, player count)
-
-<p align="center">
-  <img src="docs/public/img/grafana_dashboard.png"/>
-</p>
-
-## Performance
-
-Infrarust leverages Rust's performance capabilities:
-
-- Minimal memory footprint (~10MB base)
-- Low CPU utilization
-- Efficient async I/O handling
-- Zero-copy packet forwarding when possible
-
-> [!NOTE]
-> This project was initiated as a learning experience in advanced Rust programming, with continuous improvements and optimizations expected as development progresses.
+- [Quick Start](https://infrarust.dev/v2/guide/quick-start)
+- [Configuration](https://infrarust.dev/v2/configuration/)
+- [Plugins](https://infrarust.dev/v2/plugins/)
+- [Docker Guide](https://infrarust.dev/v2/guide/docker)
 
 ## Contributing
 
-Contributions are welcome! Check out our [Contributing Guidelines](CONTRIBUTING.md) to get started.
+Contributions welcome - see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and guidelines.
 
-Feel free to join our [Discord](https://discord.gg/sqbJhZVSgG) if you have any questions!
+Questions or ideas? Join the [Discord](https://discord.gg/sqbJhZVSgG) or open an issue.
 
 ## Similar Projects
 
-- [Infrared](https://github.com/haveachin/infrared) - The original inspiration, written in Go
+- [Infrared](https://github.com/haveachin/infrared) - the original inspiration, written in Go
 - [MCRouter](https://github.com/itzg/mc-router)
 - [Velocity](https://github.com/PaperMC/Velocity)
 
+> More can be seen on the [thank's open source web page](https://infrarust.dev/v2/thank-you-open-source)
+
 ## License
 
-Infrarust is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+AGPL-3.0 with plugin exceptions - see [LICENSE](LICENSE).
 
-<br />
 <p align="center">
-  <img height="60" src="docs/public/img/agplv3_logo.svg"/>
+  <img height="60" src="docs/v1/public/img/agplv3_logo.svg" alt="AGPL v3" />
 </p>

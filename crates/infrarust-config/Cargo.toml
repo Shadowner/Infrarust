@@ -1,0 +1,16 @@
+[package]
+name = "infrarust-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { version = "1", features = ["sync"] }
+toml = "0.8"
+ipnet = { version = "2", features = ["serde"] }
+humantime-serde = "1.1"
+wildmatch = "2.6"

@@ -5,6 +5,9 @@ on:
     branches: [ main ]
     paths:
       - 'crates/**'
+      - 'plugins/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,7 +25,10 @@ jobs:
           
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
-          
+
+      - name: Build Admin Frontend
+        uses: ./.github/actions/build-frontend
+
       - name: Check formatting
         run: cargo fmt -- --check
         

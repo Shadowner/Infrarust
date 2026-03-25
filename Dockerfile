@@ -1,10 +1,21 @@
-ARG RUST_VERSION=1.91.1
+ARG RUST_VERSION=1.94
 ARG ALPINE_VERSION=3.21
+ARG NODE_VERSION=20
 
-# Build stage - builds natively for the target platform
+# Stage 1: Build the admin frontend
+FROM node:${NODE_VERSION}-alpine AS frontend-builder
+
+WORKDIR /frontend
+COPY plugins/infrarust-plugin-admin-api/frontend/package.json \
+     plugins/infrarust-plugin-admin-api/frontend/yarn.lock ./
+RUN yarn install --frozen-lockfile
+
+COPY plugins/infrarust-plugin-admin-api/frontend/ ./
+RUN yarn generate
+
+# Stage 2: Build Rust binary
 FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
 
-# Install build dependencies
 RUN apk add --no-cache \
     musl-dev \
     pkgconfig \
@@ -15,15 +26,18 @@ RUN apk add --no-cache \
 
 WORKDIR /usr/crates/infrarust
 
-# Copy source code
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
+COPY plugins/ ./plugins/
+COPY tools/ ./tools/
+COPY data/ ./data/
 
-# Set environment variables for static linking
+COPY --from=frontend-builder /frontend/.output/public/ \
+     ./plugins/infrarust-plugin-admin-api/frontend/.output/public/
+
 ENV OPENSSL_STATIC=1
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 
-# Determine target based on architecture and build
 RUN ARCH=$(uname -m) && \
     case "$ARCH" in \
         x86_64) \
@@ -41,21 +55,17 @@ RUN ARCH=$(uname -m) && \
     esac && \
     echo "Building for target: $TARGET on architecture: $ARCH" && \
     rustup target add "$TARGET" && \
-    cargo build --release --target "$TARGET" && \
+    cargo build --release --target "$TARGET" -p infrarust-proxy && \
     cp "target/$TARGET/release/infrarust" /usr/local/bin/infrarust && \
     strip /usr/local/bin/infrarust && \
     echo "Build completed successfully"
 
-# Runtime stage - use scratch for minimal image since we have static binary
+# Stage 3: Runtime
 FROM scratch AS runtime
 
-# Copy CA certificates for HTTPS
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
-# Copy only the binary
 COPY --from=builder /usr/local/bin/infrarust /sbin/infrarust
 
-# Set up the runtime environment
 WORKDIR /app
 VOLUME ["/app/config"]
 EXPOSE 25565

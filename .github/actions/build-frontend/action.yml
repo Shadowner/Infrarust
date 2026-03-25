@@ -1,0 +1,31 @@
+name: 'Build Admin Frontend'
+description: 'Builds the Nuxt 4 admin UI frontend for rust-embed embedding'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: 'yarn'
+        cache-dependency-path: plugins/infrarust-plugin-admin-api/frontend/yarn.lock
+
+    - name: Install frontend dependencies
+      shell: bash
+      working-directory: plugins/infrarust-plugin-admin-api/frontend
+      run: yarn install --frozen-lockfile
+
+    - name: Generate static frontend
+      shell: bash
+      working-directory: plugins/infrarust-plugin-admin-api/frontend
+      run: yarn generate
+
+    - name: Verify frontend output
+      shell: bash
+      run: |
+        if [ ! -f "plugins/infrarust-plugin-admin-api/frontend/.output/public/index.html" ]; then
+          echo "::error::Frontend build failed - index.html not found in .output/public/"
+          exit 1
+        fi
+        echo "Frontend build successful"

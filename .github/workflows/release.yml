@@ -86,7 +86,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev musl-tools
 
-          
+      - name: Build Admin Frontend
+        uses: ./.github/actions/build-frontend
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
         
@@ -135,6 +137,9 @@ jobs:
           
         - name: Install Rust
           uses: dtolnay/rust-toolchain@stable
+
+        - name: Build Admin Frontend
+          uses: ./.github/actions/build-frontend
 
         - name: Install cargo-workspaces
           uses: taiki-e/install-action@v2
