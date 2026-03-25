@@ -49,7 +49,7 @@ const floatingBlocks = [
 
       <div class="cta-content">
         <a :href="withBase('/thank-you-open-source')" class="cta-badge">
-          <img width="20" height="20" src="/images/creeper.svg" />
+          <img width="20" height="20" src="/images/creeper.svg" alt="Creeper Icon" />
           <span>Community project</span>
         </a>
 
@@ -72,7 +72,7 @@ const floatingBlocks = [
             <IconCheck :size="12" />
             Plugins: any license
           </span>
-          <a href="/license" class="license-pill license-pill--link">
+          <a :href="withBase('/license')" class="license-pill license-pill--link">
             Read the license &rarr;
           </a>
         </div>

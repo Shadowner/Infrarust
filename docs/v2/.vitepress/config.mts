@@ -187,6 +187,7 @@ export default
           {
             text: 'Built-in Plugins',
             items: [
+              { text: 'Admin API & Web UI', link: '/plugins/builtin/admin-api' },
               { text: 'Auth', link: '/plugins/builtin/auth' },
               { text: 'Server Wake', link: '/plugins/builtin/server-wake' },
               { text: 'Queue', link: '/plugins/builtin/queue' },

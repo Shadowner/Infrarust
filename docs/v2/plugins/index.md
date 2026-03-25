@@ -25,13 +25,14 @@ Plugins are written in Rust and compiled into the proxy binary. Each plugin impl
 
 ## Built-in plugins
 
-Infrarust includes three built-in plugins, compiled via Cargo feature flags:
+Infrarust includes four built-in plugins:
 
-| Plugin | Feature flag | Description |
-|--------|-------------|-------------|
-| [Auth](./builtin/auth) | `plugin-auth` | Password-based authentication with `/login` and `/register` commands. Holds players in limbo until authenticated. |
-| [Server Wake](./builtin/server-wake) | `plugin-server-wake` | Holds players in limbo while a backend server starts up, showing status messages. |
-| [Queue](./builtin/queue) | `plugin-queue` | Player queue management. (In development.) |
+| Plugin | Activation | Description |
+|--------|------------|-------------|
+| [Admin API & Web UI](./builtin/admin-api) | `[web]` section in `infrarust.toml` | REST API and embedded web dashboard for proxy administration and monitoring. |
+| [Auth](./builtin/auth) | `plugin-auth` feature flag | Password-based authentication with `/login` and `/register` commands. Holds players in limbo until authenticated. |
+| [Server Wake](./builtin/server-wake) | `plugin-server-wake` feature flag | Holds players in limbo while a backend server starts up, showing status messages. |
+| [Queue](./builtin/queue) | `plugin-queue` feature flag | Player queue management. (In development.) |
 
 Built-in plugins are registered at compile time in `infrarust-proxy/src/plugins.rs` using a `StaticPluginLoader`. To enable or disable them, toggle the corresponding Cargo feature when building:
 
@@ -50,6 +51,7 @@ cargo build --release --features "plugin-auth,plugin-server-wake"
 ## Next steps
 
 - [Installing Plugins](./installing) — How to enable built-in plugins and configure them.
+- [Admin API & Web UI](./builtin/admin-api) — REST API and web dashboard for proxy management.
 - [Auth Plugin](./builtin/auth) — Password authentication and limbo login screen.
 - [Server Wake Plugin](./builtin/server-wake) — Hold players while backend servers start.
 - [Developing Plugins](./dev/getting-started) — Build your own plugin from scratch.
