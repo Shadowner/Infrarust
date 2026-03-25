@@ -133,28 +133,76 @@ impl ApiEvent {
     /// Returns `None` for events that shouldn't appear in the feed (e.g. stats ticks).
     pub fn to_recent(&self) -> Option<RecentEvent> {
         let (event_type, summary, timestamp) = match self {
-            ApiEvent::PlayerJoin { username, server, timestamp, .. } => {
-                let srv = if server.is_empty() { String::new() } else { format!(" {server}") };
-                ("player.join", format!("{username} joined{srv}"), timestamp.clone())
+            ApiEvent::PlayerJoin {
+                username,
+                server,
+                timestamp,
+                ..
+            } => {
+                let srv = if server.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {server}")
+                };
+                (
+                    "player.join",
+                    format!("{username} joined{srv}"),
+                    timestamp.clone(),
+                )
             }
-            ApiEvent::PlayerLeave { username, timestamp, .. } => {
-                ("player.leave", format!("{username} disconnected"), timestamp.clone())
-            }
-            ApiEvent::PlayerSwitch { username, to_server, timestamp, .. } => {
-                ("player.switch", format!("{username} switched to {to_server}"), timestamp.clone())
-            }
-            ApiEvent::ServerStateChange { server_id, old_state, new_state, timestamp } => {
-                ("server.state_change", format!("{server_id}: {old_state} → {new_state}"), timestamp.clone())
-            }
-            ApiEvent::ConfigReload { timestamp } => {
-                ("config.reload", "Config reloaded".to_string(), timestamp.clone())
-            }
-            ApiEvent::BanCreated { target_type, target_value, timestamp, .. } => {
-                ("ban.created", format!("Banned {target_value} ({target_type})"), timestamp.clone())
-            }
-            ApiEvent::BanRemoved { target_type: _, target_value, timestamp } => {
-                ("ban.removed", format!("Unbanned {target_value}"), timestamp.clone())
-            }
+            ApiEvent::PlayerLeave {
+                username,
+                timestamp,
+                ..
+            } => (
+                "player.leave",
+                format!("{username} disconnected"),
+                timestamp.clone(),
+            ),
+            ApiEvent::PlayerSwitch {
+                username,
+                to_server,
+                timestamp,
+                ..
+            } => (
+                "player.switch",
+                format!("{username} switched to {to_server}"),
+                timestamp.clone(),
+            ),
+            ApiEvent::ServerStateChange {
+                server_id,
+                old_state,
+                new_state,
+                timestamp,
+            } => (
+                "server.state_change",
+                format!("{server_id}: {old_state} → {new_state}"),
+                timestamp.clone(),
+            ),
+            ApiEvent::ConfigReload { timestamp } => (
+                "config.reload",
+                "Config reloaded".to_string(),
+                timestamp.clone(),
+            ),
+            ApiEvent::BanCreated {
+                target_type,
+                target_value,
+                timestamp,
+                ..
+            } => (
+                "ban.created",
+                format!("Banned {target_value} ({target_type})"),
+                timestamp.clone(),
+            ),
+            ApiEvent::BanRemoved {
+                target_type: _,
+                target_value,
+                timestamp,
+            } => (
+                "ban.removed",
+                format!("Unbanned {target_value}"),
+                timestamp.clone(),
+            ),
             ApiEvent::StatsTick { .. } => return None, // Too noisy for activity feed
         };
         Some(RecentEvent {

@@ -4,7 +4,6 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 use super::Packet;
 
-
 /// A game profile property (textures, skin data, etc.).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Property {
@@ -12,7 +11,6 @@ pub struct Property {
     pub value: String,
     pub signature: Option<String>,
 }
-
 
 fn read_byte_array_short(r: &mut &[u8]) -> ProtocolResult<Vec<u8>> {
     let len = r.read_i16_be()? as usize;
@@ -27,7 +25,6 @@ fn write_byte_array_short(
     w.write_all(data)?;
     Ok(())
 }
-
 
 #[allow(clippy::many_single_char_names)] // UUID components are conventionally named a/b/c/d
 fn read_uuid_int_array(r: &mut &[u8]) -> ProtocolResult<uuid::Uuid> {
@@ -55,7 +52,6 @@ fn write_uuid_int_array(
     w.write_i32_be(lsb as i32)?;
     Ok(())
 }
-
 
 /// Login start packet (Serverbound, 0x00).
 ///
@@ -171,7 +167,6 @@ impl Packet for SLoginStart {
     }
 }
 
-
 /// Encryption request packet (Clientbound, 0x01).
 ///
 /// Sent by the server to initiate encryption. Contains the server's RSA
@@ -245,7 +240,6 @@ impl Packet for CEncryptionRequest {
         Ok(())
     }
 }
-
 
 /// Encryption response packet (Serverbound, 0x01).
 ///
@@ -337,7 +331,6 @@ impl Packet for SEncryptionResponse {
     }
 }
 
-
 /// Set compression packet (Clientbound, 0x03).
 ///
 /// Informs the client of the compression threshold. After this packet,
@@ -372,7 +365,6 @@ impl Packet for CSetCompression {
         Ok(())
     }
 }
-
 
 /// Login success packet (Clientbound, 0x02).
 ///
@@ -503,7 +495,6 @@ impl Packet for CLoginSuccess {
     }
 }
 
-
 /// Login disconnect packet (Clientbound, 0x00).
 ///
 /// Sent by the server to disconnect the client during login with a reason.
@@ -537,7 +528,6 @@ impl Packet for CLoginDisconnect {
         Ok(())
     }
 }
-
 
 /// Login plugin request packet (Clientbound, 0x04, 1.13+).
 ///
@@ -583,7 +573,6 @@ impl Packet for CLoginPluginRequest {
     }
 }
 
-
 /// Login plugin response packet (Serverbound, 0x02, 1.13+).
 ///
 /// Client's response to a login plugin request.
@@ -627,7 +616,6 @@ impl Packet for SLoginPluginResponse {
         Ok(())
     }
 }
-
 
 /// Login acknowledged packet (Serverbound, 0x03, 1.20.2+).
 ///

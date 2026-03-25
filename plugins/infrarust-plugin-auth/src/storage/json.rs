@@ -59,7 +59,10 @@ impl JsonFileStorage {
 }
 
 impl AuthStorage for JsonFileStorage {
-    fn has_account<'a>(&'a self, username: &'a Username) -> BoxFuture<'a, Result<bool, AuthStorageError>> {
+    fn has_account<'a>(
+        &'a self,
+        username: &'a Username,
+    ) -> BoxFuture<'a, Result<bool, AuthStorageError>> {
         Box::pin(async move { Ok(self.accounts.contains_key(username)) })
     }
 
@@ -68,11 +71,17 @@ impl AuthStorage for JsonFileStorage {
         username: &'a Username,
     ) -> BoxFuture<'a, Result<Option<AuthAccount>, AuthStorageError>> {
         Box::pin(async move {
-            Ok(self.accounts.get(username).map(|entry| entry.value().clone()))
+            Ok(self
+                .accounts
+                .get(username)
+                .map(|entry| entry.value().clone()))
         })
     }
 
-    fn create_account<'a>(&'a self, account: &'a AuthAccount) -> BoxFuture<'a, Result<(), AuthStorageError>> {
+    fn create_account<'a>(
+        &'a self,
+        account: &'a AuthAccount,
+    ) -> BoxFuture<'a, Result<(), AuthStorageError>> {
         Box::pin(async move {
             use dashmap::mapref::entry::Entry;
 
@@ -108,7 +117,10 @@ impl AuthStorage for JsonFileStorage {
         })
     }
 
-    fn delete_account<'a>(&'a self, username: &'a Username) -> BoxFuture<'a, Result<bool, AuthStorageError>> {
+    fn delete_account<'a>(
+        &'a self,
+        username: &'a Username,
+    ) -> BoxFuture<'a, Result<bool, AuthStorageError>> {
         Box::pin(async move {
             let existed = self.accounts.remove(username).is_some();
             if existed {
@@ -167,7 +179,10 @@ impl AuthStorage for JsonFileStorage {
         &self,
         username: &Username,
     ) -> Result<Option<AuthAccount>, AuthStorageError> {
-        Ok(self.accounts.get(username).map(|entry| entry.value().clone()))
+        Ok(self
+            .accounts
+            .get(username)
+            .map(|entry| entry.value().clone()))
     }
 
     fn has_account_blocking(&self, username: &Username) -> bool {
@@ -238,8 +253,18 @@ mod tests {
         let account = test_account("DeleteMe");
         storage.create_account(&account).await.unwrap();
 
-        assert!(storage.delete_account(&Username::new("deleteme")).await.unwrap());
-        assert!(!storage.delete_account(&Username::new("deleteme")).await.unwrap());
+        assert!(
+            storage
+                .delete_account(&Username::new("deleteme"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !storage
+                .delete_account(&Username::new("deleteme"))
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -251,7 +276,10 @@ mod tests {
             let storage = JsonFileStorage::load_or_create(dir.path(), "accounts.json")
                 .await
                 .unwrap();
-            storage.create_account(&test_account("Persistent")).await.unwrap();
+            storage
+                .create_account(&test_account("Persistent"))
+                .await
+                .unwrap();
             storage.flush().await.unwrap();
         }
 
@@ -288,7 +316,10 @@ mod tests {
             .await
             .unwrap();
 
-        storage.create_account(&test_account("HashUpdate")).await.unwrap();
+        storage
+            .create_account(&test_account("HashUpdate"))
+            .await
+            .unwrap();
 
         let new_hash = PasswordHash::new("$argon2id$new-hash");
         storage

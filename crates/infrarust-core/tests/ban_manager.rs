@@ -22,10 +22,7 @@ async fn temp_manager() -> (Arc<BanManager>, Arc<ConnectionRegistry>, tempfile::
     (manager, registry, dir)
 }
 
-fn make_session(
-    username: &str,
-    ip: IpAddr,
-) -> (Arc<PlayerSession>, CancellationToken) {
+fn make_session(username: &str, ip: IpAddr) -> (Arc<PlayerSession>, CancellationToken) {
     let token = CancellationToken::new();
     let (tx, _rx) = mpsc::channel(32);
     let uuid = Uuid::new_v4();

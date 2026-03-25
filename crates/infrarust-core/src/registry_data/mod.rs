@@ -10,7 +10,8 @@ use infrarust_protocol::version::ProtocolVersion;
 pub(crate) trait RegistryDataProvider: Send + Sync {
     fn registry_frames(&self, version: ProtocolVersion) -> Result<Vec<PacketFrame>, CoreError>;
 
-    fn known_packs_frame(&self, version: ProtocolVersion) -> Result<Option<PacketFrame>, CoreError>;
+    fn known_packs_frame(&self, version: ProtocolVersion)
+    -> Result<Option<PacketFrame>, CoreError>;
 
     fn supports_version(&self, version: ProtocolVersion) -> bool;
 }

@@ -20,7 +20,9 @@ impl CommandHandler for ForceUnregisterCommand {
         player_registry: &'a dyn PlayerRegistry,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(sender_id) = ctx.player_id else { return };
+            let Some(sender_id) = ctx.player_id else {
+                return;
+            };
 
             if !super::is_admin(sender_id, player_registry, &self.handler) {
                 if let Some(player) = player_registry.get_player_by_id(sender_id) {
@@ -33,9 +35,8 @@ impl CommandHandler for ForceUnregisterCommand {
 
             let Some(target_name) = ctx.args.first() else {
                 if let Some(player) = player_registry.get_player_by_id(sender_id) {
-                    let _ = player.send_message(Component::error(
-                        "Usage: /forceunregister <username>",
-                    ));
+                    let _ =
+                        player.send_message(Component::error("Usage: /forceunregister <username>"));
                 }
                 return;
             };

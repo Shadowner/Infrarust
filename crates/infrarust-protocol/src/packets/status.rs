@@ -4,7 +4,6 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 use super::Packet;
 
-
 /// Status request packet (Serverbound, 0x00).
 ///
 /// Empty packet sent by the client to request the server's status JSON.
@@ -34,7 +33,6 @@ impl Packet for SStatusRequest {
         Ok(())
     }
 }
-
 
 /// Status response packet (Clientbound, 0x00).
 ///
@@ -72,7 +70,6 @@ impl Packet for CStatusResponse {
     }
 }
 
-
 /// Ping request packet (Serverbound, 0x01).
 ///
 /// The client sends a payload (typically a timestamp); the server echoes it back.
@@ -106,7 +103,6 @@ impl Packet for SPingRequest {
         Ok(())
     }
 }
-
 
 /// Ping response packet (Clientbound, 0x01).
 ///

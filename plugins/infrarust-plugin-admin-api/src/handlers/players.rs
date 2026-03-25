@@ -120,10 +120,7 @@ pub async fn kick(
     let player = find_player(&state, &username)
         .ok_or_else(|| ApiError::NotFound(format!("Player '{username}' not found")))?;
 
-    let reason = body
-        .reason
-        .as_deref()
-        .unwrap_or("Kicked by administrator");
+    let reason = body.reason.as_deref().unwrap_or("Kicked by administrator");
 
     tracing::info!(
         target: "audit",

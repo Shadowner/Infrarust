@@ -10,8 +10,8 @@ pub mod static_loader;
 pub mod tracking;
 
 pub use context_factory::{PluginContextFactory, PluginContextFactoryImpl, PluginPermissions};
-pub use plugin_registry_impl::PluginRegistryImpl;
 pub use loader::{LoaderError, PluginLoader};
+pub use plugin_registry_impl::PluginRegistryImpl;
 pub use static_loader::{PluginFactory, StaticPluginLoader};
 
 /// Tracks the lifecycle state of a plugin.

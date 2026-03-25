@@ -77,10 +77,7 @@ impl PluginManager {
 
         for loader in &self.loaders {
             let discovered = loader.discover(plugin_dir).await.map_err(|e| {
-                PluginError::InitFailed(format!(
-                    "Loader '{}' discovery failed: {e}",
-                    loader.name()
-                ))
+                PluginError::InitFailed(format!("Loader '{}' discovery failed: {e}", loader.name()))
             })?;
 
             for metadata in discovered {
@@ -206,10 +203,7 @@ impl PluginManager {
         }
 
         for loaded in self.plugins.iter().rev() {
-            let loader = self
-                .loaders
-                .iter()
-                .find(|l| l.name() == loaded.loader_name);
+            let loader = self.loaders.iter().find(|l| l.name() == loaded.loader_name);
 
             if let Some(loader) = loader {
                 if let Err(e) = loader.unload(&loaded.metadata.id).await {
@@ -237,7 +231,10 @@ impl PluginManager {
 
     pub fn collect_config_providers(
         &self,
-    ) -> Vec<(String, Box<dyn infrarust_api::provider::PluginConfigProvider>)> {
+    ) -> Vec<(
+        String,
+        Box<dyn infrarust_api::provider::PluginConfigProvider>,
+    )> {
         let mut all = Vec::new();
         for loaded in &self.plugins {
             if let Some(ctx_impl) = loaded.context.as_any().downcast_ref::<PluginContextImpl>() {
@@ -252,10 +249,7 @@ impl PluginManager {
 
     pub fn store_provider_cleanup(
         &self,
-        results: Vec<(
-            String,
-            crate::provider::plugin_adapter::ActivatedProvider,
-        )>,
+        results: Vec<(String, crate::provider::plugin_adapter::ActivatedProvider)>,
     ) {
         for (plugin_id, activated) in results {
             for loaded in &self.plugins {
@@ -290,8 +284,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use std::path::Path;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use infrarust_api::error::PluginError;
     use infrarust_api::event::BoxFuture;
@@ -341,9 +335,7 @@ mod tests {
             unimplemented!("mock")
         }
 
-        fn player_registry(
-            &self,
-        ) -> &dyn infrarust_api::services::player_registry::PlayerRegistry {
+        fn player_registry(&self) -> &dyn infrarust_api::services::player_registry::PlayerRegistry {
             unimplemented!("mock")
         }
 
@@ -373,10 +365,7 @@ mod tests {
             unimplemented!("mock")
         }
 
-        fn register_limbo_handler(
-            &self,
-            _handler: Box<dyn infrarust_api::limbo::LimboHandler>,
-        ) {
+        fn register_limbo_handler(&self, _handler: Box<dyn infrarust_api::limbo::LimboHandler>) {
             unimplemented!("mock")
         }
 
@@ -410,13 +399,17 @@ mod tests {
         ) -> Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry> {
             unimplemented!("mock")
         }
-        fn server_manager_handle(&self) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
+        fn server_manager_handle(
+            &self,
+        ) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
             unimplemented!("mock")
         }
         fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
             unimplemented!("mock")
         }
-        fn config_service_handle(&self) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
+        fn config_service_handle(
+            &self,
+        ) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
             unimplemented!("mock")
         }
         fn event_bus_handle(&self) -> Arc<dyn infrarust_api::event::bus::EventBus> {
@@ -440,29 +433,22 @@ mod tests {
     #[tokio::test]
     async fn test_plugin_manager_discovers_from_multiple_loaders() {
         let loader_a = StaticPluginLoader::new();
-        loader_a.register(
-            PluginMetadata::new("plugin_a", "A", "1.0.0"),
-            || {
-                Box::new(TestPlugin {
-                    id: "plugin_a".into(),
-                    enabled: Arc::new(AtomicBool::new(false)),
-                })
-            },
-        );
+        loader_a.register(PluginMetadata::new("plugin_a", "A", "1.0.0"), || {
+            Box::new(TestPlugin {
+                id: "plugin_a".into(),
+                enabled: Arc::new(AtomicBool::new(false)),
+            })
+        });
 
         let loader_b = StaticPluginLoader::new();
-        loader_b.register(
-            PluginMetadata::new("plugin_b", "B", "1.0.0"),
-            || {
-                Box::new(TestPlugin {
-                    id: "plugin_b".into(),
-                    enabled: Arc::new(AtomicBool::new(false)),
-                })
-            },
-        );
+        loader_b.register(PluginMetadata::new("plugin_b", "B", "1.0.0"), || {
+            Box::new(TestPlugin {
+                id: "plugin_b".into(),
+                enabled: Arc::new(AtomicBool::new(false)),
+            })
+        });
 
-        let mut manager =
-            PluginManager::new(vec![Box::new(loader_a), Box::new(loader_b)]);
+        let mut manager = PluginManager::new(vec![Box::new(loader_a), Box::new(loader_b)]);
 
         let discovered = manager.discover_all(Path::new("plugins")).await.unwrap();
         assert_eq!(discovered.len(), 2);
@@ -471,29 +457,22 @@ mod tests {
     #[tokio::test]
     async fn test_plugin_manager_detects_duplicate_ids_across_loaders() {
         let loader_a = StaticPluginLoader::new();
-        loader_a.register(
-            PluginMetadata::new("conflict", "A", "1.0.0"),
-            || {
-                Box::new(TestPlugin {
-                    id: "conflict".into(),
-                    enabled: Arc::new(AtomicBool::new(false)),
-                })
-            },
-        );
+        loader_a.register(PluginMetadata::new("conflict", "A", "1.0.0"), || {
+            Box::new(TestPlugin {
+                id: "conflict".into(),
+                enabled: Arc::new(AtomicBool::new(false)),
+            })
+        });
 
         let loader_b = StaticPluginLoader::new();
-        loader_b.register(
-            PluginMetadata::new("conflict", "B", "1.0.0"),
-            || {
-                Box::new(TestPlugin {
-                    id: "conflict".into(),
-                    enabled: Arc::new(AtomicBool::new(false)),
-                })
-            },
-        );
+        loader_b.register(PluginMetadata::new("conflict", "B", "1.0.0"), || {
+            Box::new(TestPlugin {
+                id: "conflict".into(),
+                enabled: Arc::new(AtomicBool::new(false)),
+            })
+        });
 
-        let mut manager =
-            PluginManager::new(vec![Box::new(loader_a), Box::new(loader_b)]);
+        let mut manager = PluginManager::new(vec![Box::new(loader_a), Box::new(loader_b)]);
 
         let result = manager.discover_all(Path::new("plugins")).await;
         assert!(result.is_err());

@@ -3,8 +3,8 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();

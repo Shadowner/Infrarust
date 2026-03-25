@@ -50,9 +50,7 @@ pub enum ServerPreConnectResult {
     /// Redirect to a different backend server.
     ConnectTo(ServerId),
     /// Send the player to the limbo handler chain.
-    SendToLimbo {
-        limbo_handlers: Vec<String>,
-    },
+    SendToLimbo { limbo_handlers: Vec<String> },
     /// Route the player to a virtual backend handler.
     VirtualBackend(Box<dyn VirtualBackendHandler>),
     /// Deny the connection with a reason.
@@ -143,9 +141,7 @@ pub enum KickedFromServerResult {
     /// Redirect the player to a different server.
     RedirectTo(ServerId),
     /// Send the player to the limbo handler chain.
-    SendToLimbo {
-        limbo_handlers: Vec<String>,
-    },
+    SendToLimbo { limbo_handlers: Vec<String> },
     /// Keep the player on the proxy but notify them of the kick.
     Notify {
         /// A message shown to the player.
@@ -302,7 +298,9 @@ mod tests {
 
     #[test]
     fn non_exhaustive_kicked_result() {
-        let result = KickedFromServerResult::SendToLimbo { limbo_handlers: vec![] };
+        let result = KickedFromServerResult::SendToLimbo {
+            limbo_handlers: vec![],
+        };
         #[allow(unreachable_patterns)]
         match result {
             KickedFromServerResult::DisconnectPlayer { .. }

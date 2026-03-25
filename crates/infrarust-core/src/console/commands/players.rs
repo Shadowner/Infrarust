@@ -7,9 +7,9 @@ use comfy_table::Cell;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, ServerId};
 
+use crate::console::ConsoleServices;
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
-use crate::console::ConsoleServices;
 
 pub struct ListPlayersCommand;
 
@@ -130,14 +130,8 @@ impl ConsoleCommand for FindPlayerCommand {
                         OutputLine::Info(format!("  IP: {}", player.remote_addr())),
                         OutputLine::Info(format!("  Server: {server}")),
                         OutputLine::Info(format!("  Mode: {mode}")),
-                        OutputLine::Info(format!(
-                            "  Protocol: {}",
-                            player.protocol_version()
-                        )),
-                        OutputLine::Info(format!(
-                            "  Connected: {}",
-                            player.is_connected()
-                        )),
+                        OutputLine::Info(format!("  Protocol: {}", player.protocol_version())),
+                        OutputLine::Info(format!("  Connected: {}", player.is_connected())),
                     ])
                 }
                 None => CommandOutput::Error(format!("Player '{name}' not found")),
@@ -173,7 +167,9 @@ impl ConsoleCommand for KickCommand {
         Box::pin(async move {
             let name = match args.first() {
                 Some(n) => *n,
-                None => return CommandOutput::Error("Usage: kick <player> [reason...]".to_string()),
+                None => {
+                    return CommandOutput::Error("Usage: kick <player> [reason...]".to_string());
+                }
             };
 
             let reason = if args.len() > 1 {
@@ -260,9 +256,7 @@ impl ConsoleCommand for KickIpCommand {
                 "Players kicked by IP from console"
             );
 
-            CommandOutput::Success(format!(
-                "Kicked {count} player(s) from IP {ip}"
-            ))
+            CommandOutput::Success(format!("Kicked {count} player(s) from IP {ip}"))
         })
     }
 }
@@ -316,7 +310,9 @@ impl ConsoleCommand for SendCommand {
                             );
                             CommandOutput::Success(format!("Sent {name} to {server}"))
                         }
-                        Err(e) => CommandOutput::Error(format!("Failed to send {name} to {server}: {e}")),
+                        Err(e) => {
+                            CommandOutput::Error(format!("Failed to send {name} to {server}: {e}"))
+                        }
                     }
                 }
                 None => CommandOutput::Error(format!("Player '{name}' not found")),
@@ -439,7 +435,9 @@ impl ConsoleCommand for MsgCommand {
                     }
                     match player.send_message(Component::text(&message)) {
                         Ok(()) => CommandOutput::Success(format!("Message sent to {name}")),
-                        Err(e) => CommandOutput::Error(format!("Failed to send message to {name}: {e}")),
+                        Err(e) => {
+                            CommandOutput::Error(format!("Failed to send message to {name}: {e}"))
+                        }
                     }
                 }
                 None => CommandOutput::Error(format!("Player '{name}' not found")),
@@ -478,9 +476,7 @@ impl ConsoleCommand for BroadcastCommand {
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
             if args.is_empty() {
-                return CommandOutput::Error(
-                    "Usage: broadcast <message...>".to_string(),
-                );
+                return CommandOutput::Error("Usage: broadcast <message...>".to_string());
             }
 
             let message = args.join(" ");
@@ -504,9 +500,7 @@ impl ConsoleCommand for BroadcastCommand {
                 "Broadcast sent from console"
             );
 
-            CommandOutput::Success(format!(
-                "Broadcast sent to {sent} player(s)"
-            ))
+            CommandOutput::Success(format!("Broadcast sent to {sent} player(s)"))
         })
     }
 }

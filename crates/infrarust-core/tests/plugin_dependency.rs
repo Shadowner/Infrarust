@@ -46,7 +46,10 @@ fn test_missing_required() {
     let result = resolve_load_order(&plugins);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("missing"), "Error should mention the missing dep: {err}");
+    assert!(
+        err.contains("missing"),
+        "Error should mention the missing dep: {err}"
+    );
 }
 
 #[test]
@@ -65,7 +68,10 @@ fn test_optional_present_influences_order() {
     let order = resolve_load_order(&plugins).unwrap();
     let pos_a = order.iter().position(|x| x == "a").unwrap();
     let pos_b = order.iter().position(|x| x == "b").unwrap();
-    assert!(pos_b < pos_a, "Optional dep B should load before A when present");
+    assert!(
+        pos_b < pos_a,
+        "Optional dep B should load before A when present"
+    );
 }
 
 #[test]

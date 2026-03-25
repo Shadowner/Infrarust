@@ -114,8 +114,8 @@ pub async fn load_or_create_config(path: &Path) -> Result<ServerWakeConfig, Stri
         toml::from_str(&content).map_err(|e| format!("failed to parse config: {e}"))
     } else {
         let config = ServerWakeConfig::default();
-        let content =
-            toml::to_string_pretty(&config).map_err(|e| format!("failed to serialize config: {e}"))?;
+        let content = toml::to_string_pretty(&config)
+            .map_err(|e| format!("failed to serialize config: {e}"))?;
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await

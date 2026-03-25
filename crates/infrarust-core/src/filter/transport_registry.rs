@@ -33,7 +33,12 @@ impl TransportFilterRegistryImpl {
         self.base.with_ordered(|filters, ordered| {
             let ordered_filters: Vec<Arc<dyn TransportFilter>> = ordered
                 .iter()
-                .filter_map(|id| filters.iter().find(|f| TransportFilter::metadata(f.as_ref()).id == id).cloned())
+                .filter_map(|id| {
+                    filters
+                        .iter()
+                        .find(|f| TransportFilter::metadata(f.as_ref()).id == id)
+                        .cloned()
+                })
                 .collect();
 
             TransportFilterChain::new(ordered_filters)

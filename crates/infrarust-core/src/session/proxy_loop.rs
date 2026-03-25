@@ -319,11 +319,7 @@ async fn handle_client_to_backend(
                     // CommandManager first
                     let handled = services
                         .command_manager
-                        .dispatch(
-                            Some(player_id),
-                            &input,
-                            services.player_registry.as_ref(),
-                        )
+                        .dispatch(Some(player_id), &input, services.player_registry.as_ref())
                         .await;
                     if handled {
                         return Ok(()); // Command consumed, don't forward
@@ -359,10 +355,7 @@ async fn handle_client_to_backend(
             .event_bus
             .has_packet_listeners(frame.id, api_state, api_direction)
         {
-            let raw_packet = infrarust_api::types::RawPacket::new(
-                frame.id,
-                frame.payload.clone(),
-            );
+            let raw_packet = infrarust_api::types::RawPacket::new(frame.id, frame.payload.clone());
             let mut event = infrarust_api::events::packet::RawPacketEvent::new(
                 player_id,
                 api_direction,
@@ -462,10 +455,7 @@ async fn handle_backend_to_client(
             .event_bus
             .has_packet_listeners(frame.id, api_state, api_direction)
         {
-            let raw_packet = infrarust_api::types::RawPacket::new(
-                frame.id,
-                frame.payload.clone(),
-            );
+            let raw_packet = infrarust_api::types::RawPacket::new(frame.id, frame.payload.clone());
             let mut event = infrarust_api::events::packet::RawPacketEvent::new(
                 player_id,
                 api_direction,
@@ -498,9 +488,7 @@ async fn handle_backend_to_client(
                     let reason = disc
                         .as_json()
                         .map(|s| s.to_string())
-                        .unwrap_or_else(|| {
-                            String::from_utf8_lossy(&disc.reason).to_string()
-                        });
+                        .unwrap_or_else(|| String::from_utf8_lossy(&disc.reason).to_string());
                     return Ok(BackendAction::Disconnected(Some(reason)));
                 }
                 // KeepAlive or other typed: forward

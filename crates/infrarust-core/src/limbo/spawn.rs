@@ -8,6 +8,7 @@
 use bytes::Bytes;
 use infrarust_protocol::codec::{McBufWriteExt, VarInt};
 use infrarust_protocol::io::PacketFrame;
+use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::play::center_chunk::CSetCenterChunk;
 use infrarust_protocol::packets::play::chunk_batch::{CChunkBatchFinished, CChunkBatchStart};
 use infrarust_protocol::packets::play::dimension::DimensionInfo;
@@ -17,14 +18,13 @@ use infrarust_protocol::packets::play::player_position::CSynchronizePlayerPositi
 use infrarust_protocol::packets::play::respawn::CRespawn;
 use infrarust_protocol::packets::play::respawn_switch;
 use infrarust_protocol::packets::play::spawn_position::CSetDefaultSpawnPosition;
-use infrarust_protocol::packets::Packet;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
-use infrarust_protocol::chunk::build_chunk_data_frame;
 use crate::error::CoreError;
 use crate::player::packets::encode_packet;
 use crate::session::client_bridge::ClientBridge;
+use infrarust_protocol::chunk::build_chunk_data_frame;
 
 const LIMBO_DIMENSION_NAME: &str = "minecraft:the_end";
 const LIMBO_DIMENSION_ID: i32 = 2;
@@ -129,8 +129,20 @@ async fn send_legacy_switch(
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
     if version.no_less_than(ProtocolVersion::V1_16) {
-        send_limbo_respawn(client, &DimensionInfo::Named("minecraft:overworld".to_string()), version, registry).await?;
-        send_limbo_respawn(client, &DimensionInfo::Named(LIMBO_DIMENSION_NAME.to_string()), version, registry).await?;
+        send_limbo_respawn(
+            client,
+            &DimensionInfo::Named("minecraft:overworld".to_string()),
+            version,
+            registry,
+        )
+        .await?;
+        send_limbo_respawn(
+            client,
+            &DimensionInfo::Named(LIMBO_DIMENSION_NAME.to_string()),
+            version,
+            registry,
+        )
+        .await?;
     }
     send_player_position(client, version, registry).await?;
     send_chunk(client, version, registry).await
@@ -201,11 +213,17 @@ async fn send_modern_chunk_setup(
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let center = CSetCenterChunk { chunk_x: 0, chunk_z: 0 };
+    let center = CSetCenterChunk {
+        chunk_x: 0,
+        chunk_z: 0,
+    };
     let frame = encode_packet(&center, version, registry)?;
     client.write_frame(&frame).await?;
 
-    let event = CGameEvent { event: START_WAITING_CHUNKS, value: 0.0 };
+    let event = CGameEvent {
+        event: START_WAITING_CHUNKS,
+        value: 0.0,
+    };
     let frame = encode_packet(&event, version, registry)?;
     client.write_frame(&frame).await?;
 
@@ -294,9 +312,7 @@ fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGame, CoreErro
 /// - 1.9–1.13: dimension becomes i32
 /// - 1.14: no difficulty, max_players is VarInt, + view_distance(VarInt)
 /// - 1.15: + hashed_seed(i64), max_players back to u8, + enable_respawn_screen(bool)
-fn build_pre_1_16_join_game_payload(
-    version: ProtocolVersion,
-) -> Result<Vec<u8>, CoreError> {
+fn build_pre_1_16_join_game_payload(version: ProtocolVersion) -> Result<Vec<u8>, CoreError> {
     let mut buf = Vec::with_capacity(32);
 
     // gamemode always u8, adventure mode (2)
@@ -322,9 +338,7 @@ fn build_pre_1_16_join_game_payload(
     }
 
     // max_players
-    if version.no_less_than(ProtocolVersion::V1_14)
-        && version.less_than(ProtocolVersion::V1_15)
-    {
+    if version.no_less_than(ProtocolVersion::V1_14) && version.less_than(ProtocolVersion::V1_15) {
         // 1.14 only: VarInt
         buf.write_var_int(&VarInt(1))?;
     } else {
@@ -353,9 +367,7 @@ fn build_pre_1_16_join_game_payload(
     Ok(buf)
 }
 
-fn build_1_16_to_1_20_1_join_game_payload(
-    version: ProtocolVersion,
-) -> Result<Vec<u8>, CoreError> {
+fn build_1_16_to_1_20_1_join_game_payload(version: ProtocolVersion) -> Result<Vec<u8>, CoreError> {
     use super::registry_nbt;
 
     let pvn = version.0;
@@ -412,7 +424,7 @@ fn build_1_16_to_1_20_1_join_game_payload(
 
     // reduced_debug_info, enable_respawn_screen, is_debug, is_flat
     buf.write_bool(false)?; // reduced_debug_info
-    buf.write_bool(true)?;  // enable_respawn_screen
+    buf.write_bool(true)?; // enable_respawn_screen
     buf.write_bool(false)?; // is_debug
     buf.write_bool(false)?; // is_flat
 
@@ -441,7 +453,7 @@ async fn send_clear_inventory(
     if version.no_less_than(ProtocolVersion::V1_17) {
         // 1.17.1+ format: window_id(u8) + state_id(VarInt) + count(VarInt) + slots + carried(Slot)
         buf.push(0); // window_id (u8)
-        infrarust_protocol::chunk::write_varint(&mut buf, 0);  // state_id
+        infrarust_protocol::chunk::write_varint(&mut buf, 0); // state_id
         infrarust_protocol::chunk::write_varint(&mut buf, 46); // slot_count
         for _ in 0..46 {
             // Empty slot: present=false (1.13+) or count=0 (1.20.5+) — both encode as 0x00
@@ -499,7 +511,11 @@ mod tests {
     #[test]
     fn test_pre_1_16_join_game_v1_7() {
         let result = build_limbo_join_game(ProtocolVersion::V1_7_2);
-        assert!(result.is_ok(), "JoinGame 1.7 should build: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "JoinGame 1.7 should build: {:?}",
+            result.err()
+        );
         let pkt = result.unwrap();
         assert_eq!(pkt.entity_id, 0);
         let raw = pkt.raw_payload.expect("should have raw_payload");
@@ -509,7 +525,11 @@ mod tests {
     #[test]
     fn test_pre_1_16_join_game_v1_8() {
         let result = build_limbo_join_game(ProtocolVersion::V1_8);
-        assert!(result.is_ok(), "JoinGame 1.8 should build: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "JoinGame 1.8 should build: {:?}",
+            result.err()
+        );
         let pkt = result.unwrap();
         let raw = pkt.raw_payload.expect("should have raw_payload");
         assert_eq!(raw.len(), 13);
@@ -518,7 +538,11 @@ mod tests {
     #[test]
     fn test_pre_1_16_join_game_v1_9() {
         let result = build_limbo_join_game(ProtocolVersion::V1_9);
-        assert!(result.is_ok(), "JoinGame 1.9 should build: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "JoinGame 1.9 should build: {:?}",
+            result.err()
+        );
         let pkt = result.unwrap();
         let raw = pkt.raw_payload.expect("should have raw_payload");
         assert_eq!(raw.len(), 16);
@@ -527,7 +551,11 @@ mod tests {
     #[test]
     fn test_pre_1_16_join_game_v1_14() {
         let result = build_limbo_join_game(ProtocolVersion::V1_14);
-        assert!(result.is_ok(), "JoinGame 1.14 should build: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "JoinGame 1.14 should build: {:?}",
+            result.err()
+        );
         let pkt = result.unwrap();
         let raw = pkt.raw_payload.expect("should have raw_payload");
         assert_eq!(raw.len(), 16);
@@ -536,7 +564,11 @@ mod tests {
     #[test]
     fn test_pre_1_16_join_game_v1_15() {
         let result = build_limbo_join_game(ProtocolVersion::V1_15);
-        assert!(result.is_ok(), "JoinGame 1.15 should build: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "JoinGame 1.15 should build: {:?}",
+            result.err()
+        );
         let pkt = result.unwrap();
         let raw = pkt.raw_payload.expect("should have raw_payload");
         assert_eq!(raw.len(), 25);
@@ -544,22 +576,47 @@ mod tests {
 
     #[test]
     fn test_join_game_1_16_to_1_20_1_ok() {
-        for version in [ProtocolVersion::V1_16, ProtocolVersion::V1_16_2, ProtocolVersion::V1_17,
-                        ProtocolVersion::V1_18, ProtocolVersion::V1_19, ProtocolVersion::V1_19_3,
-                        ProtocolVersion::V1_19_4, ProtocolVersion::V1_20] {
+        for version in [
+            ProtocolVersion::V1_16,
+            ProtocolVersion::V1_16_2,
+            ProtocolVersion::V1_17,
+            ProtocolVersion::V1_18,
+            ProtocolVersion::V1_19,
+            ProtocolVersion::V1_19_3,
+            ProtocolVersion::V1_19_4,
+            ProtocolVersion::V1_20,
+        ] {
             let result = build_limbo_join_game(version);
-            assert!(result.is_ok(), "version {:?} should succeed: {:?}", version, result.err());
+            assert!(
+                result.is_ok(),
+                "version {:?} should succeed: {:?}",
+                version,
+                result.err()
+            );
             let pkt = result.unwrap();
             assert_eq!(pkt.entity_id, 0);
-            assert!(pkt.raw_payload.is_some(), "version {:?} should use raw_payload", version);
+            assert!(
+                pkt.raw_payload.is_some(),
+                "version {:?} should use raw_payload",
+                version
+            );
         }
     }
 
     #[test]
     fn test_join_game_1_20_2_plus_ok() {
-        for version in [ProtocolVersion::V1_20_2, ProtocolVersion::V1_21, ProtocolVersion::V1_21_5] {
+        for version in [
+            ProtocolVersion::V1_20_2,
+            ProtocolVersion::V1_21,
+            ProtocolVersion::V1_21_5,
+        ] {
             let result = build_limbo_join_game(version);
-            assert!(result.is_ok(), "version {:?} should succeed: {:?}", version, result.err());
+            assert!(
+                result.is_ok(),
+                "version {:?} should succeed: {:?}",
+                version,
+                result.err()
+            );
             assert!(result.unwrap().raw_payload.is_none());
         }
     }

@@ -74,11 +74,7 @@ pub(crate) async fn send_login_disconnect(
     };
 
     let packet_id = packet_registry
-        .get_packet_id::<CLoginDisconnect>(
-            ConnectionState::Login,
-            Direction::Clientbound,
-            version,
-        )
+        .get_packet_id::<CLoginDisconnect>(ConnectionState::Login, Direction::Clientbound, version)
         .unwrap_or(0x00);
 
     let mut payload = Vec::new();

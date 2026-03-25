@@ -71,8 +71,7 @@ pub fn parse_legacy_handshake(data: &[u8]) -> ProtocolResult<LegacyHandshakeRequ
         if pos + 4 > data.len() {
             return Err(ProtocolError::invalid("legacy handshake: missing port"));
         }
-        let port =
-            i32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+        let port = i32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
 
         Ok(LegacyHandshakeRequest {
             protocol_version,

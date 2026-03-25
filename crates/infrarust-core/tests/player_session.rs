@@ -66,9 +66,7 @@ async fn test_kick_cancels_token() {
     let (session, _rx) = PlayerSession::new_test(true);
     assert!(!session.shutdown_token().is_cancelled());
 
-    session
-        .disconnect(Component::text("goodbye"))
-        .await;
+    session.disconnect(Component::text("goodbye")).await;
 
     assert!(session.shutdown_token().is_cancelled());
 }

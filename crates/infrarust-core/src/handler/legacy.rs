@@ -235,8 +235,7 @@ impl LegacyHandler {
             (motd, online, max)
         } else {
             let entry = self.default_motd.as_ref().and_then(|m| m.online.as_ref());
-            let motd =
-                entry.map_or_else(|| "An Infrarust Proxy".to_string(), |e| e.text.clone());
+            let motd = entry.map_or_else(|| "An Infrarust Proxy".to_string(), |e| e.text.clone());
             let online = self.connection_registry.count() as i32;
             let max = entry.and_then(|e| e.max_players).unwrap_or(0).cast_signed();
             (motd, online, max)
@@ -271,13 +270,9 @@ impl LegacyHandler {
                 cfg.motd.sleeping.as_ref(),
                 "\u{00a7}7Server sleeping \u{2014} \u{00a7}aConnect to wake up!",
             ),
-            ServerState::Starting => {
-                (cfg.motd.starting.as_ref(), "\u{00a7}eServer is starting...")
-            }
+            ServerState::Starting => (cfg.motd.starting.as_ref(), "\u{00a7}eServer is starting..."),
             ServerState::Crashed => (cfg.motd.crashed.as_ref(), "\u{00a7}cServer unavailable"),
-            ServerState::Stopping => {
-                (cfg.motd.stopping.as_ref(), "\u{00a7}6Server is stopping...")
-            }
+            ServerState::Stopping => (cfg.motd.stopping.as_ref(), "\u{00a7}6Server is stopping..."),
             _ => (None, "A Minecraft Server"),
         };
 

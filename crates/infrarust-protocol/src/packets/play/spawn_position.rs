@@ -79,7 +79,12 @@ impl Packet for CSetDefaultSpawnPosition {
         } else {
             0.0
         };
-        Ok(Self { dimension_name, location, yaw, pitch })
+        Ok(Self {
+            dimension_name,
+            location,
+            yaw,
+            pitch,
+        })
     }
 
     fn encode(

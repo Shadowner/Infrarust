@@ -62,15 +62,16 @@ pub async fn perform_switch(
     let server_config = services
         .domain_router
         .find_by_server_id(target.as_str())
-        .ok_or_else(|| {
-            CoreError::Rejected(format!("unknown server: {}", target.as_str()))
-        })?;
+        .ok_or_else(|| CoreError::Rejected(format!("unknown server: {}", target.as_str())))?;
 
     let current_config = services
         .domain_router
         .find_by_server_id(current_server.as_str())
         .ok_or_else(|| {
-            CoreError::Rejected(format!("unknown current server: {}", current_server.as_str()))
+            CoreError::Rejected(format!(
+                "unknown current server: {}",
+                current_server.as_str()
+            ))
         })?;
 
     validation::validate_switch_allowed(&current_config, &server_config)
@@ -100,7 +101,9 @@ pub async fn perform_switch(
                 reason.to_json()
             )));
         }
-        infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo { limbo_handlers } => {
+        infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo {
+            limbo_handlers,
+        } => {
             tracing::info!("server switch redirected to limbo by event");
             let handler_names = if limbo_handlers.is_empty() {
                 server_config.limbo_handlers.clone()
@@ -124,7 +127,10 @@ pub async fn perform_switch(
             .domain_router
             .find_by_server_id(effective_target.as_str())
             .ok_or_else(|| {
-                CoreError::Rejected(format!("unknown redirect server: {}", effective_target.as_str()))
+                CoreError::Rejected(format!(
+                    "unknown redirect server: {}",
+                    effective_target.as_str()
+                ))
             })?
     } else {
         server_config
@@ -148,7 +154,12 @@ pub async fn perform_switch(
             &connection_info,
         )
         .await
-        .map_err(|e| CoreError::Rejected(format!("failed to connect to {}: {e}", effective_target.as_str())))?;
+        .map_err(|e| {
+            CoreError::Rejected(format!(
+                "failed to connect to {}: {e}",
+                effective_target.as_str()
+            ))
+        })?;
 
     let mut new_backend = BackendBridge::new(backend_conn.into_stream(), version);
 
@@ -213,13 +224,13 @@ pub async fn perform_switch(
     .await?;
 
     // 10. Fire ServerSwitchEvent (fire-and-forget)
-    services.event_bus.fire_and_forget_arc(
-        infrarust_api::events::connection::ServerSwitchEvent {
+    services
+        .event_bus
+        .fire_and_forget_arc(infrarust_api::events::connection::ServerSwitchEvent {
             player_id,
             previous_server: current_server.clone(),
             new_server: effective_target.clone(),
-        },
-    );
+        });
 
     tracing::info!(
         previous = %current_server,

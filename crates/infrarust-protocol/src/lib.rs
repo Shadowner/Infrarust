@@ -33,12 +33,12 @@ pub use legacy::{
 pub use packets::{
     CConfigDisconnect, CConfigPluginMessage, CDisconnect, CEncryptionRequest, CFinishConfig,
     CJoinGame, CKeepAlive, CKnownPacks, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess,
-    CPingResponse, CPluginMessage, CRegistryData, CRespawn, CSetCompression,
-    CStartConfiguration, CStatusResponse, CSystemChatMessage, CTransfer, DimensionInfo,
-    ErasedPacket, KnownPack, OpaquePacket, Packet, Property, SAcknowledgeConfiguration,
-    SAcknowledgeFinishConfig, SConfigPluginMessage, SEncryptionResponse, SHandshake, SKeepAlive,
-    SKnownPacks, SLoginAcknowledged, SLoginPluginResponse, SLoginStart, SPingRequest,
-    SPluginMessage, SStatusRequest,
+    CPingResponse, CPluginMessage, CRegistryData, CRespawn, CSetCompression, CStartConfiguration,
+    CStatusResponse, CSystemChatMessage, CTransfer, DimensionInfo, ErasedPacket, KnownPack,
+    OpaquePacket, Packet, Property, SAcknowledgeConfiguration, SAcknowledgeFinishConfig,
+    SConfigPluginMessage, SEncryptionResponse, SHandshake, SKeepAlive, SKnownPacks,
+    SLoginAcknowledged, SLoginPluginResponse, SLoginStart, SPingRequest, SPluginMessage,
+    SStatusRequest,
 };
 pub use registry::{DecodedPacket, PacketRegistry, build_default_registry};
 pub use version::{ConnectionState, Direction, ProtocolVersion};

@@ -10,8 +10,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::command::CommandManager;
 use crate::error::PluginError;
-use crate::event::bus::EventBus;
 use crate::event::BoxFuture;
+use crate::event::bus::EventBus;
 use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use crate::limbo::LimboHandler;
 use crate::services::{
@@ -90,11 +90,7 @@ pub trait Plugin: Send + Sync {
 }
 
 impl PluginMetadata {
-    pub fn new(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        version: impl Into<String>,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, name: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -195,10 +191,7 @@ pub trait PluginContext: Send + Sync + private::Sealed {
 
     fn plugin_registry_handle(&self) -> Arc<dyn PluginRegistry>;
 
-    fn register_config_provider(
-        &self,
-        provider: Box<dyn crate::provider::PluginConfigProvider>,
-    );
+    fn register_config_provider(&self, provider: Box<dyn crate::provider::PluginConfigProvider>);
 
     fn plugin_id(&self) -> &str;
 

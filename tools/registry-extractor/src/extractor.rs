@@ -6,12 +6,14 @@ use infrarust_protocol::codec::VarInt;
 use infrarust_protocol::io::decoder::PacketDecoder;
 use infrarust_protocol::io::encoder::PacketEncoder;
 use infrarust_protocol::io::frame::PacketFrame;
+use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::config::{
     CFinishConfig, CKnownPacks, SAcknowledgeFinishConfig, SKnownPacks,
 };
-use infrarust_protocol::packets::login::{CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged, SLoginStart};
 use infrarust_protocol::packets::handshake::SHandshake;
-use infrarust_protocol::packets::Packet;
+use infrarust_protocol::packets::login::{
+    CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged, SLoginStart,
+};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry, build_default_registry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
@@ -47,9 +49,15 @@ pub async fn extract_registry_data(
         next_state: ConnectionState::Login,
     };
     send_packet(
-        &mut stream, &mut encoder, &handshake, &registry,
-        ConnectionState::Handshake, Direction::Serverbound, protocol_version,
-    ).await?;
+        &mut stream,
+        &mut encoder,
+        &handshake,
+        &registry,
+        ConnectionState::Handshake,
+        Direction::Serverbound,
+        protocol_version,
+    )
+    .await?;
     tracing::debug!("Handshake sent");
 
     let login_start = SLoginStart {
@@ -58,9 +66,15 @@ pub async fn extract_registry_data(
         signature_data: None,
     };
     send_packet(
-        &mut stream, &mut encoder, &login_start, &registry,
-        ConnectionState::Login, Direction::Serverbound, protocol_version,
-    ).await?;
+        &mut stream,
+        &mut encoder,
+        &login_start,
+        &registry,
+        ConnectionState::Login,
+        Direction::Serverbound,
+        protocol_version,
+    )
+    .await?;
     tracing::debug!("LoginStart sent for '{username}'");
 
     let mut state = ConnectionState::Login;
@@ -80,17 +94,27 @@ pub async fn extract_registry_data(
             match state {
                 ConnectionState::Login => {
                     handle_login_frame(
-                        &frame, &registry, protocol_version, &mut state,
-                        &mut stream, &mut encoder, &mut decoder,
-                    ).await?;
+                        &frame,
+                        &registry,
+                        protocol_version,
+                        &mut state,
+                        &mut stream,
+                        &mut encoder,
+                        &mut decoder,
+                    )
+                    .await?;
                 }
                 ConnectionState::Config => {
                     let done = handle_config_frame(
-                        &frame, &registry, protocol_version,
-                        &mut stream, &mut encoder,
+                        &frame,
+                        &registry,
+                        protocol_version,
+                        &mut stream,
+                        &mut encoder,
                         &mut collected_registry_frames,
                         &mut collected_known_packs,
-                    ).await?;
+                    )
+                    .await?;
 
                     if done {
                         tracing::info!(
@@ -127,7 +151,10 @@ async fn handle_login_frame(
     decoder: &mut PacketDecoder,
 ) -> anyhow::Result<()> {
     let decoded = registry.decode_frame(
-        frame, ConnectionState::Login, Direction::Clientbound, version,
+        frame,
+        ConnectionState::Login,
+        Direction::Clientbound,
+        version,
     )?;
 
     match decoded {
@@ -144,9 +171,15 @@ async fn handle_login_frame(
 
                 if version.no_less_than(ProtocolVersion::V1_20_2) {
                     send_packet(
-                        stream, encoder, &SLoginAcknowledged, registry,
-                        ConnectionState::Login, Direction::Serverbound, version,
-                    ).await?;
+                        stream,
+                        encoder,
+                        &SLoginAcknowledged,
+                        registry,
+                        ConnectionState::Login,
+                        Direction::Serverbound,
+                        version,
+                    )
+                    .await?;
                     *state = ConnectionState::Config;
                     tracing::info!("Transitioned to Config state");
                 } else {
@@ -160,7 +193,8 @@ async fn handle_login_frame(
 
             if let Some(disconnect) = packet.as_any().downcast_ref::<CLoginDisconnect>() {
                 return Err(anyhow::anyhow!(
-                    "Server rejected login: {}", disconnect.reason
+                    "Server rejected login: {}",
+                    disconnect.reason
                 ));
             }
 
@@ -185,18 +219,28 @@ async fn handle_config_frame(
     known_packs: &mut Option<FrameData>,
 ) -> anyhow::Result<bool> {
     let known_packs_id = registry.get_packet_id::<CKnownPacks>(
-        ConnectionState::Config, Direction::Clientbound, version,
+        ConnectionState::Config,
+        Direction::Clientbound,
+        version,
     );
     let finish_config_id = registry.get_packet_id::<CFinishConfig>(
-        ConnectionState::Config, Direction::Clientbound, version,
+        ConnectionState::Config,
+        Direction::Clientbound,
+        version,
     );
 
     if finish_config_id == Some(frame.id) {
         tracing::debug!("CFinishConfig received, sending SAcknowledgeFinishConfig");
         send_packet(
-            stream, encoder, &SAcknowledgeFinishConfig, registry,
-            ConnectionState::Config, Direction::Serverbound, version,
-        ).await?;
+            stream,
+            encoder,
+            &SAcknowledgeFinishConfig,
+            registry,
+            ConnectionState::Config,
+            Direction::Serverbound,
+            version,
+        )
+        .await?;
         return Ok(true);
     }
 
@@ -209,9 +253,15 @@ async fn handle_config_frame(
 
         let response = SKnownPacks { packs: vec![] };
         send_packet(
-            stream, encoder, &response, registry,
-            ConnectionState::Config, Direction::Serverbound, version,
-        ).await?;
+            stream,
+            encoder,
+            &response,
+            registry,
+            ConnectionState::Config,
+            Direction::Serverbound,
+            version,
+        )
+        .await?;
         tracing::debug!("SKnownPacks (empty) sent");
         return Ok(false);
     }

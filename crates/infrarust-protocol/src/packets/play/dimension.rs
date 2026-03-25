@@ -152,8 +152,7 @@ mod tests {
     #[test]
     fn test_extract_1_16_2_named() {
         let payload = build_1_16_2_payload("minecraft:the_nether");
-        let dim =
-            extract_dimension_from_join_game(&payload, ProtocolVersion::V1_16_2).unwrap();
+        let dim = extract_dimension_from_join_game(&payload, ProtocolVersion::V1_16_2).unwrap();
         assert_eq!(
             dim,
             DimensionInfo::Named("minecraft:the_nether".to_string())
@@ -163,21 +162,13 @@ mod tests {
     #[test]
     fn test_extract_1_16_2_overworld() {
         let payload = build_1_16_2_payload("minecraft:overworld");
-        let dim =
-            extract_dimension_from_join_game(&payload, ProtocolVersion::V1_19).unwrap();
-        assert_eq!(
-            dim,
-            DimensionInfo::Named("minecraft:overworld".to_string())
-        );
+        let dim = extract_dimension_from_join_game(&payload, ProtocolVersion::V1_19).unwrap();
+        assert_eq!(dim, DimensionInfo::Named("minecraft:overworld".to_string()));
     }
 
     #[test]
     fn test_extract_1_20_2_placeholder() {
-        let dim =
-            extract_dimension_from_join_game(&[], ProtocolVersion::V1_20_2).unwrap();
-        assert_eq!(
-            dim,
-            DimensionInfo::Named("minecraft:overworld".to_string())
-        );
+        let dim = extract_dimension_from_join_game(&[], ProtocolVersion::V1_20_2).unwrap();
+        assert_eq!(dim, DimensionInfo::Named("minecraft:overworld".to_string()));
     }
 }

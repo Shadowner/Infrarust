@@ -9,14 +9,20 @@ use crate::account::{AuthAccount, PasswordHash, Username};
 use crate::error::AuthStorageError;
 
 pub trait AuthStorage: Send + Sync {
-    fn has_account<'a>(&'a self, username: &'a Username) -> BoxFuture<'a, Result<bool, AuthStorageError>>;
+    fn has_account<'a>(
+        &'a self,
+        username: &'a Username,
+    ) -> BoxFuture<'a, Result<bool, AuthStorageError>>;
 
     fn get_account<'a>(
         &'a self,
         username: &'a Username,
     ) -> BoxFuture<'a, Result<Option<AuthAccount>, AuthStorageError>>;
 
-    fn create_account<'a>(&'a self, account: &'a AuthAccount) -> BoxFuture<'a, Result<(), AuthStorageError>>;
+    fn create_account<'a>(
+        &'a self,
+        account: &'a AuthAccount,
+    ) -> BoxFuture<'a, Result<(), AuthStorageError>>;
 
     fn update_password_hash<'a>(
         &'a self,
@@ -24,7 +30,10 @@ pub trait AuthStorage: Send + Sync {
         new_hash: PasswordHash,
     ) -> BoxFuture<'a, Result<(), AuthStorageError>>;
 
-    fn delete_account<'a>(&'a self, username: &'a Username) -> BoxFuture<'a, Result<bool, AuthStorageError>>;
+    fn delete_account<'a>(
+        &'a self,
+        username: &'a Username,
+    ) -> BoxFuture<'a, Result<bool, AuthStorageError>>;
 
     fn update_last_login<'a>(
         &'a self,

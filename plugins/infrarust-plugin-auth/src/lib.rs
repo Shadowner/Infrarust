@@ -14,11 +14,11 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
-use infrarust_api::error::PluginError;
 use infrarust_api::types::PlayerId;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
@@ -51,10 +51,7 @@ impl Default for AuthPlugin {
     }
 }
 
-async fn load_blocked_passwords(
-    data_dir: &std::path::Path,
-    filename: &str,
-) -> HashSet<String> {
+async fn load_blocked_passwords(data_dir: &std::path::Path, filename: &str) -> HashSet<String> {
     if filename.is_empty() {
         return HashSet::new();
     }
@@ -148,10 +145,7 @@ impl Plugin for AuthPlugin {
                 }
             });
 
-            let mut guard = self
-                .state
-                .lock()
-                .expect("auth plugin state mutex poisoned");
+            let mut guard = self.state.lock().expect("auth plugin state mutex poisoned");
             *guard = Some(PluginState {
                 storage,
                 save_cancel,
@@ -212,11 +206,7 @@ impl LimboHandler for AuthLimbo {
         (**self).on_command(session, command, args)
     }
 
-    fn on_chat<'a>(
-        &'a self,
-        session: &'a dyn LimboSession,
-        message: &'a str,
-    ) -> BoxFuture<'a, ()> {
+    fn on_chat<'a>(&'a self, session: &'a dyn LimboSession, message: &'a str) -> BoxFuture<'a, ()> {
         (**self).on_chat(session, message)
     }
 

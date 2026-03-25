@@ -56,10 +56,7 @@ async fn test_per_plugin_ids() {
     assert_eq!(player_registry.online_count(), 0);
 
     // Verify SchedulerImpl works
-    let handle = scheduler.delay(
-        std::time::Duration::from_secs(3600),
-        Box::new(|| {}),
-    );
+    let handle = scheduler.delay(std::time::Duration::from_secs(3600), Box::new(|| {}));
     scheduler.cancel(handle);
 
     // Verify CommandManagerImpl register/unregister

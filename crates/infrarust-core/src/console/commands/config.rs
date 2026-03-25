@@ -5,9 +5,9 @@ use std::pin::Pin;
 
 use infrarust_api::services::config_service::ConfigService;
 
+use crate::console::ConsoleServices;
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
-use crate::console::ConsoleServices;
 
 pub struct ReloadCommand;
 
@@ -68,21 +68,19 @@ impl ConsoleCommand for ConfigCommand {
         Box::pin(async move {
             if let Some(key) = args.first() {
                 return match services.config_service.get_value(key) {
-                    Some(value) => CommandOutput::Lines(vec![OutputLine::Info(format!(
-                        "  {key} = {value}"
-                    ))]),
+                    Some(value) => {
+                        CommandOutput::Lines(vec![OutputLine::Info(format!("  {key} = {value}"))])
+                    }
                     None => CommandOutput::Error(format!("Configuration key '{key}' not found")),
                 };
             }
 
             let configs = services.config_service.get_all_server_configs();
 
-            let mut lines = vec![
-                OutputLine::Info(format!(
-                    "  Servers configured: {}",
-                    configs.len()
-                )),
-            ];
+            let mut lines = vec![OutputLine::Info(format!(
+                "  Servers configured: {}",
+                configs.len()
+            ))];
 
             for cfg in &configs {
                 let addresses: Vec<String> = cfg

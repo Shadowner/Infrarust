@@ -78,8 +78,8 @@ impl CodecFilterRegistry for CodecFilterRegistryImpl {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     use infrarust_api::filter::*;
     use infrarust_api::types::RawPacket;

@@ -3,8 +3,8 @@
 //! Determines whether a serverbound packet is a chat message or slash command.
 
 use infrarust_protocol::io::PacketFrame;
-use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::packets::Packet;
+use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 

@@ -39,12 +39,9 @@ impl PluginProviderSender for PluginProviderSenderImpl {
                         config: convert_api_to_config(&config),
                     })
                 }
-                PluginProviderEvent::Removed(server_id) => {
-                    ProviderEvent::Removed(make_provider_id(
-                        &self.provider_prefix,
-                        server_id.as_str(),
-                    ))
-                }
+                PluginProviderEvent::Removed(server_id) => ProviderEvent::Removed(
+                    make_provider_id(&self.provider_prefix, server_id.as_str()),
+                ),
             };
             self.sender.send(core_event).await.is_ok()
         })
@@ -118,8 +115,7 @@ pub async fn activate_plugin_providers(
             Ok(configs) => {
                 let count = configs.len();
                 for config in &configs {
-                    let pid =
-                        make_provider_id(&provider_prefix, config.id.as_str());
+                    let pid = make_provider_id(&provider_prefix, config.id.as_str());
                     let server_config = convert_api_to_config(config);
                     domain_router.add(pid.clone(), server_config);
                     loaded_ids.push(pid);

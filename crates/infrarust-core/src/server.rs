@@ -36,9 +36,9 @@ use crate::pipeline::Pipeline;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
 use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected, RoutingData};
+use crate::player::registry::PlayerRegistryImpl;
 use crate::provider::file::FileProvider;
 use crate::provider::registry::ProviderRegistry;
-use crate::player::registry::PlayerRegistryImpl;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
@@ -203,13 +203,10 @@ impl ProxyServer {
         let player_registry = Arc::new(PlayerRegistryImpl::new(Arc::clone(&registry)));
         let command_manager = Arc::new(CommandManagerImpl::new());
 
-        let codec_filter_registry = Arc::new(
-            crate::filter::codec_registry::CodecFilterRegistryImpl::new(),
-        );
+        let codec_filter_registry =
+            Arc::new(crate::filter::codec_registry::CodecFilterRegistryImpl::new());
 
-        let limbo_handler_registry = Arc::new(
-            crate::limbo::registry::LimboHandlerRegistry::new(),
-        );
+        let limbo_handler_registry = Arc::new(crate::limbo::registry::LimboHandlerRegistry::new());
 
         let services = ProxyServices {
             event_bus: Arc::clone(&event_bus),
@@ -224,11 +221,9 @@ impl ProxyServer {
             codec_filter_registry: Arc::clone(&codec_filter_registry),
             transport_filter_chain: crate::filter::transport_chain::TransportFilterChain::empty(),
             limbo_handler_registry,
-            registry_codec_cache: Arc::new(
-                crate::limbo::registry_cache::RegistryCodecCache::new(
-                    Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider),
-                ),
-            ),
+            registry_codec_cache: Arc::new(crate::limbo::registry_cache::RegistryCodecCache::new(
+                Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider),
+            )),
             provider_event_sender,
         };
 
@@ -257,26 +252,19 @@ impl ProxyServer {
         #[cfg(feature = "telemetry")]
         let proxy_metrics = Arc::new(crate::telemetry::ProxyMetrics::new());
 
-        let passthrough_handler = PassthroughHandler::new(
-            Arc::clone(&backend_connector),
-            services.clone(),
-        );
+        let passthrough_handler =
+            PassthroughHandler::new(Arc::clone(&backend_connector), services.clone());
         #[cfg(feature = "telemetry")]
         let passthrough_handler = passthrough_handler.with_metrics(Arc::clone(&proxy_metrics));
 
-        let offline_handler = InterceptedHandler::offline(
-            Arc::clone(&backend_connector),
-            services.clone(),
-        );
+        let offline_handler =
+            InterceptedHandler::offline(Arc::clone(&backend_connector), services.clone());
         #[cfg(feature = "telemetry")]
         let offline_handler = offline_handler.with_metrics(Arc::clone(&proxy_metrics));
 
         let auth = Arc::new(MojangAuth::new()?);
-        let client_only_handler = InterceptedHandler::client_only(
-            Arc::clone(&backend_connector),
-            services.clone(),
-            auth,
-        );
+        let client_only_handler =
+            InterceptedHandler::client_only(Arc::clone(&backend_connector), services.clone(), auth);
         #[cfg(feature = "telemetry")]
         let client_only_handler = client_only_handler.with_metrics(Arc::clone(&proxy_metrics));
 
@@ -374,7 +362,10 @@ impl ProxyServer {
                 };
 
                 if matches!(
-                    self.services.transport_filter_chain.on_accept(&mut transport_ctx).await,
+                    self.services
+                        .transport_filter_chain
+                        .on_accept(&mut transport_ctx)
+                        .await,
                     FilterVerdict::Reject
                 ) {
                     tracing::debug!(peer = %peer, "Connection rejected by transport filter");
@@ -439,7 +430,9 @@ impl ProxyServer {
 
         match intent {
             ConnectionIntent::Status => {
-                self.status_handler.handle(&mut ctx, &self.services.connection_registry).await?;
+                self.status_handler
+                    .handle(&mut ctx, &self.services.connection_registry)
+                    .await?;
             }
             ConnectionIntent::Login => {
                 // Execute login pipeline

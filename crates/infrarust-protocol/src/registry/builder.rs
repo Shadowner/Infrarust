@@ -313,7 +313,6 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x0E, ProtocolVersion::V1_20_5, false)
     .register(&mut registry);
 
-
     // KeepAlive Clientbound
     PacketRegistration::<crate::packets::CKeepAlive>::new(
         ConnectionState::Play,
@@ -674,7 +673,6 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x41, ProtocolVersion::V1_21_5, true)
     .map(0x46, ProtocolVersion::V1_21_9, true)
     .register(&mut registry);
-
 
     // AcknowledgeConfiguration Serverbound (client ack for StartConfiguration)
     PacketRegistration::<crate::packets::SAcknowledgeConfiguration>::new(

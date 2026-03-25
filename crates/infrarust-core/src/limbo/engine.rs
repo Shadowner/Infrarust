@@ -86,7 +86,15 @@ pub(crate) async fn enter_limbo(
     )
     .await;
 
-    map_chain_result(chain_result, client, version, registry, &handlers, player_id).await
+    map_chain_result(
+        chain_result,
+        client,
+        version,
+        registry,
+        &handlers,
+        player_id,
+    )
+    .await
 }
 
 async fn map_chain_result(
@@ -147,9 +155,9 @@ mod tests {
     use infrarust_api::types::{Component, PlayerId, ServerId};
     use infrarust_protocol::version::ProtocolVersion;
 
-    use super::*;
     use super::super::handler_chain::LimboChainResult;
     use super::super::test_helpers::*;
+    use super::*;
 
     #[tokio::test]
     async fn test_map_completed() {
@@ -157,8 +165,14 @@ mod tests {
         let registry = Arc::new(test_registry());
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
         let result = map_chain_result(
-            LimboChainResult::Completed, &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
-        ).await;
+            LimboChainResult::Completed,
+            &mut client,
+            ProtocolVersion::V1_21,
+            &registry,
+            &handlers,
+            PlayerId::new(1),
+        )
+        .await;
         assert!(matches!(result, LimboExitResult::Completed));
     }
 
@@ -168,8 +182,14 @@ mod tests {
         let registry = Arc::new(test_registry());
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
         let result = map_chain_result(
-            LimboChainResult::Switch(ServerId::new("lobby")), &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
-        ).await;
+            LimboChainResult::Switch(ServerId::new("lobby")),
+            &mut client,
+            ProtocolVersion::V1_21,
+            &registry,
+            &handlers,
+            PlayerId::new(1),
+        )
+        .await;
         match result {
             LimboExitResult::SwitchedTo(s) => assert_eq!(s, ServerId::new("lobby")),
             other => panic!("expected SwitchedTo, got {other:?}"),
@@ -182,8 +202,14 @@ mod tests {
         let registry = Arc::new(test_registry());
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
         let result = map_chain_result(
-            LimboChainResult::Kick(Component::text("bye")), &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
-        ).await;
+            LimboChainResult::Kick(Component::text("bye")),
+            &mut client,
+            ProtocolVersion::V1_21,
+            &registry,
+            &handlers,
+            PlayerId::new(1),
+        )
+        .await;
         assert!(matches!(result, LimboExitResult::Kicked));
     }
 
@@ -191,12 +217,19 @@ mod tests {
     async fn test_map_client_disconnected() {
         let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
         let registry = Arc::new(test_registry());
-        let handlers: Vec<Arc<dyn LimboHandler>> = vec![
-            Arc::new(FixedHandler { name: "h1", result: HandlerResult::Accept }),
-        ];
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(FixedHandler {
+            name: "h1",
+            result: HandlerResult::Accept,
+        })];
         let result = map_chain_result(
-            LimboChainResult::ClientDisconnected, &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
-        ).await;
+            LimboChainResult::ClientDisconnected,
+            &mut client,
+            ProtocolVersion::V1_21,
+            &registry,
+            &handlers,
+            PlayerId::new(1),
+        )
+        .await;
         assert!(matches!(result, LimboExitResult::ClientDisconnected));
     }
 
@@ -206,8 +239,14 @@ mod tests {
         let registry = Arc::new(test_registry());
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
         let result = map_chain_result(
-            LimboChainResult::Shutdown, &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
-        ).await;
+            LimboChainResult::Shutdown,
+            &mut client,
+            ProtocolVersion::V1_21,
+            &registry,
+            &handlers,
+            PlayerId::new(1),
+        )
+        .await;
         assert!(matches!(result, LimboExitResult::Shutdown));
     }
 
@@ -217,8 +256,14 @@ mod tests {
         let registry = Arc::new(test_registry());
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
         let result = map_chain_result(
-            LimboChainResult::Timeout, &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
-        ).await;
+            LimboChainResult::Timeout,
+            &mut client,
+            ProtocolVersion::V1_21,
+            &registry,
+            &handlers,
+            PlayerId::new(1),
+        )
+        .await;
         assert!(matches!(result, LimboExitResult::Timeout));
     }
 
@@ -229,8 +274,14 @@ mod tests {
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
         let names = vec!["auth".to_string(), "lobby".to_string()];
         let result = map_chain_result(
-            LimboChainResult::SendToLimbo(names), &mut client, ProtocolVersion::V1_21, &registry, &handlers, PlayerId::new(1),
-        ).await;
+            LimboChainResult::SendToLimbo(names),
+            &mut client,
+            ProtocolVersion::V1_21,
+            &registry,
+            &handlers,
+            PlayerId::new(1),
+        )
+        .await;
         match result {
             LimboExitResult::SendToLimbo(n) => assert_eq!(n, vec!["auth", "lobby"]),
             other => panic!("expected SendToLimbo, got {other:?}"),

@@ -144,8 +144,8 @@ pub fn build_codec_chains(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     use infrarust_api::filter::*;
 
@@ -218,9 +218,7 @@ mod tests {
         }
     }
 
-    fn chain_with_instances(
-        instances: Vec<Box<dyn CodecFilterInstance>>,
-    ) -> CodecFilterChain {
+    fn chain_with_instances(instances: Vec<Box<dyn CodecFilterInstance>>) -> CodecFilterChain {
         CodecFilterChain {
             instances,
             context: CodecContext {
@@ -320,7 +318,11 @@ mod tests {
         let result = chain.process(&mut packet);
         assert!(matches!(result, FilterResult::Dropped));
         assert_eq!(count_a.load(Ordering::Relaxed), 1);
-        assert_eq!(count_b.load(Ordering::Relaxed), 0, "filter B should not be called after drop");
+        assert_eq!(
+            count_b.load(Ordering::Relaxed),
+            0,
+            "filter B should not be called after drop"
+        );
     }
 
     #[test]
@@ -343,7 +345,11 @@ mod tests {
             None,
         );
 
-        assert_eq!(create_count.load(Ordering::Relaxed), 2, "factory should be called twice (client + server)");
+        assert_eq!(
+            create_count.load(Ordering::Relaxed),
+            2,
+            "factory should be called twice (client + server)"
+        );
     }
 
     #[test]
@@ -411,8 +417,12 @@ mod tests {
         let notified2 = Arc::new(AtomicBool::new(false));
 
         let mut chain = chain_with_instances(vec![
-            Box::new(StateTracker { notified: Arc::clone(&notified1) }),
-            Box::new(StateTracker { notified: Arc::clone(&notified2) }),
+            Box::new(StateTracker {
+                notified: Arc::clone(&notified1),
+            }),
+            Box::new(StateTracker {
+                notified: Arc::clone(&notified2),
+            }),
         ]);
 
         chain.notify_state_change(ConnectionState::Play);

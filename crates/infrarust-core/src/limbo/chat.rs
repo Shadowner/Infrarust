@@ -45,8 +45,8 @@ pub(crate) fn parse_client_message(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::*;
     use super::super::test_helpers::{build_frame, test_registry};
+    use super::*;
     use bytes::Bytes;
     use infrarust_protocol::io::PacketFrame;
     use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
@@ -126,5 +126,4 @@ mod tests {
 
         assert!(parse_client_message(&frame, &registry, version).is_none());
     }
-
 }

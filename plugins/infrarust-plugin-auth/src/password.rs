@@ -42,10 +42,7 @@ pub async fn hash_password(
     .map_err(|e| AuthError::Hashing(format!("spawn_blocking failed: {e}")))?
 }
 
-pub async fn verify_password(
-    password: &str,
-    hash: &AuthPasswordHash,
-) -> Result<bool, AuthError> {
+pub async fn verify_password(password: &str, hash: &AuthPasswordHash) -> Result<bool, AuthError> {
     let password = password.to_string();
     let hash_str = hash.as_str().to_string();
 
@@ -77,8 +74,7 @@ pub async fn generate_dummy_hash(config: &HashingConfig) -> Result<AuthPasswordH
 
 fn verify_password_sync(password: &str, hash_str: &str) -> Result<bool, AuthError> {
     if hash_str.starts_with("$argon2") {
-        let parsed = PasswordHash::new(hash_str)
-            .map_err(|e| AuthError::Hashing(e.to_string()))?;
+        let parsed = PasswordHash::new(hash_str).map_err(|e| AuthError::Hashing(e.to_string()))?;
         Ok(Argon2::default()
             .verify_password(password.as_bytes(), &parsed)
             .is_ok())

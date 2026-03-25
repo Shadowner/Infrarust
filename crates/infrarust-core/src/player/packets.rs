@@ -7,12 +7,12 @@ use bytes::Bytes;
 
 use infrarust_api::types::{Component, TitleData};
 use infrarust_protocol::io::PacketFrame;
+use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::play::chat::{CChatMessageLegacy, CSystemChatMessage};
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
 use infrarust_protocol::packets::play::title::{
     CSetSubtitle, CSetTitle, CSetTitleTimes, CTitleLegacy,
 };
-use infrarust_protocol::packets::Packet;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 

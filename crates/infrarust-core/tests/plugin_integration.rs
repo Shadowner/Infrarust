@@ -3,8 +3,8 @@
 //! End-to-end plugin lifecycle integration test.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use infrarust_api::error::PluginError;
 use infrarust_api::event::bus::EventBusExt;
@@ -13,9 +13,9 @@ use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::types::{GameProfile, PlayerId, ProtocolVersion};
 use infrarust_core::event_bus::EventBusImpl;
+use infrarust_core::plugin::PluginContextFactoryImpl;
 use infrarust_core::plugin::manager::{PluginManager, PluginServices};
 use infrarust_core::plugin::static_loader::StaticPluginLoader;
-use infrarust_core::plugin::PluginContextFactoryImpl;
 use infrarust_core::services::command_manager::CommandManagerImpl;
 use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::NoopServerManager;
@@ -39,12 +39,10 @@ impl Plugin for TestPlugin {
     ) -> BoxFuture<'a, Result<(), PluginError>> {
         let flag = Arc::clone(&self.handler_called);
         Box::pin(async move {
-            ctx.event_bus().subscribe(
-                EventPriority::NORMAL,
-                move |_event: &mut PostLoginEvent| {
+            ctx.event_bus()
+                .subscribe(EventPriority::NORMAL, move |_event: &mut PostLoginEvent| {
                     flag.store(true, Ordering::SeqCst);
-                },
-            );
+                });
             Ok(())
         })
     }
@@ -180,15 +178,12 @@ async fn test_dependency_order_end_to_end() {
         },
     );
 
-    loader.register(
-        PluginMetadata::new("parent", "Parent", "1.0"),
-        move || {
-            Box::new(OrderPlugin {
-                meta: PluginMetadata::new("parent", "Parent", "1.0"),
-                order: order_parent.clone(),
-            })
-        },
-    );
+    loader.register(PluginMetadata::new("parent", "Parent", "1.0"), move || {
+        Box::new(OrderPlugin {
+            meta: PluginMetadata::new("parent", "Parent", "1.0"),
+            order: order_parent.clone(),
+        })
+    });
 
     let mut manager = PluginManager::new(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();

@@ -252,7 +252,11 @@ mod tests {
         }
 
         let data = build_named_compound("dimension_codec", &children);
-        assert!(data.len() > 2000, "compound should be ~2KB, got {} bytes", data.len());
+        assert!(
+            data.len() > 2000,
+            "compound should be ~2KB, got {} bytes",
+            data.len()
+        );
 
         let mut r: &[u8] = &data;
         skip_nbt_compound(&mut r).unwrap();

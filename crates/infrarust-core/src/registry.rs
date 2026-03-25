@@ -65,10 +65,7 @@ impl ConnectionRegistry {
     pub fn find_by_server(&self, server_id: &str) -> Vec<Arc<PlayerSession>> {
         self.sessions
             .iter()
-            .filter(|r| {
-                r.current_server()
-                    .is_some_and(|s| s.as_str() == server_id)
-            })
+            .filter(|r| r.current_server().is_some_and(|s| s.as_str() == server_id))
             .map(|r| Arc::clone(&r))
             .collect()
     }
@@ -80,10 +77,7 @@ impl ConnectionRegistry {
     pub fn count_by_server(&self, server_id: &str) -> usize {
         self.sessions
             .iter()
-            .filter(|r| {
-                r.current_server()
-                    .is_some_and(|s| s.as_str() == server_id)
-            })
+            .filter(|r| r.current_server().is_some_and(|s| s.as_str() == server_id))
             .count()
     }
 
@@ -174,10 +168,7 @@ mod tests {
         registry.register(make_session("alice", "lobby"));
         registry.register(make_session("bob", "survival"));
         let found = registry.find_by_username("bob").unwrap();
-        assert_eq!(
-            found.current_server().unwrap().as_str(),
-            "survival"
-        );
+        assert_eq!(found.current_server().unwrap().as_str(), "survival");
         assert!(registry.find_by_username("charlie").is_none());
     }
 

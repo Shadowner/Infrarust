@@ -82,7 +82,10 @@ fn validate_identifier(value: &str, field: &str, server_id: &str) -> Result<(), 
             "server '{server_id}': {field} must be at most 64 characters"
         )));
     }
-    if !value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-') {
+    if !value
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+    {
         return Err(ConfigError::Validation(format!(
             "server '{server_id}': {field} '{value}' contains invalid characters (allowed: a-z, 0-9, _, -)"
         )));

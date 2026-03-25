@@ -64,13 +64,19 @@ mod tests {
     #[test]
     fn ipv4_last_octet() {
         let ip: IpAddr = "192.168.1.42".parse().unwrap();
-        assert_eq!(mask_ip_for_log(&ip, &IpMaskingMode::LastOctet), "192.168.1.x");
+        assert_eq!(
+            mask_ip_for_log(&ip, &IpMaskingMode::LastOctet),
+            "192.168.1.x"
+        );
     }
 
     #[test]
     fn ipv4_last_two() {
         let ip: IpAddr = "192.168.1.42".parse().unwrap();
-        assert_eq!(mask_ip_for_log(&ip, &IpMaskingMode::LastTwoOctets), "192.168.x.x");
+        assert_eq!(
+            mask_ip_for_log(&ip, &IpMaskingMode::LastTwoOctets),
+            "192.168.x.x"
+        );
     }
 
     #[test]

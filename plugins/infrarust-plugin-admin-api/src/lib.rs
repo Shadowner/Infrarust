@@ -129,10 +129,7 @@ impl Plugin for AdminApiPlugin {
             });
 
             // Wire up EventBridge: proxy EventBus → broadcast::Sender<ApiEvent>
-            let bridge = EventBridge::new(
-                event_tx.clone(),
-                ctx.player_registry_handle(),
-            );
+            let bridge = EventBridge::new(event_tx.clone(), ctx.player_registry_handle());
             bridge.register_listeners(ctx);
 
             // Spawn recent-events buffer: reads broadcast and stores last 100 events
@@ -190,10 +187,7 @@ impl Plugin for AdminApiPlugin {
                 }
             });
 
-            *self
-                .server_handle
-                .lock()
-                .unwrap_or_else(|p| p.into_inner()) = Some(handle);
+            *self.server_handle.lock().unwrap_or_else(|p| p.into_inner()) = Some(handle);
 
             Ok(())
         })
@@ -395,9 +389,7 @@ mod tests {
             }]
         }
         fn plugin_info(&self, id: &str) -> Option<PluginInfo> {
-            self.list_plugin_info()
-                .into_iter()
-                .find(|p| p.id == id)
+            self.list_plugin_info().into_iter().find(|p| p.id == id)
         }
     }
 
@@ -425,7 +417,9 @@ mod tests {
             proxy_shutdown: CancellationToken::new(),
             log_tx: None,
             log_history: None,
-            server_store: Arc::new(crate::server_store::ApiServerStore::load(std::path::Path::new("/tmp/infrarust-test"))),
+            server_store: Arc::new(crate::server_store::ApiServerStore::load(
+                std::path::Path::new("/tmp/infrarust-test"),
+            )),
             provider_sender: Arc::new(tokio::sync::Mutex::new(None)),
             health_cache: Arc::new(crate::health_cache::HealthCache::new()),
             health_checker: Arc::new(crate::health_checker::HealthChecker::new()),
@@ -539,7 +533,12 @@ mod tests {
 
         let body = response_body(response).await;
         assert_eq!(body["error"]["code"], "UNAUTHORIZED");
-        assert!(body["error"]["message"].as_str().unwrap().contains("missing"));
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("missing")
+        );
     }
 
     #[tokio::test]
@@ -558,7 +557,12 @@ mod tests {
 
         let body = response_body(response).await;
         assert_eq!(body["error"]["code"], "UNAUTHORIZED");
-        assert!(body["error"]["message"].as_str().unwrap().contains("invalid"));
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid")
+        );
     }
 
     #[tokio::test]
@@ -748,10 +752,7 @@ mod tests {
             let state = test_state();
             let app = build_router(state, true);
 
-            let request = Request::builder()
-                .uri(uri)
-                .body(Body::empty())
-                .unwrap();
+            let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
 
             let response = app.oneshot(request).await.unwrap();
             assert_eq!(
@@ -804,10 +805,12 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["data"]["success"], true);
-        assert!(body["data"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("Broadcast"));
+        assert!(
+            body["data"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Broadcast")
+        );
     }
 
     // ── Ban Mutations ──
@@ -868,8 +871,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_reload_returns_503() {
-        let (status, body) =
-            auth_post("/api/v1/config/reload", serde_json::json!({})).await;
+        let (status, body) = auth_post("/api/v1/config/reload", serde_json::json!({})).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body["error"]["code"], "SERVICE_UNAVAILABLE");
     }
@@ -896,8 +898,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_proxy_shutdown_returns_200() {
-        let (status, body) =
-            auth_post("/api/v1/proxy/shutdown", serde_json::json!({})).await;
+        let (status, body) = auth_post("/api/v1/proxy/shutdown", serde_json::json!({})).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["data"]["success"], true);
     }

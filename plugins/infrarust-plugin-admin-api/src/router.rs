@@ -45,8 +45,16 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
             "/api/v1/bans/check/{target_type}/{value}",
             get(handlers::bans::check),
         )
-        .route("/api/v1/servers", get(handlers::servers::list).post(handlers::servers::create))
-        .route("/api/v1/servers/{id}", get(handlers::servers::get).put(handlers::servers::update).delete(handlers::servers::delete))
+        .route(
+            "/api/v1/servers",
+            get(handlers::servers::list).post(handlers::servers::create),
+        )
+        .route(
+            "/api/v1/servers/{id}",
+            get(handlers::servers::get)
+                .put(handlers::servers::update)
+                .delete(handlers::servers::delete),
+        )
         .route("/api/v1/plugins", get(handlers::plugins::list))
         .route("/api/v1/plugins/{id}", get(handlers::plugins::get))
         .route("/api/v1/stats", get(handlers::stats::overview))
@@ -56,10 +64,7 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
             get(handlers::config::list_providers),
         )
         // ── Log history (REST, not SSE) ──
-        .route(
-            "/api/v1/logs/history",
-            get(sse::handlers::log_history),
-        )
+        .route("/api/v1/logs/history", get(sse::handlers::log_history))
         // ── Mutation endpoints (POST / DELETE) ──
         .route(
             "/api/v1/players/broadcast",
@@ -81,14 +86,8 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
             "/api/v1/bans/{target_type}/{value}",
             delete(handlers::bans::delete),
         )
-        .route(
-            "/api/v1/servers/{id}/start",
-            post(handlers::servers::start),
-        )
-        .route(
-            "/api/v1/servers/{id}/stop",
-            post(handlers::servers::stop),
-        )
+        .route("/api/v1/servers/{id}/start", post(handlers::servers::start))
+        .route("/api/v1/servers/{id}/stop", post(handlers::servers::stop))
         .route(
             "/api/v1/servers/{id}/health",
             get(handlers::servers::health_check),
@@ -106,10 +105,7 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
             "/api/v1/plugins/{id}/enable",
             post(handlers::plugins::enable),
         )
-        .route(
-            "/api/v1/proxy/shutdown",
-            post(handlers::proxy::shutdown),
-        )
+        .route("/api/v1/proxy/shutdown", post(handlers::proxy::shutdown))
         .route("/api/v1/proxy/gc", post(handlers::proxy::gc))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -138,22 +134,20 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
         router
     };
 
-    router
-        .with_state(state.clone())
-        .layer(
-            ServiceBuilder::new()
-                .layer(
-                    TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
-                        tracing::info_span!(
-                            "http_request",
-                            method = %request.method(),
-                            uri = %request.uri(),
-                        )
-                    }),
-                )
-                .layer(CompressionLayer::new())
-                .layer(build_cors_layer(&state.config)),
-        )
+    router.with_state(state.clone()).layer(
+        ServiceBuilder::new()
+            .layer(
+                TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                    tracing::info_span!(
+                        "http_request",
+                        method = %request.method(),
+                        uri = %request.uri(),
+                    )
+                }),
+            )
+            .layer(CompressionLayer::new())
+            .layer(build_cors_layer(&state.config)),
+    )
 }
 
 fn build_cors_layer(config: &ApiConfig) -> CorsLayer {

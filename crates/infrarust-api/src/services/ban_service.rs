@@ -241,6 +241,9 @@ mod tests {
             BanTarget::Username("test".into()).to_string(),
             "username:test"
         );
-        assert_eq!(BanTarget::Ip("1.2.3.4".parse().unwrap()).display_type(), "IP");
+        assert_eq!(
+            BanTarget::Ip("1.2.3.4".parse().unwrap()).display_type(),
+            "IP"
+        );
     }
 }

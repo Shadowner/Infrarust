@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::command::CommandManager;
-use infrarust_api::event::bus::EventBus;
 use infrarust_api::event::ListenerHandle;
+use infrarust_api::event::bus::EventBus;
 use infrarust_api::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use infrarust_api::limbo::LimboHandler;
 use infrarust_api::plugin::PluginContext;
@@ -76,14 +76,18 @@ impl PluginContextImpl {
         let registered_commands = Arc::new(Mutex::new(Vec::new()));
         let registered_tasks = Arc::new(Mutex::new(Vec::new()));
 
-        let tracking_bus =
-            Arc::new(TrackingEventBus::new(event_bus, Arc::clone(&registered_handles)));
+        let tracking_bus = Arc::new(TrackingEventBus::new(
+            event_bus,
+            Arc::clone(&registered_handles),
+        ));
         let tracking_cmd = Arc::new(TrackingCommandManager::new(
             command_manager,
             Arc::clone(&registered_commands),
         ));
-        let tracking_sched =
-            Arc::new(TrackingScheduler::new(scheduler, Arc::clone(&registered_tasks)));
+        let tracking_sched = Arc::new(TrackingScheduler::new(
+            scheduler,
+            Arc::clone(&registered_tasks),
+        ));
 
         Self {
             event_bus: tracking_bus,
@@ -136,34 +140,20 @@ impl PluginContextImpl {
 
     pub fn cleanup(&self) {
         // Unsubscribe all event listeners
-        let handles = std::mem::take(
-            &mut *self
-                .registered_handles
-                .lock()
-                .expect("lock poisoned"),
-        );
+        let handles = std::mem::take(&mut *self.registered_handles.lock().expect("lock poisoned"));
         for handle in handles {
             self.event_bus.unsubscribe(handle);
         }
 
         // Unregister all commands
-        let commands = std::mem::take(
-            &mut *self
-                .registered_commands
-                .lock()
-                .expect("lock poisoned"),
-        );
+        let commands =
+            std::mem::take(&mut *self.registered_commands.lock().expect("lock poisoned"));
         for cmd in commands {
             self.command_manager.unregister(&cmd);
         }
 
         // Cancel all scheduled tasks
-        let tasks = std::mem::take(
-            &mut *self
-                .registered_tasks
-                .lock()
-                .expect("lock poisoned"),
-        );
+        let tasks = std::mem::take(&mut *self.registered_tasks.lock().expect("lock poisoned"));
         for task in tasks {
             self.scheduler.cancel(task);
         }
@@ -178,12 +168,8 @@ impl PluginContextImpl {
             token.cancel();
         }
 
-        let provider_ids = std::mem::take(
-            &mut *self
-                .registered_provider_ids
-                .lock()
-                .expect("lock poisoned"),
-        );
+        let provider_ids =
+            std::mem::take(&mut *self.registered_provider_ids.lock().expect("lock poisoned"));
         for pid in &provider_ids {
             self.domain_router.remove(pid);
         }

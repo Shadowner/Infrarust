@@ -51,9 +51,8 @@ impl AuthStrategy {
     ) -> Result<AuthResult, CoreError> {
         match self {
             Self::Mojang(auth) => {
-                let login_data = login_data.ok_or_else(|| {
-                    CoreError::MissingExtension("LoginData")
-                })?;
+                let login_data =
+                    login_data.ok_or_else(|| CoreError::MissingExtension("LoginData"))?;
 
                 // nil UUID — real UUID comes from Mojang
                 let pre_login_profile = infrarust_api::types::GameProfile {
@@ -61,7 +60,15 @@ impl AuthStrategy {
                     username: login_data.username.clone(),
                     properties: vec![],
                 };
-                fire_pre_login(client, pre_login_profile, peer_addr, version, domain, services).await?;
+                fire_pre_login(
+                    client,
+                    pre_login_profile,
+                    peer_addr,
+                    version,
+                    domain,
+                    services,
+                )
+                .await?;
 
                 let game_profile = auth
                     .authenticate(client, &login_data.username, &services.packet_registry)
@@ -106,7 +113,8 @@ impl AuthStrategy {
                     &login_props,
                     version,
                     &services.packet_registry,
-                ).await?;
+                )
+                .await?;
 
                 services.event_bus.fire_and_forget_arc(
                     infrarust_api::events::lifecycle::PostLoginEvent {
@@ -134,9 +142,7 @@ impl AuthStrategy {
                 let player_uuid = login_data
                     .and_then(|d| d.player_uuid)
                     .unwrap_or_else(uuid::Uuid::new_v4);
-                let username = login_data
-                    .map(|d| d.username.clone())
-                    .unwrap_or_default();
+                let username = login_data.map(|d| d.username.clone()).unwrap_or_default();
                 let player_id = crate::player::next_player_id();
 
                 let api_profile = infrarust_api::types::GameProfile {
@@ -145,7 +151,15 @@ impl AuthStrategy {
                     properties: vec![],
                 };
 
-                fire_pre_login(client, api_profile.clone(), peer_addr, version, domain, services).await?;
+                fire_pre_login(
+                    client,
+                    api_profile.clone(),
+                    peer_addr,
+                    version,
+                    domain,
+                    services,
+                )
+                .await?;
 
                 services.event_bus.fire_and_forget_arc(
                     infrarust_api::events::lifecycle::PostLoginEvent {

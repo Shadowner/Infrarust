@@ -345,7 +345,6 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
-
     #[test]
     fn test_version_ordering_matches_protocol_ids() {
         assert!(ProtocolVersion::V1_21 > ProtocolVersion::V1_20);
@@ -472,7 +471,6 @@ mod tests {
         assert!(!ProtocolVersion::SUPPORTED.contains(&ProtocolVersion::LEGACY));
     }
 
-
     #[test]
     fn test_handshake_id_status() {
         assert_eq!(ConnectionState::Status.handshake_id(), Some(1));
@@ -519,7 +517,6 @@ mod tests {
         assert_eq!(format!("{}", ConnectionState::Login), "login");
         assert_eq!(format!("{}", ConnectionState::Config), "config");
     }
-
 
     #[test]
     fn test_opposite() {

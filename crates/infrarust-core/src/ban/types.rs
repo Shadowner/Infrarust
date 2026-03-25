@@ -4,9 +4,9 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-pub use infrarust_api::services::ban_service::{BanEntry, BanTarget};
 #[allow(unused_imports)] // used by serde(with) on BanAuditLogEntry
 use infrarust_api::services::ban_service::epoch_serde;
+pub use infrarust_api::services::ban_service::{BanEntry, BanTarget};
 
 /// Type of action in the audit log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

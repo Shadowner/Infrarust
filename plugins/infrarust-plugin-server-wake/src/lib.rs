@@ -57,7 +57,7 @@ impl Plugin for ServerWakePlugin {
             ctx.register_limbo_handler(Box::new(ServerWakeHandler {
                 state: Arc::clone(&state),
                 server_manager: ctx.server_manager_handle(),
-                config_service: ctx.config_service_handle()
+                config_service: ctx.config_service_handle(),
             }));
 
             let wake_state = Arc::clone(&state);
@@ -118,12 +118,10 @@ fn handle_state_change(
                 "server online, releasing waiting player(s)"
             );
             let vars: &[(&str, &str)] = &[("server", server_id.as_str())];
-            let ready_title = Component::from_legacy_format(
-                &state.config.messages.ready_title, vars,
-            );
-            let ready_subtitle = Component::from_legacy_format(
-                &state.config.messages.ready_subtitle, vars,
-            );
+            let ready_title =
+                Component::from_legacy_format(&state.config.messages.ready_title, vars);
+            let ready_subtitle =
+                Component::from_legacy_format(&state.config.messages.ready_subtitle, vars);
 
             for player_id in players {
                 if let Some((_, entry)) = state.waiting.remove(&player_id) {
@@ -152,9 +150,11 @@ fn handle_state_change(
             for player_id in players {
                 if let Some((_, entry)) = state.waiting.remove(&player_id) {
                     entry.cancel.cancel();
-                    entry.session_handle.complete(HandlerResult::Deny(
-                        Component::from_legacy(&state.config.messages.failed_kick),
-                    ));
+                    entry
+                        .session_handle
+                        .complete(HandlerResult::Deny(Component::from_legacy(
+                            &state.config.messages.failed_kick,
+                        )));
                 }
             }
         }

@@ -408,15 +408,28 @@ struct LegacyFmt {
 
 impl LegacyFmt {
     fn new() -> Self {
-        Self { color: None, bold: false, italic: false, underlined: false }
+        Self {
+            color: None,
+            bold: false,
+            italic: false,
+            underlined: false,
+        }
     }
 
     fn apply(&self, text: &str) -> Component {
         let mut c = Component::text(text);
-        if let Some(color) = self.color { c = c.color(color); }
-        if self.bold { c = c.bold(); }
-        if self.italic { c = c.italic(); }
-        if self.underlined { c = c.underlined(); }
+        if let Some(color) = self.color {
+            c = c.color(color);
+        }
+        if self.bold {
+            c = c.bold();
+        }
+        if self.italic {
+            c = c.italic();
+        }
+        if self.underlined {
+            c = c.underlined();
+        }
         c
     }
 }
@@ -445,8 +458,8 @@ impl Component {
         while let Some(ch) = chars.next() {
             if ch == '&' {
                 if let Some(&code) = chars.peek() {
-                    let is_format_code = matches!(code, 'l' | 'o' | 'n' | 'r')
-                        || legacy_color_name(code).is_some();
+                    let is_format_code =
+                        matches!(code, 'l' | 'o' | 'n' | 'r') || legacy_color_name(code).is_some();
 
                     if is_format_code {
                         chars.next();
@@ -698,8 +711,7 @@ mod tests {
 
     #[test]
     fn nbt_network_with_extra() {
-        let c = Component::text("Hello ")
-            .append(Component::text("World").color("gold"));
+        let c = Component::text("Hello ").append(Component::text("World").color("gold"));
         let nbt = c.to_nbt_network();
         assert_eq!(nbt[0], 0x0A); // root compound
         // Should contain TAG_List (0x09) for "extra"
@@ -712,8 +724,8 @@ mod tests {
 
     #[test]
     fn nbt_network_with_click_event() {
-        let c = Component::text("Click me")
-            .click(ClickEvent::OpenUrl("https://example.com".into()));
+        let c =
+            Component::text("Click me").click(ClickEvent::OpenUrl("https://example.com".into()));
         let nbt = c.to_nbt_network();
         assert_eq!(nbt[0], 0x0A);
         let nbt_str = String::from_utf8_lossy(&nbt);
@@ -808,10 +820,10 @@ mod tests {
 
     #[test]
     fn format_placeholders_basic() {
-        let msg = format_placeholders("{count} waiting for {server}", &[
-            ("count", "3"),
-            ("server", "survival"),
-        ]);
+        let msg = format_placeholders(
+            "{count} waiting for {server}",
+            &[("count", "3"), ("server", "survival")],
+        );
         assert_eq!(msg, "3 waiting for survival");
     }
 
@@ -823,10 +835,10 @@ mod tests {
 
     #[test]
     fn from_legacy_format_combined() {
-        let c = Component::from_legacy_format("&e{server} starting&f{dots}", &[
-            ("server", "survival"),
-            ("dots", "..."),
-        ]);
+        let c = Component::from_legacy_format(
+            "&e{server} starting&f{dots}",
+            &[("server", "survival"), ("dots", "...")],
+        );
         assert_eq!(c.text, "survival starting");
         assert_eq!(c.color.as_deref(), Some("yellow"));
         assert_eq!(c.extra[0].text, "...");

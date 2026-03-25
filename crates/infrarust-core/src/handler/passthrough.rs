@@ -29,10 +29,7 @@ pub struct PassthroughHandler {
 }
 
 impl PassthroughHandler {
-    pub fn new(
-        backend_connector: Arc<BackendConnector>,
-        services: ProxyServices,
-    ) -> Self {
+    pub fn new(backend_connector: Arc<BackendConnector>, services: ProxyServices) -> Self {
         Self {
             backend_connector,
             services,
@@ -84,7 +81,9 @@ impl PassthroughHandler {
 
         let initial_server = infrarust_api::types::ServerId::new(routing.config_id.clone());
         let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(
-            player_id, api_profile.clone(), initial_server,
+            player_id,
+            api_profile.clone(),
+            initial_server,
         );
         let pre_connect = self.services.event_bus.fire(pre_connect).await;
         match pre_connect.result() {
@@ -135,10 +134,12 @@ impl PassthroughHandler {
         self.forward_initial_packets(backend.stream_mut(), &handshake, server_config)
             .await?;
 
-        self.services.event_bus.fire_and_forget_arc(infrarust_api::events::connection::ServerConnectedEvent {
-            player_id,
-            server: infrarust_api::types::ServerId::new(routing.config_id.clone()),
-        });
+        self.services.event_bus.fire_and_forget_arc(
+            infrarust_api::events::connection::ServerConnectedEvent {
+                player_id,
+                server: infrarust_api::types::ServerId::new(routing.config_id.clone()),
+            },
+        );
 
         // Register session
         let session_token = shutdown.child_token();
@@ -149,7 +150,9 @@ impl PassthroughHandler {
             api_profile,
             infrarust_api::types::ProtocolVersion::new(handshake.protocol_version.0),
             ctx.peer_addr,
-            Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
+            Some(infrarust_api::types::ServerId::new(
+                routing.config_id.clone(),
+            )),
             false, // active: Passthrough doesn't support packet injection
             cmd_tx,
             session_token.clone(),
@@ -182,15 +185,23 @@ impl PassthroughHandler {
             &self.services.event_bus,
             player_id,
             username,
-            Some(infrarust_api::types::ServerId::new(routing.config_id.clone())),
-        ).await;
+            Some(infrarust_api::types::ServerId::new(
+                routing.config_id.clone(),
+            )),
+        )
+        .await;
 
         // Cleanup
         let _ = self.services.connection_registry.unregister(&session_id);
 
         // Record end metrics
         #[cfg(feature = "telemetry")]
-        super::helpers::record_session_end(&self.metrics, ctx.connection_duration(), &routing.config_id, "passthrough");
+        super::helpers::record_session_end(
+            &self.metrics,
+            ctx.connection_duration(),
+            &routing.config_id,
+            "passthrough",
+        );
 
         tracing::info!(
             session = %session_id,

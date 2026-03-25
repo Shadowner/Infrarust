@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus};
-use infrarust_api::event::{ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection, PacketFilter};
+use infrarust_api::event::{
+    ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection, PacketFilter,
+};
 
 use super::handler::{HandlerEntry, HandlerKind};
 

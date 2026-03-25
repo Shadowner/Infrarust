@@ -6,10 +6,10 @@ use std::pin::Pin;
 
 use infrarust_api::services::config_service::ConfigService;
 
+use crate::console::ConsoleServices;
 use crate::console::dispatcher::{CommandInfo, ConsoleCommand};
 use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
 use crate::console::parser::format_duration_short;
-use crate::console::ConsoleServices;
 
 pub struct HelpCommand {
     commands: Vec<CommandInfo>,
@@ -50,9 +50,11 @@ impl ConsoleCommand for HelpCommand {
         Box::pin(async move {
             if let Some(cmd_name) = args.first() {
                 let lower = cmd_name.to_lowercase();
-                if let Some(info) = self.commands.iter().find(|c| {
-                    c.name == lower || c.aliases.iter().any(|a| a == &lower)
-                }) {
+                if let Some(info) = self
+                    .commands
+                    .iter()
+                    .find(|c| c.name == lower || c.aliases.iter().any(|a| a == &lower))
+                {
                     let aliases = if info.aliases.is_empty() {
                         String::new()
                     } else {
@@ -82,7 +84,10 @@ impl ConsoleCommand for HelpCommand {
 
                 lines.push(OutputLine::Info(String::new()));
                 let cat_name = if is_tty {
-                    format!("  {}", console::style(category.display_name()).cyan().bold())
+                    format!(
+                        "  {}",
+                        console::style(category.display_name()).cyan().bold()
+                    )
                 } else {
                     format!("  {}", category.display_name())
                 };
@@ -143,10 +148,7 @@ impl ConsoleCommand for VersionCommand {
         _services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            CommandOutput::Success(format!(
-                "Infrarust v{}",
-                env!("CARGO_PKG_VERSION")
-            ))
+            CommandOutput::Success(format!("Infrarust v{}", env!("CARGO_PKG_VERSION")))
         })
     }
 }
@@ -241,14 +243,22 @@ impl ConsoleCommand for StatusCommand {
                         console::style(managed_sleeping).dim(),
                     )
                 } else {
-                    format!("{server_count} configured, {managed_online} online, {managed_sleeping} sleeping")
+                    format!(
+                        "{server_count} configured, {managed_online} online, {managed_sleeping} sleeping"
+                    )
                 };
                 lines.push(OutputLine::Info(labeled("Servers", &servers_str)));
             } else {
-                lines.push(OutputLine::Info(labeled("Servers", &format!("{server_count} configured"))));
+                lines.push(OutputLine::Info(labeled(
+                    "Servers",
+                    &format!("{server_count} configured"),
+                )));
             }
 
-            lines.push(OutputLine::Info(labeled("Connections", &connections.to_string())));
+            lines.push(OutputLine::Info(labeled(
+                "Connections",
+                &connections.to_string(),
+            )));
 
             CommandOutput::Lines(lines)
         })

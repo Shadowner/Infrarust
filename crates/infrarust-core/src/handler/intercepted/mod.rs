@@ -66,9 +66,7 @@ impl InterceptedHandler {
         mut ctx: ConnectionContext,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
-        let routing = ctx
-            .require_extension::<RoutingData>("RoutingData")?
-            .clone();
+        let routing = ctx.require_extension::<RoutingData>("RoutingData")?.clone();
         let handshake = ctx
             .require_extension::<HandshakeData>("HandshakeData")?
             .clone();
@@ -78,8 +76,7 @@ impl InterceptedHandler {
         let peer_addr = ctx.peer_addr;
         let connection_info = ctx.connection_info();
 
-        let mut client =
-            ClientBridge::new(ctx.take_stream(), ctx.buffered_data.split(), version);
+        let mut client = ClientBridge::new(ctx.take_stream(), ctx.buffered_data.split(), version);
 
         let auth_result = self
             .auth_strategy

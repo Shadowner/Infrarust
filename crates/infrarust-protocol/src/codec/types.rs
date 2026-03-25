@@ -23,7 +23,6 @@ fn cautious_capacity(size_hint: usize) -> usize {
     size_hint.min(MAX_PREALLOC_BYTES)
 }
 
-
 impl Encode for bool {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         w.write_all(&[u8::from(*self)])?;
@@ -41,7 +40,6 @@ impl Decode<'_> for bool {
         }
     }
 }
-
 
 impl Encode for u8 {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
@@ -61,7 +59,6 @@ impl Decode<'_> for u8 {
     }
 }
 
-
 impl Encode for i8 {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         w.write_all(&[(*self).cast_unsigned()])?;
@@ -75,7 +72,6 @@ impl Decode<'_> for i8 {
         Ok(byte.cast_signed())
     }
 }
-
 
 macro_rules! impl_codec_be {
     ($ty:ty, $size:literal, $ctx:literal) => {
@@ -110,7 +106,6 @@ impl_codec_be!(i64, 8, "i64");
 impl_codec_be!(u128, 16, "u128");
 impl_codec_be!(f32, 4, "f32");
 impl_codec_be!(f64, 8, "f64");
-
 
 impl Encode for String {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
@@ -163,7 +158,6 @@ pub(crate) fn decode_string(r: &mut &[u8], max_chars: usize) -> ProtocolResult<S
     Ok(s)
 }
 
-
 impl Encode for Uuid {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         self.as_u128().encode(w)
@@ -176,7 +170,6 @@ impl Decode<'_> for Uuid {
         Ok(Self::from_u128(val))
     }
 }
-
 
 impl Encode for Vec<u8> {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
@@ -206,7 +199,6 @@ impl Decode<'_> for Vec<u8> {
     }
 }
 
-
 impl<T: Encode> Encode for Option<T> {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         match self {
@@ -232,7 +224,6 @@ impl<'a, T: Decode<'a>> Decode<'a> for Option<T> {
         }
     }
 }
-
 
 /// Reads a bounded string from a `Read` source.
 pub(crate) fn read_string_bounded_from_reader(
@@ -296,7 +287,6 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
-
     #[test]
     fn test_bool_round_trip() {
         for &val in &[true, false] {
@@ -314,7 +304,6 @@ mod tests {
         let err = bool::decode(&mut slice).unwrap_err();
         assert!(err.is_fatal());
     }
-
 
     #[test]
     fn test_u8_round_trip() {
@@ -373,7 +362,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_string_round_trip() {
         for s in &["Hello", "", "Héllo 🌍"] {
@@ -412,7 +400,6 @@ mod tests {
         assert!(err.is_fatal());
     }
 
-
     #[test]
     fn test_uuid_round_trip() {
         let uuid = Uuid::from_u128(0x550e8400_e29b_41d4_a716_446655440000);
@@ -430,7 +417,6 @@ mod tests {
         uuid.encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0xFF, "first byte should be MSB of u128");
     }
-
 
     #[test]
     fn test_byte_array_round_trip() {
@@ -453,7 +439,6 @@ mod tests {
         assert_eq!(Vec::<u8>::decode(&mut slice).unwrap(), data);
     }
 
-
     #[test]
     fn test_option_some_round_trip() {
         let val: Option<i32> = Some(42);
@@ -473,7 +458,6 @@ mod tests {
         let mut slice: &[u8] = &buf;
         assert_eq!(Option::<i32>::decode(&mut slice).unwrap(), None);
     }
-
 
     #[test]
     fn test_mcbuf_read_write_consistency() {

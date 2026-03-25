@@ -18,11 +18,26 @@ pub(crate) fn build_registry_codec(pvn: i32) -> Vec<u8> {
     write_nbt_string(&mut buf, "");
 
     if pvn < 751 {
-        write_registry_entry_container(&mut buf, "dimension", "minecraft:dimension_type", &end_dimension_type_element(pvn));
+        write_registry_entry_container(
+            &mut buf,
+            "dimension",
+            "minecraft:dimension_type",
+            &end_dimension_type_element(pvn),
+        );
     } else {
-        write_registry_entry_container(&mut buf, "minecraft:dimension_type", "minecraft:dimension_type", &end_dimension_type_element(pvn));
+        write_registry_entry_container(
+            &mut buf,
+            "minecraft:dimension_type",
+            "minecraft:dimension_type",
+            &end_dimension_type_element(pvn),
+        );
 
-        write_registry_entry_container(&mut buf, "minecraft:worldgen/biome", "minecraft:worldgen/biome", &plains_biome_element(pvn));
+        write_registry_entry_container(
+            &mut buf,
+            "minecraft:worldgen/biome",
+            "minecraft:worldgen/biome",
+            &plains_biome_element(pvn),
+        );
 
         if pvn >= 759 {
             write_chat_type_registry(&mut buf);
@@ -58,7 +73,7 @@ fn write_registry_entry_container(buf: &mut Vec<u8>, key: &str, type_id: &str, e
 
     buf.push(TAG_LIST);
     write_nbt_string(buf, "value");
-    buf.push(TAG_COMPOUND); 
+    buf.push(TAG_COMPOUND);
     buf.extend_from_slice(&1_i32.to_be_bytes());
 
     write_nbt_string_field(buf, "name", "minecraft:the_end");
@@ -119,8 +134,8 @@ fn write_dimension_type_fields(buf: &mut Vec<u8>, pvn: i32) {
         write_nbt_string(buf, "value");
         write_nbt_int_field(buf, "max_inclusive", 7);
         write_nbt_int_field(buf, "min_inclusive", 0);
-        buf.push(TAG_END); 
-        buf.push(TAG_END); 
+        buf.push(TAG_END);
+        buf.push(TAG_END);
     }
 }
 fn plains_biome_element(pvn: i32) -> Vec<u8> {
@@ -285,32 +300,52 @@ mod tests {
     #[test]
     fn registry_codec_1_16_not_empty() {
         let data = build_registry_codec(735);
-        assert!(data.len() > 50, "1.16 registry codec should be non-trivial: {} bytes", data.len());
+        assert!(
+            data.len() > 50,
+            "1.16 registry codec should be non-trivial: {} bytes",
+            data.len()
+        );
         assert_eq!(data[0], TAG_COMPOUND);
     }
 
     #[test]
     fn registry_codec_1_16_2_has_biome() {
         let data = build_registry_codec(751);
-        assert!(data.len() > 100, "1.16.2 registry codec should include biome: {} bytes", data.len());
+        assert!(
+            data.len() > 100,
+            "1.16.2 registry codec should include biome: {} bytes",
+            data.len()
+        );
     }
 
     #[test]
     fn registry_codec_1_19_has_chat_type() {
         let data = build_registry_codec(759);
-        assert!(data.len() > 200, "1.19 registry codec should include chat_type: {} bytes", data.len());
+        assert!(
+            data.len() > 200,
+            "1.19 registry codec should include chat_type: {} bytes",
+            data.len()
+        );
     }
 
     #[test]
     fn registry_codec_1_19_4_has_damage_type() {
         let data = build_registry_codec(762);
-        assert!(data.len() > 300, "1.19.4 registry codec should include damage_type: {} bytes", data.len());
+        assert!(
+            data.len() > 300,
+            "1.19.4 registry codec should include damage_type: {} bytes",
+            data.len()
+        );
     }
 
     #[test]
     fn dimension_codec_1_16_2() {
         let data = build_dimension_codec(751);
-        assert!(data.len() > 50, "dimension codec should be non-trivial: {} bytes", data.len());
+        assert!(
+            data.len() > 50,
+            "dimension codec should be non-trivial: {} bytes",
+            data.len()
+        );
         assert_eq!(data[0], TAG_COMPOUND);
     }
 
@@ -318,7 +353,10 @@ mod tests {
     fn registry_codec_starts_with_named_compound() {
         for pvn in [735, 751, 759, 762] {
             let data = build_registry_codec(pvn);
-            assert_eq!(data[0], TAG_COMPOUND, "pvn {pvn}: must start with TAG_Compound");
+            assert_eq!(
+                data[0], TAG_COMPOUND,
+                "pvn {pvn}: must start with TAG_Compound"
+            );
             // Named root: next two bytes are name length (0 for empty name)
             assert_eq!(data[1], 0x00, "pvn {pvn}: name length high byte");
             assert_eq!(data[2], 0x00, "pvn {pvn}: name length low byte");
@@ -329,7 +367,11 @@ mod tests {
     fn registry_codec_ends_with_tag_end() {
         for pvn in [735, 751, 759, 762] {
             let data = build_registry_codec(pvn);
-            assert_eq!(*data.last().unwrap(), TAG_END, "pvn {pvn}: must end with TAG_End");
+            assert_eq!(
+                *data.last().unwrap(),
+                TAG_END,
+                "pvn {pvn}: must end with TAG_End"
+            );
         }
     }
 }

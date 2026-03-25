@@ -3,8 +3,8 @@
 //! Resolves the execution order of filters based on their `after`/`before`
 //! dependencies and `FilterPriority` as a tiebreaker.
 
-use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use infrarust_api::filter::{FilterMetadata, FilterPriority};
 
@@ -47,9 +47,7 @@ impl PartialOrd for PriorityEntry<'_> {
 /// `before` constraints are converted to `after` on the target.
 /// When multiple filters have no dependency relationship,
 /// `FilterPriority` is used as a tiebreaker (then insertion order).
-pub fn resolve_filter_order(
-    filters: &[FilterMetadata],
-) -> Result<Vec<String>, FilterOrderError> {
+pub fn resolve_filter_order(filters: &[FilterMetadata]) -> Result<Vec<String>, FilterOrderError> {
     if filters.is_empty() {
         return Ok(Vec::new());
     }
