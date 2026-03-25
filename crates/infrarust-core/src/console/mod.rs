@@ -30,6 +30,7 @@ pub struct ConsoleServices {
 }
 
 impl ConsoleServices {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         player_registry: Arc<PlayerRegistryImpl>,
         connection_registry: Arc<ConnectionRegistry>,

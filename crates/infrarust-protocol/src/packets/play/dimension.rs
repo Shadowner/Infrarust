@@ -27,10 +27,10 @@ pub enum DimensionInfo {
 /// # Errors
 /// Returns `ProtocolError` if the payload is truncated or malformed.
 pub fn extract_dimension_from_join_game(
-    raw_payload: &[u8],
+    mut raw_payload: &[u8],
     version: ProtocolVersion,
 ) -> ProtocolResult<DimensionInfo> {
-    let r = &mut raw_payload.as_ref();
+    let r = &mut raw_payload;
 
     if version.no_less_than(ProtocolVersion::V1_20_2) {
         // 1.20.2+: config phase handles dimension, return placeholder

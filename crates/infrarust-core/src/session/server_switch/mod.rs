@@ -147,7 +147,7 @@ pub async fn perform_switch(
 
     let backend_conn = backend_connector
         .connect(
-            &effective_target.as_str(),
+            effective_target.as_str(),
             &server_config.addresses,
             server_config.timeouts.as_ref().map(|t| t.connect),
             server_config.send_proxy_protocol,

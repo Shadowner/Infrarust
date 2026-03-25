@@ -72,7 +72,7 @@ impl ConsoleCommand for BanCommand {
             }
 
             let duration_str = duration
-                .map(|d| format_duration_short(d))
+                .map(format_duration_short)
                 .unwrap_or_else(|| "permanently".to_string());
             let reason_str = reason.as_deref().unwrap_or("No reason specified");
 
@@ -172,7 +172,7 @@ impl ConsoleCommand for BanIpCommand {
             }
 
             let duration_str = duration
-                .map(|d| format_duration_short(d))
+                .map(format_duration_short)
                 .unwrap_or_else(|| "permanently".to_string());
             let reason_str = reason.as_deref().unwrap_or("No reason specified");
 
@@ -353,7 +353,7 @@ impl ConsoleCommand for BanListCommand {
                     "permanent".to_string()
                 } else {
                     ban.remaining()
-                        .map(|d| format_duration_short(d))
+                        .map(format_duration_short)
                         .unwrap_or_else(|| "expired".to_string())
                 };
 
@@ -412,7 +412,7 @@ impl ConsoleCommand for BanInfoCommand {
                         "permanent".to_string()
                     } else {
                         ban.remaining()
-                            .map(|d| format_duration_short(d))
+                            .map(format_duration_short)
                             .unwrap_or_else(|| "expired".to_string())
                     };
 

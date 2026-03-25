@@ -113,13 +113,13 @@ where
                 }
 
                 let ext = span.extensions();
-                if let Some(fields) = ext.get::<tracing_subscriber::fmt::FormattedFields<N>>() {
-                    if !fields.is_empty() {
-                        if self.is_tty {
-                            write!(writer, "{}", console::style(format!(":{fields}")).blue())?;
-                        } else {
-                            write!(writer, ":{fields}")?;
-                        }
+                if let Some(fields) = ext.get::<tracing_subscriber::fmt::FormattedFields<N>>()
+                    && !fields.is_empty()
+                {
+                    if self.is_tty {
+                        write!(writer, "{}", console::style(format!(":{fields}")).blue())?;
+                    } else {
+                        write!(writer, ":{fields}")?;
                     }
                 }
             }

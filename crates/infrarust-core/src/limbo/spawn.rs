@@ -455,18 +455,14 @@ async fn send_clear_inventory(
         buf.push(0); // window_id (u8)
         infrarust_protocol::chunk::write_varint(&mut buf, 0); // state_id
         infrarust_protocol::chunk::write_varint(&mut buf, 46); // slot_count
-        for _ in 0..46 {
-            // Empty slot: present=false (1.13+) or count=0 (1.20.5+) — both encode as 0x00
-            buf.push(0);
-        }
+        // Empty slots: present=false (1.13+) or count=0 (1.20.5+) — both encode as 0x00
+        buf.extend(std::iter::repeat_n(0, 46));
         buf.push(0); // carried_item: empty slot
     } else {
         // Pre-1.17.1 format: window_id(u8) + count(i16 BE) + slots
         buf.push(0); // window_id (u8)
         buf.extend_from_slice(&46_i16.to_be_bytes()); // count (i16)
-        for _ in 0..46 {
-            buf.push(0); // empty slot: present=false
-        }
+        buf.extend(std::iter::repeat_n(0, 46)); // empty slots: present=false
     }
 
     let frame = PacketFrame {

@@ -70,10 +70,11 @@ impl RegistryCodecCache {
     ) -> Result<Vec<PacketFrame>, CoreError> {
         {
             let map = self.captured.read().expect("registry cache lock poisoned");
-            if let Some(entry) = map.get(&version) {
-                if entry.finalized && !entry.registry_frames.is_empty() {
-                    return Ok(entry.registry_frames.clone());
-                }
+            if let Some(entry) = map.get(&version)
+                && entry.finalized
+                && !entry.registry_frames.is_empty()
+            {
+                return Ok(entry.registry_frames.clone());
             }
         }
 
@@ -86,10 +87,10 @@ impl RegistryCodecCache {
     ) -> Result<Option<PacketFrame>, CoreError> {
         {
             let map = self.captured.read().expect("registry cache lock poisoned");
-            if let Some(entry) = map.get(&version) {
-                if entry.finalized {
-                    return Ok(entry.known_packs_frame.clone());
-                }
+            if let Some(entry) = map.get(&version)
+                && entry.finalized
+            {
+                return Ok(entry.known_packs_frame.clone());
             }
         }
 

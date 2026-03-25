@@ -321,15 +321,14 @@ impl LegacyHandler {
             data.push(next[0]);
 
             // If 0x01, try for V1.6 data (0xFA + MC|PingHost)
-            if next[0] == 0x01 {
-                if let Ok(Ok(more)) = tokio::time::timeout(
+            if next[0] == 0x01
+                && let Ok(Ok(more)) = tokio::time::timeout(
                     std::time::Duration::from_millis(100),
                     self.read_remaining_v1_6_data(ctx),
                 )
                 .await
-                {
-                    data.extend_from_slice(&more);
-                }
+            {
+                data.extend_from_slice(&more);
             }
         }
 
@@ -426,7 +425,7 @@ impl LegacyHandler {
                     "legacy login: backend unreachable"
                 );
                 let msg = server_config.effective_disconnect_message();
-                self.send_legacy_kick(ctx, &msg).await;
+                self.send_legacy_kick(ctx, msg).await;
                 return Ok(());
             }
         };

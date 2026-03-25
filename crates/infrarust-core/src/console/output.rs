@@ -57,6 +57,12 @@ pub struct OutputRenderer {
     is_tty: bool,
 }
 
+impl Default for OutputRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OutputRenderer {
     pub fn new() -> Self {
         Self {

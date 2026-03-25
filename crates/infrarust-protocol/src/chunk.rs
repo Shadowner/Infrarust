@@ -226,7 +226,7 @@ fn encode_nbt_long_array(buf: &mut Vec<u8>, name: &str, count: i32) {
 /// All sections marked as empty light (no arrays). Both masks set, both array counts = 0.
 fn encode_light_data(buf: &mut Vec<u8>, num_sections: usize, _version: ProtocolVersion) {
     let total_bits = num_sections + 2; // +2 for edge sections
-    let num_longs: usize = (total_bits + 63) / 64;
+    let num_longs: usize = total_bits.div_ceil(64);
     let all_set: u64 = if total_bits >= 64 {
         u64::MAX
     } else {

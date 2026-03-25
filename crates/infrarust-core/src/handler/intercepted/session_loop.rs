@@ -138,7 +138,7 @@ pub(super) async fn run_session_loop(
                             }
                             SwitchAction::Error(e) => {
                                 tracing::warn!("server switch failed: {e}");
-                                let error_msg = infrarust_api::types::Component::text(&format!(
+                                let error_msg = infrarust_api::types::Component::text(format!(
                                     "Server switch failed: {e}"
                                 ));
                                 if let Ok(frame) = crate::player::packets::build_system_chat_message(
@@ -366,11 +366,9 @@ async fn handle_backend_disconnect(
 
     match kicked.result() {
         infrarust_api::events::connection::KickedFromServerResult::DisconnectPlayer { reason } => {
-            if let Ok(frame) = crate::player::packets::build_disconnect(
-                &reason,
-                version,
-                &services.packet_registry,
-            ) {
+            if let Ok(frame) =
+                crate::player::packets::build_disconnect(reason, version, &services.packet_registry)
+            {
                 let _ = client.write_frame(&frame).await;
             }
             DisconnectAction::Break(ProxyLoopOutcome::ClientDisconnected)
@@ -447,7 +445,7 @@ async fn handle_backend_disconnect(
         }
         infrarust_api::events::connection::KickedFromServerResult::Notify { message } => {
             if let Ok(frame) = crate::player::packets::build_system_chat_message(
-                &message,
+                message,
                 version,
                 &services.packet_registry,
             ) {

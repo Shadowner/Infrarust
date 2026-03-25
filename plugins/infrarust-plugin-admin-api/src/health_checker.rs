@@ -31,7 +31,7 @@ impl Default for HealthChecker {
 
 impl HealthChecker {
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 
     pub async fn check(&self, config: &ServerConfig) -> HealthCheckResponse {

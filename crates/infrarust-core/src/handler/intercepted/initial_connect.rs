@@ -25,7 +25,7 @@ pub(super) enum ConnectionMode {
 
 pub(super) enum InitialMode {
     Connected {
-        mode: ConnectionMode,
+        mode: Box<ConnectionMode>,
         server_id: infrarust_api::types::ServerId,
     },
     /// Disconnect already sent.
@@ -252,7 +252,7 @@ pub(super) async fn resolve_initial_mode(
     }
 
     Ok(InitialMode::Connected {
-        mode,
+        mode: Box::new(mode),
         server_id: target_server_id,
     })
 }
@@ -329,22 +329,21 @@ async fn prepare_client_for_limbo(
     ensure_login_complete_for_limbo(client, auth_result, login_completed, version, services)
         .await?;
 
-    if version.no_less_than(ProtocolVersion::V1_20_2) {
-        if let Err(e) = crate::limbo::login::complete_config_for_limbo(
+    if version.no_less_than(ProtocolVersion::V1_20_2)
+        && let Err(e) = crate::limbo::login::complete_config_for_limbo(
             client,
             version,
             &services.packet_registry,
             &services.registry_codec_cache,
         )
         .await
-        {
-            tracing::warn!("limbo config phase failed: {e}");
-            client
-                .disconnect(&e.to_string(), &services.packet_registry)
-                .await
-                .ok();
-            return Err(e);
-        }
+    {
+        tracing::warn!("limbo config phase failed: {e}");
+        client
+            .disconnect(&e.to_string(), &services.packet_registry)
+            .await
+            .ok();
+        return Err(e);
     }
 
     Ok(())

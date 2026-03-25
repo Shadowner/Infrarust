@@ -223,9 +223,8 @@ impl LimboHandler for TestGateHandler {
                 session.send_message(Component::text("Redirecting to server...").color("green"));
             session.complete(HandlerResult::Accept);
         } else {
-            let _ = session.send_message(
-                Component::text(&format!("Unknown command: /{command}")).color("red"),
-            );
+            let _ = session
+                .send_message(Component::text(format!("Unknown command: /{command}")).color("red"));
         }
 
         Box::pin(async {})

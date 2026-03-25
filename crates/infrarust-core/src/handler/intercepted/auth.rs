@@ -51,8 +51,7 @@ impl AuthStrategy {
     ) -> Result<AuthResult, CoreError> {
         match self {
             Self::Mojang(auth) => {
-                let login_data =
-                    login_data.ok_or_else(|| CoreError::MissingExtension("LoginData"))?;
+                let login_data = login_data.ok_or(CoreError::MissingExtension("LoginData"))?;
 
                 // nil UUID — real UUID comes from Mojang
                 let pre_login_profile = infrarust_api::types::GameProfile {
