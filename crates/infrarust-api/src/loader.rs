@@ -76,8 +76,5 @@ pub trait PluginLoader: Send + Sync {
     ) -> BoxFuture<'a, Result<Box<dyn Plugin>, LoaderError>>;
 
     /// Loader-specific cleanup after a plugin is disabled.
-    fn unload<'a>(
-        &'a self,
-        plugin_id: &'a str,
-    ) -> BoxFuture<'a, Result<(), LoaderError>>;
+    fn unload<'a>(&'a self, plugin_id: &'a str) -> BoxFuture<'a, Result<(), LoaderError>>;
 }

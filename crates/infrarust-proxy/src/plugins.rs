@@ -19,7 +19,9 @@ pub fn build_static_loader(web_config: Option<&WebConfig>) -> StaticPluginLoader
     {
         use infrarust_api::plugin::Plugin;
         let hello = infrarust_plugin_hello::HelloPlugin;
-        loader.register(hello.metadata(), || Box::new(infrarust_plugin_hello::HelloPlugin));
+        loader.register(hello.metadata(), || {
+            Box::new(infrarust_plugin_hello::HelloPlugin)
+        });
     }
 
     #[cfg(feature = "plugin-server-wake")]
@@ -48,6 +50,9 @@ pub fn build_static_loader(web_config: Option<&WebConfig>) -> StaticPluginLoader
         });
     }
 
-    tracing::info!(count = loader.registered_count(), "Static plugins registered");
+    tracing::info!(
+        count = loader.registered_count(),
+        "Static plugins registered"
+    );
     loader
 }

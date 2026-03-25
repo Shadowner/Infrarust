@@ -31,5 +31,5 @@ pub use plugin_message::{CPluginMessage, SPluginMessage};
 pub use respawn::CRespawn;
 pub use spawn_position::CSetDefaultSpawnPosition;
 pub use start_configuration::{CStartConfiguration, SAcknowledgeConfiguration};
-pub use title::{CTitleLegacy, CSetSubtitle, CSetTitle, CSetTitleTimes};
+pub use title::{CSetSubtitle, CSetTitle, CSetTitleTimes, CTitleLegacy};
 pub use transfer::CTransfer;

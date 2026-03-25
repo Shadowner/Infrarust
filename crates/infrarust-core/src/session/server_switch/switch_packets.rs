@@ -3,14 +3,16 @@
 //! Handles the "Respawn trick" — sending the right combination of JoinGame
 //! and Respawn packets to the client depending on the protocol version.
 
+use infrarust_protocol::Packet;
 use infrarust_protocol::error::ProtocolError;
 use infrarust_protocol::io::PacketFrame;
-use infrarust_protocol::packets::play::dimension::{DimensionInfo, extract_dimension_from_join_game};
+use infrarust_protocol::packets::play::dimension::{
+    DimensionInfo, extract_dimension_from_join_game,
+};
 use infrarust_protocol::packets::play::respawn::CRespawn;
 use infrarust_protocol::packets::play::respawn_switch;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
-use infrarust_protocol::Packet;
 
 use crate::error::CoreError;
 use crate::session::client_bridge::ClientBridge;
@@ -43,7 +45,9 @@ pub async fn send_switch_packets(
     )?;
 
     let raw_payload = join_game.raw_payload.as_deref().ok_or_else(|| {
-        CoreError::Protocol(ProtocolError::invalid("JoinGame pre-1.20.2 should have raw_payload"))
+        CoreError::Protocol(ProtocolError::invalid(
+            "JoinGame pre-1.20.2 should have raw_payload",
+        ))
     })?;
 
     let dimension = extract_dimension_from_join_game(raw_payload, version)?;

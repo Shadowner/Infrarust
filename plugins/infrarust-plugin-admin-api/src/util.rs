@@ -179,8 +179,7 @@ mod tests {
 
     #[test]
     fn parse_ban_target_uuid() {
-        let target =
-            parse_ban_target("uuid", "550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let target = parse_ban_target("uuid", "550e8400-e29b-41d4-a716-446655440000").unwrap();
         assert!(matches!(target, BanTarget::Uuid(_)));
     }
 

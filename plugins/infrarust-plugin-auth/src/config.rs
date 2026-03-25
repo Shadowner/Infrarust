@@ -18,7 +18,6 @@ pub struct AuthConfig {
     pub messages: AuthMessages,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StorageConfig {
@@ -115,7 +114,6 @@ pub struct AdminConfig {
     pub admin_usernames: Vec<String>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AuthMessages {
@@ -167,7 +165,8 @@ impl Default for AuthMessages {
             login_title: "&6Authentication Required".to_string(),
             login_subtitle: "&7/login <password>".to_string(),
             login_success: "&aLogin successful!".to_string(),
-            login_fail: "&cWrong password! &7({attempts_left}/{max_attempts} attempts left)".to_string(),
+            login_fail: "&cWrong password! &7({attempts_left}/{max_attempts} attempts left)"
+                .to_string(),
             login_max_attempts: "&cToo many failed login attempts.".to_string(),
             login_timeout: "&cAuthentication timed out.".to_string(),
             login_usage: "&cUsage: /login <password>".to_string(),
@@ -176,10 +175,14 @@ impl Default for AuthMessages {
             register_subtitle: "&7/register <password> <confirm>".to_string(),
             register_success: "&aAccount created successfully!".to_string(),
             register_password_mismatch: "&cPasswords do not match.".to_string(),
-            register_password_too_short: "&cPassword must be at least {min_length} characters.".to_string(),
-            register_password_too_long: "&cPassword must be at most {max_length} characters.".to_string(),
-            register_password_is_username: "&cPassword cannot be the same as your username.".to_string(),
-            register_password_blocked: "&cThat password is too common. Please choose a different one.".to_string(),
+            register_password_too_short: "&cPassword must be at least {min_length} characters."
+                .to_string(),
+            register_password_too_long: "&cPassword must be at most {max_length} characters."
+                .to_string(),
+            register_password_is_username: "&cPassword cannot be the same as your username."
+                .to_string(),
+            register_password_blocked:
+                "&cThat password is too common. Please choose a different one.".to_string(),
             register_account_exists: "&cAn account already exists for this username.".to_string(),
             register_usage: "&cUsage: /register <password> <confirm>".to_string(),
 
@@ -197,7 +200,8 @@ impl Default for AuthMessages {
             forceunregister_not_found: "&cNo account found for {username}.".to_string(),
             forcechangepassword_success: "&aPassword changed for {username}.".to_string(),
             forcechangepassword_not_found: "&cNo account found for {username}.".to_string(),
-            forcechangepassword_usage: "&cUsage: /forcechangepassword <username> <password>".to_string(),
+            forcechangepassword_usage: "&cUsage: /forcechangepassword <username> <password>"
+                .to_string(),
             admin_no_permission: "&cYou do not have permission to use this command.".to_string(),
             authreload_success: "&aAuth configuration reloaded.".to_string(),
 
@@ -236,8 +240,8 @@ pub async fn load_or_create_config(path: &Path) -> Result<AuthConfig, AuthError>
         toml::from_str(&content).map_err(|e| AuthError::Config(e.to_string()))
     } else {
         let config = AuthConfig::default();
-        let content = toml::to_string_pretty(&config)
-            .map_err(|e| AuthError::Config(e.to_string()))?;
+        let content =
+            toml::to_string_pretty(&config).map_err(|e| AuthError::Config(e.to_string()))?;
 
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent)

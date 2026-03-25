@@ -4,94 +4,58 @@
 //! The ChunkData packet is never decoded by the proxy — we hardcode
 //! the packet IDs per version instead.
 
-use bytes::Bytes;
 use crate::io::PacketFrame;
 use crate::version::ProtocolVersion;
+use bytes::Bytes;
 
 fn chunk_data_packet_id(version: ProtocolVersion) -> i32 {
     match version {
         // 1.14 (477) .. 1.14.4 (498)
-        v if v.no_less_than(ProtocolVersion::V1_14)
-            && v.less_than(ProtocolVersion::V1_15) =>
-        {
-            0x21
-        }
+        v if v.no_less_than(ProtocolVersion::V1_14) && v.less_than(ProtocolVersion::V1_15) => 0x21,
         // 1.15 (573) .. 1.15.2 (578)
-        v if v.no_less_than(ProtocolVersion::V1_15)
-            && v.less_than(ProtocolVersion::V1_16) =>
-        {
-            0x22
-        }
+        v if v.no_less_than(ProtocolVersion::V1_15) && v.less_than(ProtocolVersion::V1_16) => 0x22,
         // 1.16 (735) .. 1.16.1 (736)
-        v if v.no_less_than(ProtocolVersion::V1_16)
-            && v.less_than(ProtocolVersion::V1_16_2) =>
-        {
+        v if v.no_less_than(ProtocolVersion::V1_16) && v.less_than(ProtocolVersion::V1_16_2) => {
             0x21
         }
         // 1.16.2 (751) .. 1.16.4 (754)
-        v if v.no_less_than(ProtocolVersion::V1_16_2)
-            && v.less_than(ProtocolVersion::V1_17) =>
-        {
+        v if v.no_less_than(ProtocolVersion::V1_16_2) && v.less_than(ProtocolVersion::V1_17) => {
             0x20
         }
         // 1.17 (755) .. 1.17.1 (756)
-        v if v.no_less_than(ProtocolVersion::V1_17)
-            && v.less_than(ProtocolVersion::V1_18) =>
-        {
-            0x22
-        }
+        v if v.no_less_than(ProtocolVersion::V1_17) && v.less_than(ProtocolVersion::V1_18) => 0x22,
         // 1.18 (757) .. 1.18.2 (758)
-        v if v.no_less_than(ProtocolVersion::V1_18)
-            && v.less_than(ProtocolVersion::V1_19) =>
-        {
-            0x22
-        }
+        v if v.no_less_than(ProtocolVersion::V1_18) && v.less_than(ProtocolVersion::V1_19) => 0x22,
         // 1.19 (759)
-        v if v.no_less_than(ProtocolVersion::V1_19)
-            && v.less_than(ProtocolVersion::V1_19_1) =>
-        {
+        v if v.no_less_than(ProtocolVersion::V1_19) && v.less_than(ProtocolVersion::V1_19_1) => {
             0x1F
         }
         // 1.19.1 (760) .. 1.19.2
-        v if v.no_less_than(ProtocolVersion::V1_19_1)
-            && v.less_than(ProtocolVersion::V1_19_3) =>
-        {
+        v if v.no_less_than(ProtocolVersion::V1_19_1) && v.less_than(ProtocolVersion::V1_19_3) => {
             0x21
         }
         // 1.19.3 (761)
-        v if v.no_less_than(ProtocolVersion::V1_19_3)
-            && v.less_than(ProtocolVersion::V1_19_4) =>
-        {
+        v if v.no_less_than(ProtocolVersion::V1_19_3) && v.less_than(ProtocolVersion::V1_19_4) => {
             0x20
         }
         // 1.19.4 (762) .. 1.20.1 (763)
-        v if v.no_less_than(ProtocolVersion::V1_19_4)
-            && v.less_than(ProtocolVersion::V1_20_2) =>
-        {
+        v if v.no_less_than(ProtocolVersion::V1_19_4) && v.less_than(ProtocolVersion::V1_20_2) => {
             0x24
         }
         // 1.20.2 (764) .. 1.20.4 (765)
-        v if v.no_less_than(ProtocolVersion::V1_20_2)
-            && v.less_than(ProtocolVersion::V1_20_5) =>
-        {
+        v if v.no_less_than(ProtocolVersion::V1_20_2) && v.less_than(ProtocolVersion::V1_20_5) => {
             0x25
         }
         // 1.20.5 (766) .. 1.21.1 (767)
-        v if v.no_less_than(ProtocolVersion::V1_20_5)
-            && v.less_than(ProtocolVersion::V1_21_2) =>
-        {
+        v if v.no_less_than(ProtocolVersion::V1_20_5) && v.less_than(ProtocolVersion::V1_21_2) => {
             0x27
         }
         // 1.21.2 (768) .. 1.21.4 (769)
-        v if v.no_less_than(ProtocolVersion::V1_21_2)
-            && v.less_than(ProtocolVersion::V1_21_5) =>
-        {
+        v if v.no_less_than(ProtocolVersion::V1_21_2) && v.less_than(ProtocolVersion::V1_21_5) => {
             0x28
         }
         // 1.21.5 (770) .. 1.21.7 (772)
-        v if v.no_less_than(ProtocolVersion::V1_21_5)
-            && v.less_than(ProtocolVersion::V1_21_9) =>
-        {
+        v if v.no_less_than(ProtocolVersion::V1_21_5) && v.less_than(ProtocolVersion::V1_21_9) => {
             0x27
         }
         // 1.21.9 (773)+
@@ -122,7 +86,12 @@ pub fn build_chunk_data_frame(
 
 /// Wire layout varies by version. 1.14+: heightmaps, sections, block entities.
 /// Pre-1.14: ground_up_continuous, bit mask, biome data only (empty chunk).
-fn build_chunk_data_payload(chunk_x: i32, chunk_z: i32, num_sections: usize, version: ProtocolVersion) -> Vec<u8> {
+fn build_chunk_data_payload(
+    chunk_x: i32,
+    chunk_z: i32,
+    num_sections: usize,
+    version: ProtocolVersion,
+) -> Vec<u8> {
     let mut buf = Vec::with_capacity(300);
 
     buf.extend_from_slice(&chunk_x.to_be_bytes());
@@ -173,12 +142,14 @@ fn build_pre_1_14_empty_chunk(buf: &mut Vec<u8>, version: ProtocolVersion) {
 }
 
 fn zlib_compress(data: &[u8]) -> Vec<u8> {
-    use flate2::write::ZlibEncoder;
     use flate2::Compression;
+    use flate2::write::ZlibEncoder;
     use std::io::Write;
 
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(data).expect("zlib compression should not fail");
+    encoder
+        .write_all(data)
+        .expect("zlib compression should not fail");
     encoder.finish().expect("zlib finish should not fail")
 }
 
@@ -220,13 +191,13 @@ fn encode_empty_heightmaps(buf: &mut Vec<u8>, version: ProtocolVersion) {
 }
 
 fn encode_empty_heightmaps_nbt(buf: &mut Vec<u8>, version: ProtocolVersion) {
-    buf.push(0x0A);                               // TAG_Compound
+    buf.push(0x0A); // TAG_Compound
     if version.less_than(ProtocolVersion::V1_20_2) {
         buf.extend_from_slice(&0_u16.to_be_bytes()); // named root 
     }
     encode_nbt_long_array(buf, "MOTION_BLOCKING", 37);
     encode_nbt_long_array(buf, "WORLD_SURFACE", 37);
-    buf.push(0x00);                                // TAG_End
+    buf.push(0x00); // TAG_End
 }
 
 /// Indices: 1=WORLD_SURFACE, 4=MOTION_BLOCKING, 5=MOTION_BLOCKING_NO_LEAVES.
@@ -256,7 +227,11 @@ fn encode_nbt_long_array(buf: &mut Vec<u8>, name: &str, count: i32) {
 fn encode_light_data(buf: &mut Vec<u8>, num_sections: usize, _version: ProtocolVersion) {
     let total_bits = num_sections + 2; // +2 for edge sections
     let num_longs: usize = (total_bits + 63) / 64;
-    let all_set: u64 = if total_bits >= 64 { u64::MAX } else { (1_u64 << total_bits) - 1 };
+    let all_set: u64 = if total_bits >= 64 {
+        u64::MAX
+    } else {
+        (1_u64 << total_bits) - 1
+    };
 
     // sky_light_mask / block_light_mask: empty
     for _ in 0..2 {
@@ -328,7 +303,10 @@ mod tests {
         let mut buf = Vec::new();
         encode_empty_heightmaps_nbt(&mut buf, ProtocolVersion::V1_20_2);
         assert_eq!(buf[0], 0x0A, "must start with TAG_Compound");
-        assert_eq!(buf[1], 0x0C, "1.20.2+ network NBT: no name bytes after TAG_Compound");
+        assert_eq!(
+            buf[1], 0x0C,
+            "1.20.2+ network NBT: no name bytes after TAG_Compound"
+        );
     }
 
     #[test]
@@ -336,8 +314,14 @@ mod tests {
         let mut buf = Vec::new();
         encode_empty_heightmaps_nbt(&mut buf, ProtocolVersion::V1_19_4);
         assert_eq!(buf[0], 0x0A, "must start with TAG_Compound");
-        assert_eq!(buf[1], 0x00, "pre-1.20.2 standard NBT: name length high byte");
-        assert_eq!(buf[2], 0x00, "pre-1.20.2 standard NBT: name length low byte");
+        assert_eq!(
+            buf[1], 0x00,
+            "pre-1.20.2 standard NBT: name length high byte"
+        );
+        assert_eq!(
+            buf[2], 0x00,
+            "pre-1.20.2 standard NBT: name length low byte"
+        );
         assert_eq!(buf[3], 0x0C, "first inner tag after name");
     }
 

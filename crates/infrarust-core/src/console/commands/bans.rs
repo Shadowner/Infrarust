@@ -8,10 +8,10 @@ use infrarust_api::services::ban_service::{BanEntry, BanTarget};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::Component;
 
+use crate::console::ConsoleServices;
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
 use crate::console::parser::{format_duration_short, parse_ban_target, parse_duration_arg};
-use crate::console::ConsoleServices;
 
 pub struct BanCommand;
 
@@ -43,7 +43,7 @@ impl ConsoleCommand for BanCommand {
                 None => {
                     return CommandOutput::Error(
                         "Usage: ban <player> [duration] [reason...]".to_string(),
-                    )
+                    );
                 }
             };
 
@@ -74,9 +74,7 @@ impl ConsoleCommand for BanCommand {
             let duration_str = duration
                 .map(|d| format_duration_short(d))
                 .unwrap_or_else(|| "permanently".to_string());
-            let reason_str = reason
-                .as_deref()
-                .unwrap_or("No reason specified");
+            let reason_str = reason.as_deref().unwrap_or("No reason specified");
 
             tracing::info!(
                 target: "console",
@@ -98,9 +96,7 @@ impl ConsoleCommand for BanCommand {
                 player
                     .disconnect(Component::text(format!("Banned: {reason_str}")))
                     .await;
-                lines.push(OutputLine::Success(format!(
-                    "Player kicked from {server}"
-                )));
+                lines.push(OutputLine::Success(format!("Player kicked from {server}")));
             }
 
             CommandOutput::Lines(lines)
@@ -142,7 +138,7 @@ impl ConsoleCommand for BanIpCommand {
                 None => {
                     return CommandOutput::Error(
                         "Usage: ban-ip <ip> [duration] [reason...]".to_string(),
-                    )
+                    );
                 }
             };
 
@@ -178,9 +174,7 @@ impl ConsoleCommand for BanIpCommand {
             let duration_str = duration
                 .map(|d| format_duration_short(d))
                 .unwrap_or_else(|| "permanently".to_string());
-            let reason_str = reason
-                .as_deref()
-                .unwrap_or("No reason specified");
+            let reason_str = reason.as_deref().unwrap_or("No reason specified");
 
             tracing::info!(
                 target: "console",
@@ -366,11 +360,7 @@ impl ConsoleCommand for BanListCommand {
                 table.add_row(vec![
                     Cell::new(format_ban_target(&ban.target)),
                     Cell::new(ban.target.display_type()),
-                    Cell::new(
-                        ban.reason
-                            .as_deref()
-                            .unwrap_or("-"),
-                    ),
+                    Cell::new(ban.reason.as_deref().unwrap_or("-")),
                     Cell::new(&ban.source),
                     Cell::new(remaining),
                 ]);
@@ -411,11 +401,7 @@ impl ConsoleCommand for BanInfoCommand {
         Box::pin(async move {
             let arg = match args.first() {
                 Some(a) => *a,
-                None => {
-                    return CommandOutput::Error(
-                        "Usage: baninfo <player|ip|uuid>".to_string(),
-                    )
-                }
+                None => return CommandOutput::Error("Usage: baninfo <player|ip|uuid>".to_string()),
             };
 
             let target = parse_ban_target(arg);
@@ -439,10 +425,7 @@ impl ConsoleCommand for BanInfoCommand {
                         )),
                         OutputLine::Info(format!("  Source: {}", ban.source)),
                         OutputLine::Info(format!("  Remaining: {remaining}")),
-                        OutputLine::Info(format!(
-                            "  Permanent: {}",
-                            ban.is_permanent()
-                        )),
+                        OutputLine::Info(format!("  Permanent: {}", ban.is_permanent())),
                     ])
                 }
                 Ok(None) => CommandOutput::Success(format!("{arg} is not banned")),

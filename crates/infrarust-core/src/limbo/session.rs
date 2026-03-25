@@ -90,12 +90,9 @@ impl LimboSession for LimboSessionImpl {
     }
 
     fn send_title(&self, title: TitleData) -> Result<(), PlayerError> {
-        let frames = packets::build_title_packets(
-            &title,
-            self.protocol_version,
-            &self.packet_registry,
-        )
-        .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
+        let frames =
+            packets::build_title_packets(&title, self.protocol_version, &self.packet_registry)
+                .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
 
         for frame in frames {
             self.client_sender
@@ -106,12 +103,9 @@ impl LimboSession for LimboSessionImpl {
     }
 
     fn send_action_bar(&self, message: Component) -> Result<(), PlayerError> {
-        let frame = packets::build_action_bar(
-            &message,
-            self.protocol_version,
-            &self.packet_registry,
-        )
-        .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
+        let frame =
+            packets::build_action_bar(&message, self.protocol_version, &self.packet_registry)
+                .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
 
         self.client_sender
             .try_send(frame)
@@ -138,13 +132,17 @@ impl LimboSession for LimboSessionImpl {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::*;
     use super::super::test_helpers::test_profile;
+    use super::*;
     use infrarust_api::limbo::handler::HandlerResult;
     use infrarust_api::types::PlayerId;
     use infrarust_protocol::version::ProtocolVersion;
 
-    fn make_session() -> (LimboSessionImpl, mpsc::Receiver<PacketFrame>, watch::Receiver<Option<HandlerResult>>) {
+    fn make_session() -> (
+        LimboSessionImpl,
+        mpsc::Receiver<PacketFrame>,
+        watch::Receiver<Option<HandlerResult>>,
+    ) {
         let (tx, rx) = mpsc::channel(64);
         let (complete_tx, complete_rx) = watch::channel(None);
         let registry = Arc::new(infrarust_protocol::registry::build_default_registry());

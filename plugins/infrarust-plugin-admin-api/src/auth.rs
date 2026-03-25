@@ -18,7 +18,9 @@ pub async fn auth_middleware(
     let auth_str = match header_value {
         None => {
             tracing::warn!(target: "audit", action = "auth_failed", reason = "missing_header", "Authentication failed: missing Authorization header");
-            return Err(ApiError::Unauthorized("missing Authorization header".into()));
+            return Err(ApiError::Unauthorized(
+                "missing Authorization header".into(),
+            ));
         }
         Some(value) => value.to_str().map_err(|_| {
             ApiError::BadRequest("authorization header contains invalid characters".into())

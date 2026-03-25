@@ -34,10 +34,7 @@ pub enum ProtocolError {
 
     /// Size exceeds a protocol limit. Potential attack vector.
     #[error("too large: {actual} bytes exceeds maximum of {max}")]
-    TooLarge {
-        max: usize,
-        actual: usize,
-    },
+    TooLarge { max: usize, actual: usize },
 
     /// Underlying I/O error.
     #[error(transparent)]

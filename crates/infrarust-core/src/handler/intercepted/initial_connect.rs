@@ -47,7 +47,11 @@ fn resolve_limbo_lenient(
     names: &[String],
 ) -> Option<Vec<Arc<dyn LimboHandler>>> {
     let handlers = registry.resolve_handlers_lenient(names);
-    if handlers.is_empty() { None } else { Some(handlers) }
+    if handlers.is_empty() {
+        None
+    } else {
+        Some(handlers)
+    }
 }
 
 async fn deny_no_limbo_handlers(
@@ -99,14 +103,16 @@ pub(super) async fn resolve_initial_mode(
         } => {
             prepare_client_for_limbo(client, auth_result, login_completed, version, services)
                 .await?;
-            let Some(handlers) = resolve_limbo_strict(
-                &services.limbo_handler_registry, limbo_handlers,
-            ) else {
+            let Some(handlers) =
+                resolve_limbo_strict(&services.limbo_handler_registry, limbo_handlers)
+            else {
                 return deny_no_limbo_handlers(client, services).await;
             };
             initial_mode = Some(ConnectionMode::Limbo(
                 handlers,
-                LimboEntryContext::InitialConnection { target_server: initial_server.clone() },
+                LimboEntryContext::InitialConnection {
+                    target_server: initial_server.clone(),
+                },
             ));
             initial_server.clone()
         }
@@ -140,14 +146,16 @@ pub(super) async fn resolve_initial_mode(
                 } else {
                     limbo_handlers.clone()
                 };
-                let Some(handlers) = resolve_limbo_lenient(
-                    &services.limbo_handler_registry, &handler_names,
-                ) else {
+                let Some(handlers) =
+                    resolve_limbo_lenient(&services.limbo_handler_registry, &handler_names)
+                else {
                     return deny_no_limbo_handlers(client, services).await;
                 };
                 initial_mode = Some(ConnectionMode::Limbo(
                     handlers,
-                    LimboEntryContext::InitialConnection { target_server: initial_server.clone() },
+                    LimboEntryContext::InitialConnection {
+                        target_server: initial_server.clone(),
+                    },
                 ));
             }
             _ => {} // ConnectTo, VirtualBackend -- Phase 4
@@ -157,11 +165,14 @@ pub(super) async fn resolve_initial_mode(
     if initial_mode.is_none() && !server_config.limbo_handlers.is_empty() {
         prepare_client_for_limbo(client, auth_result, login_completed, version, services).await?;
         if let Some(handlers) = resolve_limbo_lenient(
-            &services.limbo_handler_registry, &server_config.limbo_handlers,
+            &services.limbo_handler_registry,
+            &server_config.limbo_handlers,
         ) {
             initial_mode = Some(ConnectionMode::Limbo(
                 handlers,
-                LimboEntryContext::InitialConnection { target_server: initial_server.clone() },
+                LimboEntryContext::InitialConnection {
+                    target_server: initial_server.clone(),
+                },
             ));
         }
     }
@@ -191,10 +202,17 @@ pub(super) async fn resolve_initial_mode(
                         "backend unreachable, falling back to limbo"
                     );
 
-                    prepare_client_for_limbo(client, auth_result, login_completed, version, services)
-                        .await?;
+                    prepare_client_for_limbo(
+                        client,
+                        auth_result,
+                        login_completed,
+                        version,
+                        services,
+                    )
+                    .await?;
                     if let Some(handlers) = resolve_limbo_lenient(
-                        &services.limbo_handler_registry, &server_config.limbo_handlers,
+                        &services.limbo_handler_registry,
+                        &server_config.limbo_handlers,
                     ) {
                         ConnectionMode::Limbo(
                             handlers,
@@ -207,10 +225,7 @@ pub(super) async fn resolve_initial_mode(
                         )
                     } else {
                         let msg = server_config.effective_disconnect_message();
-                        client
-                            .disconnect(msg, &services.packet_registry)
-                            .await
-                            .ok();
+                        client.disconnect(msg, &services.packet_registry).await.ok();
                         return Ok(InitialMode::Denied);
                     }
                 } else {
@@ -220,10 +235,7 @@ pub(super) async fn resolve_initial_mode(
                         "backend unreachable, sending disconnect to client"
                     );
                     let msg = server_config.effective_disconnect_message();
-                    client
-                        .disconnect(msg, &services.packet_registry)
-                        .await
-                        .ok();
+                    client.disconnect(msg, &services.packet_registry).await.ok();
                     return Ok(InitialMode::Denied);
                 }
             }
@@ -231,12 +243,12 @@ pub(super) async fn resolve_initial_mode(
     };
 
     if matches!(mode, ConnectionMode::Backend(_)) {
-        services
-            .event_bus
-            .fire_and_forget_arc(infrarust_api::events::connection::ServerConnectedEvent {
+        services.event_bus.fire_and_forget_arc(
+            infrarust_api::events::connection::ServerConnectedEvent {
                 player_id,
                 server: target_server_id.clone(),
-            });
+            },
+        );
     }
 
     Ok(InitialMode::Connected {
@@ -294,9 +306,7 @@ async fn connect_to_backend(
 
         if version.no_less_than(ProtocolVersion::V1_20_2) {
             let ack = SLoginAcknowledged;
-            backend
-                .send_packet(&ack, &services.packet_registry)
-                .await?;
+            backend.send_packet(&ack, &services.packet_registry).await?;
             backend.set_state(ConnectionState::Config);
             tracing::debug!("backend LoginAcknowledged -> Config");
         }
@@ -362,8 +372,7 @@ async fn ensure_login_complete_for_limbo(
     .await?;
 
     if version.no_less_than(ProtocolVersion::V1_20_2) {
-        super::auth::consume_login_acknowledged(client, version, &services.packet_registry)
-            .await?;
+        super::auth::consume_login_acknowledged(client, version, &services.packet_registry).await?;
     } else {
         client.set_state(ConnectionState::Play);
     }

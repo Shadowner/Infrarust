@@ -1,5 +1,5 @@
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use infrarust_api::prelude::ConfigService;
@@ -23,15 +23,19 @@ pub struct ServerWakeHandler {
 impl ServerWakeHandler {
     fn target_server(session: &dyn LimboSession) -> Option<ServerId> {
         match session.entry_context() {
-            LimboEntryContext::InitialConnection { target_server } => {
-                Some(target_server.clone())
-            }
+            LimboEntryContext::InitialConnection { target_server } => Some(target_server.clone()),
             LimboEntryContext::KickedFromServer { server, .. } => Some(server.clone()),
             _ => None,
         }
     }
 
-    fn build_title(title_tpl: &str, subtitle_tpl: &str, server: &ServerId, tick: u32, count: usize) -> TitleData {
+    fn build_title(
+        title_tpl: &str,
+        subtitle_tpl: &str,
+        server: &ServerId,
+        tick: u32,
+        count: usize,
+    ) -> TitleData {
         let dots = animated_dots(tick);
         let count_str = count.to_string();
         let vars = &[
@@ -154,15 +158,13 @@ impl LimboHandler for ServerWakeHandler {
     ) -> BoxFuture<'a, HandlerResult> {
         Box::pin(async move {
             let Some(target) = Self::target_server(session) else {
-                return HandlerResult::Deny(
-                    Component::text("Server wake: no target server in entry context"),
-                );
+                return HandlerResult::Deny(Component::text(
+                    "Server wake: no target server in entry context",
+                ));
             };
 
             let Some(server_config) = self.config_service.get_server_config(&target) else {
-                return HandlerResult::Deny(
-                    Component::text("Server wake: unknown server"),
-                );
+                return HandlerResult::Deny(Component::text("Server wake: unknown server"));
             };
 
             if !server_config.has_server_manager {
@@ -227,12 +229,7 @@ impl LimboHandler for ServerWakeHandler {
                 cancel.clone(),
             );
 
-            Self::spawn_timeout(
-                Arc::clone(&self.state),
-                handle,
-                session.player_id(),
-                cancel,
-            );
+            Self::spawn_timeout(Arc::clone(&self.state), handle, session.player_id(), cancel);
 
             HandlerResult::Hold
         })

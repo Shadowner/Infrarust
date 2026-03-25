@@ -8,9 +8,9 @@ use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::ServerId;
 
+use crate::console::ConsoleServices;
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
-use crate::console::ConsoleServices;
 
 pub struct ServersCommand;
 
@@ -47,16 +47,14 @@ impl ConsoleCommand for ServersCommand {
                 return CommandOutput::Success("No servers configured".to_string());
             }
 
-            let managed_states: std::collections::HashMap<String, infrarust_server_manager::ServerState> =
-                services
-                    .server_manager
-                    .as_ref()
-                    .map(|sm| {
-                        sm.get_all_managed()
-                            .into_iter()
-                            .collect()
-                    })
-                    .unwrap_or_default();
+            let managed_states: std::collections::HashMap<
+                String,
+                infrarust_server_manager::ServerState,
+            > = services
+                .server_manager
+                .as_ref()
+                .map(|sm| sm.get_all_managed().into_iter().collect())
+                .unwrap_or_default();
 
             let has_managed = !managed_states.is_empty();
 
@@ -64,13 +62,9 @@ impl ConsoleCommand for ServersCommand {
             let mut table = renderer.create_table();
 
             if has_managed {
-                table.set_header(vec![
-                    "Server", "Address", "Mode", "State", "Players",
-                ]);
+                table.set_header(vec!["Server", "Address", "Mode", "State", "Players"]);
             } else {
-                table.set_header(vec![
-                    "Server", "Address", "Mode", "Players",
-                ]);
+                table.set_header(vec!["Server", "Address", "Mode", "Players"]);
             }
 
             for cfg in &configs {
@@ -82,9 +76,7 @@ impl ConsoleCommand for ServersCommand {
                     .unwrap_or_else(|| "-".to_string());
 
                 let mode = format!("{:?}", cfg.proxy_mode);
-                let players = services
-                    .player_registry
-                    .online_count_on(&cfg.id);
+                let players = services.player_registry.online_count_on(&cfg.id);
 
                 if has_managed {
                     let state = managed_states
@@ -215,9 +207,7 @@ impl ConsoleCommand for StartServerCommand {
             let sm = match services.server_manager.as_ref() {
                 Some(sm) => sm,
                 None => {
-                    return CommandOutput::Error(
-                        "Server management is not configured".to_string(),
-                    )
+                    return CommandOutput::Error("Server management is not configured".to_string());
                 }
             };
 
@@ -268,9 +258,7 @@ impl ConsoleCommand for StopServerCommand {
             let sm = match services.server_manager.as_ref() {
                 Some(sm) => sm,
                 None => {
-                    return CommandOutput::Error(
-                        "Server management is not configured".to_string(),
-                    )
+                    return CommandOutput::Error("Server management is not configured".to_string());
                 }
             };
 
@@ -289,10 +277,7 @@ impl ConsoleCommand for StopServerCommand {
     }
 }
 
-fn format_server_state(
-    state: &infrarust_server_manager::ServerState,
-    is_tty: bool,
-) -> String {
+fn format_server_state(state: &infrarust_server_manager::ServerState, is_tty: bool) -> String {
     use infrarust_server_manager::ServerState;
     if is_tty {
         match state {

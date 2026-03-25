@@ -54,9 +54,7 @@ pub enum RawPacketResult {
     #[default]
     Pass,
     /// Replace the packet with a modified version.
-    Modify {
-        packet: RawPacket,
-    },
+    Modify { packet: RawPacket },
     /// Drop the packet entirely.
     Drop,
 }

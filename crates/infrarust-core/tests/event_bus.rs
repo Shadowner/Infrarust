@@ -207,8 +207,13 @@ async fn test_subscribe_packet_fires_for_matching_id() {
         PacketDirection::Serverbound,
         RawPacket::new(0x1A, bytes::Bytes::from_static(b"test")),
     );
-    bus.fire_packet_event(0x1A, ConnectionState::Play, PacketDirection::Serverbound, &mut event)
-        .await;
+    bus.fire_packet_event(
+        0x1A,
+        ConnectionState::Play,
+        PacketDirection::Serverbound,
+        &mut event,
+    )
+    .await;
 
     assert!(called.load(Ordering::SeqCst));
 }
@@ -237,8 +242,13 @@ async fn test_subscribe_packet_ignores_non_matching_id() {
         PacketDirection::Serverbound,
         RawPacket::new(0x2B, bytes::Bytes::from_static(b"test")),
     );
-    bus.fire_packet_event(0x2B, ConnectionState::Play, PacketDirection::Serverbound, &mut event)
-        .await;
+    bus.fire_packet_event(
+        0x2B,
+        ConnectionState::Play,
+        PacketDirection::Serverbound,
+        &mut event,
+    )
+    .await;
 
     assert!(!called.load(Ordering::SeqCst));
 }
@@ -258,7 +268,11 @@ async fn test_has_packet_listeners_true_when_subscribed() {
         |_event: &mut RawPacketEvent| {},
     );
 
-    assert!(bus_ref.has_packet_listeners(0x1A, ConnectionState::Play, PacketDirection::Serverbound));
+    assert!(bus_ref.has_packet_listeners(
+        0x1A,
+        ConnectionState::Play,
+        PacketDirection::Serverbound
+    ));
 }
 
 #[tokio::test]
@@ -266,7 +280,11 @@ async fn test_has_packet_listeners_false_when_empty() {
     let bus = EventBusImpl::new();
     let bus_ref: &dyn EventBus = &bus;
 
-    assert!(!bus_ref.has_packet_listeners(0x1A, ConnectionState::Play, PacketDirection::Serverbound));
+    assert!(!bus_ref.has_packet_listeners(
+        0x1A,
+        ConnectionState::Play,
+        PacketDirection::Serverbound
+    ));
 }
 
 #[tokio::test]
@@ -308,8 +326,13 @@ async fn test_packet_handler_priority_order() {
         PacketDirection::Serverbound,
         RawPacket::new(0x1A, bytes::Bytes::from_static(b"test")),
     );
-    bus.fire_packet_event(0x1A, ConnectionState::Play, PacketDirection::Serverbound, &mut event)
-        .await;
+    bus.fire_packet_event(
+        0x1A,
+        ConnectionState::Play,
+        PacketDirection::Serverbound,
+        &mut event,
+    )
+    .await;
 
     assert_eq!(&*order.lock().unwrap(), "AB");
 }
@@ -329,11 +352,19 @@ async fn test_unsubscribe_packet_removes_handler() {
         |_event: &mut RawPacketEvent| {},
     );
 
-    assert!(bus_ref.has_packet_listeners(0x1A, ConnectionState::Play, PacketDirection::Serverbound));
+    assert!(bus_ref.has_packet_listeners(
+        0x1A,
+        ConnectionState::Play,
+        PacketDirection::Serverbound
+    ));
 
     bus_ref.unsubscribe(handle);
 
-    assert!(!bus_ref.has_packet_listeners(0x1A, ConnectionState::Play, PacketDirection::Serverbound));
+    assert!(!bus_ref.has_packet_listeners(
+        0x1A,
+        ConnectionState::Play,
+        PacketDirection::Serverbound
+    ));
 }
 
 #[tokio::test]
@@ -358,8 +389,13 @@ async fn test_raw_packet_result_modify() {
         PacketDirection::Serverbound,
         RawPacket::new(0x1A, bytes::Bytes::from_static(b"original")),
     );
-    bus.fire_packet_event(0x1A, ConnectionState::Play, PacketDirection::Serverbound, &mut event)
-        .await;
+    bus.fire_packet_event(
+        0x1A,
+        ConnectionState::Play,
+        PacketDirection::Serverbound,
+        &mut event,
+    )
+    .await;
 
     match event.result() {
         RawPacketResult::Modify { packet } => {
@@ -391,8 +427,13 @@ async fn test_raw_packet_result_drop() {
         PacketDirection::Serverbound,
         RawPacket::new(0x1A, bytes::Bytes::from_static(b"test")),
     );
-    bus.fire_packet_event(0x1A, ConnectionState::Play, PacketDirection::Serverbound, &mut event)
-        .await;
+    bus.fire_packet_event(
+        0x1A,
+        ConnectionState::Play,
+        PacketDirection::Serverbound,
+        &mut event,
+    )
+    .await;
 
     assert!(matches!(event.result(), RawPacketResult::Drop));
 }

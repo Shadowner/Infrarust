@@ -1,9 +1,9 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use super::ConsoleServices;
 use super::output::{CommandCategory, CommandOutput};
 use super::parser;
-use super::ConsoleServices;
 
 pub trait ConsoleCommand: Send + Sync {
     fn name(&self) -> &str;
@@ -73,9 +73,10 @@ impl CommandDispatcher {
 
         let name = parsed.command.to_lowercase();
 
-        let command = self.commands.iter().find(|cmd| {
-            cmd.name() == name || cmd.aliases().iter().any(|a| *a == name)
-        });
+        let command = self
+            .commands
+            .iter()
+            .find(|cmd| cmd.name() == name || cmd.aliases().iter().any(|a| *a == name));
 
         match command {
             Some(cmd) => cmd.execute(&parsed.args, services).await,

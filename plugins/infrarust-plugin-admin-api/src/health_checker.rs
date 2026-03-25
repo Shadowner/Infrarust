@@ -5,7 +5,9 @@ use infrarust_protocol::codec::VarInt;
 use infrarust_protocol::io::{PacketDecoder, PacketEncoder};
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::handshake::SHandshake;
-use infrarust_protocol::packets::status::{CPingResponse, CStatusResponse, SPingRequest, SStatusRequest};
+use infrarust_protocol::packets::status::{
+    CPingResponse, CStatusResponse, SPingRequest, SStatusRequest,
+};
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -39,16 +41,27 @@ impl HealthChecker {
         };
 
         let target = format!("{}:{}", addr.host, addr.port);
-        let domain = config.domains.first().map(|d| d.as_str()).unwrap_or(&addr.host);
+        let domain = config
+            .domains
+            .first()
+            .map(|d| d.as_str())
+            .unwrap_or(&addr.host);
 
-        match tokio::time::timeout(HEALTH_CHECK_TIMEOUT, self.ping(&target, domain, addr.port)).await {
+        match tokio::time::timeout(HEALTH_CHECK_TIMEOUT, self.ping(&target, domain, addr.port))
+            .await
+        {
             Ok(Ok(result)) => result,
             Ok(Err(e)) => HealthCheckResponse::error(&format!("Health check failed: {e}")),
             Err(_) => HealthCheckResponse::error("Health check timed out (5s)"),
         }
     }
 
-    async fn ping(&self, target: &str, domain: &str, port: u16) -> Result<HealthCheckResponse, String> {
+    async fn ping(
+        &self,
+        target: &str,
+        domain: &str,
+        port: u16,
+    ) -> Result<HealthCheckResponse, String> {
         let mut stream = TcpStream::connect(target)
             .await
             .map_err(|e| format!("Connection refused: {e}"))?;
@@ -68,13 +81,21 @@ impl HealthChecker {
         // Read StatusResponse
         let mut decoder = PacketDecoder::new();
         let status_frame = self.read_frame(&mut stream, &mut decoder, 0x00).await?;
-        let status_response = CStatusResponse::decode(&mut status_frame.as_slice(), PROTOCOL_VERSION)
-            .map_err(|e| format!("Failed to decode status response: {e}"))?;
+        let status_response =
+            CStatusResponse::decode(&mut status_frame.as_slice(), PROTOCOL_VERSION)
+                .map_err(|e| format!("Failed to decode status response: {e}"))?;
 
         // Send PingRequest + read PingResponse for latency
         let ping_start = Instant::now();
         let ping_payload = ping_start.elapsed().as_millis() as i64;
-        self.send_packet(&mut stream, 0x01, &SPingRequest { payload: ping_payload }).await?;
+        self.send_packet(
+            &mut stream,
+            0x01,
+            &SPingRequest {
+                payload: ping_payload,
+            },
+        )
+        .await?;
 
         let pong_frame = self.read_frame(&mut stream, &mut decoder, 0x01).await?;
         let _pong = CPingResponse::decode(&mut pong_frame.as_slice(), PROTOCOL_VERSION)
@@ -99,7 +120,10 @@ impl HealthChecker {
                 .sample
                 .unwrap_or_default()
                 .into_iter()
-                .map(|s| PlayerSampleResponse { name: s.name, id: s.id })
+                .map(|s| PlayerSampleResponse {
+                    name: s.name,
+                    id: s.id,
+                })
                 .collect(),
             favicon: parsed.favicon,
             error: None,
@@ -128,7 +152,10 @@ impl HealthChecker {
             .write_all(&bytes)
             .await
             .map_err(|e| format!("Failed to write: {e}"))?;
-        stream.flush().await.map_err(|e| format!("Failed to flush: {e}"))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| format!("Failed to flush: {e}"))?;
         Ok(())
     }
 

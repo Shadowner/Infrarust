@@ -58,10 +58,8 @@ pub trait LimboHandler: Send + Sync {
     ///
     /// Return [`HandlerResult::Hold`] to keep the player in limbo until
     /// [`LimboSession::complete`] is called.
-    fn on_player_enter<'a>(
-        &'a self,
-        session: &'a dyn LimboSession,
-    ) -> BoxFuture<'a, HandlerResult>;
+    fn on_player_enter<'a>(&'a self, session: &'a dyn LimboSession)
+    -> BoxFuture<'a, HandlerResult>;
 
     /// Called when the player sends a `/command args` while in this limbo stage.
     ///

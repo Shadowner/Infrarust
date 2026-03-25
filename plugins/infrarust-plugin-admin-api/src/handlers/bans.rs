@@ -102,7 +102,9 @@ pub async fn create(
 
     if let Some(ref reason) = body.reason {
         if reason.len() > 256 {
-            return Err(ApiError::BadRequest("ban reason too long (max 256 characters)".into()));
+            return Err(ApiError::BadRequest(
+                "ban reason too long (max 256 characters)".into(),
+            ));
         }
     }
 

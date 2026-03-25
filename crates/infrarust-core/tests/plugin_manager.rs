@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
@@ -64,9 +64,7 @@ impl PluginContext for MockPluginContext {
     ) {
         // no-op for tests
     }
-    fn codec_filters(
-        &self,
-    ) -> Option<&dyn infrarust_api::filter::registry::CodecFilterRegistry> {
+    fn codec_filters(&self) -> Option<&dyn infrarust_api::filter::registry::CodecFilterRegistry> {
         None
     }
     fn transport_filters(
@@ -85,13 +83,17 @@ impl PluginContext for MockPluginContext {
     ) -> Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry> {
         unimplemented!("mock")
     }
-    fn server_manager_handle(&self) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
+    fn server_manager_handle(
+        &self,
+    ) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
         unimplemented!("mock")
     }
     fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
         unimplemented!("mock")
     }
-    fn config_service_handle(&self) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
+    fn config_service_handle(
+        &self,
+    ) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
         unimplemented!("mock")
     }
     fn event_bus_handle(&self) -> Arc<dyn infrarust_api::event::bus::EventBus> {
@@ -112,9 +114,7 @@ impl PluginContextFactory for MockPluginContextFactory {
     }
 }
 
-fn make_real_factory(
-    services: PluginServices,
-) -> infrarust_core::plugin::PluginContextFactoryImpl {
+fn make_real_factory(services: PluginServices) -> infrarust_core::plugin::PluginContextFactoryImpl {
     infrarust_core::plugin::PluginContextFactoryImpl::new(
         services,
         std::collections::HashMap::new(),
@@ -165,8 +165,10 @@ impl Plugin for MockPlugin {
     ) -> BoxFuture<'a, Result<(), PluginError>> {
         Box::pin(async {
             self.on_enable_called.store(true, Ordering::SeqCst);
-            self.enable_order
-                .store(self.order_counter.fetch_add(1, Ordering::SeqCst), Ordering::SeqCst);
+            self.enable_order.store(
+                self.order_counter.fetch_add(1, Ordering::SeqCst),
+                Ordering::SeqCst,
+            );
             if self.should_fail {
                 Err(PluginError::InitFailed("test failure".into()))
             } else {
@@ -178,8 +180,10 @@ impl Plugin for MockPlugin {
     fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
         Box::pin(async {
             self.on_disable_called.store(true, Ordering::SeqCst);
-            self.disable_order
-                .store(self.order_counter.fetch_add(1, Ordering::SeqCst), Ordering::SeqCst);
+            self.disable_order.store(
+                self.order_counter.fetch_add(1, Ordering::SeqCst),
+                Ordering::SeqCst,
+            );
             Ok(())
         })
     }
@@ -392,8 +396,8 @@ async fn test_is_plugin_loaded() {
 
 #[tokio::test]
 async fn test_cleanup_on_disable() {
-    use infrarust_api::event::bus::EventBusExt;
     use infrarust_api::event::EventPriority;
+    use infrarust_api::event::bus::EventBusExt;
     use infrarust_api::events::proxy::ProxyInitializeEvent;
 
     let event_bus = Arc::new(EventBusImpl::new());
@@ -449,10 +453,11 @@ async fn test_cleanup_on_disable() {
 
     let loader = StaticPluginLoader::new();
     let counter_for_factory = counter.clone();
-    loader.register(
-        PluginMetadata::new("listener", "L", "1.0"),
-        move || Box::new(ListenerPlugin { counter: counter_for_factory.clone() }),
-    );
+    loader.register(PluginMetadata::new("listener", "L", "1.0"), move || {
+        Box::new(ListenerPlugin {
+            counter: counter_for_factory.clone(),
+        })
+    });
 
     let mut manager = PluginManager::new(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
@@ -460,7 +465,11 @@ async fn test_cleanup_on_disable() {
 
     // Fire event — handler should be called
     event_bus.fire(ProxyInitializeEvent).await;
-    assert_eq!(call_count.load(Ordering::SeqCst), 1, "Handler should be called once");
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        1,
+        "Handler should be called once"
+    );
 
     // Shutdown — cleanup removes listener
     manager.shutdown().await;

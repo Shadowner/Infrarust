@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
@@ -162,29 +162,20 @@ impl ServerManagerService {
     /// The callback receives `(server_id, old_state, new_state)`.
     pub fn add_on_state_change(&self, callback: StateChangeCallback) -> u64 {
         let id = self.next_listener_id.fetch_add(1, Ordering::Relaxed);
-        let mut listeners = self
-            .listeners
-            .write()
-            .expect("lock poisoned");
+        let mut listeners = self.listeners.write().expect("lock poisoned");
         listeners.push((id, callback));
         id
     }
 
     /// Removes a previously registered state change listener.
     pub fn remove_on_state_change(&self, listener_id: u64) {
-        let mut listeners = self
-            .listeners
-            .write()
-            .expect("lock poisoned");
+        let mut listeners = self.listeners.write().expect("lock poisoned");
         listeners.retain(|(id, _)| *id != listener_id);
     }
 
     fn fire_state_change(&self, server_id: &str, old: ServerState, new: ServerState) {
         let snapshot = {
-            let listeners = self
-                .listeners
-                .read()
-                .expect("lock poisoned");
+            let listeners = self.listeners.read().expect("lock poisoned");
             listeners.clone()
         };
         for (_, callback) in &snapshot {

@@ -59,8 +59,7 @@ mod tests {
         };
         let mut buf = Vec::new();
         pkt.encode(&mut buf, ProtocolVersion::V1_21).unwrap();
-        let decoded =
-            CSetCenterChunk::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
+        let decoded = CSetCenterChunk::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
         assert_eq!(decoded.chunk_x, 0);
         assert_eq!(decoded.chunk_z, 0);
     }

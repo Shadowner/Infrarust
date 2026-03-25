@@ -139,9 +139,10 @@ pub async fn log_history(
     State(state): State<Arc<ApiState>>,
     Query(filter): Query<LogHistoryFilter>,
 ) -> Result<Json<ApiResponse<Vec<LogEntry>>>, ApiError> {
-    let history = state.log_history.as_ref().ok_or_else(|| {
-        ApiError::ServiceUnavailable("Log history is not available".into())
-    })?;
+    let history = state
+        .log_history
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("Log history is not available".into()))?;
 
     let min_level = parse_level(&filter.level);
     let n = filter.n.unwrap_or(100).min(1000);
@@ -182,10 +183,7 @@ fn level_to_num(level: &str) -> u8 {
 
 /// Parses the filter level string, defaulting to INFO.
 fn parse_level(level: &Option<String>) -> u8 {
-    level
-        .as_deref()
-        .map(level_to_num)
-        .unwrap_or(2) // INFO
+    level.as_deref().map(level_to_num).unwrap_or(2) // INFO
 }
 
 /// Returns `true` if the entry's level is >= the minimum level.

@@ -35,7 +35,9 @@ impl LimboHandlerRegistry {
 
     /// Returns the handler registered under `name`, if any.
     pub fn get(&self, name: &str) -> Option<Arc<dyn LimboHandler>> {
-        self.handlers.get(name).map(|entry| Arc::clone(entry.value()))
+        self.handlers
+            .get(name)
+            .map(|entry| Arc::clone(entry.value()))
     }
 
     /// Resolves an ordered list of handler names into handler instances.
@@ -94,7 +96,10 @@ mod tests {
             self.handler_name
         }
 
-        fn on_player_enter<'a>(&'a self, _session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
+        fn on_player_enter<'a>(
+            &'a self,
+            _session: &'a dyn LimboSession,
+        ) -> BoxFuture<'a, HandlerResult> {
             Box::pin(async { HandlerResult::Accept })
         }
     }

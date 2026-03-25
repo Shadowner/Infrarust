@@ -10,7 +10,9 @@ use tokio::net::TcpStream;
 use infrarust_config::ServerConfig;
 use infrarust_protocol::Packet;
 use infrarust_protocol::io::{PacketDecoder, PacketEncoder, PacketFrame};
-use infrarust_protocol::packets::login::{CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginStart};
+use infrarust_protocol::packets::login::{
+    CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginStart,
+};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 

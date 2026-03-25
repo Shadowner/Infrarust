@@ -59,7 +59,18 @@ impl Packet for CSynchronizePlayerPosition {
             let yaw = r.read_f32_be()?;
             let pitch = r.read_f32_be()?;
             let flags = r.read_i32_be()?;
-            Ok(Self { x, y, z, delta_x, delta_y, delta_z, yaw, pitch, flags, teleport_id })
+            Ok(Self {
+                x,
+                y,
+                z,
+                delta_x,
+                delta_y,
+                delta_z,
+                yaw,
+                pitch,
+                flags,
+                teleport_id,
+            })
         } else {
             // Pre-1.21.2: position, angles, flags(u8), teleport_id
             let x = r.read_f64_be()?;
@@ -73,7 +84,18 @@ impl Packet for CSynchronizePlayerPosition {
             } else {
                 0
             };
-            Ok(Self { x, y, z, delta_x: 0.0, delta_y: 0.0, delta_z: 0.0, yaw, pitch, flags, teleport_id })
+            Ok(Self {
+                x,
+                y,
+                z,
+                delta_x: 0.0,
+                delta_y: 0.0,
+                delta_z: 0.0,
+                yaw,
+                pitch,
+                flags,
+                teleport_id,
+            })
         }
     }
 

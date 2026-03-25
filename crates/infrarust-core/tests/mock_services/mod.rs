@@ -24,10 +24,7 @@ impl PlayerRegistry for MockPlayerRegistry {
     ) -> Option<Arc<dyn infrarust_api::player::Player>> {
         None
     }
-    fn get_player_by_id(
-        &self,
-        _id: PlayerId,
-    ) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn infrarust_api::player::Player>> {
         None
     }
     fn get_players_on_server(

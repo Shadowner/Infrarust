@@ -36,10 +36,7 @@ pub enum DecodedPacket {
         packet: Box<dyn ErasedPacket>,
     },
     /// Unknown packet or no registered parser. Forward as-is.
-    Opaque {
-        id: i32,
-        payload: Bytes,
-    },
+    Opaque { id: i32, payload: Bytes },
 }
 
 /// Registry for a specific (state, direction, version) combination.

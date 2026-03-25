@@ -21,8 +21,12 @@ impl CommandHandler for ChangePasswordCommand {
         player_registry: &'a dyn PlayerRegistry,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player_id) = ctx.player_id else { return };
-            let Some(player) = player_registry.get_player_by_id(player_id) else { return };
+            let Some(player_id) = ctx.player_id else {
+                return;
+            };
+            let Some(player) = player_registry.get_player_by_id(player_id) else {
+                return;
+            };
 
             if ctx.args.len() < 2 {
                 let _ = player.send_message(parse_colored(
@@ -48,9 +52,8 @@ impl CommandHandler for ChangePasswordCommand {
             match password::verify_password(old_password, &account.password_hash).await {
                 Ok(true) => {}
                 Ok(false) => {
-                    let _ = player.send_message(parse_colored(
-                        &config.messages.changepassword_wrong_old,
-                    ));
+                    let _ = player
+                        .send_message(parse_colored(&config.messages.changepassword_wrong_old));
                     return;
                 }
                 Err(e) => {
@@ -67,9 +70,8 @@ impl CommandHandler for ChangePasswordCommand {
                         let _ = player.send_message(Component::error("Internal error."));
                         return;
                     }
-                    let _ = player.send_message(parse_colored(
-                        &config.messages.changepassword_success,
-                    ));
+                    let _ =
+                        player.send_message(parse_colored(&config.messages.changepassword_success));
                 }
                 Err(e) => {
                     tracing::error!("Password hashing error: {e}");

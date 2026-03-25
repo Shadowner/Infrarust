@@ -4,7 +4,6 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 use super::Packet;
 
-
 /// A known data pack entry used in `CKnownPacks` / `SKnownPacks`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownPack {
@@ -12,7 +11,6 @@ pub struct KnownPack {
     pub id: String,
     pub version: String,
 }
-
 
 /// Finish configuration packet (Clientbound).
 ///
@@ -44,7 +42,6 @@ impl Packet for CFinishConfig {
     }
 }
 
-
 /// Acknowledge finish configuration packet (Serverbound).
 ///
 /// Empty confirmation from the client that it's ready to transition to Play.
@@ -74,7 +71,6 @@ impl Packet for SAcknowledgeFinishConfig {
         Ok(())
     }
 }
-
 
 /// Registry data packet (Clientbound).
 ///
@@ -111,7 +107,6 @@ impl Packet for CRegistryData {
     }
 }
 
-
 define_twin_packets! {
     clientbound: CKnownPacks,
     serverbound: SKnownPacks,
@@ -142,7 +137,6 @@ define_twin_packets! {
     },
 }
 
-
 define_twin_packets! {
     clientbound: CConfigPluginMessage,
     serverbound: SConfigPluginMessage,
@@ -162,7 +156,6 @@ define_twin_packets! {
         Ok(())
     },
 }
-
 
 /// Disconnect packet in config state (Clientbound).
 ///

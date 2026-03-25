@@ -18,7 +18,9 @@ impl CommandHandler for AuthReloadCommand {
         player_registry: &'a dyn PlayerRegistry,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(sender_id) = ctx.player_id else { return };
+            let Some(sender_id) = ctx.player_id else {
+                return;
+            };
 
             if !super::is_admin(sender_id, player_registry, &self.handler) {
                 if let Some(player) = player_registry.get_player_by_id(sender_id) {

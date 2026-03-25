@@ -34,9 +34,7 @@ pub async fn handle_config_phase_switch(
     version: ProtocolVersion,
 ) -> Result<PacketFrame, CoreError> {
     // 1. Send StartConfiguration to client
-    client
-        .send_packet(&CStartConfiguration, registry)
-        .await?;
+    client.send_packet(&CStartConfiguration, registry).await?;
     tracing::debug!("sent StartConfiguration to client");
 
     // 2. Read from client until we get AcknowledgeConfiguration
@@ -57,7 +55,10 @@ pub async fn handle_config_phase_switch(
             break;
         }
         // Absorb/ignore other Play-state packets during transition
-        tracing::trace!(id = frame.id, "absorbing client packet during config transition");
+        tracing::trace!(
+            id = frame.id,
+            "absorbing client packet during config transition"
+        );
     }
 
     // 3. Transition both sides to Config
@@ -116,7 +117,10 @@ pub async fn handle_config_phase_switch(
             break;
         }
         // Absorb any other packets
-        tracing::trace!(id = frame.id, "absorbing client packet waiting for finish ack");
+        tracing::trace!(
+            id = frame.id,
+            "absorbing client packet waiting for finish ack"
+        );
     }
 
     // 6. Transition both sides back to Play
@@ -129,7 +133,10 @@ pub async fn handle_config_phase_switch(
         .await?
         .ok_or(CoreError::ConnectionClosed)?;
 
-    tracing::debug!(id = join_game_frame.id, "received JoinGame from new backend");
+    tracing::debug!(
+        id = join_game_frame.id,
+        "received JoinGame from new backend"
+    );
 
     Ok(join_game_frame)
 }

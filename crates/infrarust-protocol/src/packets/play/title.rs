@@ -221,7 +221,11 @@ impl Packet for CTitleLegacy {
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let action = r.read_var_int()?.0;
-        let times_action = if version.less_than(ProtocolVersion::V1_12) { 2 } else { 3 };
+        let times_action = if version.less_than(ProtocolVersion::V1_12) {
+            2
+        } else {
+            3
+        };
 
         if action == 0 {
             Ok(Self::SetTitle(r.read_string()?))
@@ -231,11 +235,15 @@ impl Packet for CTitleLegacy {
             let fade_in = r.read_i32_be()?;
             let stay = r.read_i32_be()?;
             let fade_out = r.read_i32_be()?;
-            Ok(Self::SetTimes { fade_in, stay, fade_out })
+            Ok(Self::SetTimes {
+                fade_in,
+                stay,
+                fade_out,
+            })
         } else {
-            Err(crate::error::ProtocolError::invalid(
-                format!("CTitleLegacy: unknown action {action}"),
-            ))
+            Err(crate::error::ProtocolError::invalid(format!(
+                "CTitleLegacy: unknown action {action}"
+            )))
         }
     }
 
@@ -249,7 +257,11 @@ impl Packet for CTitleLegacy {
             Self::SetTitle(json) | Self::SetSubtitle(json) => {
                 w.write_string(json)?;
             }
-            Self::SetTimes { fade_in, stay, fade_out } => {
+            Self::SetTimes {
+                fade_in,
+                stay,
+                fade_out,
+            } => {
                 w.write_i32_be(*fade_in)?;
                 w.write_i32_be(*stay)?;
                 w.write_i32_be(*fade_out)?;
@@ -325,10 +337,18 @@ mod tests {
 
     #[test]
     fn test_legacy_title_set_times_post_1_11() {
-        let pkt = CTitleLegacy::SetTimes { fade_in: 10, stay: 70, fade_out: 20 };
+        let pkt = CTitleLegacy::SetTimes {
+            fade_in: 10,
+            stay: 70,
+            fade_out: 20,
+        };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_12);
         match decoded {
-            CTitleLegacy::SetTimes { fade_in, stay, fade_out } => {
+            CTitleLegacy::SetTimes {
+                fade_in,
+                stay,
+                fade_out,
+            } => {
                 assert_eq!(fade_in, 10);
                 assert_eq!(stay, 70);
                 assert_eq!(fade_out, 20);
@@ -339,10 +359,18 @@ mod tests {
 
     #[test]
     fn test_legacy_title_set_times_pre_1_11() {
-        let pkt = CTitleLegacy::SetTimes { fade_in: 5, stay: 40, fade_out: 10 };
+        let pkt = CTitleLegacy::SetTimes {
+            fade_in: 5,
+            stay: 40,
+            fade_out: 10,
+        };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_9);
         match decoded {
-            CTitleLegacy::SetTimes { fade_in, stay, fade_out } => {
+            CTitleLegacy::SetTimes {
+                fade_in,
+                stay,
+                fade_out,
+            } => {
                 assert_eq!(fade_in, 5);
                 assert_eq!(stay, 40);
                 assert_eq!(fade_out, 10);

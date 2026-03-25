@@ -34,8 +34,8 @@ use crate::limbo::registry_cache::RegistryCodecCache;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
-use crate::services::command_manager::CommandManagerImpl;
 use crate::services::ProxyServices;
+use crate::services::command_manager::CommandManagerImpl;
 use crate::session::client_bridge::ClientBridge;
 
 pub fn test_profile() -> GameProfile {
@@ -91,7 +91,10 @@ pub fn test_proxy_services() -> ProxyServices {
         connection_registry,
         packet_registry,
         server_manager: None,
-        ban_manager: Arc::new(BanManager::new(ban_storage, Arc::new(ConnectionRegistry::new()))),
+        ban_manager: Arc::new(BanManager::new(
+            ban_storage,
+            Arc::new(ConnectionRegistry::new()),
+        )),
         config: Arc::new(toml::from_str("").unwrap()),
         domain_router: Arc::new(DomainRouter::new()),
         codec_filter_registry: Arc::new(CodecFilterRegistryImpl::new()),
@@ -105,23 +108,39 @@ pub fn test_proxy_services() -> ProxyServices {
 struct NullBanStorage;
 
 impl BanStorage for NullBanStorage {
-    fn add_ban(&self, _entry: BanEntry) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
+    fn add_ban(
+        &self,
+        _entry: BanEntry,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
         Box::pin(async { Ok(()) })
     }
 
-    fn remove_ban(&self, _target: &BanTarget) -> Pin<Box<dyn Future<Output = Result<bool, CoreError>> + Send + '_>> {
+    fn remove_ban(
+        &self,
+        _target: &BanTarget,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, CoreError>> + Send + '_>> {
         Box::pin(async { Ok(false) })
     }
 
-    fn is_banned(&self, _target: &BanTarget) -> Pin<Box<dyn Future<Output = Result<Option<BanEntry>, CoreError>> + Send + '_>> {
+    fn is_banned(
+        &self,
+        _target: &BanTarget,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<BanEntry>, CoreError>> + Send + '_>> {
         Box::pin(async { Ok(None) })
     }
 
-    fn check_player<'a>(&'a self, _ip: &'a IpAddr, _username: &'a str, _uuid: Option<&'a Uuid>) -> Pin<Box<dyn Future<Output = Result<Option<BanEntry>, CoreError>> + Send + 'a>> {
+    fn check_player<'a>(
+        &'a self,
+        _ip: &'a IpAddr,
+        _username: &'a str,
+        _uuid: Option<&'a Uuid>,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<BanEntry>, CoreError>> + Send + 'a>> {
         Box::pin(async { Ok(None) })
     }
 
-    fn get_all_active(&self) -> Pin<Box<dyn Future<Output = Result<Vec<BanEntry>, CoreError>> + Send + '_>> {
+    fn get_all_active(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<BanEntry>, CoreError>> + Send + '_>> {
         Box::pin(async { Ok(vec![]) })
     }
 
@@ -148,7 +167,10 @@ impl LimboHandler for FixedHandler {
         self.name
     }
 
-    fn on_player_enter<'a>(&'a self, _session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
+    fn on_player_enter<'a>(
+        &'a self,
+        _session: &'a dyn LimboSession,
+    ) -> BoxFuture<'a, HandlerResult> {
         let result = self.result.clone();
         Box::pin(async move { result })
     }
@@ -169,7 +191,10 @@ impl LimboHandler for TrackingHandler {
         self.name
     }
 
-    fn on_player_enter<'a>(&'a self, _session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
+    fn on_player_enter<'a>(
+        &'a self,
+        _session: &'a dyn LimboSession,
+    ) -> BoxFuture<'a, HandlerResult> {
         self.called.store(true, Ordering::SeqCst);
         let result = self.result.clone();
         Box::pin(async move { result })
@@ -189,7 +214,10 @@ impl LimboHandler for HoldHandler {
         self.name
     }
 
-    fn on_player_enter<'a>(&'a self, _session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
+    fn on_player_enter<'a>(
+        &'a self,
+        _session: &'a dyn LimboSession,
+    ) -> BoxFuture<'a, HandlerResult> {
         Box::pin(async { HandlerResult::Hold })
     }
 

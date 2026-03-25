@@ -7,7 +7,9 @@ mod extractor;
 
 #[derive(Parser)]
 #[command(name = "registry-extractor")]
-#[command(about = "Captures Minecraft registry data from a vanilla server for use in Infrarust limbo")]
+#[command(
+    about = "Captures Minecraft registry data from a vanilla server for use in Infrarust limbo"
+)]
 struct Cli {
     #[arg(short, long)]
     server: String,
@@ -26,8 +28,7 @@ struct Cli {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::from_default_env()
-                .add_directive("registry_extractor=info".parse()?),
+            EnvFilter::from_default_env().add_directive("registry_extractor=info".parse()?),
         )
         .init();
 
@@ -36,8 +37,7 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&cli.output)?;
 
     let result =
-        extractor::extract_registry_data(&cli.server, &cli.username, cli.protocol_version)
-            .await?;
+        extractor::extract_registry_data(&cli.server, &cli.username, cli.protocol_version).await?;
 
     let filename = format!("v{}.bin", result.protocol_version);
     let path = cli.output.join(&filename);
@@ -55,7 +55,9 @@ async fn main() -> anyhow::Result<()> {
         "Registry data extracted successfully"
     );
 
-    let json_path = cli.output.join(format!("v{}.json", result.protocol_version));
+    let json_path = cli
+        .output
+        .join(format!("v{}.json", result.protocol_version));
     let json = serde_json::to_string_pretty(&result)?;
     std::fs::write(&json_path, &json)?;
     tracing::info!(path = %json_path.display(), "Debug JSON written");

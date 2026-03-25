@@ -52,10 +52,7 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.items
-            .read()
-            .expect("lock poisoned")
-            .is_empty()
+        self.items.read().expect("lock poisoned").is_empty()
     }
 
     /// Provides read access to the items and ordered IDs for building

@@ -11,7 +11,10 @@ use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{ServerAddress, ServerId};
 
 use crate::dto::player::PlayerSummary;
-use crate::dto::server::{CreateServerRequest, HealthCheckResponse, ServerDetailResponse, ServerResponse, UpdateServerRequest};
+use crate::dto::server::{
+    CreateServerRequest, HealthCheckResponse, ServerDetailResponse, ServerResponse,
+    UpdateServerRequest,
+};
 use crate::error::ApiError;
 use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
 use crate::state::ApiState;
@@ -48,9 +51,7 @@ pub async fn list(
         .map(|config| {
             let id_str = config.id.as_str().to_string();
             let server_state = states.get(&id_str);
-            let player_count = state
-                .player_registry
-                .online_count_on(&config.id);
+            let player_count = state.player_registry.online_count_on(&config.id);
 
             ServerResponse {
                 is_api_managed: state.server_store.contains(&id_str),
@@ -99,7 +100,10 @@ pub async fn get(
         domains: config.domains.clone(),
         proxy_mode: proxy_mode_str(config.proxy_mode).to_string(),
         limbo_handlers: config.limbo_handlers.clone(),
-        state: server_state.as_ref().map(server_state_str).map(String::from),
+        state: server_state
+            .as_ref()
+            .map(server_state_str)
+            .map(String::from),
         player_count: players.len(),
         players: players
             .iter()
@@ -169,9 +173,9 @@ pub async fn stop(
 fn parse_address(s: &str) -> Result<ServerAddress, ApiError> {
     // Handle IPv6 bracket notation: [::1]:25565
     if let Some(rest) = s.strip_prefix('[') {
-        let (host, port_str) = rest
-            .split_once("]:")
-            .ok_or_else(|| ApiError::BadRequest(format!("invalid IPv6 address '{s}': expected [host]:port")))?;
+        let (host, port_str) = rest.split_once("]:").ok_or_else(|| {
+            ApiError::BadRequest(format!("invalid IPv6 address '{s}': expected [host]:port"))
+        })?;
         let port: u16 = port_str
             .parse()
             .map_err(|_| ApiError::BadRequest(format!("invalid port in '{s}'")))?;
@@ -181,9 +185,9 @@ fn parse_address(s: &str) -> Result<ServerAddress, ApiError> {
         });
     }
 
-    let (host, port_str) = s
-        .rsplit_once(':')
-        .ok_or_else(|| ApiError::BadRequest(format!("invalid address '{s}': expected host:port")))?;
+    let (host, port_str) = s.rsplit_once(':').ok_or_else(|| {
+        ApiError::BadRequest(format!("invalid address '{s}': expected host:port"))
+    })?;
     let port: u16 = port_str
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("invalid port in '{s}'")))?;
@@ -223,7 +227,9 @@ pub async fn create(
     validate_server_id(&req.id)?;
 
     if req.domains.is_empty() {
-        return Err(ApiError::BadRequest("At least one domain is required".into()));
+        return Err(ApiError::BadRequest(
+            "At least one domain is required".into(),
+        ));
     }
     if req.addresses.is_empty() {
         return Err(ApiError::BadRequest(

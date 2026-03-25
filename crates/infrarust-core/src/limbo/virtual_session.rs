@@ -54,8 +54,8 @@ impl VirtualSessionCore {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::*;
     use super::super::test_helpers::test_profile;
+    use super::*;
     use infrarust_api::types::PlayerId;
 
     #[tokio::test]

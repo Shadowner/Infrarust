@@ -18,10 +18,7 @@ impl ConfigServiceImpl {
     }
 
     /// Converts an internal [`infrarust_config::ServerConfig`] to an API [`ServerConfig`].
-    fn convert_config(
-        id: &str,
-        config: &infrarust_config::ServerConfig,
-    ) -> ServerConfig {
+    fn convert_config(id: &str, config: &infrarust_config::ServerConfig) -> ServerConfig {
         ServerConfig {
             id: ServerId::new(id),
             network: config.network.clone(),
@@ -79,7 +76,10 @@ fn convert_proxy_mode(mode: infrarust_config::ProxyMode) -> ProxyMode {
         infrarust_config::ProxyMode::Offline => ProxyMode::Offline,
         infrarust_config::ProxyMode::ServerOnly => ProxyMode::ServerOnly,
         _ => {
-            tracing::warn!(?mode, "unmapped ProxyMode variant, defaulting to Passthrough");
+            tracing::warn!(
+                ?mode,
+                "unmapped ProxyMode variant, defaulting to Passthrough"
+            );
             ProxyMode::Passthrough
         }
     }

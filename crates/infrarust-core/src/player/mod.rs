@@ -7,8 +7,8 @@ pub(crate) mod packets;
 pub mod registry;
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use tokio::sync::mpsc;
@@ -104,9 +104,7 @@ impl PlayerSession {
     /// Creates a test session with a new channel and cancellation token.
     ///
     /// Returns `(session, command_rx)` so tests can inspect commands.
-    pub fn new_test(
-        active: bool,
-    ) -> (Self, mpsc::Receiver<PlayerCommand>) {
+    pub fn new_test(active: bool) -> (Self, mpsc::Receiver<PlayerCommand>) {
         let (tx, rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
         let session = Self::new(
             PlayerId::new(1),
@@ -136,10 +134,7 @@ impl PlayerSession {
 
     /// Updates the current server (called by the proxy loop on server switch).
     pub fn set_current_server(&self, server: ServerId) {
-        let mut guard = self
-            .current_server
-            .write()
-            .expect("lock poisoned");
+        let mut guard = self.current_server.write().expect("lock poisoned");
         *guard = Some(server);
     }
 
@@ -186,10 +181,7 @@ impl Player for PlayerSession {
     }
 
     fn current_server(&self) -> Option<ServerId> {
-        self.current_server
-            .read()
-            .expect("lock poisoned")
-            .clone()
+        self.current_server.read().expect("lock poisoned").clone()
     }
 
     fn is_connected(&self) -> bool {

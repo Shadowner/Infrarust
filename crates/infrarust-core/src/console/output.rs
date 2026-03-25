@@ -1,10 +1,13 @@
 use std::io::IsTerminal;
 
-use comfy_table::{Attribute, CellAlignment, ContentArrangement, presets};
 use comfy_table::Table;
+use comfy_table::{Attribute, CellAlignment, ContentArrangement, presets};
 
 pub enum CommandOutput {
-    Table { table: Table, footer: Option<String> },
+    Table {
+        table: Table,
+        footer: Option<String>,
+    },
     Lines(Vec<OutputLine>),
     Success(String),
     Error(String),
@@ -132,7 +135,10 @@ impl OutputRenderer {
 
     pub fn header(&self, text: &str) -> String {
         if self.is_tty {
-            format!("{}", console::style(format!("=== {text} ===")).green().bold())
+            format!(
+                "{}",
+                console::style(format!("=== {text} ===")).green().bold()
+            )
         } else {
             format!("=== {text} ===")
         }

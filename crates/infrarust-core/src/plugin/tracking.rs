@@ -76,8 +76,7 @@ impl EventBus for TrackingEventBus {
         state: ConnectionState,
         direction: PacketDirection,
     ) -> bool {
-        self.inner
-            .has_packet_listeners(packet_id, state, direction)
+        self.inner.has_packet_listeners(packet_id, state, direction)
     }
 
     fn unsubscribe(&self, handle: ListenerHandle) {
@@ -108,7 +107,10 @@ impl CommandManager for TrackingCommandManager {
         handler: Box<dyn CommandHandler>,
     ) {
         self.inner.register(name, aliases, description, handler);
-        self.commands.lock().expect("lock poisoned").push(name.to_string());
+        self.commands
+            .lock()
+            .expect("lock poisoned")
+            .push(name.to_string());
     }
 
     fn unregister(&self, name: &str) {
@@ -131,11 +133,7 @@ impl TrackingScheduler {
 impl infrarust_api::services::scheduler::private::Sealed for TrackingScheduler {}
 
 impl Scheduler for TrackingScheduler {
-    fn delay(
-        &self,
-        duration: std::time::Duration,
-        task: Box<dyn FnOnce() + Send>,
-    ) -> TaskHandle {
+    fn delay(&self, duration: std::time::Duration, task: Box<dyn FnOnce() + Send>) -> TaskHandle {
         let handle = self.inner.delay(duration, task);
         self.tasks.lock().expect("lock poisoned").push(handle);
         handle

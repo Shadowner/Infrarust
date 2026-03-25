@@ -15,12 +15,12 @@ use tracing_subscriber::EnvFilter;
 use infrarust_api::events::proxy::{ProxyInitializeEvent, ProxyShutdownEvent};
 use infrarust_config::ProxyConfig;
 use infrarust_core::plugin::manager::{PluginManager, PluginServices};
-use infrarust_core::telemetry::formatter::InfrarustFormatter;
 use infrarust_core::server::ProxyServer;
 use infrarust_core::services::ban_bridge::BanServiceBridge;
 use infrarust_core::services::config_service::ConfigServiceImpl;
 use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};
+use infrarust_core::telemetry::formatter::InfrarustFormatter;
 
 mod plugins;
 
@@ -81,15 +81,11 @@ fn main() -> ExitCode {
                     match infrarust_core::telemetry::init_telemetry(tc) {
                         Ok(guard) => {
                             let tracer = opentelemetry::global::tracer("infrarust");
-                            let otel_layer =
-                                tracing_opentelemetry::layer().with_tracer(tracer);
+                            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
                             tracing_subscriber::registry()
                                 .with(filter)
-                                .with(
-                                    tracing_subscriber::fmt::layer()
-                                        .event_format(formatter),
-                                )
+                                .with(tracing_subscriber::fmt::layer().event_format(formatter))
                                 .with(otel_layer)
                                 .with(log_layer)
                                 .init();
@@ -98,10 +94,7 @@ fn main() -> ExitCode {
                         Err(e) => {
                             tracing_subscriber::registry()
                                 .with(filter)
-                                .with(
-                                    tracing_subscriber::fmt::layer()
-                                        .event_format(formatter),
-                                )
+                                .with(tracing_subscriber::fmt::layer().event_format(formatter))
                                 .with(log_layer)
                                 .init();
                             tracing::warn!(
@@ -113,9 +106,7 @@ fn main() -> ExitCode {
                 } else {
                     tracing_subscriber::registry()
                         .with(filter)
-                        .with(
-                            tracing_subscriber::fmt::layer().event_format(formatter),
-                        )
+                        .with(tracing_subscriber::fmt::layer().event_format(formatter))
                         .with(log_layer)
                         .init();
                     None
@@ -123,9 +114,7 @@ fn main() -> ExitCode {
             } else {
                 tracing_subscriber::registry()
                     .with(filter)
-                    .with(
-                        tracing_subscriber::fmt::layer().event_format(formatter),
-                    )
+                    .with(tracing_subscriber::fmt::layer().event_format(formatter))
                     .with(log_layer)
                     .init();
                 None
@@ -135,9 +124,7 @@ fn main() -> ExitCode {
         #[cfg(not(feature = "telemetry"))]
         tracing_subscriber::registry()
             .with(filter)
-            .with(
-                tracing_subscriber::fmt::layer().event_format(formatter),
-            )
+            .with(tracing_subscriber::fmt::layer().event_format(formatter))
             .with(log_layer)
             .init();
     }
@@ -209,8 +196,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         .context("failed to initialize proxy server")?;
 
     let static_loader = plugins::build_static_loader(web_config.as_ref());
-    let loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> =
-        vec![Box::new(static_loader)];
+    let loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> = vec![Box::new(static_loader)];
 
     let mut plugin_manager = PluginManager::new(loaders);
 
@@ -227,9 +213,8 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
             None => Arc::new(NoopServerManager),
         };
 
-    let transport_filter_registry = Arc::new(
-        infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
-    );
+    let transport_filter_registry =
+        Arc::new(infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new());
 
     let plugin_registry = Arc::new(infrarust_core::plugin::PluginRegistryImpl::new());
 
@@ -263,10 +248,9 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     }
 
     // Refresh the plugin registry snapshot so all plugins are visible via the API
-    plugin_registry.update_from(
-        &plugin_manager.list_plugins(),
-        &|id| plugin_manager.plugin_state(id).cloned(),
-    );
+    plugin_registry.update_from(&plugin_manager.list_plugins(), &|id| {
+        plugin_manager.plugin_state(id).cloned()
+    });
 
     // Collect limbo handlers registered by plugins and populate the registry
     for handler in plugin_manager.collect_limbo_handlers() {
@@ -277,7 +261,10 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
 
     let plugin_providers = plugin_manager.collect_config_providers();
     if !plugin_providers.is_empty() {
-        tracing::info!(count = plugin_providers.len(), "activating plugin config providers");
+        tracing::info!(
+            count = plugin_providers.len(),
+            "activating plugin config providers"
+        );
         let results = infrarust_core::provider::plugin_adapter::activate_plugin_providers(
             plugin_providers,
             services.provider_event_sender.clone(),

@@ -276,16 +276,15 @@ impl LimboHandler for AuthHandler {
                 };
                 if entry.needs_register {
                     drop(entry);
-                    let _ = session
-                        .send_message(self.msg(&self.config.messages.register_usage, &[]));
+                    let _ =
+                        session.send_message(self.msg(&self.config.messages.register_usage, &[]));
                     return Box::pin(async {});
                 }
                 let username = entry.username.clone();
                 drop(entry);
 
                 let Some(password) = args.first() else {
-                    let _ =
-                        session.send_message(self.msg(&self.config.messages.login_usage, &[]));
+                    let _ = session.send_message(self.msg(&self.config.messages.login_usage, &[]));
                     return Box::pin(async {});
                 };
                 let password = password.to_string();
@@ -327,9 +326,8 @@ impl LimboHandler for AuthHandler {
                                 });
                             }
 
-                            let _ = session.send_message(
-                                self.msg(&self.config.messages.login_success, &[]),
-                            );
+                            let _ = session
+                                .send_message(self.msg(&self.config.messages.login_success, &[]));
                             Self::clear_title(session);
                             self.cleanup_session(player_id);
                             session.complete(HandlerResult::Accept);
@@ -338,7 +336,10 @@ impl LimboHandler for AuthHandler {
                             let (should_kick, attempts_left) =
                                 if let Some(mut entry) = self.sessions.get_mut(&player_id) {
                                     entry.failed_attempts += 1;
-                                    let left = self.config.security.max_login_attempts
+                                    let left = self
+                                        .config
+                                        .security
+                                        .max_login_attempts
                                         .saturating_sub(entry.failed_attempts);
                                     (
                                         entry.failed_attempts
@@ -350,8 +351,7 @@ impl LimboHandler for AuthHandler {
                                 };
 
                             if should_kick {
-                                let msg =
-                                    self.msg(&self.config.messages.login_max_attempts, &[]);
+                                let msg = self.msg(&self.config.messages.login_max_attempts, &[]);
                                 self.cleanup_session(player_id);
                                 session.complete(HandlerResult::Deny(msg));
                             } else {
@@ -361,11 +361,7 @@ impl LimboHandler for AuthHandler {
                                         ("{attempts_left}", &attempts_left.to_string()),
                                         (
                                             "{max_attempts}",
-                                            &self
-                                                .config
-                                                .security
-                                                .max_login_attempts
-                                                .to_string(),
+                                            &self.config.security.max_login_attempts.to_string(),
                                         ),
                                     ],
                                 ));
@@ -387,8 +383,7 @@ impl LimboHandler for AuthHandler {
                 };
                 if !entry.needs_register {
                     drop(entry);
-                    let _ =
-                        session.send_message(self.msg(&self.config.messages.login_usage, &[]));
+                    let _ = session.send_message(self.msg(&self.config.messages.login_usage, &[]));
                     return Box::pin(async {});
                 }
                 let username = entry.username.clone();
@@ -396,8 +391,8 @@ impl LimboHandler for AuthHandler {
                 drop(entry);
 
                 if args.len() < 2 {
-                    let _ = session
-                        .send_message(self.msg(&self.config.messages.register_usage, &[]));
+                    let _ =
+                        session.send_message(self.msg(&self.config.messages.register_usage, &[]));
                     return Box::pin(async {});
                 }
 
@@ -420,17 +415,17 @@ impl LimboHandler for AuthHandler {
                 let player_registry = Arc::clone(&self.player_registry);
 
                 Box::pin(async move {
-                    let hash =
-                        match password::hash_password(&password, &self.config.hashing).await {
-                            Ok(h) => h,
-                            Err(e) => {
-                                tracing::error!("Password hashing error: {e}");
-                                let _ = session.send_message(Component::error(
-                                    "An internal error occurred. Please try again.",
-                                ));
-                                return;
-                            }
-                        };
+                    let hash = match password::hash_password(&password, &self.config.hashing).await
+                    {
+                        Ok(h) => h,
+                        Err(e) => {
+                            tracing::error!("Password hashing error: {e}");
+                            let _ = session.send_message(Component::error(
+                                "An internal error occurred. Please try again.",
+                            ));
+                            return;
+                        }
+                    };
 
                     let account = AuthAccount {
                         username: username.clone(),
@@ -469,8 +464,7 @@ impl LimboHandler for AuthHandler {
             }
 
             _ => {
-                let _ =
-                    session.send_message(self.msg(&self.config.messages.unknown_command, &[]));
+                let _ = session.send_message(self.msg(&self.config.messages.unknown_command, &[]));
                 Box::pin(async {})
             }
         }

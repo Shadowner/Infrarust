@@ -5,9 +5,9 @@ use std::pin::Pin;
 
 use comfy_table::Cell;
 
+use crate::console::ConsoleServices;
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
-use crate::console::ConsoleServices;
 use crate::plugin::PluginState;
 
 pub struct PluginsCommand;
@@ -121,10 +121,7 @@ impl ConsoleCommand for PluginCommand {
                 meta.authors.join(", ")
             };
 
-            let description = meta
-                .description
-                .as_deref()
-                .unwrap_or("-");
+            let description = meta.description.as_deref().unwrap_or("-");
 
             let deps: Vec<String> = meta
                 .dependencies

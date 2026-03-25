@@ -8,8 +8,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 
 use infrarust_protocol::io::PacketFrame;
-use infrarust_protocol::packets::play::keepalive::{CKeepAlive, SKeepAlive};
 use infrarust_protocol::packets::Packet;
+use infrarust_protocol::packets::play::keepalive::{CKeepAlive, SKeepAlive};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
@@ -99,20 +99,19 @@ pub(crate) fn is_keepalive_response(
 /// Extracts the keepalive ID from a serverbound `SKeepAlive` frame.
 ///
 /// Returns `None` if decoding fails.
-pub(crate) fn extract_keepalive_id(
-    frame: &PacketFrame,
-    version: ProtocolVersion,
-) -> Option<i64> {
+pub(crate) fn extract_keepalive_id(frame: &PacketFrame, version: ProtocolVersion) -> Option<i64> {
     let mut data = frame.payload.as_ref();
-    SKeepAlive::decode(&mut data, version).ok().map(|pkt| pkt.id)
+    SKeepAlive::decode(&mut data, version)
+        .ok()
+        .map(|pkt| pkt.id)
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::*;
     use super::super::test_helpers::test_registry;
+    use super::*;
 
     #[test]
     fn tick_returns_some_on_first_call() {

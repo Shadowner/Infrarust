@@ -102,17 +102,16 @@ impl PluginLoader for StaticPluginLoader {
     ) -> BoxFuture<'a, Result<Box<dyn Plugin>, LoaderError>> {
         Box::pin(async move {
             let factories = self.factories.read().expect("lock poisoned");
-            let factory = factories.get(plugin_id).ok_or_else(|| LoaderError::PluginNotFound {
-                plugin_id: plugin_id.to_string(),
-            })?;
+            let factory = factories
+                .get(plugin_id)
+                .ok_or_else(|| LoaderError::PluginNotFound {
+                    plugin_id: plugin_id.to_string(),
+                })?;
             Ok(factory.create())
         })
     }
 
-    fn unload<'a>(
-        &'a self,
-        _plugin_id: &'a str,
-    ) -> BoxFuture<'a, Result<(), LoaderError>> {
+    fn unload<'a>(&'a self, _plugin_id: &'a str) -> BoxFuture<'a, Result<(), LoaderError>> {
         Box::pin(async { Ok(()) })
     }
 }
@@ -121,8 +120,8 @@ impl PluginLoader for StaticPluginLoader {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use infrarust_api::error::PluginError;
     use infrarust_api::plugin::PluginContext;
@@ -168,9 +167,7 @@ mod tests {
             unimplemented!("mock")
         }
 
-        fn player_registry(
-            &self,
-        ) -> &dyn infrarust_api::services::player_registry::PlayerRegistry {
+        fn player_registry(&self) -> &dyn infrarust_api::services::player_registry::PlayerRegistry {
             unimplemented!("mock")
         }
 
@@ -234,13 +231,17 @@ mod tests {
         ) -> Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry> {
             unimplemented!("mock")
         }
-        fn server_manager_handle(&self) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
+        fn server_manager_handle(
+            &self,
+        ) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
             unimplemented!("mock")
         }
         fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
             unimplemented!("mock")
         }
-        fn config_service_handle(&self) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
+        fn config_service_handle(
+            &self,
+        ) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
             unimplemented!("mock")
         }
         fn event_bus_handle(&self) -> Arc<dyn infrarust_api::event::bus::EventBus> {
@@ -264,24 +265,18 @@ mod tests {
     #[tokio::test]
     async fn test_static_loader_discover_returns_registered_plugins() {
         let loader = StaticPluginLoader::new();
-        loader.register(
-            PluginMetadata::new("test_a", "Test A", "1.0.0"),
-            || {
-                Box::new(TestPlugin {
-                    id: "test_a".into(),
-                    enabled: Arc::new(AtomicBool::new(false)),
-                })
-            },
-        );
-        loader.register(
-            PluginMetadata::new("test_b", "Test B", "1.0.0"),
-            || {
-                Box::new(TestPlugin {
-                    id: "test_b".into(),
-                    enabled: Arc::new(AtomicBool::new(false)),
-                })
-            },
-        );
+        loader.register(PluginMetadata::new("test_a", "Test A", "1.0.0"), || {
+            Box::new(TestPlugin {
+                id: "test_a".into(),
+                enabled: Arc::new(AtomicBool::new(false)),
+            })
+        });
+        loader.register(PluginMetadata::new("test_b", "Test B", "1.0.0"), || {
+            Box::new(TestPlugin {
+                id: "test_b".into(),
+                enabled: Arc::new(AtomicBool::new(false)),
+            })
+        });
 
         let discovered = loader.discover(Path::new("ignored")).await.unwrap();
         assert_eq!(discovered.len(), 2);
@@ -298,15 +293,12 @@ mod tests {
         let enabled = Arc::new(AtomicBool::new(false));
         let enabled_clone = enabled.clone();
 
-        loader.register(
-            PluginMetadata::new("test", "Test", "1.0.0"),
-            move || {
-                Box::new(TestPlugin {
-                    id: "test".into(),
-                    enabled: enabled_clone.clone(),
-                })
-            },
-        );
+        loader.register(PluginMetadata::new("test", "Test", "1.0.0"), move || {
+            Box::new(TestPlugin {
+                id: "test".into(),
+                enabled: enabled_clone.clone(),
+            })
+        });
 
         let mock_factory = MockPluginContextFactory;
         let plugin = loader.load("test", &mock_factory).await.unwrap();
@@ -326,24 +318,18 @@ mod tests {
     #[should_panic(expected = "Duplicate static plugin id")]
     fn test_static_loader_duplicate_id_panics() {
         let loader = StaticPluginLoader::new();
-        loader.register(
-            PluginMetadata::new("dup", "Dup", "1.0.0"),
-            || {
-                Box::new(TestPlugin {
-                    id: "dup".into(),
-                    enabled: Arc::new(AtomicBool::new(false)),
-                })
-            },
-        );
-        loader.register(
-            PluginMetadata::new("dup", "Dup Again", "2.0.0"),
-            || {
-                Box::new(TestPlugin {
-                    id: "dup".into(),
-                    enabled: Arc::new(AtomicBool::new(false)),
-                })
-            },
-        );
+        loader.register(PluginMetadata::new("dup", "Dup", "1.0.0"), || {
+            Box::new(TestPlugin {
+                id: "dup".into(),
+                enabled: Arc::new(AtomicBool::new(false)),
+            })
+        });
+        loader.register(PluginMetadata::new("dup", "Dup Again", "2.0.0"), || {
+            Box::new(TestPlugin {
+                id: "dup".into(),
+                enabled: Arc::new(AtomicBool::new(false)),
+            })
+        });
     }
 
     #[tokio::test]
@@ -358,15 +344,12 @@ mod tests {
         let loader = StaticPluginLoader::new();
         assert_eq!(loader.registered_count(), 0);
 
-        loader.register(
-            PluginMetadata::new("a", "A", "1.0.0"),
-            || {
-                Box::new(TestPlugin {
-                    id: "a".into(),
-                    enabled: Arc::new(AtomicBool::new(false)),
-                })
-            },
-        );
+        loader.register(PluginMetadata::new("a", "A", "1.0.0"), || {
+            Box::new(TestPlugin {
+                id: "a".into(),
+                enabled: Arc::new(AtomicBool::new(false)),
+            })
+        });
         assert_eq!(loader.registered_count(), 1);
     }
 }

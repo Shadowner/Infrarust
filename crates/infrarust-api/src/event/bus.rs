@@ -2,7 +2,9 @@
 
 use std::any::{Any, TypeId};
 
-use super::{BoxFuture, ConnectionState, EventPriority, ListenerHandle, PacketDirection, PacketFilter};
+use super::{
+    BoxFuture, ConnectionState, EventPriority, ListenerHandle, PacketDirection, PacketFilter,
+};
 
 #[doc(hidden)]
 pub mod private {
@@ -135,7 +137,10 @@ pub trait EventBusExt {
         handler: F,
     ) -> ListenerHandle
     where
-        F: Fn(&mut crate::events::packet::RawPacketEvent) -> BoxFuture<'_, ()> + Send + Sync + 'static;
+        F: Fn(&mut crate::events::packet::RawPacketEvent) -> BoxFuture<'_, ()>
+            + Send
+            + Sync
+            + 'static;
 }
 
 impl EventBusExt for dyn EventBus + '_ {
@@ -200,7 +205,10 @@ impl EventBusExt for dyn EventBus + '_ {
         handler: F,
     ) -> ListenerHandle
     where
-        F: Fn(&mut crate::events::packet::RawPacketEvent) -> BoxFuture<'_, ()> + Send + Sync + 'static,
+        F: Fn(&mut crate::events::packet::RawPacketEvent) -> BoxFuture<'_, ()>
+            + Send
+            + Sync
+            + 'static,
     {
         self.subscribe_packet_async(
             filter,

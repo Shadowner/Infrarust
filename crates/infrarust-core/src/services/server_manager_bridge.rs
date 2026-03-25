@@ -25,9 +25,7 @@ impl infrarust_api::services::server_manager::private::Sealed for ServerManagerB
 
 impl ServerManager for ServerManagerBridge {
     fn get_state(&self, server: &ServerId) -> Option<ServerState> {
-        self.service
-            .get_state(server.as_str())
-            .map(convert_state)
+        self.service.get_state(server.as_str()).map(convert_state)
     }
 
     fn start(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {

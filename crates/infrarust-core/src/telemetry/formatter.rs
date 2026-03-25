@@ -113,9 +113,7 @@ where
                 }
 
                 let ext = span.extensions();
-                if let Some(fields) =
-                    ext.get::<tracing_subscriber::fmt::FormattedFields<N>>()
-                {
+                if let Some(fields) = ext.get::<tracing_subscriber::fmt::FormattedFields<N>>() {
                     if !fields.is_empty() {
                         if self.is_tty {
                             write!(writer, "{}", console::style(format!(":{fields}")).blue())?;
@@ -160,7 +158,8 @@ struct MessageVisitor {
 impl tracing::field::Visit for MessageVisitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
         let val = format!("{value:?}");
-        let val = val.strip_prefix('"')
+        let val = val
+            .strip_prefix('"')
             .and_then(|v| v.strip_suffix('"'))
             .unwrap_or(&val)
             .to_string();

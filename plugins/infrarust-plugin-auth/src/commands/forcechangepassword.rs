@@ -21,7 +21,9 @@ impl CommandHandler for ForceChangePasswordCommand {
         player_registry: &'a dyn PlayerRegistry,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(sender_id) = ctx.player_id else { return };
+            let Some(sender_id) = ctx.player_id else {
+                return;
+            };
 
             if !super::is_admin(sender_id, player_registry, &self.handler) {
                 if let Some(player) = player_registry.get_player_by_id(sender_id) {
@@ -36,9 +38,8 @@ impl CommandHandler for ForceChangePasswordCommand {
 
             if ctx.args.len() < 2 {
                 if let Some(player) = player_registry.get_player_by_id(sender_id) {
-                    let _ = player.send_message(parse_colored(
-                        &config.messages.forcechangepassword_usage,
-                    ));
+                    let _ = player
+                        .send_message(parse_colored(&config.messages.forcechangepassword_usage));
                 }
                 return;
             }
