@@ -205,14 +205,14 @@ impl PluginManager {
         for loaded in self.plugins.iter().rev() {
             let loader = self.loaders.iter().find(|l| l.name() == loaded.loader_name);
 
-            if let Some(loader) = loader {
-                if let Err(e) = loader.unload(&loaded.metadata.id).await {
-                    tracing::error!(
-                        plugin = %loaded.metadata.id,
-                        error = %e,
-                        "Loader unload failed"
-                    );
-                }
+            if let Some(loader) = loader
+                && let Err(e) = loader.unload(&loaded.metadata.id).await
+            {
+                tracing::error!(
+                    plugin = %loaded.metadata.id,
+                    error = %e,
+                    "Loader unload failed"
+                );
             }
         }
     }

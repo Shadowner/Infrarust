@@ -102,27 +102,27 @@ pub fn build_title_packets(
     }
 
     if version.less_than(ProtocolVersion::V1_17) {
-        let mut frames = Vec::with_capacity(3);
-        frames.push(encode_packet(
-            &CTitleLegacy::SetTimes {
-                fade_in: title.fade_in_ticks,
-                stay: title.stay_ticks,
-                fade_out: title.fade_out_ticks,
-            },
-            version,
-            registry,
-        )?);
-        frames.push(encode_packet(
-            &CTitleLegacy::SetSubtitle(title.subtitle.to_json()),
-            version,
-            registry,
-        )?);
-        frames.push(encode_packet(
-            &CTitleLegacy::SetTitle(title.title.to_json()),
-            version,
-            registry,
-        )?);
-        return Ok(frames);
+        return Ok(vec![
+            encode_packet(
+                &CTitleLegacy::SetTimes {
+                    fade_in: title.fade_in_ticks,
+                    stay: title.stay_ticks,
+                    fade_out: title.fade_out_ticks,
+                },
+                version,
+                registry,
+            )?,
+            encode_packet(
+                &CTitleLegacy::SetSubtitle(title.subtitle.to_json()),
+                version,
+                registry,
+            )?,
+            encode_packet(
+                &CTitleLegacy::SetTitle(title.title.to_json()),
+                version,
+                registry,
+            )?,
+        ]);
     }
 
     let mut frames = Vec::with_capacity(3);

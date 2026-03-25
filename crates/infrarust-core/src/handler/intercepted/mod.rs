@@ -106,7 +106,7 @@ impl InterceptedHandler {
         .await?;
 
         let (initial_mode, target_server_id) = match initial {
-            InitialMode::Connected { mode, server_id } => (mode, server_id),
+            InitialMode::Connected { mode, server_id } => (*mode, server_id),
             InitialMode::Denied => return Ok(()),
         };
 

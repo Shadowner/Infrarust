@@ -161,13 +161,13 @@ impl ConsoleCommand for ServerCommand {
                 OutputLine::Info(format!("  Players online: {players}")),
             ];
 
-            if let Some(ref sm) = services.server_manager {
-                if let Some(state) = sm.get_state(id) {
-                    lines.push(OutputLine::Info(format!(
-                        "  State: {}",
-                        format_server_state(&state, services.is_tty())
-                    )));
-                }
+            if let Some(ref sm) = services.server_manager
+                && let Some(state) = sm.get_state(id)
+            {
+                lines.push(OutputLine::Info(format!(
+                    "  State: {}",
+                    format_server_state(&state, services.is_tty())
+                )));
             }
 
             if let Some(ref network) = cfg.network {

@@ -165,11 +165,10 @@ async fn wait_for_hold(
             }
 
             frame = core.outgoing_rx.recv() => {
-                if let Some(frame) = frame {
-                    if client.write_frame(&frame).await.is_err() {
+                if let Some(frame) = frame
+                    && client.write_frame(&frame).await.is_err() {
                         return HandlerAction::Exit(LimboChainResult::ClientDisconnected);
                     }
-                }
             }
 
             _ = keepalive_interval.tick() => {

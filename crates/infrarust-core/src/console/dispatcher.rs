@@ -37,6 +37,12 @@ pub struct CommandDispatcher {
     commands: Vec<Box<dyn ConsoleCommand>>,
 }
 
+impl Default for CommandDispatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CommandDispatcher {
     pub fn new() -> Self {
         Self {
