@@ -1,0 +1,10 @@
+target/
+.git/
+docs/
+.github/
+.claude/
+*.md
+plugins/infrarust-plugin-admin-api/frontend/node_modules/
+plugins/infrarust-plugin-admin-api/frontend/.output/
+plugins/infrarust-plugin-admin-api/frontend/.nuxt/
+plugins/infrarust-plugin-admin-api/frontend/.data/
