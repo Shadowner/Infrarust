@@ -1,5 +1,5 @@
 [package]
-name = "infrarust-proxy"
+name = "infrarust"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

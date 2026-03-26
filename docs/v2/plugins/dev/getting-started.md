@@ -188,9 +188,9 @@ fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
 
 Infrarust compiles plugins statically via Cargo features. You need to make three changes.
 
-### 1. Add the dependency to infrarust-proxy
+### 1. Add the dependency to infrarust
 
-In `crates/infrarust-proxy/Cargo.toml`, add your plugin as an optional dependency and create a feature flag:
+In `crates/infrarust/Cargo.toml`, add your plugin as an optional dependency and create a feature flag:
 
 ```toml{3,7}
 [features]
@@ -204,7 +204,7 @@ infrarust-plugin-greet = { path = "../../plugins/infrarust-plugin-greet", option
 
 ### 2. Register the plugin in the static loader
 
-In `crates/infrarust-proxy/src/plugins.rs`, add a registration block:
+In `crates/infrarust/src/plugins.rs`, add a registration block:
 
 ```rust
 #[cfg(feature = "plugin-greet")]

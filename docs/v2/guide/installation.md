@@ -79,12 +79,12 @@ apk add musl-dev pkgconfig openssl-dev build-base
 
 ### Compile
 
-Clone the repository and build the `infrarust-proxy` crate, which produces the `infrarust` binary:
+Clone the repository and build the `infrarust` crate, which produces the `infrarust` binary:
 
 ```bash
 git clone https://github.com/Shadowner/Infrarust.git
 cd Infrarust
-cargo build --release -p infrarust-proxy
+cargo build --release -p infrarust
 ```
 
 The binary is at `target/release/infrarust`.
@@ -101,7 +101,7 @@ Enable features at compile time with `--features`:
 | `plugin-server-wake` | Wake-on-LAN / server start plugin |
 
 ```bash
-cargo build --release -p infrarust-proxy --features telemetry,plugin-auth
+cargo build --release -p infrarust --features telemetry,plugin-auth
 ```
 
 ### Static linking (musl)
@@ -110,7 +110,7 @@ For a fully static binary (no runtime dependencies), target musl. This is what t
 
 ```bash
 rustup target add x86_64-unknown-linux-musl
-OPENSSL_STATIC=1 cargo build --release -p infrarust-proxy \
+OPENSSL_STATIC=1 cargo build --release -p infrarust \
   --target x86_64-unknown-linux-musl
 ```
 

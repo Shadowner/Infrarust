@@ -54,7 +54,7 @@ docker pull ghcr.io/shadowner/infrarust:latest
 
 # From source (Rust 1.85+)
 git clone https://github.com/Shadowner/Infrarust.git && cd Infrarust
-cargo build --release -p infrarust-proxy
+cargo build --release -p infrarust
 ```
 
 ### Configure

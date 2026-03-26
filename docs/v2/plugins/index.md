@@ -34,7 +34,7 @@ Infrarust includes four built-in plugins:
 | [Server Wake](./builtin/server-wake) | `plugin-server-wake` feature flag | Holds players in limbo while a backend server starts up, showing status messages. |
 | [Queue](./builtin/queue) | `plugin-queue` feature flag | Player queue management. (In development.) |
 
-Built-in plugins are registered at compile time in `infrarust-proxy/src/plugins.rs` using a `StaticPluginLoader`. To enable or disable them, toggle the corresponding Cargo feature when building:
+Built-in plugins are registered at compile time in `infrarust/src/plugins.rs` using a `StaticPluginLoader`. To enable or disable them, toggle the corresponding Cargo feature when building:
 
 ```bash
 cargo build --release --features "plugin-auth,plugin-server-wake"
