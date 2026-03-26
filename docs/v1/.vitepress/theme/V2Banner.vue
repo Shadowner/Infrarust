@@ -29,7 +29,7 @@ function dismiss() {
 
 function goToV2(e) {
   e.preventDefault()
-  window.location.href = '/v2/'
+  window.location.href = '/'
 }
 </script>
 
@@ -38,7 +38,7 @@ function goToV2(e) {
     <div class="v2-banner-content">
       <span>
         🚀 <strong>Infrarust V2 is now in alpha!</strong>
-        Check out the <a href="/v2/" @click="goToV2">new documentation</a>.
+        Check out the <a href="/" @click="goToV2">new documentation</a>.
         V1 will be archived once V2 is released.
       </span>
       <button class="v2-banner-close" aria-label="Dismiss banner" @click="dismiss">✕</button>

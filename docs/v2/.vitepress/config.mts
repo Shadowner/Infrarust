@@ -89,7 +89,7 @@ export default
             {
               text: 'Previous versions',
               items: [
-                { text: 'V1 Documentation', link: '/v1/' },
+                { text: 'V1 Documentation', link: 'https://infrarust.dev/v1/' },
               ],
             },
           ],

@@ -52,7 +52,7 @@ RUN ARCH=$(uname -m) && \
     esac && \
     echo "Building for target: $TARGET on architecture: $ARCH" && \
     rustup target add "$TARGET" && \
-    cargo build --release --target "$TARGET" -p infrarust-proxy && \
+    cargo build --release --target "$TARGET" -p infrarust && \
     cp "target/$TARGET/release/infrarust" /usr/local/bin/infrarust && \
     strip /usr/local/bin/infrarust && \
     echo "Build completed successfully"
