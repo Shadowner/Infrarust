@@ -1,20 +1,17 @@
 ARG RUST_VERSION=1.94
 ARG ALPINE_VERSION=3.21
-ARG NODE_VERSION=20
+ARG NODE_VERSION=22
 
 # Stage 1: Build the admin frontend
-FROM node:${NODE_VERSION}-alpine AS frontend-builder
+FROM docker.io/library/node:${NODE_VERSION}-alpine AS frontend-builder
 
 WORKDIR /frontend
-COPY plugins/infrarust-plugin-admin-api/frontend/package.json \
-     plugins/infrarust-plugin-admin-api/frontend/yarn.lock ./
-RUN yarn install --frozen-lockfile
-
 COPY plugins/infrarust-plugin-admin-api/frontend/ ./
+RUN yarn install --frozen-lockfile
 RUN yarn generate
 
 # Stage 2: Build Rust binary
-FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
+FROM docker.io/library/rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
 
 RUN apk add --no-cache \
     musl-dev \
