@@ -17,6 +17,10 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     name: Build ${{ matrix.platform }}
@@ -35,17 +39,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      # - name: Login to Docker Hub
-      #   uses: docker/login-action@v3
-      #   with:
-      #     username: ${{ secrets.DOCKERHUB_USERNAME }}
-      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - uses: docker/login-action@v3
+      - name: Set image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
         name: Login to GitHub Container Registry
         with:
           registry: ghcr.io
@@ -69,16 +71,16 @@ jobs:
       
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: ${{ matrix.platform }}
           build-args: |
-            RUST_VERSION=1.91.1
+            RUST_VERSION=1.94
             ALPINE_VERSION=3.21
-          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/infrarust,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/infrarust:buildcache-${{ matrix.arch }}
-          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/infrarust:buildcache-${{ matrix.arch }},mode=max
+          outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=build-${{ matrix.arch }}
+          cache-to: type=gha,scope=build-${{ matrix.arch }},mode=max
       
       - name: Export digest
         run: |
@@ -107,22 +109,20 @@ jobs:
           pattern: digests-*
           merge-multiple: true
       
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      # - name: Login to Docker Hub
-      #   uses: docker/login-action@v3
-      #   with:
-      #     username: ${{ secrets.DOCKERHUB_USERNAME }}
-      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Set image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
 
-      - uses: docker/login-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
         name: Login to GitHub Container Registry
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Determine tags
         id: determine-tags
         run: |
@@ -145,13 +145,13 @@ jobs:
           IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
           TAG_FLAGS=""
           for tag in "${TAG_ARRAY[@]}"; do
-            TAG_FLAGS="$TAG_FLAGS -t ${{ secrets.DOCKERHUB_USERNAME }}/infrarust:$tag"
+            TAG_FLAGS="$TAG_FLAGS -t ${{ steps.image.outputs.name }}:$tag"
           done
           docker buildx imagetools create $TAG_FLAGS \
-            $(printf '${{ secrets.DOCKERHUB_USERNAME }}/infrarust@sha256:%s ' *)
+            $(printf '${{ steps.image.outputs.name }}@sha256:%s ' *)
       
       - name: Inspect image
         run: |
           TAGS="${{ steps.determine-tags.outputs.tags }}"
           FIRST_TAG=$(echo "$TAGS" | cut -d',' -f1)
-          docker buildx imagetools inspect ${{ secrets.DOCKERHUB_USERNAME }}/infrarust:$FIRST_TAG
+          docker buildx imagetools inspect ${{ steps.image.outputs.name }}:$FIRST_TAG
