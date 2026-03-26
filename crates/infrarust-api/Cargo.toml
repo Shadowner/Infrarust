@@ -8,6 +8,9 @@ description = "Plugin API for Infrarust, a Minecraft reverse proxy"
 keywords = ["minecraft", "proxy", "plugin", "api"]
 categories = ["game-development", "network-programming"]
 
+[lints]
+workspace = true
+
 [dependencies]
 bytes = { workspace = true }
 serde = { workspace = true, optional = true }

@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [features]
 default = []
 docker = ["dep:bollard", "dep:futures-util"]
@@ -38,33 +41,33 @@ serde_json = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 reqwest = { workspace = true }
-wildmatch = "2.6"
+wildmatch = { workspace = true }
 comfy-table = { workspace = true }
 console = { workspace = true }
 minus = { workspace = true }
 humantime = { workspace = true }
-flate2 = "1.1.9"
+flate2 = { workspace = true }
 
 # Docker provider (optional)
-bollard = { version = "0.18", optional = true }
-futures-util = { version = "0.3", optional = true }
+bollard = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
 
 # Telemetry (optional)
-opentelemetry = { version = "0.31", optional = true }
-opentelemetry_sdk = { version = "0.31", optional = true }
-opentelemetry-otlp = { version = "0.31", optional = true, features = ["grpc-tonic", "http-proto"] }
-tracing-opentelemetry = { version = "0.32", optional = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 
 # Auth Mojang (ClientOnly)
-rsa = { version = "0.9", features = ["sha1"] }
-sha1 = "0.10"
-rand = "0.8"
-num-bigint = "0.4"
-base64 = "0.22"
+rsa = { workspace = true }
+sha1 = { workspace = true }
+rand = { workspace = true }
+num-bigint = { workspace = true }
+base64 = { workspace = true }
 
 [build-dependencies]
-flate2 = "1.1.9"
+flate2 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
-tempfile = "3"
+tempfile = { workspace = true }

@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 infrarust-api = { workspace = true }
 tokio = { workspace = true }
@@ -15,11 +18,11 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 dashmap = { workspace = true }
 toml = { workspace = true }
-chrono = { version = "0.4", features = ["serde"] }
-argon2 = { version = "0.5", features = ["std"] }
-password-hash = "0.5"
-bcrypt = "0.16"
-rand_core = { version = "0.6", features = ["getrandom"] }
+chrono = { workspace = true }
+argon2 = { workspace = true }
+password-hash = { workspace = true }
+bcrypt = { workspace = true }
+rand_core = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }

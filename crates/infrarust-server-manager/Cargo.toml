@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 infrarust-config = { workspace = true }
 tokio = { workspace = true }
@@ -18,4 +21,4 @@ tokio-util = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
-tempfile = "3"
+tempfile = { workspace = true }
