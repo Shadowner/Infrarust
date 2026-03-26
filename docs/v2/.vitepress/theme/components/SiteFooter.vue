@@ -19,6 +19,10 @@ const year = new Date().getFullYear()
           &#9829;
           Open Source
         </a>
+        <a href="https://ko-fi.com/C1C41WOEBB" target="_blank" rel="noopener" class="footer-license footer-kofi">
+          <img src="/images/kofi_symbol.png" alt="Ko-fi" class="kofi-icon" />
+          Buy me a coffee
+        </a>
       </div>
       <div class="footer-links">
         <a :href="GITHUB_URL" target="_blank" rel="noopener">GitHub</a>
@@ -86,6 +90,21 @@ const year = new Date().getFullYear()
 .footer-oss:hover {
   color: var(--ir-green);
   border-color: rgba(93, 175, 80, 0.4);
+}
+
+.footer-kofi {
+  color: rgba(244, 93, 34, 0.55);
+  border-color: rgba(244, 93, 34, 0.15);
+}
+
+.footer-kofi:hover {
+  color: #f45d22;
+  border-color: rgba(244, 93, 34, 0.4);
+}
+
+.kofi-icon {
+  height: 13px;
+  width: auto;
 }
 
 .footer-links {

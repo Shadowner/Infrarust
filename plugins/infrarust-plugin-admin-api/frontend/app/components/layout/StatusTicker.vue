@@ -8,6 +8,7 @@ import {
   DocumentTextIcon,
   Cog6ToothIcon,
   KeyIcon,
+  HeartIcon,
 } from '@heroicons/vue/24/outline';
 import type { ProxyStatus } from '~/types/api';
 
@@ -143,6 +144,20 @@ function handleSwitchKey() {
         <KeyIcon class="h-3.5 w-3.5" />
         Key
       </button>
+
+      <span class="h-3 w-px bg-[var(--ir-border)]" />
+
+      <a
+        href="https://ko-fi.com/C1C41WOEBB"
+        target="_blank"
+        rel="noopener"
+        class="support-link group flex items-center gap-0 rounded-md px-2 py-1 text-[var(--ir-text-muted)] transition-all hover:gap-1.5"
+      >
+        <HeartIcon class="h-3.5 w-3.5 shrink-0 transition-colors group-hover:text-[var(--ir-danger)]" />
+        <span class="max-w-0 overflow-hidden whitespace-nowrap text-xs opacity-0 transition-all duration-300 group-hover:max-w-[8rem] group-hover:opacity-100 group-hover:text-[var(--ir-danger)]">
+          Support us
+        </span>
+      </a>
     </div>
   </header>
 
