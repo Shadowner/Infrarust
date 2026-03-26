@@ -2,7 +2,8 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use std::path::PathBuf;
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +24,7 @@ use infrarust_core::services::server_manager_bridge::{NoopServerManager, ServerM
 use infrarust_core::telemetry::formatter::InfrarustFormatter;
 
 mod plugins;
+mod wizard;
 
 /// Infrarust — A Minecraft reverse proxy
 #[derive(Parser)]
@@ -45,12 +47,32 @@ struct Cli {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    // Load config FIRST (before subscriber, to get telemetry config)
-    let config = match load_config(&cli) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("error: {e:#}");
-            return ExitCode::FAILURE;
+    let config = if !cli.config.exists()
+        && cli.config == Path::new("infrarust.toml")
+        && std::io::stdout().is_terminal()
+    {
+        match wizard::run(&cli.config) {
+            Ok(wizard::WizardOutcome::Config(c)) => {
+                let mut c = *c;
+                // CLI --bind overrides config (load_config does this for the normal path)
+                if let Some(bind) = cli.bind {
+                    c.bind = bind;
+                }
+                c
+            }
+            Ok(wizard::WizardOutcome::ExitClean) => return ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        match load_config(&cli) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                return ExitCode::FAILURE;
+            }
         }
     };
 
@@ -304,6 +326,11 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let console_handle = tokio::spawn(console_task.run());
 
     tracing::info!("infrarust is ready, accepting connections");
+
+    if let Some(web) = &web_config {
+        let label = if web.enable_webui { "Web dashboard" } else { "API" };
+        tracing::info!("{label} accessible at: http://localhost:{}", web.listen_port);
+    }
 
     let server = Arc::new(server);
 

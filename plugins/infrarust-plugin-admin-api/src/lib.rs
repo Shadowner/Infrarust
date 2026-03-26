@@ -45,17 +45,15 @@ use crate::state::{ApiEvent, ApiState};
 pub struct AdminApiPlugin {
     server_handle: Mutex<Option<JoinHandle<()>>>,
     shutdown: CancellationToken,
-    listen_port: u16,
     _enable_api: bool, //TODO : make to only have the api without webui
     enable_webui: bool,
 }
 
 impl AdminApiPlugin {
-    pub fn new(listen_port: u16, enable_api: bool, enable_webui: bool) -> Self {
+    pub fn new(enable_api: bool, enable_webui: bool) -> Self {
         Self {
             server_handle: Mutex::new(None),
             shutdown: CancellationToken::new(),
-            listen_port,
             _enable_api: enable_api,
             enable_webui,
         }
@@ -75,8 +73,7 @@ impl Plugin for AdminApiPlugin {
     ) -> BoxFuture<'a, Result<(), PluginError>> {
         Box::pin(async move {
             let data_dir = PathBuf::from("plugins/admin_api");
-            let mut config = load_config(&data_dir).await?;
-            config.bind = format!("127.0.0.1:{}", self.listen_port);
+            let config = load_config(&data_dir).await?;
 
             let (event_tx, _) = broadcast::channel::<ApiEvent>(EVENT_CHANNEL_CAPACITY);
 

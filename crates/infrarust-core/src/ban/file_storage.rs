@@ -133,20 +133,34 @@ impl BanStorage for FileBanStorage {
         Box::pin(async move {
             match tokio::fs::read_to_string(&self.file_path).await {
                 Ok(contents) => {
-                    let data: BanFileData = serde_json::from_str(&contents)
-                        .map_err(|e| CoreError::Other(format!("failed to parse ban file: {e}")))?;
-                    self.populate_maps(data.bans);
-                    {
-                        let mut log = self.audit_log.write().await;
-                        *log = data.audit_log;
+                    match serde_json::from_str::<BanFileData>(&contents) {
+                        Ok(data) => {
+                            self.populate_maps(data.bans);
+                            {
+                                let mut log = self.audit_log.write().await;
+                                *log = data.audit_log;
+                            }
+                            tracing::info!(
+                                path = %self.file_path.display(),
+                                ip_bans = self.ip_bans.len(),
+                                username_bans = self.username_bans.len(),
+                                uuid_bans = self.uuid_bans.len(),
+                                "loaded ban data"
+                            );
+                        }
+                        Err(e) => {
+                            let backup = self.file_path.with_extension("json.bak");
+                            tracing::warn!(
+                                path = %self.file_path.display(),
+                                error = %e,
+                                backup = %backup.display(),
+                                "ban file is corrupt, backing up and starting empty"
+                            );
+                            if let Err(rename_err) = tokio::fs::rename(&self.file_path, &backup).await {
+                                tracing::warn!(error = %rename_err, "failed to back up corrupt ban file");
+                            }
+                        }
                     }
-                    tracing::info!(
-                        path = %self.file_path.display(),
-                        ip_bans = self.ip_bans.len(),
-                        username_bans = self.username_bans.len(),
-                        uuid_bans = self.uuid_bans.len(),
-                        "loaded ban data"
-                    );
                     Ok(())
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
