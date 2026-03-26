@@ -42,7 +42,7 @@ fn main() {
 
     writeln!(out, "const REGISTRY_BINS: &[&[u8]] = &[").unwrap();
     for gz in &gz_paths {
-        writeln!(out, "    include_bytes!(\"{gz}\"),").unwrap();
+        writeln!(out, "    include_bytes!({:?}),", gz).unwrap();
     }
     writeln!(out, "];").unwrap();
 }
