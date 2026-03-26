@@ -20,10 +20,10 @@ telemetry = [
 
 [dependencies]
 infrarust-api = { workspace = true, features = ["serde"] }
-infrarust-config = { workspace = true }
-infrarust-protocol = { workspace = true }
+infrarust_config = { workspace = true }
+infrarust_protocol = { workspace = true }
 infrarust-transport = { workspace = true }
-infrarust-server-manager = { workspace = true }
+infrarust_server_manager = { workspace = true }
 
 tokio = { workspace = true }
 tokio-util = { workspace = true }

@@ -13,7 +13,7 @@ name = "registry-extractor"
 path = "src/main.rs"
 
 [dependencies]
-infrarust-protocol = { workspace = true }
+infrarust_protocol = { workspace = true }
 infrarust-core = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }

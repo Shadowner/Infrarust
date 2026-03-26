@@ -1,5 +1,5 @@
 [package]
-name = "infrarust-protocol"
+name = "infrarust_protocol"
 version.workspace = true
 edition.workspace = true
 license = "MIT"

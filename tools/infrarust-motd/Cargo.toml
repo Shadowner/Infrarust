@@ -13,6 +13,6 @@ name = "infrarust-motd"
 path = "src/main.rs"
 
 [dependencies]
-infrarust-protocol = { workspace = true }
+infrarust_protocol = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }

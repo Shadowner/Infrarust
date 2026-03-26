@@ -32,13 +32,11 @@ dialoguer = { workspace = true }
 comfy-table = { workspace = true }
 console = { workspace = true }
 uuid = { workspace = true }
-infrarust-protocol = { workspace = true }
+infrarust_protocol = { workspace = true }
 infrarust-api = { workspace = true }
-infrarust-config = { workspace = true }
+infrarust_config = { workspace = true }
 infrarust-core = { workspace = true }
-infrarust-limbo = { workspace = true }
-infrarust-ban = { workspace = true }
-infrarust-server-manager = { workspace = true }
+infrarust_server_manager = { workspace = true }
 
 # Plugins (optional)
 infrarust-plugin-auth = { workspace = true, optional = true }
