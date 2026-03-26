@@ -48,4 +48,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: latest-build
-          path: target/release/infrarust-latest
+          path: target/release/infrarust-latest-linux
