@@ -48,10 +48,10 @@ pub async fn list(
 
     if let Some(ref mode_filter) = query.mode {
         players.retain(|p| {
-            if let Some(server_id) = p.current_server() {
-                if let Some(config) = state.config_service.get_server_config(&server_id) {
-                    return proxy_mode_str(config.proxy_mode) == mode_filter.as_str();
-                }
+            if let Some(server_id) = p.current_server()
+                && let Some(config) = state.config_service.get_server_config(&server_id)
+            {
+                return proxy_mode_str(config.proxy_mode) == mode_filter.as_str();
             }
             false
         });

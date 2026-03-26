@@ -35,10 +35,10 @@ pub async fn event_stream(
         loop {
             match receiver.recv().await {
                 Ok(event) => {
-                    if let Some(ref allowed) = type_filter {
-                        if !allowed.contains(event.event_type()) {
-                            continue;
-                        }
+                    if let Some(ref allowed) = type_filter
+                        && !allowed.contains(event.event_type())
+                    {
+                        continue;
                     }
 
                     match serde_json::to_string(&event) {
@@ -97,10 +97,10 @@ pub async fn log_stream(
                     if !level_matches(&entry.level, min_level) {
                         continue;
                     }
-                    if let Some(ref prefix) = target_prefix {
-                        if !entry.target.starts_with(prefix.as_str()) {
-                            continue;
-                        }
+                    if let Some(ref prefix) = target_prefix
+                        && !entry.target.starts_with(prefix.as_str())
+                    {
+                        continue;
                     }
 
                     match serde_json::to_string(&entry) {

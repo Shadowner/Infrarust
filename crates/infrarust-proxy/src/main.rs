@@ -328,8 +328,15 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     tracing::info!("infrarust is ready, accepting connections");
 
     if let Some(web) = &web_config {
-        let label = if web.enable_webui { "Web dashboard" } else { "API" };
-        tracing::info!("{label} accessible at: http://localhost:{}", web.listen_port);
+        let label = if web.enable_webui {
+            "Web dashboard"
+        } else {
+            "API"
+        };
+        tracing::info!(
+            "{label} accessible at: http://localhost:{}",
+            web.listen_port
+        );
     }
 
     let server = Arc::new(server);

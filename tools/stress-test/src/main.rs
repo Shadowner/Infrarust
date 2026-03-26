@@ -71,7 +71,10 @@ fn build_status_request() -> Vec<u8> {
 }
 
 #[derive(Parser)]
-#[command(name = "infrarust-stress-test", about = "Stress test tool for Infrarust Minecraft proxy")]
+#[command(
+    name = "infrarust-stress-test",
+    about = "Stress test tool for Infrarust Minecraft proxy"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -136,8 +139,14 @@ impl Stats {
     }
 
     fn record_latency(&self, latency_ms: u64) {
-        self.latencies.lock().unwrap_or_else(|e| e.into_inner()).push(latency_ms);
-        self.all_latencies.lock().unwrap_or_else(|e| e.into_inner()).push(latency_ms);
+        self.latencies
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(latency_ms);
+        self.all_latencies
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(latency_ms);
     }
 
     fn drain_latencies(&self) -> Vec<u64> {
@@ -154,9 +163,8 @@ async fn do_slp(host: &str, port: u16, stats: &Stats) {
 
     let result = timeout(CONNECT_TIMEOUT, async {
         let addr = format!("{host}:{port}");
-        let mut stream = TcpStream::connect(&addr).await.map_err(|e| {
+        let mut stream = TcpStream::connect(&addr).await.inspect_err(|_e| {
             stats.conn_fail.fetch_add(1, Ordering::Relaxed);
-            e
         })?;
         let _ = stream.set_nodelay(true);
 
@@ -171,7 +179,10 @@ async fn do_slp(host: &str, port: u16, stats: &Stats) {
         // Read response: VarInt length, then payload
         let length = read_varint(&mut stream).await?;
         if length <= 0 || length > 1_048_576 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "bad response length"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bad response length",
+            ));
         }
         // Read at least 1 byte to confirm we got data
         let mut buf = vec![0u8; std::cmp::min(length as usize, 4096)];
@@ -234,9 +245,8 @@ async fn do_malformed(host: &str, port: u16, variant: MalformedType, stats: &Sta
 
     let result = timeout(CONNECT_TIMEOUT, async {
         let addr = format!("{host}:{port}");
-        let mut stream = TcpStream::connect(&addr).await.map_err(|e| {
+        let mut stream = TcpStream::connect(&addr).await.inspect_err(|_e| {
             stats.conn_fail.fetch_add(1, Ordering::Relaxed);
-            e
         })?;
         let _ = stream.set_nodelay(true);
 
@@ -363,7 +373,10 @@ fn print_summary(stats: &Stats, duration: Duration) {
     let total_errors = stats.errors.load(Ordering::Relaxed);
     let total_conn_fail = stats.conn_fail.load(Ordering::Relaxed);
 
-    let all_latencies = stats.all_latencies.lock().unwrap_or_else(|e| e.into_inner());
+    let all_latencies = stats
+        .all_latencies
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
 
     let (avg_latency, p99_latency) = if all_latencies.is_empty() {
         (0, 0)
@@ -398,15 +411,24 @@ async fn main() {
     let cli = Cli::parse();
 
     let (host, port, concurrency, duration_secs, mode) = match &cli.command {
-        Command::Flood { host, port, concurrency, duration } => {
-            (host.clone(), *port, *concurrency, *duration, "flood")
-        }
-        Command::Malformed { host, port, concurrency, duration } => {
-            (host.clone(), *port, *concurrency, *duration, "malformed")
-        }
-        Command::Mixed { host, port, concurrency, duration } => {
-            (host.clone(), *port, *concurrency, *duration, "mixed")
-        }
+        Command::Flood {
+            host,
+            port,
+            concurrency,
+            duration,
+        } => (host.clone(), *port, *concurrency, *duration, "flood"),
+        Command::Malformed {
+            host,
+            port,
+            concurrency,
+            duration,
+        } => (host.clone(), *port, *concurrency, *duration, "malformed"),
+        Command::Mixed {
+            host,
+            port,
+            concurrency,
+            duration,
+        } => (host.clone(), *port, *concurrency, *duration, "mixed"),
     };
 
     println!("=== Infrarust Stress Test ===");

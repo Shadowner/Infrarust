@@ -13,10 +13,10 @@ pub async fn spa_handler(uri: Uri) -> Response {
         return (StatusCode::NOT_FOUND, "Not Found").into_response();
     }
 
-    if !path.is_empty() {
-        if let Some(file) = FrontendAssets::get(path) {
-            return serve_file(path, &file.data);
-        }
+    if !path.is_empty()
+        && let Some(file) = FrontendAssets::get(path)
+    {
+        return serve_file(path, &file.data);
     }
 
     serve_index()
