@@ -25,6 +25,10 @@ tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 toml = { workspace = true }
+dialoguer = { workspace = true }
+comfy-table = { workspace = true }
+console = { workspace = true }
+uuid = { workspace = true }
 infrarust-protocol = { workspace = true }
 infrarust-api = { workspace = true }
 infrarust-config = { workspace = true }

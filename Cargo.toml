@@ -42,6 +42,7 @@ nonzero_ext = "0.3"
 toml = "0.8"
 comfy-table = { version = "7", features = ["tty"] }
 console = "0.16"
+dialoguer = "0.11"
 minus = { version = "5", features = ["static_output"] }
 humantime = "2"
 
