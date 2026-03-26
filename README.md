@@ -4,7 +4,10 @@
   <h1>Infrarust</h1>
 
   <p>Minecraft reverse proxy written in Rust. Route players to backend servers by domain, manage everything from a web dashboard.</p>
-
+  <a href="https://ko-fi.com/C1C41WOEBB">
+    <img height='26' alt="Ko-fi" src="https://storage.ko-fi.com/cdn/kofi6.png?v=6" />
+  <br /><br />
+  </a>
   <a href="https://crates.io/crates/infrarust">
     <img alt="Crates.io" src="https://img.shields.io/crates/v/infrarust?style=flat-square" />
   </a>
@@ -12,6 +15,7 @@
   <a href="https://discord.gg/sqbJhZVSgG">
     <img alt="Discord" src="https://img.shields.io/discord/1330603066478825502?style=flat-square&label=discord" />
   </a>
+
 </div>
 
 <br />
