@@ -7,6 +7,30 @@ description: Set up Infrarust in five minutes. Create a minimal config, start th
 
 This guide walks you through a minimal Infrarust setup: one proxy, one backend Minecraft server, one player connecting through a domain.
 
+## Interactive setup
+
+The fastest way to get started is to run `infrarust` with no configuration file. The built-in setup wizard walks you through the essentials:
+
+```bash
+infrarust
+```
+
+When no `infrarust.toml` is found in the working directory, the wizard prompts you for:
+
+- **Proxy listen address** - the address and port players connect to (default `0.0.0.0:25565`)
+- **Servers directory** - where backend server definitions live (default `./servers`)
+- **Maximum connections** - connection limit, `0` for unlimited
+- **Web admin panel** - enable the REST API and web dashboard, choose a bind address and port
+- **Sample server** - optionally create a first backend server definition with a domain and address
+
+If you enable the web panel, the wizard generates an API key and writes it to `plugins/admin_api/config.toml`. Save this key, it is required to access the dashboard.
+
+Once confirmed, the wizard writes `infrarust.toml`, creates the servers directory, and starts the proxy immediately.
+
+::: tip
+If you prefer to write the configuration by hand, skip this section and continue with the [manual setup below](#prerequisites). For the full list of options, see the [configuration reference](../reference/config-schema).
+:::
+
 ## Prerequisites
 
 - Infrarust installed ([Installation](./installation.md))
@@ -27,7 +51,7 @@ servers_dir = "./servers"
 `bind` sets the address and port Infrarust listens on. `servers_dir` tells it where to find server definitions. The `[web]` section enables the admin REST API and web dashboard on port `8080`.
 
 ::: tip
-`bind` and `servers_dir` are the defaults. The `[web]` section activates the [Admin API & Web UI](../plugins/builtin/admin-api) plugin with all defaults — API and dashboard on `http://127.0.0.1:8080`.
+`bind` and `servers_dir` are the defaults. The `[web]` section activates the [Admin API & Web UI](../plugins/builtin/admin-api) plugin with all defaults - API and dashboard on `http://127.0.0.1:8080`.
 :::
 
 ## 2. Define a backend server
