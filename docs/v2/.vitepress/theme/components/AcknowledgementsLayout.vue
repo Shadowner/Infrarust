@@ -6,6 +6,12 @@ import { useMultiGitHubStars, formatStars } from '../composables/useMultiGitHubS
 
 const minecraftProjects = [
   {
+    name: "Infrared",
+    
+    repo: "https://github.com/haveachin/infrared",
+    desc : "The original Go Minecraft proxy that inspired me to build Infrarust in the first place. I learned a lot from reading through the code and issues. Even if Infrarust don't share the architecture anymore, the V1 codebase (inspired by it) was the spark that started it all.",
+  },
+  {
     name: 'Velocity',
 
     repo: 'https://github.com/PaperMC/Velocity',
