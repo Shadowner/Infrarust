@@ -8,10 +8,6 @@ const { push } = useToast();
 const serverId = route.params.id as string;
 
 const server = ref<ServerDetailDto | null>(null);
-const domains = ref<string[]>([]);
-const addresses = ref<string[]>([]);
-const mode = ref('passthrough');
-const handlers = ref<string[]>([]);
 const submitting = ref(false);
 
 const { data } = await useAsyncData(`server-edit:${serverId}`, async () => {
@@ -21,29 +17,26 @@ const { data } = await useAsyncData(`server-edit:${serverId}`, async () => {
 
 if (data.value) {
   server.value = data.value;
-  domains.value = [...data.value.domains];
-  addresses.value = [...data.value.addresses];
-  mode.value = data.value.proxy_mode;
-  handlers.value = [...(data.value.limbo_handlers ?? [])];
 }
 
-async function submit() {
-  if (domains.value.length === 0) {
-    push({ type: 'error', title: 'At least one domain is required' });
-    return;
-  }
-  if (addresses.value.length === 0) {
-    push({ type: 'error', title: 'At least one address is required' });
-    return;
-  }
+const initialData = computed(() => {
+  if (!server.value) return undefined;
+  return {
+    domains: server.value.domains,
+    addresses: server.value.addresses,
+    mode: server.value.proxy_mode,
+    handlers: server.value.limbo_handlers ?? [],
+  };
+});
 
+async function handleUpdate(payload: { domains: string[]; addresses: string[]; mode: string; handlers: string[] }) {
   submitting.value = true;
   try {
     const body: UpdateServerRequest = {
-      domains: domains.value,
-      addresses: addresses.value,
-      proxy_mode: mode.value,
-      limbo_handlers: handlers.value.length > 0 ? handlers.value : undefined,
+      domains: payload.domains,
+      addresses: payload.addresses,
+      proxy_mode: payload.mode,
+      limbo_handlers: payload.handlers.length > 0 ? payload.handlers : undefined,
     };
     await request<ApiEnvelope<MutationResult>>(`/servers/${encodeURIComponent(serverId)}`, {
       method: 'PUT',
@@ -79,44 +72,13 @@ async function submit() {
       <p class="text-sm text-[var(--ir-text-muted)]">This server is managed by a config provider and cannot be edited from here.</p>
     </div>
 
-    <div v-else-if="server" class="glass-pane relative overflow-hidden p-6">
-      <div class="absolute inset-x-0 top-0 h-[3px] bg-[var(--ir-accent-gradient)]" />
-
-      <div class="grid gap-4">
-        <div>
-          <label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Server ID</label>
-          <input :value="serverId" class="input font-mono" disabled />
-        </div>
-        <div>
-          <label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Domains</label>
-          <TagInput v-model="domains" />
-        </div>
-        <div>
-          <label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Addresses (host:port)</label>
-          <TagInput v-model="addresses" />
-        </div>
-        <div>
-          <label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Proxy Mode</label>
-          <select v-model="mode" class="input">
-            <option>passthrough</option>
-            <option value="zero_copy">zerocopy</option>
-            <option>client_only</option>
-            <option>offline</option>
-            <option>server_only</option>
-          </select>
-        </div>
-        <div>
-          <label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Limbo Handlers</label>
-          <TagInput v-model="handlers" />
-        </div>
-      </div>
-
-      <div class="mt-5 flex justify-end gap-2">
-        <NuxtLink :to="`/servers/${serverId}`" class="btn btn-secondary">Cancel</NuxtLink>
-        <button class="btn btn-primary" :disabled="submitting" @click="submit">
-          {{ submitting ? 'Saving...' : 'Update Server' }}
-        </button>
-      </div>
-    </div>
+    <ServerForm
+      v-else-if="server"
+      :is-edit="true"
+      :server-id="serverId"
+      :initial-data="initialData"
+      @submit="handleUpdate"
+      @cancel="navigateTo(`/servers/${serverId}`)"
+    />
   </div>
 </template>

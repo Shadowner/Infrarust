@@ -15,7 +15,6 @@ const { request } = useApi();
 const { push } = useToast();
 const { ask } = useConfirm();
 const rows = ref<ServerDto[]>([]);
-const showCreateModal = ref(false);
 
 async function fetchServers() {
   try {
@@ -102,10 +101,10 @@ async function deleteServer(id: string) {
         </span>
         <span v-if="healthLoading" class="text-[10px] text-[var(--ir-text-muted)] animate-pulse">pinging...</span>
       </div>
-      <button class="btn btn-primary flex items-center gap-1.5" @click="showCreateModal = true">
+      <NuxtLink to="/servers/create" class="btn btn-primary flex items-center gap-1.5">
         <PlusIcon class="h-4 w-4" />
         <span class="hidden sm:inline">New Server</span>
-      </button>
+      </NuxtLink>
     </div>
 
     <!-- API-managed servers -->
@@ -118,9 +117,9 @@ async function deleteServer(id: string) {
 
       <div v-if="apiServers.length === 0" class="glass-pane p-6 text-center">
         <p class="text-sm text-[var(--ir-text-muted)]">No API-managed servers yet.</p>
-        <button class="mt-2 inline-flex items-center gap-1.5 text-sm text-[var(--ir-accent)] hover:underline" @click="showCreateModal = true">
+        <NuxtLink to="/servers/create" class="mt-2 inline-flex items-center gap-1.5 text-sm text-[var(--ir-accent)] hover:underline">
           <PlusIcon class="h-4 w-4" /> Create one
-        </button>
+        </NuxtLink>
       </div>
 
       <div v-else class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -220,7 +219,5 @@ async function deleteServer(id: string) {
         </NuxtLink>
       </div>
     </section>
-
-    <ServerFormModal v-model="showCreateModal" @saved="fetchServers" />
   </div>
 </template>
