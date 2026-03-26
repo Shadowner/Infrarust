@@ -1,10 +1,13 @@
 [package]
 name = "infrarust-stress-test"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
-[workspace]
+[lints]
+workspace = true
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-clap = { version = "4", features = ["derive"] }
+tokio = { workspace = true }
+clap = { workspace = true }

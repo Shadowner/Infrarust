@@ -18,33 +18,107 @@ members = [
     "plugins/infrarust-plugin-admin-api",
     "tools/infrarust-motd",
     "tools/registry-extractor",
+    "tools/stress-test",
 ]
 
 [workspace.dependencies]
-tokio = { version = "1", features = ["net", "io-util", "io-std", "sync", "time", "macros", "rt", "rt-multi-thread", "signal", "process", "fs"] }
+# Async runtime
+tokio = { version = "1.50.0", features = ["net", "io-util", "io-std", "sync", "time", "macros", "rt", "rt-multi-thread", "signal", "process", "fs"] }
 tokio-util = { version = "0.7", features = ["codec"] }
-bytes = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+tokio-stream = "0.1.18"
+
+# Serialization
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 serde_yml = "0.0.12"
-thiserror = "2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter", "registry"] }
-uuid = { version = "1", features = ["v3", "v4", "serde"] }
-arc-swap = "1"
-clap = { version = "4.6.0", features = ["derive"] }
-anyhow = "1.0.102"
-reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json"] }
-notify = "8.2.0"
-dashmap = "6"
-governor = "0.10.4"
-nonzero_ext = "0.3"
 toml = "0.8"
-comfy-table = { version = "7", features = ["tty"] }
-console = "0.16"
-dialoguer = "0.11"
-minus = { version = "5", features = ["static_output"] }
-humantime = "2"
+fastnbt = "2.6.1"
+
+# Data types
+bytes = "1.11.1"
+uuid = { version = "1.22.0", features = ["v3", "v4", "serde"] }
+chrono = { version = "0.4.44", features = ["serde"] }
+humantime = "2.3.0"
+humantime-serde = "1.1.1"
+ipnet = { version = "2.12.0", features = ["serde"] }
+
+# Error handling
+thiserror = "2.0.18"
+anyhow = "1.0.102"
+
+# Logging / Tracing
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "registry"] }
+
+# Telemetry (OpenTelemetry)
+opentelemetry = { version = "0.31.0" }
+opentelemetry_sdk = { version = "0.31.0" }
+opentelemetry-otlp = { version = "0.31.1", features = ["grpc-tonic", "http-proto"] }
+tracing-opentelemetry = { version = "0.32.1" }
+
+# CLI
+clap = { version = "4.6.0", features = ["derive"] }
+comfy-table = { version = "7.2.2", features = ["tty"] }
+console = "0.16.3"
+dialoguer = "0.12.0"
+minus = { version = "5.6.1", features = ["static_output"] }
+
+# Networking
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json"] }
+socket2 = { version = "0.5.10", features = ["all"] }
+ppp = "2.3.0"
+
+# Concurrency / State
+arc-swap = "1.9.0"
+dashmap = "6.1.0"
+governor = "0.10.4"
+nonzero_ext = "0.3.0"
+notify = "8.2.0"
+futures-util = "0.3.32"
+async-stream = "0.3.6"
+
+# Compression
+flate2 = "1.1.9"
+libdeflater = "1.25.2"
+
+# Crypto (protocol)
+aes = "0.8.4"
+cfb8 = "0.8.1"
+cipher = "0.4.4"
+rsa = { version = "0.9.10", features = ["sha1"] }
+sha1 = "0.10.6"
+rand = "0.8"
+num-bigint = "0.4.6"
+base64 = "0.22.1"
+
+# Crypto (auth plugin)
+argon2 = { version = "0.5.3", features = ["std"] }
+password-hash = "0.6.0"
+bcrypt = "0.19.0"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+
+# Web (admin API)
+axum = "0.8.8"
+tower = { version = "0.5.3", features = ["limit"] }
+tower-http = { version = "0.6.8", features = ["cors", "compression-gzip", "trace", "timeout"] }
+subtle = "2.6.1"
+time = { version = "0.3.47", features = ["formatting", "macros"] }
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+mime_guess = "2.0.5"
+http-body-util = "0.1.3"
+
+# Docker
+bollard = "0.18.1"
+
+# Pattern matching
+wildmatch = "2.6.1"
+
+# Platform-specific
+nix = { version = "0.29", features = ["fs", "net", "zerocopy"] }
+mimalloc = "0.1.48"
+
+# Testing
+tempfile = "3.27.0"
 
 # Internal crates
 infrarust-protocol = { path = "crates/infrarust-protocol" }
@@ -55,6 +129,18 @@ infrarust-core = { path = "crates/infrarust-core" }
 infrarust-limbo = { path = "crates/infrarust-limbo" }
 infrarust-ban = { path = "crates/infrarust-ban" }
 infrarust-server-manager = { path = "crates/infrarust-server-manager" }
+
+# Internal plugins
+infrarust-plugin-auth = { path = "plugins/infrarust-plugin-auth" }
+infrarust-plugin-hello = { path = "plugins/infrarust-plugin-hello" }
+infrarust-plugin-server-wake = { path = "plugins/infrarust-plugin-server-wake" }
+infrarust-plugin-admin-api = { path = "plugins/infrarust-plugin-admin-api" }
+
+[workspace.lints.clippy]
+all = "warn"
+
+[workspace.lints.rust]
+unsafe_code = "warn"
 
 [workspace.package]
 version = "2.0.0-alpha.1"

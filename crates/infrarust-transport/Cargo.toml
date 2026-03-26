@@ -6,18 +6,21 @@ license.workspace = true
 repository.workspace = true
 description = "Low-level networking layer for the Infrarust Minecraft proxy"
 
+[lints]
+workspace = true
+
 [dependencies]
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 bytes = { workspace = true }
-socket2 = { version = "0.5", features = ["all"] }
-ppp = "2"
+socket2 = { workspace = true }
+ppp = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 infrarust-config = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "0.29", features = ["fs", "net", "zerocopy"] }
+nix = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

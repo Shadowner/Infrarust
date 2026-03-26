@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "infrarust"
 path = "src/main.rs"
@@ -38,14 +41,14 @@ infrarust-ban = { workspace = true }
 infrarust-server-manager = { workspace = true }
 
 # Plugins (optional)
-infrarust-plugin-auth = { path = "../../plugins/infrarust-plugin-auth", optional = true }
-infrarust-plugin-hello = { path = "../../plugins/infrarust-plugin-hello", optional = true }
-infrarust-plugin-server-wake = { path = "../../plugins/infrarust-plugin-server-wake", optional = true }
-infrarust-plugin-admin-api = { path = "../../plugins/infrarust-plugin-admin-api" }
+infrarust-plugin-auth = { workspace = true, optional = true }
+infrarust-plugin-hello = { workspace = true, optional = true }
+infrarust-plugin-server-wake = { workspace = true, optional = true }
+infrarust-plugin-admin-api = { workspace = true }
 
 # Telemetry (optional)
-opentelemetry = { version = "0.31", optional = true }
-tracing-opentelemetry = { version = "0.32", optional = true }
+opentelemetry = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
-mimalloc = "0.1"
+mimalloc = { workspace = true }
