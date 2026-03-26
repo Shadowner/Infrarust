@@ -51,15 +51,15 @@ jobs:
         working-directory: docs/v2
         run: yarn docs:build
 
-      - name: Merge V1 and V2 builds
+      - name: Merge V2 and V1 builds
         run: |
-          mkdir -p docs/v1/.vitepress/dist/v2
-          cp -r docs/v2/.vitepress/dist/* docs/v1/.vitepress/dist/v2/
+          mkdir -p docs/v2/.vitepress/dist/v1
+          cp -r docs/v1/.vitepress/dist/* docs/v2/.vitepress/dist/v1/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/v1/.vitepress/dist
+          path: docs/v2/.vitepress/dist
 
   deploy:
     environment:
