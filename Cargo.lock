@@ -1350,33 +1350,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "infrarust-ban"
-version = "2.0.0-alpha.1"
-dependencies = [
- "infrarust-api",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "infrarust-config"
-version = "2.0.0-alpha.1"
-dependencies = [
- "humantime-serde",
- "ipnet",
- "serde",
- "thiserror 2.0.18",
- "tokio",
- "toml",
- "tracing",
- "wildmatch",
-]
-
-[[package]]
 name = "infrarust-core"
 version = "2.0.0-alpha.1"
 dependencies = [
@@ -1392,10 +1365,10 @@ dependencies = [
  "governor",
  "humantime",
  "infrarust-api",
- "infrarust-config",
- "infrarust-protocol",
- "infrarust-server-manager",
  "infrarust-transport",
+ "infrarust_config",
+ "infrarust_protocol",
+ "infrarust_server_manager",
  "minus",
  "nonzero_ext",
  "notify",
@@ -1422,24 +1395,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "infrarust-limbo"
-version = "2.0.0-alpha.1"
-dependencies = [
- "bytes",
- "infrarust-api",
- "infrarust-protocol",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "infrarust-motd"
 version = "2.0.0-alpha.1"
 dependencies = [
  "clap",
- "infrarust-protocol",
+ "infrarust_protocol",
  "tokio",
 ]
 
@@ -1451,7 +1411,7 @@ dependencies = [
  "axum",
  "http-body-util",
  "infrarust-api",
- "infrarust-protocol",
+ "infrarust_protocol",
  "mime_guess",
  "rust-embed",
  "serde",
@@ -1527,22 +1487,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "infrarust-protocol"
-version = "2.0.0-alpha.1"
-dependencies = [
- "aes",
- "bytes",
- "cfb8",
- "cipher",
- "fastnbt",
- "flate2",
- "libdeflater",
- "serde",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
 name = "infrarust-proxy"
 version = "2.0.0-alpha.1"
 dependencies = [
@@ -1552,16 +1496,14 @@ dependencies = [
  "console",
  "dialoguer",
  "infrarust-api",
- "infrarust-ban",
- "infrarust-config",
  "infrarust-core",
- "infrarust-limbo",
  "infrarust-plugin-admin-api",
  "infrarust-plugin-auth",
  "infrarust-plugin-hello",
  "infrarust-plugin-server-wake",
- "infrarust-protocol",
- "infrarust-server-manager",
+ "infrarust_config",
+ "infrarust_protocol",
+ "infrarust_server_manager",
  "mimalloc",
  "opentelemetry",
  "tokio",
@@ -1571,22 +1513,6 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "infrarust-server-manager"
-version = "2.0.0-alpha.1"
-dependencies = [
- "dashmap",
- "infrarust-config",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]
@@ -1602,10 +1528,56 @@ name = "infrarust-transport"
 version = "2.0.0-alpha.1"
 dependencies = [
  "bytes",
- "infrarust-config",
+ "infrarust_config",
  "nix",
  "ppp",
  "socket2 0.5.10",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "infrarust_config"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "humantime-serde",
+ "ipnet",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+ "wildmatch",
+]
+
+[[package]]
+name = "infrarust_protocol"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "aes",
+ "bytes",
+ "cfb8",
+ "cipher",
+ "fastnbt",
+ "flate2",
+ "libdeflater",
+ "serde",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "infrarust_server_manager"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "dashmap",
+ "infrarust_config",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -2553,7 +2525,7 @@ dependencies = [
  "chrono",
  "clap",
  "infrarust-core",
- "infrarust-protocol",
+ "infrarust_protocol",
  "serde",
  "serde_json",
  "tokio",

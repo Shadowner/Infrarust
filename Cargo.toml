@@ -1,15 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/infrarust-protocol",
+    "crates/infrarust_protocol",
     "crates/infrarust-api",
-    "crates/infrarust-config",
+    "crates/infrarust_config",
     "crates/infrarust-core",
-    "crates/infrarust-limbo",
-    "crates/infrarust-ban",
-    "crates/infrarust-server-manager",
+    "crates/infrarust_server_manager",
     "crates/infrarust-transport",
-    "crates/infrarust-proxy",
+    "crates/infrarust",
     "plugins/infrarust-plugin-auth",
     "plugins/infrarust-plugin-antibot",
     "plugins/infrarust-plugin-hello",
@@ -121,14 +119,13 @@ mimalloc = "0.1.48"
 tempfile = "3.27.0"
 
 # Internal crates
-infrarust-protocol = { path = "crates/infrarust-protocol" }
+infrarust_protocol = { path = "crates/infrarust_protocol" }
 infrarust-api = { path = "crates/infrarust-api" }
-infrarust-config = { path = "crates/infrarust-config" }
+infrarust_config = { path = "crates/infrarust_config" }
 infrarust-transport = { path = "crates/infrarust-transport" }
 infrarust-core = { path = "crates/infrarust-core" }
 infrarust-limbo = { path = "crates/infrarust-limbo" }
-infrarust-ban = { path = "crates/infrarust-ban" }
-infrarust-server-manager = { path = "crates/infrarust-server-manager" }
+infrarust_server_manager = { path = "crates/infrarust_server_manager" }
 
 # Internal plugins
 infrarust-plugin-auth = { path = "plugins/infrarust-plugin-auth" }

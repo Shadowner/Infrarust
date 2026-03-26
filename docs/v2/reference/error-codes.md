@@ -210,7 +210,7 @@ The transport layer received a shutdown signal. This is expected during graceful
 
 ## Protocol Errors
 
-These come from `infrarust-protocol` and indicate problems with Minecraft protocol data.
+These come from `infrarust_protocol` and indicate problems with Minecraft protocol data.
 
 ### `Incomplete`
 
@@ -242,7 +242,7 @@ An I/O error occurred during protocol read/write. The original `std::io::Error` 
 
 ## Configuration Errors
 
-These come from `infrarust-config` and are raised when loading or validating config files.
+These come from `infrarust_config` and are raised when loading or validating config files.
 
 ### `ReadFile`
 
@@ -310,7 +310,7 @@ A catch-all for config validation failures that don't fit other variants.
 
 ## Server Manager Errors
 
-These come from `infrarust-server-manager` and relate to server lifecycle operations (start, stop, wake).
+These come from `infrarust_server_manager` and relate to server lifecycle operations (start, stop, wake).
 
 ### `ServerNotFound`
 
