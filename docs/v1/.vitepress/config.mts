@@ -4,6 +4,7 @@ import { withMermaid } from "vitepress-plugin-mermaid";
 export default withMermaid({
   title: "Infrarust",
   description: "High-Performance Minecraft Reverse Proxy in Rust",
+  base: "/v1/",
 
   locales: {
     root: {
@@ -18,7 +19,7 @@ export default withMermaid({
   },
 
   head: [
-    ["link", { rel: "icon", type: "image/svg+xml", href: "/img/logo.svg" }],
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/v1/img/logo.svg" }],
   ],
 
   themeConfig: {
