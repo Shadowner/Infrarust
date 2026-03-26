@@ -157,7 +157,7 @@ Questions or ideas? Join the [Discord](https://discord.gg/sqbJhZVSgG) or open an
 - [MCRouter](https://github.com/itzg/mc-router)
 - [Velocity](https://github.com/PaperMC/Velocity)
 
-> More can be seen on the [thank's open source web page](https://infrarust.dev/v2/thank-you-open-source)
+> More can be seen on the [thank's open source web page](https://infrarust.dev/v2/thank-you-open-source) 
 
 ## License
 
