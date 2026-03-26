@@ -1,5 +1,5 @@
 [package]
-name = "infrarust-server-manager"
+name = "infrarust_server_manager"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-infrarust-config = { workspace = true }
+infrarust_config = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
 dashmap = { workspace = true }

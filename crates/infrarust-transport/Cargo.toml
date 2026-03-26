@@ -17,7 +17,7 @@ socket2 = { workspace = true }
 ppp = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-infrarust-config = { workspace = true }
+infrarust_config = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = { workspace = true }
