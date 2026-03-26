@@ -100,12 +100,12 @@ pub async fn create(
             .map_err(|_| ApiError::BadRequest(format!("Invalid UUID: {uuid}")))?,
     };
 
-    if let Some(ref reason) = body.reason {
-        if reason.len() > 256 {
-            return Err(ApiError::BadRequest(
-                "ban reason too long (max 256 characters)".into(),
-            ));
-        }
+    if let Some(ref reason) = body.reason
+        && reason.len() > 256
+    {
+        return Err(ApiError::BadRequest(
+            "ban reason too long (max 256 characters)".into(),
+        ));
     }
 
     let duration = body.duration_seconds.map(Duration::from_secs);

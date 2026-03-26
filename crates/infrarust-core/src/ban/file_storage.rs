@@ -156,7 +156,9 @@ impl BanStorage for FileBanStorage {
                                 backup = %backup.display(),
                                 "ban file is corrupt, backing up and starting empty"
                             );
-                            if let Err(rename_err) = tokio::fs::rename(&self.file_path, &backup).await {
+                            if let Err(rename_err) =
+                                tokio::fs::rename(&self.file_path, &backup).await
+                            {
                                 tracing::warn!(error = %rename_err, "failed to back up corrupt ban file");
                             }
                         }

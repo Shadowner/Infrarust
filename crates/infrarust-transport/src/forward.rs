@@ -261,6 +261,7 @@ mod splice_impl {
                     // SAFETY: `TcpStream` owns a valid file descriptor for its entire lifetime.
                     // We borrow it only within the scope of `try_io`'s closure, which guarantees
                     // the fd remains valid. The `TcpStream` is not dropped or moved during this call.
+                    #[allow(unsafe_code)]
                     let src_fd = unsafe { BorrowedFd::borrow_raw(src.as_raw_fd()) };
                     match src.try_io(Interest::READABLE, || {
                         nix::fcntl::splice(
@@ -288,6 +289,7 @@ mod splice_impl {
                 // SAFETY: `TcpStream` owns a valid file descriptor for its entire lifetime.
                 // We borrow it only within the scope of `try_io`'s closure, which guarantees
                 // the fd remains valid. The `TcpStream` is not dropped or moved during this call.
+                #[allow(unsafe_code)]
                 let dst_fd = unsafe { BorrowedFd::borrow_raw(dst.as_raw_fd()) };
                 match dst.try_io(Interest::WRITABLE, || {
                     nix::fcntl::splice(&pipe.read_fd, None, dst_fd, None, drained - pumped, flags)

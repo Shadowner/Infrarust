@@ -36,7 +36,7 @@ pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
 
     let mode = Select::new()
         .with_prompt("How would you like to configure Infrarust?")
-        .items(&[
+        .items([
             "Minimal configuration (recommended)",
             "Complete configuration reference (open docs)",
         ])
@@ -88,14 +88,17 @@ pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
     if web_enabled {
         let web_mode = Select::new()
             .with_prompt("Web features")
-            .items(&["API + Web UI (recommended)", "API only"])
+            .items(["API + Web UI (recommended)", "API only"])
             .default(0)
             .interact()?;
         enable_webui = web_mode == 0;
 
         println!(
             "  {}",
-            console::style("127.0.0.1 = local only (secure, use a reverse proxy for external access)").dim()
+            console::style(
+                "127.0.0.1 = local only (secure, use a reverse proxy for external access)"
+            )
+            .dim()
         );
         println!(
             "  {}",
@@ -103,7 +106,10 @@ pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
         );
         let web_bind_choice = Select::new()
             .with_prompt("Web bind address")
-            .items(&["127.0.0.1 (local only, recommended)", "0.0.0.0 (all interfaces)"])
+            .items([
+                "127.0.0.1 (local only, recommended)",
+                "0.0.0.0 (all interfaces)",
+            ])
             .default(0)
             .interact()?;
         web_bind = if web_bind_choice == 0 {
@@ -202,8 +208,12 @@ pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
     let content = std::fs::read_to_string(config_path)
         .with_context(|| format!("cannot read generated config: {}", config_path.display()))?;
 
-    let config: ProxyConfig = toml::from_str(&content)
-        .with_context(|| format!("generated config is invalid TOML: {}", config_path.display()))?;
+    let config: ProxyConfig = toml::from_str(&content).with_context(|| {
+        format!(
+            "generated config is invalid TOML: {}",
+            config_path.display()
+        )
+    })?;
 
     infrarust_config::validate_proxy_config(&config)
         .context("generated configuration failed validation")?;
@@ -227,7 +237,10 @@ fn write_files(config_path: &Path, settings: &WizardSettings) -> anyhow::Result<
             .context("failed to write admin API config")?;
     }
 
-    if let (Some(domain), Some(address)) = (&settings.sample_server_domain, &settings.sample_server_address) {
+    if let (Some(domain), Some(address)) = (
+        &settings.sample_server_domain,
+        &settings.sample_server_address,
+    ) {
         let filename = sanitize_filename(domain);
         let server_path = settings.servers_dir.join(format!("{filename}.toml"));
         let server_toml = generate_server_toml(domain, address);

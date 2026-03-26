@@ -38,8 +38,7 @@ pub fn build_static_loader(web_config: Option<&WebConfig>) -> StaticPluginLoader
         use infrarust_api::plugin::Plugin;
         let enable_api = web.enable_api;
         let enable_webui = web.enable_webui;
-        let admin_api =
-            infrarust_plugin_admin_api::AdminApiPlugin::new(enable_api, enable_webui);
+        let admin_api = infrarust_plugin_admin_api::AdminApiPlugin::new(enable_api, enable_webui);
         loader.register(admin_api.metadata(), move || {
             Box::new(infrarust_plugin_admin_api::AdminApiPlugin::new(
                 enable_api,
