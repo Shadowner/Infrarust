@@ -3,7 +3,7 @@
 use infrarust_config::WebConfig;
 use infrarust_core::plugin::StaticPluginLoader;
 
-pub fn build_static_loader(web_config: Option<&WebConfig>) -> StaticPluginLoader {
+pub fn build_static_loader(web_config: Option<&mut WebConfig>) -> StaticPluginLoader {
     let loader = StaticPluginLoader::new();
 
     #[cfg(feature = "plugin-auth")]
@@ -36,12 +36,32 @@ pub fn build_static_loader(web_config: Option<&WebConfig>) -> StaticPluginLoader
     // Admin API: always compiled, conditionally registered based on [web] config
     if let Some(web) = web_config {
         use infrarust_api::plugin::Plugin;
-        let enable_api = web.enable_api;
+        use infrarust_plugin_admin_api::config::{ApiConfig, RateLimitConfig};
+
+        let api_key = match web.resolve_api_key() {
+            Ok(key) => key,
+            Err(e) => {
+                tracing::error!("{e}");
+                panic!("Invalid web API configuration: {e}");
+            }
+        };
+
         let enable_webui = web.enable_webui;
-        let admin_api = infrarust_plugin_admin_api::AdminApiPlugin::new(enable_api, enable_webui);
+
+        let config = ApiConfig {
+            bind: web.bind.clone(),
+            api_key,
+            cors_origins: web.cors_origins.clone(),
+            rate_limit: RateLimitConfig {
+                requests_per_minute: web.rate_limit.requests_per_minute,
+            },
+        };
+
+        let admin_api =
+            infrarust_plugin_admin_api::AdminApiPlugin::new(config.clone(), enable_webui);
         loader.register(admin_api.metadata(), move || {
             Box::new(infrarust_plugin_admin_api::AdminApiPlugin::new(
-                enable_api,
+                config.clone(),
                 enable_webui,
             ))
         });

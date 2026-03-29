@@ -27,7 +27,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::api_provider::ApiConfigProvider;
-use crate::config::load_config;
+use crate::config::ApiConfig;
 use crate::health_cache::HealthCache;
 use crate::health_checker::HealthChecker;
 use crate::log_layer::LogBroadcast;
@@ -44,16 +44,16 @@ use crate::state::{ApiEvent, ApiState};
 pub struct AdminApiPlugin {
     server_handle: Mutex<Option<JoinHandle<()>>>,
     shutdown: CancellationToken,
-    _enable_api: bool, //TODO : make to only have the api without webui
+    config: Mutex<Option<ApiConfig>>,
     enable_webui: bool,
 }
 
 impl AdminApiPlugin {
-    pub fn new(enable_api: bool, enable_webui: bool) -> Self {
+    pub fn new(config: ApiConfig, enable_webui: bool) -> Self {
         Self {
             server_handle: Mutex::new(None),
             shutdown: CancellationToken::new(),
-            _enable_api: enable_api,
+            config: Mutex::new(Some(config)),
             enable_webui,
         }
     }
@@ -72,7 +72,21 @@ impl Plugin for AdminApiPlugin {
     ) -> BoxFuture<'a, Result<(), PluginError>> {
         Box::pin(async move {
             let data_dir = ctx.data_dir();
-            let config = load_config(&data_dir).await?;
+            let mut config = self
+                .config
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take()
+                .ok_or_else(|| PluginError::InitFailed("Config already consumed".into()))?;
+
+            config.cors_origins.retain(|origin| {
+                if origin.parse::<axum::http::HeaderValue>().is_err() {
+                    tracing::warn!(origin = %origin, "Ignoring invalid CORS origin");
+                    false
+                } else {
+                    true
+                }
+            });
 
             let (event_tx, _) = broadcast::channel::<ApiEvent>(EVENT_CHANNEL_CAPACITY);
 

@@ -5,7 +5,12 @@ servers_dir = "./examples/servers"
 # [web]
 # enable_api = true
 # enable_webui = true
-# listen_port = 8080
+# bind = "127.0.0.1:8080"
+# api_key = "your-secure-api-key-here"
+# cors_origins = []
+#
+# [web.rate_limit]
+# requests_per_minute = 60
 
 [ban]
 file = "./examples/bans.json"

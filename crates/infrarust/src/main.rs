@@ -3,6 +3,7 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use std::io::IsTerminal;
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
@@ -237,7 +238,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         shutdown_signal.cancel();
     });
 
-    let web_config = config.web.clone();
+    let mut web_config = config.web.clone();
     let plugins_dir = config.plugins_dir.clone();
 
     // Build and run the proxy server
@@ -245,7 +246,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         .await
         .context("failed to initialize proxy server")?;
 
-    let static_loader = plugins::build_static_loader(web_config.as_ref());
+    let static_loader = plugins::build_static_loader(web_config.as_mut());
     let loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> = vec![Box::new(static_loader)];
 
     let mut plugin_manager = PluginManager::new(loaders);
@@ -362,8 +363,8 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
             "API"
         };
         tracing::info!(
-            "{label} accessible at: http://localhost:{}",
-            web.listen_port
+            "{label} accessible at: http://{}",
+            web.bind
         );
     }
 

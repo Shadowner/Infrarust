@@ -26,7 +26,6 @@ tracing-subscriber = { workspace = true }
 async-stream = { workspace = true }
 tokio-stream = { workspace = true }
 subtle = { workspace = true }
-toml = { workspace = true }
 uuid = { workspace = true }
 time = { workspace = true }
 rust-embed = { workspace = true }

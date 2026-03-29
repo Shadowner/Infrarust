@@ -1451,7 +1451,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
- "toml",
  "tower",
  "tower-http",
  "tracing",
@@ -1551,6 +1550,7 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+ "uuid",
  "wildmatch",
 ]
 
