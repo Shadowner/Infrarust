@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license-file.workspace = true
 repository.workspace = true
+description = "Infrarust is a high-performance Minecraft proxy server written in Rust, designed for stability, security, and extensibility.Allowing players to connect to multiple backend servers seamlessly while providing features like load balancing, plugin support, and advanced configuration options."
 
 [lints]
 workspace = true

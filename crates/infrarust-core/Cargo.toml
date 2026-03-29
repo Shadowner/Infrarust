@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license-file.workspace = true
 repository.workspace = true
-
+description = "Core library for Infrarust, a Minecraft proxy server written in Rust. Provides shared utilities, types, and traits for the Infrarust ecosystem."
 [lints]
 workspace = true
 
