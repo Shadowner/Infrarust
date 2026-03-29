@@ -36,6 +36,14 @@ pub trait Scheduler: Send + Sync + private::Sealed {
     /// Schedules a repeating task at a fixed interval.
     fn interval(&self, period: Duration, task: Box<dyn Fn() + Send + Sync>) -> TaskHandle;
 
+    /// Schedules a repeating task at a fixed interval, starting after an initial delay.
+    fn interval_with_delay(
+        &self,
+        period: Duration,
+        delay: Duration,
+        task: Box<dyn Fn() + Send + Sync>,
+    ) -> TaskHandle;
+
     /// Cancels a scheduled task.
     fn cancel(&self, handle: TaskHandle);
 }

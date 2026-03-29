@@ -149,6 +149,17 @@ impl Scheduler for TrackingScheduler {
         handle
     }
 
+    fn interval_with_delay(
+        &self,
+        period: std::time::Duration,
+        delay: std::time::Duration,
+        task: Box<dyn Fn() + Send + Sync>,
+    ) -> TaskHandle {
+        let handle = self.inner.interval_with_delay(period, delay, task);
+        self.tasks.lock().expect("lock poisoned").push(handle);
+        handle
+    }
+
     fn cancel(&self, handle: TaskHandle) {
         self.inner.cancel(handle);
     }

@@ -70,6 +70,27 @@ impl Scheduler for SchedulerImpl {
         handle
     }
 
+    fn interval_with_delay(
+        &self,
+        period: Duration,
+        delay: Duration,
+        task: Box<dyn Fn() + Send + Sync>,
+    ) -> TaskHandle {
+        let handle = self.next_handle();
+
+        let join_handle = tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let mut interval = tokio::time::interval(period);
+            loop {
+                interval.tick().await;
+                task();
+            }
+        });
+
+        self.tasks.insert(handle, join_handle.abort_handle());
+        handle
+    }
+
     fn cancel(&self, handle: TaskHandle) {
         if let Some((_, abort_handle)) = self.tasks.remove(&handle) {
             abort_handle.abort();
