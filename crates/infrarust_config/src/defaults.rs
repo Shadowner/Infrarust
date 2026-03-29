@@ -16,6 +16,10 @@ pub fn servers_dir() -> PathBuf {
     PathBuf::from("./servers")
 }
 
+pub fn plugins_dir() -> PathBuf {
+    PathBuf::from("./plugins")
+}
+
 pub const fn rate_limit_max() -> u32 {
     3
 }

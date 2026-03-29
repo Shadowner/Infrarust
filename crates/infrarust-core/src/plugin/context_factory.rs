@@ -54,6 +54,7 @@ impl PluginContextFactory for PluginContextFactoryImpl {
             Arc::clone(&self.services.transport_filter_registry),
             Arc::clone(&self.services.domain_router),
             self.services.proxy_shutdown.clone(),
+            self.services.plugins_dir.clone(),
         ))
     }
 }

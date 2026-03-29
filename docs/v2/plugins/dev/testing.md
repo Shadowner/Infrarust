@@ -147,6 +147,9 @@ impl infrarust_api::plugin::private::Sealed for MockPluginContext {}
 impl PluginContext for MockPluginContext {
     fn as_any(&self) -> &dyn std::any::Any { self }
     fn plugin_id(&self) -> &str { &self.plugin_id }
+    fn data_dir(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from("plugins").join(&self.plugin_id)
+    }
 
     fn event_bus(&self) -> &dyn infrarust_api::event::bus::EventBus {
         unimplemented!("mock")

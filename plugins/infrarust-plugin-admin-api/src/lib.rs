@@ -16,7 +16,6 @@ pub mod sse;
 pub mod state;
 pub mod util;
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -72,7 +71,7 @@ impl Plugin for AdminApiPlugin {
         ctx: &'a dyn PluginContext,
     ) -> BoxFuture<'a, Result<(), PluginError>> {
         Box::pin(async move {
-            let data_dir = PathBuf::from("plugins/admin_api");
+            let data_dir = ctx.data_dir();
             let config = load_config(&data_dir).await?;
 
             let (event_tx, _) = broadcast::channel::<ApiEvent>(EVENT_CHANNEL_CAPACITY);

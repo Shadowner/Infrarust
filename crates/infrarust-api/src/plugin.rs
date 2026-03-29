@@ -4,6 +4,7 @@
 //! Plugins register event listeners, commands, and handlers during
 //! [`on_enable`](Plugin::on_enable) via the [`PluginContext`].
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
@@ -194,6 +195,8 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     fn register_config_provider(&self, provider: Box<dyn crate::provider::PluginConfigProvider>);
 
     fn plugin_id(&self) -> &str;
+
+    fn data_dir(&self) -> PathBuf;
 
     fn proxy_shutdown(&self) -> CancellationToken;
 }

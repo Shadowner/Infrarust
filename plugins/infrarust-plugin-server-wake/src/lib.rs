@@ -2,7 +2,6 @@ pub mod config;
 pub mod handler;
 pub mod state;
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use infrarust_api::error::PluginError;
@@ -46,7 +45,7 @@ impl Plugin for ServerWakePlugin {
         ctx: &'a dyn PluginContext,
     ) -> BoxFuture<'a, Result<(), PluginError>> {
         Box::pin(async move {
-            let data_dir = PathBuf::from("plugins/server_wake");
+            let data_dir = ctx.data_dir();
             let config_path = data_dir.join("config.toml");
             let config = load_or_create_config(&config_path)
                 .await

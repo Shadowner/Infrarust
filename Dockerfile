@@ -68,4 +68,4 @@ VOLUME ["/app/config"]
 EXPOSE 25565
 
 ENTRYPOINT ["/sbin/infrarust"]
-CMD ["--config-path", "/app/config/config.yaml", "--proxies-path", "/app/config/proxies", "--no-interactive"]
+CMD ["--config", "/app/config/infrarust.toml", "--plugins-dir", "/app/config/plugins", "--servers-dir", "/app/config/servers"]

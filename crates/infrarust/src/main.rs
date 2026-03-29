@@ -3,7 +3,6 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,6 +44,10 @@ struct Cli {
     /// Log level filter (overridden by `RUST_LOG` env var)
     #[arg(short, long, default_value = "info")]
     log_level: String,
+
+    /// Override the plugins directory path
+    #[arg(long)]
+    plugins_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -72,9 +75,12 @@ fn main() -> ExitCode {
         match wizard::run(&cli.config) {
             Ok(wizard::WizardOutcome::Config(c)) => {
                 let mut c = *c;
-                // CLI --bind overrides config (load_config does this for the normal path)
+                // CLI overrides (load_config does this for the normal path)
                 if let Some(bind) = cli.bind {
                     c.bind = bind;
+                }
+                if let Some(ref plugins_dir) = cli.plugins_dir {
+                    c.plugins_dir = plugins_dir.clone();
                 }
                 c
             }
@@ -207,9 +213,12 @@ fn load_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
     let mut config: ProxyConfig = toml::from_str(&content)
         .with_context(|| format!("invalid TOML in {}", cli.config.display()))?;
 
-    // CLI --bind overrides config
+    // CLI overrides
     if let Some(bind) = cli.bind {
         config.bind = bind;
+    }
+    if let Some(ref plugins_dir) = cli.plugins_dir {
+        config.plugins_dir = plugins_dir.clone();
     }
 
     infrarust_config::validate_proxy_config(&config).context("configuration validation failed")?;
@@ -229,6 +238,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     });
 
     let web_config = config.web.clone();
+    let plugins_dir = config.plugins_dir.clone();
 
     // Build and run the proxy server
     let mut server = ProxyServer::new(config, shutdown.clone())
@@ -243,7 +253,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let services = server.services();
 
     plugin_manager
-        .discover_all(std::path::Path::new("plugins"))
+        .discover_all(&plugins_dir)
         .await
         .context("failed to discover plugins")?;
 
@@ -274,7 +284,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         transport_filter_registry: Arc::clone(&transport_filter_registry),
         domain_router: Arc::clone(&services.domain_router),
         proxy_shutdown: shutdown.clone(),
-        plugins_dir: PathBuf::from("plugins"),
+        plugins_dir,
     };
 
     let context_factory = infrarust_core::plugin::PluginContextFactoryImpl::new(

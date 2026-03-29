@@ -391,6 +391,9 @@ mod tests {
         fn plugin_id(&self) -> &str {
             &self.plugin_id
         }
+        fn data_dir(&self) -> std::path::PathBuf {
+            std::path::PathBuf::from("plugins").join(&self.plugin_id)
+        }
         fn plugin_registry(&self) -> &dyn infrarust_api::services::plugin_registry::PluginRegistry {
             unimplemented!("mock")
         }

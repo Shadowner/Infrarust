@@ -46,6 +46,9 @@ pub struct ProxyConfig {
     #[serde(default = "defaults::servers_dir")]
     pub servers_dir: PathBuf,
 
+    #[serde(default = "defaults::plugins_dir")]
+    pub plugins_dir: PathBuf,
+
     /// Number of tokio worker threads (0 = auto)
     #[serde(default)]
     pub worker_threads: usize,

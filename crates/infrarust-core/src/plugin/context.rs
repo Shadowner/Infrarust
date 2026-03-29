@@ -1,5 +1,6 @@
 //! [`PluginContext`] implementation — per-plugin service aggregator.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tokio_util::sync::CancellationToken;
@@ -46,6 +47,7 @@ pub struct PluginContextImpl {
     domain_router: Arc<DomainRouter>,
     proxy_shutdown: CancellationToken,
     plugin_id: String,
+    plugins_dir: PathBuf,
 
     // Shared tracking state (also held by the wrappers)
     registered_handles: Arc<Mutex<Vec<ListenerHandle>>>,
@@ -71,6 +73,7 @@ impl PluginContextImpl {
         transport_filter_registry: Arc<TransportFilterRegistryImpl>,
         domain_router: Arc<DomainRouter>,
         proxy_shutdown: CancellationToken,
+        plugins_dir: PathBuf,
     ) -> Self {
         let registered_handles = Arc::new(Mutex::new(Vec::new()));
         let registered_commands = Arc::new(Mutex::new(Vec::new()));
@@ -105,6 +108,7 @@ impl PluginContextImpl {
             domain_router,
             proxy_shutdown,
             plugin_id,
+            plugins_dir,
             registered_handles,
             registered_commands,
             registered_tasks,
@@ -261,6 +265,10 @@ impl PluginContext for PluginContextImpl {
 
     fn plugin_id(&self) -> &str {
         &self.plugin_id
+    }
+
+    fn data_dir(&self) -> PathBuf {
+        self.plugins_dir.join(&self.plugin_id)
     }
 
     fn proxy_shutdown(&self) -> CancellationToken {
