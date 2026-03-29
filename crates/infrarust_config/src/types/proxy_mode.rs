@@ -1,9 +1,9 @@
 //! Proxy mode definitions.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Supported proxy modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ProxyMode {

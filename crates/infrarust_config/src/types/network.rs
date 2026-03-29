@@ -2,12 +2,12 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::defaults;
 
 /// Server-specific timeouts (overrides global settings).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimeoutConfig {
     #[serde(default = "defaults::connect_timeout")]

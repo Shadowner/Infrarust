@@ -4,7 +4,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::str::FromStr;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::DEFAULT_MC_PORT;
 use crate::error::ConfigError;
@@ -58,6 +58,15 @@ impl fmt::Display for ServerAddress {
     }
 }
 
+impl Serialize for ServerAddress {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 /// Serde deserialization from a string.
 impl<'de> Deserialize<'de> for ServerAddress {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -71,7 +80,7 @@ impl<'de> Deserialize<'de> for ServerAddress {
 
 /// How to rewrite the domain in the Minecraft handshake
 /// before forwarding it to the backend.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum DomainRewrite {

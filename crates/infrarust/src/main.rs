@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
@@ -23,6 +23,7 @@ use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};
 use infrarust_core::telemetry::formatter::InfrarustFormatter;
 
+mod migrate;
 mod plugins;
 mod wizard;
 
@@ -30,6 +31,9 @@ mod wizard;
 #[derive(Parser)]
 #[command(name = "infrarust", version, about)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Path to the proxy configuration file
     #[arg(short, long, default_value = "infrarust.toml")]
     config: std::path::PathBuf,
@@ -43,9 +47,23 @@ struct Cli {
     log_level: String,
 }
 
+#[derive(Subcommand)]
+enum Command {
+    /// Migrate V1 proxy configs (YAML) to V2 server configs (TOML)
+    Migrate {
+        input: std::path::PathBuf,
+        #[arg(short, long, default_value = "./servers")]
+        output: std::path::PathBuf,
+    },
+}
+
 #[allow(clippy::print_stderr)] // eprintln used before tracing is initialized
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    if let Some(Command::Migrate { input, output }) = &cli.command {
+        return migrate::run(input, output);
+    }
 
     let config = if !cli.config.exists()
         && cli.config == Path::new("infrarust.toml")

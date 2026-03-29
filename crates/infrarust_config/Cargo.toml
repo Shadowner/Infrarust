@@ -17,3 +17,7 @@ toml = { workspace = true }
 ipnet = { workspace = true }
 humantime-serde = { workspace = true }
 wildmatch = { workspace = true }
+serde_yml = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

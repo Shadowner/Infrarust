@@ -1,6 +1,6 @@
 //! Backend server configuration (one per `.toml` file in `servers_dir`).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
     DomainRewrite, IpFilterConfig, MotdConfig, ProxyMode, ServerAddress, ServerManagerConfig,
@@ -8,7 +8,7 @@ use crate::types::{
 };
 
 /// Each file in `servers_dir/` deserializes into this type.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// Unique identifier. Derived from the filename if absent.

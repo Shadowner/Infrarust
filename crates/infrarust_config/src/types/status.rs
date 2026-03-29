@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::defaults;
 
@@ -29,7 +29,7 @@ impl Default for StatusCacheConfig {
 }
 
 /// MOTD per server state.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MotdConfig {
     pub online: Option<MotdEntry>,
@@ -41,7 +41,7 @@ pub struct MotdConfig {
     pub unreachable: Option<MotdEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MotdEntry {
     /// MOTD text (supports Minecraft formatting codes).

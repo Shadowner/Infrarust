@@ -3,6 +3,7 @@
 pub mod defaults;
 pub mod domain;
 pub mod error;
+pub mod migrate;
 pub mod provider;
 pub mod proxy;
 pub mod server;
