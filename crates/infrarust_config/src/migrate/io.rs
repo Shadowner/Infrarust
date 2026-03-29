@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use super::convert::{convert_v1_proxy_config, convert_v1_to_v2, MigrationSeverity, MigrationWarning};
+use super::convert::{
+    MigrationSeverity, MigrationWarning, convert_v1_proxy_config, convert_v1_to_v2,
+};
 use super::v1_types::{V1InfrarustConfig, V1ServerConfig};
 use crate::error::ConfigError;
 
@@ -151,17 +153,13 @@ pub fn migrate_proxy_config(
     })?;
 
     let v1: V1InfrarustConfig = serde_yml::from_str(&content).map_err(|e| {
-        ConfigError::Validation(format!(
-            "YAML parse error in {}: {e}",
-            input_file.display()
-        ))
+        ConfigError::Validation(format!("YAML parse error in {}: {e}", input_file.display()))
     })?;
 
     let result = convert_v1_proxy_config(&v1);
 
-    let toml_content = toml::to_string_pretty(&result.config).map_err(|e| {
-        ConfigError::Validation(format!("TOML serialization error: {e}"))
-    })?;
+    let toml_content = toml::to_string_pretty(&result.config)
+        .map_err(|e| ConfigError::Validation(format!("TOML serialization error: {e}")))?;
 
     if let Some(parent) = output_file.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {

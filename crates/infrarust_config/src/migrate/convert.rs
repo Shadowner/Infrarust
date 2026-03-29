@@ -48,7 +48,13 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
                 .unwrap_or(id)
                 .to_lowercase()
                 .chars()
-                .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                        c
+                    } else {
+                        '-'
+                    }
+                })
                 .collect::<String>()
         })
         .or_else(|| {
@@ -126,11 +132,7 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
     let ip_filter = convert_ip_filter(v1, filename, &mut warnings);
 
     if let Some(ref filters) = v1.filters {
-        if filters
-            .rate_limiter
-            .as_ref()
-            .is_some_and(|f| f.enabled)
-        {
+        if filters.rate_limiter.as_ref().is_some_and(|f| f.enabled) {
             warn(
                 &mut warnings,
                 MigrationSeverity::Info,
@@ -265,7 +267,10 @@ fn convert_motds(
 
     let has_dropped_fields = |entry: &Option<V1MotdEntry>| -> bool {
         entry.as_ref().is_some_and(|e| {
-            e.enabled && (e.protocol_version.is_some() || e.online_players.is_some() || !e.samples.is_empty())
+            e.enabled
+                && (e.protocol_version.is_some()
+                    || e.online_players.is_some()
+                    || !e.samples.is_empty())
         })
     };
 
@@ -318,9 +323,7 @@ fn convert_server_manager(
         }
     };
 
-    let shutdown_after = sm
-        .empty_shutdown_time
-        .map(Duration::from_secs);
+    let shutdown_after = sm.empty_shutdown_time.map(Duration::from_secs);
 
     match provider.to_lowercase().as_str() {
         "local" => {
@@ -363,7 +366,8 @@ fn convert_server_manager(
                 warnings.push(MigrationWarning {
                     severity: MigrationSeverity::Error,
                     file: filename.to_string(),
-                    message: "Pterodactyl server_id is missing, must be filled in manually".to_string(),
+                    message: "Pterodactyl server_id is missing, must be filled in manually"
+                        .to_string(),
                 });
                 "TODO: fill in your server ID".to_string()
             });
@@ -382,7 +386,9 @@ fn convert_server_manager(
             warnings.push(MigrationWarning {
                 severity: MigrationSeverity::Warning,
                 file: filename.to_string(),
-                message: "Crafty api_url and api_key must be filled in manually (stored globally in V1)".to_string(),
+                message:
+                    "Crafty api_url and api_key must be filled in manually (stored globally in V1)"
+                        .to_string(),
             });
             let server_id = sm.server_id.clone().unwrap_or_else(|| {
                 warnings.push(MigrationWarning {
@@ -468,12 +474,12 @@ fn convert_ip_filter(
     })
 }
 
+use super::v1_types::V1InfrarustConfig;
 use crate::proxy::ProxyConfig;
 use crate::types::{
-    BanConfig, DockerProviderConfig, KeepaliveConfig, RateLimitConfig, StatusCacheConfig,
-    TelemetryConfig, MetricsConfig, TracesConfig, ResourceConfig,
+    BanConfig, DockerProviderConfig, KeepaliveConfig, MetricsConfig, RateLimitConfig,
+    ResourceConfig, StatusCacheConfig, TelemetryConfig, TracesConfig,
 };
-use super::v1_types::V1InfrarustConfig;
 
 pub struct ProxyMigrationResult {
     pub config: ProxyConfig,
@@ -507,8 +513,8 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(crate::defaults::servers_dir);
 
-    if let Some(fp) = &v1.file_provider {
-        if fp.proxies_path.len() > 1 {
+    if let Some(fp) = &v1.file_provider
+        && fp.proxies_path.len() > 1 {
             warnings.push(MigrationWarning {
                 severity: MigrationSeverity::Warning,
                 file: file.clone(),
@@ -519,7 +525,6 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
                 ),
             });
         }
-    }
 
     if v1.handshake_timeout_secs.is_some() || v1.status_request_timeout_secs.is_some() {
         warnings.push(MigrationWarning {
@@ -541,7 +546,9 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
                 .and_then(|s| humantime::parse_duration(s).ok())
                 .unwrap_or_else(crate::defaults::rate_limit_window);
             RateLimitConfig {
-                max_connections: rl.request_limit.unwrap_or_else(crate::defaults::rate_limit_max),
+                max_connections: rl
+                    .request_limit
+                    .unwrap_or_else(crate::defaults::rate_limit_max),
                 window,
                 ..RateLimitConfig::default()
             }
@@ -553,7 +560,9 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
             warnings.push(MigrationWarning {
                 severity: MigrationSeverity::Warning,
                 file: file.clone(),
-                message: "Global IP filter is per-server in V2, must be configured in each server .toml".to_string(),
+                message:
+                    "Global IP filter is per-server in V2, must be configured in each server .toml"
+                        .to_string(),
             });
         }
         if filters.id_filter.as_ref().is_some_and(|f| f.enabled) {
@@ -586,7 +595,9 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
                 .auto_cleanup_interval
                 .map(Duration::from_secs)
                 .unwrap_or_else(crate::defaults::ban_purge_interval),
-            enable_audit_log: b.enable_audit_log.unwrap_or_else(crate::defaults::ban_audit_log),
+            enable_audit_log: b
+                .enable_audit_log
+                .unwrap_or_else(crate::defaults::ban_audit_log),
         })
         .unwrap_or_default();
 
@@ -628,15 +639,16 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         .and_then(|pp| pp.receive_enabled)
         .unwrap_or(false);
 
-    if let Some(pp) = &v1.proxy_protocol {
-        if pp.receive_timeout_secs.is_some() || pp.receive_allowed_versions.is_some() {
+    if let Some(pp) = &v1.proxy_protocol
+        && (pp.receive_timeout_secs.is_some() || pp.receive_allowed_versions.is_some()) {
             warnings.push(MigrationWarning {
                 severity: MigrationSeverity::Info,
                 file: file.clone(),
-                message: "proxy_protocol.receive_timeout_secs and receive_allowed_versions are not in V2".to_string(),
+                message:
+                    "proxy_protocol.receive_timeout_secs and receive_allowed_versions are not in V2"
+                        .to_string(),
             });
         }
-    }
 
     let default_motd = v1.motds.as_ref().and_then(|motds| {
         let entry = motds
@@ -662,7 +674,8 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         warnings.push(MigrationWarning {
             severity: MigrationSeverity::Info,
             file: file.clone(),
-            message: "Logging config is not in V2; use RUST_LOG env var or --log-level CLI flag".to_string(),
+            message: "Logging config is not in V2; use RUST_LOG env var or --log-level CLI flag"
+                .to_string(),
         });
     }
 
@@ -674,19 +687,17 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         });
     }
 
-    let docker = v1.docker_provider.as_ref().map(|dp| {
-        DockerProviderConfig {
-            endpoint: dp
-                .docker_host
-                .clone()
-                .unwrap_or_else(crate::defaults::docker_endpoint),
-            network: None,
-            poll_interval: dp
-                .polling_interval
-                .map(Duration::from_secs)
-                .unwrap_or_else(crate::defaults::docker_poll_interval),
-            reconnect_delay: crate::defaults::docker_reconnect_delay(),
-        }
+    let docker = v1.docker_provider.as_ref().map(|dp| DockerProviderConfig {
+        endpoint: dp
+            .docker_host
+            .clone()
+            .unwrap_or_else(crate::defaults::docker_endpoint),
+        network: None,
+        poll_interval: dp
+            .polling_interval
+            .map(Duration::from_secs)
+            .unwrap_or_else(crate::defaults::docker_poll_interval),
+        reconnect_delay: crate::defaults::docker_reconnect_delay(),
     });
 
     let config = ProxyConfig {

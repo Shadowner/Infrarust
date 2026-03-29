@@ -72,7 +72,6 @@ impl WebConfig {
             }
         }
     }
-
 }
 
 impl Default for WebConfig {

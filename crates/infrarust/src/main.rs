@@ -67,7 +67,12 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    if let Some(Command::Migrate { input, output, config }) = &cli.command {
+    if let Some(Command::Migrate {
+        input,
+        output,
+        config,
+    }) = &cli.command
+    {
         return migrate::run(input, output, config.as_deref());
     }
 
@@ -257,19 +262,10 @@ fn build_proxy_info(config: &ProxyConfig) -> infrarust_api::services::proxy_info
             interval: config.keepalive.interval,
             retries: config.keepalive.retries,
         },
-        telemetry_enabled: config
-            .telemetry
-            .as_ref()
-            .is_some_and(|t| t.enabled),
+        telemetry_enabled: config.telemetry.as_ref().is_some_and(|t| t.enabled),
         docker_enabled: config.docker.is_some(),
-        web_api_enabled: config
-            .web
-            .as_ref()
-            .is_some_and(|w| w.enable_api),
-        web_ui_enabled: config
-            .web
-            .as_ref()
-            .is_some_and(|w| w.enable_webui),
+        web_api_enabled: config.web.as_ref().is_some_and(|w| w.enable_api),
+        web_ui_enabled: config.web.as_ref().is_some_and(|w| w.enable_webui),
         unknown_domain_behavior: match config.unknown_domain_behavior {
             infrarust_config::UnknownDomainBehavior::DefaultMotd => {
                 UnknownDomainBehavior::DefaultMotd
@@ -416,10 +412,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         } else {
             "API"
         };
-        tracing::info!(
-            "{label} accessible at: http://{}",
-            web.bind
-        );
+        tracing::info!("{label} accessible at: http://{}", web.bind);
     }
 
     let server = Arc::new(server);
