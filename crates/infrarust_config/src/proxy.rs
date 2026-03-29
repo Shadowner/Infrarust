@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::defaults;
 use crate::types::{
@@ -13,7 +13,7 @@ use crate::types::{
     StatusCacheConfig, TelemetryConfig, WebConfig,
 };
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UnknownDomainBehavior {
     #[default]
@@ -22,7 +22,7 @@ pub enum UnknownDomainBehavior {
 }
 
 /// Corresponds to the `infrarust.toml` file.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProxyConfig {
     /// Listen address, e.g., "0.0.0.0:25565"
@@ -98,7 +98,7 @@ pub struct ProxyConfig {
     pub plugins: HashMap<String, PluginConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginConfig {
     /// Path to the plugin binary/library.

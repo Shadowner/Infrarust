@@ -58,6 +58,8 @@ enum Command {
         input: std::path::PathBuf,
         #[arg(short, long, default_value = "./servers")]
         output: std::path::PathBuf,
+        #[arg(long)]
+        config: Option<std::path::PathBuf>,
     },
 }
 
@@ -65,8 +67,8 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    if let Some(Command::Migrate { input, output }) = &cli.command {
-        return migrate::run(input, output);
+    if let Some(Command::Migrate { input, output, config }) = &cli.command {
+        return migrate::run(input, output, config.as_deref());
     }
 
     let config = if !cli.config.exists()

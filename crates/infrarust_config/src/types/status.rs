@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::defaults;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StatusCacheConfig {
     /// Time-to-live for a cache entry.

@@ -143,3 +143,142 @@ pub struct V1Caches {
     #[serde(default)]
     pub max_status_entries: Option<usize>,
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct V1InfrarustConfig {
+    #[serde(default)]
+    pub bind: Option<String>,
+    #[serde(default)]
+    pub keep_alive_timeout: Option<String>,
+    #[serde(default, alias = "handshake_timeout_secs")]
+    pub handshake_timeout_secs: Option<u64>,
+    #[serde(default, alias = "status_request_timeout_secs")]
+    pub status_request_timeout_secs: Option<u64>,
+    #[serde(default, alias = "file_provider")]
+    pub file_provider: Option<V1FileProvider>,
+    #[serde(default)]
+    pub filters: Option<V1GlobalFilters>,
+    #[serde(default)]
+    pub cache: Option<V1Cache>,
+    #[serde(default)]
+    pub logging: Option<serde_yml::Value>,
+    #[serde(default)]
+    pub telemetry: Option<V1Telemetry>,
+    #[serde(default, alias = "managers_config")]
+    pub managers_config: Option<V1ManagersConfig>,
+    #[serde(default, alias = "proxy_protocol")]
+    pub proxy_protocol: Option<V1ProxyProtocol>,
+    #[serde(default)]
+    pub motds: Option<V1Motds>,
+    #[serde(default, alias = "docker_provider")]
+    pub docker_provider: Option<V1DockerProvider>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct V1FileProvider {
+    #[serde(default)]
+    pub proxies_path: Vec<String>,
+    #[serde(default)]
+    pub watch: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct V1GlobalFilters {
+    #[serde(default)]
+    pub rate_limiter: Option<V1RateLimiter>,
+    #[serde(default, alias = "ip_filter")]
+    pub ip_filter: Option<V1IpFilter>,
+    #[serde(default, alias = "id_filter")]
+    pub id_filter: Option<V1GenericFilter>,
+    #[serde(default, alias = "name_filter")]
+    pub name_filter: Option<V1GenericFilter>,
+    #[serde(default)]
+    pub ban: Option<V1Ban>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct V1RateLimiter {
+    #[serde(default)]
+    pub request_limit: Option<u32>,
+    #[serde(default)]
+    pub window_length: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct V1Ban {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub file_path: Option<String>,
+    #[serde(default)]
+    pub enable_audit_log: Option<bool>,
+    #[serde(default)]
+    pub auto_cleanup_interval: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct V1Cache {
+    #[serde(default)]
+    pub status_ttl_seconds: Option<u64>,
+    #[serde(default)]
+    pub max_status_entries: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct V1Telemetry {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub export_url: Option<String>,
+    #[serde(default)]
+    pub export_interval_seconds: Option<u64>,
+    #[serde(default)]
+    pub enable_metrics: Option<bool>,
+    #[serde(default)]
+    pub enable_tracing: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct V1ProxyProtocol {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub receive_enabled: Option<bool>,
+    #[serde(default)]
+    pub receive_timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub receive_allowed_versions: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct V1ManagersConfig {
+    #[serde(default)]
+    pub pterodactyl: Option<V1ManagerCredentials>,
+    #[serde(default)]
+    pub crafty: Option<V1ManagerCredentials>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct V1ManagerCredentials {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct V1DockerProvider {
+    #[serde(default)]
+    pub docker_host: Option<String>,
+    #[serde(default)]
+    pub polling_interval: Option<u64>,
+    #[serde(default)]
+    pub label_prefix: Option<String>,
+    #[serde(default)]
+    pub watch: Option<bool>,
+}

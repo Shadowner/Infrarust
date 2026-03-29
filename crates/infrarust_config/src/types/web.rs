@@ -1,6 +1,6 @@
 //! Web admin API / UI configuration.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 fn default_true() -> bool {
     true
@@ -14,7 +14,7 @@ fn default_requests_per_minute() -> u64 {
     60
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebConfig {
     #[serde(default = "default_true")]
@@ -35,7 +35,7 @@ pub struct WebConfig {
     pub rate_limit: WebRateLimitConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebRateLimitConfig {
     #[serde(default = "default_requests_per_minute")]

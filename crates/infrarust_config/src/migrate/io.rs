@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use super::convert::{convert_v1_to_v2, MigrationSeverity, MigrationWarning};
-use super::v1_types::V1ServerConfig;
+use super::convert::{convert_v1_proxy_config, convert_v1_to_v2, MigrationSeverity, MigrationWarning};
+use super::v1_types::{V1InfrarustConfig, V1ServerConfig};
 use crate::error::ConfigError;
 
 pub fn migrate_directory(
@@ -137,6 +137,49 @@ pub fn migrate_directory(
     });
 
     Ok(all_warnings)
+}
+
+pub fn migrate_proxy_config(
+    input_file: &Path,
+    output_file: &Path,
+) -> Result<Vec<MigrationWarning>, ConfigError> {
+    let content = std::fs::read_to_string(input_file).map_err(|e| {
+        ConfigError::Validation(format!(
+            "Cannot read config file {}: {e}",
+            input_file.display()
+        ))
+    })?;
+
+    let v1: V1InfrarustConfig = serde_yml::from_str(&content).map_err(|e| {
+        ConfigError::Validation(format!(
+            "YAML parse error in {}: {e}",
+            input_file.display()
+        ))
+    })?;
+
+    let result = convert_v1_proxy_config(&v1);
+
+    let toml_content = toml::to_string_pretty(&result.config).map_err(|e| {
+        ConfigError::Validation(format!("TOML serialization error: {e}"))
+    })?;
+
+    if let Some(parent) = output_file.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            ConfigError::Validation(format!(
+                "Cannot create output directory {}: {e}",
+                parent.display()
+            ))
+        })?;
+    }
+
+    std::fs::write(output_file, toml_content).map_err(|e| {
+        ConfigError::Validation(format!(
+            "Cannot write output file {}: {e}",
+            output_file.display()
+        ))
+    })?;
+
+    Ok(result.warnings)
 }
 
 #[cfg(test)]

@@ -468,6 +468,251 @@ fn convert_ip_filter(
     })
 }
 
+use crate::proxy::ProxyConfig;
+use crate::types::{
+    BanConfig, DockerProviderConfig, KeepaliveConfig, RateLimitConfig, StatusCacheConfig,
+    TelemetryConfig, MetricsConfig, TracesConfig, ResourceConfig,
+};
+use super::v1_types::V1InfrarustConfig;
+
+pub struct ProxyMigrationResult {
+    pub config: ProxyConfig,
+    pub warnings: Vec<MigrationWarning>,
+}
+
+pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
+    let mut warnings = Vec::new();
+    let file = "config.yaml".to_string();
+
+    let bind = v1
+        .bind
+        .as_ref()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(crate::defaults::bind);
+
+    let keepalive = v1
+        .keep_alive_timeout
+        .as_ref()
+        .and_then(|s| humantime::parse_duration(s).ok())
+        .map(|time| KeepaliveConfig {
+            time,
+            ..KeepaliveConfig::default()
+        })
+        .unwrap_or_default();
+
+    let servers_dir = v1
+        .file_provider
+        .as_ref()
+        .and_then(|fp| fp.proxies_path.first())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(crate::defaults::servers_dir);
+
+    if let Some(fp) = &v1.file_provider {
+        if fp.proxies_path.len() > 1 {
+            warnings.push(MigrationWarning {
+                severity: MigrationSeverity::Warning,
+                file: file.clone(),
+                message: format!(
+                    "V2 supports only one servers_dir; using '{}', ignoring {} other path(s)",
+                    servers_dir.display(),
+                    fp.proxies_path.len() - 1
+                ),
+            });
+        }
+    }
+
+    if v1.handshake_timeout_secs.is_some() || v1.status_request_timeout_secs.is_some() {
+        warnings.push(MigrationWarning {
+            severity: MigrationSeverity::Info,
+            file: file.clone(),
+            message: "handshake_timeout_secs and status_request_timeout_secs are not in V2"
+                .to_string(),
+        });
+    }
+
+    let rate_limit = v1
+        .filters
+        .as_ref()
+        .and_then(|f| f.rate_limiter.as_ref())
+        .map(|rl| {
+            let window = rl
+                .window_length
+                .as_ref()
+                .and_then(|s| humantime::parse_duration(s).ok())
+                .unwrap_or_else(crate::defaults::rate_limit_window);
+            RateLimitConfig {
+                max_connections: rl.request_limit.unwrap_or_else(crate::defaults::rate_limit_max),
+                window,
+                ..RateLimitConfig::default()
+            }
+        })
+        .unwrap_or_default();
+
+    if let Some(ref filters) = v1.filters {
+        if filters.ip_filter.as_ref().is_some_and(|f| f.enabled) {
+            warnings.push(MigrationWarning {
+                severity: MigrationSeverity::Warning,
+                file: file.clone(),
+                message: "Global IP filter is per-server in V2, must be configured in each server .toml".to_string(),
+            });
+        }
+        if filters.id_filter.as_ref().is_some_and(|f| f.enabled) {
+            warnings.push(MigrationWarning {
+                severity: MigrationSeverity::Warning,
+                file: file.clone(),
+                message: "ID filter is not available in V2".to_string(),
+            });
+        }
+        if filters.name_filter.as_ref().is_some_and(|f| f.enabled) {
+            warnings.push(MigrationWarning {
+                severity: MigrationSeverity::Warning,
+                file: file.clone(),
+                message: "Name filter is not available in V2".to_string(),
+            });
+        }
+    }
+
+    let ban = v1
+        .filters
+        .as_ref()
+        .and_then(|f| f.ban.as_ref())
+        .map(|b| BanConfig {
+            file: b
+                .file_path
+                .as_ref()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(crate::defaults::ban_file),
+            purge_interval: b
+                .auto_cleanup_interval
+                .map(Duration::from_secs)
+                .unwrap_or_else(crate::defaults::ban_purge_interval),
+            enable_audit_log: b.enable_audit_log.unwrap_or_else(crate::defaults::ban_audit_log),
+        })
+        .unwrap_or_default();
+
+    let status_cache = v1
+        .cache
+        .as_ref()
+        .map(|c| StatusCacheConfig {
+            ttl: c
+                .status_ttl_seconds
+                .map(Duration::from_secs)
+                .unwrap_or_else(crate::defaults::status_cache_ttl),
+            max_entries: c
+                .max_status_entries
+                .unwrap_or_else(crate::defaults::status_cache_max_entries),
+        })
+        .unwrap_or_default();
+
+    let telemetry = v1.telemetry.as_ref().map(|t| TelemetryConfig {
+        enabled: t.enabled,
+        endpoint: t.export_url.clone(),
+        protocol: crate::defaults::telemetry_protocol(),
+        metrics: MetricsConfig {
+            enabled: t.enable_metrics.unwrap_or(true),
+            export_interval: t
+                .export_interval_seconds
+                .map(Duration::from_secs)
+                .unwrap_or_else(crate::defaults::metrics_export_interval),
+        },
+        traces: TracesConfig {
+            enabled: t.enable_tracing.unwrap_or(true),
+            ..TracesConfig::default()
+        },
+        resource: ResourceConfig::default(),
+    });
+
+    let receive_proxy_protocol = v1
+        .proxy_protocol
+        .as_ref()
+        .and_then(|pp| pp.receive_enabled)
+        .unwrap_or(false);
+
+    if let Some(pp) = &v1.proxy_protocol {
+        if pp.receive_timeout_secs.is_some() || pp.receive_allowed_versions.is_some() {
+            warnings.push(MigrationWarning {
+                severity: MigrationSeverity::Info,
+                file: file.clone(),
+                message: "proxy_protocol.receive_timeout_secs and receive_allowed_versions are not in V2".to_string(),
+            });
+        }
+    }
+
+    let default_motd = v1.motds.as_ref().and_then(|motds| {
+        let entry = motds
+            .unreachable
+            .as_ref()
+            .or(motds.unknown.as_ref())
+            .or(motds.unable_status.as_ref());
+        entry.and_then(|e| {
+            let text = e.text.clone()?;
+            Some(MotdConfig {
+                online: Some(MotdEntry {
+                    text,
+                    favicon: e.favicon.clone(),
+                    version_name: e.version_name.clone(),
+                    max_players: e.max_players,
+                }),
+                ..MotdConfig::default()
+            })
+        })
+    });
+
+    if v1.logging.is_some() {
+        warnings.push(MigrationWarning {
+            severity: MigrationSeverity::Info,
+            file: file.clone(),
+            message: "Logging config is not in V2; use RUST_LOG env var or --log-level CLI flag".to_string(),
+        });
+    }
+
+    if v1.managers_config.is_some() {
+        warnings.push(MigrationWarning {
+            severity: MigrationSeverity::Warning,
+            file: file.clone(),
+            message: "managers_config (Pterodactyl/Crafty credentials) is now per-server in V2 [server_manager] sections".to_string(),
+        });
+    }
+
+    let docker = v1.docker_provider.as_ref().map(|dp| {
+        DockerProviderConfig {
+            endpoint: dp
+                .docker_host
+                .clone()
+                .unwrap_or_else(crate::defaults::docker_endpoint),
+            network: None,
+            poll_interval: dp
+                .polling_interval
+                .map(Duration::from_secs)
+                .unwrap_or_else(crate::defaults::docker_poll_interval),
+            reconnect_delay: crate::defaults::docker_reconnect_delay(),
+        }
+    });
+
+    let config = ProxyConfig {
+        bind,
+        max_connections: 0,
+        connect_timeout: crate::defaults::connect_timeout(),
+        receive_proxy_protocol,
+        servers_dir,
+        plugins_dir: crate::defaults::plugins_dir(),
+        worker_threads: 0,
+        rate_limit,
+        status_cache,
+        default_motd,
+        telemetry,
+        keepalive,
+        so_reuseport: false,
+        ban,
+        docker,
+        unknown_domain_behavior: Default::default(),
+        web: None,
+        plugins: std::collections::HashMap::new(),
+    };
+
+    ProxyMigrationResult { config, warnings }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

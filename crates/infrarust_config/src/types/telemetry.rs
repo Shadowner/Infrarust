@@ -2,13 +2,13 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::defaults;
 
 /// Sub-sections: `[telemetry.metrics]`, `[telemetry.traces]`, `[telemetry.resource]`.
 /// Absent from the TOML file means `None` in `ProxyConfig` (no telemetry).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryConfig {
     /// Enables telemetry. `false` = initialized but no export.
     #[serde(default)]
@@ -48,7 +48,7 @@ impl Default for TelemetryConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     /// Enables metrics export.
@@ -70,7 +70,7 @@ impl Default for MetricsConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TracesConfig {
     /// Enables traces export.
@@ -92,7 +92,7 @@ impl Default for TracesConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceConfig {
     /// `OTel` service name.

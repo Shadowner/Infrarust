@@ -25,7 +25,7 @@ pub struct TimeoutConfig {
 
 /// Controls the keepalive probes sent on TCP connections
 /// to detect dead connections.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeepaliveConfig {
     /// Idle duration before the first probe.

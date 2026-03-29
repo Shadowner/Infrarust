@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::defaults;
 
@@ -10,7 +10,7 @@ use crate::defaults;
 /// `ProxyConfig` can parse a `[docker]` section regardless of
 /// the build configuration. The `DockerProvider` itself
 /// is feature-gated in `infrarust-core`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DockerProviderConfig {
     /// Endpoint Docker (ex: "<unix:///var/run/docker.sock>").
