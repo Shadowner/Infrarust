@@ -105,6 +105,9 @@ impl PluginContext for MockPluginContext {
     fn proxy_shutdown(&self) -> tokio_util::sync::CancellationToken {
         tokio_util::sync::CancellationToken::new()
     }
+    fn proxy_info(&self) -> &infrarust_api::services::proxy_info::ProxyInfo {
+        unimplemented!("mock")
+    }
 }
 
 struct MockPluginContextFactory;
@@ -143,6 +146,7 @@ fn make_services() -> PluginServices {
         ),
         domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
         proxy_shutdown: tokio_util::sync::CancellationToken::new(),
+        proxy_info: infrarust_api::services::proxy_info::ProxyInfo::default(),
         plugins_dir: PathBuf::from("plugins"),
     }
 }
@@ -423,6 +427,7 @@ async fn test_cleanup_on_disable() {
         ),
         domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
         proxy_shutdown: tokio_util::sync::CancellationToken::new(),
+        proxy_info: infrarust_api::services::proxy_info::ProxyInfo::default(),
         plugins_dir: PathBuf::from("plugins"),
     };
 

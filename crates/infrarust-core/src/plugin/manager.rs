@@ -10,7 +10,8 @@ use infrarust_api::event::bus::EventBus;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::{
     ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
-    plugin_registry::PluginRegistry, scheduler::Scheduler, server_manager::ServerManager,
+    plugin_registry::PluginRegistry, proxy_info::ProxyInfo, scheduler::Scheduler,
+    server_manager::ServerManager,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -37,6 +38,7 @@ pub struct PluginServices {
     pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
     pub domain_router: Arc<crate::routing::DomainRouter>,
     pub proxy_shutdown: CancellationToken,
+    pub proxy_info: ProxyInfo,
     pub plugins_dir: PathBuf,
 }
 
@@ -420,6 +422,9 @@ mod tests {
         }
         fn proxy_shutdown(&self) -> tokio_util::sync::CancellationToken {
             tokio_util::sync::CancellationToken::new()
+        }
+        fn proxy_info(&self) -> &infrarust_api::services::proxy_info::ProxyInfo {
+            unimplemented!("mock")
         }
     }
 

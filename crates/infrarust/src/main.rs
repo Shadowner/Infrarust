@@ -229,6 +229,56 @@ fn load_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
     Ok(config)
 }
 
+fn build_proxy_info(config: &ProxyConfig) -> infrarust_api::services::proxy_info::ProxyInfo {
+    use infrarust_api::services::proxy_info::{
+        KeepaliveInfo, ProxyInfo, RateLimitInfo, StatusCacheInfo, UnknownDomainBehavior,
+    };
+
+    ProxyInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        bind: config.bind,
+        max_connections: config.max_connections,
+        connect_timeout: config.connect_timeout,
+        receive_proxy_protocol: config.receive_proxy_protocol,
+        worker_threads: config.worker_threads,
+        so_reuseport: config.so_reuseport,
+        rate_limit: RateLimitInfo {
+            max_connections: config.rate_limit.max_connections,
+            window: config.rate_limit.window,
+            status_max: config.rate_limit.status_max,
+            status_window: config.rate_limit.status_window,
+        },
+        status_cache: StatusCacheInfo {
+            ttl: config.status_cache.ttl,
+            max_entries: config.status_cache.max_entries,
+        },
+        keepalive: KeepaliveInfo {
+            time: config.keepalive.time,
+            interval: config.keepalive.interval,
+            retries: config.keepalive.retries,
+        },
+        telemetry_enabled: config
+            .telemetry
+            .as_ref()
+            .is_some_and(|t| t.enabled),
+        docker_enabled: config.docker.is_some(),
+        web_api_enabled: config
+            .web
+            .as_ref()
+            .is_some_and(|w| w.enable_api),
+        web_ui_enabled: config
+            .web
+            .as_ref()
+            .is_some_and(|w| w.enable_webui),
+        unknown_domain_behavior: match config.unknown_domain_behavior {
+            infrarust_config::UnknownDomainBehavior::DefaultMotd => {
+                UnknownDomainBehavior::DefaultMotd
+            }
+            infrarust_config::UnknownDomainBehavior::Drop => UnknownDomainBehavior::Drop,
+        },
+    }
+}
+
 async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
 
@@ -242,6 +292,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
 
     let mut web_config = config.web.clone();
     let plugins_dir = config.plugins_dir.clone();
+    let proxy_info = build_proxy_info(&config);
 
     // Build and run the proxy server
     let mut server = ProxyServer::new(config, shutdown.clone())
@@ -287,6 +338,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         transport_filter_registry: Arc::clone(&transport_filter_registry),
         domain_router: Arc::clone(&services.domain_router),
         proxy_shutdown: shutdown.clone(),
+        proxy_info,
         plugins_dir,
     };
 

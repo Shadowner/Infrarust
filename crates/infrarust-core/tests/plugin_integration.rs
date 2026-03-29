@@ -71,6 +71,7 @@ async fn test_plugin_receives_events_end_to_end() {
         ),
         domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
         proxy_shutdown: tokio_util::sync::CancellationToken::new(),
+        proxy_info: infrarust_api::services::proxy_info::ProxyInfo::default(),
         plugins_dir: PathBuf::from("plugins"),
     };
 
@@ -159,6 +160,7 @@ async fn test_dependency_order_end_to_end() {
         ),
         domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
         proxy_shutdown: tokio_util::sync::CancellationToken::new(),
+        proxy_info: infrarust_api::services::proxy_info::ProxyInfo::default(),
         plugins_dir: PathBuf::from("plugins"),
     };
 

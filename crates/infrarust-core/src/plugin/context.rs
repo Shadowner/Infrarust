@@ -12,6 +12,7 @@ use infrarust_api::filter::registry::{CodecFilterRegistry, TransportFilterRegist
 use infrarust_api::limbo::LimboHandler;
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::provider::PluginConfigProvider;
+use infrarust_api::services::proxy_info::ProxyInfo;
 use infrarust_api::services::scheduler::{Scheduler, TaskHandle};
 use infrarust_api::services::{
     ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
@@ -46,6 +47,7 @@ pub struct PluginContextImpl {
     transport_filter_registry: Arc<TransportFilterRegistryImpl>,
     domain_router: Arc<DomainRouter>,
     proxy_shutdown: CancellationToken,
+    proxy_info: ProxyInfo,
     plugin_id: String,
     plugins_dir: PathBuf,
 
@@ -73,6 +75,7 @@ impl PluginContextImpl {
         transport_filter_registry: Arc<TransportFilterRegistryImpl>,
         domain_router: Arc<DomainRouter>,
         proxy_shutdown: CancellationToken,
+        proxy_info: ProxyInfo,
         plugins_dir: PathBuf,
     ) -> Self {
         let registered_handles = Arc::new(Mutex::new(Vec::new()));
@@ -107,6 +110,7 @@ impl PluginContextImpl {
             transport_filter_registry,
             domain_router,
             proxy_shutdown,
+            proxy_info,
             plugin_id,
             plugins_dir,
             registered_handles,
@@ -273,5 +277,9 @@ impl PluginContext for PluginContextImpl {
 
     fn proxy_shutdown(&self) -> CancellationToken {
         self.proxy_shutdown.clone()
+    }
+
+    fn proxy_info(&self) -> &ProxyInfo {
+        &self.proxy_info
     }
 }

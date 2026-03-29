@@ -253,6 +253,9 @@ mod tests {
         fn proxy_shutdown(&self) -> tokio_util::sync::CancellationToken {
             tokio_util::sync::CancellationToken::new()
         }
+        fn proxy_info(&self) -> &infrarust_api::services::proxy_info::ProxyInfo {
+            unimplemented!("mock")
+        }
     }
 
     struct MockPluginContextFactory;

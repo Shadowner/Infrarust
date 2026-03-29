@@ -17,7 +17,8 @@ use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use crate::limbo::LimboHandler;
 use crate::services::{
     ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
-    plugin_registry::PluginRegistry, scheduler::Scheduler, server_manager::ServerManager,
+    plugin_registry::PluginRegistry, proxy_info::ProxyInfo, scheduler::Scheduler,
+    server_manager::ServerManager,
 };
 
 /// Metadata describing a plugin.
@@ -199,6 +200,8 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     fn data_dir(&self) -> PathBuf;
 
     fn proxy_shutdown(&self) -> CancellationToken;
+
+    fn proxy_info(&self) -> &ProxyInfo;
 }
 
 #[cfg(test)]
