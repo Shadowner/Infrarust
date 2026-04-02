@@ -224,11 +224,12 @@ impl StatusHandler {
             }
         }
 
-        if let Some((response, _latency)) = self.cache.get_stale(config_id) {
+        if let Some((mut response, _latency)) = self.cache.get_stale(config_id) {
             tracing::warn!(
                 server = config_id,
                 "serving stale cached status (backend unreachable)"
             );
+            response.version.protocol = -1;
             return response;
         }
 
