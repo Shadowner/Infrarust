@@ -265,7 +265,7 @@ impl StatusHandler {
             _ => (None, "A Minecraft Server"),
         };
 
-        let mut resp = motd_entry.map_or_else(
+        motd_entry.map_or_else(
             || ServerPingResponse::synthetic(default_text, None, None, None),
             |entry| {
                 let mut r = ServerPingResponse::synthetic(
@@ -279,8 +279,7 @@ impl StatusHandler {
                 }
                 r
             },
-        );
-        resp
+        )
     }
 
     /// Builds a response from the global `default_motd` (unknown domain).
