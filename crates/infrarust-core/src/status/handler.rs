@@ -254,7 +254,7 @@ impl StatusHandler {
             _ => (None, "A Minecraft Server"),
         };
 
-        motd_entry.map_or_else(
+        let mut resp = motd_entry.map_or_else(
             || ServerPingResponse::synthetic(default_text, None, None, None),
             |entry| {
                 ServerPingResponse::synthetic(
@@ -264,7 +264,9 @@ impl StatusHandler {
                     entry.max_players.map(u32::cast_signed),
                 )
             },
-        )
+        );
+        resp.version.protocol = -1;
+        resp
     }
 
     /// Builds a response from the global `default_motd` (unknown domain).
@@ -319,6 +321,7 @@ impl StatusHandler {
             None,
             Some(config.max_players.cast_signed()),
         );
+        resp.version.protocol = -1;
         let online = connection_registry.count_by_server(config_id) as i32;
         resp.players.online = online;
         resp
