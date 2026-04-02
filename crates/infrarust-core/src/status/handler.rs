@@ -125,8 +125,10 @@ impl StatusHandler {
         self.send_packet(ctx, &status_resp, protocol_version)
             .await?;
 
-        // Skip ping/pong for offline servers so the client shows an X on the bars
-        if response.version.protocol != -1 {
+        if response.version.protocol == -1 {
+            // Read the ping request but don't send pong, so the client shows X on bars
+            self.read_ping(ctx, protocol_version).await?;
+        } else {
             self.handle_ping_pong(ctx, protocol_version).await?;
         }
 
@@ -364,6 +366,31 @@ impl StatusHandler {
         })
         .await
         .map_err(|_| CoreError::Timeout("status request read timed out".into()))?
+    }
+
+    /// Reads the client's ping request without sending a pong response.
+    /// This causes the client to show an X on the ping bars after timeout.
+    async fn read_ping(
+        &self,
+        ctx: &mut ConnectionContext,
+        _protocol_version: ProtocolVersion,
+    ) -> Result<(), CoreError> {
+        let _ = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut decoder = PacketDecoder::new();
+            loop {
+                if decoder.try_next_frame()?.is_some() {
+                    return Ok(());
+                }
+                let mut buf = [0u8; 512];
+                let n = ctx.stream_mut().read(&mut buf).await?;
+                if n == 0 {
+                    return Err(CoreError::ConnectionClosed);
+                }
+                decoder.queue_bytes(&buf[..n]);
+            }
+        })
+        .await;
+        Ok(())
     }
 
     /// Handles the ping/pong exchange after status response.
