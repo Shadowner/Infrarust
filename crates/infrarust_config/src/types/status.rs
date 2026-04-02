@@ -52,6 +52,10 @@ pub struct MotdEntry {
     /// Version displayed in the client.
     #[serde(default)]
     pub version_name: Option<String>,
+    /// Protocol version number. Set to -1 to show version name in red
+    /// and display an X on the ping bars (server appears offline).
+    #[serde(default)]
+    pub version_protocol: Option<i32>,
     /// Maximum player count displayed.
     #[serde(default)]
     pub max_players: Option<u32>,

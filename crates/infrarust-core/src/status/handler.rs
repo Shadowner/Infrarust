@@ -232,7 +232,14 @@ impl StatusHandler {
                 server = config_id,
                 "serving stale cached status (backend unreachable)"
             );
-            response.version.protocol = -1;
+            let unreachable_entry = config
+                .motd
+                .unreachable
+                .as_ref()
+                .or_else(|| self.default_motd.as_ref().and_then(|m| m.unreachable.as_ref()));
+            if let Some(entry) = unreachable_entry {
+                response.apply_overrides(entry);
+            }
             return response;
         }
 
@@ -261,15 +268,18 @@ impl StatusHandler {
         let mut resp = motd_entry.map_or_else(
             || ServerPingResponse::synthetic(default_text, None, None, None),
             |entry| {
-                ServerPingResponse::synthetic(
+                let mut r = ServerPingResponse::synthetic(
                     &entry.text,
                     entry.favicon.as_deref(),
                     entry.version_name.as_deref(),
                     entry.max_players.map(u32::cast_signed),
-                )
+                );
+                if let Some(protocol) = entry.version_protocol {
+                    r.version.protocol = protocol;
+                }
+                r
             },
         );
-        resp.version.protocol = -1;
         resp
     }
 
@@ -277,7 +287,7 @@ impl StatusHandler {
     fn build_default_motd_response(&self) -> ServerPingResponse {
         let entry = self.default_motd.as_ref().and_then(|m| m.online.as_ref());
 
-        entry.map_or_else(
+        let mut resp = entry.map_or_else(
             || ServerPingResponse::synthetic("An Infrarust Proxy", None, None, None),
             |entry| {
                 ServerPingResponse::synthetic(
@@ -287,7 +297,11 @@ impl StatusHandler {
                     entry.max_players.map(u32::cast_signed),
                 )
             },
-        )
+        );
+        if let Some(protocol) = entry.and_then(|e| e.version_protocol) {
+            resp.version.protocol = protocol;
+        }
+        resp
     }
 
     /// Builds a synthetic "unreachable" MOTD.
@@ -297,35 +311,33 @@ impl StatusHandler {
         connection_registry: &ConnectionRegistry,
         config_id: &str,
     ) -> ServerPingResponse {
-        if let Some(ref entry) = config.motd.unreachable {
-            return ServerPingResponse::synthetic(
-                &entry.text,
-                entry.favicon.as_deref(),
-                entry.version_name.as_deref(),
-                entry.max_players.map(u32::cast_signed),
-            );
-        }
-
-        if let Some(entry) = self
-            .default_motd
+        let motd_entry = config
+            .motd
+            .unreachable
             .as_ref()
-            .and_then(|m| m.unreachable.as_ref())
-        {
-            return ServerPingResponse::synthetic(
-                &entry.text,
-                entry.favicon.as_deref(),
-                entry.version_name.as_deref(),
-                entry.max_players.map(u32::cast_signed),
-            );
-        }
+            .or_else(|| self.default_motd.as_ref().and_then(|m| m.unreachable.as_ref()));
 
-        let mut resp = ServerPingResponse::synthetic(
-            "\u{00a7}cServer unreachable",
-            None,
-            None,
-            Some(config.max_players.cast_signed()),
+        let mut resp = motd_entry.map_or_else(
+            || {
+                ServerPingResponse::synthetic(
+                    "\u{00a7}cServer unreachable",
+                    None,
+                    None,
+                    Some(config.max_players.cast_signed()),
+                )
+            },
+            |entry| {
+                ServerPingResponse::synthetic(
+                    &entry.text,
+                    entry.favicon.as_deref(),
+                    entry.version_name.as_deref(),
+                    entry.max_players.map(u32::cast_signed),
+                )
+            },
         );
-        resp.version.protocol = -1;
+        if let Some(protocol) = motd_entry.and_then(|e| e.version_protocol) {
+            resp.version.protocol = protocol;
+        }
         let online = connection_registry.count_by_server(config_id) as i32;
         resp.players.online = online;
         resp

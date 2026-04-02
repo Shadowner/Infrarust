@@ -85,6 +85,9 @@ impl ServerPingResponse {
         if let Some(ref name) = motd.version_name {
             self.version.name.clone_from(name);
         }
+        if let Some(protocol) = motd.version_protocol {
+            self.version.protocol = protocol;
+        }
         if let Some(max) = motd.max_players {
             self.players.max = max.cast_signed();
         }
@@ -227,6 +230,7 @@ mod tests {
             text: "Custom MOTD".to_string(),
             favicon: None,
             version_name: None,
+            version_protocol: None,
             max_players: None,
         };
         resp.apply_overrides(&entry);
@@ -258,6 +262,7 @@ mod tests {
             text: "X".to_string(),
             favicon: Some("data:image/png;base64,abc".to_string()),
             version_name: None,
+            version_protocol: None,
             max_players: None,
         };
         resp.apply_overrides(&entry);

@@ -207,6 +207,7 @@ fn convert_v1_motd_entry(entry: &V1MotdEntry) -> Option<MotdEntry> {
         text,
         favicon: entry.favicon.clone(),
         version_name: entry.version_name.clone(),
+        version_protocol: entry.protocol_version,
         max_players: entry.max_players,
     })
 }
@@ -665,6 +666,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
                     text,
                     favicon: e.favicon.clone(),
                     version_name: e.version_name.clone(),
+                    version_protocol: e.protocol_version,
                     max_players: e.max_players,
                 }),
                 ..MotdConfig::default()
