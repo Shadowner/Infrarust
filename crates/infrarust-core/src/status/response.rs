@@ -247,6 +247,7 @@ mod tests {
             text: "New MOTD".to_string(),
             favicon: None,
             version_name: None,
+            version_protocol: None,
             max_players: Some(200),
         };
         resp.apply_overrides(&entry);
