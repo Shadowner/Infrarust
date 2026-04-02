@@ -125,7 +125,10 @@ impl StatusHandler {
         self.send_packet(ctx, &status_resp, protocol_version)
             .await?;
 
-        self.handle_ping_pong(ctx, protocol_version).await?;
+        // Skip ping/pong for offline servers so the client shows an X on the bars
+        if response.version.protocol != -1 {
+            self.handle_ping_pong(ctx, protocol_version).await?;
+        }
 
         Ok(())
     }
