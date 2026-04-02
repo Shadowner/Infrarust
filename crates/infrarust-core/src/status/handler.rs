@@ -232,11 +232,11 @@ impl StatusHandler {
                 server = config_id,
                 "serving stale cached status (backend unreachable)"
             );
-            let unreachable_entry = config
-                .motd
-                .unreachable
-                .as_ref()
-                .or_else(|| self.default_motd.as_ref().and_then(|m| m.unreachable.as_ref()));
+            let unreachable_entry = config.motd.unreachable.as_ref().or_else(|| {
+                self.default_motd
+                    .as_ref()
+                    .and_then(|m| m.unreachable.as_ref())
+            });
             if let Some(entry) = unreachable_entry {
                 response.apply_overrides(entry);
             }
@@ -311,11 +311,11 @@ impl StatusHandler {
         connection_registry: &ConnectionRegistry,
         config_id: &str,
     ) -> ServerPingResponse {
-        let motd_entry = config
-            .motd
-            .unreachable
-            .as_ref()
-            .or_else(|| self.default_motd.as_ref().and_then(|m| m.unreachable.as_ref()));
+        let motd_entry = config.motd.unreachable.as_ref().or_else(|| {
+            self.default_motd
+                .as_ref()
+                .and_then(|m| m.unreachable.as_ref())
+        });
 
         let mut resp = motd_entry.map_or_else(
             || {
