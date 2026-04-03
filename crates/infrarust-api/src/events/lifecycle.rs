@@ -103,6 +103,18 @@ pub struct DisconnectEvent {
 
 impl Event for DisconnectEvent {}
 
+/// Fired when online-mode authentication fails (cracked client couldn't complete encryption).
+///
+/// Covers both forced online auth (`ForceOnline` in offline mode) and default
+/// online auth (`client_only` mode). Plugins can listen for this to remember
+/// the username and set `ForceOffline` on the next connection attempt.
+pub struct OnlineAuthFailed {
+    /// The username that failed online authentication.
+    pub username: String,
+}
+
+impl Event for OnlineAuthFailed {}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]

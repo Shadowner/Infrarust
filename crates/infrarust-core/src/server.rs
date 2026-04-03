@@ -257,12 +257,16 @@ impl ProxyServer {
         #[cfg(feature = "telemetry")]
         let passthrough_handler = passthrough_handler.with_metrics(Arc::clone(&proxy_metrics));
 
-        let offline_handler =
-            InterceptedHandler::offline(Arc::clone(&backend_connector), services.clone());
+        let auth = Arc::new(MojangAuth::new()?);
+
+        let offline_handler = InterceptedHandler::offline(
+            Arc::clone(&backend_connector),
+            services.clone(),
+            Some(Arc::clone(&auth)),
+        );
         #[cfg(feature = "telemetry")]
         let offline_handler = offline_handler.with_metrics(Arc::clone(&proxy_metrics));
 
-        let auth = Arc::new(MojangAuth::new()?);
         let client_only_handler =
             InterceptedHandler::client_only(Arc::clone(&backend_connector), services.clone(), auth);
         #[cfg(feature = "telemetry")]

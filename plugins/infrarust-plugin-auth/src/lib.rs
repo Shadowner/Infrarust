@@ -7,6 +7,7 @@ pub mod error;
 pub mod handler;
 pub mod ip_mask;
 pub mod password;
+pub mod premium;
 pub mod storage;
 pub mod util;
 
@@ -15,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
+use infrarust_api::event::bus::EventBusExt;
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
@@ -113,12 +115,54 @@ impl Plugin for AuthPlugin {
                 load_blocked_passwords(&data_dir, &config.password_policy.blocked_passwords_file)
                     .await;
 
+            let premium_cache = if config.premium.enabled {
+                let cache = Arc::new(premium::PremiumCache::new(
+                    std::time::Duration::from_secs(config.premium.cache_ttl_seconds),
+                    std::time::Duration::from_secs(config.premium.failed_auth_remember_seconds),
+                ));
+                let lookup = Arc::new(premium::MojangApiLookup::new(
+                    config.premium.rate_limit_per_second,
+                ));
+                let detector = Arc::new(premium::PremiumDetector::new(
+                    Arc::clone(&cache),
+                    lookup,
+                    Arc::clone(&storage),
+                    Arc::new(config.premium.clone()),
+                ));
+
+                ctx.event_bus()
+                    .subscribe_async::<infrarust_api::events::lifecycle::PreLoginEvent, _>(
+                        infrarust_api::event::EventPriority::EARLY,
+                        detector.pre_login_handler(),
+                    );
+
+                let failure_cache = Arc::clone(&cache);
+                ctx.event_bus().subscribe::<
+                    infrarust_api::events::lifecycle::OnlineAuthFailed, _
+                >(
+                    infrarust_api::event::EventPriority::NORMAL,
+                    move |event| {
+                        failure_cache.mark_auth_failed(&event.username);
+                        tracing::info!(
+                            username = %event.username,
+                            "Remembered failed premium auth — next attempt will skip ForceOnline"
+                        );
+                    },
+                );
+
+                tracing::info!("[AuthPlugin] Premium auto-login enabled");
+                Some(cache)
+            } else {
+                None
+            };
+
             let handler = Arc::new(AuthHandler::new(
                 Arc::clone(&storage),
                 Arc::clone(&config),
                 ctx.player_registry_handle(),
                 dummy_hash,
                 blocked_passwords,
+                premium_cache,
             ));
 
             ctx.register_limbo_handler(Box::new(AuthLimbo(Arc::clone(&handler))));

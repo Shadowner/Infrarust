@@ -1473,9 +1473,11 @@ dependencies = [
  "bcrypt",
  "chrono",
  "dashmap",
+ "governor",
  "infrarust-api",
  "password-hash 0.6.0",
  "rand_core 0.6.4",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
@@ -1484,6 +1486,7 @@ dependencies = [
  "tokio-util",
  "toml",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

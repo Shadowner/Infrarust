@@ -34,6 +34,16 @@ pub struct GameProfile {
     pub properties: Vec<ProfileProperty>,
 }
 
+impl GameProfile {
+    /// Returns `true` if this profile has a signed `textures` property,
+    /// indicating the player was authenticated by Mojang (online mode).
+    pub fn is_mojang_authenticated(&self) -> bool {
+        self.properties
+            .iter()
+            .any(|p| p.name == "textures" && p.signature.is_some())
+    }
+}
+
 /// A single property on a [`GameProfile`].
 ///
 /// Typically contains skin texture data signed by Mojang.

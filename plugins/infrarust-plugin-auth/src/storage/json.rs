@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use infrarust_api::event::BoxFuture;
 
-use crate::account::{AuthAccount, PasswordHash, Username};
+use crate::account::{AuthAccount, PasswordHash, PremiumInfo, Username};
 use crate::error::AuthStorageError;
 
 use super::AuthStorage;
@@ -106,7 +106,7 @@ impl AuthStorage for JsonFileStorage {
         Box::pin(async move {
             match self.accounts.get_mut(username) {
                 Some(mut entry) => {
-                    entry.password_hash = new_hash;
+                    entry.password_hash = Some(new_hash);
                     self.mark_dirty();
                     Ok(())
                 }
@@ -188,6 +188,32 @@ impl AuthStorage for JsonFileStorage {
     fn has_account_blocking(&self, username: &Username) -> bool {
         self.accounts.contains_key(username)
     }
+
+    fn update_premium_info<'a>(
+        &'a self,
+        username: &'a Username,
+        premium_info: Option<PremiumInfo>,
+    ) -> BoxFuture<'a, Result<(), AuthStorageError>> {
+        Box::pin(async move {
+            match self.accounts.get_mut(username) {
+                Some(mut entry) => {
+                    entry.premium_info = premium_info;
+                    self.mark_dirty();
+                    Ok(())
+                }
+                None => Err(AuthStorageError::AccountNotFound {
+                    username: username.to_string(),
+                }),
+            }
+        })
+    }
+
+    fn is_force_cracked_blocking(&self, username: &Username) -> bool {
+        self.accounts
+            .get(username)
+            .and_then(|entry| entry.premium_info.as_ref().map(|pi| pi.force_cracked))
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
@@ -200,11 +226,12 @@ mod tests {
         AuthAccount {
             username: Username::new(name),
             display_name: DisplayName::new(name),
-            password_hash: PasswordHash::new("$argon2id$test"),
+            password_hash: Some(PasswordHash::new("$argon2id$test")),
             registered_at: Utc::now(),
             last_login: None,
             last_ip: None,
             login_count: 0,
+            premium_info: None,
         }
     }
 
@@ -332,6 +359,9 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(account.password_hash.as_str(), "$argon2id$new-hash");
+        assert_eq!(
+            account.password_hash.as_ref().map(|h| h.as_str()),
+            Some("$argon2id$new-hash")
+        );
     }
 }

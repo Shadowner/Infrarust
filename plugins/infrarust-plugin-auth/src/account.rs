@@ -3,6 +3,7 @@ use std::net::IpAddr;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Lowercased canonical username for case-insensitive lookups.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -64,14 +65,24 @@ impl PasswordHash {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PremiumInfo {
+    pub mojang_uuid: Uuid,
+    pub force_cracked: bool,
+    pub first_premium_login: DateTime<Utc>,
+    pub last_premium_login: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthAccount {
     pub username: Username,
     pub display_name: DisplayName,
-    pub password_hash: PasswordHash,
+    pub password_hash: Option<PasswordHash>,
     pub registered_at: DateTime<Utc>,
     pub last_login: Option<DateTime<Utc>>,
     pub last_ip: Option<IpAddr>,
     pub login_count: u64,
+    #[serde(default)]
+    pub premium_info: Option<PremiumInfo>,
 }
 
 #[cfg(test)]

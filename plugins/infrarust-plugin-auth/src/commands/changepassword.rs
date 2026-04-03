@@ -49,7 +49,14 @@ impl CommandHandler for ChangePasswordCommand {
                 }
             };
 
-            match password::verify_password(old_password, &account.password_hash).await {
+            let Some(ref password_hash) = account.password_hash else {
+                let _ = player.send_message(Component::error(
+                    "This is a premium account with no password set.",
+                ));
+                return;
+            };
+
+            match password::verify_password(old_password, password_hash).await {
                 Ok(true) => {}
                 Ok(false) => {
                     let _ = player

@@ -48,7 +48,14 @@ impl CommandHandler for UnregisterCommand {
                 }
             };
 
-            match password::verify_password(password, &account.password_hash).await {
+            let Some(ref password_hash) = account.password_hash else {
+                let _ = player.send_message(Component::error(
+                    "This is a premium account with no password set.",
+                ));
+                return;
+            };
+
+            match password::verify_password(password, password_hash).await {
                 Ok(true) => {
                     if let Err(e) = storage.delete_account(&username).await {
                         tracing::error!("Account deletion error: {e}");

@@ -12,9 +12,10 @@ use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, PlayerId, TitleData};
 use tokio_util::sync::CancellationToken;
 
-use crate::account::{AuthAccount, DisplayName, Username};
+use crate::account::{AuthAccount, DisplayName, PremiumInfo, Username};
 use crate::config::AuthConfig;
 use crate::password;
+use crate::premium::PremiumCache;
 use crate::storage::AuthStorage;
 use crate::util::parse_colored;
 
@@ -34,6 +35,7 @@ pub struct AuthHandler {
     dummy_hash: crate::account::PasswordHash,
     blocked_passwords: HashSet<String>,
     admin_set: HashSet<String>,
+    premium_cache: Option<Arc<PremiumCache>>,
 }
 
 impl AuthHandler {
@@ -43,6 +45,7 @@ impl AuthHandler {
         player_registry: Arc<dyn PlayerRegistry>,
         dummy_hash: crate::account::PasswordHash,
         blocked_passwords: HashSet<String>,
+        premium_cache: Option<Arc<PremiumCache>>,
     ) -> Self {
         let admin_set = config.admin_set();
         Self {
@@ -53,7 +56,12 @@ impl AuthHandler {
             dummy_hash,
             blocked_passwords,
             admin_set,
+            premium_cache,
         }
+    }
+
+    pub(crate) fn premium_cache(&self) -> Option<&Arc<PremiumCache>> {
+        self.premium_cache.as_ref()
     }
 
     pub(crate) fn storage(&self) -> &Arc<dyn AuthStorage> {
@@ -198,6 +206,79 @@ impl LimboHandler for AuthHandler {
     ) -> BoxFuture<'a, HandlerResult> {
         let player_id = session.player_id();
         let profile = session.profile();
+
+        if self.config.premium.enabled && profile.is_mojang_authenticated() {
+            let username = Username::new(&profile.username);
+            let display_name = profile.username.clone();
+            let mojang_uuid = profile.uuid;
+            let now = chrono::Utc::now();
+
+            match self.storage.get_account_blocking(&username) {
+                Ok(Some(existing)) => {
+                    let first = existing
+                        .premium_info
+                        .as_ref()
+                        .map(|pi| pi.first_premium_login)
+                        .unwrap_or(now);
+
+                    let premium_info = PremiumInfo {
+                        mojang_uuid,
+                        force_cracked: false,
+                        first_premium_login: first,
+                        last_premium_login: Some(now),
+                    };
+
+                    let storage = Arc::clone(&self.storage);
+                    let u = username.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = storage.update_premium_info(&u, Some(premium_info)).await {
+                            tracing::error!("Premium info update failed: {e}");
+                        }
+                    });
+                }
+                _ => {
+                    let ip = self
+                        .player_registry
+                        .get_player_by_id(player_id)
+                        .map(|p| p.remote_addr().ip());
+
+                    let premium_info = PremiumInfo {
+                        mojang_uuid,
+                        force_cracked: false,
+                        first_premium_login: now,
+                        last_premium_login: Some(now),
+                    };
+
+                    let account = AuthAccount {
+                        username: username.clone(),
+                        display_name: DisplayName::new(display_name.clone()),
+                        password_hash: None,
+                        registered_at: now,
+                        last_login: Some(now),
+                        last_ip: ip,
+                        login_count: 1,
+                        premium_info: Some(premium_info),
+                    };
+                    let storage = Arc::clone(&self.storage);
+                    tokio::spawn(async move {
+                        if let Err(e) = storage.create_account(&account).await {
+                            tracing::error!("Premium account creation failed: {e}");
+                        }
+                    });
+                }
+            }
+
+            let msg = self
+                .config
+                .premium
+                .messages
+                .premium_login
+                .replace("{username}", &display_name);
+            let _ = session.send_message(parse_colored(&msg));
+            tracing::info!(%display_name, "Premium auto-login");
+            return Box::pin(async { HandlerResult::Accept });
+        }
+
         let username = Username::new(&profile.username);
         let display_name = profile.username.clone();
         let cancel_token = CancellationToken::new();
@@ -290,7 +371,18 @@ impl LimboHandler for AuthHandler {
                 let password = password.to_string();
 
                 let hash = match self.storage.get_account_blocking(&username) {
-                    Ok(Some(account)) => account.password_hash.clone(),
+                    Ok(Some(account)) => match account.password_hash {
+                        Some(h) => h.clone(),
+                        None => {
+                            let msg = if account.premium_info.is_some() {
+                                "This is a premium account. Use your official Minecraft launcher."
+                            } else {
+                                "This account has no password set. Contact an administrator."
+                            };
+                            let _ = session.send_message(Component::error(msg));
+                            return Box::pin(async {});
+                        }
+                    },
                     _ => self.dummy_hash.clone(),
                 };
 
@@ -430,13 +522,14 @@ impl LimboHandler for AuthHandler {
                     let account = AuthAccount {
                         username: username.clone(),
                         display_name: DisplayName::new(display_name),
-                        password_hash: hash,
+                        password_hash: Some(hash),
                         registered_at: chrono::Utc::now(),
                         last_login: None,
                         last_ip: player_registry
                             .get_player_by_id(player_id)
                             .map(|p| p.remote_addr().ip()),
                         login_count: 0,
+                        premium_info: None,
                     };
 
                     match storage.create_account(&account).await {

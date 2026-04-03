@@ -19,10 +19,13 @@ tracing = { workspace = true }
 dashmap = { workspace = true }
 toml = { workspace = true }
 chrono = { workspace = true }
+uuid = { workspace = true }
 argon2 = { workspace = true }
 password-hash = { workspace = true }
 bcrypt = { workspace = true }
 rand_core = { workspace = true }
+reqwest = { workspace = true }
+governor = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

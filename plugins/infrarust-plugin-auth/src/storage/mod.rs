@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use chrono::{DateTime, Utc};
 use infrarust_api::event::BoxFuture;
 
-use crate::account::{AuthAccount, PasswordHash, Username};
+use crate::account::{AuthAccount, PasswordHash, PremiumInfo, Username};
 use crate::error::AuthStorageError;
 
 pub trait AuthStorage: Send + Sync {
@@ -42,6 +42,12 @@ pub trait AuthStorage: Send + Sync {
         now: DateTime<Utc>,
     ) -> BoxFuture<'a, Result<(), AuthStorageError>>;
 
+    fn update_premium_info<'a>(
+        &'a self,
+        username: &'a Username,
+        premium_info: Option<PremiumInfo>,
+    ) -> BoxFuture<'a, Result<(), AuthStorageError>>;
+
     fn flush(&self) -> BoxFuture<'_, Result<(), AuthStorageError>>;
 
     fn get_account_blocking(
@@ -50,4 +56,6 @@ pub trait AuthStorage: Send + Sync {
     ) -> Result<Option<AuthAccount>, AuthStorageError>;
 
     fn has_account_blocking(&self, username: &Username) -> bool;
+
+    fn is_force_cracked_blocking(&self, username: &Username) -> bool;
 }

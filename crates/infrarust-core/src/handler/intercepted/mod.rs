@@ -44,11 +44,17 @@ impl InterceptedHandler {
         }
     }
 
-    pub fn offline(backend_connector: Arc<BackendConnector>, services: ProxyServices) -> Self {
+    pub fn offline(
+        backend_connector: Arc<BackendConnector>,
+        services: ProxyServices,
+        mojang_auth: Option<Arc<MojangAuth>>,
+    ) -> Self {
         Self {
             backend_connector,
             services,
-            auth_strategy: AuthStrategy::None,
+            auth_strategy: AuthStrategy::Offline {
+                mojang: mojang_auth,
+            },
             #[cfg(feature = "telemetry")]
             metrics: None,
         }

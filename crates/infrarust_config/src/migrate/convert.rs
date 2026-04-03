@@ -514,17 +514,18 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         .unwrap_or_else(crate::defaults::servers_dir);
 
     if let Some(fp) = &v1.file_provider
-        && fp.proxies_path.len() > 1 {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Warning,
-                file: file.clone(),
-                message: format!(
-                    "V2 supports only one servers_dir; using '{}', ignoring {} other path(s)",
-                    servers_dir.display(),
-                    fp.proxies_path.len() - 1
-                ),
-            });
-        }
+        && fp.proxies_path.len() > 1
+    {
+        warnings.push(MigrationWarning {
+            severity: MigrationSeverity::Warning,
+            file: file.clone(),
+            message: format!(
+                "V2 supports only one servers_dir; using '{}', ignoring {} other path(s)",
+                servers_dir.display(),
+                fp.proxies_path.len() - 1
+            ),
+        });
+    }
 
     if v1.handshake_timeout_secs.is_some() || v1.status_request_timeout_secs.is_some() {
         warnings.push(MigrationWarning {
@@ -640,15 +641,16 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         .unwrap_or(false);
 
     if let Some(pp) = &v1.proxy_protocol
-        && (pp.receive_timeout_secs.is_some() || pp.receive_allowed_versions.is_some()) {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Info,
-                file: file.clone(),
-                message:
-                    "proxy_protocol.receive_timeout_secs and receive_allowed_versions are not in V2"
-                        .to_string(),
-            });
-        }
+        && (pp.receive_timeout_secs.is_some() || pp.receive_allowed_versions.is_some())
+    {
+        warnings.push(MigrationWarning {
+            severity: MigrationSeverity::Info,
+            file: file.clone(),
+            message:
+                "proxy_protocol.receive_timeout_secs and receive_allowed_versions are not in V2"
+                    .to_string(),
+        });
+    }
 
     let default_motd = v1.motds.as_ref().and_then(|motds| {
         let entry = motds

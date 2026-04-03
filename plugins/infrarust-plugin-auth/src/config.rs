@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AuthError;
 use crate::ip_mask::IpMaskingMode;
+use crate::premium::config::PremiumConfig;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -16,6 +17,7 @@ pub struct AuthConfig {
     pub privacy: PrivacyConfig,
     pub admin: AdminConfig,
     pub messages: AuthMessages,
+    pub premium: PremiumConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
