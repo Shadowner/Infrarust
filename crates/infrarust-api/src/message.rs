@@ -23,6 +23,8 @@ impl ProxyMessage {
     }
 
     pub fn prefixed(message: Component) -> Component {
-        Component::text("[Infrarust] ").color("gold").append(message)
+        Component::text("[Infrarust] ")
+            .color("gold")
+            .append(message)
     }
 }

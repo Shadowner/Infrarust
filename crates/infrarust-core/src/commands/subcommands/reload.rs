@@ -37,9 +37,7 @@ impl SubcommandHandler for ReloadSubcommand {
             let _ = player.send_message(ProxyMessage::info(
                 "Configuration auto-reloads when files change.",
             ));
-            let _ = player.send_message(ProxyMessage::detail(
-                "  No manual reload is needed.",
-            ));
+            let _ = player.send_message(ProxyMessage::detail("  No manual reload is needed."));
         })
     }
 }

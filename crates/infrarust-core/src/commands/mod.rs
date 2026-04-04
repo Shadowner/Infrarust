@@ -13,9 +13,9 @@ use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
 
 use crate::player::registry::PlayerRegistryImpl;
+use crate::services::ProxyServices;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::services::config_service::ConfigServiceImpl;
-use crate::services::ProxyServices;
 use infrarust_server_manager::ServerManagerService;
 
 pub(crate) trait SubcommandHandler: Send + Sync {
@@ -90,8 +90,7 @@ impl CommandHandler for InfrarustRootCommand {
 
             match sub_name.as_deref() {
                 Some("help") => {
-                    let remaining_args: Vec<String> =
-                        ctx.args.iter().skip(1).cloned().collect();
+                    let remaining_args: Vec<String> = ctx.args.iter().skip(1).cloned().collect();
                     subcommands::help::handle_help(
                         &ctx,
                         &remaining_args,
@@ -100,19 +99,13 @@ impl CommandHandler for InfrarustRootCommand {
                     );
                 }
                 Some(name) if self.subcommands.contains_key(name) => {
-                    let remaining_args: Vec<String> =
-                        ctx.args.iter().skip(1).cloned().collect();
+                    let remaining_args: Vec<String> = ctx.args.iter().skip(1).cloned().collect();
                     self.subcommands[name]
                         .execute(&ctx, &remaining_args, &self.services)
                         .await;
                 }
                 _ => {
-                    subcommands::help::handle_help(
-                        &ctx,
-                        &[],
-                        &self.subcommands,
-                        &self.services,
-                    );
+                    subcommands::help::handle_help(&ctx, &[], &self.subcommands, &self.services);
                 }
             }
         })

@@ -546,10 +546,7 @@ async fn handle_backend_to_client(
                 if let Some(commands) = packet.as_any().downcast_ref::<CCommands>() {
                     if services.config.announce_proxy_commands {
                         let mut modified = commands.clone();
-                        crate::commands::brigadier::inject_proxy_commands(
-                            &mut modified,
-                            version,
-                        );
+                        crate::commands::brigadier::inject_proxy_commands(&mut modified, version);
                         let mut buf = Vec::new();
                         if let Err(e) = infrarust_protocol::packets::Packet::encode(
                             &modified, &mut buf, version,

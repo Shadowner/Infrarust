@@ -99,11 +99,7 @@ impl CommandNode {
         }
     }
 
-    pub fn argument_non_executable(
-        name: &str,
-        parser: Parser,
-        suggestions: Option<&str>,
-    ) -> Self {
+    pub fn argument_non_executable(name: &str, parser: Parser, suggestions: Option<&str>) -> Self {
         let mut flags = NODE_TYPE_ARGUMENT;
         if suggestions.is_some() {
             flags |= FLAG_SUGGESTIONS;
@@ -471,7 +467,10 @@ pub fn string_parser(mode: i32, version: ProtocolVersion) -> Parser {
     let mut props = Vec::new();
     VarInt(mode).encode(&mut props).expect("VarInt encode");
     if version.no_less_than(ProtocolVersion::V1_19) {
-        Parser::Indexed { id: 5, properties: props }
+        Parser::Indexed {
+            id: 5,
+            properties: props,
+        }
     } else {
         Parser::Named {
             identifier: "brigadier:string".to_string(),
@@ -552,7 +551,10 @@ mod tests {
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
         assert_eq!(decoded.nodes[1].name.as_deref(), Some("name"));
-        assert!(matches!(decoded.nodes[1].parser, Some(Parser::Indexed { id: 5, .. })));
+        assert!(matches!(
+            decoded.nodes[1].parser,
+            Some(Parser::Indexed { id: 5, .. })
+        ));
         assert_eq!(
             decoded.nodes[1].suggestions_type.as_deref(),
             Some("minecraft:ask_server")

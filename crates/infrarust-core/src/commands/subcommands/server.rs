@@ -37,20 +37,19 @@ impl SubcommandHandler for ServerSubcommand {
             };
 
             match args.first() {
-                None => {
-                    match player.current_server() {
-                        Some(server) => {
-                            let _ = player.send_message(ProxyMessage::info(&format!(
-                                "You are connected to: {}", server.as_str()
-                            )));
-                        }
-                        None => {
-                            let _ = player.send_message(ProxyMessage::info(
-                                "You are not connected to any server.",
-                            ));
-                        }
+                None => match player.current_server() {
+                    Some(server) => {
+                        let _ = player.send_message(ProxyMessage::info(&format!(
+                            "You are connected to: {}",
+                            server.as_str()
+                        )));
                     }
-                }
+                    None => {
+                        let _ = player.send_message(ProxyMessage::info(
+                            "You are not connected to any server.",
+                        ));
+                    }
+                },
                 Some(name) => {
                     let target = ServerId::new(name);
 

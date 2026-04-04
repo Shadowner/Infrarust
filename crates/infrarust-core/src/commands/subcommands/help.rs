@@ -48,9 +48,7 @@ pub(crate) fn handle_help(
             }
         }
 
-        let _ = player.send_message(ProxyMessage::detail(
-            "Use /ir help <command> for details.",
-        ));
+        let _ = player.send_message(ProxyMessage::detail("Use /ir help <command> for details."));
     }
 }
 

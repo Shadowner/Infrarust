@@ -38,15 +38,11 @@ impl SubcommandHandler for VersionSubcommand {
             let players = services.player_registry.online_count();
             let uptime = format_uptime(services.start_time.elapsed());
 
-            let _ = player.send_message(ProxyMessage::info(&format!(
-                "Infrarust v{version}"
-            )));
+            let _ = player.send_message(ProxyMessage::info(&format!("Infrarust v{version}")));
             let _ = player.send_message(ProxyMessage::detail(&format!(
                 "  Players online: {players}"
             )));
-            let _ = player.send_message(ProxyMessage::detail(&format!(
-                "  Uptime: {uptime}"
-            )));
+            let _ = player.send_message(ProxyMessage::detail(&format!("  Uptime: {uptime}")));
         })
     }
 }

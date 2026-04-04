@@ -41,16 +41,11 @@ impl SubcommandHandler for PluginsSubcommand {
                 return;
             }
 
-            let _ = player.send_message(ProxyMessage::info(&format!(
-                "Plugins ({}):",
-                plugins.len()
-            )));
+            let _ =
+                player.send_message(ProxyMessage::info(&format!("Plugins ({}):", plugins.len())));
 
             for info in &plugins {
-                let desc = info
-                    .description
-                    .as_deref()
-                    .unwrap_or("No description");
+                let desc = info.description.as_deref().unwrap_or("No description");
                 let _ = player.send_message(ProxyMessage::detail(&format!(
                     "  {} v{} - {}",
                     info.name, info.version, desc

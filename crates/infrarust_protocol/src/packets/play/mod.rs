@@ -1,8 +1,8 @@
 pub mod center_chunk;
 pub mod chat;
 pub mod chat_session;
-pub mod commands;
 pub mod chunk_batch;
+pub mod commands;
 pub(crate) mod common;
 pub mod dimension;
 pub mod disconnect;
@@ -21,9 +21,9 @@ pub mod transfer;
 
 pub use center_chunk::CSetCenterChunk;
 pub use chat::{CChatMessageLegacy, CSystemChatMessage, SChatCommand, SChatMessage};
-pub use commands::CCommands;
 pub use chat_session::SChatSessionUpdate;
 pub use chunk_batch::{CChunkBatchFinished, CChunkBatchStart};
+pub use commands::CCommands;
 pub use dimension::{DimensionInfo, extract_dimension_from_join_game};
 pub use disconnect::CDisconnect;
 pub use game_event::CGameEvent;

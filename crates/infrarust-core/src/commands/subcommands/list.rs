@@ -51,10 +51,8 @@ impl SubcommandHandler for ListSubcommand {
                 .map(|sm| sm.get_all_managed().into_iter().collect())
                 .unwrap_or_default();
 
-            let _ = player.send_message(ProxyMessage::info(&format!(
-                "Servers ({}):",
-                configs.len()
-            )));
+            let _ =
+                player.send_message(ProxyMessage::info(&format!("Servers ({}):", configs.len())));
 
             for cfg in &configs {
                 let id = cfg.id.as_str();
@@ -72,13 +70,12 @@ impl SubcommandHandler for ListSubcommand {
             }
         })
     }
-
 }
 
 fn format_state_indicator(state: &infrarust_server_manager::ServerState) -> String {
     use infrarust_server_manager::ServerState;
     match state {
-        ServerState::Online => "\u{25CF}".to_string(),  // ●
+        ServerState::Online => "\u{25CF}".to_string(),   // ●
         ServerState::Sleeping => "\u{25CB}".to_string(), // ○
         ServerState::Starting => "\u{25CF}".to_string(), // ●
         ServerState::Stopping => "\u{25CF}".to_string(), // ●

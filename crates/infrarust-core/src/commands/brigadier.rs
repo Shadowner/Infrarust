@@ -70,14 +70,30 @@ pub fn inject_proxy_commands(commands: &mut CCommands, version: ProtocolVersion)
     let ir_idx = push(CommandNode::redirect("ir", infrarust_idx));
 
     // Wire children
-    nodes[(help_idx - base) as usize].children.push(help_cmd_idx);
-    nodes[(server_idx - base) as usize].children.push(server_name_idx);
-    nodes[(find_idx - base) as usize].children.push(find_player_idx);
-    nodes[(send_idx - base) as usize].children.push(send_player_idx);
-    nodes[(send_player_idx - base) as usize].children.push(send_server_idx);
-    nodes[(kick_idx - base) as usize].children.push(kick_player_idx);
-    nodes[(kick_player_idx - base) as usize].children.push(kick_reason_idx);
-    nodes[(broadcast_idx - base) as usize].children.push(broadcast_msg_idx);
+    nodes[(help_idx - base) as usize]
+        .children
+        .push(help_cmd_idx);
+    nodes[(server_idx - base) as usize]
+        .children
+        .push(server_name_idx);
+    nodes[(find_idx - base) as usize]
+        .children
+        .push(find_player_idx);
+    nodes[(send_idx - base) as usize]
+        .children
+        .push(send_player_idx);
+    nodes[(send_player_idx - base) as usize]
+        .children
+        .push(send_server_idx);
+    nodes[(kick_idx - base) as usize]
+        .children
+        .push(kick_player_idx);
+    nodes[(kick_player_idx - base) as usize]
+        .children
+        .push(kick_reason_idx);
+    nodes[(broadcast_idx - base) as usize]
+        .children
+        .push(broadcast_msg_idx);
 
     // infrarust children
     nodes[(infrarust_idx - base) as usize].children = vec![
@@ -166,7 +182,15 @@ mod tests {
             .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
             .collect();
         for expected in [
-            "help", "version", "list", "plugins", "reload", "server", "find", "send", "kick",
+            "help",
+            "version",
+            "list",
+            "plugins",
+            "reload",
+            "server",
+            "find",
+            "send",
+            "kick",
             "broadcast",
         ] {
             assert!(
