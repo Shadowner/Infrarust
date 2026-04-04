@@ -45,6 +45,12 @@ jobs:
             platform: linux
             ext: tar.gz
 
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            arch: arm64
+            platform: linux
+            ext: tar.gz
+
           # macOS builds
           - os: macos-latest
             target: x86_64-apple-darwin

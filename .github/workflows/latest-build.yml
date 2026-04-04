@@ -16,15 +16,22 @@ env:
 
 jobs:
   check-and-build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-          
+
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
@@ -33,21 +40,21 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt -- --check
-        
+
       - name: Run clippy
         run: cargo clippy -- -D warnings
-        
+
       - name: Run tests
         run: cargo test
 
       - name: Build
         run: cargo build --release
-        
+
       - name: Rename binary
-        run: mv target/release/infrarust target/release/infrarust-latest-linux
-          
+        run: mv target/release/infrarust target/release/infrarust-latest-linux-${{ matrix.arch }}
+
       - name: Upload latest build
         uses: actions/upload-artifact@v4
         with:
-          name: latest-build
-          path: target/release/infrarust-latest-linux
+          name: latest-build-linux-${{ matrix.arch }}
+          path: target/release/infrarust-latest-linux-${{ matrix.arch }}
