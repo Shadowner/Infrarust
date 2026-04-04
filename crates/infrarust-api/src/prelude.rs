@@ -44,6 +44,9 @@ pub use crate::virtual_backend::{VirtualBackendHandler, VirtualBackendSession};
 // Commands
 pub use crate::command::{CommandContext, CommandHandler, CommandManager};
 
+// Proxy messages
+pub use crate::message::ProxyMessage;
+
 // Filters
 pub use crate::filter::{
     CodecContext, CodecFilterError, CodecFilterFactory, CodecFilterInstance, CodecFilterRegistry,

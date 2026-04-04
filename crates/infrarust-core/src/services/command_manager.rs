@@ -1,5 +1,3 @@
-//! [`CommandManager`] implementation.
-
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -7,16 +5,15 @@ use infrarust_api::command::{CommandContext, CommandHandler, CommandManager};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::PlayerId;
 
-/// A registered command with its handler and metadata.
 struct RegisteredCommand {
     handler: Arc<dyn CommandHandler>,
     aliases: Vec<String>,
-    _description: String,
+    description: String,
+    is_builtin: bool,
+    #[allow(dead_code)]
+    plugin_id: String,
 }
 
-/// Concrete [`CommandManager`] implementation.
-///
-/// Commands and aliases are stored in lowercase for case-insensitive lookup.
 pub struct CommandManagerImpl {
     commands: RwLock<HashMap<String, RegisteredCommand>>,
     aliases: RwLock<HashMap<String, String>>,
@@ -30,10 +27,7 @@ impl CommandManagerImpl {
         }
     }
 
-    /// Dispatches a command input string.
-    ///
-    /// Returns `true` if the command was found and executed (should not be
-    /// forwarded to the backend), `false` otherwise.
+    /// Returns `true` if the command was found and executed.
     pub async fn dispatch(
         &self,
         player_id: Option<PlayerId>,
@@ -48,13 +42,11 @@ impl CommandManagerImpl {
 
         let name_lower = name.to_lowercase();
 
-        // Resolve alias → canonical name
         let canonical = {
             let aliases = self.aliases.read().expect("lock poisoned");
             aliases.get(&name_lower).cloned().unwrap_or(name_lower)
         };
 
-        // Look up handler
         let handler_exists = {
             let commands = self.commands.read().expect("lock poisoned");
             commands.contains_key(&canonical)
@@ -76,7 +68,6 @@ impl CommandManagerImpl {
             raw: input.to_string(),
         };
 
-        // Clone the handler Arc so we can drop the lock before awaiting.
         let handler = {
             let commands = self.commands.read().expect("lock poisoned");
             commands.get(&canonical).map(|cmd| Arc::clone(&cmd.handler))
@@ -89,6 +80,46 @@ impl CommandManagerImpl {
             }
             None => false,
         }
+    }
+
+    pub fn register_builtin(
+        &self,
+        name: &str,
+        aliases: &[&str],
+        description: &str,
+        handler: Box<dyn CommandHandler>,
+    ) {
+        let name_lower = name.to_lowercase();
+        let alias_list: Vec<String> = aliases.iter().map(|a| a.to_lowercase()).collect();
+
+        {
+            let mut alias_map = self.aliases.write().expect("lock poisoned");
+            for alias in &alias_list {
+                alias_map.insert(alias.clone(), name_lower.clone());
+            }
+        }
+
+        {
+            let mut commands = self.commands.write().expect("lock poisoned");
+            commands.insert(
+                name_lower,
+                RegisteredCommand {
+                    handler: Arc::from(handler),
+                    aliases: alias_list,
+                    description: description.to_string(),
+                    is_builtin: true,
+                    plugin_id: String::new(),
+                },
+            );
+        }
+    }
+
+    pub fn list_commands(&self) -> Vec<(String, String)> {
+        let commands = self.commands.read().expect("lock poisoned");
+        commands
+            .iter()
+            .map(|(name, cmd)| (name.clone(), cmd.description.clone()))
+            .collect()
     }
 }
 
@@ -110,12 +141,22 @@ impl CommandManager for CommandManagerImpl {
     ) {
         let name_lower = name.to_lowercase();
 
-        // Clean up any previous registration (removes orphaned aliases).
+        {
+            let commands = self.commands.read().expect("lock poisoned");
+            if let Some(existing) = commands.get(&name_lower)
+                && existing.is_builtin
+            {
+                tracing::warn!(
+                    "Plugin attempted to overwrite built-in command '{name}' — ignoring"
+                );
+                return;
+            }
+        }
+
         self.unregister(name);
 
         let alias_list: Vec<String> = aliases.iter().map(|a| a.to_lowercase()).collect();
 
-        // Register aliases
         {
             let mut alias_map = self.aliases.write().expect("lock poisoned");
             for alias in &alias_list {
@@ -123,7 +164,6 @@ impl CommandManager for CommandManagerImpl {
             }
         }
 
-        // Register command
         {
             let mut commands = self.commands.write().expect("lock poisoned");
             commands.insert(
@@ -131,7 +171,9 @@ impl CommandManager for CommandManagerImpl {
                 RegisteredCommand {
                     handler: Arc::from(handler),
                     aliases: alias_list,
-                    _description: description.to_string(),
+                    description: description.to_string(),
+                    is_builtin: false,
+                    plugin_id: String::new(),
                 },
             );
         }
@@ -140,7 +182,6 @@ impl CommandManager for CommandManagerImpl {
     fn unregister(&self, name: &str) {
         let name_lower = name.to_lowercase();
 
-        // Remove aliases first
         let alias_list = {
             let commands = self.commands.read().expect("lock poisoned");
             commands
@@ -156,7 +197,6 @@ impl CommandManager for CommandManagerImpl {
             }
         }
 
-        // Remove command
         {
             let mut commands = self.commands.write().expect("lock poisoned");
             commands.remove(&name_lower);

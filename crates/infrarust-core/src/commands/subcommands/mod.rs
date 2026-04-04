@@ -1,0 +1,10 @@
+pub(crate) mod broadcast;
+pub(crate) mod find;
+pub(crate) mod help;
+pub(crate) mod kick;
+pub(crate) mod list;
+pub(crate) mod plugins;
+pub(crate) mod reload;
+pub(crate) mod send;
+pub(crate) mod server;
+pub(crate) mod version;

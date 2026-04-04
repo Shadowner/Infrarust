@@ -66,6 +66,7 @@ COPY --from=builder /usr/local/bin/infrarust /sbin/infrarust
 WORKDIR /app
 VOLUME ["/app/config"]
 EXPOSE 25565
+EXPOSE 8080
 
 ENTRYPOINT ["/sbin/infrarust"]
 CMD ["--config", "/app/config/infrarust.toml", "--plugins-dir", "/app/config/plugins", "--servers-dir", "/app/config/servers"]
