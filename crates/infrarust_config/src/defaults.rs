@@ -126,3 +126,7 @@ pub const fn docker_poll_interval() -> std::time::Duration {
 pub const fn docker_reconnect_delay() -> std::time::Duration {
     std::time::Duration::from_secs(5)
 }
+
+pub const fn announce_proxy_commands() -> bool {
+    true
+}

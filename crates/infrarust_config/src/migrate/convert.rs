@@ -719,6 +719,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         ban,
         docker,
         unknown_domain_behavior: Default::default(),
+        announce_proxy_commands: crate::defaults::announce_proxy_commands(),
         web: None,
         plugins: std::collections::HashMap::new(),
     };

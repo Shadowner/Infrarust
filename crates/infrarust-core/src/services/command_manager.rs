@@ -121,6 +121,37 @@ impl CommandManagerImpl {
             .map(|(name, cmd)| (name.clone(), cmd.description.clone()))
             .collect()
     }
+
+    pub fn tab_complete(&self, input: &str) -> Vec<String> {
+        let input = input.trim();
+        let (name, rest) = match input.split_once(' ') {
+            Some((n, r)) => (n, r),
+            None => (input, ""),
+        };
+
+        let name_lower = name.to_lowercase();
+        let canonical = {
+            let aliases = self.aliases.read().expect("lock poisoned");
+            aliases.get(&name_lower).cloned().unwrap_or(name_lower)
+        };
+
+        let handler = {
+            let commands = self.commands.read().expect("lock poisoned");
+            commands.get(&canonical).map(|cmd| Arc::clone(&cmd.handler))
+        };
+
+        match handler {
+            Some(handler) => {
+                let partial_args: Vec<&str> = if rest.is_empty() {
+                    vec![]
+                } else {
+                    rest.split_whitespace().collect()
+                };
+                handler.tab_complete(&partial_args)
+            }
+            None => vec![],
+        }
+    }
 }
 
 impl Default for CommandManagerImpl {

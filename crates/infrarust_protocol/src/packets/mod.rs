@@ -107,11 +107,12 @@ pub use login::{
 };
 pub use opaque::OpaquePacket;
 pub use play::{
-    CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CDisconnect, CGameEvent, CJoinGame,
-    CKeepAlive, CPluginMessage, CRespawn, CSetCenterChunk, CSetDefaultSpawnPosition, CSetSubtitle,
+    CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CCommands, CDisconnect, CGameEvent,
+    CJoinGame, CKeepAlive, CPluginMessage, CRespawn, CSetCenterChunk, CSetDefaultSpawnPosition, CSetSubtitle,
     CSetTitle, CSetTitleTimes, CStartConfiguration, CSynchronizePlayerPosition, CSystemChatMessage,
-    CTitleLegacy, CTransfer, DimensionInfo, SAcknowledgeConfiguration, SChatCommand, SChatMessage,
-    SChatSessionUpdate, SKeepAlive, SPluginMessage,
+    CTabCompleteResponse, CTitleLegacy, CTransfer, DimensionInfo, SAcknowledgeConfiguration,
+    SChatCommand, SChatMessage, SChatSessionUpdate, SKeepAlive, SPluginMessage,
+    STabCompleteRequest,
 };
 pub use status::{CPingResponse, CStatusResponse, SPingRequest, SStatusRequest};
 

@@ -1,6 +1,7 @@
 pub mod center_chunk;
 pub mod chat;
 pub mod chat_session;
+pub mod commands;
 pub mod chunk_batch;
 pub(crate) mod common;
 pub mod dimension;
@@ -14,11 +15,13 @@ pub mod respawn;
 pub mod respawn_switch;
 pub mod spawn_position;
 pub mod start_configuration;
+pub mod tab_complete;
 pub mod title;
 pub mod transfer;
 
 pub use center_chunk::CSetCenterChunk;
 pub use chat::{CChatMessageLegacy, CSystemChatMessage, SChatCommand, SChatMessage};
+pub use commands::CCommands;
 pub use chat_session::SChatSessionUpdate;
 pub use chunk_batch::{CChunkBatchFinished, CChunkBatchStart};
 pub use dimension::{DimensionInfo, extract_dimension_from_join_game};
@@ -31,5 +34,6 @@ pub use plugin_message::{CPluginMessage, SPluginMessage};
 pub use respawn::CRespawn;
 pub use spawn_position::CSetDefaultSpawnPosition;
 pub use start_configuration::{CStartConfiguration, SAcknowledgeConfiguration};
+pub use tab_complete::{CTabCompleteResponse, STabCompleteRequest};
 pub use title::{CSetSubtitle, CSetTitle, CSetTitleTimes, CTitleLegacy};
 pub use transfer::CTransfer;

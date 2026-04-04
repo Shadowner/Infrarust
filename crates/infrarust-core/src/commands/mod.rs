@@ -1,5 +1,6 @@
 //! Built-in proxy commands (`/infrarust`, `/ir`).
 
+pub mod brigadier;
 mod subcommands;
 
 use std::collections::HashMap;

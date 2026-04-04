@@ -89,6 +89,9 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub unknown_domain_behavior: UnknownDomainBehavior,
 
+    #[serde(default = "defaults::announce_proxy_commands")]
+    pub announce_proxy_commands: bool,
+
     /// Web admin API / UI configuration (absent = web plugin not loaded).
     #[serde(default)]
     pub web: Option<WebConfig>,

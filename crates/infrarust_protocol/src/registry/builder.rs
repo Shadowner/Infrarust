@@ -313,6 +313,54 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x0E, ProtocolVersion::V1_20_5, false)
     .register(&mut registry);
 
+    PacketRegistration::<crate::packets::CCommands>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x11, ProtocolVersion::V1_13, false)
+    .map(0x12, ProtocolVersion::V1_15, false)
+    .map(0x11, ProtocolVersion::V1_16, false)
+    .map(0x10, ProtocolVersion::V1_16_2, false)
+    .map(0x12, ProtocolVersion::V1_17, false)
+    .map(0x0F, ProtocolVersion::V1_19, false)
+    .map(0x0E, ProtocolVersion::V1_19_3, false)
+    .map(0x10, ProtocolVersion::V1_19_4, false)
+    .map(0x11, ProtocolVersion::V1_20_2, false)
+    .map(0x10, ProtocolVersion::V1_21_5, false)
+    .register(&mut registry);
+
+    PacketRegistration::<crate::packets::STabCompleteRequest>::new(
+        ConnectionState::Play,
+        Direction::Serverbound,
+    )
+    .map(0x05, ProtocolVersion::V1_13, false)
+    .map(0x06, ProtocolVersion::V1_14, false)
+    .map(0x08, ProtocolVersion::V1_19, false)
+    .map(0x09, ProtocolVersion::V1_19_1, false)
+    .map(0x08, ProtocolVersion::V1_19_3, false)
+    .map(0x09, ProtocolVersion::V1_19_4, false)
+    .map(0x0A, ProtocolVersion::V1_20_2, false)
+    .map(0x0B, ProtocolVersion::V1_20_5, false)
+    .map(0x0D, ProtocolVersion::V1_21_2, false)
+    .map(0x0E, ProtocolVersion::V1_21_6, false)
+    .register(&mut registry);
+
+    PacketRegistration::<crate::packets::CTabCompleteResponse>::new(
+        ConnectionState::Play,
+        Direction::Clientbound,
+    )
+    .map(0x10, ProtocolVersion::V1_13, false)
+    .map(0x11, ProtocolVersion::V1_15, false)
+    .map(0x10, ProtocolVersion::V1_16, false)
+    .map(0x0F, ProtocolVersion::V1_16_2, false)
+    .map(0x11, ProtocolVersion::V1_17, false)
+    .map(0x0E, ProtocolVersion::V1_19, false)
+    .map(0x0D, ProtocolVersion::V1_19_3, false)
+    .map(0x0F, ProtocolVersion::V1_19_4, false)
+    .map(0x10, ProtocolVersion::V1_20_2, false)
+    .map(0x0F, ProtocolVersion::V1_21_5, false)
+    .register(&mut registry);
+
     // KeepAlive Clientbound
     PacketRegistration::<crate::packets::CKeepAlive>::new(
         ConnectionState::Play,

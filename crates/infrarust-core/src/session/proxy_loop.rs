@@ -19,7 +19,11 @@ use infrarust_protocol::packets::login::{
     CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged,
 };
 use infrarust_protocol::packets::play::chat_session::SChatSessionUpdate;
+use infrarust_protocol::packets::play::commands::CCommands;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
+use infrarust_protocol::packets::play::tab_complete::{
+    CTabCompleteResponse, STabCompleteRequest, TabCompleteMatch,
+};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction};
 
@@ -312,6 +316,54 @@ async fn handle_client_to_backend(
             return Ok(());
         }
 
+        let tab_complete_id = registry.get_packet_id::<STabCompleteRequest>(
+            ConnectionState::Play,
+            Direction::Serverbound,
+            version,
+        );
+        if Some(frame.id) == tab_complete_id
+            && let Ok(DecodedPacket::Typed { id: _, packet }) =
+                registry.decode_frame(&frame, state, Direction::Serverbound, version)
+            && let Some(req) = packet.as_any().downcast_ref::<STabCompleteRequest>()
+        {
+            let text = req.text.trim();
+            if text.starts_with("/infrarust ") || text.starts_with("/ir ") {
+                let cmd_input = text.trim_start_matches('/');
+                let suggestions = services.command_manager.tab_complete(cmd_input);
+                let last_space = text.rfind(' ').unwrap_or(0) + 1;
+                let response = CTabCompleteResponse {
+                    transaction_id: req.transaction_id,
+                    start: last_space as i32,
+                    length: (text.len() - last_space) as i32,
+                    matches: suggestions
+                        .into_iter()
+                        .map(|s| TabCompleteMatch {
+                            text: s,
+                            tooltip: None,
+                        })
+                        .collect(),
+                };
+                let resp_id = registry.get_packet_id::<CTabCompleteResponse>(
+                    ConnectionState::Play,
+                    Direction::Clientbound,
+                    version,
+                );
+                if let Some(resp_id) = resp_id {
+                    let mut buf = Vec::new();
+                    if infrarust_protocol::packets::Packet::encode(&response, &mut buf, version)
+                        .is_ok()
+                    {
+                        let resp_frame = PacketFrame {
+                            id: resp_id,
+                            payload: buf.into(),
+                        };
+                        client.write_frame(&resp_frame).await?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
         // Chat/command detection (serverbound only)
         if let Some(action) = detect_chat_or_command(&frame, registry, version) {
             match action {
@@ -482,7 +534,7 @@ async fn handle_backend_to_client(
 
         // Disconnect detection
         match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
-            Ok(DecodedPacket::Typed { packet, .. }) => {
+            Ok(DecodedPacket::Typed { id, packet }) => {
                 if let Some(disc) = packet.as_any().downcast_ref::<CDisconnect>() {
                     client.write_frame(&frame).await?;
                     let reason = disc
@@ -491,8 +543,32 @@ async fn handle_backend_to_client(
                         .unwrap_or_else(|| String::from_utf8_lossy(&disc.reason).to_string());
                     return Ok(BackendAction::Disconnected(Some(reason)));
                 }
-                // KeepAlive or other typed: forward
-                client.write_frame(&frame).await?;
+                if let Some(commands) = packet.as_any().downcast_ref::<CCommands>() {
+                    if services.config.announce_proxy_commands {
+                        let mut modified = commands.clone();
+                        crate::commands::brigadier::inject_proxy_commands(
+                            &mut modified,
+                            version,
+                        );
+                        let mut buf = Vec::new();
+                        if let Err(e) = infrarust_protocol::packets::Packet::encode(
+                            &modified, &mut buf, version,
+                        ) {
+                            tracing::warn!("failed to re-encode CCommands: {e}");
+                            client.write_frame(&frame).await?;
+                        } else {
+                            let new_frame = PacketFrame {
+                                id,
+                                payload: buf.into(),
+                            };
+                            client.write_frame(&new_frame).await?;
+                        }
+                    } else {
+                        client.write_frame(&frame).await?;
+                    }
+                } else {
+                    client.write_frame(&frame).await?;
+                }
             }
             Ok(DecodedPacket::Opaque { .. }) => {
                 client.write_frame(&frame).await?;
