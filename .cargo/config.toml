@@ -6,4 +6,5 @@ linker = "musl-gcc"
 rustflags = ["-C", "relocation-model=static"]
 
 [target.aarch64-unknown-linux-musl]
-linker = "aarch64-linux-gnu-gcc"
+linker = "aarch64-linux-musl-gcc"
+rustflags = ["-C", "relocation-model=static"]
