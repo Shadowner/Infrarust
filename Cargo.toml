@@ -9,10 +9,8 @@ members = [
     "crates/infrarust-transport",
     "crates/infrarust",
     "plugins/infrarust-plugin-auth",
-    "plugins/infrarust-plugin-antibot",
     "plugins/infrarust-plugin-hello",
     "plugins/infrarust-plugin-server-wake",
-    "plugins/infrarust-plugin-queue",
     "plugins/infrarust-plugin-admin-api",
     "tools/infrarust-motd",
     "tools/registry-extractor",
@@ -126,7 +124,6 @@ infrarust-api = { path = "crates/infrarust-api" }
 infrarust_config = { path = "crates/infrarust_config" }
 infrarust-transport = { path = "crates/infrarust-transport" }
 infrarust-core = { path = "crates/infrarust-core" }
-infrarust-limbo = { path = "crates/infrarust-limbo" }
 infrarust_server_manager = { path = "crates/infrarust_server_manager" }
 
 # Internal plugins
@@ -144,6 +141,7 @@ unsafe_code = "warn"
 [workspace.package]
 version = "2.0.0-alpha.2"
 edition = "2024"
+rust-version = "1.94.1"
 license-file = "LICENSE"
 repository = "https://github.com/Shadowner/Infrarust"
 

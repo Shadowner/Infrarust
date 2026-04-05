@@ -3,7 +3,9 @@
 use infrarust_config::WebConfig;
 use infrarust_core::plugin::StaticPluginLoader;
 
-pub fn build_static_loader(web_config: Option<&mut WebConfig>) -> StaticPluginLoader {
+pub fn build_static_loader(
+    web_config: Option<&mut WebConfig>,
+) -> anyhow::Result<StaticPluginLoader> {
     let loader = StaticPluginLoader::new();
 
     #[cfg(feature = "plugin-auth")]
@@ -38,13 +40,9 @@ pub fn build_static_loader(web_config: Option<&mut WebConfig>) -> StaticPluginLo
         use infrarust_api::plugin::Plugin;
         use infrarust_plugin_admin_api::config::{ApiConfig, RateLimitConfig};
 
-        let api_key = match web.resolve_api_key() {
-            Ok(key) => key,
-            Err(e) => {
-                tracing::error!("{e}");
-                panic!("Invalid web API configuration: {e}");
-            }
-        };
+        let api_key = web
+            .resolve_api_key()
+            .map_err(|e| anyhow::anyhow!("Invalid web API configuration: {e}"))?;
 
         let enable_webui = web.enable_webui;
 
@@ -71,5 +69,5 @@ pub fn build_static_loader(web_config: Option<&mut WebConfig>) -> StaticPluginLo
         count = loader.registered_count(),
         "Static plugins registered"
     );
-    loader
+    Ok(loader)
 }

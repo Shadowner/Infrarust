@@ -295,7 +295,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         .await
         .context("failed to initialize proxy server")?;
 
-    let static_loader = plugins::build_static_loader(web_config.as_mut());
+    let static_loader = plugins::build_static_loader(web_config.as_mut())?;
     let loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> = vec![Box::new(static_loader)];
 
     let mut plugin_manager = PluginManager::new(loaders);

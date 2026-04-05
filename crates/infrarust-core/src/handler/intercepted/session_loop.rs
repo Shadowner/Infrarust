@@ -35,6 +35,7 @@ pub(super) async fn run_session_loop(
     handshake: &HandshakeData,
     version: ProtocolVersion,
     peer_addr: std::net::SocketAddr,
+    real_ip: Option<std::net::IpAddr>,
     mut current_server_id: infrarust_api::types::ServerId,
     session_id: &uuid::Uuid,
     services: &ProxyServices,
@@ -112,6 +113,7 @@ pub(super) async fn run_session_loop(
                             services,
                             backend_connector,
                             peer_addr,
+                            real_ip,
                             version,
                         )
                         .await
@@ -165,6 +167,7 @@ pub(super) async fn run_session_loop(
                             services,
                             backend_connector,
                             peer_addr,
+                            real_ip,
                         )
                         .await
                         {
@@ -221,6 +224,7 @@ pub(super) async fn run_session_loop(
                             services,
                             backend_connector,
                             peer_addr,
+                            real_ip,
                             version,
                         )
                         .await
@@ -306,6 +310,7 @@ async fn handle_switch(
     services: &ProxyServices,
     backend_connector: &BackendConnector,
     peer_addr: std::net::SocketAddr,
+    real_ip: Option<std::net::IpAddr>,
     version: ProtocolVersion,
 ) -> SwitchAction {
     match crate::session::server_switch::perform_switch(
@@ -319,6 +324,7 @@ async fn handle_switch(
         services,
         backend_connector,
         peer_addr,
+        real_ip,
         version,
     )
     .await
@@ -355,6 +361,7 @@ async fn handle_backend_disconnect(
     services: &ProxyServices,
     backend_connector: &BackendConnector,
     peer_addr: std::net::SocketAddr,
+    real_ip: Option<std::net::IpAddr>,
 ) -> DisconnectAction {
     let kick_reason = reason.as_deref().unwrap_or("Disconnected");
     let kicked = infrarust_api::events::connection::KickedFromServerEvent::new(
@@ -385,6 +392,7 @@ async fn handle_backend_disconnect(
                 services,
                 backend_connector,
                 peer_addr,
+                real_ip,
                 version,
             )
             .await

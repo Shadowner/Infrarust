@@ -115,7 +115,13 @@ define_twin_packets! {
         pub packs: Vec<KnownPack>,
     },
     decode(r, _version): {
-        let count = r.read_var_int()?.0 as usize;
+        let count = r.read_var_int()?.0;
+        if count < 0 {
+            return Err(crate::error::ProtocolError::invalid(
+                "negative pack count",
+            ));
+        }
+        let count = count as usize;
         let mut packs = Vec::with_capacity(count.min(64));
         for _ in 0..count {
             packs.push(KnownPack {

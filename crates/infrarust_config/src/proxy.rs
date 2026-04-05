@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::defaults;
 use crate::types::{
-    BanConfig, DockerProviderConfig, ForwardingConfig, KeepaliveConfig, MotdConfig,
+    BanConfig, DockerProviderConfig, ForwardingConfig, IpFilterConfig, KeepaliveConfig, MotdConfig,
     RateLimitConfig, StatusCacheConfig, TelemetryConfig, WebConfig,
 };
 
@@ -85,6 +85,9 @@ pub struct ProxyConfig {
     /// Present in the TOML even without the `docker` feature compiled.
     #[serde(default)]
     pub docker: Option<DockerProviderConfig>,
+
+    #[serde(default)]
+    pub ip_filter: Option<IpFilterConfig>,
 
     #[serde(default)]
     pub unknown_domain_behavior: UnknownDomainBehavior,

@@ -340,11 +340,14 @@ fn print_summary(settings: &WizardSettings) {
 }
 
 fn sanitize_filename(domain: &str) -> String {
-    domain
+    let sanitized: String = domain
         .chars()
         .map(|c| match c {
             '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
             _ => c,
         })
-        .collect()
+        .collect();
+    let sanitized = sanitized.replace("..", "_");
+    let sanitized = sanitized.trim_start_matches('.').to_string();
+    if sanitized.is_empty() { "unnamed".to_string() } else { sanitized }
 }

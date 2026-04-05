@@ -236,7 +236,7 @@ impl ProxyServer {
 
         // Build common pipeline: IpFilter → BanIpCheck → HandshakeParser → RateLimiter → DomainRouter
         let mut common_pipeline = Pipeline::new();
-        common_pipeline.add(Box::new(IpFilterMiddleware::new(None))); // Global filter from proxy config — Phase 2
+        common_pipeline.add(Box::new(IpFilterMiddleware::new(config.ip_filter.clone())));
         common_pipeline.add(Box::new(BanIpCheckMiddleware::new(Arc::clone(
             &ban_manager,
         ))));

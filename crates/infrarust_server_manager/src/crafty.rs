@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use infrarust_config::CraftyManagerConfig;
 
 use crate::error::ServerManagerError;
@@ -40,6 +42,7 @@ impl ServerProvider for CraftyProvider {
                 .http_client
                 .post(&url)
                 .bearer_auth(&self.api_key)
+                .timeout(Duration::from_secs(10))
                 .send()
                 .await?;
 
@@ -72,6 +75,7 @@ impl ServerProvider for CraftyProvider {
                 .http_client
                 .post(&url)
                 .bearer_auth(&self.api_key)
+                .timeout(Duration::from_secs(10))
                 .send()
                 .await?;
 
@@ -103,6 +107,7 @@ impl ServerProvider for CraftyProvider {
                 .http_client
                 .get(&url)
                 .bearer_auth(&self.api_key)
+                .timeout(Duration::from_secs(10))
                 .send()
                 .await?;
 

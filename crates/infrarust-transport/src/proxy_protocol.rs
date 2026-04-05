@@ -5,9 +5,11 @@
 //! silent fallback.
 
 use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::time::timeout;
 
 use crate::connection::ConnectionInfo;
 use crate::error::TransportError;
@@ -44,7 +46,8 @@ pub struct ProxyProtocolInfo {
 /// Decodes a proxy protocol header from the stream.
 ///
 /// Reads up to 536 bytes and attempts to parse as v2 (binary) then v1 (text).
-/// Returns the parsed info and the number of bytes consumed.
+/// Returns the parsed info (if any) and any leftover bytes that were read
+/// past the end of the header (due to TCP coalescing).
 ///
 /// # Errors
 ///
@@ -53,56 +56,69 @@ pub struct ProxyProtocolInfo {
 /// be closed.
 pub async fn decode_proxy_protocol(
     stream: &mut TcpStream,
-) -> Result<(ProxyProtocolInfo, usize), TransportError> {
-    let mut buf = [0u8; MAX_HEADER_SIZE];
-    let mut total_read = 0;
+) -> Result<(Option<ProxyProtocolInfo>, Vec<u8>), TransportError> {
+    timeout(Duration::from_secs(5), async {
+        let mut buf = [0u8; MAX_HEADER_SIZE];
+        let mut total_read = 0;
 
-    // Read enough data to parse the header
-    loop {
-        if total_read >= MAX_HEADER_SIZE {
-            return Err(TransportError::InvalidProxyProtocol(
-                "header exceeds maximum size".to_string(),
-            ));
-        }
+        loop {
+            if total_read >= MAX_HEADER_SIZE {
+                return Err(TransportError::InvalidProxyProtocol(
+                    "header exceeds maximum size".to_string(),
+                ));
+            }
 
-        let n = stream
-            .read(&mut buf[total_read..])
-            .await
-            .map_err(|e| TransportError::ProxyProtocolDecode(e.to_string()))?;
+            let n = stream
+                .read(&mut buf[total_read..])
+                .await
+                .map_err(|e| TransportError::ProxyProtocolDecode(e.to_string()))?;
 
-        if n == 0 {
-            return Err(TransportError::InvalidProxyProtocol(
-                "connection closed before proxy protocol header".to_string(),
-            ));
-        }
+            if n == 0 {
+                return Err(TransportError::InvalidProxyProtocol(
+                    "connection closed before proxy protocol header".to_string(),
+                ));
+            }
 
-        total_read += n;
+            total_read += n;
 
-        // Try v2 first (binary)
-        if total_read >= 16 && buf[..12] == PP_V2_SIGNATURE {
-            match try_decode_v2(&buf[..total_read]) {
-                Ok(result) => return Ok(result),
-                Err(DecodeAttempt::Incomplete) => continue,
-                Err(DecodeAttempt::Failed(e)) => return Err(e),
+            // Try v2 first (binary)
+            if total_read >= 16 && buf[..12] == PP_V2_SIGNATURE {
+                match try_decode_v2(&buf[..total_read]) {
+                    Ok((info, consumed)) => {
+                        let leftover = buf[consumed..total_read].to_vec();
+                        return Ok((Some(info), leftover));
+                    }
+                    Err(DecodeAttempt::Incomplete) => continue,
+                    Err(DecodeAttempt::Failed(e)) => return Err(e),
+                }
+            }
+
+            // Try v1 (text)
+            if total_read >= 6 && buf[..6] == *PP_V1_PREFIX {
+                match try_decode_v1(&buf[..total_read]) {
+                    Ok((info, consumed)) => {
+                        let leftover = buf[consumed..total_read].to_vec();
+                        return Ok((info, leftover));
+                    }
+                    Err(DecodeAttempt::Incomplete) => continue,
+                    Err(DecodeAttempt::Failed(e)) => return Err(e),
+                }
+            }
+
+            // If we have enough bytes and neither signature matches, it's not PP
+            if total_read >= 16 {
+                return Err(TransportError::InvalidProxyProtocol(
+                    "data does not start with a proxy protocol signature".to_string(),
+                ));
             }
         }
-
-        // Try v1 (text)
-        if total_read >= 6 && buf[..6] == *PP_V1_PREFIX {
-            match try_decode_v1(&buf[..total_read]) {
-                Ok(result) => return Ok(result),
-                Err(DecodeAttempt::Incomplete) => continue,
-                Err(DecodeAttempt::Failed(e)) => return Err(e),
-            }
-        }
-
-        // If we have enough bytes and neither signature matches, it's not PP
-        if total_read >= 16 {
-            return Err(TransportError::InvalidProxyProtocol(
-                "data does not start with a proxy protocol signature".to_string(),
-            ));
-        }
-    }
+    })
+    .await
+    .map_err(|_| {
+        TransportError::ProxyProtocolDecode(
+            "proxy protocol header read timed out".to_string(),
+        )
+    })?
 }
 
 enum DecodeAttempt {
@@ -133,7 +149,7 @@ fn try_decode_v2(buf: &[u8]) -> Result<(ProxyProtocolInfo, usize), DecodeAttempt
     ))
 }
 
-fn try_decode_v1(buf: &[u8]) -> Result<(ProxyProtocolInfo, usize), DecodeAttempt> {
+fn try_decode_v1(buf: &[u8]) -> Result<(Option<ProxyProtocolInfo>, usize), DecodeAttempt> {
     // v1 header ends with \r\n
     let crlf_pos = buf.windows(2).position(|w| w == b"\r\n");
 
@@ -149,15 +165,20 @@ fn try_decode_v1(buf: &[u8]) -> Result<(ProxyProtocolInfo, usize), DecodeAttempt
         DecodeAttempt::Failed(TransportError::ProxyProtocolDecode(format!("{e:?}")))
     })?;
 
+    // PROXY UNKNOWN is valid per HAProxy spec (used for health checks)
+    if matches!(header.addresses, ppp::v1::Addresses::Unknown) {
+        return Ok((None, end));
+    }
+
     let (source_addr, dest_addr) =
         extract_v1_addresses(&header.addresses).map_err(DecodeAttempt::Failed)?;
 
     Ok((
-        ProxyProtocolInfo {
+        Some(ProxyProtocolInfo {
             source_addr,
             dest_addr,
             version: ProxyProtocolVersion::V1,
-        },
+        }),
         end,
     ))
 }
@@ -197,7 +218,7 @@ fn extract_v1_addresses(
             Ok((src, dst))
         }
         ppp::v1::Addresses::Unknown => Err(TransportError::InvalidProxyProtocol(
-            "unknown address family in v1 header".to_string(),
+            "unexpected unknown address family in v1 header".to_string(),
         )),
     }
 }

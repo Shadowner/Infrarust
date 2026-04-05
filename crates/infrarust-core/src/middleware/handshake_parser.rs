@@ -34,11 +34,7 @@ impl HandshakeParserMiddleware {
     }
 }
 
-/// Strips Forge Mod Loader markers from the domain string.
-fn strip_fml_markers(domain: &str) -> &str {
-    // FML markers: \0FML\0, \0FML2\0, \0FML3\0
-    domain.find('\0').map_or(domain, |pos| &domain[..pos])
-}
+use crate::util::strip_fml_markers;
 
 impl Middleware for HandshakeParserMiddleware {
     fn name(&self) -> &'static str {

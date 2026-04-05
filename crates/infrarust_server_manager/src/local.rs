@@ -22,10 +22,10 @@ struct LocalProcess {
     stdin: ChildStdin,
     /// True when the `ready_pattern` has been detected in stdout.
     ready: Arc<AtomicBool>,
-    /// True when the process has exited.
-    exited: Arc<AtomicBool>,
     /// Task reading stdout lines.
     stdout_task: JoinHandle<()>,
+    /// Task reading stderr lines.
+    stderr_task: JoinHandle<()>,
 }
 
 impl LocalProvider {
@@ -82,7 +82,6 @@ impl ServerProvider for LocalProvider {
             })?;
 
             let ready = Arc::new(AtomicBool::new(false));
-            let exited = Arc::new(AtomicBool::new(false));
             let ready_clone = Arc::clone(&ready);
             let pattern = self.config.ready_pattern.clone();
             let label = self.server_label();
@@ -102,7 +101,7 @@ impl ServerProvider for LocalProvider {
 
             // Separate task for stderr (logging only)
             let label2 = self.server_label();
-            tokio::spawn(async move {
+            let stderr_task = tokio::spawn(async move {
                 let reader = BufReader::new(stderr);
                 let mut lines = reader.lines();
                 while let Ok(Some(line)) = lines.next_line().await {
@@ -114,8 +113,8 @@ impl ServerProvider for LocalProvider {
                 child,
                 stdin,
                 ready,
-                exited,
                 stdout_task,
+                stderr_task,
             });
             drop(process_lock);
 
@@ -163,6 +162,7 @@ impl ServerProvider for LocalProvider {
 
             // 3. Cleanup
             process.stdout_task.abort();
+            process.stderr_task.abort();
             *process_lock = None;
             drop(process_lock);
 
@@ -188,8 +188,8 @@ impl ServerProvider for LocalProvider {
                     match process.child.try_wait() {
                         Ok(Some(_status)) => {
                             // Process has exited — clean up
-                            process.exited.store(true, Ordering::Release);
                             process.stdout_task.abort();
+                            process.stderr_task.abort();
                             *process_lock = None;
                             Ok(ProviderStatus::Stopped)
                         }

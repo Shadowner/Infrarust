@@ -80,14 +80,14 @@ fn test_apply_api_preserves_extra() {
         serde_json::Value::Bool(true),
     );
 
-    let api = PingResponse {
-        description: Component::text("Modified MOTD"),
-        max_players: 200,
-        online_players: 99,
-        protocol_version: ProtocolVersion::new(769),
-        version_name: "Custom 1.21".to_string(),
-        favicon: Some("data:image/png;base64,new".to_string()),
-    };
+    let api = PingResponse::new(
+        Component::text("Modified MOTD"),
+        200,
+        99,
+        ProtocolVersion::new(769),
+        "Custom 1.21".to_string(),
+        Some("data:image/png;base64,new".to_string()),
+    );
 
     apply_api_to_core(&mut core, &api);
 

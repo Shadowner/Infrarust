@@ -165,6 +165,7 @@ impl InterceptedHandler {
             &handshake,
             version,
             peer_addr,
+            Some(ctx.client_ip),
             target_server_id,
             &session_id,
             &self.services,

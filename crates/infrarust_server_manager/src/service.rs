@@ -51,8 +51,6 @@ pub(crate) struct ServerEntry {
     pub(crate) poll_interval: Duration,
     /// Timestamp of the last player seen connected (for auto-shutdown).
     pub(crate) last_player_seen: Option<Instant>,
-    /// Timestamp when start was requested (for timeout tracking).
-    pub(crate) start_requested_at: Option<Instant>,
     /// Waiters: connections waiting for the server to become Online.
     pub(crate) waiters: Vec<oneshot::Sender<Result<(), ServerManagerError>>>,
 }
@@ -105,7 +103,6 @@ impl ServerManagerService {
                     start_timeout,
                     poll_interval,
                     last_player_seen: None,
-                    start_requested_at: None,
                     waiters: Vec::new(),
                 },
             );
@@ -138,7 +135,6 @@ impl ServerManagerService {
                 start_timeout,
                 poll_interval,
                 last_player_seen: None,
-                start_requested_at: None,
                 waiters: Vec::new(),
             },
         );
@@ -179,7 +175,14 @@ impl ServerManagerService {
             listeners.clone()
         };
         for (_, callback) in &snapshot {
-            callback(server_id, old, new);
+            if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                callback(server_id, old, new);
+            })) {
+                tracing::error!(
+                    server = %server_id,
+                    "state change callback panicked: {e:?}"
+                );
+            }
         }
     }
 
@@ -264,7 +267,6 @@ impl ServerManagerService {
                     let provider = Arc::clone(&entry.provider);
                     let old_state = entry.state;
                     entry.state = ServerState::Starting;
-                    entry.start_requested_at = Some(Instant::now());
 
                     // Drop the lock before calling provider.start()
                     let start_timeout = entry.start_timeout;
@@ -312,14 +314,32 @@ impl ServerManagerService {
                     let provider = Arc::clone(&entry.provider);
                     let old_state = entry.state;
                     entry.state = ServerState::Starting;
-                    entry.start_requested_at = Some(Instant::now());
                     let start_timeout = entry.start_timeout;
                     let (tx, rx) = oneshot::channel();
                     entry.waiters.push(tx);
                     drop(entry);
 
                     self.fire_state_change(server_id, old_state, ServerState::Starting);
-                    let _ = provider.start().await;
+                    if let Err(e) = provider.start().await {
+                        tracing::error!(server = %server_id, "provider start failed: {e}");
+                        if let Some(mut entry) = self.entries.get_mut(server_id) {
+                            entry.state = ServerState::Crashed;
+                            let waiters = std::mem::take(&mut entry.waiters);
+                            drop(entry);
+                            self.fire_state_change(
+                                server_id,
+                                ServerState::Starting,
+                                ServerState::Crashed,
+                            );
+                            for tx in waiters {
+                                let _ = tx.send(Err(ServerManagerError::Provider {
+                                    server_id: server_id.to_string(),
+                                    message: "start failed".to_string(),
+                                }));
+                            }
+                        }
+                        return Err(e);
+                    }
                     (rx, start_timeout)
                 }
             }
@@ -367,7 +387,6 @@ impl ServerManagerService {
 
             let old = entry.state;
             entry.state = ServerState::Starting;
-            entry.start_requested_at = Some(Instant::now());
             (Arc::clone(&entry.provider), old)
         };
 
@@ -396,7 +415,13 @@ impl ServerManagerService {
 
         self.fire_state_change(server_id, old_state, ServerState::Stopping);
 
-        provider.stop().await?;
+        if let Err(e) = provider.stop().await {
+            if let Some(mut entry) = self.entries.get_mut(server_id) {
+                entry.state = old_state;
+            }
+            self.fire_state_change(server_id, ServerState::Stopping, old_state);
+            return Err(e);
+        }
 
         if let Some(mut entry) = self.entries.get_mut(server_id) {
             entry.state = ServerState::Sleeping;

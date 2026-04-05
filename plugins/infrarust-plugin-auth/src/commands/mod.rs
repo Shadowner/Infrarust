@@ -1,4 +1,3 @@
-pub mod authreload;
 pub mod changepassword;
 pub mod cracked;
 pub mod forcechangepassword;
@@ -61,14 +60,6 @@ pub fn register_commands(ctx: &dyn PluginContext, handler: Arc<AuthHandler>) {
         }),
     );
 
-    ctx.command_manager().register(
-        "authreload",
-        &[],
-        "Reload auth plugin configuration",
-        Box::new(authreload::AuthReloadCommand {
-            handler: Arc::clone(&handler),
-        }),
-    );
 
     if handler.config().premium.enabled && handler.config().premium.allow_cracked_command {
         ctx.command_manager().register(

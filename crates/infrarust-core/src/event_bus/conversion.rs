@@ -11,14 +11,14 @@ use crate::status::response::ServerPingResponse;
 /// The core type stores the MOTD as a `serde_json::Value` (string, object,
 /// or array) while the API type uses a structured [`Component`].
 pub fn core_to_api_ping_response(core: &ServerPingResponse) -> PingResponse {
-    PingResponse {
-        description: json_value_to_component(&core.description),
-        max_players: core.players.max,
-        online_players: core.players.online,
-        protocol_version: ProtocolVersion::new(core.version.protocol),
-        version_name: core.version.name.clone(),
-        favicon: core.favicon.clone(),
-    }
+    PingResponse::new(
+        json_value_to_component(&core.description),
+        core.players.max,
+        core.players.online,
+        ProtocolVersion::new(core.version.protocol),
+        core.version.name.clone(),
+        core.favicon.clone(),
+    )
 }
 
 /// Merges modifications from the API `PingResponse` back into the core
@@ -300,14 +300,14 @@ mod tests {
             },
         };
 
-        let api = PingResponse {
-            description: Component::text("Modified"),
-            max_players: 200,
-            online_players: 99,
-            protocol_version: ProtocolVersion::new(769),
-            version_name: "1.21.4".to_string(),
-            favicon: Some("data:image/png;base64,new".to_string()),
-        };
+        let api = PingResponse::new(
+            Component::text("Modified"),
+            200,
+            99,
+            ProtocolVersion::new(769),
+            "1.21.4".to_string(),
+            Some("data:image/png;base64,new".to_string()),
+        );
 
         apply_api_to_core(&mut core, &api);
 

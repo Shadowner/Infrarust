@@ -13,14 +13,20 @@ pub struct Property {
 }
 
 fn read_byte_array_short(r: &mut &[u8]) -> ProtocolResult<Vec<u8>> {
-    let len = r.read_i16_be()? as usize;
-    r.read_byte_array_bounded(len)
+    let len = r.read_i16_be()?;
+    if len < 0 {
+        return Err(ProtocolError::invalid("negative byte array length"));
+    }
+    r.read_byte_array_bounded(len as usize)
 }
 
 fn write_byte_array_short(
     mut w: &mut (impl std::io::Write + ?Sized),
     data: &[u8],
 ) -> ProtocolResult<()> {
+    if data.len() > i16::MAX as usize {
+        return Err(ProtocolError::too_large(i16::MAX as usize, data.len()));
+    }
     w.write_i16_be(data.len() as i16)?;
     w.write_all(data)?;
     Ok(())

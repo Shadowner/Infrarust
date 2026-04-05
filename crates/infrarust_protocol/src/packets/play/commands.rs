@@ -118,7 +118,10 @@ impl CommandNode {
 fn decode_node(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<CommandNode> {
     let flags = r.read_u8()?;
     let child_count = r.read_var_int()?.0;
-    let mut children = Vec::with_capacity(child_count as usize);
+    if child_count < 0 {
+        return Err(crate::error::ProtocolError::invalid("negative child count"));
+    }
+    let mut children = Vec::with_capacity((child_count as usize).min(1024));
     for _ in 0..child_count {
         children.push(r.read_var_int()?.0);
     }
@@ -439,7 +442,12 @@ impl Packet for CCommands {
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let count = r.read_var_int()?.0;
-        let mut nodes = Vec::with_capacity(count as usize);
+        if count < 0 {
+            return Err(crate::error::ProtocolError::invalid(
+                "negative node count",
+            ));
+        }
+        let mut nodes = Vec::with_capacity((count as usize).min(1024));
         for _ in 0..count {
             nodes.push(decode_node(r, version)?);
         }

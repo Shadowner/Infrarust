@@ -25,6 +25,7 @@ pub enum ProxyMode {
 
 /// Configuration for a backend server.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ServerConfig {
     /// The server's unique identifier.
     pub id: ServerId,
@@ -47,6 +48,35 @@ pub struct ServerConfig {
     pub send_proxy_protocol: bool,
     /// Whether this server has a server manager configured (auto start/stop).
     pub has_server_manager: bool,
+}
+
+impl ServerConfig {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: ServerId,
+        network: Option<String>,
+        addresses: Vec<crate::types::ServerAddress>,
+        domains: Vec<String>,
+        proxy_mode: ProxyMode,
+        limbo_handlers: Vec<String>,
+        max_players: u32,
+        disconnect_message: Option<String>,
+        send_proxy_protocol: bool,
+        has_server_manager: bool,
+    ) -> Self {
+        Self {
+            id,
+            network,
+            addresses,
+            domains,
+            proxy_mode,
+            limbo_handlers,
+            max_players,
+            disconnect_message,
+            send_proxy_protocol,
+            has_server_manager,
+        }
+    }
 }
 
 /// Read-only access to proxy configuration.

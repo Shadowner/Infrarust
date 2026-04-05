@@ -254,18 +254,18 @@ pub async fn create(
 
     let proxy_mode = parse_proxy_mode(&req.proxy_mode)?;
 
-    let config = ServerConfig {
-        id: server_id,
-        network: None,
+    let config = ServerConfig::new(
+        server_id,
+        None,
         addresses,
-        domains: req.domains,
+        req.domains,
         proxy_mode,
-        limbo_handlers: req.limbo_handlers,
-        max_players: 0,
-        disconnect_message: None,
-        send_proxy_protocol: false,
-        has_server_manager: false,
-    };
+        req.limbo_handlers,
+        0,
+        None,
+        false,
+        false,
+    );
 
     state.server_store.insert(config.clone());
 
@@ -337,18 +337,18 @@ pub async fn update(
 
     let limbo_handlers = req.limbo_handlers.unwrap_or(existing.limbo_handlers);
 
-    let config = ServerConfig {
-        id: ServerId::new(&id),
-        network: existing.network,
+    let config = ServerConfig::new(
+        ServerId::new(&id),
+        existing.network,
         addresses,
         domains,
         proxy_mode,
         limbo_handlers,
-        max_players: existing.max_players,
-        disconnect_message: existing.disconnect_message,
-        send_proxy_protocol: existing.send_proxy_protocol,
-        has_server_manager: existing.has_server_manager,
-    };
+        existing.max_players,
+        existing.disconnect_message,
+        existing.send_proxy_protocol,
+        existing.has_server_manager,
+    );
 
     state.server_store.insert(config.clone());
 

@@ -116,6 +116,7 @@ impl Listener {
     /// error, or [`TransportError::SocketConfig`] if socket configuration
     /// fails.
     pub async fn accept(&self) -> Result<AcceptedConnection, TransportError> {
+        let mut backoff = std::time::Duration::from_millis(100);
         loop {
             // Acquire permit before accepting
             let permit = if let Some(sem) = &self.semaphore {
@@ -143,8 +144,9 @@ impl Listener {
                     match result {
                         Ok((stream, addr)) => (stream, addr),
                         Err(e) if is_transient_error(&e) => {
-                            tracing::warn!(error = %e, "transient accept error, retrying");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(error = %e, backoff_ms = backoff.as_millis(), "transient accept error, retrying");
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(std::time::Duration::from_secs(5));
                             continue;
                         }
                         Err(e) => return Err(TransportError::Accept(e)),
@@ -170,8 +172,15 @@ impl Listener {
 
             // Decode proxy protocol if enabled
             let conn = if self.config.receive_proxy_protocol {
-                let (info, _consumed) = decode_proxy_protocol(&mut stream).await?;
-                ClientConnection::new(stream, peer_addr, local_addr).with_proxy_protocol(&info)
+                let (info, leftover) = decode_proxy_protocol(&mut stream).await?;
+                let mut conn = ClientConnection::new(stream, peer_addr, local_addr);
+                if let Some(ref pp_info) = info {
+                    conn = conn.with_proxy_protocol(pp_info);
+                }
+                if !leftover.is_empty() {
+                    conn.inject_buffered_data(&leftover);
+                }
+                conn
             } else {
                 ClientConnection::new(stream, peer_addr, local_addr)
             };

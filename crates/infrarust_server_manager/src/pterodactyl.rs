@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use infrarust_config::PterodactylManagerConfig;
 
 use crate::error::ServerManagerError;
@@ -34,6 +36,7 @@ impl PterodactylProvider {
             .bearer_auth(&self.api_key)
             .header("Accept", "application/json")
             .json(&serde_json::json!({"signal": signal}))
+            .timeout(Duration::from_secs(10))
             .send()
             .await?;
 
@@ -92,6 +95,7 @@ impl ServerProvider for PterodactylProvider {
                 .get(&url)
                 .bearer_auth(&self.api_key)
                 .header("Accept", "application/json")
+                .timeout(Duration::from_secs(10))
                 .send()
                 .await?;
 

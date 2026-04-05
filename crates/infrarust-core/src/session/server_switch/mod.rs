@@ -55,6 +55,7 @@ pub async fn perform_switch(
     services: &ProxyServices,
     backend_connector: &BackendConnector,
     peer_addr: std::net::SocketAddr,
+    real_ip: Option<std::net::IpAddr>,
     protocol_version: ProtocolVersion,
 ) -> Result<SwitchResult, CoreError> {
     let version = protocol_version;
@@ -140,7 +141,7 @@ pub async fn perform_switch(
     // 3. Connect to new backend
     let connection_info = infrarust_transport::ConnectionInfo {
         peer_addr,
-        real_ip: None,
+        real_ip,
         real_port: None,
         local_addr: peer_addr, // Not critical for outgoing backend connections
         connected_at: tokio::time::Instant::now(),
@@ -166,7 +167,7 @@ pub async fn perform_switch(
 
     let handler = services.resolve_forwarding_handler(&server_config);
     let fwd_data = ForwardingData {
-        real_ip: peer_addr.ip(),
+        real_ip: real_ip.unwrap_or(peer_addr.ip()),
         uuid: api_profile.uuid,
         username: game_profile_name.to_string(),
         properties: api_profile.properties.clone(),

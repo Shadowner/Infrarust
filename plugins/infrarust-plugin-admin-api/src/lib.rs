@@ -124,7 +124,7 @@ impl Plugin for AdminApiPlugin {
                 plugin_registry: ctx.plugin_registry_handle(),
                 config: config.clone(),
                 start_time,
-                proxy_version: "2.0.0-alpha.1".into(),
+                proxy_version: env!("CARGO_PKG_VERSION").into(),
                 rate_limiter,
                 event_tx: event_tx.clone(),
                 shutdown: self.shutdown.clone(),
@@ -358,18 +358,18 @@ mod tests {
         }
         fn get_all_server_configs(&self) -> Vec<ServerConfig> {
             (0..self.server_count)
-                .map(|i| ServerConfig {
-                    id: ServerId::new(format!("server_{i}")),
-                    network: None,
-                    addresses: vec![],
-                    domains: vec![],
-                    proxy_mode: infrarust_api::services::config_service::ProxyMode::Passthrough,
-                    limbo_handlers: vec![],
-                    max_players: 0,
-                    disconnect_message: None,
-                    send_proxy_protocol: false,
-                    has_server_manager: false,
-                })
+                .map(|i| ServerConfig::new(
+                    ServerId::new(format!("server_{i}")),
+                    None,
+                    vec![],
+                    vec![],
+                    infrarust_api::services::config_service::ProxyMode::Passthrough,
+                    vec![],
+                    0,
+                    None,
+                    false,
+                    false,
+                ))
                 .collect()
         }
         fn get_value(&self, _key: &str) -> Option<String> {

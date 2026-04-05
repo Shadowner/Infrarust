@@ -23,6 +23,7 @@ impl ProxyPingEvent {
 
 /// The server list ping response data.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PingResponse {
     /// The MOTD description shown in the server list.
     pub description: Component,
@@ -36,6 +37,26 @@ pub struct PingResponse {
     pub version_name: String,
     /// Base64-encoded 64x64 PNG favicon, if any.
     pub favicon: Option<String>,
+}
+
+impl PingResponse {
+    pub fn new(
+        description: Component,
+        max_players: i32,
+        online_players: i32,
+        protocol_version: ProtocolVersion,
+        version_name: String,
+        favicon: Option<String>,
+    ) -> Self {
+        Self {
+            description,
+            max_players,
+            online_players,
+            protocol_version,
+            version_name,
+            favicon,
+        }
+    }
 }
 
 impl Event for ProxyPingEvent {}
@@ -82,14 +103,14 @@ mod tests {
     fn ping_response_mutation() {
         let mut event = ProxyPingEvent {
             remote_addr: "127.0.0.1:12345".parse().unwrap(),
-            response: PingResponse {
-                description: Component::text("Hello"),
-                max_players: 100,
-                online_players: 42,
-                protocol_version: ProtocolVersion::MINECRAFT_1_21,
-                version_name: "Infrarust 2.0".into(),
-                favicon: None,
-            },
+            response: PingResponse::new(
+                Component::text("Hello"),
+                100,
+                42,
+                ProtocolVersion::MINECRAFT_1_21,
+                "Infrarust 2.0".into(),
+                None,
+            ),
         };
 
         event.response_mut().online_players = 99;

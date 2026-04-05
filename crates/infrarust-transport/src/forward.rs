@@ -281,29 +281,36 @@ mod splice_impl {
                 }
             };
 
-            // Pump: pipe → destination (always drain fully to avoid data loss)
+            // Pump: pipe → destination
             let mut pumped = 0usize;
             while pumped < drained {
-                let result = dst.ready(Interest::WRITABLE).await;
-                let _ = result?;
-                // SAFETY: `TcpStream` owns a valid file descriptor for its entire lifetime.
-                // We borrow it only within the scope of `try_io`'s closure, which guarantees
-                // the fd remains valid. The `TcpStream` is not dropped or moved during this call.
-                #[allow(unsafe_code)]
-                let dst_fd = unsafe { BorrowedFd::borrow_raw(dst.as_raw_fd()) };
-                match dst.try_io(Interest::WRITABLE, || {
-                    nix::fcntl::splice(&pipe.read_fd, None, dst_fd, None, drained - pumped, flags)
-                        .map_err(nix_to_io_error)
-                }) {
-                    Ok(0) => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::WriteZero,
-                            "splice pump returned 0",
-                        ));
+                tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => {
+                        return Ok(total);
                     }
-                    Ok(n) => pumped += n,
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                    Err(e) => return Err(e),
+                    result = dst.ready(Interest::WRITABLE) => {
+                        let _ = result?;
+                        // SAFETY: `TcpStream` owns a valid file descriptor for its entire lifetime.
+                        // We borrow it only within the scope of `try_io`'s closure, which guarantees
+                        // the fd remains valid. The `TcpStream` is not dropped or moved during this call.
+                        #[allow(unsafe_code)]
+                        let dst_fd = unsafe { BorrowedFd::borrow_raw(dst.as_raw_fd()) };
+                        match dst.try_io(Interest::WRITABLE, || {
+                            nix::fcntl::splice(&pipe.read_fd, None, dst_fd, None, drained - pumped, flags)
+                                .map_err(nix_to_io_error)
+                        }) {
+                            Ok(0) => {
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::WriteZero,
+                                    "splice pump returned 0",
+                                ));
+                            }
+                            Ok(n) => pumped += n,
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                            Err(e) => return Err(e),
+                        }
+                    }
                 }
             }
 

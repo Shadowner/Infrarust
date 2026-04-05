@@ -6,9 +6,8 @@ use tokio_util::sync::CancellationToken;
 
 use infrarust_config::DomainRewrite;
 use infrarust_protocol::io::PacketEncoder;
-use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::version::ProtocolVersion;
-use infrarust_protocol::{Packet, VarInt};
+use infrarust_protocol::Packet;
 use infrarust_transport::{BackendConnector, select_forwarder};
 
 use crate::error::CoreError;
@@ -338,32 +337,10 @@ impl PassthroughHandler {
         handshake: &HandshakeData,
         new_domain: &str,
     ) -> Result<(), CoreError> {
-        // Build a modified SHandshake packet
-        let next_state = match handshake.intent {
-            crate::pipeline::types::ConnectionIntent::Status => {
-                infrarust_protocol::ConnectionState::Status
-            }
-            crate::pipeline::types::ConnectionIntent::Login
-            | crate::pipeline::types::ConnectionIntent::Transfer => {
-                infrarust_protocol::ConnectionState::Login
-            }
-        };
-
-        let modified = SHandshake {
-            protocol_version: VarInt(handshake.protocol_version.0),
-            server_address: new_domain.to_string(),
-            server_port: handshake.port,
-            next_state,
-        };
-
-        // Encode the modified handshake
-        let mut payload = Vec::new();
-        modified.encode(&mut payload, handshake.protocol_version)?;
-
-        let mut encoder = PacketEncoder::new();
-        encoder.append_raw(0x00, &payload)?; // Handshake is always 0x00
-        let bytes = encoder.take();
-        backend.write_all(&bytes).await?;
+        let encoded = crate::util::domain_rewrite::encode_handshake_with_domain(
+            handshake, new_domain,
+        )?;
+        backend.write_all(&encoded).await?;
 
         // Forward remaining packets (login start etc.) as-is
         for raw in handshake.raw_packets.iter().skip(1) {

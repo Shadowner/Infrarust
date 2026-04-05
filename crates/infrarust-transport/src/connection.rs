@@ -47,6 +47,14 @@ impl ClientConnection {
         self
     }
 
+    /// This is used when the proxy protocol decode over-reads (TCP coalescing
+    /// causes the first Minecraft packet to be read together with the PP header).
+    /// The leftover bytes are injected here so they are consumed before reading
+    /// from the stream.
+    pub fn inject_buffered_data(&mut self, data: &[u8]) {
+        self.buffered_data.extend_from_slice(data);
+    }
+
     /// Returns the effective client IP address.
     ///
     /// If proxy protocol provided a real IP, returns that.

@@ -33,11 +33,10 @@ impl StoredServer {
     }
 
     fn to_config(&self) -> ServerConfig {
-        ServerConfig {
-            id: ServerId::new(&self.id),
-            network: None,
-            addresses: self
-                .addresses
+        ServerConfig::new(
+            ServerId::new(&self.id),
+            None,
+            self.addresses
                 .iter()
                 .filter_map(|a| {
                     let (host, port_str) = a.rsplit_once(':')?;
@@ -48,20 +47,20 @@ impl StoredServer {
                     })
                 })
                 .collect(),
-            domains: self.domains.clone(),
-            proxy_mode: match self.proxy_mode.as_str() {
+            self.domains.clone(),
+            match self.proxy_mode.as_str() {
                 "zero_copy" | "zerocopy" => ProxyMode::ZeroCopy,
                 "client_only" => ProxyMode::ClientOnly,
                 "offline" => ProxyMode::Offline,
                 "server_only" => ProxyMode::ServerOnly,
                 _ => ProxyMode::Passthrough,
             },
-            limbo_handlers: self.limbo_handlers.clone(),
-            max_players: 0,
-            disconnect_message: None,
-            send_proxy_protocol: false,
-            has_server_manager: false,
-        }
+            self.limbo_handlers.clone(),
+            0,
+            None,
+            false,
+            false,
+        )
     }
 }
 

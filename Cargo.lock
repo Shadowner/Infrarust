@@ -1470,13 +1470,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "infrarust-plugin-antibot"
-version = "2.0.0-alpha.2"
-dependencies = [
- "infrarust-api",
-]
-
-[[package]]
 name = "infrarust-plugin-auth"
 version = "2.0.0-alpha.2"
 dependencies = [
@@ -1506,13 +1499,6 @@ version = "2.0.0-alpha.2"
 dependencies = [
  "infrarust-api",
  "tracing",
-]
-
-[[package]]
-name = "infrarust-plugin-queue"
-version = "2.0.0-alpha.2"
-dependencies = [
- "infrarust-api",
 ]
 
 [[package]]

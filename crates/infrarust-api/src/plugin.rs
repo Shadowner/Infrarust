@@ -23,6 +23,7 @@ use crate::services::{
 
 /// Metadata describing a plugin.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PluginMetadata {
     /// Unique `snake_case` identifier (e.g. `"my_plugin"`).
     pub id: String,

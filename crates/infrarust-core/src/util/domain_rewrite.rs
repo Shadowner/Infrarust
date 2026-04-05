@@ -49,7 +49,7 @@ fn first_raw_packet(handshake_data: &HandshakeData) -> Vec<u8> {
         .unwrap_or_default()
 }
 
-fn encode_handshake_with_domain(
+pub(crate) fn encode_handshake_with_domain(
     handshake_data: &HandshakeData,
     new_domain: &str,
 ) -> Result<Vec<u8>, CoreError> {

@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 
@@ -52,18 +53,22 @@ impl Middleware for LoginStartParserMiddleware {
             }
 
             let mut raw_data = ctx.buffered_data.clone();
-            let frame = loop {
-                if let Some(frame) = decoder.try_next_frame()? {
-                    break frame;
+            let frame = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if let Some(frame) = decoder.try_next_frame()? {
+                        break Ok::<_, CoreError>(frame);
+                    }
+                    let mut buf = [0u8; 1024];
+                    let n = ctx.stream_mut().read(&mut buf).await?;
+                    if n == 0 {
+                        return Err(CoreError::ConnectionClosed);
+                    }
+                    decoder.queue_bytes(&buf[..n]);
+                    raw_data.extend_from_slice(&buf[..n]);
                 }
-                let mut buf = [0u8; 1024];
-                let n = ctx.stream_mut().read(&mut buf).await?;
-                if n == 0 {
-                    return Err(CoreError::ConnectionClosed);
-                }
-                decoder.queue_bytes(&buf[..n]);
-                raw_data.extend_from_slice(&buf[..n]);
-            };
+            })
+            .await
+            .map_err(|_| CoreError::ConnectionClosed)??;
 
             if frame.id != 0x00 {
                 return Err(CoreError::Protocol(

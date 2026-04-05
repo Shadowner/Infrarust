@@ -1,7 +1,8 @@
 //! Backend-side bridge for intercepted proxy modes.
 //!
 //! Wraps the backend TCP stream with packet codec and optional compression.
-//! No encryption in Phase 2A (Offline/ClientOnly backends run in offline mode).
+
+use std::time::Duration;
 
 use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -237,81 +238,90 @@ impl BackendBridge {
         version: ProtocolVersion,
         velocity_ctx: Option<(&crate::forwarding::ForwardingData, &[u8])>,
     ) -> Result<(), CoreError> {
-        loop {
-            let frame = self
-                .read_frame()
-                .await?
-                .ok_or(CoreError::ConnectionClosed)?;
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let frame = self
+                    .read_frame()
+                    .await?
+                    .ok_or(CoreError::ConnectionClosed)?;
 
-            let decoded = registry.decode_frame(
-                &frame,
-                ConnectionState::Login,
-                Direction::Clientbound,
-                version,
-            )?;
+                let decoded = registry.decode_frame(
+                    &frame,
+                    ConnectionState::Login,
+                    Direction::Clientbound,
+                    version,
+                )?;
 
-            match decoded {
-                DecodedPacket::Typed { packet, .. } => {
-                    if let Some(set_comp) = packet.as_any().downcast_ref::<CSetCompression>() {
-                        self.set_compression(set_comp.threshold.0);
-                        tracing::debug!(
-                            threshold = set_comp.threshold.0,
-                            "backend compression activated"
-                        );
-                        continue;
-                    }
-
-                    if packet.as_any().downcast_ref::<CLoginSuccess>().is_some() {
-                        if version.less_than(ProtocolVersion::V1_20_2) {
-                            self.set_state(ConnectionState::Play);
+                match decoded {
+                    DecodedPacket::Typed { packet, .. } => {
+                        if let Some(set_comp) = packet.as_any().downcast_ref::<CSetCompression>() {
+                            self.set_compression(set_comp.threshold.0);
+                            tracing::debug!(
+                                threshold = set_comp.threshold.0,
+                                "backend compression activated"
+                            );
+                            continue;
                         }
-                        tracing::debug!("consumed backend LoginSuccess");
-                        break;
-                    }
 
-                    if let Some(disconnect) = packet.as_any().downcast_ref::<CLoginDisconnect>() {
-                        return Err(CoreError::Rejected(format!(
-                            "backend refused login: {}",
-                            disconnect.reason
-                        )));
-                    }
-
-                    if let Some(request) = packet.as_any().downcast_ref::<CLoginPluginRequest>() {
-                        if crate::forwarding::velocity::is_velocity_request(request) {
-                            if let Some((fwd_data, secret)) = velocity_ctx {
-                                let response = crate::forwarding::velocity::build_velocity_response(
-                                    request, fwd_data, secret,
-                                );
-                                self.send_packet(&response, registry).await?;
-                                tracing::info!("velocity forwarding applied (auto-detected)");
-                                continue;
+                        if packet.as_any().downcast_ref::<CLoginSuccess>().is_some() {
+                            if version.less_than(ProtocolVersion::V1_20_2) {
+                                self.set_state(ConnectionState::Play);
                             }
-                            tracing::debug!(
-                                "backend requested velocity forwarding but no secret is \
-                                 configured — responding 'not understood'"
-                            );
-                        } else {
-                            tracing::debug!(
-                                channel = %request.channel,
-                                "responding 'not understood' to LoginPluginRequest"
-                            );
+                            tracing::debug!("consumed backend LoginSuccess");
+                            break;
                         }
 
-                        let response = SLoginPluginResponse {
-                            message_id: request.message_id,
-                            successful: false,
-                            data: Vec::new(),
-                        };
-                        self.send_packet(&response, registry).await?;
-                        continue;
+                        if let Some(disconnect) =
+                            packet.as_any().downcast_ref::<CLoginDisconnect>()
+                        {
+                            return Err(CoreError::Rejected(format!(
+                                "backend refused login: {}",
+                                disconnect.reason
+                            )));
+                        }
+
+                        if let Some(request) =
+                            packet.as_any().downcast_ref::<CLoginPluginRequest>()
+                        {
+                            if crate::forwarding::velocity::is_velocity_request(request) {
+                                if let Some((fwd_data, secret)) = velocity_ctx {
+                                    let response =
+                                        crate::forwarding::velocity::build_velocity_response(
+                                            request, fwd_data, secret,
+                                        );
+                                    self.send_packet(&response, registry).await?;
+                                    tracing::info!("velocity forwarding applied (auto-detected)");
+                                    continue;
+                                }
+                                tracing::debug!(
+                                    "backend requested velocity forwarding but no secret is \
+                                     configured — responding 'not understood'"
+                                );
+                            } else {
+                                tracing::debug!(
+                                    channel = %request.channel,
+                                    "responding 'not understood' to LoginPluginRequest"
+                                );
+                            }
+
+                            let response = SLoginPluginResponse {
+                                message_id: request.message_id,
+                                successful: false,
+                                data: Vec::new(),
+                            };
+                            self.send_packet(&response, registry).await?;
+                            continue;
+                        }
                     }
-                }
-                DecodedPacket::Opaque { id, .. } => {
-                    tracing::debug!(id, "ignoring opaque packet during backend login");
+                    DecodedPacket::Opaque { id, .. } => {
+                        tracing::debug!(id, "ignoring opaque packet during backend login");
+                    }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
+        })
+        .await
+        .map_err(|_| CoreError::Rejected("backend login timed out".to_string()))?
     }
 }

@@ -2,13 +2,14 @@
 
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::defaults;
 
 /// Sub-sections: `[telemetry.metrics]`, `[telemetry.traces]`, `[telemetry.resource]`.
 /// Absent from the TOML file means `None` in `ProxyConfig` (no telemetry).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TelemetryConfig {
     /// Enables telemetry. `false` = initialized but no export.
     #[serde(default)]
@@ -80,6 +81,7 @@ pub struct TracesConfig {
     /// Sampling ratio for status pings (0.0-1.0).
     /// Login connections are always traced at 100%.
     #[serde(default = "defaults::sampling_ratio")]
+    #[serde(deserialize_with = "deserialize_sampling_ratio")]
     pub sampling_ratio: f64,
 }
 
@@ -111,4 +113,14 @@ impl Default for ResourceConfig {
             service_version: defaults::service_version(),
         }
     }
+}
+
+fn deserialize_sampling_ratio<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    let v = f64::deserialize(d)?;
+    if !(0.0..=1.0).contains(&v) {
+        return Err(serde::de::Error::custom(
+            "sampling_ratio must be between 0.0 and 1.0",
+        ));
+    }
+    Ok(v)
 }
