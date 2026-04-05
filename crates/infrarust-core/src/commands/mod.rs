@@ -97,8 +97,8 @@ impl CommandHandler for InfrarustRootCommand {
         Box::pin(async move {
             let sub_name = ctx.args.first().map(|s| s.to_lowercase());
 
-            if let Some(player_id) = ctx.player_id {
-                if let Some(player) = self.services.player_registry.get_player_by_id(player_id) {
+            if let Some(player_id) = ctx.player_id
+                && let Some(player) = self.services.player_registry.get_player_by_id(player_id) {
                     let level = player.permission_level();
                     match sub_name.as_deref() {
                         Some(name) => {
@@ -124,7 +124,6 @@ impl CommandHandler for InfrarustRootCommand {
                         }
                     }
                 }
-            }
 
             match sub_name.as_deref() {
                 Some("help") => {

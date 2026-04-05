@@ -88,11 +88,10 @@ impl PermissionService {
             return true;
         }
         let cmd_lower = command.to_lowercase();
-        if let Some(info) = self.subcommand_info.get() {
-            if info.admin_only.contains(&cmd_lower) {
+        if let Some(info) = self.subcommand_info.get()
+            && info.admin_only.contains(&cmd_lower) {
                 return false;
             }
-        }
         self.player_commands.contains(&cmd_lower)
     }
 
@@ -104,7 +103,7 @@ impl PermissionService {
         let admin_only = info.map(|i| &i.admin_only);
         self.player_commands
             .iter()
-            .filter(|cmd| admin_only.map_or(true, |ao| !ao.contains(cmd.as_str())))
+            .filter(|cmd| admin_only.is_none_or(|ao| !ao.contains(cmd.as_str())))
             .cloned()
             .collect()
     }

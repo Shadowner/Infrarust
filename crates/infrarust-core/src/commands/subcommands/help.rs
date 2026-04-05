@@ -48,15 +48,14 @@ pub(crate) fn handle_help(
         names.sort();
 
         for name in names {
-            if let Some(sub) = subcommands.get(name) {
-                if services.permission_service.is_command_allowed(name, level) {
+            if let Some(sub) = subcommands.get(name)
+                && services.permission_service.is_command_allowed(name, level) {
                     let _ = player.send_message(ProxyMessage::detail(&format!(
                         "  {:<12} - {}",
                         sub.name(),
                         sub.description()
                     )));
                 }
-            }
         }
 
         let _ = player.send_message(ProxyMessage::detail("Use /ir help <command> for details."));
