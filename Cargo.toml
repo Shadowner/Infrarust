@@ -19,7 +19,7 @@ members = [
 
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1.50.0", features = ["net", "io-util", "io-std", "sync", "time", "macros", "rt", "rt-multi-thread", "signal", "process", "fs"] }
+tokio = { version = "1.51.0", features = ["net", "io-util", "io-std", "sync", "time", "macros", "rt", "rt-multi-thread", "signal", "process", "fs"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 tokio-stream = "0.1.18"
 
@@ -27,12 +27,12 @@ tokio-stream = "0.1.18"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_yml = "0.0.12"
-toml = "0.8"
+toml = "0.9.8"
 fastnbt = "2.6.1"
 
 # Data types
 bytes = "1.11.1"
-uuid = { version = "1.22.0", features = ["v3", "v4", "serde"] }
+uuid = { version = "1.23.0", features = ["v3", "v4", "serde"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 humantime = "2.3.0"
 humantime-serde = "1.1.1"
@@ -65,7 +65,7 @@ socket2 = { version = "0.5.10", features = ["all"] }
 ppp = "2.3.0"
 
 # Concurrency / State
-arc-swap = "1.9.0"
+arc-swap = "1.9.1"
 dashmap = "6.1.0"
 governor = "0.10.4"
 nonzero_ext = "0.3.0"
@@ -82,7 +82,7 @@ aes = "0.8.4"
 cfb8 = "0.8.1"
 cipher = "0.4.4"
 rsa = { version = "0.9.10", features = ["sha1"] }
-sha1 = "0.10.6"
+sha1 = "0.11.0"
 sha2 = "0.10.9"
 hmac = "0.12.1"
 rand = "0.8"
@@ -139,9 +139,9 @@ all = "warn"
 unsafe_code = "warn"
 
 [workspace.package]
-version = "2.0.0-alpha.2"
+version = "2.0.0-alpha.3"
 edition = "2024"
-rust-version = "1.94.1"
+rust-version = "1.94"
 license-file = "LICENSE"
 repository = "https://github.com/Shadowner/Infrarust"
 
