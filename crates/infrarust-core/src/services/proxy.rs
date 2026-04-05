@@ -14,6 +14,7 @@ use crate::filter::transport_chain::TransportFilterChain;
 use crate::forwarding::{ForwardingHandler, ForwardingMode, build_forwarding_handler};
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::limbo::registry_cache::RegistryCodecCache;
+use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::provider::ProviderEvent;
 use crate::registry::ConnectionRegistry;
@@ -56,6 +57,7 @@ pub struct ProxyServices {
     pub provider_event_sender: mpsc::Sender<ProviderEvent>,
     pub forwarding_mode: Arc<ForwardingMode>,
     pub forwarding_secret: Option<Arc<[u8]>>,
+    pub permission_service: Arc<PermissionService>,
 }
 
 impl ProxyServices {

@@ -81,17 +81,8 @@ pub fn register_commands(ctx: &dyn PluginContext, handler: Arc<AuthHandler>) {
     }
 }
 
-fn is_admin(
-    player_id: PlayerId,
-    player_registry: &dyn PlayerRegistry,
-    handler: &AuthHandler,
-) -> bool {
-    if let Some(player) = player_registry.get_player_by_id(player_id) {
-        if player.has_permission("auth.admin") {
-            return true;
-        }
-        handler.is_admin(&player.profile().username)
-    } else {
-        false
-    }
+fn is_admin(player_id: PlayerId, player_registry: &dyn PlayerRegistry) -> bool {
+    player_registry
+        .get_player_by_id(player_id)
+        .is_some_and(|p| p.has_permission("infrarust.admin"))
 }

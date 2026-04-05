@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use infrarust_server_manager::ServerManagerService;
 
 use crate::ban::manager::BanManager;
+use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::plugin::manager::PluginManager;
 use crate::registry::ConnectionRegistry;
@@ -24,6 +25,7 @@ pub struct ConsoleServices {
     pub server_manager: Option<Arc<ServerManagerService>>,
     pub config_service: Arc<ConfigServiceImpl>,
     pub plugin_manager: Arc<tokio::sync::RwLock<PluginManager>>,
+    pub permission_service: Arc<PermissionService>,
     pub shutdown: CancellationToken,
     pub start_time: Instant,
     is_tty: bool,
@@ -38,6 +40,7 @@ impl ConsoleServices {
         server_manager: Option<Arc<ServerManagerService>>,
         config_service: Arc<ConfigServiceImpl>,
         plugin_manager: Arc<tokio::sync::RwLock<PluginManager>>,
+        permission_service: Arc<PermissionService>,
         shutdown: CancellationToken,
         start_time: Instant,
     ) -> Self {
@@ -48,6 +51,7 @@ impl ConsoleServices {
             server_manager,
             config_service,
             plugin_manager,
+            permission_service,
             shutdown,
             start_time,
             is_tty: std::io::stdout().is_terminal(),

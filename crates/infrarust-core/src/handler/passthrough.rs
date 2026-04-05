@@ -162,8 +162,10 @@ impl PassthroughHandler {
                 routing.config_id.clone(),
             )),
             false, // active: Passthrough doesn't support packet injection
+            false, // online_mode: passthrough doesn't authenticate
             cmd_tx,
             session_token.clone(),
+            crate::permissions::default_checker(),
         ));
 
         let session_id = self.services.connection_registry.register(player_session);

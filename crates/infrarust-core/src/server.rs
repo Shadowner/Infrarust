@@ -213,6 +213,9 @@ impl ProxyServer {
         let forwarding_mode = Arc::new(Self::resolve_forwarding_mode(&config));
         let forwarding_secret = Self::load_forwarding_secret(&config, &forwarding_mode);
 
+        let permission_service =
+            Arc::new(crate::permissions::PermissionService::new(&config.permissions).await);
+
         let services = ProxyServices {
             event_bus: Arc::clone(&event_bus),
             player_registry,
@@ -232,6 +235,7 @@ impl ProxyServer {
             provider_event_sender,
             forwarding_mode,
             forwarding_secret,
+            permission_service,
         };
 
         // Build common pipeline: IpFilter → BanIpCheck → HandshakeParser → RateLimiter → DomainRouter

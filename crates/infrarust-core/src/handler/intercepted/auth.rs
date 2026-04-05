@@ -23,6 +23,8 @@ pub(super) struct AuthResult {
     pub api_profile: infrarust_api::types::GameProfile,
     /// Whether LoginSuccess was sent to the client (true for ClientOnly).
     pub login_completed: bool,
+    /// Whether this player authenticated via Mojang (online mode).
+    pub online_mode: bool,
 }
 
 pub(super) enum AuthStrategy {
@@ -83,6 +85,7 @@ impl AuthStrategy {
                         login_data,
                         services,
                         version,
+                        false,
                     );
                 }
 
@@ -173,6 +176,7 @@ impl AuthStrategy {
                     username,
                     api_profile,
                     login_completed: false,
+                    online_mode: false,
                 })
             }
         }
@@ -255,6 +259,7 @@ async fn run_mojang_auth_flow(
         username: game_profile.name.clone(),
         api_profile,
         login_completed: true,
+        online_mode: true,
     })
 }
 
@@ -266,6 +271,7 @@ fn build_offline_result(
     login_data: &LoginData,
     services: &ProxyServices,
     version: ProtocolVersion,
+    online_mode: bool,
 ) -> Result<AuthResult, CoreError> {
     let player_uuid = login_data
         .player_uuid
@@ -292,6 +298,7 @@ fn build_offline_result(
         username: username.to_string(),
         api_profile,
         login_completed: false,
+        online_mode,
     })
 }
 

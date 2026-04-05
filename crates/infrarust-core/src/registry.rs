@@ -137,8 +137,10 @@ mod tests {
             "127.0.0.1:12345".parse().unwrap(),
             Some(ServerId::new(server)),
             false,
+            false,
             tx,
             CancellationToken::new(),
+            crate::permissions::default_checker(),
         ))
     }
 

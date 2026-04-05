@@ -1,8 +1,10 @@
 //! Player lifecycle events.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use crate::event::{Event, ResultedEvent};
+use crate::permissions::PermissionChecker;
 use crate::types::{Component, GameProfile, PlayerId, ProtocolVersion, ServerId};
 
 /// Fired before authentication, when a player initiates a connection.
@@ -114,6 +116,60 @@ pub struct OnlineAuthFailed {
 }
 
 impl Event for OnlineAuthFailed {}
+
+/// Fired after authentication, before the player session is fully constructed.
+///
+/// Plugins can listen for this event to provide a custom [`PermissionChecker`]
+/// that replaces the default config-based checker for this player. This is the
+/// extension point for integrating LuckPerms, a database, or any external
+/// permission system.
+///
+/// If no listener sets a custom checker, the proxy uses its built-in
+/// `ConfigPermissionChecker` (admin UUIDs from `[permissions].admins`).
+pub struct PermissionsSetupEvent {
+    /// The player's session ID.
+    pub player_id: PlayerId,
+    /// The authenticated game profile.
+    pub profile: GameProfile,
+    /// Whether the player authenticated via Mojang (online mode).
+    pub online_mode: bool,
+    result: PermissionsSetupResult,
+}
+
+/// The result of a [`PermissionsSetupEvent`].
+#[derive(Default)]
+#[non_exhaustive]
+pub enum PermissionsSetupResult {
+    /// Use the proxy's built-in config-based permission checker.
+    #[default]
+    UseDefault,
+    /// Use a plugin-provided permission checker.
+    Custom(Arc<dyn PermissionChecker>),
+}
+
+impl PermissionsSetupEvent {
+    pub fn new(player_id: PlayerId, profile: GameProfile, online_mode: bool) -> Self {
+        Self {
+            player_id,
+            profile,
+            online_mode,
+            result: PermissionsSetupResult::default(),
+        }
+    }
+}
+
+impl Event for PermissionsSetupEvent {}
+impl ResultedEvent for PermissionsSetupEvent {
+    type Result = PermissionsSetupResult;
+
+    fn result(&self) -> &Self::Result {
+        &self.result
+    }
+
+    fn set_result(&mut self, result: Self::Result) {
+        self.result = result;
+    }
+}
 
 #[cfg(test)]
 mod tests {

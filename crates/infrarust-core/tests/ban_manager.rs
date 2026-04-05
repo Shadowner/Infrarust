@@ -37,8 +37,10 @@ fn make_session(username: &str, ip: IpAddr) -> (Arc<PlayerSession>, Cancellation
         std::net::SocketAddr::new(ip, 12345),
         Some(ServerId::new("test-server")),
         false,
+        false,
         tx,
         token.clone(),
+        infrarust_core::permissions::default_checker(),
     ));
     (session, token)
 }

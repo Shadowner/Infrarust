@@ -9,9 +9,12 @@ use std::time::Instant;
 
 use infrarust_api::command::{CommandContext, CommandHandler};
 use infrarust_api::event::BoxFuture;
+use infrarust_api::message::ProxyMessage;
+use infrarust_api::permissions::PermissionLevel;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
 
+use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::services::ProxyServices;
 use crate::services::command_manager::CommandManagerImpl;
@@ -23,6 +26,10 @@ pub(crate) trait SubcommandHandler: Send + Sync {
     fn description(&self) -> &str;
     #[allow(dead_code)]
     fn usage(&self) -> &str;
+
+    fn required_level(&self) -> PermissionLevel {
+        PermissionLevel::Player
+    }
 
     fn execute<'a>(
         &'a self,
@@ -42,6 +49,7 @@ pub(crate) struct CommandServices {
     pub server_manager: Option<Arc<ServerManagerService>>,
     pub plugin_registry: Arc<dyn PluginRegistry>,
     pub command_manager: Arc<CommandManagerImpl>,
+    pub permission_service: Arc<PermissionService>,
     pub start_time: Instant,
 }
 
@@ -87,6 +95,36 @@ impl CommandHandler for InfrarustRootCommand {
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let sub_name = ctx.args.first().map(|s| s.to_lowercase());
+
+            if let Some(player_id) = ctx.player_id {
+                if let Some(player) = self.services.player_registry.get_player_by_id(player_id) {
+                    let level = player.permission_level();
+                    match sub_name.as_deref() {
+                        Some(name) => {
+                            if !self
+                                .services
+                                .permission_service
+                                .is_command_allowed(name, level)
+                            {
+                                let _ = player.send_message(ProxyMessage::error(
+                                    "You don't have permission.",
+                                ));
+                                return;
+                            }
+                        }
+                        None => {
+                            let visible =
+                                self.services.permission_service.visible_subcommands(level);
+                            if visible.is_empty() {
+                                let _ = player.send_message(ProxyMessage::error(
+                                    "You don't have permission.",
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
 
             match sub_name.as_deref() {
                 Some("help") => {
@@ -149,10 +187,23 @@ pub fn register_builtin_commands(
         server_manager: proxy_services.server_manager.clone(),
         plugin_registry,
         command_manager: Arc::clone(&proxy_services.command_manager),
+        permission_service: Arc::clone(&proxy_services.permission_service),
         start_time,
     });
 
     let root_cmd = InfrarustRootCommand::new(services);
+
+    let mut all = std::collections::HashSet::new();
+    let mut admin_only = std::collections::HashSet::new();
+    for (name, sub) in &root_cmd.subcommands {
+        all.insert(name.clone());
+        if sub.required_level() >= PermissionLevel::Admin {
+            admin_only.insert(name.clone());
+        }
+    }
+    proxy_services
+        .permission_service
+        .register_subcommands(all, admin_only);
 
     command_manager.register_builtin(
         "infrarust",

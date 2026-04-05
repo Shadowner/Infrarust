@@ -104,6 +104,9 @@ pub fn test_proxy_services() -> ProxyServices {
         provider_event_sender: tokio::sync::mpsc::channel(1).0,
         forwarding_mode: Arc::new(crate::forwarding::ForwardingMode::None),
         forwarding_secret: None,
+        permission_service: Arc::new(crate::permissions::PermissionService::new_sync(
+            &Default::default(),
+        )),
     }
 }
 

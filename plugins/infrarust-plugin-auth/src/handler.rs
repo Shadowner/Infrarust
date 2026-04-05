@@ -34,7 +34,6 @@ pub struct AuthHandler {
     player_registry: Arc<dyn PlayerRegistry>,
     dummy_hash: crate::account::PasswordHash,
     blocked_passwords: HashSet<String>,
-    admin_set: HashSet<String>,
     premium_cache: Option<Arc<PremiumCache>>,
 }
 
@@ -47,7 +46,6 @@ impl AuthHandler {
         blocked_passwords: HashSet<String>,
         premium_cache: Option<Arc<PremiumCache>>,
     ) -> Self {
-        let admin_set = config.admin_set();
         Self {
             sessions: DashMap::new(),
             storage,
@@ -55,7 +53,6 @@ impl AuthHandler {
             player_registry,
             dummy_hash,
             blocked_passwords,
-            admin_set,
             premium_cache,
         }
     }
@@ -70,10 +67,6 @@ impl AuthHandler {
 
     pub(crate) fn config(&self) -> &Arc<AuthConfig> {
         &self.config
-    }
-
-    pub(crate) fn is_admin(&self, username: &str) -> bool {
-        self.admin_set.contains(&username.to_lowercase())
     }
 
     pub(crate) fn force_complete_session(&self, player_id: PlayerId) -> bool {

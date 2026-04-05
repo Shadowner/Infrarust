@@ -1,6 +1,7 @@
 use infrarust_api::command::CommandContext;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::message::ProxyMessage;
+use infrarust_api::permissions::PermissionLevel;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::Component;
 
@@ -15,6 +16,10 @@ impl SubcommandHandler for KickSubcommand {
 
     fn description(&self) -> &str {
         "Kick a player from the proxy"
+    }
+
+    fn required_level(&self) -> PermissionLevel {
+        PermissionLevel::Admin
     }
 
     fn usage(&self) -> &str {

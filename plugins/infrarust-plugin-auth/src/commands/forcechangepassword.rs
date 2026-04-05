@@ -25,7 +25,7 @@ impl CommandHandler for ForceChangePasswordCommand {
                 return;
             };
 
-            if !super::is_admin(sender_id, player_registry, &self.handler) {
+            if !super::is_admin(sender_id, player_registry) {
                 if let Some(player) = player_registry.get_player_by_id(sender_id) {
                     let _ = player.send_message(parse_colored(
                         &self.handler.config().messages.admin_no_permission,

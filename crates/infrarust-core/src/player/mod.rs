@@ -7,6 +7,7 @@ pub(crate) mod packets;
 pub mod registry;
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::SystemTime;
@@ -16,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 use infrarust_api::error::PlayerError;
 use infrarust_api::event::BoxFuture;
+use infrarust_api::permissions::{DefaultPermissionChecker, PermissionChecker, PermissionLevel};
 use infrarust_api::player::Player;
 use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
@@ -59,9 +61,11 @@ pub struct PlayerSession {
     current_server: RwLock<Option<ServerId>>,
     connected: AtomicBool,
     active: bool,
+    online_mode: bool,
     connected_at: SystemTime,
     command_tx: mpsc::Sender<PlayerCommand>,
     shutdown_token: CancellationToken,
+    permission_checker: Arc<dyn PermissionChecker>,
 }
 
 impl std::fmt::Debug for PlayerSession {
@@ -84,8 +88,10 @@ impl PlayerSession {
         remote_addr: SocketAddr,
         current_server: Option<ServerId>,
         active: bool,
+        online_mode: bool,
         command_tx: mpsc::Sender<PlayerCommand>,
         shutdown_token: CancellationToken,
+        permission_checker: Arc<dyn PermissionChecker>,
     ) -> Self {
         Self {
             player_id,
@@ -95,9 +101,11 @@ impl PlayerSession {
             current_server: RwLock::new(current_server),
             connected: AtomicBool::new(true),
             active,
+            online_mode,
             connected_at: SystemTime::now(),
             command_tx,
             shutdown_token,
+            permission_checker,
         }
     }
 
@@ -117,8 +125,10 @@ impl PlayerSession {
             "127.0.0.1:12345".parse().expect("valid test addr"),
             None,
             active,
+            false,
             tx,
             CancellationToken::new(),
+            Arc::new(DefaultPermissionChecker),
         );
         (session, rx)
     }
@@ -230,8 +240,16 @@ impl Player for PlayerSession {
         })
     }
 
-    fn has_permission(&self, _permission: &str) -> bool {
-        true // Phase future
+    fn is_online_mode(&self) -> bool {
+        self.online_mode
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        self.permission_checker.permission_level()
+    }
+
+    fn has_permission(&self, permission: &str) -> bool {
+        self.permission_checker.has_permission(permission)
     }
 
     fn connected_at(&self) -> SystemTime {

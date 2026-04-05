@@ -19,14 +19,23 @@ pub(crate) fn handle_help(
         return;
     };
 
+    let level = player.permission_level();
+
     if let Some(cmd_name) = args.first() {
         let lower = cmd_name.to_lowercase();
         if let Some(sub) = subcommands.get(&lower) {
-            let _ = player.send_message(ProxyMessage::info(&format!(
-                "{} — {}",
-                sub.usage(),
-                sub.description()
-            )));
+            if services
+                .permission_service
+                .is_command_allowed(&lower, level)
+            {
+                let _ = player.send_message(ProxyMessage::info(&format!(
+                    "{} — {}",
+                    sub.usage(),
+                    sub.description()
+                )));
+            } else {
+                let _ = player.send_message(ProxyMessage::error("You don't have permission."));
+            }
         } else {
             let _ = player.send_message(ProxyMessage::error(&format!(
                 "Unknown command: '{cmd_name}'. Use /ir help for a list."
@@ -40,11 +49,13 @@ pub(crate) fn handle_help(
 
         for name in names {
             if let Some(sub) = subcommands.get(name) {
-                let _ = player.send_message(ProxyMessage::detail(&format!(
-                    "  {:<12} - {}",
-                    sub.name(),
-                    sub.description()
-                )));
+                if services.permission_service.is_command_allowed(name, level) {
+                    let _ = player.send_message(ProxyMessage::detail(&format!(
+                        "  {:<12} - {}",
+                        sub.name(),
+                        sub.description()
+                    )));
+                }
             }
         }
 

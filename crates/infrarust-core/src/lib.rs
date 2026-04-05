@@ -15,6 +15,7 @@ pub mod forwarding;
 pub mod handler;
 pub(crate) mod limbo;
 pub mod middleware;
+pub mod permissions;
 pub mod pipeline;
 pub mod player;
 pub mod plugin;

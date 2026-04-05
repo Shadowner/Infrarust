@@ -1,5 +1,6 @@
 pub mod bans;
 pub mod config;
+pub mod permissions;
 pub mod players;
 pub mod plugins;
 pub mod servers;
@@ -40,6 +41,10 @@ pub fn register_all(dispatcher: &mut CommandDispatcher) {
     dispatcher.register(Box::new(system::StopCommand));
     dispatcher.register(Box::new(system::ClearCommand));
     dispatcher.register(Box::new(system::GcCommand));
+
+    dispatcher.register(Box::new(permissions::OpCommand));
+    dispatcher.register(Box::new(permissions::DeopCommand));
+    dispatcher.register(Box::new(permissions::OpListCommand));
 
     let help = system::HelpCommand::from_commands(dispatcher.command_info());
     dispatcher.register(Box::new(help));

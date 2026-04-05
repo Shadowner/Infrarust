@@ -9,6 +9,7 @@
 
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::event::bus::EventBus;
+use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{PlayerId, RawPacket, ServerId};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -558,10 +559,20 @@ async fn handle_backend_to_client(
                     if services.config.announce_proxy_commands {
                         let mut modified = commands.clone();
                         let plugin_cmds = services.command_manager.list_plugin_commands();
+                        let visible =
+                            services
+                                .player_registry
+                                .get_player_by_id(player_id)
+                                .map(|p| {
+                                    services
+                                        .permission_service
+                                        .visible_subcommands(p.permission_level())
+                                });
                         crate::commands::brigadier::inject_proxy_commands(
                             &mut modified,
                             version,
                             &plugin_cmds,
+                            visible.as_ref(),
                         );
                         let mut buf = Vec::new();
                         if let Err(e) = infrarust_protocol::packets::Packet::encode(

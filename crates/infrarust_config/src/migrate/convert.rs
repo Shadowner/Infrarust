@@ -724,6 +724,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         forwarding: None,
         ip_filter: None,
         web: None,
+        permissions: Default::default(),
         plugins: std::collections::HashMap::new(),
     };
 

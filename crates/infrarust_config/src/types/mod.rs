@@ -6,6 +6,7 @@ mod docker;
 mod forwarding;
 mod ip_filter;
 mod network;
+mod permissions;
 mod proxy_mode;
 mod rate_limit;
 mod server_manager;
@@ -19,6 +20,7 @@ pub use docker::DockerProviderConfig;
 pub use forwarding::{BungeeCordChannelPermissions, ForwardingConfig, ForwardingMode};
 pub use ip_filter::IpFilterConfig;
 pub use network::{KeepaliveConfig, TimeoutConfig};
+pub use permissions::PermissionsConfig;
 pub use proxy_mode::ProxyMode;
 pub use rate_limit::RateLimitConfig;
 pub use server_manager::{

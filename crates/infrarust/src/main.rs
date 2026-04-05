@@ -392,6 +392,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let console_ban_manager = Arc::clone(&services.ban_manager);
     let console_server_manager = services.server_manager.clone();
     let console_domain_router = Arc::clone(&services.domain_router);
+    let console_permission_service = Arc::clone(&services.permission_service);
 
     // Rebuild transport filter chain now that plugins may have registered filters
     server.rebuild_transport_filter_chain(&transport_filter_registry);
@@ -407,6 +408,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         console_server_manager,
         Arc::new(ConfigServiceImpl::new(console_domain_router)),
         Arc::clone(&plugin_manager),
+        console_permission_service,
         shutdown.clone(),
         start_time,
     ));

@@ -1,6 +1,7 @@
 use infrarust_api::command::CommandContext;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::message::ProxyMessage;
+use infrarust_api::permissions::PermissionLevel;
 use infrarust_api::services::player_registry::PlayerRegistry;
 
 use crate::commands::{CommandServices, SubcommandHandler};
@@ -14,6 +15,10 @@ impl SubcommandHandler for PluginsSubcommand {
 
     fn description(&self) -> &str {
         "List loaded plugins"
+    }
+
+    fn required_level(&self) -> PermissionLevel {
+        PermissionLevel::Admin
     }
 
     fn usage(&self) -> &str {
