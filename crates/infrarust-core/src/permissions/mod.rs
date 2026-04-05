@@ -89,9 +89,10 @@ impl PermissionService {
         }
         let cmd_lower = command.to_lowercase();
         if let Some(info) = self.subcommand_info.get()
-            && info.admin_only.contains(&cmd_lower) {
-                return false;
-            }
+            && info.admin_only.contains(&cmd_lower)
+        {
+            return false;
+        }
         self.player_commands.contains(&cmd_lower)
     }
 

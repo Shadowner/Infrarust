@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -1430,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-api"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "bytes",
  "serde",
@@ -1442,7 +1442,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-core"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "arc-swap",
  "base64",
@@ -1489,7 +1489,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-motd"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "clap",
  "infrarust_protocol",
@@ -1498,7 +1498,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-admin-api"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "async-stream",
  "axum",
@@ -1524,7 +1524,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-auth"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "argon2",
  "bcrypt",
@@ -1548,7 +1548,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-hello"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "infrarust-api",
  "tracing",
@@ -1556,7 +1556,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-server-wake"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "dashmap",
  "infrarust-api",
@@ -1569,7 +1569,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-stress-test"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "clap",
  "tokio",
@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-transport"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "bytes",
  "infrarust_config",
@@ -1592,7 +1592,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust_config"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "humantime",
  "humantime-serde",
@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust_protocol"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "aes",
  "bytes",
@@ -1626,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust_server_manager"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "dashmap",
  "infrarust_config",
@@ -2584,7 +2584,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "registry-extractor"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 dependencies = [
  "anyhow",
  "bytes",

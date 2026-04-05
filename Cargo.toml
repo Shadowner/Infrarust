@@ -119,18 +119,18 @@ mimalloc = "0.1.48"
 tempfile = "3.27.0"
 
 # Internal crates
-infrarust_protocol = { path = "crates/infrarust_protocol" }
-infrarust-api = { path = "crates/infrarust-api" }
-infrarust_config = { path = "crates/infrarust_config" }
-infrarust-transport = { path = "crates/infrarust-transport" }
-infrarust-core = { path = "crates/infrarust-core" }
-infrarust_server_manager = { path = "crates/infrarust_server_manager" }
+infrarust_protocol = { path = "crates/infrarust_protocol", version = "2.0.0-alpha.4" }
+infrarust-api = { path = "crates/infrarust-api", version = "2.0.0-alpha.4" }
+infrarust_config = { path = "crates/infrarust_config", version = "2.0.0-alpha.4" }
+infrarust-transport = { path = "crates/infrarust-transport", version = "2.0.0-alpha.4" }
+infrarust-core = { path = "crates/infrarust-core", version = "2.0.0-alpha.4" }
+infrarust_server_manager = { path = "crates/infrarust_server_manager", version = "2.0.0-alpha.4" }
 
 # Internal plugins
-infrarust-plugin-auth = { path = "plugins/infrarust-plugin-auth" }
-infrarust-plugin-hello = { path = "plugins/infrarust-plugin-hello" }
-infrarust-plugin-server-wake = { path = "plugins/infrarust-plugin-server-wake" }
-infrarust-plugin-admin-api = { path = "plugins/infrarust-plugin-admin-api" }
+infrarust-plugin-auth = { path = "plugins/infrarust-plugin-auth", version = "2.0.0-alpha.4" }
+infrarust-plugin-hello = { path = "plugins/infrarust-plugin-hello", version = "2.0.0-alpha.4" }
+infrarust-plugin-server-wake = { path = "plugins/infrarust-plugin-server-wake", version = "2.0.0-alpha.4" }
+infrarust-plugin-admin-api = { path = "plugins/infrarust-plugin-admin-api", version = "2.0.0-alpha.4" }
 
 [workspace.lints.clippy]
 all = "warn"
@@ -139,7 +139,7 @@ all = "warn"
 unsafe_code = "warn"
 
 [workspace.package]
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 edition = "2024"
 rust-version = "1.94"
 license-file = "LICENSE"

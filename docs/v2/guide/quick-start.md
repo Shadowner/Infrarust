@@ -88,7 +88,7 @@ infrarust
 You should see output like:
 
 ```
-INFO starting infrarust v2.0.0-alpha.3
+INFO starting infrarust v2.0.0-alpha.4
      bind=0.0.0.0:25565 servers_dir=./servers
 INFO Generated admin API key: a1b2c3d4-e5f6-...
 INFO Admin API server starting bind=127.0.0.1:8080

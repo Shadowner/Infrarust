@@ -98,32 +98,33 @@ impl CommandHandler for InfrarustRootCommand {
             let sub_name = ctx.args.first().map(|s| s.to_lowercase());
 
             if let Some(player_id) = ctx.player_id
-                && let Some(player) = self.services.player_registry.get_player_by_id(player_id) {
-                    let level = player.permission_level();
-                    match sub_name.as_deref() {
-                        Some(name) => {
-                            if !self
-                                .services
-                                .permission_service
-                                .is_command_allowed(name, level)
-                            {
-                                let _ = player.send_message(ProxyMessage::error(NO_PERMISSION));
-                                return;
-                            }
+                && let Some(player) = self.services.player_registry.get_player_by_id(player_id)
+            {
+                let level = player.permission_level();
+                match sub_name.as_deref() {
+                    Some(name) => {
+                        if !self
+                            .services
+                            .permission_service
+                            .is_command_allowed(name, level)
+                        {
+                            let _ = player.send_message(ProxyMessage::error(NO_PERMISSION));
+                            return;
                         }
-                        None => {
-                            if self
-                                .services
-                                .permission_service
-                                .visible_subcommands(level)
-                                .is_empty()
-                            {
-                                let _ = player.send_message(ProxyMessage::error(NO_PERMISSION));
-                                return;
-                            }
+                    }
+                    None => {
+                        if self
+                            .services
+                            .permission_service
+                            .visible_subcommands(level)
+                            .is_empty()
+                        {
+                            let _ = player.send_message(ProxyMessage::error(NO_PERMISSION));
+                            return;
                         }
                     }
                 }
+            }
 
             match sub_name.as_deref() {
                 Some("help") => {
