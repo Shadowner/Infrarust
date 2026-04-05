@@ -61,6 +61,8 @@ tracing-opentelemetry = { workspace = true, optional = true }
 # Auth Mojang (ClientOnly)
 rsa = { workspace = true }
 sha1 = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
 rand = { workspace = true }
 num-bigint = { workspace = true }
 base64 = { workspace = true }

@@ -83,6 +83,7 @@ fn convert_api_to_config(
         domains: api.domains.clone(),
         addresses,
         proxy_mode,
+        forwarding_mode: None,
         send_proxy_protocol: api.send_proxy_protocol,
         domain_rewrite: Default::default(),
         motd: Default::default(),

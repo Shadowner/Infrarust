@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    DomainRewrite, IpFilterConfig, MotdConfig, ProxyMode, ServerAddress, ServerManagerConfig,
-    TimeoutConfig,
+    DomainRewrite, ForwardingMode, IpFilterConfig, MotdConfig, ProxyMode, ServerAddress,
+    ServerManagerConfig, TimeoutConfig,
 };
 
 /// Each file in `servers_dir/` deserializes into this type.
@@ -37,6 +37,9 @@ pub struct ServerConfig {
     /// Proxy mode for this server
     #[serde(default)]
     pub proxy_mode: ProxyMode,
+
+    #[serde(default)]
+    pub forwarding_mode: Option<ForwardingMode>,
 
     /// Sends proxy protocol to the backend
     #[serde(default)]

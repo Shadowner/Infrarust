@@ -114,6 +114,7 @@ mod tests {
             domains: vec!["play.example.com".to_string()],
             addresses: vec!["backend.local:25565".parse::<ServerAddress>().unwrap()],
             proxy_mode: Default::default(),
+            forwarding_mode: None,
             send_proxy_protocol: false,
             domain_rewrite: rewrite,
             motd: Default::default(),

@@ -85,6 +85,7 @@ pub fn labels_to_server_config(
             domains,
             addresses: vec![server_address],
             proxy_mode,
+            forwarding_mode: None,
             send_proxy_protocol,
             domain_rewrite: Default::default(),
             motd: Default::default(),

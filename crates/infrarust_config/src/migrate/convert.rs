@@ -184,6 +184,7 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
         domains: v1.domains.clone(),
         addresses,
         proxy_mode,
+        forwarding_mode: None,
         send_proxy_protocol: v1.send_proxy_protocol.unwrap_or(false),
         domain_rewrite,
         motd,
@@ -720,6 +721,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         docker,
         unknown_domain_behavior: Default::default(),
         announce_proxy_commands: crate::defaults::announce_proxy_commands(),
+        forwarding: None,
         web: None,
         plugins: std::collections::HashMap::new(),
     };

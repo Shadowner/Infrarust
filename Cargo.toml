@@ -85,6 +85,8 @@ cfb8 = "0.8.1"
 cipher = "0.4.4"
 rsa = { version = "0.9.10", features = ["sha1"] }
 sha1 = "0.10.6"
+sha2 = "0.10.9"
+hmac = "0.12.1"
 rand = "0.8"
 num-bigint = "0.4.6"
 base64 = "0.22.1"

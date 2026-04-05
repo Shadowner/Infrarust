@@ -29,6 +29,9 @@ pub enum CoreError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("forwarding error: {0}")]
+    Forwarding(#[from] crate::forwarding::ForwardingError),
+
     #[error("auth error: {0}")]
     Auth(String),
 

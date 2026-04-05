@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use infrarust_config::{ProxyConfig, ProxyMode, UnknownDomainBehavior};
+use infrarust_config::{
+    ForwardingMode as ConfigForwardingMode, ProxyConfig, ProxyMode, UnknownDomainBehavior,
+};
 use infrarust_protocol::build_default_registry;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
@@ -208,6 +210,9 @@ impl ProxyServer {
 
         let limbo_handler_registry = Arc::new(crate::limbo::registry::LimboHandlerRegistry::new());
 
+        let forwarding_mode = Arc::new(Self::resolve_forwarding_mode(&config));
+        let forwarding_secret = Self::load_forwarding_secret(&config, &forwarding_mode);
+
         let services = ProxyServices {
             event_bus: Arc::clone(&event_bus),
             player_registry,
@@ -225,6 +230,8 @@ impl ProxyServer {
                 Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider),
             )),
             provider_event_sender,
+            forwarding_mode,
+            forwarding_secret,
         };
 
         // Build common pipeline: IpFilter → BanIpCheck → HandshakeParser → RateLimiter → DomainRouter
@@ -548,5 +555,98 @@ impl ProxyServer {
 
     pub const fn shutdown(&self) -> &CancellationToken {
         &self.shutdown
+    }
+
+    fn load_forwarding_secret(
+        config: &ProxyConfig,
+        mode: &crate::forwarding::ForwardingMode,
+    ) -> Option<Arc<[u8]>> {
+        // If the mode already has a secret, use it
+        match mode {
+            crate::forwarding::ForwardingMode::Velocity { secret } => {
+                return Some(secret.as_slice().into());
+            }
+            crate::forwarding::ForwardingMode::BungeeGuard { token } => {
+                return Some(token.as_bytes().into());
+            }
+            _ => {}
+        }
+
+        let secret_path = config
+            .forwarding
+            .as_ref()
+            .map(|f| f.secret_file.clone())
+            .unwrap_or_else(|| std::path::PathBuf::from("forwarding.secret"));
+
+        if secret_path.exists() {
+            match crate::forwarding::secret::load_or_generate_secret(&secret_path) {
+                Ok(secret) => {
+                    tracing::info!(
+                        path = %secret_path.display(),
+                        "loaded forwarding secret for Velocity auto-detection"
+                    );
+                    Some(secret.into())
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        path = %secret_path.display(),
+                        error = %e,
+                        "could not load forwarding secret — Velocity auto-detection disabled"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    fn resolve_forwarding_mode(config: &ProxyConfig) -> crate::forwarding::ForwardingMode {
+        let fwd_config = match &config.forwarding {
+            Some(c) => c,
+            None => return crate::forwarding::ForwardingMode::None,
+        };
+
+        match &fwd_config.mode {
+            ConfigForwardingMode::None => crate::forwarding::ForwardingMode::None,
+            ConfigForwardingMode::BungeeCord => {
+                tracing::warn!(
+                    "BungeeCord legacy forwarding is configured globally. \
+                     This mode is fundamentally insecure — anyone reaching the backend \
+                     directly can impersonate any player. Consider migrating to Velocity \
+                     modern forwarding."
+                );
+                crate::forwarding::ForwardingMode::BungeeCord
+            }
+            ConfigForwardingMode::BungeeGuard => {
+                match crate::forwarding::secret::load_or_generate_secret(&fwd_config.secret_file) {
+                    Ok(secret) => {
+                        let token = String::from_utf8_lossy(&secret).to_string();
+                        crate::forwarding::ForwardingMode::BungeeGuard { token }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            path = %fwd_config.secret_file.display(),
+                            error = %e,
+                            "failed to load BungeeGuard secret, falling back to no forwarding"
+                        );
+                        crate::forwarding::ForwardingMode::None
+                    }
+                }
+            }
+            ConfigForwardingMode::Velocity => {
+                match crate::forwarding::secret::load_or_generate_secret(&fwd_config.secret_file) {
+                    Ok(secret) => crate::forwarding::ForwardingMode::Velocity { secret },
+                    Err(e) => {
+                        tracing::error!(
+                            path = %fwd_config.secret_file.display(),
+                            error = %e,
+                            "failed to load Velocity secret, falling back to no forwarding"
+                        );
+                        crate::forwarding::ForwardingMode::None
+                    }
+                }
+            }
+        }
     }
 }

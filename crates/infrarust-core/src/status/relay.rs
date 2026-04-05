@@ -346,6 +346,7 @@ mod tests {
             domains: vec!["test.mc".to_string()],
             addresses,
             proxy_mode: Default::default(),
+            forwarding_mode: None,
             send_proxy_protocol: false,
             domain_rewrite: DomainRewrite::None,
             motd: Default::default(),

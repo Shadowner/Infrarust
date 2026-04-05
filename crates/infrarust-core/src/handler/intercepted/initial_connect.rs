@@ -9,14 +9,14 @@ use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
 
+use super::auth::AuthResult;
 use crate::error::CoreError;
+use crate::forwarding::{ForwardingData, build_handshake_for_backend};
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
-
-use super::auth::AuthResult;
 
 pub(super) enum ConnectionMode {
     Backend(BackendBridge),
@@ -284,17 +284,30 @@ async fn connect_to_backend(
     let mut backend = BackendBridge::new(backend_conn.into_stream(), version);
 
     if login_completed {
-        backend
-            .send_initial_packets_offline(
-                handshake,
-                server_config,
-                &auth_result.username,
-                &services.packet_registry,
-            )
-            .await?;
+        let handler = services.resolve_forwarding_handler(server_config);
+        let fwd_data = build_forwarding_data(auth_result, connection_info, version);
+
+        if handler.modifies_handshake() {
+            let mut hs = build_handshake_for_backend(handshake, server_config);
+            handler.apply_handshake(&mut hs, &fwd_data);
+            backend
+                .send_handshake_and_login(&hs, &auth_result.username, &services.packet_registry)
+                .await?;
+        } else {
+            backend
+                .send_initial_packets_offline(
+                    handshake,
+                    server_config,
+                    &auth_result.username,
+                    &services.packet_registry,
+                )
+                .await?;
+        }
+
+        let velocity_ctx = services.forwarding_secret().map(|s| (&fwd_data, s));
 
         if let Err(e) = backend
-            .consume_backend_login(&services.packet_registry, version)
+            .consume_backend_login(&services.packet_registry, version, velocity_ctx)
             .await
         {
             client
@@ -317,6 +330,25 @@ async fn connect_to_backend(
     }
 
     Ok(backend)
+}
+
+fn build_forwarding_data(
+    auth_result: &AuthResult,
+    connection_info: &infrarust_transport::ConnectionInfo,
+    protocol_version: ProtocolVersion,
+) -> ForwardingData {
+    let real_ip = connection_info
+        .real_ip
+        .unwrap_or(connection_info.peer_addr.ip());
+
+    ForwardingData {
+        real_ip,
+        uuid: auth_result.player_uuid,
+        username: auth_result.username.clone(),
+        properties: auth_result.api_profile.properties.clone(),
+        protocol_version,
+        chat_session: None,
+    }
 }
 
 async fn prepare_client_for_limbo(

@@ -3,6 +3,7 @@
 mod address;
 mod ban;
 mod docker;
+mod forwarding;
 mod ip_filter;
 mod network;
 mod proxy_mode;
@@ -15,6 +16,7 @@ mod web;
 pub use address::{DomainRewrite, ServerAddress};
 pub use ban::BanConfig;
 pub use docker::DockerProviderConfig;
+pub use forwarding::{BungeeCordChannelPermissions, ForwardingConfig, ForwardingMode};
 pub use ip_filter::IpFilterConfig;
 pub use network::{KeepaliveConfig, TimeoutConfig};
 pub use proxy_mode::ProxyMode;

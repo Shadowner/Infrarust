@@ -11,6 +11,7 @@ pub mod console;
 pub mod error;
 pub mod event_bus;
 pub mod filter;
+pub mod forwarding;
 pub mod handler;
 pub(crate) mod limbo;
 pub mod middleware;

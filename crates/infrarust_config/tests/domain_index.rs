@@ -9,6 +9,7 @@ fn make_config(id: &str, domains: &[&str], addr: &str) -> ServerConfig {
         domains: domains.iter().map(ToString::to_string).collect(),
         addresses: vec![addr.parse().unwrap()],
         proxy_mode: ProxyMode::default(),
+        forwarding_mode: None,
         send_proxy_protocol: false,
         domain_rewrite: DomainRewrite::default(),
         motd: MotdConfig::default(),
