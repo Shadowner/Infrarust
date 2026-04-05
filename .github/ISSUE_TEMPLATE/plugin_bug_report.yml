@@ -1,0 +1,79 @@
+name: Plugin Bug Report
+description: Report a bug with a specific plugin
+title: "[Plugin Bug] "
+labels: ["bug", "plugin"]
+body:
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: Which plugin?
+      options:
+        - auth
+        - antibot
+        - server-wake
+        - admin-api
+        - hello (example plugin)
+        - Other / third-party
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug. What did you expect vs what actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Enable plugin with configuration...
+        2. Connect with...
+        3. Do X...
+        4. Observe Y...
+    validations:
+      required: true
+
+  - type: textarea
+    id: plugin-config
+    attributes:
+      label: Plugin configuration
+      description: Paste the relevant plugin config section. Redact secrets.
+      render: toml
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Infrarust version
+      placeholder: "2.0.0-alpha.3"
+    validations:
+      required: true
+
+  - type: input
+    id: mc-version
+    attributes:
+      label: Minecraft version
+      placeholder: "1.21.4"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste any relevant log output. This will be formatted as a code block automatically.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+    validations:
+      required: false

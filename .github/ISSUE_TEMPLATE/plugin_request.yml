@@ -1,0 +1,44 @@
+name: Plugin Request
+description: Suggest a new plugin or a change to the plugin system
+title: "[Plugin] "
+labels: ["enhancement", "plugin"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Plugin idea
+      description: What plugin do you want, or what should change about the plugin system?
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What problem would this plugin solve? Who benefits from it?
+      placeholder: On my network, I need to do X and there is no good way to handle it today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected behavior
+      description: How should this plugin work? Config format, events it hooks into, expected outcomes.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Existing alternatives
+      description: Are there other plugins, mods, or workarounds that do something similar? What's missing?
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+    validations:
+      required: false

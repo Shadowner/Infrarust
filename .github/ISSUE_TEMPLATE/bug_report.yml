@@ -1,0 +1,82 @@
+name: Bug Report
+description: Report a bug in the core proxy (not plugin-specific)
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug. What did you expect vs what actually happened?
+      placeholder: When I connect through the proxy with X configuration, Y happens instead of Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Walk us through how to trigger this bug.
+      placeholder: |
+        1. Set up backend server with...
+        2. Connect with client version...
+        3. Do X...
+        4. Observe Y...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Infrarust version
+      placeholder: "2.0.0-alpha.3"
+    validations:
+      required: true
+
+  - type: input
+    id: mc-version
+    attributes:
+      label: Minecraft version
+      placeholder: "1.21.4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: server-software
+    attributes:
+      label: Backend server software
+      options:
+        - Paper
+        - Spigot
+        - Fabric
+        - Forge
+        - NeoForge
+        - Vanilla
+        - Other (specify in additional context)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 24.04 / Windows 11 / macOS 15"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste any relevant log output here. This will be formatted as a code block automatically.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that might help. Screenshots, config snippets, network setup, etc.
+    validations:
+      required: false

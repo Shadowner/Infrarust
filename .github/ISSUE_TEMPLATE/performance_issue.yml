@@ -1,0 +1,67 @@
+name: Performance Issue
+description: Report lag, high resource usage, connection timeouts, or throughput problems
+title: "[Perf] "
+labels: ["performance"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What's the performance problem?
+      description: Describe what you're seeing. High CPU? Memory leak? Lag spikes? Timeouts?
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Tell us about your setup so we can understand the load.
+      placeholder: |
+        Player count: ~50 concurrent
+        Backend servers: 3 (Paper 1.21.4)
+        Hardware: 4 vCPU, 8GB RAM, SSD
+        Network: 1Gbps dedicated
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Infrarust version
+      placeholder: "2.0.0-alpha.3"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      description: If you can reliably trigger the issue, tell us how. If it's intermittent, describe when it tends to happen.
+    validations:
+      required: false
+
+  - type: textarea
+    id: metrics
+    attributes:
+      label: Metrics or profiling data
+      description: CPU/memory graphs, flame graphs, connection counts, anything you've measured. Paste or attach.
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: Paste the parts of your config that might matter (thread counts, connection limits, etc.). Redact secrets.
+      render: toml
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Any relevant log output. Timestamps help.
+      render: text
+    validations:
+      required: false

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: GitHub Discussions
+    url: https://github.com/Shadowner/Infrarust/discussions
+    about: Ask questions, share ideas, or discuss anything that isn't a bug or feature request.
+  - name: Discord
+    url: https://discord.gg/sqbJhZVSgG
+    about: Join our community on Discord to chat in real-time, get support, and connect with other users and developers.

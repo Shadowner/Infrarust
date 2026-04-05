@@ -1,0 +1,81 @@
+name: Compatibility Issue
+description: Report problems with specific Minecraft versions, mods, or server software
+title: "[Compat] "
+labels: ["compatibility"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What's not working?
+      description: Describe the compatibility problem. Connection fails? Packets broken? Features missing?
+    validations:
+      required: true
+
+  - type: input
+    id: mc-version
+    attributes:
+      label: Minecraft client version
+      placeholder: "1.21.4"
+    validations:
+      required: true
+
+  - type: textarea
+    id: client-mods
+    attributes:
+      label: Client mods
+      description: List any client-side mods you're running (Fabric mods, Forge mods, modpacks, etc.). Put "none" if vanilla.
+      placeholder: |
+        - Fabric Loader 0.16.x
+        - Sodium 0.6.x
+        - ViaVersion (client-side)
+    validations:
+      required: true
+
+  - type: input
+    id: server-software
+    attributes:
+      label: Backend server software and version
+      placeholder: "Paper 1.21.4 build #123 / Forge 1.20.1-47.2.0"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Infrarust version
+      placeholder: "2.0.0-alpha.3"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happens instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Client and/or proxy logs showing the failure.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Does this work with vanilla clients? With a different server software? Any other details.
+    validations:
+      required: false
