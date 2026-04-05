@@ -10,7 +10,6 @@ struct RegisteredCommand {
     aliases: Vec<String>,
     description: String,
     is_builtin: bool,
-    #[allow(dead_code)]
     plugin_id: String,
 }
 
@@ -122,8 +121,45 @@ impl CommandManagerImpl {
             .collect()
     }
 
+    pub fn list_plugin_commands(&self) -> Vec<(String, String)> {
+        let commands = self.commands.read().expect("lock poisoned");
+        commands
+            .iter()
+            .filter(|(_, cmd)| !cmd.is_builtin)
+            .map(|(name, cmd)| (name.clone(), cmd.plugin_id.clone()))
+            .collect()
+    }
+
+    pub fn find_plugin_command(
+        &self,
+        plugin_id: &str,
+        command_name: &str,
+    ) -> Option<Arc<dyn CommandHandler>> {
+        let name_lower = command_name.to_lowercase();
+        let commands = self.commands.read().expect("lock poisoned");
+        commands
+            .get(&name_lower)
+            .filter(|cmd| cmd.plugin_id == plugin_id)
+            .map(|cmd| Arc::clone(&cmd.handler))
+    }
+
+    pub fn commands_for_plugin(&self, plugin_id: &str) -> Vec<(String, String)> {
+        let commands = self.commands.read().expect("lock poisoned");
+        commands
+            .iter()
+            .filter(|(_, cmd)| cmd.plugin_id == plugin_id)
+            .map(|(name, cmd)| (name.clone(), cmd.description.clone()))
+            .collect()
+    }
+
+    pub fn is_plugin_command(&self, name: &str) -> bool {
+        let name_lower = name.to_lowercase();
+        let commands = self.commands.read().expect("lock poisoned");
+        commands.get(&name_lower).is_some_and(|cmd| !cmd.is_builtin)
+    }
+
     pub fn tab_complete(&self, input: &str) -> Vec<String> {
-        let input = input.trim();
+        let input = input.trim_start();
         let (name, rest) = match input.split_once(' ') {
             Some((n, r)) => (n, r),
             None => (input, ""),
@@ -144,6 +180,10 @@ impl CommandManagerImpl {
             Some(handler) => {
                 let partial_args: Vec<&str> = if rest.is_empty() {
                     vec![]
+                } else if rest.ends_with(' ') {
+                    let mut args: Vec<&str> = rest.split_whitespace().collect();
+                    args.push("");
+                    args
                 } else {
                     rest.split_whitespace().collect()
                 };
@@ -169,6 +209,17 @@ impl CommandManager for CommandManagerImpl {
         aliases: &[&str],
         description: &str,
         handler: Box<dyn CommandHandler>,
+    ) {
+        self.register_with_plugin_id(name, aliases, description, handler, "");
+    }
+
+    fn register_with_plugin_id(
+        &self,
+        name: &str,
+        aliases: &[&str],
+        description: &str,
+        handler: Box<dyn CommandHandler>,
+        plugin_id: &str,
     ) {
         let name_lower = name.to_lowercase();
 
@@ -204,7 +255,7 @@ impl CommandManager for CommandManagerImpl {
                     aliases: alias_list,
                     description: description.to_string(),
                     is_builtin: false,
-                    plugin_id: String::new(),
+                    plugin_id: plugin_id.to_string(),
                 },
             );
         }

@@ -41,7 +41,6 @@ pub(crate) struct CommandServices {
     pub config_service: Arc<ConfigServiceImpl>,
     pub server_manager: Option<Arc<ServerManagerService>>,
     pub plugin_registry: Arc<dyn PluginRegistry>,
-    #[allow(dead_code)]
     pub command_manager: Arc<CommandManagerImpl>,
     pub start_time: Instant,
 }
@@ -65,6 +64,7 @@ impl InfrarustRootCommand {
             Box::new(subcommands::broadcast::BroadcastSubcommand),
             Box::new(subcommands::kick::KickSubcommand),
             Box::new(subcommands::plugins::PluginsSubcommand),
+            Box::new(subcommands::plugin::PluginSubcommand),
             Box::new(subcommands::reload::ReloadSubcommand),
         ];
 

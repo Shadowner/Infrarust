@@ -5,7 +5,11 @@ const ASK_SERVER: Option<&str> = Some("minecraft:ask_server");
 const SINGLE_WORD: i32 = 0;
 const GREEDY_PHRASE: i32 = 2;
 
-pub fn inject_proxy_commands(commands: &mut CCommands, version: ProtocolVersion) {
+pub fn inject_proxy_commands(
+    commands: &mut CCommands,
+    version: ProtocolVersion,
+    plugin_commands: &[(String, String)],
+) {
     let base = commands.nodes.len() as i32;
     let root = commands.root_index;
 
@@ -67,9 +71,20 @@ pub fn inject_proxy_commands(commands: &mut CCommands, version: ProtocolVersion)
         string_parser(GREEDY_PHRASE, version),
         None,
     ));
+    let plugin_lit_idx = push(CommandNode::literal("plugin"));
+    let plugin_id_idx = push(CommandNode::argument_non_executable(
+        "plugin_id",
+        string_parser(SINGLE_WORD, version),
+        ASK_SERVER,
+    ));
+    let plugin_cmd_idx = push(CommandNode::argument(
+        "command",
+        string_parser(GREEDY_PHRASE, version),
+        ASK_SERVER,
+    ));
+
     let ir_idx = push(CommandNode::redirect("ir", infrarust_idx));
 
-    // Wire children
     nodes[(help_idx - base) as usize]
         .children
         .push(help_cmd_idx);
@@ -94,8 +109,13 @@ pub fn inject_proxy_commands(commands: &mut CCommands, version: ProtocolVersion)
     nodes[(broadcast_idx - base) as usize]
         .children
         .push(broadcast_msg_idx);
+    nodes[(plugin_lit_idx - base) as usize]
+        .children
+        .push(plugin_id_idx);
+    nodes[(plugin_id_idx - base) as usize]
+        .children
+        .push(plugin_cmd_idx);
 
-    // infrarust children
     nodes[(infrarust_idx - base) as usize].children = vec![
         help_idx,
         version_idx,
@@ -107,13 +127,30 @@ pub fn inject_proxy_commands(commands: &mut CCommands, version: ProtocolVersion)
         send_idx,
         kick_idx,
         broadcast_idx,
+        plugin_lit_idx,
     ];
+
+    let mut plugin_root_indices = Vec::new();
+    for (cmd_name, _) in plugin_commands {
+        let cmd_idx = base + nodes.len() as i32;
+        nodes.push(CommandNode::literal_executable(cmd_name));
+        let args_idx = base + nodes.len() as i32;
+        nodes.push(CommandNode::argument(
+            "args",
+            string_parser(GREEDY_PHRASE, version),
+            ASK_SERVER,
+        ));
+        nodes[(cmd_idx - base) as usize].children.push(args_idx);
+        plugin_root_indices.push(cmd_idx);
+    }
 
     commands.nodes.extend(nodes);
 
-    // Add infrarust and ir as children of root
     commands.nodes[root as usize].children.push(infrarust_idx);
     commands.nodes[root as usize].children.push(ir_idx);
+    for idx in plugin_root_indices {
+        commands.nodes[root as usize].children.push(idx);
+    }
 }
 
 #[cfg(test)]
@@ -139,7 +176,7 @@ mod tests {
     #[test]
     fn inject_adds_infrarust_and_ir_to_root() {
         let mut cmds = make_empty_tree();
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21);
+        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[]);
         let root = &cmds.nodes[0];
         let names: Vec<&str> = root
             .children
@@ -153,7 +190,7 @@ mod tests {
     #[test]
     fn ir_redirects_to_infrarust() {
         let mut cmds = make_empty_tree();
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21);
+        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[]);
         let ir = cmds
             .nodes
             .iter()
@@ -170,7 +207,7 @@ mod tests {
     #[test]
     fn infrarust_has_all_subcommands() {
         let mut cmds = make_empty_tree();
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21);
+        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[]);
         let infrarust = cmds
             .nodes
             .iter()
@@ -192,6 +229,7 @@ mod tests {
             "send",
             "kick",
             "broadcast",
+            "plugin",
         ] {
             assert!(
                 child_names.contains(&expected),
@@ -203,7 +241,7 @@ mod tests {
     #[test]
     fn server_arg_has_ask_server_suggestions() {
         let mut cmds = make_empty_tree();
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21);
+        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[]);
         let server_node = cmds
             .nodes
             .iter()
@@ -218,10 +256,76 @@ mod tests {
     }
 
     #[test]
+    fn plugin_commands_injected_at_root() {
+        let mut cmds = make_empty_tree();
+        let plugin_cmds = vec![
+            ("hello".to_string(), "hello-plugin".to_string()),
+            ("forcelogin".to_string(), "auth".to_string()),
+        ];
+        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &plugin_cmds);
+        let root = &cmds.nodes[0];
+        let names: Vec<&str> = root
+            .children
+            .iter()
+            .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
+            .collect();
+        assert!(names.contains(&"hello"), "missing plugin command: hello");
+        assert!(
+            names.contains(&"forcelogin"),
+            "missing plugin command: forcelogin"
+        );
+
+        // Each plugin command should have an "args" child
+        let hello_idx = root
+            .children
+            .iter()
+            .find(|&&i| cmds.nodes[i as usize].name.as_deref() == Some("hello"))
+            .unwrap();
+        let hello_node = &cmds.nodes[*hello_idx as usize];
+        assert!(
+            !hello_node.children.is_empty(),
+            "hello should have args child"
+        );
+    }
+
+    #[test]
+    fn plugin_node_subtree_exists() {
+        let mut cmds = make_empty_tree();
+        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[]);
+        let infrarust = cmds
+            .nodes
+            .iter()
+            .find(|n| n.name.as_deref() == Some("infrarust"))
+            .unwrap();
+        let child_names: Vec<&str> = infrarust
+            .children
+            .iter()
+            .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
+            .collect();
+        assert!(
+            child_names.contains(&"plugin"),
+            "infrarust should have 'plugin' subcommand"
+        );
+
+        let plugin_idx = infrarust
+            .children
+            .iter()
+            .find(|&&i| cmds.nodes[i as usize].name.as_deref() == Some("plugin"))
+            .unwrap();
+        let plugin_node = &cmds.nodes[*plugin_idx as usize];
+        assert_eq!(plugin_node.children.len(), 1);
+        let plugin_id_node = &cmds.nodes[plugin_node.children[0] as usize];
+        assert_eq!(plugin_id_node.name.as_deref(), Some("plugin_id"));
+        assert_eq!(plugin_id_node.children.len(), 1);
+        let cmd_node = &cmds.nodes[plugin_id_node.children[0] as usize];
+        assert_eq!(cmd_node.name.as_deref(), Some("command"));
+    }
+
+    #[test]
     fn round_trip_after_injection() {
         use infrarust_protocol::packets::Packet;
         let mut cmds = make_empty_tree();
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21);
+        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[]);
         let mut buf = Vec::new();
         cmds.encode(&mut buf, ProtocolVersion::V1_21).unwrap();
         let decoded = CCommands::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();

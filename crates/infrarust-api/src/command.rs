@@ -75,6 +75,21 @@ pub trait CommandManager: Send + Sync + private::Sealed {
         handler: Box<dyn CommandHandler>,
     );
 
+    /// Registers a command associated with a specific plugin.
+    ///
+    /// The default implementation ignores `plugin_id` and delegates to [`register`](Self::register).
+    fn register_with_plugin_id(
+        &self,
+        name: &str,
+        aliases: &[&str],
+        description: &str,
+        handler: Box<dyn CommandHandler>,
+        plugin_id: &str,
+    ) {
+        let _ = plugin_id;
+        self.register(name, aliases, description, handler);
+    }
+
     /// Unregisters a command by name.
     fn unregister(&self, name: &str);
 }

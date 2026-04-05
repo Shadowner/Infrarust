@@ -89,6 +89,7 @@ impl PluginContextImpl {
         let tracking_cmd = Arc::new(TrackingCommandManager::new(
             command_manager,
             Arc::clone(&registered_commands),
+            plugin_id.clone(),
         ));
         let tracking_sched = Arc::new(TrackingScheduler::new(
             scheduler,

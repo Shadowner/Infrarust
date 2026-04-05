@@ -326,8 +326,19 @@ async fn handle_client_to_backend(
                 registry.decode_frame(&frame, state, Direction::Serverbound, version)
             && let Some(req) = packet.as_any().downcast_ref::<STabCompleteRequest>()
         {
-            let text = req.text.trim();
-            if text.starts_with("/infrarust ") || text.starts_with("/ir ") {
+            let text = req.text.trim_start();
+            let should_intercept = if text.starts_with("/infrarust ") || text.starts_with("/ir ") {
+                true
+            } else {
+                let cmd_name = text
+                    .trim_start_matches('/')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                !cmd_name.is_empty() && services.command_manager.is_plugin_command(cmd_name)
+            };
+
+            if should_intercept {
                 let cmd_input = text.trim_start_matches('/');
                 let suggestions = services.command_manager.tab_complete(cmd_input);
                 let last_space = text.rfind(' ').unwrap_or(0) + 1;
@@ -546,7 +557,12 @@ async fn handle_backend_to_client(
                 if let Some(commands) = packet.as_any().downcast_ref::<CCommands>() {
                     if services.config.announce_proxy_commands {
                         let mut modified = commands.clone();
-                        crate::commands::brigadier::inject_proxy_commands(&mut modified, version);
+                        let plugin_cmds = services.command_manager.list_plugin_commands();
+                        crate::commands::brigadier::inject_proxy_commands(
+                            &mut modified,
+                            version,
+                            &plugin_cmds,
+                        );
                         let mut buf = Vec::new();
                         if let Err(e) = infrarust_protocol::packets::Packet::encode(
                             &modified, &mut buf, version,

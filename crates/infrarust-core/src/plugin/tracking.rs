@@ -88,11 +88,20 @@ impl EventBus for TrackingEventBus {
 pub struct TrackingCommandManager {
     inner: Arc<dyn CommandManager>,
     commands: Arc<Mutex<Vec<String>>>,
+    plugin_id: String,
 }
 
 impl TrackingCommandManager {
-    pub fn new(inner: Arc<dyn CommandManager>, commands: Arc<Mutex<Vec<String>>>) -> Self {
-        Self { inner, commands }
+    pub fn new(
+        inner: Arc<dyn CommandManager>,
+        commands: Arc<Mutex<Vec<String>>>,
+        plugin_id: String,
+    ) -> Self {
+        Self {
+            inner,
+            commands,
+            plugin_id,
+        }
     }
 }
 
@@ -106,7 +115,8 @@ impl CommandManager for TrackingCommandManager {
         description: &str,
         handler: Box<dyn CommandHandler>,
     ) {
-        self.inner.register(name, aliases, description, handler);
+        self.inner
+            .register_with_plugin_id(name, aliases, description, handler, &self.plugin_id);
         self.commands
             .lock()
             .expect("lock poisoned")
