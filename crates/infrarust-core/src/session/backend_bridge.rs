@@ -271,8 +271,7 @@ impl BackendBridge {
                             break;
                         }
 
-                        if let Some(disconnect) =
-                            packet.as_any().downcast_ref::<CLoginDisconnect>()
+                        if let Some(disconnect) = packet.as_any().downcast_ref::<CLoginDisconnect>()
                         {
                             return Err(CoreError::Rejected(format!(
                                 "backend refused login: {}",
@@ -280,8 +279,7 @@ impl BackendBridge {
                             )));
                         }
 
-                        if let Some(request) =
-                            packet.as_any().downcast_ref::<CLoginPluginRequest>()
+                        if let Some(request) = packet.as_any().downcast_ref::<CLoginPluginRequest>()
                         {
                             if crate::forwarding::velocity::is_velocity_request(request) {
                                 if let Some((fwd_data, secret)) = velocity_ctx {

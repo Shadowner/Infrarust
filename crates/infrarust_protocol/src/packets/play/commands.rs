@@ -443,9 +443,7 @@ impl Packet for CCommands {
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let count = r.read_var_int()?.0;
         if count < 0 {
-            return Err(crate::error::ProtocolError::invalid(
-                "negative node count",
-            ));
+            return Err(crate::error::ProtocolError::invalid("negative node count"));
         }
         let mut nodes = Vec::with_capacity((count as usize).min(1024));
         for _ in 0..count {

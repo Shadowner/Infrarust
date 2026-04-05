@@ -349,5 +349,9 @@ fn sanitize_filename(domain: &str) -> String {
         .collect();
     let sanitized = sanitized.replace("..", "_");
     let sanitized = sanitized.trim_start_matches('.').to_string();
-    if sanitized.is_empty() { "unnamed".to_string() } else { sanitized }
+    if sanitized.is_empty() {
+        "unnamed".to_string()
+    } else {
+        sanitized
+    }
 }

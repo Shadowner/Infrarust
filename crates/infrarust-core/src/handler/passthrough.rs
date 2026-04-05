@@ -5,9 +5,9 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_config::DomainRewrite;
+use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::version::ProtocolVersion;
-use infrarust_protocol::Packet;
 use infrarust_transport::{BackendConnector, select_forwarder};
 
 use crate::error::CoreError;
@@ -337,9 +337,8 @@ impl PassthroughHandler {
         handshake: &HandshakeData,
         new_domain: &str,
     ) -> Result<(), CoreError> {
-        let encoded = crate::util::domain_rewrite::encode_handshake_with_domain(
-            handshake, new_domain,
-        )?;
+        let encoded =
+            crate::util::domain_rewrite::encode_handshake_with_domain(handshake, new_domain)?;
         backend.write_all(&encoded).await?;
 
         // Forward remaining packets (login start etc.) as-is

@@ -358,18 +358,20 @@ mod tests {
         }
         fn get_all_server_configs(&self) -> Vec<ServerConfig> {
             (0..self.server_count)
-                .map(|i| ServerConfig::new(
-                    ServerId::new(format!("server_{i}")),
-                    None,
-                    vec![],
-                    vec![],
-                    infrarust_api::services::config_service::ProxyMode::Passthrough,
-                    vec![],
-                    0,
-                    None,
-                    false,
-                    false,
-                ))
+                .map(|i| {
+                    ServerConfig::new(
+                        ServerId::new(format!("server_{i}")),
+                        None,
+                        vec![],
+                        vec![],
+                        infrarust_api::services::config_service::ProxyMode::Passthrough,
+                        vec![],
+                        0,
+                        None,
+                        false,
+                        false,
+                    )
+                })
                 .collect()
         }
         fn get_value(&self, _key: &str) -> Option<String> {

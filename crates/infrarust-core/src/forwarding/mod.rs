@@ -22,8 +22,12 @@ pub enum ForwardingMode {
     #[default]
     None,
     BungeeCord,
-    BungeeGuard { token: String },
-    Velocity { secret: Vec<u8> },
+    BungeeGuard {
+        token: String,
+    },
+    Velocity {
+        secret: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone)]

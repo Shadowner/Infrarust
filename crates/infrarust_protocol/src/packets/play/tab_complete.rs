@@ -74,9 +74,7 @@ impl Packet for CTabCompleteResponse {
         let length = r.read_var_int()?.0;
         let count = r.read_var_int()?.0;
         if count < 0 {
-            return Err(crate::error::ProtocolError::invalid(
-                "negative match count",
-            ));
+            return Err(crate::error::ProtocolError::invalid("negative match count"));
         }
         let mut matches = Vec::with_capacity((count as usize).min(1024));
         for _ in 0..count {

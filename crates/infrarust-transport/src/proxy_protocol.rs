@@ -115,9 +115,7 @@ pub async fn decode_proxy_protocol(
     })
     .await
     .map_err(|_| {
-        TransportError::ProxyProtocolDecode(
-            "proxy protocol header read timed out".to_string(),
-        )
+        TransportError::ProxyProtocolDecode("proxy protocol header read timed out".to_string())
     })?
 }
 

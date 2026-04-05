@@ -60,7 +60,6 @@ pub fn register_commands(ctx: &dyn PluginContext, handler: Arc<AuthHandler>) {
         }),
     );
 
-
     if handler.config().premium.enabled && handler.config().premium.allow_cracked_command {
         ctx.command_manager().register(
             "cracked",
