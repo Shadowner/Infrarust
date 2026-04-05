@@ -179,36 +179,67 @@ ctx.command_manager().register(
 
 ## Permission checks
 
-The `PlayerRegistry` gives you access to the player object, which has a `has_permission` method:
+The proxy has a two-level permission system (Player / Admin) configured in `[permissions]` in `infrarust.toml`. See the [Permissions configuration](../../configuration/security/permissions.md) page for how operators set up admins and open commands to players.
+
+In your handler, check admin status with `player.has_permission("infrarust.admin")`:
 
 ```rust
-fn is_admin(
-    player_id: PlayerId,
-    player_registry: &dyn PlayerRegistry,
-    handler: &AuthHandler,
-) -> bool {
-    if let Some(player) = player_registry.get_player_by_id(player_id) {
-        if player.has_permission("auth.admin") {
-            return true;
-        }
-        handler.is_admin(&player.profile().username)
-    } else {
-        false
-    }
+fn is_admin(player_id: PlayerId, player_registry: &dyn PlayerRegistry) -> bool {
+    player_registry
+        .get_player_by_id(player_id)
+        .is_some_and(|p| p.has_permission("infrarust.admin"))
 }
 ```
 
-Use this inside your handler to gate admin commands:
+Use it to gate admin-only commands:
 
 ```rust
 let Some(player_id) = ctx.player_id else { return };
-if !is_admin(player_id, player_registry, &self.handler) {
+if !is_admin(player_id, player_registry) {
     if let Some(player) = player_registry.get_player_by_id(player_id) {
         let _ = player.send_message(Component::error("No permission."));
     }
     return;
 }
 ```
+
+You can also read the player's permission level directly:
+
+```rust
+use infrarust_api::permissions::PermissionLevel;
+
+if let Some(player) = player_registry.get_player_by_id(player_id) {
+    match player.permission_level() {
+        PermissionLevel::Admin => { /* full access */ }
+        PermissionLevel::Player => { /* restricted */ }
+    }
+}
+```
+
+### Custom permission checker
+
+Plugins can replace the built-in config-based checker by listening to `PermissionsSetupEvent`. This fires after authentication, before the player session is constructed. If no listener provides a custom checker, the proxy uses its config-based default.
+
+```rust
+use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
+use infrarust_api::permissions::PermissionChecker;
+
+ctx.event_bus().subscribe(EventPriority::NORMAL, |event: &mut PermissionsSetupEvent| {
+    let checker = MyDatabaseChecker::new(event.profile.uuid);
+    event.set_result(PermissionsSetupResult::Custom(Arc::new(checker)));
+});
+```
+
+Your checker must implement the `PermissionChecker` trait:
+
+```rust
+pub trait PermissionChecker: Send + Sync {
+    fn permission_level(&self) -> PermissionLevel;
+    fn has_permission(&self, permission: &str) -> bool;
+}
+```
+
+This is how you'd integrate LuckPerms, a database, or any external permission backend.
 
 ## Organizing commands
 

@@ -150,6 +150,7 @@ export default
               { text: 'Client-Only', link: '/configuration/proxy-modes/client-only' },
               { text: 'Offline', link: '/configuration/proxy-modes/offline' },
               { text: 'Server-Only', link: '/configuration/proxy-modes/server-only' },
+              { text: 'Proxy Forwarding', link: '/configuration/proxy-forwarding' },
             ],
           },
           {
@@ -162,6 +163,7 @@ export default
           {
             text: 'Security',
             items: [
+              { text: 'Permissions', link: '/configuration/security/permissions' },
               { text: 'Rate Limiting', link: '/configuration/security/rate-limiting' },
               { text: 'Ban System', link: '/configuration/security/bans' },
               { text: 'IP Filtering', link: '/configuration/security/ip-filtering' },
