@@ -9,6 +9,9 @@ use uuid::Uuid;
 use infrarust_api::permissions::{DefaultPermissionChecker, PermissionChecker, PermissionLevel};
 use infrarust_config::PermissionsConfig;
 
+const PERM_ADMIN: &str = "infrarust.admin";
+const PERM_COMMAND_PREFIX: &str = "infrarust.command.";
+
 struct SubcommandInfo {
     all: HashSet<String>,
     admin_only: HashSet<String>,
@@ -16,7 +19,7 @@ struct SubcommandInfo {
 
 pub struct PermissionService {
     admin_uuids: Arc<DashSet<Uuid>>,
-    player_commands: HashSet<String>,
+    player_commands: Arc<HashSet<String>>,
     subcommand_info: OnceLock<SubcommandInfo>,
 }
 
@@ -41,7 +44,7 @@ impl PermissionService {
     }
 
     fn build(config: &PermissionsConfig, admin_uuids: Arc<DashSet<Uuid>>) -> Self {
-        let player_commands = config
+        let player_commands: HashSet<String> = config
             .player_commands
             .iter()
             .map(|c| c.to_lowercase())
@@ -49,7 +52,7 @@ impl PermissionService {
 
         Self {
             admin_uuids,
-            player_commands,
+            player_commands: Arc::new(player_commands),
             subcommand_info: OnceLock::new(),
         }
     }
@@ -58,7 +61,7 @@ impl PermissionService {
         let _ = self.subcommand_info.set(SubcommandInfo { all, admin_only });
 
         if let Some(info) = self.subcommand_info.get() {
-            for cmd in &self.player_commands {
+            for cmd in self.player_commands.iter() {
                 if info.admin_only.contains(cmd) {
                     tracing::warn!(
                         "Command '{cmd}' is always admin-only and cannot be opened to players"
@@ -72,7 +75,7 @@ impl PermissionService {
         ConfigPermissionChecker {
             admin_uuids: Arc::clone(&self.admin_uuids),
             player_uuid,
-            player_commands: self.player_commands.clone(),
+            player_commands: Arc::clone(&self.player_commands),
         }
     }
 
@@ -101,11 +104,7 @@ impl PermissionService {
         let admin_only = info.map(|i| &i.admin_only);
         self.player_commands
             .iter()
-            .filter(|cmd| {
-                admin_only
-                    .map(|ao| !ao.contains(cmd.as_str()))
-                    .unwrap_or(true)
-            })
+            .filter(|cmd| admin_only.map_or(true, |ao| !ao.contains(cmd.as_str())))
             .cloned()
             .collect()
     }
@@ -139,7 +138,7 @@ impl PermissionService {
 pub struct ConfigPermissionChecker {
     admin_uuids: Arc<DashSet<Uuid>>,
     player_uuid: Uuid,
-    player_commands: HashSet<String>,
+    player_commands: Arc<HashSet<String>>,
 }
 
 impl PermissionChecker for ConfigPermissionChecker {
@@ -154,14 +153,11 @@ impl PermissionChecker for ConfigPermissionChecker {
     fn has_permission(&self, permission: &str) -> bool {
         let is_admin = self.admin_uuids.contains(&self.player_uuid);
         match permission {
-            "infrarust.admin" => is_admin,
-            p if p.starts_with("infrarust.command.") => {
-                is_admin
-                    || self
-                        .player_commands
-                        .contains(&p["infrarust.command.".len()..])
-            }
-            _ => is_admin,
+            PERM_ADMIN => is_admin,
+            p => match p.strip_prefix(PERM_COMMAND_PREFIX) {
+                Some(cmd) => is_admin || self.player_commands.contains(cmd),
+                None => is_admin,
+            },
         }
     }
 }
@@ -203,10 +199,7 @@ async fn resolve_username(client: &reqwest::Client, username: &str) -> Result<Uu
         id: String,
     }
 
-    let url = format!(
-        "https://api.mojang.com/users/profiles/minecraft/{}",
-        username
-    );
+    let url = format!("https://api.mojang.com/users/profiles/minecraft/{username}");
 
     let response = client
         .get(&url)
@@ -227,7 +220,6 @@ async fn resolve_username(client: &reqwest::Client, username: &str) -> Result<Uu
         .await
         .map_err(|e| format!("failed to parse Mojang response: {e}"))?;
 
-    // Mojang returns UUID without dashes
     let uuid_str = if profile.id.len() == 32 && !profile.id.contains('-') {
         format!(
             "{}-{}-{}-{}-{}",
@@ -266,41 +258,34 @@ mod tests {
         let checker = ConfigPermissionChecker {
             admin_uuids: set,
             player_uuid: uuid,
-            player_commands: HashSet::new(),
+            player_commands: Arc::new(HashSet::new()),
         };
 
         assert_eq!(checker.permission_level(), PermissionLevel::Admin);
-        assert!(checker.has_permission("infrarust.admin"));
+        assert!(checker.has_permission(PERM_ADMIN));
         assert!(checker.has_permission("infrarust.command.kick"));
         assert!(checker.has_permission("anything"));
     }
 
     #[test]
     fn config_checker_player_no_commands() {
-        let set = Arc::new(DashSet::new());
-        let uuid = Uuid::new_v4();
-
         let checker = ConfigPermissionChecker {
-            admin_uuids: set,
-            player_uuid: uuid,
-            player_commands: HashSet::new(),
+            admin_uuids: Arc::new(DashSet::new()),
+            player_uuid: Uuid::new_v4(),
+            player_commands: Arc::new(HashSet::new()),
         };
 
         assert_eq!(checker.permission_level(), PermissionLevel::Player);
-        assert!(!checker.has_permission("infrarust.admin"));
+        assert!(!checker.has_permission(PERM_ADMIN));
         assert!(!checker.has_permission("infrarust.command.list"));
     }
 
     #[test]
     fn config_checker_player_with_commands() {
-        let set = Arc::new(DashSet::new());
-        let uuid = Uuid::new_v4();
-        let cmds = HashSet::from(["list".to_string(), "help".to_string()]);
-
         let checker = ConfigPermissionChecker {
-            admin_uuids: set,
-            player_uuid: uuid,
-            player_commands: cmds,
+            admin_uuids: Arc::new(DashSet::new()),
+            player_uuid: Uuid::new_v4(),
+            player_commands: Arc::new(HashSet::from(["list".into(), "help".into()])),
         };
 
         assert!(checker.has_permission("infrarust.command.list"));
@@ -316,13 +301,13 @@ mod tests {
         let svc = PermissionService::new_sync(&config);
         svc.register_subcommands(
             HashSet::from([
-                "kick".to_string(),
-                "list".to_string(),
-                "help".to_string(),
-                "server".to_string(),
-                "reload".to_string(),
+                "kick".into(),
+                "list".into(),
+                "help".into(),
+                "server".into(),
+                "reload".into(),
             ]),
-            HashSet::from(["kick".to_string(), "reload".to_string()]),
+            HashSet::from(["kick".into(), "reload".into()]),
         );
         svc
     }
@@ -381,7 +366,7 @@ mod tests {
         let checker = ConfigPermissionChecker {
             admin_uuids: Arc::clone(&set),
             player_uuid: uuid,
-            player_commands: HashSet::new(),
+            player_commands: Arc::new(HashSet::new()),
         };
 
         assert_eq!(checker.permission_level(), PermissionLevel::Player);

@@ -7,6 +7,8 @@ mod session_loop;
 use std::sync::Arc;
 
 use infrarust_api::event::ResultedEvent;
+use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
+use infrarust_api::permissions::PermissionChecker;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_transport::BackendConnector;
@@ -117,27 +119,24 @@ impl InterceptedHandler {
             InitialMode::Denied => return Ok(()),
         };
 
-        let default_checker: std::sync::Arc<dyn infrarust_api::permissions::PermissionChecker> =
-            if auth_result.online_mode {
-                std::sync::Arc::new(
-                    self.services
-                        .permission_service
-                        .build_checker(auth_result.player_uuid),
-                )
-            } else {
-                crate::permissions::default_checker()
-            };
+        let default_checker: Arc<dyn PermissionChecker> = if auth_result.online_mode {
+            Arc::new(
+                self.services
+                    .permission_service
+                    .build_checker(auth_result.player_uuid),
+            )
+        } else {
+            crate::permissions::default_checker()
+        };
 
-        let perm_event = infrarust_api::events::lifecycle::PermissionsSetupEvent::new(
+        let perm_event = PermissionsSetupEvent::new(
             auth_result.player_id,
             auth_result.api_profile.clone(),
             auth_result.online_mode,
         );
         let perm_event = self.services.event_bus.fire(perm_event).await;
         let permission_checker =
-            if let infrarust_api::events::lifecycle::PermissionsSetupResult::Custom(checker) =
-                perm_event.result()
-            {
+            if let PermissionsSetupResult::Custom(checker) = perm_event.result() {
                 checker.clone()
             } else {
                 default_checker

@@ -3,7 +3,7 @@
 pub mod brigadier;
 mod subcommands;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -21,10 +21,11 @@ use crate::services::command_manager::CommandManagerImpl;
 use crate::services::config_service::ConfigServiceImpl;
 use infrarust_server_manager::ServerManagerService;
 
+const NO_PERMISSION: &str = "You don't have permission.";
+
 pub(crate) trait SubcommandHandler: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
-    #[allow(dead_code)]
     fn usage(&self) -> &str;
 
     fn required_level(&self) -> PermissionLevel {
@@ -106,19 +107,18 @@ impl CommandHandler for InfrarustRootCommand {
                                 .permission_service
                                 .is_command_allowed(name, level)
                             {
-                                let _ = player.send_message(ProxyMessage::error(
-                                    "You don't have permission.",
-                                ));
+                                let _ = player.send_message(ProxyMessage::error(NO_PERMISSION));
                                 return;
                             }
                         }
                         None => {
-                            let visible =
-                                self.services.permission_service.visible_subcommands(level);
-                            if visible.is_empty() {
-                                let _ = player.send_message(ProxyMessage::error(
-                                    "You don't have permission.",
-                                ));
+                            if self
+                                .services
+                                .permission_service
+                                .visible_subcommands(level)
+                                .is_empty()
+                            {
+                                let _ = player.send_message(ProxyMessage::error(NO_PERMISSION));
                                 return;
                             }
                         }
@@ -172,7 +172,6 @@ impl CommandHandler for InfrarustRootCommand {
 }
 
 /// Registers the built-in `/infrarust` (alias `/ir`) command.
-/// Must be called before plugins are loaded.
 pub fn register_builtin_commands(
     command_manager: &CommandManagerImpl,
     proxy_services: &ProxyServices,
@@ -193,8 +192,8 @@ pub fn register_builtin_commands(
 
     let root_cmd = InfrarustRootCommand::new(services);
 
-    let mut all = std::collections::HashSet::new();
-    let mut admin_only = std::collections::HashSet::new();
+    let mut all = HashSet::new();
+    let mut admin_only = HashSet::new();
     for (name, sub) in &root_cmd.subcommands {
         all.insert(name.clone());
         if sub.required_level() >= PermissionLevel::Admin {

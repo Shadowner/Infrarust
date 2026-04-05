@@ -34,7 +34,7 @@ pub(crate) fn handle_help(
                     sub.description()
                 )));
             } else {
-                let _ = player.send_message(ProxyMessage::error("You don't have permission."));
+                let _ = player.send_message(ProxyMessage::error(crate::commands::NO_PERMISSION));
             }
         } else {
             let _ = player.send_message(ProxyMessage::error(&format!(
