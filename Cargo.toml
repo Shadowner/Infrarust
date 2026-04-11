@@ -139,7 +139,7 @@ all = "warn"
 unsafe_code = "warn"
 
 [workspace.package]
-version = "2.0.0-alpha.4"
+version = "2.0.0-alpha.5"
 edition = "2024"
 rust-version = "1.94"
 license-file = "LICENSE"
