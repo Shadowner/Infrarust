@@ -34,7 +34,7 @@ impl HandshakeParserMiddleware {
     }
 }
 
-use crate::util::strip_fml_markers;
+use crate::util::normalize_handshake;
 
 impl Middleware for HandshakeParserMiddleware {
     fn name(&self) -> &'static str {
@@ -106,7 +106,7 @@ impl Middleware for HandshakeParserMiddleware {
                 let handshake =
                     SHandshake::decode(&mut frame.payload.as_ref(), ProtocolVersion::V1_7_2)?;
 
-                let domain = strip_fml_markers(&handshake.server_address).to_lowercase();
+                let domain = normalize_handshake(&handshake.server_address).to_lowercase();
                 let port = handshake.server_port;
                 let protocol_version = ProtocolVersion(handshake.protocol_version.0);
 
@@ -146,15 +146,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_strip_fml_markers() {
-        assert_eq!(strip_fml_markers("mc.example.com"), "mc.example.com");
-        assert_eq!(strip_fml_markers("mc.example.com\0FML\0"), "mc.example.com");
+    fn test_normalize_handshake() {
+        assert_eq!(normalize_handshake("mc.example.com"), "mc.example.com");
         assert_eq!(
-            strip_fml_markers("mc.example.com\0FML2\0"),
+            normalize_handshake("mc.example.com\0FML\0"),
             "mc.example.com"
         );
         assert_eq!(
-            strip_fml_markers("mc.example.com\0FML3\0"),
+            normalize_handshake("mc.example.com\0FML2\0"),
+            "mc.example.com"
+        );
+        assert_eq!(
+            normalize_handshake("mc.example.com\0FML3\0"),
+            "mc.example.com"
+        );
+        // SRV-resolved FQDN with trailing dot (MC-41034) — login flow only.
+        assert_eq!(normalize_handshake("mc.example.com."), "mc.example.com");
+        assert_eq!(normalize_handshake("mc.example.com..."), "mc.example.com");
+        assert_eq!(
+            normalize_handshake("mc.example.com.\0FML2\0"),
             "mc.example.com"
         );
     }

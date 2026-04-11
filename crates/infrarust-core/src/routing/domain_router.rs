@@ -31,7 +31,7 @@ struct WildcardEntry {
     provider_id: ProviderId,
 }
 
-use crate::util::strip_fml_markers;
+use crate::util::normalize_handshake;
 
 /// Returns `true` if the domain string contains wildcard characters.
 fn is_wildcard(domain: &str) -> bool {
@@ -153,9 +153,9 @@ impl DomainRouter {
     /// Resolves a domain to its provider and server configuration.
     ///
     /// Exact matches take priority over wildcard matches.
-    /// FML markers are stripped before resolution.
+    /// FML markers and trailing dots are stripped before resolution.
     pub fn resolve(&self, domain: &str) -> Option<(ProviderId, Arc<ServerConfig>)> {
-        let stripped = strip_fml_markers(domain);
+        let stripped = normalize_handshake(domain);
         let normalized = stripped.to_lowercase();
 
         // 1. Exact match (O(1) via DashMap)
