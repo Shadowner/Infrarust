@@ -22,6 +22,7 @@ use infrarust_protocol::{CURRENT_MC_PROTOCOL, Packet};
 
 use infrarust_server_manager::{ServerManagerService, ServerState};
 
+use super::STATUS_PROTOCOL_VERSION;
 use super::cache::StatusCache;
 use super::favicon::FaviconCache;
 use super::relay::StatusRelayClient;
@@ -92,10 +93,6 @@ impl StatusHandler {
         let routing = ctx.extensions.get::<RoutingData>().cloned();
         let handshake = ctx.extensions.get::<HandshakeData>().cloned();
 
-        let protocol_version = handshake
-            .as_ref()
-            .map_or(ProtocolVersion(CURRENT_MC_PROTOCOL), |h| h.protocol_version);
-
         self.read_status_request(ctx).await?;
 
         let mut response = self
@@ -122,10 +119,10 @@ impl StatusHandler {
         let status_resp = CStatusResponse {
             json_response: json,
         };
-        self.send_packet(ctx, &status_resp, protocol_version)
+        self.send_packet(ctx, &status_resp, STATUS_PROTOCOL_VERSION)
             .await?;
 
-        self.handle_ping_pong(ctx, protocol_version).await?;
+        self.handle_ping_pong(ctx).await?;
 
         Ok(())
     }
@@ -350,11 +347,7 @@ impl StatusHandler {
 
     /// Handles the ping/pong exchange after status response.
     #[allow(clippy::similar_names)] // decoder vs decoded are contextually different
-    async fn handle_ping_pong(
-        &self,
-        ctx: &mut ConnectionContext,
-        protocol_version: ProtocolVersion,
-    ) -> Result<(), CoreError> {
+    async fn handle_ping_pong(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
         let frame = tokio::time::timeout(Duration::from_secs(5), async {
             let mut decoder = PacketDecoder::new();
             loop {
@@ -376,7 +369,7 @@ impl StatusHandler {
             &frame,
             ConnectionState::Status,
             Direction::Serverbound,
-            protocol_version,
+            STATUS_PROTOCOL_VERSION,
         )?;
 
         let payload = match decoded {
@@ -388,7 +381,7 @@ impl StatusHandler {
         };
 
         let pong = CPingResponse { payload };
-        self.send_packet(ctx, &pong, protocol_version).await
+        self.send_packet(ctx, &pong, STATUS_PROTOCOL_VERSION).await
     }
 
     /// Encodes and sends a typed packet to the client stream.

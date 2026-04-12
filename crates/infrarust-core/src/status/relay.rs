@@ -22,6 +22,7 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_transport::BackendConnector;
 use infrarust_transport::connection::ConnectionInfo;
 
+use super::STATUS_PROTOCOL_VERSION;
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
 
@@ -121,7 +122,7 @@ impl StatusRelayClient {
             &self.registry,
             &mut stream,
             &SStatusRequest,
-            protocol_version,
+            STATUS_PROTOCOL_VERSION,
         )
         .await?;
 
@@ -135,7 +136,7 @@ impl StatusRelayClient {
             &status_frame,
             ConnectionState::Status,
             Direction::Clientbound,
-            protocol_version,
+            STATUS_PROTOCOL_VERSION,
         )?;
 
         let json_response = match status_decoded {
@@ -169,7 +170,7 @@ impl StatusRelayClient {
             &SPingRequest {
                 payload: ping_payload,
             },
-            protocol_version,
+            STATUS_PROTOCOL_VERSION,
         )
         .await?;
 
@@ -181,7 +182,7 @@ impl StatusRelayClient {
             &pong_frame,
             ConnectionState::Status,
             Direction::Clientbound,
-            protocol_version,
+            STATUS_PROTOCOL_VERSION,
         )?;
 
         if let DecodedPacket::Typed { packet, .. } = pong_decoded
@@ -512,5 +513,35 @@ mod tests {
         let mut cfg = make_server_config(vec!["backend.local:25565".parse().unwrap()]);
         cfg.domain_rewrite = DomainRewrite::FromBackend;
         assert_eq!(resolve_relay_domain("play.mc", &cfg), "backend.local");
+    }
+
+    #[tokio::test]
+    async fn test_relay_with_unsupported_protocol_version() {
+        let (addrs, shutdown) = spawn_mock_mc_status(TEST_JSON).await;
+        let server_config = make_server_config(addrs);
+
+        let connector = Arc::new(BackendConnector::new(
+            Duration::from_secs(5),
+            KeepaliveConfig::default(),
+        ));
+        let registry = Arc::new(build_default_registry());
+        let client = StatusRelayClient::new(connector, registry, Duration::from_secs(5));
+
+        let future_version = ProtocolVersion(9999);
+        let result = client
+            .relay(
+                "test",
+                &server_config,
+                "test.mc",
+                future_version,
+                &make_client_info(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.response.players.online, 42);
+        assert_eq!(result.response.players.max, 100);
+
+        shutdown.cancel();
     }
 }
