@@ -83,7 +83,7 @@ infrarust
 
 The web dashboard is at `http://localhost:8080`. Your API key is in `plugins/admin_api/config.toml`.
 
-Full docs at **[infrarust.dev](https://infrarust.dev/v2/)**.
+Full docs at **[infrarust.dev](https://infrarust.dev/guide/)**.
 
 ## Docker
 
@@ -140,10 +140,10 @@ Infrarust exports metrics, traces, and logs via OpenTelemetry. A ready-to-use mo
 
 Full documentation at [infrarust.dev](https://infrarust.dev/v2/):
 
-- [Quick Start](https://infrarust.dev/v2/guide/quick-start)
-- [Configuration](https://infrarust.dev/v2/configuration/)
-- [Plugins](https://infrarust.dev/v2/plugins/)
-- [Docker Guide](https://infrarust.dev/v2/guide/docker)
+- [Quick Start](https://infrarust.dev/guide/quick-start)
+- [Configuration](https://infrarust.dev/configuration/)
+- [Plugins](https://infrarust.dev/plugins/)
+- [Docker Guide](https://infrarust.dev/guide/docker)
 
 ## Contributing
 
