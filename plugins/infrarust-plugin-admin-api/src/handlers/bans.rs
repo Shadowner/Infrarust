@@ -51,7 +51,7 @@ pub async fn list(
         bans.retain(|b| b.source == *src);
     }
 
-    bans.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    bans.sort_by_key(|b| std::cmp::Reverse(b.created_at));
 
     let responses: Vec<BanResponse> = bans.iter().map(BanResponse::from_entry).collect();
 

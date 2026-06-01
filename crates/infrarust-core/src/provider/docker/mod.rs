@@ -25,8 +25,6 @@ use infrarust_config::{DockerProviderConfig, ServerConfig};
 use crate::error::CoreError;
 use crate::provider::{ConfigProvider, ProviderConfig, ProviderEvent, ProviderId};
 
-use self::labels::{labels_to_server_config, resolve_container_address};
-
 /// Default Minecraft port.
 const DEFAULT_MC_PORT: u16 = 25565;
 
