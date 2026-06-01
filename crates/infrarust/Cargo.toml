@@ -16,6 +16,7 @@ path = "src/main.rs"
 [features]
 default = ["default-plugins"]
 telemetry = ["infrarust-core/telemetry", "dep:opentelemetry", "dep:tracing-opentelemetry"]
+docker = ["infrarust-core/docker"]
 default-plugins = ["plugin-auth", "plugin-server-wake"]
 plugin-auth = ["dep:infrarust-plugin-auth"]
 plugin-hello = ["dep:infrarust-plugin-hello"]
