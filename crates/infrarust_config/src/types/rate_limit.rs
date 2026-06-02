@@ -9,6 +9,9 @@ use crate::defaults;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RateLimitConfig {
+    #[serde(default = "defaults::rate_limit_enabled")]
+    pub enabled: bool,
+
     /// Maximum login connections per IP per window.
     #[serde(default = "defaults::rate_limit_max")]
     pub max_connections: u32,
@@ -31,6 +34,7 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
+            enabled: defaults::rate_limit_enabled(),
             max_connections: defaults::rate_limit_max(),
             window: defaults::rate_limit_window(),
             status_max: defaults::rate_limit_status_max(),

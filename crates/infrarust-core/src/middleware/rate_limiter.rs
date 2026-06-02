@@ -20,6 +20,7 @@ type KeyedLimiter = RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>
 /// Middleware that rate-limits connections per IP, with separate limits
 /// for status pings and login attempts.
 pub struct RateLimiterMiddleware {
+    enabled: bool,
     login_limiter: Arc<KeyedLimiter>,
     status_limiter: Arc<KeyedLimiter>,
 }
@@ -30,6 +31,7 @@ impl RateLimiterMiddleware {
         let status_limiter = Self::build_limiter(config.status_max, config.status_window);
 
         Self {
+            enabled: config.enabled,
             login_limiter: Arc::new(login_limiter),
             status_limiter: Arc::new(status_limiter),
         }
@@ -55,6 +57,10 @@ impl Middleware for RateLimiterMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
+            if !self.enabled {
+                return Ok(MiddlewareResult::Continue);
+            }
+
             let Some(handshake) = ctx.extensions.get::<HandshakeData>() else {
                 return Ok(MiddlewareResult::Continue); // No handshake yet, skip
             };
@@ -75,5 +81,25 @@ impl Middleware for RateLimiterMiddleware {
                 Ok(MiddlewareResult::Reject("Rate limit exceeded".into()))
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enabled_field_mirrors_config() {
+        let mut cfg = RateLimitConfig::default();
+        cfg.enabled = false;
+        assert!(!RateLimiterMiddleware::new(&cfg).enabled);
+
+        cfg.enabled = true;
+        assert!(RateLimiterMiddleware::new(&cfg).enabled);
+    }
+
+    #[test]
+    fn default_config_is_disabled() {
+        assert!(!RateLimiterMiddleware::new(&RateLimitConfig::default()).enabled);
     }
 }

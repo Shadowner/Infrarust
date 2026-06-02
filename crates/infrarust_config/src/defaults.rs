@@ -20,6 +20,9 @@ pub fn plugins_dir() -> PathBuf {
     PathBuf::from("./plugins")
 }
 
+pub const fn rate_limit_enabled() -> bool {
+    false
+}
 pub const fn rate_limit_max() -> u32 {
     3
 }
@@ -27,7 +30,7 @@ pub const fn rate_limit_window() -> Duration {
     Duration::from_secs(10)
 }
 pub const fn rate_limit_status_max() -> u32 {
-    30
+    300
 }
 pub const fn rate_limit_status_window() -> Duration {
     Duration::from_secs(10)
