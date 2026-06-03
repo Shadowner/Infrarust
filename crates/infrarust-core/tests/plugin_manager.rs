@@ -21,6 +21,7 @@ use mock_services::{MockBanService, MockConfigService, MockPlayerRegistry};
 
 struct MockPluginContext {
     plugin_id: String,
+    capabilities: infrarust_api::permissions::CapabilitySet,
 }
 
 impl infrarust_api::plugin::private::Sealed for MockPluginContext {}
@@ -108,6 +109,9 @@ impl PluginContext for MockPluginContext {
     fn proxy_info(&self) -> &infrarust_api::services::proxy_info::ProxyInfo {
         unimplemented!("mock")
     }
+    fn capabilities(&self) -> &infrarust_api::permissions::CapabilitySet {
+        &self.capabilities
+    }
 }
 
 struct MockPluginContextFactory;
@@ -116,6 +120,7 @@ impl PluginContextFactory for MockPluginContextFactory {
     fn create_context(&self, plugin_id: &str) -> Arc<dyn PluginContext> {
         Arc::new(MockPluginContext {
             plugin_id: plugin_id.to_string(),
+            capabilities: infrarust_api::permissions::CapabilitySet::native_trusted(),
         })
     }
 }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
 
 pub use infrarust_api::loader::PluginContextFactory;
@@ -11,8 +12,9 @@ use super::manager::PluginServices;
 /// Per-plugin permissions extracted from proxy configuration.
 #[derive(Debug, Clone, Default)]
 pub struct PluginPermissions {
-    /// Granted permission strings (e.g., `["codec_filter"]`).
+    /// Granted capability strings from config (kebab-case, e.g. `["codec-filter", "raw-packet"]`).
     pub permissions: Vec<String>,
+    pub trusted: bool,
 }
 
 pub struct PluginContextFactoryImpl {
@@ -34,11 +36,25 @@ impl PluginContextFactoryImpl {
 
 impl PluginContextFactory for PluginContextFactoryImpl {
     fn create_context(&self, plugin_id: &str) -> Arc<dyn PluginContext> {
-        let _permissions = self
+        let perms = self
             .plugin_configs
             .get(plugin_id)
             .cloned()
             .unwrap_or_default();
+
+        let capabilities = if perms.trusted {
+            CapabilitySet::native_trusted()
+        } else {
+            let (set, rejected) = CapabilitySet::from_config_strings(&perms.permissions);
+            for cap in &rejected {
+                tracing::warn!(
+                    plugin = %plugin_id,
+                    capability = %cap,
+                    "ignoring plugin capability: unknown or not grantable via config"
+                );
+            }
+            set
+        };
 
         Arc::new(PluginContextImpl::new(
             plugin_id.to_string(),
@@ -56,6 +72,7 @@ impl PluginContextFactory for PluginContextFactoryImpl {
             self.services.proxy_shutdown.clone(),
             self.services.proxy_info.clone(),
             self.services.plugins_dir.clone(),
+            capabilities,
         ))
     }
 }

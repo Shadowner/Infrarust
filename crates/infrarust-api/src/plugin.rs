@@ -182,12 +182,17 @@ pub trait PluginContext: Send + Sync + private::Sealed {
 
     /// Returns the codec filter registry for registering packet-level filters.
     ///
-    /// Returns `Some` for native plugins, `None` for WASM plugins (future).
+    /// Returns `Some` only if the plugin holds [`Capability::CodecFilter`], else `None`.
+    ///
+    /// [`Capability::CodecFilter`]: crate::permissions::Capability::CodecFilter
     fn codec_filters(&self) -> Option<&dyn CodecFilterRegistry>;
 
     /// Returns the transport filter registry for registering TCP-level filters.
     ///
-    /// Returns `Some` for native plugins, `None` for WASM plugins.
+    /// Returns `Some` only if the plugin holds [`Capability::TransportFilter`], else
+    /// `None`. That capability is granted to trusted native plugins only.
+    ///
+    /// [`Capability::TransportFilter`]: crate::permissions::Capability::TransportFilter
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry>;
 
     fn plugin_registry(&self) -> &dyn PluginRegistry;
@@ -203,6 +208,9 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     fn proxy_shutdown(&self) -> CancellationToken;
 
     fn proxy_info(&self) -> &ProxyInfo;
+
+    /// Capabilities granted to this plugin (source: Infrarust config).
+    fn capabilities(&self) -> &crate::permissions::CapabilitySet;
 }
 
 #[cfg(test)]

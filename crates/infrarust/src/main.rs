@@ -289,6 +289,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let mut web_config = config.web.clone();
     let plugins_dir = config.plugins_dir.clone();
     let proxy_info = build_proxy_info(&config);
+    let plugin_cfgs = config.plugins.clone();
 
     // Build and run the proxy server
     let mut server = ProxyServer::new(config, shutdown.clone())
@@ -296,6 +297,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         .context("failed to initialize proxy server")?;
 
     let static_loader = plugins::build_static_loader(web_config.as_mut())?;
+    let static_ids = static_loader.registered_ids();
     let loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> = vec![Box::new(static_loader)];
 
     let mut plugin_manager = PluginManager::new(loaders);
@@ -348,10 +350,31 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         plugins_dir,
     };
 
-    let context_factory = infrarust_core::plugin::PluginContextFactoryImpl::new(
-        plugin_services,
-        std::collections::HashMap::new(),
-    );
+    use infrarust_core::plugin::PluginPermissions;
+    let mut plugin_configs: std::collections::HashMap<String, PluginPermissions> = plugin_cfgs
+        .into_iter()
+        .map(|(id, c)| {
+            (
+                id,
+                PluginPermissions {
+                    permissions: c.permissions,
+                    trusted: false,
+                },
+            )
+        })
+        .collect();
+    for id in static_ids {
+        plugin_configs
+            .entry(id)
+            .and_modify(|p| p.trusted = true)
+            .or_insert(PluginPermissions {
+                permissions: Vec::new(),
+                trusted: true,
+            });
+    }
+
+    let context_factory =
+        infrarust_core::plugin::PluginContextFactoryImpl::new(plugin_services, plugin_configs);
 
     let errors = plugin_manager.load_and_enable_all(&context_factory).await;
     if !errors.is_empty() {

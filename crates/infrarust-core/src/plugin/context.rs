@@ -10,6 +10,7 @@ use infrarust_api::event::ListenerHandle;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use infrarust_api::limbo::LimboHandler;
+use infrarust_api::permissions::{Capability, CapabilitySet};
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::provider::PluginConfigProvider;
 use infrarust_api::services::proxy_info::ProxyInfo;
@@ -50,6 +51,7 @@ pub struct PluginContextImpl {
     proxy_info: ProxyInfo,
     plugin_id: String,
     plugins_dir: PathBuf,
+    capabilities: CapabilitySet,
 
     // Shared tracking state (also held by the wrappers)
     registered_handles: Arc<Mutex<Vec<ListenerHandle>>>,
@@ -77,6 +79,7 @@ impl PluginContextImpl {
         proxy_shutdown: CancellationToken,
         proxy_info: ProxyInfo,
         plugins_dir: PathBuf,
+        capabilities: CapabilitySet,
     ) -> Self {
         let registered_handles = Arc::new(Mutex::new(Vec::new()));
         let registered_commands = Arc::new(Mutex::new(Vec::new()));
@@ -114,6 +117,7 @@ impl PluginContextImpl {
             proxy_info,
             plugin_id,
             plugins_dir,
+            capabilities,
             registered_handles,
             registered_commands,
             registered_tasks,
@@ -243,6 +247,13 @@ impl PluginContext for PluginContextImpl {
     }
 
     fn register_limbo_handler(&self, handler: Box<dyn LimboHandler>) {
+        if !self.capabilities.has(Capability::Limbo) {
+            tracing::warn!(
+                plugin = %self.plugin_id,
+                "register_limbo_handler denied: missing Limbo capability"
+            );
+            return;
+        }
         let mut handlers = self.limbo_handlers.lock().expect("lock poisoned");
         handlers.push(handler);
     }
@@ -261,11 +272,19 @@ impl PluginContext for PluginContextImpl {
     }
 
     fn codec_filters(&self) -> Option<&dyn CodecFilterRegistry> {
-        Some(self.codec_filter_registry.as_ref())
+        if self.capabilities.has(Capability::CodecFilter) {
+            Some(self.codec_filter_registry.as_ref())
+        } else {
+            None
+        }
     }
 
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry> {
-        Some(self.transport_filter_registry.as_ref())
+        if self.capabilities.has(Capability::TransportFilter) {
+            Some(self.transport_filter_registry.as_ref())
+        } else {
+            None
+        }
     }
 
     fn plugin_id(&self) -> &str {
@@ -282,5 +301,9 @@ impl PluginContext for PluginContextImpl {
 
     fn proxy_info(&self) -> &ProxyInfo {
         &self.proxy_info
+    }
+
+    fn capabilities(&self) -> &CapabilitySet {
+        &self.capabilities
     }
 }
