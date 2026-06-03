@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["hello", "trap-on-purpose", "cpu-spin", "memory-bomb"]
+
+[workspace.dependencies]
+wit-bindgen = "0.51"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"

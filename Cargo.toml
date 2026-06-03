@@ -18,6 +18,9 @@ members = [
     "tools/registry-extractor",
     "tools/stress-test",
 ]
+exclude = [
+    "crates/infrarust-loader-wasm/tests/fixtures",
+]
 
 [workspace.dependencies]
 # Async runtime

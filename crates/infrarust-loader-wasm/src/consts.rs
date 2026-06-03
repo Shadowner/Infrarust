@@ -1,0 +1,31 @@
+//! Tunable sandbox constants. Values are hardcoded for WASM-1; wiring them to
+//! `ProxyConfig` is deferred (see the `TODO(config)` markers).
+
+use std::time::Duration;
+
+/// How often the dedicated OS thread bumps the engine epoch (§9.2).
+pub(crate) const EPOCH_TICK_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Epoch ticks granted before the deadline callback first fires, re-granted on each
+/// cooperative yield. One tick ≈ [`EPOCH_TICK_INTERVAL`].
+pub(crate) const EPOCH_DEADLINE_TICKS: u64 = 1;
+
+/// Cooperative yields tolerated per guest call before a hard trap (`Interrupt`).
+/// ≈ `MAX_EPOCH_YIELDS_BEFORE_TRAP * EPOCH_TICK_INTERVAL` ≈ 3 s of pure spin.
+/// The cpu-spin test's wall-clock timeout must stay strictly above this.
+pub(crate) const MAX_EPOCH_YIELDS_BEFORE_TRAP: u32 = 60;
+
+/// Linear-memory cap per plugin instance (§9.3). TODO(config): read from `ProxyConfig`.
+/// Instance/table/memory *counts* keep wasmtime's defaults (a component needs several core
+/// instances), so only memory growth is bounded here.
+pub(crate) const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
+
+/// AOT cache subdirectory, created under the scanned plugin dir.
+pub(crate) const CACHE_SUBDIR: &str = ".cache";
+
+/// Coarse wasmtime-line marker mixed into the cache key (bump on major upgrade).
+/// wasmtime's own embedded version section is the real cross-version safety net.
+pub(crate) const WASMTIME_CACHE_TAG: &str = "wasmtime-45";
+
+/// WIT world version mixed into the cache key so a world bump invalidates artifacts.
+pub(crate) const WORLD_VERSION: &str = "0.1.0";
