@@ -1,6 +1,6 @@
 //! [`PluginManager`] — orchestrates plugin lifecycle.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -48,6 +48,7 @@ pub struct PluginManager {
     states: HashMap<String, PluginState>,
     load_order: Vec<String>,
     loader_mapping: HashMap<String, String>, // plugin_id -> loader_name
+    loaded_loaders: Vec<String>,             // loaders whose on_load() succeeded
 }
 
 struct LoadedPlugin {
@@ -65,6 +66,7 @@ impl PluginManager {
             states: HashMap::new(),
             load_order: Vec::new(),
             loader_mapping: HashMap::new(),
+            loaded_loaders: Vec::new(),
         }
     }
 
@@ -111,6 +113,23 @@ impl PluginManager {
         let mut errors = Vec::new();
         let load_order = self.load_order.clone();
 
+        let mut failed_loaders: HashSet<String> = HashSet::new();
+        let mut ok_loaders: Vec<String> = Vec::new();
+        for loader in &self.loaders {
+            match loader.on_load(context_factory).await {
+                Ok(()) => ok_loaders.push(loader.name().to_string()),
+                Err(e) => {
+                    let name = loader.name().to_string();
+                    tracing::error!(loader = %name, error = %e, "Loader on_load() failed");
+                    errors.push(PluginError::InitFailed(format!(
+                        "Loader '{name}' on_load failed: {e}"
+                    )));
+                    failed_loaders.insert(name);
+                }
+            }
+        }
+        self.loaded_loaders = ok_loaders;
+
         for plugin_id in &load_order {
             let loader_name = match self.loader_mapping.get(plugin_id) {
                 Some(name) => name.clone(),
@@ -121,6 +140,14 @@ impl PluginManager {
                     continue;
                 }
             };
+
+            if failed_loaders.contains(&loader_name) {
+                self.states.insert(
+                    plugin_id.clone(),
+                    PluginState::Error(format!("loader '{loader_name}' on_load failed")),
+                );
+                continue;
+            }
 
             let loader = match self.loaders.iter().find(|l| l.name() == loader_name) {
                 Some(l) => l,
@@ -215,6 +242,15 @@ impl PluginManager {
                     error = %e,
                     "Loader unload failed"
                 );
+            }
+        }
+
+        let loaded = std::mem::take(&mut self.loaded_loaders);
+        for name in loaded.iter().rev() {
+            if let Some(loader) = self.loaders.iter().find(|l| l.name() == name)
+                && let Err(e) = loader.on_shutdown().await
+            {
+                tracing::error!(loader = %name, error = %e, "Loader on_shutdown() failed");
             }
         }
     }
@@ -517,5 +553,195 @@ mod tests {
 
         manager.shutdown().await;
         assert!(!enabled.load(Ordering::Relaxed));
+    }
+    use std::sync::Mutex;
+
+    use infrarust_api::loader::LoaderError;
+
+    struct LifecycleLoader {
+        name: &'static str,
+        log: Arc<Mutex<Vec<String>>>,
+        metadatas: Vec<PluginMetadata>,
+        fail_on_load: bool,
+    }
+
+    impl PluginLoader for LifecycleLoader {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn discover<'a>(
+            &'a self,
+            _dir: &'a Path,
+        ) -> BoxFuture<'a, Result<Vec<PluginMetadata>, LoaderError>> {
+            let metas = self.metadatas.clone();
+            Box::pin(async move { Ok(metas) })
+        }
+
+        fn on_load<'a>(
+            &'a self,
+            _factory: &'a dyn PluginContextFactory,
+        ) -> BoxFuture<'a, Result<(), LoaderError>> {
+            let log = Arc::clone(&self.log);
+            let label = format!("on_load:{}", self.name);
+            let fail = self.fail_on_load;
+            let name = self.name;
+            Box::pin(async move {
+                log.lock().expect("lock poisoned").push(label);
+                if fail {
+                    Err(LoaderError::LoadFailed {
+                        plugin_id: name.to_string(),
+                        reason: "boom".to_string(),
+                        source: None,
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+        }
+
+        fn load<'a>(
+            &'a self,
+            plugin_id: &'a str,
+            _factory: &'a dyn PluginContextFactory,
+        ) -> BoxFuture<'a, Result<Box<dyn Plugin>, LoaderError>> {
+            let log = Arc::clone(&self.log);
+            let id = plugin_id.to_string();
+            Box::pin(async move {
+                log.lock().expect("lock poisoned").push(format!("load:{id}"));
+                Ok(Box::new(TestPlugin {
+                    id,
+                    enabled: Arc::new(AtomicBool::new(false)),
+                }) as Box<dyn Plugin>)
+            })
+        }
+
+        fn unload<'a>(&'a self, plugin_id: &'a str) -> BoxFuture<'a, Result<(), LoaderError>> {
+            let log = Arc::clone(&self.log);
+            let id = plugin_id.to_string();
+            Box::pin(async move {
+                log.lock()
+                    .expect("lock poisoned")
+                    .push(format!("unload:{id}"));
+                Ok(())
+            })
+        }
+
+        fn on_shutdown<'a>(&'a self) -> BoxFuture<'a, Result<(), LoaderError>> {
+            let log = Arc::clone(&self.log);
+            let label = format!("on_shutdown:{}", self.name);
+            Box::pin(async move {
+                log.lock().expect("lock poisoned").push(label);
+                Ok(())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn on_load_runs_before_loads_and_on_shutdown_after_unloads() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let loader = LifecycleLoader {
+            name: "lifecycle",
+            log: Arc::clone(&log),
+            metadatas: vec![PluginMetadata::new("p1", "P1", "1.0.0")],
+            fail_on_load: false,
+        };
+        let mut mgr = PluginManager::new(vec![Box::new(loader)]);
+        mgr.discover_all(Path::new("plugins")).await.unwrap();
+        let errors = mgr.load_and_enable_all(&MockPluginContextFactory).await;
+        assert!(errors.is_empty());
+        mgr.shutdown().await;
+
+        let seq = log.lock().unwrap().clone();
+        assert_eq!(
+            seq,
+            vec![
+                "on_load:lifecycle",
+                "load:p1",
+                "unload:p1",
+                "on_shutdown:lifecycle",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn loader_with_zero_plugins_still_initialises_and_tears_down() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let loader = LifecycleLoader {
+            name: "host",
+            log: Arc::clone(&log),
+            metadatas: vec![],
+            fail_on_load: false,
+        };
+        let mut mgr = PluginManager::new(vec![Box::new(loader)]);
+        mgr.discover_all(Path::new("plugins")).await.unwrap();
+        let errors = mgr.load_and_enable_all(&MockPluginContextFactory).await;
+        assert!(errors.is_empty());
+        mgr.shutdown().await;
+
+        // A host that booted with zero plugins must still be torn down.
+        let seq = log.lock().unwrap().clone();
+        assert_eq!(seq, vec!["on_load:host", "on_shutdown:host"]);
+    }
+
+    #[tokio::test]
+    async fn failing_on_load_skips_its_plugins_and_skips_its_shutdown() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let bad = LifecycleLoader {
+            name: "bad",
+            log: Arc::clone(&log),
+            metadatas: vec![PluginMetadata::new("b1", "B1", "1.0.0")],
+            fail_on_load: true,
+        };
+        let good = LifecycleLoader {
+            name: "good",
+            log: Arc::clone(&log),
+            metadatas: vec![PluginMetadata::new("g1", "G1", "1.0.0")],
+            fail_on_load: false,
+        };
+        let mut mgr = PluginManager::new(vec![Box::new(bad), Box::new(good)]);
+        mgr.discover_all(Path::new("plugins")).await.unwrap();
+        let errors = mgr.load_and_enable_all(&MockPluginContextFactory).await;
+
+        // The failed on_load surfaces exactly one error...
+        assert_eq!(errors.len(), 1);
+        // ...its plugin is marked Error and never loaded...
+        assert!(matches!(mgr.plugin_state("b1"), Some(PluginState::Error(_))));
+        // ...while the healthy loader's plugin still enables.
+        assert!(mgr.is_plugin_loaded("g1"));
+
+        mgr.shutdown().await;
+        let seq = log.lock().unwrap().clone();
+        // bad: on_load fired, but no load and no on_shutdown (it never booted).
+        assert!(seq.contains(&"on_load:bad".to_string()));
+        assert!(!seq.iter().any(|s| s == "load:b1"));
+        assert!(!seq.iter().any(|s| s == "on_shutdown:bad"));
+        // good: full lifecycle ran.
+        assert!(seq.contains(&"load:g1".to_string()));
+        assert!(seq.contains(&"on_shutdown:good".to_string()));
+    }
+
+    #[tokio::test]
+    async fn second_shutdown_does_not_repeat_on_shutdown() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let loader = LifecycleLoader {
+            name: "once",
+            log: Arc::clone(&log),
+            metadatas: vec![PluginMetadata::new("p1", "P1", "1.0.0")],
+            fail_on_load: false,
+        };
+        let mut mgr = PluginManager::new(vec![Box::new(loader)]);
+        mgr.discover_all(Path::new("plugins")).await.unwrap();
+        mgr.load_and_enable_all(&MockPluginContextFactory).await;
+        mgr.shutdown().await;
+        mgr.shutdown().await;
+
+        let count = log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| *s == "on_shutdown:once")
+            .count();
+        assert_eq!(count, 1);
     }
 }

@@ -53,9 +53,15 @@ pub trait PluginContextFactory: Send + Sync {
 /// The lifecycle is:
 /// 1. `discover(plugin_dir)` — returns metadata
 /// 2. `PluginManager` resolves dependencies (topological sort)
-/// 3. `load(plugin_id, context_factory)` — builds the plugin
-/// 4. `PluginManager` calls `on_enable(ctx)`
-/// 5. At shutdown: `unload(plugin_id)` after `on_disable()`
+/// 3. `on_load(context_factory)` — once per loader, before any plugin loads
+/// 4. `load(plugin_id, context_factory)` — builds the plugin
+/// 5. `PluginManager` calls `on_enable(ctx)`
+/// 6. At shutdown: `unload(plugin_id)` after `on_disable()`
+/// 7. `on_shutdown()` — once per loader, after all its plugins are unloaded
+///
+/// Note that `discover()` runs in step 1, *before* the `PluginContextFactory`
+/// (and thus the hosted runtime) exists: a loader must not depend on its own
+/// runtime to enumerate plugins.
 pub trait PluginLoader: Send + Sync {
     fn name(&self) -> &str;
 
@@ -64,6 +70,22 @@ pub trait PluginLoader: Send + Sync {
         &'a self,
         plugin_dir: &'a Path,
     ) -> BoxFuture<'a, Result<Vec<PluginMetadata>, LoaderError>>;
+
+    /// Initializes the loader's runtime once, before any of its plugins load.
+    ///
+    /// Runs after [`discover`](Self::discover). On `Err`, the loader must roll
+    /// back any partially-initialized state: [`on_shutdown`](Self::on_shutdown)
+    /// is only called for loaders whose `on_load` returned `Ok`. When `on_load`
+    /// fails, all of that loader's plugins are skipped and marked errored.
+    ///
+    /// The default implementation is a no-op.
+    fn on_load<'a>(
+        &'a self,
+        context_factory: &'a dyn PluginContextFactory,
+    ) -> BoxFuture<'a, Result<(), LoaderError>> {
+        let _ = context_factory;
+        Box::pin(async { Ok(()) })
+    }
 
     /// Loads a previously discovered plugin by its ID.
     ///
@@ -77,4 +99,13 @@ pub trait PluginLoader: Send + Sync {
 
     /// Loader-specific cleanup after a plugin is disabled.
     fn unload<'a>(&'a self, plugin_id: &'a str) -> BoxFuture<'a, Result<(), LoaderError>>;
+
+    /// Tears down the loader's runtime at proxy shutdown, after every one of its
+    /// plugins has been disabled and unloaded.
+    ///
+    /// Only called for loaders whose [`on_load`](Self::on_load) returned `Ok`.
+    /// Must be idempotent. The default implementation is a no-op.
+    fn on_shutdown<'a>(&'a self) -> BoxFuture<'a, Result<(), LoaderError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
