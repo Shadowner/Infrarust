@@ -1,0 +1,157 @@
+// The guest export: lifecycle, the unified event dispatch, and the marker+proxy
+// handler entry points. Results that carry a native trait object
+// (ServerPreConnectResult::VirtualBackend, PermissionsSetupResult::Custom) are
+// deferred to v0.2 and absent from event-outcome.
+interface guest {
+    use types.{plugin-metadata, component, server-id, player-id, game-profile,
+               protocol-version, server-state};
+
+    record pre-login-event {
+        profile: game-profile,
+        remote-addr: string,
+        protocol-version: protocol-version,
+        server-domain: string,
+    }
+    variant pre-login-result {
+        allowed,
+        denied(component),
+        force-offline,
+        force-online,
+    }
+
+    record post-login-event {
+        profile: game-profile,
+        player-id: player-id,
+        protocol-version: protocol-version,
+    }
+
+    record disconnect-event {
+        player-id: player-id,
+        username: string,
+        last-server: option<server-id>,
+    }
+
+    record online-auth-failed-event {
+        username: string,
+    }
+
+    // Observable only; the modifiable result is deferred to v0.2.
+    record permissions-setup-event {
+        player-id: player-id,
+        profile: game-profile,
+        online-mode: bool,
+    }
+
+    record server-pre-connect-event {
+        player-id: player-id,
+        profile: game-profile,
+        original-server: server-id,
+    }
+    variant server-pre-connect-result {
+        allowed,
+        connect-to(server-id),
+        send-to-limbo(list<string>),
+        denied(component),
+    }
+
+    record server-connected-event {
+        player-id: player-id,
+        server: server-id,
+    }
+
+    record server-switch-event {
+        player-id: player-id,
+        previous-server: server-id,
+        new-server: server-id,
+    }
+
+    record kicked-from-server-event {
+        player-id: player-id,
+        server: server-id,
+        reason: component,
+    }
+    variant kicked-from-server-result {
+        disconnect-player(component),
+        redirect-to(server-id),
+        send-to-limbo(list<string>),
+        notify(component),
+    }
+
+    record player-choose-initial-server-event {
+        player-id: player-id,
+        profile: game-profile,
+        initial-server: server-id,
+    }
+    variant player-choose-initial-server-result {
+        allowed,
+        redirect(server-id),
+        send-to-limbo(list<string>),
+    }
+
+    record ping-response {
+        description: component,
+        max-players: s32,
+        online-players: s32,
+        protocol-version: protocol-version,
+        version-name: string,
+        favicon: option<string>,
+    }
+    record proxy-ping-event {
+        remote-addr: string,
+        response: ping-response,
+    }
+
+    record server-state-change-event {
+        server: server-id,
+        old-state: server-state,
+        new-state: server-state,
+    }
+
+    record chat-message-event {
+        player-id: player-id,
+        message: string,
+    }
+    variant chat-message-result {
+        allow,
+        deny(component),
+        modify(string),
+    }
+
+    variant event {
+        pre-login(pre-login-event),
+        post-login(post-login-event),
+        disconnect(disconnect-event),
+        online-auth-failed(online-auth-failed-event),
+        permissions-setup(permissions-setup-event),
+        server-pre-connect(server-pre-connect-event),
+        server-connected(server-connected-event),
+        server-switch(server-switch-event),
+        kicked-from-server(kicked-from-server-event),
+        player-choose-initial-server(player-choose-initial-server-event),
+        proxy-ping(proxy-ping-event),
+        proxy-initialize,
+        proxy-shutdown,
+        config-reload,
+        server-state-change(server-state-change-event),
+        chat-message(chat-message-event),
+    }
+    variant event-outcome {
+        none,
+        pre-login(pre-login-result),
+        server-pre-connect(server-pre-connect-result),
+        kicked-from-server(kicked-from-server-result),
+        player-choose-initial-server(player-choose-initial-server-result),
+        chat-message(chat-message-result),
+        proxy-ping(ping-response),
+    }
+
+    metadata: func() -> plugin-metadata;
+    on-enable: func() -> result<_, string>;
+    on-disable: func() -> result<_, string>;
+
+    handle-event: func(ev: event) -> event-outcome;
+
+    handle-command: func(callback-id: u64, args: list<string>, player: option<player-id>);
+    tab-complete: func(callback-id: u64, partial: list<string>) -> list<string>;
+    on-scheduled-task: func(callback-id: u64);
+}

@@ -1,0 +1,27 @@
+// The guest subscribes (in on-enable) to the kinds it wants; the host registers
+// a native handler per subscribed kind that marshals to handle-event.
+interface event-bus {                                                         // gated: event-bus
+    use types.{event-priority, listener-handle};
+
+    enum event-kind {
+        pre-login,
+        post-login,
+        disconnect,
+        online-auth-failed,
+        permissions-setup,
+        server-pre-connect,
+        server-connected,
+        server-switch,
+        kicked-from-server,
+        player-choose-initial-server,
+        proxy-ping,
+        proxy-initialize,
+        proxy-shutdown,
+        config-reload,
+        server-state-change,
+        chat-message,
+    }
+
+    subscribe: func(kind: event-kind, priority: event-priority) -> listener-handle;
+    unsubscribe: func(handle: listener-handle);
+}

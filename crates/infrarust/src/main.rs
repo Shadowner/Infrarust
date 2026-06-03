@@ -27,7 +27,7 @@ mod migrate;
 mod plugins;
 mod wizard;
 
-/// Infrarust — A Minecraft reverse proxy
+/// Infrarust - A Minecraft reverse proxy
 #[derive(Parser)]
 #[command(name = "infrarust", version, about)]
 struct Cli {
@@ -108,7 +108,7 @@ fn main() -> ExitCode {
         }
     };
 
-    // Init tracing subscriber — RUST_LOG takes priority over --log-level
+    // Init tracing subscriber. RUST_LOG takes priority over --log-level
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
 
@@ -291,6 +291,10 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let proxy_info = build_proxy_info(&config);
     let plugin_cfgs = config.plugins.clone();
 
+    // Build the WASM engine before `config` is moved into the proxy server.
+    #[cfg(feature = "wasm")]
+    let wasm_engine = infrarust_loader_wasm::build_engine(&config)?;
+
     // Build and run the proxy server
     let mut server = ProxyServer::new(config, shutdown.clone())
         .await
@@ -298,7 +302,13 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
 
     let static_loader = plugins::build_static_loader(web_config.as_mut())?;
     let static_ids = static_loader.registered_ids();
-    let loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> = vec![Box::new(static_loader)];
+    #[cfg_attr(not(feature = "wasm"), allow(unused_mut))]
+    let mut loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> = vec![Box::new(static_loader)];
+
+    #[cfg(feature = "wasm")]
+    loaders.push(Box::new(infrarust_loader_wasm::WasmPluginLoader::new(
+        wasm_engine,
+    )));
 
     let mut plugin_manager = PluginManager::new(loaders);
 

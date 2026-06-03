@@ -21,6 +21,7 @@ default-plugins = ["plugin-auth", "plugin-server-wake"]
 plugin-auth = ["dep:infrarust-plugin-auth"]
 plugin-hello = ["dep:infrarust-plugin-hello"]
 plugin-server-wake = ["dep:infrarust-plugin-server-wake"]
+wasm = ["dep:infrarust-loader-wasm"]
 
 [dependencies]
 tokio = { workspace = true }
@@ -45,6 +46,8 @@ infrarust-plugin-auth = { workspace = true, optional = true }
 infrarust-plugin-hello = { workspace = true, optional = true }
 infrarust-plugin-server-wake = { workspace = true, optional = true }
 infrarust-plugin-admin-api = { workspace = true }
+
+infrarust-loader-wasm = { workspace = true, optional = true, features = ["wasm"] }
 
 # Telemetry (optional)
 opentelemetry = { workspace = true, optional = true }

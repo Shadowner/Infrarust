@@ -1,0 +1,12 @@
+[package]
+name = "infrarust-plugin-wit"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Frozen WIT contract (infrarust:plugin) shared by the WASM host loader and the guest SDK"
+keywords = ["minecraft", "proxy", "plugin", "wasm", "wit"]
+categories = ["game-development", "wasm"]
+
+[lints]
+workspace = true

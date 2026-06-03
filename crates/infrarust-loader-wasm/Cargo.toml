@@ -1,0 +1,24 @@
+[package]
+name = "infrarust-loader-wasm"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "WebAssembly (Component Model) plugin loader for Infrarust"
+keywords = ["minecraft", "proxy", "plugin", "wasm", "wasmtime"]
+categories = ["game-development", "wasm"]
+
+[lints]
+workspace = true
+
+[dependencies]
+infrarust-api = { workspace = true }
+infrarust_config = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+wasmtime = { workspace = true, optional = true }
+
+[features]
+default = []
+wasm = ["dep:wasmtime"]

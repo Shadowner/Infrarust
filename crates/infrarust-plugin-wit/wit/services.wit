@@ -1,0 +1,86 @@
+// Host service interfaces. "host-async": bound async on the host so the guest
+// fiber suspends during I/O. "gated: X": only linked when the plugin holds
+// capability X.
+
+interface player-registry {
+    use types.{player-id, server-id, uuid, game-profile, protocol-version,
+               component, title-data, raw-packet, permission-level, player-error};
+
+    resource player {
+        id: func() -> player-id;
+        profile: func() -> game-profile;
+        protocol-version: func() -> protocol-version;
+        remote-addr: func() -> string;
+        current-server: func() -> option<server-id>;
+        is-connected: func() -> bool;
+        is-active: func() -> bool;
+
+        disconnect: func(reason: component);                                  // host-async
+        send-message: func(message: component) -> result<_, player-error>;
+        send-title: func(title: title-data) -> result<_, player-error>;
+        send-action-bar: func(message: component) -> result<_, player-error>;
+        send-packet: func(packet: raw-packet) -> result<_, player-error>;     // gated: raw-packet
+        switch-server: func(target: server-id) -> result<_, player-error>;    // host-async
+
+        is-online-mode: func() -> bool;
+        permission-level: func() -> permission-level;
+        has-permission: func(permission: string) -> bool;
+        connected-at: func() -> u64;
+    }
+
+    get-player: func(username: string) -> option<player>;
+    get-player-by-uuid: func(player-uuid: uuid) -> option<player>;
+    get-player-by-id: func(id: player-id) -> option<player>;
+    get-players-on-server: func(server: server-id) -> list<player>;
+    get-all-players: func() -> list<player>;
+    online-count: func() -> u32;
+    online-count-on: func(server: server-id) -> u32;
+}
+
+interface server-manager {                                                    // gated: server-manage
+    use types.{server-id, server-state, service-error};
+
+    get-state: func(server: server-id) -> option<server-state>;
+    start: func(server: server-id) -> result<_, service-error>;              // host-async
+    stop: func(server: server-id) -> result<_, service-error>;               // host-async
+    get-all-servers: func() -> list<tuple<server-id, server-state>>;
+}
+
+interface ban-service {                                                       // gated: ban
+    use types.{ban-target, ban-entry, service-error};
+
+    ban: func(target: ban-target, reason: option<string>, duration-ms: option<u64>) -> result<_, service-error>;  // host-async
+    unban: func(target: ban-target) -> result<bool, service-error>;          // host-async
+    is-banned: func(target: ban-target) -> result<bool, service-error>;      // host-async
+    get-ban: func(target: ban-target) -> result<option<ban-entry>, service-error>;  // host-async
+    get-all-bans: func() -> result<list<ban-entry>, service-error>;          // host-async
+}
+
+interface config-service {                                                    // gated: config-read
+    use types.{server-id, server-config};
+
+    get-server-config: func(server: server-id) -> option<server-config>;
+    get-all-server-configs: func() -> list<server-config>;
+    get-value: func(key: string) -> option<string>;
+}
+
+interface command-manager {                                                   // gated: command
+    register: func(name: string, aliases: list<string>, description: string, callback-id: u64);
+    unregister: func(name: string);
+}
+
+interface scheduler {                                                         // gated: scheduler
+    use types.{task-handle};
+
+    delay: func(after-ms: u64, callback-id: u64) -> task-handle;
+    interval: func(period-ms: u64, callback-id: u64) -> task-handle;
+    cancel: func(handle: task-handle);
+}
+
+interface log {
+    trace: func(message: string);
+    debug: func(message: string);
+    info: func(message: string);
+    warn: func(message: string);
+    error: func(message: string);
+}

@@ -7,6 +7,8 @@ members = [
     "crates/infrarust-core",
     "crates/infrarust_server_manager",
     "crates/infrarust-transport",
+    "crates/infrarust-plugin-wit",
+    "crates/infrarust-loader-wasm",
     "crates/infrarust",
     "plugins/infrarust-plugin-auth",
     "plugins/infrarust-plugin-hello",
@@ -118,6 +120,10 @@ mimalloc = "0.1.48"
 # Testing
 tempfile = "3.27.0"
 
+# WASM plugin loader (host). Pinned >= 43.0.1 (post-RUSTSEC-2026-0096).
+wasmtime = { version = "45", features = ["component-model", "async", "cranelift", "cache"] }
+wasmtime-wasi = { version = "45" }
+
 # Internal crates
 infrarust_protocol = { path = "crates/infrarust_protocol", version = "2.0.0-alpha.4" }
 infrarust-api = { path = "crates/infrarust-api", version = "2.0.0-alpha.4" }
@@ -125,6 +131,8 @@ infrarust_config = { path = "crates/infrarust_config", version = "2.0.0-alpha.4"
 infrarust-transport = { path = "crates/infrarust-transport", version = "2.0.0-alpha.4" }
 infrarust-core = { path = "crates/infrarust-core", version = "2.0.0-alpha.4" }
 infrarust_server_manager = { path = "crates/infrarust_server_manager", version = "2.0.0-alpha.4" }
+infrarust-plugin-wit = { path = "crates/infrarust-plugin-wit", version = "2.0.0-alpha.4" }
+infrarust-loader-wasm = { path = "crates/infrarust-loader-wasm", version = "2.0.0-alpha.4" }
 
 # Internal plugins
 infrarust-plugin-auth = { path = "plugins/infrarust-plugin-auth", version = "2.0.0-alpha.4" }

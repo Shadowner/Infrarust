@@ -1,0 +1,102 @@
+interface types {
+    type player-id = u64;
+    type server-id = string;
+    type protocol-version = s32;
+    type task-handle = u64;
+    type listener-handle = u64;
+    type uuid = string;
+
+    enum event-priority { first, early, normal, late, last }
+    enum connection-state { handshake, status, login, configuration, play }
+    enum packet-direction { serverbound, clientbound }
+    enum server-state { online, offline, starting, stopping, sleeping, crashed }
+    enum proxy-mode { passthrough, zero-copy, client-only, offline, server-only }
+    enum permission-level { player, admin }
+
+    // Minecraft rich text as the canonical text-component JSON string. WIT has
+    // no recursive types, so the native recursive Component cannot be a record
+    // (spec decision §18); it is pre-serialized to JSON at the boundary.
+    type component = string;
+
+    record profile-property {
+        name: string,
+        value: string,
+        signature: option<string>,
+    }
+    record game-profile {
+        uuid: uuid,
+        username: string,
+        properties: list<profile-property>,
+    }
+
+    record server-address {
+        host: string,
+        port: u16,
+    }
+    record server-config {
+        id: server-id,
+        network: option<string>,
+        addresses: list<server-address>,
+        domains: list<string>,
+        proxy-mode: proxy-mode,
+        limbo-handlers: list<string>,
+        max-players: u32,
+        disconnect-message: option<string>,
+        send-proxy-protocol: bool,
+        has-server-manager: bool,
+    }
+
+    record title-data {
+        title: component,
+        subtitle: component,
+        fade-in-ticks: s32,
+        stay-ticks: s32,
+        fade-out-ticks: s32,
+    }
+
+    // Kept for player.send-packet (gated raw-packet); the RawPacketEvent itself
+    // is deferred to the packets phase.
+    record raw-packet {
+        packet-id: s32,
+        data: list<u8>,
+    }
+
+    variant ban-target {
+        ip(string),
+        username(string),
+        uuid(uuid),
+    }
+    record ban-entry {
+        target: ban-target,
+        reason: option<string>,
+        expires-at: option<u64>,
+        created-at: u64,
+        source: string,
+    }
+
+    record plugin-dependency {
+        id: string,
+        optional: bool,
+    }
+    record plugin-metadata {
+        id: string,
+        name: string,
+        version: string,
+        authors: list<string>,
+        description: option<string>,
+        dependencies: list<plugin-dependency>,
+    }
+
+    variant player-error {
+        not-active,
+        disconnected,
+        send-failed(string),
+        server-not-found(string),
+        switch-failed(string),
+    }
+    variant service-error {
+        not-found(string),
+        operation-failed(string),
+        unavailable(string),
+    }
+}
