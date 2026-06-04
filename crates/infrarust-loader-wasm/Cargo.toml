@@ -21,6 +21,8 @@ wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 infrarust-api = { workspace = true }
@@ -34,4 +36,11 @@ uuid = { workspace = true }
 
 [features]
 default = []
-wasm = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:sha2", "dep:tokio"]
+wasm = [
+    "dep:wasmtime",
+    "dep:wasmtime-wasi",
+    "dep:sha2",
+    "dep:tokio",
+    "dep:bytes",
+    "dep:uuid",
+]

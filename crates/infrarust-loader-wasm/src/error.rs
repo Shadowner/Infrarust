@@ -67,6 +67,9 @@ pub enum WasmLoaderError {
         expected: String,
         found: String,
     },
+
+    #[error("plugin '{plugin_id}' imports a host interface it lacks the capability for: {reason}")]
+    CapabilityDenied { plugin_id: String, reason: String },
 }
 
 impl WasmLoaderError {

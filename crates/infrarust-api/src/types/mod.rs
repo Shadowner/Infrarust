@@ -12,7 +12,9 @@ mod protocol_version;
 mod raw_packet;
 mod server_id;
 
-pub use component::{ClickEvent, Component, HoverEvent, TitleData, format_placeholders};
+pub use component::{
+    ClickEvent, Component, ComponentParseError, HoverEvent, TitleData, format_placeholders,
+};
 pub use extensions::Extensions;
 pub use permission::Permission;
 pub use player_id::PlayerId;

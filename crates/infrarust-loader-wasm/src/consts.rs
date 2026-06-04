@@ -29,3 +29,9 @@ pub(crate) const WASMTIME_CACHE_TAG: &str = "wasmtime-45";
 
 /// WIT world version mixed into the cache key so a world bump invalidates artifacts.
 pub(crate) const WORLD_VERSION: &str = "0.1.0";
+
+/// Upper bound on a single async host service call (ban/server start-stop). Epoch
+/// interruption cannot preempt a guest parked inside a host `.await`, so each such
+/// call is wrapped in this timeout; on expiry the guest sees `service-error`.
+/// Generous so legitimately slow operations complete. TODO(config): make tunable.
+pub(crate) const HOST_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);

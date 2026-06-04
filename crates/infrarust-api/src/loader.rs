@@ -46,6 +46,16 @@ pub enum LoaderError {
 /// to the plugin runtime (e.g., WASM host functions).
 pub trait PluginContextFactory: Send + Sync {
     fn create_context(&self, plugin_id: &str) -> Arc<dyn PluginContext>;
+
+    /// Drops any cached context for `plugin_id`.
+    ///
+    /// Implementations that memoize contexts per plugin (so a loader and the
+    /// manager share one instance) must evict on disable/unload, or a later
+    /// reload would resurrect a stale context holding dangling listener
+    /// handles. The default implementation is a no-op (no memoization).
+    fn forget_context(&self, plugin_id: &str) {
+        let _ = plugin_id;
+    }
 }
 
 /// Discovers and loads plugins from a specific source format.

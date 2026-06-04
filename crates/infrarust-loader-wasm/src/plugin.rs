@@ -18,9 +18,9 @@ pub(crate) struct WasmPlugin {
     inner: Arc<Mutex<WasmInstance>>,
 }
 
-struct WasmInstance {
-    store: Store<PluginStoreState>,
-    bindings: PluginBindings,
+pub(crate) struct WasmInstance {
+    pub(crate) store: Store<PluginStoreState>,
+    pub(crate) bindings: PluginBindings,
 }
 
 impl WasmPlugin {
@@ -30,10 +30,15 @@ impl WasmPlugin {
         bindings: PluginBindings,
     ) -> Self {
         let plugin_id = metadata.id.clone();
+        let inner = Arc::new(Mutex::new(WasmInstance { store, bindings }));
+        if let Ok(mut guard) = inner.try_lock() {
+            let weak = Arc::downgrade(&inner);
+            guard.store.data_mut().set_instance_ref(weak);
+        }
         Self {
             metadata,
             plugin_id,
-            inner: Arc::new(Mutex::new(WasmInstance { store, bindings })),
+            inner,
         }
     }
 }
@@ -77,6 +82,11 @@ impl Plugin for WasmPlugin {
         Box::pin(async move {
             let mut guard = self.inner.lock().await;
             let WasmInstance { store, bindings } = &mut *guard;
+            if store.data().is_poisoned() {
+                tracing::warn!(plugin = %self.plugin_id,
+                    "skipping on_disable for a poisoned (previously trapped) wasm plugin");
+                return Ok(());
+            }
             store.data_mut().reset_epoch_budget();
             match bindings.infrarust_plugin_guest().call_on_disable(&mut *store).await {
                 Ok(Ok(())) => Ok(()),

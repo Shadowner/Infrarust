@@ -1,5 +1,5 @@
 [package]
-name = "fixture-memory-bomb"
+name = "fixture-event-modifier"
 version = "0.0.0"
 edition = "2024"
 publish = false

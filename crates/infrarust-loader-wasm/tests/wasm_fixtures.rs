@@ -5,11 +5,21 @@
 #![cfg(all(feature = "wasm", wasm_fixtures_available))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use infrarust_api::command::CommandManager;
+use infrarust_api::event::ResultedEvent;
+use infrarust_api::event::bus::EventBus;
+use infrarust_api::events::connection::{ServerPreConnectEvent, ServerPreConnectResult};
+use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::loader::{PluginContextFactory, PluginLoader};
+use infrarust_api::plugin::Plugin;
+use infrarust_api::services::config_service::ConfigService;
+use infrarust_api::services::player_registry::PlayerRegistry;
+use infrarust_api::types::{GameProfile, PlayerId, ProtocolVersion, ServerId};
 use infrarust_config::ProxyConfig;
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::PluginContextFactoryImpl;
@@ -20,7 +30,9 @@ use infrarust_core::services::server_manager_bridge::NoopServerManager;
 use infrarust_loader_wasm::{WasmPluginLoader, build_engine};
 
 mod mock_services;
-use mock_services::{MockBanService, MockConfigService, MockPlayerRegistry};
+use mock_services::{
+    CountingPlayerRegistry, MapConfigService, MockBanService, MockConfigService, MockPlayerRegistry,
+};
 
 const FIXTURE_DIR: &str = env!("INFRARUST_WASM_FIXTURE_DIR");
 
@@ -33,16 +45,27 @@ fn fresh_loader() -> WasmPluginLoader {
     WasmPluginLoader::new(build_engine(&config).expect("build engine"))
 }
 
-fn make_factory(plugins_dir: PathBuf) -> PluginContextFactoryImpl {
+struct TestEnv {
+    factory: PluginContextFactoryImpl,
+    event_bus: Arc<EventBusImpl>,
+    command_manager: Arc<CommandManagerImpl>,
+}
+
+fn make_env(
+    plugins_dir: PathBuf,
+    player_registry: Arc<dyn PlayerRegistry>,
+    config_service: Arc<dyn ConfigService>,
+) -> TestEnv {
     let event_bus = Arc::new(EventBusImpl::new());
+    let command_manager = Arc::new(CommandManagerImpl::new());
     let services = PluginServices {
-        event_bus: event_bus as Arc<dyn infrarust_api::event::bus::EventBus>,
-        player_registry: Arc::new(MockPlayerRegistry),
+        event_bus: Arc::clone(&event_bus) as Arc<dyn EventBus>,
+        player_registry,
         server_manager: Arc::new(NoopServerManager),
         ban_service: Arc::new(MockBanService),
-        command_manager: Arc::new(CommandManagerImpl::new()),
+        command_manager: Arc::clone(&command_manager) as Arc<dyn CommandManager>,
         scheduler: Arc::new(SchedulerImpl::new()),
-        config_service: Arc::new(MockConfigService),
+        config_service,
         plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
@@ -55,7 +78,56 @@ fn make_factory(plugins_dir: PathBuf) -> PluginContextFactoryImpl {
         proxy_info: infrarust_api::services::proxy_info::ProxyInfo::default(),
         plugins_dir,
     };
-    PluginContextFactoryImpl::new(services, std::collections::HashMap::new())
+    TestEnv {
+        factory: PluginContextFactoryImpl::new(services, HashMap::new()),
+        event_bus,
+        command_manager,
+    }
+}
+
+fn make_factory(plugins_dir: PathBuf) -> PluginContextFactoryImpl {
+    make_env(
+        plugins_dir,
+        Arc::new(MockPlayerRegistry),
+        Arc::new(MockConfigService),
+    )
+    .factory
+}
+
+async fn load_enabled(
+    loader: &WasmPluginLoader,
+    factory: &PluginContextFactoryImpl,
+    id: &str,
+) -> Box<dyn Plugin> {
+    let plugin = loader
+        .load(id, factory)
+        .await
+        .unwrap_or_else(|e| panic!("load {id}: {e}"));
+    let ctx = factory.create_context(id);
+    plugin
+        .on_enable(ctx.as_ref())
+        .await
+        .unwrap_or_else(|e| panic!("enable {id}: {e}"));
+    plugin
+}
+
+fn nil_profile(username: &str) -> GameProfile {
+    GameProfile {
+        uuid: uuid::Uuid::nil(),
+        username: username.to_string(),
+        properties: vec![],
+    }
+}
+
+fn stage(fixture: &str) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let plugins_dir = tmp.path().to_path_buf();
+    std::fs::copy(
+        fixture_path(fixture),
+        plugins_dir.join(format!("{fixture}.wasm")),
+    )
+    .unwrap();
+    (tmp, plugins_dir)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -194,5 +266,123 @@ async fn test_aot_cache_reused() {
     assert_eq!(
         mtime_first, mtime_second,
         ".cwasm must be reused (unchanged mtime), not recompiled"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_event_subscriber_receives_post_login() {
+    let (_tmp, plugins_dir) = stage("event-subscriber");
+    let loader = fresh_loader();
+    let env = make_env(
+        plugins_dir.clone(),
+        Arc::new(MockPlayerRegistry),
+        Arc::new(MockConfigService),
+    );
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "event-subscriber").await;
+
+    env.event_bus
+        .fire(PostLoginEvent {
+            profile: nil_profile("Steve"),
+            player_id: PlayerId::new(1),
+            protocol_version: ProtocolVersion::MINECRAFT_1_21,
+        })
+        .await;
+
+    let marker = plugins_dir.join("event-subscriber").join("post-login.marker");
+    let got = std::fs::read_to_string(&marker)
+        .expect("guest should have written post-login.marker on receipt");
+    assert_eq!(got, "Steve", "guest saw the joining player's username");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_event_modifier_applies_outcome() {
+    let (_tmp, plugins_dir) = stage("event-modifier");
+    let loader = fresh_loader();
+    let env = make_env(
+        plugins_dir.clone(),
+        Arc::new(MockPlayerRegistry),
+        Arc::new(MockConfigService),
+    );
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "event-modifier").await;
+
+    let event = ServerPreConnectEvent::new(
+        PlayerId::new(1),
+        nil_profile("Steve"),
+        ServerId::new("lobby"),
+    );
+    let event = env.event_bus.fire(event).await;
+
+    match event.result() {
+        ServerPreConnectResult::ConnectTo(target) => {
+            assert_eq!(target.as_str(), "backend-1", "guest redirected the connection");
+        }
+        _ => panic!("expected ServerPreConnectResult::ConnectTo(backend-1)"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_host_caller_reads_services() {
+    let (_tmp, plugins_dir) = stage("host-caller");
+    let loader = fresh_loader();
+    let mut values = HashMap::new();
+    values.insert("greeting".to_string(), "hello-wasm".to_string());
+    let env = make_env(
+        plugins_dir.clone(),
+        Arc::new(CountingPlayerRegistry { count: 7 }),
+        Arc::new(MapConfigService { values }),
+    );
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "host-caller").await;
+
+    let dir = plugins_dir.join("host-caller");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("count.txt")).expect("count.txt"),
+        "7",
+        "guest read online_count via the host"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("greeting.txt")).expect("greeting.txt"),
+        "hello-wasm",
+        "guest read a config value via the host"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_command_plugin_dispatch_reaches_guest() {
+    let (_tmp, plugins_dir) = stage("command-plugin");
+    let loader = fresh_loader();
+    let env = make_env(
+        plugins_dir.clone(),
+        Arc::new(MockPlayerRegistry),
+        Arc::new(MockConfigService),
+    );
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "command-plugin").await;
+
+    let found = env
+        .command_manager
+        .dispatch(None, "greet world peace", &MockPlayerRegistry)
+        .await;
+    assert!(found, "the guest-registered 'greet' command should be found");
+
+    let marker = plugins_dir.join("command-plugin").join("command.marker");
+    let got =
+        std::fs::read_to_string(&marker).expect("guest should record the command args on dispatch");
+    assert_eq!(got, "world,peace", "command args reached the guest");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_capability_denied_fails_to_load() {
+    let (_tmp, plugins_dir) = stage("capability-denied");
+    let loader = fresh_loader();
+    let factory = make_factory(plugins_dir.clone());
+    loader.discover(&plugins_dir).await.unwrap();
+
+    let result = loader.load("capability-denied", &factory).await;
+    assert!(
+        result.is_err(),
+        "a plugin importing an ungranted gated interface must fail to instantiate"
     );
 }

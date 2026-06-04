@@ -2,25 +2,27 @@
 //! native plugin context, the resource-limiter backing, and epoch-control wiring.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
+use tokio::sync::Mutex;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 use crate::consts::{EPOCH_DEADLINE_TICKS, MAX_EPOCH_YIELDS_BEFORE_TRAP, MEMORY_LIMIT};
 use crate::error::WasmLoaderError;
+use crate::plugin::WasmInstance;
 
 pub(crate) struct PluginStoreState {
     table: ResourceTable,
     wasi: WasiCtx,
     limits: StoreLimits,
-    #[allow(dead_code)]
     capabilities: CapabilitySet,
-    #[allow(dead_code)]
     ctx: Option<Arc<dyn PluginContext>>,
+    instance: Weak<Mutex<WasmInstance>>,
+    poisoned: bool,
     pub(crate) plugin_id: String,
     pub(crate) epoch_yields: u32,
 }
@@ -32,6 +34,34 @@ impl PluginStoreState {
 
     pub(crate) fn limits_mut(&mut self) -> &mut StoreLimits {
         &mut self.limits
+    }
+
+    pub(crate) fn table_mut(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+
+    pub(crate) fn ctx(&self) -> Option<&Arc<dyn PluginContext>> {
+        self.ctx.as_ref()
+    }
+
+    pub(crate) fn capabilities(&self) -> &CapabilitySet {
+        &self.capabilities
+    }
+
+    pub(crate) fn instance_ref(&self) -> Weak<Mutex<WasmInstance>> {
+        self.instance.clone()
+    }
+
+    pub(crate) fn set_instance_ref(&mut self, instance: Weak<Mutex<WasmInstance>>) {
+        self.instance = instance;
+    }
+
+    pub(crate) fn is_poisoned(&self) -> bool {
+        self.poisoned
+    }
+
+    pub(crate) fn set_poisoned(&mut self) {
+        self.poisoned = true;
     }
 }
 
@@ -80,6 +110,8 @@ pub(crate) fn build_load_state(
         limits: default_limits(),
         capabilities,
         ctx: Some(ctx),
+        instance: Weak::new(),
+        poisoned: false,
         plugin_id,
         epoch_yields: 0,
     })
@@ -92,6 +124,8 @@ pub(crate) fn build_probe_state(plugin_id: String) -> PluginStoreState {
         limits: default_limits(),
         capabilities: CapabilitySet::default(),
         ctx: None,
+        instance: Weak::new(),
+        poisoned: false,
         plugin_id,
         epoch_yields: 0,
     }

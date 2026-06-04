@@ -1840,6 +1840,7 @@ version = "2.0.0-alpha.7"
 dependencies = [
  "bytes",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio-util",
  "tracing",
@@ -1897,6 +1898,7 @@ dependencies = [
 name = "infrarust-loader-wasm"
 version = "2.0.0-alpha.7"
 dependencies = [
+ "bytes",
  "infrarust-api",
  "infrarust-core",
  "infrarust_config",

@@ -67,6 +67,15 @@ pub enum HoverEvent {
     ShowText(Box<Component>),
 }
 
+/// Error returned by [`Component::from_json`] when the input is not valid JSON.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ComponentParseError {
+    /// The input string was not well-formed JSON.
+    #[error("invalid text-component JSON: {0}")]
+    InvalidJson(String),
+}
+
 impl Component {
     /// Creates a new text component with the given content.
     pub fn text(text: impl Into<String>) -> Self {
@@ -507,6 +516,92 @@ impl Component {
     pub fn from_legacy_format(template: &str, vars: &[(&str, &str)]) -> Self {
         Self::from_legacy(&format_placeholders(template, vars))
     }
+
+    /// Parses a Minecraft JSON text component into a [`Component`].
+    ///
+    /// Accepts the three canonical shapes: a bare string (`"hi"`), an object
+    /// (`{"text":"hi","color":"red", ...}`), and an array (`["a", {"text":"b"}]`
+    /// where the first element is the parent and the rest become `extra`).
+    /// Fields this type does not model (e.g. `translate`, `score`, `selector`)
+    /// are dropped. Malformed JSON returns [`ComponentParseError::InvalidJson`];
+    /// this never panics, even on hostile input (the recursion depth is bounded
+    /// by `serde_json`'s parser limit).
+    pub fn from_json(s: &str) -> Result<Self, ComponentParseError> {
+        let value: serde_json::Value =
+            serde_json::from_str(s).map_err(|e| ComponentParseError::InvalidJson(e.to_string()))?;
+        Ok(Self::from_json_value(&value))
+    }
+
+    fn from_json_value(value: &serde_json::Value) -> Self {
+        use serde_json::Value;
+        match value {
+            Value::String(s) => Self::text(s.clone()),
+            Value::Bool(b) => Self::text(b.to_string()),
+            Value::Number(n) => Self::text(n.to_string()),
+            Value::Null => Self::text(""),
+            Value::Array(items) => {
+                let mut iter = items.iter();
+                let Some(first) = iter.next() else {
+                    return Self::text("");
+                };
+                let mut root = Self::from_json_value(first);
+                for item in iter {
+                    root.extra.push(Self::from_json_value(item));
+                }
+                root
+            }
+            Value::Object(map) => {
+                let mut c = Self::text(map.get("text").and_then(Value::as_str).unwrap_or(""));
+                c.color = map
+                    .get("color")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+                c.bold = map.get("bold").and_then(Value::as_bool);
+                c.italic = map.get("italic").and_then(Value::as_bool);
+                c.underlined = map.get("underlined").and_then(Value::as_bool);
+                c.strikethrough = map.get("strikethrough").and_then(Value::as_bool);
+                c.obfuscated = map.get("obfuscated").and_then(Value::as_bool);
+                if let Some(extra) = map.get("extra").and_then(Value::as_array) {
+                    c.extra = extra.iter().map(Self::from_json_value).collect();
+                }
+                c.click_event = map
+                    .get("clickEvent")
+                    .and_then(Value::as_object)
+                    .and_then(Self::parse_click_event);
+                c.hover_event = map
+                    .get("hoverEvent")
+                    .and_then(Value::as_object)
+                    .and_then(Self::parse_hover_event);
+                c
+            }
+        }
+    }
+
+    fn parse_click_event(
+        map: &serde_json::Map<String, serde_json::Value>,
+    ) -> Option<ClickEvent> {
+        let value = map.get("value").and_then(serde_json::Value::as_str)?;
+        match map.get("action").and_then(serde_json::Value::as_str)? {
+            "open_url" => Some(ClickEvent::OpenUrl(value.to_string())),
+            "suggest_command" => Some(ClickEvent::SuggestCommand(value.to_string())),
+            "run_command" => Some(ClickEvent::RunCommand(value.to_string())),
+            "copy_to_clipboard" => Some(ClickEvent::CopyToClipboard(value.to_string())),
+            _ => None,
+        }
+    }
+
+    fn parse_hover_event(
+        map: &serde_json::Map<String, serde_json::Value>,
+    ) -> Option<HoverEvent> {
+        if map.get("action").and_then(serde_json::Value::as_str)? != "show_text" {
+            return None;
+        }
+        // Modern form uses `contents`; the legacy form uses `value`.
+        let contents = map.get("contents").or_else(|| map.get("value"))?;
+        Some(HoverEvent::ShowText(Box::new(Self::from_json_value(
+            contents,
+        ))))
+    }
 }
 
 /// Replaces `{key}` placeholders in a template string.
@@ -843,5 +938,74 @@ mod tests {
         assert_eq!(c.color.as_deref(), Some("yellow"));
         assert_eq!(c.extra[0].text, "...");
         assert_eq!(c.extra[0].color.as_deref(), Some("white"));
+    }
+
+    #[test]
+    fn from_json_bare_string() {
+        let c = Component::from_json("\"hello\"").unwrap();
+        assert_eq!(c.text, "hello");
+        assert!(c.color.is_none());
+    }
+
+    #[test]
+    fn from_json_object() {
+        let c = Component::from_json(r#"{"text":"hi","color":"red","bold":true}"#).unwrap();
+        assert_eq!(c.text, "hi");
+        assert_eq!(c.color.as_deref(), Some("red"));
+        assert_eq!(c.bold, Some(true));
+    }
+
+    #[test]
+    fn from_json_array_first_is_parent() {
+        let c = Component::from_json(r#"["a",{"text":"b","color":"gold"}]"#).unwrap();
+        assert_eq!(c.text, "a");
+        assert_eq!(c.extra.len(), 1);
+        assert_eq!(c.extra[0].text, "b");
+        assert_eq!(c.extra[0].color.as_deref(), Some("gold"));
+    }
+
+    #[test]
+    fn from_json_roundtrip() {
+        let original = Component::text("Hi ")
+            .color("gold")
+            .bold()
+            .append(Component::text("there").color("white"))
+            .click(ClickEvent::RunCommand("/say hi".into()));
+        let parsed = Component::from_json(&original.to_json()).unwrap();
+        assert_eq!(parsed.text, "Hi ");
+        assert_eq!(parsed.color.as_deref(), Some("gold"));
+        assert_eq!(parsed.bold, Some(true));
+        assert_eq!(parsed.extra.len(), 1);
+        assert_eq!(parsed.extra[0].text, "there");
+        assert!(matches!(
+            parsed.click_event,
+            Some(ClickEvent::RunCommand(ref c)) if c == "/say hi"
+        ));
+    }
+
+    #[test]
+    fn from_json_hover_contents_roundtrip() {
+        let original = Component::text("hover")
+            .hover(HoverEvent::ShowText(Box::new(Component::text("tip").color("aqua"))));
+        let parsed = Component::from_json(&original.to_json()).unwrap();
+        match parsed.hover_event {
+            Some(HoverEvent::ShowText(inner)) => {
+                assert_eq!(inner.text, "tip");
+                assert_eq!(inner.color.as_deref(), Some("aqua"));
+            }
+            _ => panic!("expected show_text hover event"),
+        }
+    }
+
+    #[test]
+    fn from_json_malformed_is_err_not_panic() {
+        assert!(Component::from_json("{not json").is_err());
+        assert!(Component::from_json("").is_err());
+    }
+
+    #[test]
+    fn from_json_unknown_fields_dropped() {
+        let c = Component::from_json(r#"{"text":"x","translate":"k","extra_unknown":1}"#).unwrap();
+        assert_eq!(c.text, "x");
     }
 }

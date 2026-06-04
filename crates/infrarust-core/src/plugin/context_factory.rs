@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
@@ -20,6 +20,7 @@ pub struct PluginPermissions {
 pub struct PluginContextFactoryImpl {
     services: PluginServices,
     plugin_configs: HashMap<String, PluginPermissions>,
+    contexts: Mutex<HashMap<String, Weak<PluginContextImpl>>>,
 }
 
 impl PluginContextFactoryImpl {
@@ -30,12 +31,18 @@ impl PluginContextFactoryImpl {
         Self {
             services,
             plugin_configs,
+            contexts: Mutex::new(HashMap::new()),
         }
     }
 }
 
 impl PluginContextFactory for PluginContextFactoryImpl {
     fn create_context(&self, plugin_id: &str) -> Arc<dyn PluginContext> {
+        let mut cache = self.contexts.lock().expect("lock poisoned");
+        if let Some(existing) = cache.get(plugin_id).and_then(Weak::upgrade) {
+            return existing;
+        }
+
         let perms = self
             .plugin_configs
             .get(plugin_id)
@@ -56,7 +63,7 @@ impl PluginContextFactory for PluginContextFactoryImpl {
             set
         };
 
-        Arc::new(PluginContextImpl::new(
+        let ctx = Arc::new(PluginContextImpl::new(
             plugin_id.to_string(),
             Arc::clone(&self.services.event_bus),
             Arc::clone(&self.services.player_registry),
@@ -73,6 +80,13 @@ impl PluginContextFactory for PluginContextFactoryImpl {
             self.services.proxy_info.clone(),
             self.services.plugins_dir.clone(),
             capabilities,
-        ))
+        ));
+
+        cache.insert(plugin_id.to_string(), Arc::downgrade(&ctx));
+        ctx
+    }
+
+    fn forget_context(&self, plugin_id: &str) {
+        self.contexts.lock().expect("lock poisoned").remove(plugin_id);
     }
 }

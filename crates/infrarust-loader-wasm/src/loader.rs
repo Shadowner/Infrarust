@@ -111,6 +111,9 @@ impl PluginLoader for WasmPluginLoader {
             let capabilities = ctx.capabilities().clone();
             let data_dir = ctx.data_dir();
 
+            let linker = build_linker(&self.engine, plugin_id, &capabilities)
+                .map_err(|e| e.into_loader_error(plugin_id))?;
+
             let state = build_load_state(plugin_id.to_owned(), ctx, capabilities, &data_dir)
                 .map_err(|e| e.into_loader_error(plugin_id))?;
             let mut store = Store::new(&self.engine, state);
@@ -119,17 +122,9 @@ impl PluginLoader for WasmPluginLoader {
                 s.limits_mut() as &mut dyn wasmtime::ResourceLimiter
             });
 
-            let linker =
-                build_linker(&self.engine, plugin_id).map_err(|e| e.into_loader_error(plugin_id))?;
             let bindings = PluginBindings::instantiate_async(&mut store, &entry.component, &linker)
                 .await
-                .map_err(|e| {
-                    WasmLoaderError::Instantiate {
-                        plugin_id: plugin_id.to_owned(),
-                        reason: e.to_string(),
-                    }
-                    .into_loader_error(plugin_id)
-                })?;
+                .map_err(|e| map_instantiate_error(plugin_id, &e).into_loader_error(plugin_id))?;
 
             Ok(Box::new(WasmPlugin::new(entry.metadata, store, bindings)) as Box<dyn Plugin>)
         })
@@ -140,6 +135,21 @@ impl PluginLoader for WasmPluginLoader {
             tracing::debug!(plugin = %plugin_id, "wasm plugin unloaded");
             Ok(())
         })
+    }
+}
+
+fn map_instantiate_error(plugin_id: &str, e: &wasmtime::Error) -> WasmLoaderError {
+    let reason = e.to_string();
+    if reason.contains("infrarust:plugin/") {
+        WasmLoaderError::CapabilityDenied {
+            plugin_id: plugin_id.to_owned(),
+            reason,
+        }
+    } else {
+        WasmLoaderError::Instantiate {
+            plugin_id: plugin_id.to_owned(),
+            reason,
+        }
     }
 }
 

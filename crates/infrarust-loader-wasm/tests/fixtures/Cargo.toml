@@ -1,6 +1,16 @@
 [workspace]
 resolver = "2"
-members = ["hello", "trap-on-purpose", "cpu-spin", "memory-bomb"]
+members = [
+    "hello",
+    "trap-on-purpose",
+    "cpu-spin",
+    "memory-bomb",
+    "event-subscriber",
+    "event-modifier",
+    "host-caller",
+    "command-plugin",
+    "capability-denied",
+]
 
 [workspace.dependencies]
 wit-bindgen = "0.51"
