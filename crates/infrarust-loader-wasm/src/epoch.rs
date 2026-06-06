@@ -16,8 +16,7 @@ impl EpochTicker {
         let handle = std::thread::Builder::new()
             .name("infrarust-wasm-epoch".to_owned())
             .spawn(move || {
-                while let Err(RecvTimeoutError::Timeout) =
-                    stop_rx.recv_timeout(EPOCH_TICK_INTERVAL)
+                while let Err(RecvTimeoutError::Timeout) = stop_rx.recv_timeout(EPOCH_TICK_INTERVAL)
                 {
                     engine.increment_epoch();
                 }

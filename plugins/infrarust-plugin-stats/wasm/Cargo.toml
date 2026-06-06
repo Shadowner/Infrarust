@@ -1,0 +1,23 @@
+[package]
+name = "infrarust-plugin-stats-wasm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+infrarust-plugin-stats = { path = "../" }
+infrarust-plugin-sdk = { path = "../../../crates/infrarust-plugin-sdk" }
+
+[workspace]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"

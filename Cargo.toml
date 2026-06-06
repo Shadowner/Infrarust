@@ -9,17 +9,22 @@ members = [
     "crates/infrarust-transport",
     "crates/infrarust-plugin-wit",
     "crates/infrarust-loader-wasm",
+    "crates/infrarust-plugin-sdk",
+    "crates/infrarust-plugin-macros",
     "crates/infrarust",
     "plugins/infrarust-plugin-auth",
     "plugins/infrarust-plugin-hello",
     "plugins/infrarust-plugin-server-wake",
     "plugins/infrarust-plugin-admin-api",
+    "plugins/infrarust-plugin-stats",
+    "plugins/infrarust-plugin-stats/native",
     "tools/infrarust-motd",
     "tools/registry-extractor",
     "tools/stress-test",
 ]
 exclude = [
     "crates/infrarust-loader-wasm/tests/fixtures",
+    "plugins/infrarust-plugin-stats/wasm",
 ]
 
 [workspace.dependencies]
@@ -127,6 +132,12 @@ tempfile = "3.27.0"
 wasmtime = { version = "45", features = ["component-model", "async", "cranelift", "cache"] }
 wasmtime-wasi = { version = "45" }
 
+# WASM plugin SDK (guest) + proc-macros
+wit-bindgen = "0.51"
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+
 # Internal crates
 infrarust_protocol = { path = "crates/infrarust_protocol", version = "2.0.0-alpha.4" }
 infrarust-api = { path = "crates/infrarust-api", version = "2.0.0-alpha.4" }
@@ -136,12 +147,16 @@ infrarust-core = { path = "crates/infrarust-core", version = "2.0.0-alpha.4" }
 infrarust_server_manager = { path = "crates/infrarust_server_manager", version = "2.0.0-alpha.4" }
 infrarust-plugin-wit = { path = "crates/infrarust-plugin-wit", version = "2.0.0-alpha.4" }
 infrarust-loader-wasm = { path = "crates/infrarust-loader-wasm", version = "2.0.0-alpha.4" }
+infrarust-plugin-sdk = { path = "crates/infrarust-plugin-sdk", version = "2.0.0-alpha.4" }
+infrarust-plugin-macros = { path = "crates/infrarust-plugin-macros", version = "2.0.0-alpha.4" }
 
 # Internal plugins
 infrarust-plugin-auth = { path = "plugins/infrarust-plugin-auth", version = "2.0.0-alpha.4" }
 infrarust-plugin-hello = { path = "plugins/infrarust-plugin-hello", version = "2.0.0-alpha.4" }
 infrarust-plugin-server-wake = { path = "plugins/infrarust-plugin-server-wake", version = "2.0.0-alpha.4" }
 infrarust-plugin-admin-api = { path = "plugins/infrarust-plugin-admin-api", version = "2.0.0-alpha.4" }
+infrarust-plugin-stats = { path = "plugins/infrarust-plugin-stats", version = "2.0.0-alpha.4" }
+infrarust-plugin-stats-native = { path = "plugins/infrarust-plugin-stats/native", version = "2.0.0-alpha.4" }
 
 [workspace.lints.clippy]
 all = "warn"

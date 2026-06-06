@@ -22,7 +22,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-          
+          targets: wasm32-wasip2
+
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
@@ -36,5 +37,17 @@ jobs:
         run: cargo clippy -- -D warnings
         
       - name: Run tests
-
         run: cargo test
+
+      - name: Run WASM loader tests
+        run: |
+          set -o pipefail
+          cargo test -p infrarust-loader-wasm --features wasm 2>&1 | tee wasm-tests.log
+          grep -Eq 'running [1-9][0-9]* tests' wasm-tests.log \
+            || { echo "::error::WASM test suite ran 0 tests"; exit 1; }
+
+      - name: Lint excluded stats wasm plugin
+        working-directory: plugins/infrarust-plugin-stats/wasm
+        run: |
+          cargo fmt -- --check
+          cargo clippy --release --target wasm32-wasip2 -- -D warnings

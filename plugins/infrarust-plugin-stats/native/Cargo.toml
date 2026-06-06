@@ -1,0 +1,17 @@
+[package]
+name = "infrarust-plugin-stats-native"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Native build of the Infrarust stats plugin"
+keywords = ["minecraft", "proxy", "plugin"]
+categories = ["game-development"]
+
+[lints]
+workspace = true
+
+[dependencies]
+infrarust-plugin-stats = { workspace = true }
+infrarust-api = { workspace = true }
+tracing = { workspace = true }

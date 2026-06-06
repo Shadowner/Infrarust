@@ -27,12 +27,14 @@ pub(crate) async fn extract_metadata(
             reason: e.to_string(),
         })?;
 
-    let wit_md = bindings.infrarust_plugin_guest().call_metadata(&mut store).await.map_err(|e| {
-        WasmLoaderError::Metadata {
+    let wit_md = bindings
+        .infrarust_plugin_guest()
+        .call_metadata(&mut store)
+        .await
+        .map_err(|e| WasmLoaderError::Metadata {
             path: path.to_path_buf(),
             reason: format!("metadata() trapped: {e}"),
-        }
-    })?;
+        })?;
 
     let mut metadata = PluginMetadata::new(wit_md.id, wit_md.name, wit_md.version);
     for author in wit_md.authors {

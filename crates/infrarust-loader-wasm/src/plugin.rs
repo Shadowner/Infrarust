@@ -57,7 +57,11 @@ impl Plugin for WasmPlugin {
             let mut guard = self.inner.lock().await;
             let WasmInstance { store, bindings } = &mut *guard;
             store.data_mut().reset_epoch_budget();
-            match bindings.infrarust_plugin_guest().call_on_enable(&mut *store).await {
+            match bindings
+                .infrarust_plugin_guest()
+                .call_on_enable(&mut *store)
+                .await
+            {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(message)) => {
                     tracing::warn!(plugin = %self.plugin_id, %message,
@@ -88,7 +92,11 @@ impl Plugin for WasmPlugin {
                 return Ok(());
             }
             store.data_mut().reset_epoch_budget();
-            match bindings.infrarust_plugin_guest().call_on_disable(&mut *store).await {
+            match bindings
+                .infrarust_plugin_guest()
+                .call_on_disable(&mut *store)
+                .await
+            {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(message)) => {
                     tracing::warn!(plugin = %self.plugin_id, %message,

@@ -23,9 +23,9 @@ use infrarust_api::plugin::PluginContext;
 use infrarust_api::types::{ProtocolVersion, ServerId};
 use tokio::sync::Mutex;
 
+use crate::bindings::exports::infrarust::plugin::guest as wg;
 use crate::bindings::infrarust::plugin::event_bus::EventKind;
 use crate::bindings::infrarust::plugin::types as wt;
-use crate::bindings::exports::infrarust::plugin::guest as wg;
 use crate::convert;
 use crate::plugin::WasmInstance;
 
@@ -49,7 +49,9 @@ pub(crate) fn register_event_handler(
     match kind {
         EventKind::PreLogin => bus.subscribe_async::<PreLoginEvent, _>(priority, move |ev| {
             let wit = ev_pre_login(ev);
-            Box::pin(dispatch(instance.clone(), wit, move |o| apply_pre_login(o, ev)))
+            Box::pin(dispatch(instance.clone(), wit, move |o| {
+                apply_pre_login(o, ev)
+            }))
         }),
         EventKind::PostLogin => bus.subscribe_async::<PostLoginEvent, _>(priority, move |ev| {
             let wit = ev_post_login(ev);
@@ -99,33 +101,36 @@ pub(crate) fn register_event_handler(
                 }))
             })
         }
-        EventKind::PlayerChooseInitialServer => {
-            bus.subscribe_async::<PlayerChooseInitialServerEvent, _>(priority, move |ev| {
+        EventKind::PlayerChooseInitialServer => bus
+            .subscribe_async::<PlayerChooseInitialServerEvent, _>(priority, move |ev| {
                 let wit = ev_player_choose_initial_server(ev);
                 Box::pin(dispatch(instance.clone(), wit, move |o| {
                     apply_player_choose_initial_server(o, ev);
                 }))
-            })
-        }
+            }),
         EventKind::ProxyPing => bus.subscribe_async::<ProxyPingEvent, _>(priority, move |ev| {
             let wit = ev_proxy_ping(ev);
-            Box::pin(dispatch(instance.clone(), wit, move |o| apply_proxy_ping(o, ev)))
+            Box::pin(dispatch(instance.clone(), wit, move |o| {
+                apply_proxy_ping(o, ev)
+            }))
         }),
         EventKind::ProxyInitialize => {
             bus.subscribe_async::<ProxyInitializeEvent, _>(priority, move |_ev| {
-                Box::pin(dispatch(instance.clone(), wg::Event::ProxyInitialize, |_| {}))
+                Box::pin(dispatch(
+                    instance.clone(),
+                    wg::Event::ProxyInitialize,
+                    |_| {},
+                ))
             })
         }
-        EventKind::ProxyShutdown => {
-            bus.subscribe_async::<ProxyShutdownEvent, _>(priority, move |_ev| {
+        EventKind::ProxyShutdown => bus
+            .subscribe_async::<ProxyShutdownEvent, _>(priority, move |_ev| {
                 Box::pin(dispatch(instance.clone(), wg::Event::ProxyShutdown, |_| {}))
-            })
-        }
-        EventKind::ConfigReload => {
-            bus.subscribe_async::<ConfigReloadEvent, _>(priority, move |_ev| {
+            }),
+        EventKind::ConfigReload => bus
+            .subscribe_async::<ConfigReloadEvent, _>(priority, move |_ev| {
                 Box::pin(dispatch(instance.clone(), wg::Event::ConfigReload, |_| {}))
-            })
-        }
+            }),
         EventKind::ServerStateChange => {
             bus.subscribe_async::<ServerStateChangeEvent, _>(priority, move |ev| {
                 let wit = ev_server_state_change(ev);
@@ -134,7 +139,9 @@ pub(crate) fn register_event_handler(
         }
         EventKind::ChatMessage => bus.subscribe_async::<ChatMessageEvent, _>(priority, move |ev| {
             let wit = ev_chat_message(ev);
-            Box::pin(dispatch(instance.clone(), wit, move |o| apply_chat_message(o, ev)))
+            Box::pin(dispatch(instance.clone(), wit, move |o| {
+                apply_chat_message(o, ev)
+            }))
         }),
     }
 }

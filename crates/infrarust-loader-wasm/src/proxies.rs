@@ -17,7 +17,11 @@ pub(crate) struct WasmCommandHandler {
 }
 
 impl WasmCommandHandler {
-    pub(crate) fn new(callback_id: u64, instance: Weak<Mutex<WasmInstance>>, plugin_id: String) -> Self {
+    pub(crate) fn new(
+        callback_id: u64,
+        instance: Weak<Mutex<WasmInstance>>,
+        plugin_id: String,
+    ) -> Self {
         Self {
             callback_id,
             instance,

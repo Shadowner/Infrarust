@@ -1,0 +1,20 @@
+[package]
+name = "infrarust-plugin-macros"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Proc-macros for authoring Infrarust WASM plugins with infrarust-plugin-sdk"
+keywords = ["minecraft", "proxy", "plugin", "wasm", "macros"]
+categories = ["game-development", "wasm"]
+
+[lib]
+proc-macro = true
+
+[lints]
+workspace = true
+
+[dependencies]
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }

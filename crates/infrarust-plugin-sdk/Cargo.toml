@@ -1,0 +1,16 @@
+[package]
+name = "infrarust-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Guest SDK for authoring Infrarust WASM plugins (infrarust:plugin@0.1.0)"
+keywords = ["minecraft", "proxy", "plugin", "wasm", "wit"]
+categories = ["game-development", "wasm"]
+
+[lints]
+workspace = true
+
+[dependencies]
+wit-bindgen = { workspace = true }
+infrarust-plugin-macros = { workspace = true }

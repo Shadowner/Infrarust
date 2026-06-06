@@ -1,4 +1,3 @@
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -83,7 +82,13 @@ impl PluginLoader for WasmPluginLoader {
                     .map_err(|e| e.into_loader_error(&label))?;
 
                 metadatas.push(metadata.clone());
-                discovered.insert(metadata.id.clone(), DiscoveredWasm { metadata, component });
+                discovered.insert(
+                    metadata.id.clone(),
+                    DiscoveredWasm {
+                        metadata,
+                        component,
+                    },
+                );
             }
 
             *self.discovered.write().expect("discovered lock poisoned") = discovered;
@@ -157,12 +162,11 @@ fn scan_wasm_files(dir: &Path) -> Result<Vec<PathBuf>, LoaderError> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
-        let entries = std::fs::read_dir(&current).map_err(|source| {
-            LoaderError::DirectoryNotAccessible {
+        let entries =
+            std::fs::read_dir(&current).map_err(|source| LoaderError::DirectoryNotAccessible {
                 path: current.clone(),
                 source,
-            }
-        })?;
+            })?;
         for entry in entries {
             let entry = entry.map_err(|source| LoaderError::DirectoryNotAccessible {
                 path: current.clone(),

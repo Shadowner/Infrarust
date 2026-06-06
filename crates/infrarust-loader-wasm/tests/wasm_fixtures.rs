@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use infrarust_api::command::CommandManager;
@@ -31,7 +31,8 @@ use infrarust_loader_wasm::{WasmPluginLoader, build_engine};
 
 mod mock_services;
 use mock_services::{
-    CountingPlayerRegistry, MapConfigService, MockBanService, MockConfigService, MockPlayerRegistry,
+    CountingPlayerRegistry, MapConfigService, MockBanService, MockConfigService,
+    MockPlayerRegistry, RecordingPlayerRegistry,
 };
 
 const FIXTURE_DIR: &str = env!("INFRARUST_WASM_FIXTURE_DIR");
@@ -119,6 +120,7 @@ fn nil_profile(username: &str) -> GameProfile {
     }
 }
 
+/// Stages a single fixture under a fresh temp plugin dir.
 fn stage(fixture: &str) -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let plugins_dir = tmp.path().to_path_buf();
@@ -154,10 +156,34 @@ async fn test_hello_loads_enables_disables() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_sdk_smoke_loads_via_library_split() {
+    let (_tmp, plugins_dir) = stage("sdk-smoke");
+    let loader = fresh_loader();
+    let factory = make_factory(plugins_dir.clone());
+
+    let metas = loader.discover(&plugins_dir).await.unwrap();
+    assert!(
+        metas.iter().any(|m| m.id == "sdk-smoke"),
+        "sdk-smoke metadata read through the SDK library split"
+    );
+
+    let _plugin = load_enabled(&loader, &factory, "sdk-smoke").await;
+    let marker = plugins_dir.join("sdk-smoke").join("sdk-smoke.marker");
+    assert!(
+        marker.exists(),
+        "on_enable ran through the SDK-exported component"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trap_on_purpose_is_contained() {
     let tmp = tempfile::tempdir().unwrap();
     let plugins_dir = tmp.path().to_path_buf();
-    std::fs::copy(fixture_path("trap-on-purpose"), plugins_dir.join("trap.wasm")).unwrap();
+    std::fs::copy(
+        fixture_path("trap-on-purpose"),
+        plugins_dir.join("trap.wasm"),
+    )
+    .unwrap();
     std::fs::copy(fixture_path("hello"), plugins_dir.join("hello.wasm")).unwrap();
 
     let loader = fresh_loader();
@@ -195,14 +221,14 @@ async fn test_cpu_spin_interrupted_by_epoch() {
     let factory = make_factory(plugins_dir.clone());
     loader.discover(&plugins_dir).await.unwrap();
 
-    let plugin = loader.load("cpu-spin", &factory).await.expect("load cpu-spin");
+    let plugin = loader
+        .load("cpu-spin", &factory)
+        .await
+        .expect("load cpu-spin");
     let ctx = factory.create_context("cpu-spin");
 
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(10),
-        plugin.on_enable(ctx.as_ref()),
-    )
-    .await;
+    let outcome =
+        tokio::time::timeout(Duration::from_secs(10), plugin.on_enable(ctx.as_ref())).await;
     match outcome {
         Ok(result) => assert!(result.is_err(), "cpu-spin must trap (Err), not return Ok"),
         Err(_) => panic!("cpu-spin was not interrupted within 10s — epoch interruption broken"),
@@ -225,12 +251,9 @@ async fn test_memory_bomb_refused_by_limiter() {
         .expect("load memory-bomb");
     let ctx = factory.create_context("memory-bomb");
 
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(10),
-        plugin.on_enable(ctx.as_ref()),
-    )
-    .await
-    .expect("memory-bomb should fail fast, not hang/OOM");
+    let outcome = tokio::time::timeout(Duration::from_secs(10), plugin.on_enable(ctx.as_ref()))
+        .await
+        .expect("memory-bomb should fail fast, not hang/OOM");
     assert!(
         outcome.is_err(),
         "memory-bomb must be refused by the resource limiter (Err)"
@@ -281,6 +304,7 @@ async fn test_event_subscriber_receives_post_login() {
     loader.discover(&plugins_dir).await.unwrap();
     let _plugin = load_enabled(&loader, &env.factory, "event-subscriber").await;
 
+    // Fire a PostLoginEvent on the same bus the guest subscribed to.
     env.event_bus
         .fire(PostLoginEvent {
             profile: nil_profile("Steve"),
@@ -289,7 +313,9 @@ async fn test_event_subscriber_receives_post_login() {
         })
         .await;
 
-    let marker = plugins_dir.join("event-subscriber").join("post-login.marker");
+    let marker = plugins_dir
+        .join("event-subscriber")
+        .join("post-login.marker");
     let got = std::fs::read_to_string(&marker)
         .expect("guest should have written post-login.marker on receipt");
     assert_eq!(got, "Steve", "guest saw the joining player's username");
@@ -316,7 +342,11 @@ async fn test_event_modifier_applies_outcome() {
 
     match event.result() {
         ServerPreConnectResult::ConnectTo(target) => {
-            assert_eq!(target.as_str(), "backend-1", "guest redirected the connection");
+            assert_eq!(
+                target.as_str(),
+                "backend-1",
+                "guest redirected the connection"
+            );
         }
         _ => panic!("expected ServerPreConnectResult::ConnectTo(backend-1)"),
     }
@@ -365,12 +395,44 @@ async fn test_command_plugin_dispatch_reaches_guest() {
         .command_manager
         .dispatch(None, "greet world peace", &MockPlayerRegistry)
         .await;
-    assert!(found, "the guest-registered 'greet' command should be found");
+    assert!(
+        found,
+        "the guest-registered 'greet' command should be found"
+    );
 
     let marker = plugins_dir.join("command-plugin").join("command.marker");
     let got =
         std::fs::read_to_string(&marker).expect("guest should record the command args on dispatch");
     assert_eq!(got, "world,peace", "command args reached the guest");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_stats_count_command() {
+    let (_tmp, plugins_dir) = stage("stats");
+    let loader = fresh_loader();
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let env = make_env(
+        plugins_dir.clone(),
+        Arc::new(RecordingPlayerRegistry {
+            count: 7,
+            sent: Arc::clone(&sent),
+        }),
+        Arc::new(MockConfigService),
+    );
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "stats").await;
+
+    let found = env
+        .command_manager
+        .dispatch(Some(PlayerId::new(1)), "count", &MockPlayerRegistry)
+        .await;
+    assert!(found, "the stats 'count' command should be registered");
+
+    assert_eq!(
+        sent.lock().unwrap().as_slice(),
+        ["Online: 7".to_string()],
+        "wasm /count replied with the formatted online count"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

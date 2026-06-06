@@ -1,0 +1,12 @@
+[package]
+name = "infrarust-plugin-stats"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Shared logic for the Infrarust stats plugin (native + WASM double distribution)"
+keywords = ["minecraft", "proxy", "plugin"]
+categories = ["game-development"]
+
+[lints]
+workspace = true

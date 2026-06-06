@@ -10,10 +10,13 @@ members = [
     "host-caller",
     "command-plugin",
     "capability-denied",
+    "sdk-smoke",
 ]
 
 [workspace.dependencies]
 wit-bindgen = "0.51"
+infrarust-plugin-sdk = { path = "../../../infrarust-plugin-sdk" }
+infrarust-plugin-macros = { path = "../../../infrarust-plugin-macros" }
 
 [profile.release]
 opt-level = "s"

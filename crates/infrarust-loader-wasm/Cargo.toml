@@ -28,6 +28,7 @@ uuid = { workspace = true, optional = true }
 infrarust-api = { workspace = true }
 infrarust-core = { workspace = true }
 infrarust_config = { workspace = true }
+infrarust-plugin-stats-native = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tempfile = { workspace = true }

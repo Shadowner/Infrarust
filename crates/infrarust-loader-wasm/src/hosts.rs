@@ -28,7 +28,9 @@ async fn await_service<T>(
     match timeout(HOST_CALL_TIMEOUT, fut).await {
         Ok(Ok(value)) => Ok(value),
         Ok(Err(e)) => Err(convert::service_error_to_wit(e)),
-        Err(_) => Err(wt::ServiceError::Unavailable("host call timed out".to_string())),
+        Err(_) => Err(wt::ServiceError::Unavailable(
+            "host call timed out".to_string(),
+        )),
     }
 }
 
@@ -66,7 +68,8 @@ impl event_bus::Host for PluginStoreState {
             return Err(no_ctx());
         };
         let native_priority = dispatch::priority_from_wit(priority);
-        let handle = dispatch::register_event_handler(ctx.as_ref(), instance, kind, native_priority);
+        let handle =
+            dispatch::register_event_handler(ctx.as_ref(), instance, kind, native_priority);
         Ok(handle.as_u64())
     }
 
@@ -185,7 +188,10 @@ impl player_registry::HostPlayer for PluginStoreState {
         Ok(self.resolve_player(&self_)?.id().as_u64())
     }
 
-    async fn profile(&mut self, self_: Resource<PlayerHandle>) -> wasmtime::Result<wt::GameProfile> {
+    async fn profile(
+        &mut self,
+        self_: Resource<PlayerHandle>,
+    ) -> wasmtime::Result<wt::GameProfile> {
         let p = self.resolve_player(&self_)?;
         Ok(convert::game_profile_to_wit(p.profile()))
     }

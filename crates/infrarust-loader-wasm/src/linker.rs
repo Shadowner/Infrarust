@@ -14,8 +14,13 @@ use crate::store_state::PluginStoreState;
 
 macro_rules! link {
     ($linker:expr, $plugin_id:expr, $iface:ident) => {
-        $iface::add_to_linker::<_, HasSelf<_>>(&mut $linker, |state| state)
-            .map_err(|e| instantiate_err($plugin_id, &format!("{} link failed", stringify!($iface)), e))?;
+        $iface::add_to_linker::<_, HasSelf<_>>(&mut $linker, |state| state).map_err(|e| {
+            instantiate_err(
+                $plugin_id,
+                &format!("{} link failed", stringify!($iface)),
+                e,
+            )
+        })?;
     };
 }
 
