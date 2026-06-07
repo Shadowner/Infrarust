@@ -9,8 +9,6 @@ wit_bindgen::generate!({
     generate_all,
 });
 
-use exports::infrarust::plugin::guest::{Event, EventOutcome, Guest, PluginMetadata};
-
 use crate::infrarust::plugin::ban_service;
 use crate::infrarust::plugin::types::BanTarget;
 

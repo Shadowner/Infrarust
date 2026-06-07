@@ -15,6 +15,7 @@ use infrarust_api::events::lifecycle::{
     DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PostLoginEvent, PreLoginEvent,
     PreLoginResult,
 };
+use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_api::events::proxy::{
     ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent, ProxyShutdownEvent,
     ServerStateChangeEvent,
@@ -30,13 +31,7 @@ use crate::convert;
 use crate::plugin::WasmInstance;
 
 pub(crate) fn priority_from_wit(p: wt::EventPriority) -> EventPriority {
-    match p {
-        wt::EventPriority::First => EventPriority::FIRST,
-        wt::EventPriority::Early => EventPriority::EARLY,
-        wt::EventPriority::Normal => EventPriority::NORMAL,
-        wt::EventPriority::Late => EventPriority::LATE,
-        wt::EventPriority::Last => EventPriority::LAST,
-    }
+    EventPriority::custom(p)
 }
 
 pub(crate) fn register_event_handler(
@@ -44,39 +39,40 @@ pub(crate) fn register_event_handler(
     instance: Weak<Mutex<WasmInstance>>,
     kind: EventKind,
     priority: EventPriority,
+    listener_id: u64,
 ) -> ListenerHandle {
     let bus = ctx.event_bus();
     match kind {
         EventKind::PreLogin => bus.subscribe_async::<PreLoginEvent, _>(priority, move |ev| {
             let wit = ev_pre_login(ev);
-            Box::pin(dispatch(instance.clone(), wit, move |o| {
+            Box::pin(dispatch(instance.clone(), listener_id, wit, move |o| {
                 apply_pre_login(o, ev)
             }))
         }),
         EventKind::PostLogin => bus.subscribe_async::<PostLoginEvent, _>(priority, move |ev| {
             let wit = ev_post_login(ev);
-            Box::pin(dispatch(instance.clone(), wit, |_| {}))
+            Box::pin(dispatch(instance.clone(), listener_id, wit, |_| {}))
         }),
         EventKind::Disconnect => bus.subscribe_async::<DisconnectEvent, _>(priority, move |ev| {
             let wit = ev_disconnect(ev);
-            Box::pin(dispatch(instance.clone(), wit, |_| {}))
+            Box::pin(dispatch(instance.clone(), listener_id, wit, |_| {}))
         }),
         EventKind::OnlineAuthFailed => {
             bus.subscribe_async::<OnlineAuthFailed, _>(priority, move |ev| {
                 let wit = ev_online_auth_failed(ev);
-                Box::pin(dispatch(instance.clone(), wit, |_| {}))
+                Box::pin(dispatch(instance.clone(), listener_id, wit, |_| {}))
             })
         }
         EventKind::PermissionsSetup => {
             bus.subscribe_async::<PermissionsSetupEvent, _>(priority, move |ev| {
                 let wit = ev_permissions_setup(ev);
-                Box::pin(dispatch(instance.clone(), wit, |_| {}))
+                Box::pin(dispatch(instance.clone(), listener_id, wit, |_| {}))
             })
         }
         EventKind::ServerPreConnect => {
             bus.subscribe_async::<ServerPreConnectEvent, _>(priority, move |ev| {
                 let wit = ev_server_pre_connect(ev);
-                Box::pin(dispatch(instance.clone(), wit, move |o| {
+                Box::pin(dispatch(instance.clone(), listener_id, wit, move |o| {
                     apply_server_pre_connect(o, ev);
                 }))
             })
@@ -84,19 +80,19 @@ pub(crate) fn register_event_handler(
         EventKind::ServerConnected => {
             bus.subscribe_async::<ServerConnectedEvent, _>(priority, move |ev| {
                 let wit = ev_server_connected(ev);
-                Box::pin(dispatch(instance.clone(), wit, |_| {}))
+                Box::pin(dispatch(instance.clone(), listener_id, wit, |_| {}))
             })
         }
         EventKind::ServerSwitch => {
             bus.subscribe_async::<ServerSwitchEvent, _>(priority, move |ev| {
                 let wit = ev_server_switch(ev);
-                Box::pin(dispatch(instance.clone(), wit, |_| {}))
+                Box::pin(dispatch(instance.clone(), listener_id, wit, |_| {}))
             })
         }
         EventKind::KickedFromServer => {
             bus.subscribe_async::<KickedFromServerEvent, _>(priority, move |ev| {
                 let wit = ev_kicked_from_server(ev);
-                Box::pin(dispatch(instance.clone(), wit, move |o| {
+                Box::pin(dispatch(instance.clone(), listener_id, wit, move |o| {
                     apply_kicked_from_server(o, ev);
                 }))
             })
@@ -104,13 +100,13 @@ pub(crate) fn register_event_handler(
         EventKind::PlayerChooseInitialServer => bus
             .subscribe_async::<PlayerChooseInitialServerEvent, _>(priority, move |ev| {
                 let wit = ev_player_choose_initial_server(ev);
-                Box::pin(dispatch(instance.clone(), wit, move |o| {
+                Box::pin(dispatch(instance.clone(), listener_id, wit, move |o| {
                     apply_player_choose_initial_server(o, ev);
                 }))
             }),
         EventKind::ProxyPing => bus.subscribe_async::<ProxyPingEvent, _>(priority, move |ev| {
             let wit = ev_proxy_ping(ev);
-            Box::pin(dispatch(instance.clone(), wit, move |o| {
+            Box::pin(dispatch(instance.clone(), listener_id, wit, move |o| {
                 apply_proxy_ping(o, ev)
             }))
         }),
@@ -118,36 +114,53 @@ pub(crate) fn register_event_handler(
             bus.subscribe_async::<ProxyInitializeEvent, _>(priority, move |_ev| {
                 Box::pin(dispatch(
                     instance.clone(),
+                    listener_id,
                     wg::Event::ProxyInitialize,
                     |_| {},
                 ))
             })
         }
-        EventKind::ProxyShutdown => bus
-            .subscribe_async::<ProxyShutdownEvent, _>(priority, move |_ev| {
-                Box::pin(dispatch(instance.clone(), wg::Event::ProxyShutdown, |_| {}))
-            }),
-        EventKind::ConfigReload => bus
-            .subscribe_async::<ConfigReloadEvent, _>(priority, move |_ev| {
-                Box::pin(dispatch(instance.clone(), wg::Event::ConfigReload, |_| {}))
-            }),
+        EventKind::ProxyShutdown => {
+            bus.subscribe_async::<ProxyShutdownEvent, _>(priority, move |_ev| {
+                Box::pin(dispatch(
+                    instance.clone(),
+                    listener_id,
+                    wg::Event::ProxyShutdown,
+                    |_| {},
+                ))
+            })
+        }
+        EventKind::ConfigReload => {
+            bus.subscribe_async::<ConfigReloadEvent, _>(priority, move |_ev| {
+                Box::pin(dispatch(
+                    instance.clone(),
+                    listener_id,
+                    wg::Event::ConfigReload,
+                    |_| {},
+                ))
+            })
+        }
         EventKind::ServerStateChange => {
             bus.subscribe_async::<ServerStateChangeEvent, _>(priority, move |ev| {
                 let wit = ev_server_state_change(ev);
-                Box::pin(dispatch(instance.clone(), wit, |_| {}))
+                Box::pin(dispatch(instance.clone(), listener_id, wit, |_| {}))
             })
         }
         EventKind::ChatMessage => bus.subscribe_async::<ChatMessageEvent, _>(priority, move |ev| {
             let wit = ev_chat_message(ev);
-            Box::pin(dispatch(instance.clone(), wit, move |o| {
+            Box::pin(dispatch(instance.clone(), listener_id, wit, move |o| {
                 apply_chat_message(o, ev)
             }))
         }),
+        EventKind::RawPacket => {
+            bus.subscribe_async::<RawPacketEvent, _>(priority, move |_ev| Box::pin(async {}))
+        }
     }
 }
 
 async fn dispatch<F: FnOnce(wg::EventOutcome)>(
     instance: Weak<Mutex<WasmInstance>>,
+    listener_id: u64,
     wit: wg::Event,
     apply: F,
 ) {
@@ -162,7 +175,7 @@ async fn dispatch<F: FnOnce(wg::EventOutcome)>(
     store.data_mut().reset_epoch_budget();
     match bindings
         .infrarust_plugin_guest()
-        .call_handle_event(&mut *store, &wit)
+        .call_handle_event(&mut *store, listener_id, &wit)
         .await
     {
         Ok(outcome) => apply(outcome),

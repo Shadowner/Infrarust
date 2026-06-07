@@ -49,7 +49,7 @@ fn main() {
         None,
     );
     let Some(()) = fixtures else {
-        return; 
+        return;
     };
 
     let stats_target_dir = out_dir.join("stats-target");

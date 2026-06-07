@@ -84,6 +84,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-multi-handler"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-sdk-smoke"
 version = "0.0.0"
 dependencies = [

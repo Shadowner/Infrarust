@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use infrarust_api::error::ServiceError;
@@ -11,8 +12,8 @@ use wasmtime::component::Resource;
 
 use crate::bindings::infrarust::plugin::player_registry::Player as PlayerHandle;
 use crate::bindings::infrarust::plugin::{
-    ban_service, command_manager, config_service, event_bus, log, player_registry, scheduler,
-    server_manager, types as wt,
+    ban_service, command_manager, config_service, event_bus, limbo, log, player_registry,
+    scheduler, server_manager, types as wt,
 };
 use crate::consts::HOST_CALL_TIMEOUT;
 use crate::store_state::PluginStoreState;
@@ -22,6 +23,9 @@ fn no_ctx() -> wasmtime::Error {
     wasmtime::Error::msg("plugin context unavailable (host function called off the load path)")
 }
 
+fn limbo_deferred() -> wasmtime::Error {
+    wasmtime::Error::msg("limbo session methods are not wired yet (deferred to the limbo phase)")
+}
 async fn await_service<T>(
     fut: impl Future<Output = Result<T, ServiceError>> + Send,
 ) -> Result<T, wt::ServiceError> {
@@ -67,15 +71,25 @@ impl event_bus::Host for PluginStoreState {
         let Some(ctx) = self.ctx() else {
             return Err(no_ctx());
         };
+        let ctx = Arc::clone(ctx);
         let native_priority = dispatch::priority_from_wit(priority);
-        let handle =
-            dispatch::register_event_handler(ctx.as_ref(), instance, kind, native_priority);
-        Ok(handle.as_u64())
+        let listener_id = self.mint_listener_id();
+        let handle = dispatch::register_event_handler(
+            ctx.as_ref(),
+            instance,
+            kind,
+            native_priority,
+            listener_id,
+        );
+        self.record_listener(listener_id, handle);
+        Ok(listener_id)
     }
 
     async fn unsubscribe(&mut self, handle: u64) -> wasmtime::Result<()> {
-        if let Some(ctx) = self.ctx() {
-            ctx.event_bus().unsubscribe(ListenerHandle::new(handle));
+        if let Some(native) = self.take_listener(handle)
+            && let Some(ctx) = self.ctx()
+        {
+            ctx.event_bus().unsubscribe(native);
         }
         Ok(())
     }
@@ -548,6 +562,63 @@ impl scheduler::Host for PluginStoreState {
         if let Some(ctx) = self.ctx() {
             ctx.scheduler().cancel(TaskHandle::new(handle));
         }
+        Ok(())
+    }
+}
+impl limbo::Host for PluginStoreState {}
+
+impl limbo::HostLimboSession for PluginStoreState {
+    async fn player_id(&mut self, _self_: Resource<limbo::LimboSession>) -> wasmtime::Result<u64> {
+        Err(limbo_deferred())
+    }
+
+    async fn profile(
+        &mut self,
+        _self_: Resource<limbo::LimboSession>,
+    ) -> wasmtime::Result<wt::GameProfile> {
+        Err(limbo_deferred())
+    }
+
+    async fn entry_context(
+        &mut self,
+        _self_: Resource<limbo::LimboSession>,
+    ) -> wasmtime::Result<limbo::LimboEntryContext> {
+        Err(limbo_deferred())
+    }
+
+    async fn send_message(
+        &mut self,
+        _self_: Resource<limbo::LimboSession>,
+        _message: String,
+    ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
+        Err(limbo_deferred())
+    }
+
+    async fn send_title(
+        &mut self,
+        _self_: Resource<limbo::LimboSession>,
+        _title: wt::TitleData,
+    ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
+        Err(limbo_deferred())
+    }
+
+    async fn send_action_bar(
+        &mut self,
+        _self_: Resource<limbo::LimboSession>,
+        _message: String,
+    ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
+        Err(limbo_deferred())
+    }
+
+    async fn complete(
+        &mut self,
+        _self_: Resource<limbo::LimboSession>,
+        _outcome: limbo::HandlerResult,
+    ) -> wasmtime::Result<()> {
+        Err(limbo_deferred())
+    }
+
+    async fn drop(&mut self, _rep: Resource<limbo::LimboSession>) -> wasmtime::Result<()> {
         Ok(())
     }
 }

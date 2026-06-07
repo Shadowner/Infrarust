@@ -10,24 +10,15 @@ use crate::bindings::codec_filter::{
 };
 use crate::bindings::guest::{Event, EventOutcome};
 use crate::context::{CommandInvocation, Context};
-use crate::event::{EventPriority, GuestEvent, kind_of};
+use crate::event::{EventPriority, GuestEvent};
 use crate::plugin::Plugin;
-
-/// One slot per `event-kind`; a single handler per kind in this phase.
-const SLOTS: usize = 17;
 
 type EventClosure = Box<dyn FnMut(Event) -> EventOutcome>;
 type CommandClosure = Box<dyn FnMut(CommandInvocation)>;
 type TaskClosure = Box<dyn FnMut()>;
 
-struct EventSlot {
-    handle: u64,
-    closure: EventClosure,
-}
-
 thread_local! {
-    static EVENT_HANDLERS: RefCell<[Option<EventSlot>; SLOTS]> =
-        RefCell::new(std::array::from_fn(|_| None));
+    static EVENT_HANDLERS: RefCell<HashMap<u64, EventClosure>> = RefCell::new(HashMap::new());
     static COMMANDS: RefCell<HashMap<u64, CommandClosure>> = RefCell::new(HashMap::new());
     static TASKS: RefCell<HashMap<u64, TaskClosure>> = RefCell::new(HashMap::new());
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
@@ -42,13 +33,13 @@ fn next_id() -> u64 {
     })
 }
 
-/// Subscribe a typed handler for `E`. At most one handler per kind in this phase:
-/// a second registration swaps the closure rather than adding a native listener.
-/// (The contract now carries a listener handle; per-listener routing lands later.)
+/// Subscribe a typed handler for `E`, returning its `listener_id`. Each call adds
+/// an independent native listener, so multiple handlers may share a kind and the
+/// host routes every fire to the exact closure by its id.
 pub fn register_event<E: GuestEvent>(
     priority: EventPriority,
     mut handler: impl FnMut(&mut E) + 'static,
-) {
+) -> u64 {
     let closure: EventClosure = Box::new(move |ev| match E::from_event(ev) {
         Some(mut typed) => {
             handler(&mut typed);
@@ -56,36 +47,15 @@ pub fn register_event<E: GuestEvent>(
         }
         None => EventOutcome::None,
     });
+    let handle = crate::bindings::event_bus::subscribe(E::KIND, priority.value());
+    EVENT_HANDLERS.with(|hs| hs.borrow_mut().insert(handle, closure));
+    handle
+}
 
-    let idx = E::KIND as usize;
-    let subscribe = EVENT_HANDLERS.with(|hs| {
-        let mut hs = hs.borrow_mut();
-        match &mut hs[idx] {
-            Some(slot) => {
-                slot.closure = closure;
-                false
-            }
-            None => {
-                hs[idx] = Some(EventSlot { handle: 0, closure });
-                true
-            }
-        }
-    });
-
-    if subscribe {
-        let handle = crate::bindings::event_bus::subscribe(E::KIND, priority.value());
-        EVENT_HANDLERS.with(|hs| {
-            if let Some(slot) = &mut hs.borrow_mut()[idx] {
-                slot.handle = handle;
-            }
-        });
-    } else {
-        crate::bindings::log::warn(&format!(
-            "infrarust-plugin-sdk: handler for {:?} replaced (one handler per kind; \
-             multiple handlers per kind land in a later phase)",
-            E::KIND
-        ));
-    }
+/// Drop a single event handler by its `listener_id` (see [`register_event`]).
+pub fn unsubscribe_event(handle: u64) {
+    EVENT_HANDLERS.with(|hs| hs.borrow_mut().remove(&handle));
+    crate::bindings::event_bus::unsubscribe(handle);
 }
 
 pub fn register_command(
@@ -111,17 +81,13 @@ pub fn schedule_interval(period_ms: u64, task: TaskClosure) -> u64 {
     crate::bindings::scheduler::interval(period_ms, id)
 }
 
-pub fn handle_event(_listener: u64, ev: Event) -> EventOutcome {
-    let idx = kind_of(&ev) as usize;
-    let slot = EVENT_HANDLERS.with(|hs| hs.borrow_mut()[idx].take());
-    match slot {
-        Some(mut slot) => {
-            let outcome = (slot.closure)(ev);
+pub fn handle_event(listener: u64, ev: Event) -> EventOutcome {
+    let closure = EVENT_HANDLERS.with(|hs| hs.borrow_mut().remove(&listener));
+    match closure {
+        Some(mut closure) => {
+            let outcome = closure(ev);
             EVENT_HANDLERS.with(|hs| {
-                let mut hs = hs.borrow_mut();
-                if hs[idx].is_none() {
-                    hs[idx] = Some(slot);
-                }
+                hs.borrow_mut().entry(listener).or_insert(closure);
             });
             outcome
         }

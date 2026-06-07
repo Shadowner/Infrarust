@@ -1,9 +1,11 @@
 //! Per-plugin store data: WASI context, resource table, capabilities, the captured
 //! native plugin context, the resource-limiter backing, and epoch-control wiring.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Weak};
 
+use infrarust_api::event::ListenerHandle;
 use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
 use tokio::sync::Mutex;
@@ -25,6 +27,8 @@ pub(crate) struct PluginStoreState {
     poisoned: bool,
     pub(crate) plugin_id: String,
     pub(crate) epoch_yields: u32,
+    next_listener_id: u64,
+    listeners: HashMap<u64, ListenerHandle>,
 }
 
 impl PluginStoreState {
@@ -62,6 +66,20 @@ impl PluginStoreState {
 
     pub(crate) fn set_poisoned(&mut self) {
         self.poisoned = true;
+    }
+
+    pub(crate) fn mint_listener_id(&mut self) -> u64 {
+        let id = self.next_listener_id;
+        self.next_listener_id += 1;
+        id
+    }
+
+    pub(crate) fn record_listener(&mut self, id: u64, handle: ListenerHandle) {
+        self.listeners.insert(id, handle);
+    }
+
+    pub(crate) fn take_listener(&mut self, id: u64) -> Option<ListenerHandle> {
+        self.listeners.remove(&id)
     }
 }
 
@@ -114,6 +132,8 @@ pub(crate) fn build_load_state(
         poisoned: false,
         plugin_id,
         epoch_yields: 0,
+        next_listener_id: 1,
+        listeners: HashMap::new(),
     })
 }
 
@@ -128,6 +148,8 @@ pub(crate) fn build_probe_state(plugin_id: String) -> PluginStoreState {
         poisoned: false,
         plugin_id,
         epoch_yields: 0,
+        next_listener_id: 1,
+        listeners: HashMap::new(),
     }
 }
 

@@ -15,6 +15,16 @@ pub struct CommandInvocation {
 /// A scheduled-task handle, usable with [`Context::cancel`].
 pub type TaskHandle = u64;
 
+pub struct EventSubscription {
+    id: u64,
+}
+
+impl EventSubscription {
+    pub fn cancel(self) {
+        runtime::unsubscribe_event(self.id);
+    }
+}
+
 /// The plugin's entry point into the host: event subscription, command and task
 /// registration, and service accessors.
 pub struct Context {
@@ -26,14 +36,18 @@ impl Context {
         Self { _priv: () }
     }
 
-    /// Subscribe a handler for event `E`. One handler per kind: re-subscribing
-    /// the same kind replaces the previous handler.
+    /// Subscribe a handler for event `E`, returning a handle to this one
+    /// subscription. Multiple handlers may share a kind and fire in priority
+    /// order. Drop the handle to keep the subscription, or call
+    /// [`cancel`](EventSubscription::cancel) to remove just this handler.
     pub fn on<E: GuestEvent>(
         &self,
         priority: EventPriority,
         handler: impl FnMut(&mut E) + 'static,
-    ) {
-        runtime::register_event::<E>(priority, handler);
+    ) -> EventSubscription {
+        EventSubscription {
+            id: runtime::register_event::<E>(priority, handler),
+        }
     }
 
     /// Register a command, returning a builder for aliases/description.

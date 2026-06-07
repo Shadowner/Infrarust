@@ -34,7 +34,7 @@ pub mod services;
 
 pub use bindings::export;
 pub use component::Component;
-pub use context::{CommandBuilder, CommandInvocation, Context, TaskHandle};
+pub use context::{CommandBuilder, CommandInvocation, Context, EventSubscription, TaskHandle};
 pub use event::{EventPriority, GuestEvent};
 pub use infrarust_plugin_macros::plugin;
 pub use plugin::{Plugin, PluginDependency, PluginMetadata};
@@ -62,7 +62,7 @@ macro_rules! error {
 
 pub mod prelude {
     pub use crate::component::Component;
-    pub use crate::context::{CommandInvocation, Context, TaskHandle};
+    pub use crate::context::{CommandInvocation, Context, EventSubscription, TaskHandle};
     pub use crate::event::*;
     pub use crate::plugin::{Plugin, PluginMetadata};
     pub use crate::services::{Bans, Config, Player, Players, Servers};

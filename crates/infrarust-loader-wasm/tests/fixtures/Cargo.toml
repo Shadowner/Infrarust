@@ -8,6 +8,7 @@ members = [
     "memory-bomb",
     "event-subscriber",
     "event-modifier",
+    "multi-handler",
     "host-caller",
     "command-plugin",
     "capability-denied",

@@ -33,37 +33,14 @@ impl EventPriority {
     }
 }
 
-/// An event a plugin can handle. The slot key is [`KIND`](GuestEvent::KIND).
+/// An event a plugin can handle.
 pub trait GuestEvent: Sized + 'static {
-    /// The wire kind, also the dispatch-table slot.
+    /// The wire kind, passed to `event-bus.subscribe`.
     const KIND: EventKind;
     #[doc(hidden)]
     fn from_event(ev: Event) -> Option<Self>;
     #[doc(hidden)]
     fn into_outcome(self) -> EventOutcome;
-}
-
-/// The dispatch-table slot for an incoming event (parity with [`GuestEvent::KIND`]).
-pub(crate) fn kind_of(ev: &Event) -> EventKind {
-    match ev {
-        Event::PreLogin(_) => EventKind::PreLogin,
-        Event::PostLogin(_) => EventKind::PostLogin,
-        Event::Disconnect(_) => EventKind::Disconnect,
-        Event::OnlineAuthFailed(_) => EventKind::OnlineAuthFailed,
-        Event::PermissionsSetup(_) => EventKind::PermissionsSetup,
-        Event::ServerPreConnect(_) => EventKind::ServerPreConnect,
-        Event::ServerConnected(_) => EventKind::ServerConnected,
-        Event::ServerSwitch(_) => EventKind::ServerSwitch,
-        Event::KickedFromServer(_) => EventKind::KickedFromServer,
-        Event::PlayerChooseInitialServer(_) => EventKind::PlayerChooseInitialServer,
-        Event::ProxyPing(_) => EventKind::ProxyPing,
-        Event::ProxyInitialize => EventKind::ProxyInitialize,
-        Event::ProxyShutdown => EventKind::ProxyShutdown,
-        Event::ConfigReload => EventKind::ConfigReload,
-        Event::ServerStateChange(_) => EventKind::ServerStateChange,
-        Event::ChatMessage(_) => EventKind::ChatMessage,
-        Event::RawPacket(_) => EventKind::RawPacket,
-    }
 }
 
 macro_rules! observe_records {
