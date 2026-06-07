@@ -659,3 +659,49 @@ specific requirements.
 if any, to sign a "copyright disclaimer" for the program, if necessary.
 For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
+
+-------------------------------------------------------------------------------
+ADDITIONAL PERMISSION UNDER GNU AGPL VERSION 3, SECTION 7 - INFRARUST PLUGINS
+-------------------------------------------------------------------------------
+
+As a special exception, the copyright holders of Infrarust grant you the
+additional permission to develop, use, distribute, sublicense, and convey
+Plugins that interact with Infrarust exclusively through its Official Public
+Plugin API, under license terms of your choice, including proprietary and
+commercial terms, without those Plugins being considered derivative works of
+Infrarust or being subject to the GNU Affero General Public License version 3.
+
+For the purposes of this exception:
+
+  "Plugin" means a separate and independent work that is loaded or invoked by
+  Infrarust at runtime (for example, through dynamic loading, FFI, or any
+  extension mechanism documented as such) and that interacts with Infrarust
+  solely through the Official Public Plugin API. An independent module is a
+  module which is not itself derived from or based on Infrarust.
+
+  "Official Public Plugin API" means the interfaces, traits, types, and entry
+  points that the Infrarust project explicitly documents as the public Plugin
+  API at <https://infrarust.dev/plugins/>. Interfaces that are internal,
+  undocumented, or marked as private are NOT part of the Official Public
+  Plugin API.
+
+This additional permission applies only to such Plugins. It does NOT apply to:
+
+  (a) modifications to Infrarust itself — including its source code, its
+      compiled binaries, and any "covered work" within the meaning of the
+      AGPL — which remain fully and solely subject to the GNU Affero General
+      Public License version 3; or
+
+  (b) any work that copies, embeds, or statically incorporates substantial
+      portions of Infrarust's source code instead of interacting with it
+      through the Official Public Plugin API.
+
+This statement grants additional rights and does not impose any further
+restriction on the Program within the meaning of Section 7 of the GNU Affero
+General Public License version 3.
+
+If you modify a copy of Infrarust, you may extend this exception to your
+version, but you are not obligated to do so. If you do not wish to grant this
+exception for your modified version, you may delete this exception statement
+from your version.
+-------------------------------------------------------------------------------
