@@ -1,0 +1,26 @@
+[package]
+name = "{{crate_name}}"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+{% if sdk_source == "crates-io" -%}
+infrarust-plugin-sdk = "0.1"
+{%- elsif sdk_source == "git" -%}
+infrarust-plugin-sdk = { git = "{{sdk_git}}" }
+{%- else -%}
+infrarust-plugin-sdk = { path = "{{sdk_path}}" }
+{%- endif %}
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"

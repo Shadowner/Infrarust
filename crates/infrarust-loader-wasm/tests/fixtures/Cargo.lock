@@ -31,7 +31,7 @@ dependencies = [
 name = "fixture-command-plugin"
 version = "0.0.0"
 dependencies = [
- "wit-bindgen",
+ "infrarust-plugin-sdk",
 ]
 
 [[package]]
@@ -45,28 +45,28 @@ dependencies = [
 name = "fixture-event-modifier"
 version = "0.0.0"
 dependencies = [
- "wit-bindgen",
+ "infrarust-plugin-sdk",
 ]
 
 [[package]]
 name = "fixture-event-subscriber"
 version = "0.0.0"
 dependencies = [
- "wit-bindgen",
+ "infrarust-plugin-sdk",
 ]
 
 [[package]]
 name = "fixture-hello"
 version = "0.0.0"
 dependencies = [
- "wit-bindgen",
+ "infrarust-plugin-sdk",
 ]
 
 [[package]]
 name = "fixture-host-caller"
 version = "0.0.0"
 dependencies = [
- "wit-bindgen",
+ "infrarust-plugin-sdk",
 ]
 
 [[package]]

@@ -1,0 +1,20 @@
+[template]
+description = "Infrarust WASM plugin (SDK + #[plugin] macro)"
+cargo_generate_version = ">=0.21.0"
+
+[placeholders.sdk_source]
+type = "string"
+prompt = "How should the plugin depend on infrarust-plugin-sdk?"
+choices = ["git", "path", "crates-io"]
+default = "git"
+
+[placeholders.sdk_git]
+type = "string"
+prompt = "Git URL for Infrarust (provides the SDK)"
+default = "https://github.com/Shadowner/Infrarust.git"
+
+# Asked only when the SDK is sourced from a local checkout.
+[conditional.'sdk_source == "path"'.placeholders.sdk_path]
+type = "string"
+prompt = "Relative path to crates/infrarust-plugin-sdk"
+default = "../Infrarust/crates/infrarust-plugin-sdk"

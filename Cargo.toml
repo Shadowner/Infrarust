@@ -25,6 +25,7 @@ members = [
 exclude = [
     "crates/infrarust-loader-wasm/tests/fixtures",
     "plugins/infrarust-plugin-stats/wasm",
+    "templates/plugin-template",
 ]
 
 [workspace.dependencies]
