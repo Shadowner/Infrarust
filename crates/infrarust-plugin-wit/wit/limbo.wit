@@ -1,0 +1,34 @@
+// Limbo handlers (Tier 2) via marker+proxy. The host owns the native session
+// (sealed LimboSession) and lends it by borrow to the guest dispatch funcs in
+// `guest`. Always linked; the Limbo capability is enforced when the host mints a
+// session for a capability-holding plugin, never at link time.
+interface limbo {
+    use types.{player-id, server-id, component, game-profile, title-data, player-error};
+
+    // Why the player entered limbo (native LimboEntryContext, flattened).
+    variant limbo-entry-context {
+        initial-connection(server-id),
+        kicked-from-server(tuple<server-id, component>),
+        plugin-redirect(option<server-id>),
+    }
+
+    variant handler-result {
+        accept,
+        deny(component),
+        hold,
+        redirect(server-id),
+        send-to-limbo(list<string>),
+    }
+
+    // Host resource: the live native session, handed to the guest by borrow for
+    // the duration of each dispatch call.
+    resource limbo-session {
+        player-id: func() -> player-id;
+        profile: func() -> game-profile;
+        entry-context: func() -> limbo-entry-context;
+        send-message: func(message: component) -> result<_, player-error>;
+        send-title: func(title: title-data) -> result<_, player-error>;
+        send-action-bar: func(message: component) -> result<_, player-error>;
+        complete: func(outcome: handler-result);
+    }
+}

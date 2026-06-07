@@ -16,38 +16,15 @@ use crate::infrarust::plugin::types::BanTarget;
 
 struct Component;
 
-impl Guest for Component {
-    fn metadata() -> PluginMetadata {
-        PluginMetadata {
-            id: "capability-denied".to_string(),
-            name: "Capability Denied Fixture".to_string(),
-            version: "0.1.0".to_string(),
-            authors: vec![],
-            description: None,
-            dependencies: vec![],
-        }
-    }
-
-    fn on_enable() -> Result<(), String> {
+fixture_common::raw_fixture!(
+    Component,
+    id: "capability-denied",
+    name: "Capability Denied Fixture",
+    description: None,
+    on_enable: {
         let _ = ban_service::is_banned(&BanTarget::Username("nobody".to_string()));
         Ok(())
     }
-
-    fn on_disable() -> Result<(), String> {
-        Ok(())
-    }
-
-    fn handle_event(_ev: Event) -> EventOutcome {
-        EventOutcome::None
-    }
-
-    fn handle_command(_callback_id: u64, _args: Vec<String>, _player: Option<u64>) {}
-
-    fn tab_complete(_callback_id: u64, _partial: Vec<String>) -> Vec<String> {
-        vec![]
-    }
-
-    fn on_scheduled_task(_callback_id: u64) {}
-}
+);
 
 export!(Component);

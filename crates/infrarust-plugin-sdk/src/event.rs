@@ -9,7 +9,29 @@ use crate::bindings::event_bus::EventKind;
 use crate::bindings::guest::{self, Event, EventOutcome};
 use crate::bindings::types::GameProfile;
 
-pub use crate::bindings::types::EventPriority;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventPriority {
+    First,
+    Early,
+    Normal,
+    Late,
+    Last,
+    Custom(u8),
+}
+
+impl EventPriority {
+    #[must_use]
+    pub const fn value(self) -> u8 {
+        match self {
+            Self::First => 0,
+            Self::Early => 64,
+            Self::Normal => 128,
+            Self::Late => 192,
+            Self::Last => 255,
+            Self::Custom(v) => v,
+        }
+    }
+}
 
 /// An event a plugin can handle. The slot key is [`KIND`](GuestEvent::KIND).
 pub trait GuestEvent: Sized + 'static {
@@ -40,6 +62,7 @@ pub(crate) fn kind_of(ev: &Event) -> EventKind {
         Event::ConfigReload => EventKind::ConfigReload,
         Event::ServerStateChange(_) => EventKind::ServerStateChange,
         Event::ChatMessage(_) => EventKind::ChatMessage,
+        Event::RawPacket(_) => EventKind::RawPacket,
     }
 }
 

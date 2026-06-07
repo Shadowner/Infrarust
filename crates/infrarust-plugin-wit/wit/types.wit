@@ -4,9 +4,14 @@ interface types {
     type protocol-version = s32;
     type task-handle = u64;
     type listener-handle = u64;
+    // Guest-owned id behind a registered handler (limbo / permission checker /
+    // codec factory), wrapped by the host in a native marker+proxy.
+    type handler-id = u64;
     type uuid = string;
 
-    enum event-priority { first, early, normal, late, last }
+    // u8, 1:1 with native EventPriority(u8); the SDK exposes the named levels
+    // (first=0, early=64, normal=128, late=192, last=255) as constants.
+    type event-priority = u8;
     enum connection-state { handshake, status, login, configuration, play }
     enum packet-direction { serverbound, clientbound }
     enum server-state { online, offline, starting, stopping, sleeping, crashed }

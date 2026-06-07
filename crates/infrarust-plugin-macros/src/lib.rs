@@ -151,9 +151,10 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
                 ::infrarust_plugin_sdk::runtime::on_disable()
             }
             fn handle_event(
+                listener: u64,
                 ev: ::infrarust_plugin_sdk::bindings::guest::Event,
             ) -> ::infrarust_plugin_sdk::bindings::guest::EventOutcome {
-                ::infrarust_plugin_sdk::runtime::handle_event(ev)
+                ::infrarust_plugin_sdk::runtime::handle_event(listener, ev)
             }
             fn handle_command(
                 callback_id: u64,
@@ -165,11 +166,53 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
             fn tab_complete(
                 callback_id: u64,
                 partial: ::std::vec::Vec<::std::string::String>,
+                cursor: u32,
             ) -> ::std::vec::Vec<::std::string::String> {
-                ::infrarust_plugin_sdk::runtime::tab_complete(callback_id, partial)
+                ::infrarust_plugin_sdk::runtime::tab_complete(callback_id, partial, cursor)
             }
             fn on_scheduled_task(callback_id: u64) {
                 ::infrarust_plugin_sdk::runtime::on_scheduled_task(callback_id)
+            }
+
+            fn limbo_on_player_enter(
+                _handler: u64,
+                _session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
+            ) -> ::infrarust_plugin_sdk::bindings::guest::HandlerResult {
+                ::infrarust_plugin_sdk::bindings::guest::HandlerResult::Accept
+            }
+            fn limbo_on_command(
+                _handler: u64,
+                _session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
+                _command: ::std::string::String,
+                _args: ::std::vec::Vec<::std::string::String>,
+            ) {
+            }
+            fn limbo_on_chat(
+                _handler: u64,
+                _session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
+                _message: ::std::string::String,
+            ) {
+            }
+            fn limbo_on_disconnect(_handler: u64, _player: u64) {}
+            fn permission_level_of(
+                _handler: u64,
+            ) -> ::infrarust_plugin_sdk::bindings::guest::PermissionLevel {
+                ::infrarust_plugin_sdk::bindings::guest::PermissionLevel::Player
+            }
+            fn check_permission(_handler: u64, _permission: ::std::string::String) -> bool {
+                false
+            }
+        }
+
+        impl ::infrarust_plugin_sdk::bindings::codec_filter::Guest for __InfrarustPluginComponent {
+            type FilterInstance = ::infrarust_plugin_sdk::runtime::NoopFilterInstance;
+            fn create(
+                _factory: u64,
+                _init: ::infrarust_plugin_sdk::bindings::codec_filter::CodecSessionInit,
+            ) -> ::infrarust_plugin_sdk::bindings::codec_filter::FilterInstance {
+                ::infrarust_plugin_sdk::bindings::codec_filter::FilterInstance::new(
+                    ::infrarust_plugin_sdk::runtime::NoopFilterInstance,
+                )
             }
         }
 

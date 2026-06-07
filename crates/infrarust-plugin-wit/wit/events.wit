@@ -20,6 +20,7 @@ interface event-bus {                                                         //
         config-reload,
         server-state-change,
         chat-message,
+        raw-packet,
     }
 
     subscribe: func(kind: event-kind, priority: event-priority) -> listener-handle;

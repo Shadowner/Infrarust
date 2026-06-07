@@ -1,0 +1,65 @@
+// Codec filters (hot path) as a guest-owned per-session resource. The host calls
+// `create` per connection/side, then `filter` for every frame, then drops the
+// instance. The filter is shaped to run synchronously (§16); its execution model
+// (a sync engine vs a single-poll future) is a host-side, later-phase choice.
+interface codec-filter {                                                      // gated: codec-filter
+    use types.{raw-packet, protocol-version, connection-state, uuid, handler-id};
+
+    enum connection-side { client-side, server-side }
+
+    record player-info {
+        username: string,
+        uuid: option<uuid>,
+    }
+
+    record codec-session-init {
+        client-version: protocol-version,
+        connection-id: u64,
+        remote-addr: string,
+        real-ip: option<string>,
+        side: connection-side,
+    }
+
+    record codec-context {
+        client-version: protocol-version,
+        server-version: option<protocol-version>,
+        state: connection-state,
+        connection-id: u64,
+        side: connection-side,
+        player-info: option<player-info>,
+        is-proxy-consumed: bool,
+    }
+
+    variant codec-filter-error {
+        translation-failed(string),
+        malformed-payload,
+        unsupported-version(s32),
+        internal(string),
+    }
+
+    // Mirrors native CodecVerdict exactly (replace is unit — the replacement
+    // frames come from inject-*). The possibly-modified packet and the injections
+    // are returned because the boundary has no &mut; packet none == unchanged.
+    variant codec-verdict {
+        pass,
+        drop,
+        replace,
+        error(codec-filter-error),
+    }
+    record filter-output {
+        verdict: codec-verdict,
+        packet: option<raw-packet>,
+        inject-before: list<raw-packet>,
+        inject-after: list<raw-packet>,
+    }
+
+    resource filter-instance {
+        filter: func(ctx: codec-context, packet: raw-packet) -> filter-output;
+        on-state-change: func(new-state: connection-state);
+        on-compression-change: func(threshold: s32);
+        on-encryption-enabled: func();
+        on-close: func();
+    }
+
+    create: func(factory: handler-id, init: codec-session-init) -> filter-instance;
+}

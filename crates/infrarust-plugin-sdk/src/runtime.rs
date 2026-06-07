@@ -5,12 +5,16 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+use crate::bindings::codec_filter::{
+    CodecContext, CodecVerdict, ConnectionState, FilterOutput, GuestFilterInstance, RawPacket,
+};
 use crate::bindings::guest::{Event, EventOutcome};
 use crate::context::{CommandInvocation, Context};
 use crate::event::{EventPriority, GuestEvent, kind_of};
 use crate::plugin::Plugin;
 
-const SLOTS: usize = 16;
+/// One slot per `event-kind`; a single handler per kind in this phase.
+const SLOTS: usize = 17;
 
 type EventClosure = Box<dyn FnMut(Event) -> EventOutcome>;
 type CommandClosure = Box<dyn FnMut(CommandInvocation)>;
@@ -38,9 +42,9 @@ fn next_id() -> u64 {
     })
 }
 
-/// Subscribe a typed handler for `E`. At most one handler per kind: a second
-/// registration swaps the closure without adding a native listener (which would
-/// double-fire, since `handle-event` carries no listener id).
+/// Subscribe a typed handler for `E`. At most one handler per kind in this phase:
+/// a second registration swaps the closure rather than adding a native listener.
+/// (The contract now carries a listener handle; per-listener routing lands later.)
 pub fn register_event<E: GuestEvent>(
     priority: EventPriority,
     mut handler: impl FnMut(&mut E) + 'static,
@@ -69,7 +73,7 @@ pub fn register_event<E: GuestEvent>(
     });
 
     if subscribe {
-        let handle = crate::bindings::event_bus::subscribe(E::KIND, priority);
+        let handle = crate::bindings::event_bus::subscribe(E::KIND, priority.value());
         EVENT_HANDLERS.with(|hs| {
             if let Some(slot) = &mut hs.borrow_mut()[idx] {
                 slot.handle = handle;
@@ -77,7 +81,8 @@ pub fn register_event<E: GuestEvent>(
         });
     } else {
         crate::bindings::log::warn(&format!(
-            "infrarust-plugin-sdk: handler for {:?} replaced (one handler per kind in v0.1)",
+            "infrarust-plugin-sdk: handler for {:?} replaced (one handler per kind; \
+             multiple handlers per kind land in a later phase)",
             E::KIND
         ));
     }
@@ -106,7 +111,7 @@ pub fn schedule_interval(period_ms: u64, task: TaskClosure) -> u64 {
     crate::bindings::scheduler::interval(period_ms, id)
 }
 
-pub fn handle_event(ev: Event) -> EventOutcome {
+pub fn handle_event(_listener: u64, ev: Event) -> EventOutcome {
     let idx = kind_of(&ev) as usize;
     let slot = EVENT_HANDLERS.with(|hs| hs.borrow_mut()[idx].take());
     match slot {
@@ -144,7 +149,7 @@ pub fn on_scheduled_task(callback_id: u64) {
     }
 }
 
-pub fn tab_complete(_callback_id: u64, _partial: Vec<String>) -> Vec<String> {
+pub fn tab_complete(_callback_id: u64, _partial: Vec<String>, _cursor: u32) -> Vec<String> {
     Vec::new()
 }
 
@@ -161,4 +166,21 @@ pub fn on_disable() -> Result<(), String> {
         Some(plugin) => plugin.on_disable(&Context::new()),
         None => Ok(()),
     }
+}
+
+pub struct NoopFilterInstance;
+
+impl GuestFilterInstance for NoopFilterInstance {
+    fn filter(&self, _ctx: CodecContext, _packet: RawPacket) -> FilterOutput {
+        FilterOutput {
+            verdict: CodecVerdict::Pass,
+            packet: None,
+            inject_before: Vec::new(),
+            inject_after: Vec::new(),
+        }
+    }
+    fn on_state_change(&self, _new_state: ConnectionState) {}
+    fn on_compression_change(&self, _threshold: i32) {}
+    fn on_encryption_enabled(&self) {}
+    fn on_close(&self) {}
 }

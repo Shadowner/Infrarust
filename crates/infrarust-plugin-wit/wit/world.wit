@@ -1,7 +1,7 @@
 // The Infrarust plugin world: the host/guest contract.
-// Versioned and frozen; deferred surfaces (raw-packet event, codec filters,
-// limbo, virtual backend) arrive as minor bumps.
-package infrarust:plugin@0.1.0;
+// Versioned and frozen. v0.2 adds raw-packet events, codec filters, limbo, and
+// custom permission checkers; virtual backend stays deferred to a later minor.
+package infrarust:plugin@0.2.0;
 
 world plugin {
     import types;
@@ -13,6 +13,8 @@ world plugin {
     import config-service;
     import command-manager;
     import scheduler;
+    import limbo;
 
     export guest;
+    export codec-filter;
 }

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "fixture-common",
     "hello",
     "trap-on-purpose",
     "cpu-spin",
@@ -17,6 +18,7 @@ members = [
 wit-bindgen = "0.51"
 infrarust-plugin-sdk = { path = "../../../infrarust-plugin-sdk" }
 infrarust-plugin-macros = { path = "../../../infrarust-plugin-macros" }
+fixture-common = { path = "fixture-common" }
 
 [profile.release]
 opt-level = "s"

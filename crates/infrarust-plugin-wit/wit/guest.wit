@@ -1,10 +1,12 @@
 // The guest export: lifecycle, the unified event dispatch, and the marker+proxy
-// handler entry points. Results that carry a native trait object
-// (ServerPreConnectResult::VirtualBackend, PermissionsSetupResult::Custom) are
-// deferred to v0.2 and absent from event-outcome.
+// handler entry points (limbo handlers, custom permission checker).
+// ServerPreConnectResult::VirtualBackend stays deferred to a later minor and is
+// absent from event-outcome.
 interface guest {
     use types.{plugin-metadata, component, server-id, player-id, game-profile,
-               protocol-version, server-state};
+               protocol-version, server-state, listener-handle, handler-id,
+               raw-packet, packet-direction, permission-level};
+    use limbo.{limbo-session, handler-result};
 
     record pre-login-event {
         profile: game-profile,
@@ -35,11 +37,14 @@ interface guest {
         username: string,
     }
 
-    // Observable only; the modifiable result is deferred to v0.2.
     record permissions-setup-event {
         player-id: player-id,
         profile: game-profile,
         online-mode: bool,
+    }
+    variant permissions-setup-result {
+        use-default,
+        custom(handler-id),
     }
 
     record server-pre-connect-event {
@@ -117,6 +122,17 @@ interface guest {
         modify(string),
     }
 
+    record raw-packet-event {
+        player-id: player-id,
+        direction: packet-direction,
+        packet: raw-packet,
+    }
+    variant raw-packet-result {
+        pass,
+        modify(raw-packet),
+        drop,
+    }
+
     variant event {
         pre-login(pre-login-event),
         post-login(post-login-event),
@@ -134,6 +150,7 @@ interface guest {
         config-reload,
         server-state-change(server-state-change-event),
         chat-message(chat-message-event),
+        raw-packet(raw-packet-event),
     }
     variant event-outcome {
         none,
@@ -143,15 +160,28 @@ interface guest {
         player-choose-initial-server(player-choose-initial-server-result),
         chat-message(chat-message-result),
         proxy-ping(ping-response),
+        permissions-setup(permissions-setup-result),
+        raw-packet(raw-packet-result),
     }
 
     metadata: func() -> plugin-metadata;
     on-enable: func() -> result<_, string>;
     on-disable: func() -> result<_, string>;
 
-    handle-event: func(ev: event) -> event-outcome;
+    handle-event: func(listener: listener-handle, ev: event) -> event-outcome;
 
     handle-command: func(callback-id: u64, args: list<string>, player: option<player-id>);
-    tab-complete: func(callback-id: u64, partial: list<string>) -> list<string>;
+    tab-complete: func(callback-id: u64, partial: list<string>, cursor: u32) -> list<string>;
     on-scheduled-task: func(callback-id: u64);
+
+    // Limbo handler dispatch (marker+proxy): the host wraps a guest handler-id in
+    // a native WasmLimboHandler that calls back here, lending the session by borrow.
+    limbo-on-player-enter: func(handler: handler-id, session: borrow<limbo-session>) -> handler-result;
+    limbo-on-command: func(handler: handler-id, session: borrow<limbo-session>, command: string, args: list<string>);
+    limbo-on-chat: func(handler: handler-id, session: borrow<limbo-session>, message: string);
+    limbo-on-disconnect: func(handler: handler-id, player: player-id);
+
+    // Custom permission checker dispatch (marker+proxy), keyed by handler-id.
+    permission-level-of: func(handler: handler-id) -> permission-level;
+    check-permission: func(handler: handler-id, permission: string) -> bool;
 }

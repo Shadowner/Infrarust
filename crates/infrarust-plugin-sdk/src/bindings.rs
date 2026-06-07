@@ -14,7 +14,7 @@ wit_bindgen::generate!({
     default_bindings_module: "infrarust_plugin_sdk::bindings",
 });
 
-pub use exports::infrarust::plugin::guest;
+pub use exports::infrarust::plugin::{codec_filter, guest};
 pub use infrarust::plugin::{
     ban_service, command_manager, config_service, event_bus, log, player_registry, scheduler,
     server_manager, types,
