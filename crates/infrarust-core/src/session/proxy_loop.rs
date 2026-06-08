@@ -109,6 +109,9 @@ pub async fn proxy_loop(
                     Ok(Some(frame)) => {
                         if let Err(e) = handle_client_to_backend(client, backend, frame, registry, services, player_id, client_codec_chain).await {
 
+                            if e.is_expected_disconnect() {
+                                break ProxyLoopOutcome::BackendDisconnected { reason: Some(e.to_string()) };
+                            }
                             break ProxyLoopOutcome::Error(e);
                         }
                     }
