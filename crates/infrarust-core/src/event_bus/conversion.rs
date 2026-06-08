@@ -22,14 +22,33 @@ pub fn core_to_api_ping_response(core: &ServerPingResponse) -> PingResponse {
 }
 
 /// Merges modifications from the API `PingResponse` back into the core
-/// response, preserving `extra` fields (Forge/Fabric metadata).
+/// response (including the lossy `description`), preserving `extra` fields
+/// (Forge/Fabric metadata).
 pub fn apply_api_to_core(core: &mut ServerPingResponse, api: &PingResponse) {
     core.description = component_to_json_value(&api.description);
+    apply_api_scalars_to_core(core, api);
+}
+
+pub fn apply_api_scalars_to_core(core: &mut ServerPingResponse, api: &PingResponse) {
     core.players.max = api.max_players;
     core.players.online = api.online_players;
     core.version.name.clone_from(&api.version_name);
     core.version.protocol = api.protocol_version.raw();
     core.favicon.clone_from(&api.favicon);
+}
+
+/// Folds a (possibly plugin-modified) `ProxyPingEvent` result back into the core
+/// response.
+pub fn merge_ping_event(
+    core: &mut ServerPingResponse,
+    sent_description: &serde_json::Value,
+    api: &PingResponse,
+) {
+    if &component_to_json_value(&api.description) == sent_description {
+        apply_api_scalars_to_core(core, api);
+    } else {
+        apply_api_to_core(core, api);
+    }
 }
 
 /// Converts a `serde_json::Value` (Minecraft chat JSON) into a [`Component`].
@@ -272,6 +291,79 @@ mod tests {
         assert_eq!(api.protocol_version.raw(), 769);
         assert_eq!(api.version_name, "1.21.4");
         assert_eq!(api.favicon.as_deref(), Some("data:image/png;base64,abc"));
+    }
+
+    fn rich_response() -> ServerPingResponse {
+        use crate::status::response::{PingPlayers, PingVersion};
+        ServerPingResponse {
+            version: PingVersion {
+                name: "1.21.4".to_string(),
+                protocol: 769,
+            },
+            players: PingPlayers {
+                max: 100,
+                online: 42,
+                sample: vec![],
+            },
+            // Fields the Component type cannot represent (hoverEvent/clickEvent/font).
+            description: serde_json::json!({
+                "text": "Welcome",
+                "color": "gold",
+                "hoverEvent": {"action": "show_text", "value": "tooltip"},
+                "clickEvent": {"action": "open_url", "value": "https://example.com"},
+                "extra": [{"text": "!", "font": "minecraft:uniform"}]
+            }),
+            favicon: None,
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    #[test]
+    fn merge_ping_event_preserves_rich_motd_when_unmodified() {
+        // Regression: with no plugin modification, a rich relayed MOTD must NOT
+        // be degraded through the lossy Component round-trip.
+        let mut core = rich_response();
+        let original = core.description.clone();
+
+        let api = core_to_api_ping_response(&core);
+        let sent = component_to_json_value(&api.description);
+        // Simulate the event returning the response unmodified.
+        merge_ping_event(&mut core, &sent, &api);
+
+        assert_eq!(core.description, original, "rich MOTD must survive untouched");
+        assert!(core.description.get("hoverEvent").is_some());
+        assert!(core.description.get("clickEvent").is_some());
+    }
+
+    #[test]
+    fn merge_ping_event_applies_modified_description() {
+        // When a plugin changes the description, the change is applied (even
+        // though the Component form is lossy — that is the plugin's choice).
+        let mut core = rich_response();
+
+        let mut api = core_to_api_ping_response(&core);
+        let sent = component_to_json_value(&api.description);
+        api.description = Component::text("Plugin MOTD");
+
+        merge_ping_event(&mut core, &sent, &api);
+        assert_eq!(core.description["text"].as_str().unwrap(), "Plugin MOTD");
+    }
+
+    #[test]
+    fn merge_ping_event_applies_scalar_changes_without_touching_description() {
+        // A plugin changing only player counts must not degrade the description.
+        let mut core = rich_response();
+        let original = core.description.clone();
+
+        let mut api = core_to_api_ping_response(&core);
+        let sent = component_to_json_value(&api.description);
+        api.max_players = 5;
+        api.online_players = 1;
+
+        merge_ping_event(&mut core, &sent, &api);
+        assert_eq!(core.players.max, 5);
+        assert_eq!(core.players.online, 1);
+        assert_eq!(core.description, original, "description must stay opaque");
     }
 
     #[test]

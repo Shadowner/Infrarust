@@ -153,7 +153,6 @@ pub fn on_disable() -> Result<(), String> {
     }
 }
 
-pub struct NoopFilterInstance;
 pub fn register_codec_factory(
     notify: bool,
     metadata: crate::bindings::codec_registry::CodecFilterMetadata,

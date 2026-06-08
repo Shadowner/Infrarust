@@ -29,7 +29,9 @@ use super::relay::StatusRelayClient;
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
-use crate::event_bus::conversion::{apply_api_to_core, core_to_api_ping_response};
+use crate::event_bus::conversion::{
+    component_to_json_value, core_to_api_ping_response, merge_ping_event,
+};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::registry::ConnectionRegistry;
@@ -105,13 +107,14 @@ impl StatusHandler {
             .await;
 
         let api_response = core_to_api_ping_response(&response);
+        let sent_description = component_to_json_value(&api_response.description);
         let remote_addr = SocketAddr::new(ctx.client_ip, ctx.peer_addr.port());
         let event = ProxyPingEvent {
             remote_addr,
             response: api_response,
         };
         let event = self.event_bus.fire(event).await;
-        apply_api_to_core(&mut response, &event.response);
+        merge_ping_event(&mut response, &sent_description, &event.response);
 
         let json = response
             .to_json()
