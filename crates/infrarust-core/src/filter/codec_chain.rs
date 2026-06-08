@@ -235,6 +235,57 @@ mod tests {
         }
     }
 
+    struct CloseTrackingInstance {
+        filter_count: Arc<AtomicU32>,
+        close_count: Arc<AtomicU32>,
+    }
+
+    impl CodecFilterInstance for CloseTrackingInstance {
+        fn filter(
+            &mut self,
+            _ctx: &CodecContext,
+            _packet: &mut RawPacket,
+            _output: &mut FrameOutput,
+        ) -> CodecVerdict {
+            self.filter_count.fetch_add(1, Ordering::Relaxed);
+            CodecVerdict::Pass
+        }
+
+        fn on_close(&mut self) {
+            self.close_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn chain_survives_segments_and_closes_exactly_once() {
+        let filter_count = Arc::new(AtomicU32::new(0));
+        let close_count = Arc::new(AtomicU32::new(0));
+        let instance: Box<dyn CodecFilterInstance> = Box::new(CloseTrackingInstance {
+            filter_count: Arc::clone(&filter_count),
+            close_count: Arc::clone(&close_count),
+        });
+        let mut chain = chain_with_instances(vec![instance]);
+
+        let mut p1 = RawPacket::new(0x00, bytes::Bytes::from_static(b"a"));
+        let _ = chain.process(&mut p1);
+        assert_eq!(
+            close_count.load(Ordering::Relaxed),
+            0,
+            "chain must not be closed on a server switch"
+        );
+
+        let mut p2 = RawPacket::new(0x00, bytes::Bytes::from_static(b"b"));
+        let _ = chain.process(&mut p2);
+        assert_eq!(
+            filter_count.load(Ordering::Relaxed),
+            2,
+            "filter must remain active after a switch"
+        );
+
+        chain.close();
+        assert_eq!(close_count.load(Ordering::Relaxed), 1);
+    }
+
     #[test]
     fn test_empty_chain_passes() {
         let mut chain = empty_chain(ConnectionSide::ClientSide);

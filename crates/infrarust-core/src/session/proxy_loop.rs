@@ -149,10 +149,6 @@ pub async fn proxy_loop(
         }
     };
 
-    // Cleanup filter chains
-    client_codec_chain.close();
-    server_codec_chain.close();
-
     outcome
 }
 

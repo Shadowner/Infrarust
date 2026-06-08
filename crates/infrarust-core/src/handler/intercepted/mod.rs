@@ -229,6 +229,9 @@ impl InterceptedHandler {
         )
         .await;
 
+        client_codec_chain.close();
+        server_codec_chain.close();
+
         super::helpers::fire_disconnect_event(
             &self.services.event_bus,
             auth_result.player_id,
