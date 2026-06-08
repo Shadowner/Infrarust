@@ -50,21 +50,6 @@ pub fn skip_nbt_compound(r: &mut &[u8]) -> ProtocolResult<()> {
     skip_compound_payload(r, 0)
 }
 
-/// Skips a full NBT Compound tag in 1.20.2+ network format (no root name).
-///
-/// 1.20.2+ network NBT:
-/// - Tag type byte (must be 0x0A = Compound)
-/// - Compound payload (children terminated by TAG_End) — NO root name
-pub fn _skip_nbt_compound_nameless(r: &mut &[u8]) -> ProtocolResult<()> {
-    let tag_type = r.read_u8()?;
-    if tag_type != TAG_COMPOUND {
-        return Err(ProtocolError::invalid(format!(
-            "expected NBT Compound (0x0A), got 0x{tag_type:02X}"
-        )));
-    }
-    skip_compound_payload(r, 0)
-}
-
 /// Skips the payload of a compound tag (children until TAG_End).
 fn skip_compound_payload(r: &mut &[u8], depth: u32) -> ProtocolResult<()> {
     if depth > MAX_DEPTH {
@@ -87,6 +72,10 @@ fn skip_compound_payload(r: &mut &[u8], depth: u32) -> ProtocolResult<()> {
 
 /// Skips the payload of a single tag (not including type byte or name).
 fn skip_tag_payload(r: &mut &[u8], tag_type: u8, depth: u32) -> ProtocolResult<()> {
+    if depth > MAX_DEPTH {
+        return Err(ProtocolError::invalid("NBT nesting depth exceeded"));
+    }
+
     match tag_type {
         TAG_BYTE => skip_bytes(r, 1),
         TAG_SHORT => skip_bytes(r, 2),
@@ -326,5 +315,50 @@ mod tests {
         let data = [TAG_BYTE]; // Not a compound
         let mut r: &[u8] = &data;
         assert!(skip_nbt_compound(&mut r).is_err());
+    }
+
+    fn build_nested_list_payload(levels: u32) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.push(TAG_BYTE); // element type
+        payload.extend_from_slice(&0i32.to_be_bytes()); // count
+        for _ in 0..levels {
+            let mut outer = Vec::new();
+            outer.push(TAG_LIST); // element type = list
+            outer.extend_from_slice(&1i32.to_be_bytes()); // count = 1
+            outer.extend_from_slice(&payload); // the single element is the deeper list
+            payload = outer;
+        }
+        payload
+    }
+
+    #[test]
+    fn test_deeply_nested_list_errors_instead_of_overflowing() {
+        let mut children = Vec::new();
+        children.push(TAG_LIST); // child tag type
+        children.extend_from_slice(&1u16.to_be_bytes()); // child name len
+        children.push(b'x'); // child name
+        children.extend_from_slice(&build_nested_list_payload(MAX_DEPTH + 100));
+
+        let data = build_named_compound("root", &children);
+        let mut r: &[u8] = &data;
+        let result = skip_nbt_compound(&mut r);
+        assert!(
+            result.is_err(),
+            "deeply nested NBT lists must return Err, not overflow the stack"
+        );
+    }
+
+    #[test]
+    fn test_list_nesting_within_limit_ok() {
+        let mut children = Vec::new();
+        children.push(TAG_LIST);
+        children.extend_from_slice(&1u16.to_be_bytes());
+        children.push(b'x');
+        children.extend_from_slice(&build_nested_list_payload(8));
+
+        let data = build_named_compound("root", &children);
+        let mut r: &[u8] = &data;
+        skip_nbt_compound(&mut r).unwrap();
+        assert!(r.is_empty());
     }
 }

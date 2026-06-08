@@ -58,9 +58,10 @@ impl ClientConnection {
     /// Returns the effective client IP address.
     ///
     /// If proxy protocol provided a real IP, returns that.
-    /// Otherwise returns the TCP peer address.
+    /// Otherwise returns the TCP peer address. IPv4-mapped IPv6 addresses are
+    /// canonicalized to IPv4 so downstream bans and CIDR filters match.
     pub fn client_addr(&self) -> IpAddr {
-        self.real_ip.unwrap_or_else(|| self.peer_addr.ip())
+        canonicalize_ip(self.real_ip.unwrap_or_else(|| self.peer_addr.ip()))
     }
 
     /// Consumes the connection, returning the stream, buffered data, and metadata.
@@ -129,6 +130,20 @@ impl ClientConnection {
     }
 }
 
+/// Canonicalizes an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) to its IPv4
+/// form. Clients reaching a dual-stack listener over IPv6 appear as mapped
+/// addresses; without this, an IPv4 ban or CIDR filter would silently fail to
+/// match them. Native IPv6 and plain IPv4 addresses pass through unchanged.
+fn canonicalize_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(v6),
+        },
+        v4 => v4,
+    }
+}
+
 /// Lightweight metadata about a client connection (without the stream).
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo {
@@ -142,4 +157,28 @@ pub struct ConnectionInfo {
     pub local_addr: SocketAddr,
     /// Time when the connection was accepted.
     pub connected_at: Instant,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn canonicalize_maps_ipv4_mapped_v6_to_v4() {
+        let mapped = IpAddr::V6(Ipv4Addr::new(1, 2, 3, 4).to_ipv6_mapped());
+        assert_eq!(canonicalize_ip(mapped), IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)));
+    }
+
+    #[test]
+    fn canonicalize_leaves_native_v6_untouched() {
+        let v6 = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
+        assert_eq!(canonicalize_ip(IpAddr::V6(v6)), IpAddr::V6(v6));
+    }
+
+    #[test]
+    fn canonicalize_leaves_v4_untouched() {
+        let v4 = IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9));
+        assert_eq!(canonicalize_ip(v4), v4);
+    }
 }

@@ -99,6 +99,30 @@ impl InterceptedHandler {
             )
             .await?;
 
+        if let Some(ban_entry) = self
+            .services
+            .ban_manager
+            .check_player(
+                &ctx.client_ip,
+                &auth_result.username,
+                Some(&auth_result.player_uuid),
+            )
+            .await?
+        {
+            tracing::info!(
+                ip = %ctx.client_ip,
+                username = %auth_result.username,
+                uuid = %auth_result.player_uuid,
+                ban_type = ban_entry.target.display_type(),
+                "connection rejected post-auth: player is banned"
+            );
+            client
+                .disconnect(&ban_entry.kick_message(), &self.services.packet_registry)
+                .await
+                .ok();
+            return Ok(());
+        }
+
         let mut login_completed = auth_result.login_completed;
 
         let initial = initial_connect::resolve_initial_mode(

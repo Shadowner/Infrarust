@@ -20,6 +20,22 @@ async fn test_client_addr_without_proxy() {
 }
 
 #[tokio::test]
+async fn test_client_addr_canonicalizes_ipv4_mapped_peer() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let _client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (server_stream, _peer_addr) = listener.accept().await.unwrap();
+
+    let mapped_peer: std::net::SocketAddr = "[::ffff:203.0.113.7]:40000".parse().unwrap();
+    let conn = ClientConnection::new(server_stream, mapped_peer, addr);
+    assert_eq!(
+        conn.client_addr(),
+        "203.0.113.7".parse::<IpAddr>().unwrap()
+    );
+}
+
+#[tokio::test]
 async fn test_client_addr_with_proxy() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

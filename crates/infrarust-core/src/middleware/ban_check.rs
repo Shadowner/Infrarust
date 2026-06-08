@@ -46,7 +46,6 @@ impl Middleware for BanCheckMiddleware {
                 return Ok(MiddlewareResult::Continue);
             };
 
-            // No UUID check in Phase 2B (will be added in Phase 3 post-auth)
             let uuid: Option<&uuid::Uuid> = None;
 
             match self.ban_manager.check_player(&ip, username, uuid).await? {

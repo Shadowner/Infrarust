@@ -230,6 +230,28 @@ async fn test_check_player_no_uuid() {
 }
 
 #[tokio::test]
+async fn test_check_player_uuid_ban_enforced_when_uuid_known() {
+    let (storage, _dir) = temp_storage().await;
+    let uuid = Uuid::new_v4();
+    let fresh_ip: IpAddr = "203.0.113.55".parse().unwrap();
+
+    storage
+        .add_ban(permanent_ban(BanTarget::Uuid(uuid)))
+        .await
+        .unwrap();
+
+    let result = storage
+        .check_player(&fresh_ip, "BrandNewName", Some(&uuid))
+        .await
+        .unwrap();
+    assert!(
+        result.is_some(),
+        "UUID ban must match once the UUID is supplied"
+    );
+    assert!(matches!(result.unwrap().target, BanTarget::Uuid(_)));
+}
+
+#[tokio::test]
 async fn test_purge_expired() {
     let (storage, _dir) = temp_storage().await;
 
