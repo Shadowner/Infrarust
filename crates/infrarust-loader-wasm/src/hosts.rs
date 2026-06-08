@@ -23,9 +23,6 @@ fn no_ctx() -> wasmtime::Error {
     wasmtime::Error::msg("plugin context unavailable (host function called off the load path)")
 }
 
-fn limbo_deferred() -> wasmtime::Error {
-    wasmtime::Error::msg("limbo session methods are not wired yet (deferred to the limbo phase)")
-}
 async fn await_service<T>(
     fut: impl Future<Output = Result<T, ServiceError>> + Send,
 ) -> Result<T, wt::ServiceError> {
@@ -613,60 +610,95 @@ impl scheduler::Host for PluginStoreState {
         Ok(())
     }
 }
-impl limbo::Host for PluginStoreState {}
+impl limbo::Host for PluginStoreState {
+    async fn register_limbo_handler(
+        &mut self,
+        name: String,
+        handler: u64,
+    ) -> wasmtime::Result<()> {
+        if !self.capabilities().has(Capability::Limbo) {
+            tracing::warn!(plugin = %self.plugin_id, handler = %name,
+                "register_limbo_handler denied: missing Limbo capability");
+            return Ok(());
+        }
+        let instance = self.instance_ref();
+        let plugin_id = self.plugin_id.clone();
+        let Some(ctx) = self.ctx() else {
+            return Ok(());
+        };
+        ctx.register_limbo_handler(Box::new(crate::limbo::WasmLimboHandler::new(
+            handler, name, instance, plugin_id,
+        )));
+        Ok(())
+    }
+}
 
 impl limbo::HostLimboSession for PluginStoreState {
-    async fn player_id(&mut self, _self_: Resource<limbo::LimboSession>) -> wasmtime::Result<u64> {
-        Err(limbo_deferred())
+    async fn player_id(&mut self, self_: Resource<limbo::LimboSession>) -> wasmtime::Result<u64> {
+        Ok(self.resolve_limbo_session(&self_)?.player_id().as_u64())
     }
 
     async fn profile(
         &mut self,
-        _self_: Resource<limbo::LimboSession>,
+        self_: Resource<limbo::LimboSession>,
     ) -> wasmtime::Result<wt::GameProfile> {
-        Err(limbo_deferred())
+        let session = self.resolve_limbo_session(&self_)?;
+        Ok(convert::game_profile_to_wit(session.profile()))
     }
 
     async fn entry_context(
         &mut self,
-        _self_: Resource<limbo::LimboSession>,
+        self_: Resource<limbo::LimboSession>,
     ) -> wasmtime::Result<limbo::LimboEntryContext> {
-        Err(limbo_deferred())
+        let session = self.resolve_limbo_session(&self_)?;
+        Ok(convert::limbo_entry_context_to_wit(session.entry_context()))
     }
 
     async fn send_message(
         &mut self,
-        _self_: Resource<limbo::LimboSession>,
-        _message: String,
+        self_: Resource<limbo::LimboSession>,
+        message: String,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
-        Err(limbo_deferred())
+        let session = self.resolve_limbo_session(&self_)?;
+        Ok(session
+            .send_message(convert::component_from_wit(&message))
+            .map_err(convert::player_error_to_wit))
     }
 
     async fn send_title(
         &mut self,
-        _self_: Resource<limbo::LimboSession>,
-        _title: wt::TitleData,
+        self_: Resource<limbo::LimboSession>,
+        title: wt::TitleData,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
-        Err(limbo_deferred())
+        let session = self.resolve_limbo_session(&self_)?;
+        Ok(session
+            .send_title(convert::title_data_from_wit(title))
+            .map_err(convert::player_error_to_wit))
     }
 
     async fn send_action_bar(
         &mut self,
-        _self_: Resource<limbo::LimboSession>,
-        _message: String,
+        self_: Resource<limbo::LimboSession>,
+        message: String,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
-        Err(limbo_deferred())
+        let session = self.resolve_limbo_session(&self_)?;
+        Ok(session
+            .send_action_bar(convert::component_from_wit(&message))
+            .map_err(convert::player_error_to_wit))
     }
 
     async fn complete(
         &mut self,
-        _self_: Resource<limbo::LimboSession>,
-        _outcome: limbo::HandlerResult,
+        self_: Resource<limbo::LimboSession>,
+        outcome: limbo::HandlerResult,
     ) -> wasmtime::Result<()> {
-        Err(limbo_deferred())
+        let session = self.resolve_limbo_session(&self_)?;
+        session.complete(convert::handler_result_from_wit(outcome));
+        Ok(())
     }
 
-    async fn drop(&mut self, _rep: Resource<limbo::LimboSession>) -> wasmtime::Result<()> {
+    async fn drop(&mut self, rep: Resource<limbo::LimboSession>) -> wasmtime::Result<()> {
+        let _ = self.drop_limbo_session(rep);
         Ok(())
     }
 }

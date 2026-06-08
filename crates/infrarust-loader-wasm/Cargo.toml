@@ -25,7 +25,7 @@ bytes = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
-infrarust-api = { workspace = true }
+infrarust-api = { workspace = true, features = ["test-util"] }
 infrarust-core = { workspace = true }
 infrarust_config = { workspace = true }
 infrarust-plugin-stats-native = { workspace = true }

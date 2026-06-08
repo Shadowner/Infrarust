@@ -41,6 +41,10 @@ impl SessionHandle {
     pub fn complete(&self, result: HandlerResult) {
         self.inner.complete(result);
     }
+
+    pub fn as_session(&self) -> Arc<dyn LimboSession> {
+        Arc::clone(&self.inner)
+    }
 }
 
 impl std::fmt::Debug for SessionHandle {

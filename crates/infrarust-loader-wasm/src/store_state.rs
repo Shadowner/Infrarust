@@ -30,6 +30,7 @@ pub(crate) struct PluginStoreState {
     pub(crate) epoch_yields: u32,
     next_listener_id: u64,
     listeners: HashMap<u64, ListenerHandle>,
+    codec: Option<Arc<CodecInstantiator>>,
 }
 
 impl PluginStoreState {

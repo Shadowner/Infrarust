@@ -25,6 +25,8 @@ mod error;
 #[cfg(feature = "wasm")]
 mod hosts;
 #[cfg(feature = "wasm")]
+mod limbo;
+#[cfg(feature = "wasm")]
 mod linker;
 #[cfg(feature = "wasm")]
 mod loader;

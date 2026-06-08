@@ -15,6 +15,7 @@ use crate::codec::{
 };
 use crate::context::{CommandInvocation, Context};
 use crate::event::{EventPriority, GuestEvent};
+use crate::limbo::{HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession};
 use crate::plugin::Plugin;
 
 type EventClosure = Box<dyn FnMut(Event) -> EventOutcome>;
@@ -31,6 +32,8 @@ thread_local! {
     static PLUGIN: RefCell<Option<Box<dyn Plugin>>> = const { RefCell::new(None) };
     static CODEC_FACTORIES: RefCell<Vec<FilterConstructor>> = RefCell::new(Vec::new());
     static CODEC_DECLARED: Cell<bool> = const { Cell::new(false) };
+    static LIMBO_HANDLERS: RefCell<HashMap<u64, Box<dyn LimboHandler>>> = RefCell::new(HashMap::new());
+    static LIMBO_DECLARED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn next_id() -> u64 {
@@ -140,6 +143,7 @@ pub fn on_enable<P: Plugin + Default>() -> Result<(), String> {
     let result = plugin.on_enable(&Context::new());
     if result.is_ok() {
         declare_codec_filters::<P>(true);
+        declare_limbo_handlers::<P>();
     }
     PLUGIN.with(|p| *p.borrow_mut() = Some(Box::new(plugin)));
     result
@@ -175,6 +179,60 @@ fn declare_codec_filters<P: Plugin>(notify: bool) {
     let mut registrar = CodecRegistrar { notify };
     P::register_codec_filters(&mut registrar);
     CODEC_DECLARED.with(|c| c.set(true));
+}
+
+pub fn register_limbo_handler(name: &str, handler: Box<dyn LimboHandler>) {
+    let id = next_id();
+    LIMBO_HANDLERS.with(|h| h.borrow_mut().insert(id, handler));
+    crate::bindings::limbo::register_limbo_handler(name, id);
+}
+
+fn declare_limbo_handlers<P: Plugin>() {
+    if LIMBO_DECLARED.with(Cell::get) {
+        return;
+    }
+    let mut registrar = LimboRegistrar::new();
+    P::register_limbo_handlers(&mut registrar);
+    LIMBO_DECLARED.with(|c| c.set(true));
+}
+
+pub fn limbo_on_player_enter(
+    handler: u64,
+    session: &crate::bindings::guest::LimboSession,
+) -> crate::bindings::guest::HandlerResult {
+    LIMBO_HANDLERS.with(|h| match h.borrow().get(&handler) {
+        Some(hdlr) => hdlr.on_player_enter(&LimboSession::new(session)).into_wit(),
+        None => HandlerOutcome::Accept.into_wit(),
+    })
+}
+
+pub fn limbo_on_command(
+    handler: u64,
+    session: &crate::bindings::guest::LimboSession,
+    command: String,
+    args: Vec<String>,
+) {
+    LIMBO_HANDLERS.with(|h| {
+        if let Some(hdlr) = h.borrow().get(&handler) {
+            hdlr.on_command(&LimboSession::new(session), &command, &args);
+        }
+    });
+}
+
+pub fn limbo_on_chat(handler: u64, session: &crate::bindings::guest::LimboSession, message: String) {
+    LIMBO_HANDLERS.with(|h| {
+        if let Some(hdlr) = h.borrow().get(&handler) {
+            hdlr.on_chat(&LimboSession::new(session), &message);
+        }
+    });
+}
+
+pub fn limbo_on_disconnect(handler: u64, player: u64) {
+    LIMBO_HANDLERS.with(|h| {
+        if let Some(hdlr) = h.borrow().get(&handler) {
+            hdlr.on_disconnect(player);
+        }
+    });
 }
 pub fn create_codec_filter<P: Plugin>(factory: u64, init: CodecSessionInit) -> FilterInstanceProxy {
     declare_codec_filters::<P>(false);

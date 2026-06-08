@@ -15,6 +15,7 @@ members = [
     "sdk-smoke",
     "codec-modify",
     "codec-stateful",
+    "limbo-handler",
 ]
 
 [workspace.dependencies]

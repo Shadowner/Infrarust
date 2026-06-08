@@ -12,6 +12,8 @@ pub mod context;
 pub mod handle;
 pub mod handler;
 pub mod session;
+#[cfg(feature = "test-util")]
+pub mod test_util;
 
 pub use context::LimboEntryContext;
 pub use handle::SessionHandle;

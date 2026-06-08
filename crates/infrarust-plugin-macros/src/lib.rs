@@ -175,25 +175,29 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
             }
 
             fn limbo_on_player_enter(
-                _handler: u64,
-                _session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
+                handler: u64,
+                session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
             ) -> ::infrarust_plugin_sdk::bindings::guest::HandlerResult {
-                ::infrarust_plugin_sdk::bindings::guest::HandlerResult::Accept
+                ::infrarust_plugin_sdk::runtime::limbo_on_player_enter(handler, session)
             }
             fn limbo_on_command(
-                _handler: u64,
-                _session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
-                _command: ::std::string::String,
-                _args: ::std::vec::Vec<::std::string::String>,
+                handler: u64,
+                session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
+                command: ::std::string::String,
+                args: ::std::vec::Vec<::std::string::String>,
             ) {
+                ::infrarust_plugin_sdk::runtime::limbo_on_command(handler, session, command, args)
             }
             fn limbo_on_chat(
-                _handler: u64,
-                _session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
-                _message: ::std::string::String,
+                handler: u64,
+                session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
+                message: ::std::string::String,
             ) {
+                ::infrarust_plugin_sdk::runtime::limbo_on_chat(handler, session, message)
             }
-            fn limbo_on_disconnect(_handler: u64, _player: u64) {}
+            fn limbo_on_disconnect(handler: u64, player: u64) {
+                ::infrarust_plugin_sdk::runtime::limbo_on_disconnect(handler, player)
+            }
             fn permission_level_of(
                 _handler: u64,
             ) -> ::infrarust_plugin_sdk::bindings::guest::PermissionLevel {

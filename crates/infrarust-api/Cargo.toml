@@ -23,3 +23,5 @@ uuid = { workspace = true }
 [features]
 default = []
 serde = ["dep:serde"]
+# Test-only helpers (e.g. a constructible LimboSession) for downstream crates.
+test-util = []

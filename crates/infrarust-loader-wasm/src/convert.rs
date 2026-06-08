@@ -1,12 +1,14 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use infrarust_api::error::{PlayerError, ServiceError};
+use infrarust_api::limbo::{HandlerResult, LimboEntryContext};
 use infrarust_api::permissions::PermissionLevel;
 use infrarust_api::services::ban_service::{BanEntry, BanTarget};
 use infrarust_api::services::config_service::{ProxyMode, ServerConfig};
 use infrarust_api::services::server_manager::ServerState;
-use infrarust_api::types::{Component, GameProfile, RawPacket, TitleData};
+use infrarust_api::types::{Component, GameProfile, RawPacket, ServerId, TitleData};
 
+use crate::bindings::infrarust::plugin::limbo as wl;
 use crate::bindings::infrarust::plugin::types as wit;
 
 pub(crate) fn system_time_to_millis(t: SystemTime) -> u64 {
@@ -156,5 +158,33 @@ pub(crate) fn title_data_from_wit(t: wit::TitleData) -> TitleData {
         fade_in_ticks: t.fade_in_ticks,
         stay_ticks: t.stay_ticks,
         fade_out_ticks: t.fade_out_ticks,
+    }
+}
+
+pub(crate) fn handler_result_from_wit(r: wl::HandlerResult) -> HandlerResult {
+    match r {
+        wl::HandlerResult::Accept => HandlerResult::Accept,
+        wl::HandlerResult::Deny(c) => HandlerResult::Deny(component_from_wit(&c)),
+        wl::HandlerResult::Hold => HandlerResult::Hold,
+        wl::HandlerResult::Redirect(s) => HandlerResult::Redirect(ServerId::from(s)),
+        wl::HandlerResult::SendToLimbo(v) => HandlerResult::SendToLimbo(v),
+    }
+}
+
+pub(crate) fn limbo_entry_context_to_wit(c: &LimboEntryContext) -> wl::LimboEntryContext {
+    match c {
+        LimboEntryContext::InitialConnection { target_server } => {
+            wl::LimboEntryContext::InitialConnection(target_server.as_str().to_string())
+        }
+        LimboEntryContext::KickedFromServer { server, reason } => {
+            wl::LimboEntryContext::KickedFromServer((
+                server.as_str().to_string(),
+                component_to_wit(reason),
+            ))
+        }
+        LimboEntryContext::PluginRedirect { from_server } => wl::LimboEntryContext::PluginRedirect(
+            from_server.as_ref().map(|s| s.as_str().to_string()),
+        ),
+        _ => wl::LimboEntryContext::PluginRedirect(None),
     }
 }

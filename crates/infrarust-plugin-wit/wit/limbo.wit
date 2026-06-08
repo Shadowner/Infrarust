@@ -3,7 +3,7 @@
 // `guest`. Always linked; the Limbo capability is enforced when the host mints a
 // session for a capability-holding plugin, never at link time.
 interface limbo {
-    use types.{player-id, server-id, component, game-profile, title-data, player-error};
+    use types.{player-id, server-id, component, game-profile, title-data, player-error, handler-id};
 
     // Why the player entered limbo (native LimboEntryContext, flattened).
     variant limbo-entry-context {
@@ -31,4 +31,5 @@ interface limbo {
         send-action-bar: func(message: component) -> result<_, player-error>;
         complete: func(outcome: handler-result);
     }
+    register-limbo-handler: func(name: string, handler: handler-id);
 }

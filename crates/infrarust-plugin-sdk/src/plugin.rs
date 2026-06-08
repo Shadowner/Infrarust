@@ -21,6 +21,11 @@ pub trait Plugin: 'static {
         Self: Sized,
     {
     }
+    fn register_limbo_handlers(_reg: &mut crate::limbo::LimboRegistrar)
+    where
+        Self: Sized,
+    {
+    }
 }
 
 impl PluginMetadata {

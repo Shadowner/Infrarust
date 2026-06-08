@@ -90,6 +90,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-limbo-handler"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-memory-bomb"
 version = "0.0.0"
 dependencies = [
