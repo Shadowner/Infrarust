@@ -62,6 +62,14 @@ pub trait CommandHandler: Send + Sync {
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async { Vec::new() })
     }
+    fn tab_complete_for<'a>(
+        &'a self,
+        partial_args: Vec<String>,
+        cursor: u32,
+        _player_id: Option<PlayerId>,
+    ) -> BoxFuture<'a, Vec<String>> {
+        self.tab_complete(partial_args, cursor)
+    }
 }
 
 pub mod private {

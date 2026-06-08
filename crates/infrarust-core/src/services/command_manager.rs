@@ -159,6 +159,14 @@ impl CommandManagerImpl {
     }
 
     pub async fn tab_complete(&self, input: &str) -> Vec<String> {
+        self.tab_complete_for_player(input, None).await
+    }
+
+    pub async fn tab_complete_for_player(
+        &self,
+        input: &str,
+        player_id: Option<PlayerId>,
+    ) -> Vec<String> {
         let input = input.trim_start();
         let (name, rest) = match input.split_once(' ') {
             Some((n, r)) => (n, r),
@@ -189,7 +197,9 @@ impl CommandManagerImpl {
                 } else {
                     rest.split_whitespace().map(String::from).collect()
                 };
-                handler.tab_complete(partial_args, cursor).await
+                handler
+                    .tab_complete_for(partial_args, cursor, player_id)
+                    .await
             }
             None => vec![],
         }
