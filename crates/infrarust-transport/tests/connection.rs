@@ -29,10 +29,7 @@ async fn test_client_addr_canonicalizes_ipv4_mapped_peer() {
 
     let mapped_peer: std::net::SocketAddr = "[::ffff:203.0.113.7]:40000".parse().unwrap();
     let conn = ClientConnection::new(server_stream, mapped_peer, addr);
-    assert_eq!(
-        conn.client_addr(),
-        "203.0.113.7".parse::<IpAddr>().unwrap()
-    );
+    assert_eq!(conn.client_addr(), "203.0.113.7".parse::<IpAddr>().unwrap());
 }
 
 #[tokio::test]

@@ -65,9 +65,7 @@ impl WebConfig {
             .map_or(self.bind.as_str(), |(h, _)| h)
             .trim_matches(['[', ']']);
         host.eq_ignore_ascii_case("localhost")
-            || host
-                .parse::<IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
+            || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
     }
 
     pub fn resolve_api_key(&mut self) -> Result<String, String> {
@@ -159,7 +157,9 @@ mod tests {
     #[test]
     fn non_loopback_with_strong_key_is_accepted() {
         let mut cfg = config("0.0.0.0:8080", Some("a-sufficiently-long-api-key-value"));
-        let key = cfg.resolve_api_key().expect("strong key on any bind is fine");
+        let key = cfg
+            .resolve_api_key()
+            .expect("strong key on any bind is fine");
         assert_eq!(key, "a-sufficiently-long-api-key-value");
     }
 }

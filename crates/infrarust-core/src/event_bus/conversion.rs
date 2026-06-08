@@ -330,7 +330,10 @@ mod tests {
         // Simulate the event returning the response unmodified.
         merge_ping_event(&mut core, &sent, &api);
 
-        assert_eq!(core.description, original, "rich MOTD must survive untouched");
+        assert_eq!(
+            core.description, original,
+            "rich MOTD must survive untouched"
+        );
         assert!(core.description.get("hoverEvent").is_some());
         assert!(core.description.get("clickEvent").is_some());
     }

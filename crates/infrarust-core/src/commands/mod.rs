@@ -316,10 +316,8 @@ mod tests {
 
         let root = InfrarustRootCommand::new(services);
         let all: HashSet<String> = root.subcommands.keys().cloned().collect();
-        permission_service.register_subcommands(
-            all,
-            admin_only.iter().map(|s| (*s).to_string()).collect(),
-        );
+        permission_service
+            .register_subcommands(all, admin_only.iter().map(|s| (*s).to_string()).collect());
         root
     }
 
@@ -353,7 +351,11 @@ mod tests {
     async fn tab_complete_does_not_descend_into_forbidden_subcommand() {
         let root = root_command(&["list", "help"], &["kick"]);
         let suggestions = root
-            .complete_for_level(vec!["kick".to_string(), String::new()], 0, PermissionLevel::Player)
+            .complete_for_level(
+                vec!["kick".to_string(), String::new()],
+                0,
+                PermissionLevel::Player,
+            )
             .await;
 
         assert!(
