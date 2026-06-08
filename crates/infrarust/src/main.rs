@@ -471,9 +471,9 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
 
     console_handle.abort();
 
-    plugin_manager.write().await.shutdown().await;
-
     server.event_bus().fire(ProxyShutdownEvent).await;
+
+    plugin_manager.write().await.shutdown().await;
 
     // Post-shutdown: drain active connections with a timeout
     let remaining = server.registry().count();
