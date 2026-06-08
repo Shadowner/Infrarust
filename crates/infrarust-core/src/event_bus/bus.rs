@@ -54,6 +54,7 @@ pub struct EventBusImpl {
 
     /// Monotonic counter for generating unique `ListenerHandle` values.
     next_handle: AtomicU64,
+    packet_listener_count: AtomicU64,
 }
 
 impl EventBusImpl {
@@ -62,6 +63,7 @@ impl EventBusImpl {
             handlers: RwLock::new(HashMap::new()),
             packet_handlers: RwLock::new(HashMap::new()),
             next_handle: AtomicU64::new(1),
+            packet_listener_count: AtomicU64::new(0),
         }
     }
 
@@ -151,6 +153,7 @@ impl EventBusImpl {
             let pos = vec.partition_point(|h| h.priority.value() <= entry.priority.value());
             vec.insert(pos, entry);
         }
+        self.packet_listener_count.fetch_add(1, Ordering::Relaxed);
         handle
     }
 
@@ -279,6 +282,9 @@ impl EventBus for EventBusImpl {
         state: ConnectionState,
         direction: PacketDirection,
     ) -> bool {
+        if self.packet_listener_count.load(Ordering::Relaxed) == 0 {
+            return false;
+        }
         let key = PacketKey {
             packet_id,
             state,
@@ -316,6 +322,7 @@ impl EventBus for EventBusImpl {
                 let vec = Arc::make_mut(vec_arc);
                 if let Some(pos) = vec.iter().position(|h| h.handle == handle) {
                     vec.remove(pos);
+                    self.packet_listener_count.fetch_sub(1, Ordering::Relaxed);
                     return;
                 }
             }
