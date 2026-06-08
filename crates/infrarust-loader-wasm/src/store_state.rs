@@ -13,6 +13,7 @@ use wasmtime::component::ResourceTable;
 use wasmtime::{Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
+use crate::codec::CodecInstantiator;
 use crate::consts::{EPOCH_DEADLINE_TICKS, MAX_EPOCH_YIELDS_BEFORE_TRAP, MEMORY_LIMIT};
 use crate::error::WasmLoaderError;
 use crate::plugin::WasmInstance;
@@ -81,6 +82,10 @@ impl PluginStoreState {
     pub(crate) fn take_listener(&mut self, id: u64) -> Option<ListenerHandle> {
         self.listeners.remove(&id)
     }
+
+    pub(crate) fn codec_instantiator(&self) -> Option<&Arc<CodecInstantiator>> {
+        self.codec.as_ref()
+    }
 }
 
 impl WasiView for PluginStoreState {
@@ -121,6 +126,7 @@ pub(crate) fn build_load_state(
     ctx: Arc<dyn PluginContext>,
     capabilities: CapabilitySet,
     data_dir: &Path,
+    codec: Option<Arc<CodecInstantiator>>,
 ) -> Result<PluginStoreState, WasmLoaderError> {
     Ok(PluginStoreState {
         table: ResourceTable::new(),
@@ -134,6 +140,7 @@ pub(crate) fn build_load_state(
         epoch_yields: 0,
         next_listener_id: 1,
         listeners: HashMap::new(),
+        codec,
     })
 }
 
@@ -150,6 +157,7 @@ pub(crate) fn build_probe_state(plugin_id: String) -> PluginStoreState {
         epoch_yields: 0,
         next_listener_id: 1,
         listeners: HashMap::new(),
+        codec: None,
     }
 }
 

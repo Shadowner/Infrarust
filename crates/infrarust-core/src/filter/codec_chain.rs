@@ -178,7 +178,7 @@ mod tests {
     impl CodecFilterFactory for MockFactory {
         fn metadata(&self) -> FilterMetadata {
             FilterMetadata {
-                id: self.id,
+                id: self.id.to_string(),
                 priority: self.priority,
                 after: vec![],
                 before: vec![],

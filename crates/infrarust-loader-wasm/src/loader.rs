@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::loader::{LoaderError, PluginContextFactory, PluginLoader};
+use infrarust_api::permissions::Capability;
 use infrarust_api::plugin::{Plugin, PluginMetadata};
 use wasmtime::component::Component;
 use wasmtime::{Engine, Store};
@@ -119,7 +120,19 @@ impl PluginLoader for WasmPluginLoader {
             let linker = build_linker(&self.engine, plugin_id, &capabilities)
                 .map_err(|e| e.into_loader_error(plugin_id))?;
 
-            let state = build_load_state(plugin_id.to_owned(), ctx, capabilities, &data_dir)
+            let codec = if capabilities.has(Capability::CodecFilter) {
+                let instantiator = crate::codec::CodecInstantiator::new(
+                    self.engine.clone(),
+                    &entry.component,
+                    plugin_id.to_owned(),
+                )
+                .map_err(|e| e.into_loader_error(plugin_id))?;
+                Some(Arc::new(instantiator))
+            } else {
+                None
+            };
+
+            let state = build_load_state(plugin_id.to_owned(), ctx, capabilities, &data_dir, codec)
                 .map_err(|e| e.into_loader_error(plugin_id))?;
             let mut store = Store::new(&self.engine, state);
             install_epoch_control(&mut store);

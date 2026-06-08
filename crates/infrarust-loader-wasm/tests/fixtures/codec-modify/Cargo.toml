@@ -1,0 +1,11 @@
+[package]
+name = "fixture-codec-modify"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+infrarust-plugin-sdk = { workspace = true }

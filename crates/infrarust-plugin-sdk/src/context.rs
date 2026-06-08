@@ -61,6 +61,7 @@ impl Context {
             aliases: Vec::new(),
             description: String::new(),
             handler: Box::new(handler),
+            completer: None,
         }
     }
 

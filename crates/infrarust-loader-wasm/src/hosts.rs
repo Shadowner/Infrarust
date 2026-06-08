@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use infrarust_api::error::ServiceError;
-use infrarust_api::event::ListenerHandle;
+use infrarust_api::filter::{FilterMetadata, FilterPriority};
 use infrarust_api::permissions::Capability;
 use infrarust_api::services::scheduler::TaskHandle;
 use infrarust_api::types::{PlayerId, ServerId};
@@ -12,8 +12,8 @@ use wasmtime::component::Resource;
 
 use crate::bindings::infrarust::plugin::player_registry::Player as PlayerHandle;
 use crate::bindings::infrarust::plugin::{
-    ban_service, command_manager, config_service, event_bus, limbo, log, player_registry,
-    scheduler, server_manager, types as wt,
+    ban_service, codec_registry, command_manager, config_service, event_bus, limbo, log,
+    player_registry, scheduler, server_manager, types as wt,
 };
 use crate::consts::HOST_CALL_TIMEOUT;
 use crate::store_state::PluginStoreState;
@@ -527,6 +527,54 @@ impl command_manager::Host for PluginStoreState {
     }
 }
 
+fn filter_priority_from_u8(p: u8) -> FilterPriority {
+    match p {
+        0 => FilterPriority::First,
+        1 => FilterPriority::Early,
+        2 => FilterPriority::Normal,
+        3 => FilterPriority::Late,
+        _ => FilterPriority::Last,
+    }
+}
+
+impl codec_registry::Host for PluginStoreState {
+    async fn register_codec_filter(
+        &mut self,
+        metadata: codec_registry::CodecFilterMetadata,
+        factory: u64,
+    ) -> wasmtime::Result<()> {
+        let Some(instantiator) = self.codec_instantiator().cloned() else {
+            return Ok(());
+        };
+        let Some(ctx) = self.ctx() else {
+            return Ok(());
+        };
+        let Some(registry) = ctx.codec_filters() else {
+            return Ok(());
+        };
+        let native_meta = FilterMetadata {
+            id: metadata.id,
+            priority: filter_priority_from_u8(metadata.priority),
+            after: metadata.after,
+            before: metadata.before,
+        };
+        registry.register(Box::new(crate::codec::WasmCodecFilterFactory::new(
+            instantiator,
+            factory,
+            native_meta,
+        )));
+        Ok(())
+    }
+
+    async fn unregister_codec_filter(&mut self, id: String) -> wasmtime::Result<()> {
+        if let Some(ctx) = self.ctx()
+            && let Some(registry) = ctx.codec_filters()
+        {
+            registry.unregister(&id);
+        }
+        Ok(())
+    }
+}
 impl scheduler::Host for PluginStoreState {
     async fn delay(&mut self, after_ms: u64, callback_id: u64) -> wasmtime::Result<u64> {
         let instance = self.instance_ref();

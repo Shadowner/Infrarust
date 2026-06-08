@@ -29,7 +29,7 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
     /// Registers a filter, replacing any existing filter with the same ID.
     pub fn register(&self, item: F) {
         let id = item.metadata().id;
-        tracing::debug!(filter_id = id, kind = self.label, "Registering filter");
+        tracing::debug!(filter_id = %id, kind = self.label, "Registering filter");
 
         {
             let mut items = self.items.write().expect("lock poisoned");

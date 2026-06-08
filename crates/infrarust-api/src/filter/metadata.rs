@@ -4,13 +4,13 @@
 #[derive(Debug, Clone)]
 pub struct FilterMetadata {
     /// Unique identifier for this filter.
-    pub id: &'static str,
+    pub id: String,
     /// Base priority for ordering.
     pub priority: FilterPriority,
     /// This filter must execute AFTER these filters (by id).
-    pub after: Vec<&'static str>,
+    pub after: Vec<String>,
     /// This filter must execute BEFORE these filters (by id).
-    pub before: Vec<&'static str>,
+    pub before: Vec<String>,
 }
 
 /// Priority of a filter within its chain.
@@ -35,9 +35,9 @@ pub enum FilterPriority {
 impl FilterMetadata {
     /// Creates metadata with only an id and default priority.
     #[must_use]
-    pub fn new(id: &'static str) -> Self {
+    pub fn new(id: impl Into<String>) -> Self {
         Self {
-            id,
+            id: id.into(),
             priority: FilterPriority::Normal,
             after: Vec::new(),
             before: Vec::new(),

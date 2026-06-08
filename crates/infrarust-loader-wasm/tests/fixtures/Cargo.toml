@@ -13,6 +13,8 @@ members = [
     "command-plugin",
     "capability-denied",
     "sdk-smoke",
+    "codec-modify",
+    "codec-stateful",
 ]
 
 [workspace.dependencies]

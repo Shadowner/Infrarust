@@ -29,6 +29,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-codec-modify"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
+name = "fixture-codec-stateful"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-command-plugin"
 version = "0.0.0"
 dependencies = [

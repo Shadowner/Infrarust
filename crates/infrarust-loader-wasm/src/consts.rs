@@ -15,6 +15,12 @@ pub(crate) const EPOCH_DEADLINE_TICKS: u64 = 1;
 /// The cpu-spin test's wall-clock timeout must stay strictly above this.
 pub(crate) const MAX_EPOCH_YIELDS_BEFORE_TRAP: u32 = 60;
 
+/// Epoch ticks granted to a single synchronous codec guest call before a hard
+/// trap. Reset before every `create`/`filter`/lifecycle call (see `codec::proxies`).
+/// A per-packet filter completes in microseconds, so this is ~16×50 ms of pure
+/// headroom that only a runaway filter can exceed — false trips are impossible.
+pub(crate) const CODEC_EPOCH_DEADLINE_TICKS: u64 = 16;
+
 /// Linear-memory cap per plugin instance (§9.3). TODO(config): read from `ProxyConfig`.
 /// Instance/table/memory *counts* keep wasmtime's defaults (a component needs several core
 /// instances), so only memory growth is bounded here.

@@ -6,9 +6,13 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use crate::bindings::codec_filter::{
-    CodecContext, CodecVerdict, ConnectionState, FilterOutput, GuestFilterInstance, RawPacket,
+    CodecContext, CodecSessionInit, ConnectionState, FilterOutput, GuestFilterInstance, RawPacket,
 };
 use crate::bindings::guest::{Event, EventOutcome};
+use crate::codec::{
+    CodecFilter, CodecRegistrar, FilterConstructor, Injections, Packet, Verdict, build_filter_output,
+    packet_from_wit,
+};
 use crate::context::{CommandInvocation, Context};
 use crate::event::{EventPriority, GuestEvent};
 use crate::plugin::Plugin;
@@ -25,6 +29,8 @@ thread_local! {
     static TASKS: RefCell<HashMap<u64, TaskClosure>> = RefCell::new(HashMap::new());
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
     static PLUGIN: RefCell<Option<Box<dyn Plugin>>> = const { RefCell::new(None) };
+    static CODEC_FACTORIES: RefCell<Vec<FilterConstructor>> = RefCell::new(Vec::new());
+    static CODEC_DECLARED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn next_id() -> u64 {
@@ -132,6 +138,9 @@ pub fn tab_complete(callback_id: u64, partial: Vec<String>, cursor: u32) -> Vec<
 pub fn on_enable<P: Plugin + Default>() -> Result<(), String> {
     let plugin = P::default();
     let result = plugin.on_enable(&Context::new());
+    if result.is_ok() {
+        declare_codec_filters::<P>(true);
+    }
     PLUGIN.with(|p| *p.borrow_mut() = Some(Box::new(plugin)));
     result
 }
@@ -145,18 +154,77 @@ pub fn on_disable() -> Result<(), String> {
 }
 
 pub struct NoopFilterInstance;
+pub fn register_codec_factory(
+    notify: bool,
+    metadata: crate::bindings::codec_registry::CodecFilterMetadata,
+    constructor: FilterConstructor,
+) {
+    let id = CODEC_FACTORIES.with(|f| {
+        let mut f = f.borrow_mut();
+        let id = u64::try_from(f.len()).unwrap_or(u64::MAX);
+        f.push(constructor);
+        id
+    });
+    if notify {
+        crate::bindings::codec_registry::register_codec_filter(&metadata, id);
+    }
+}
+fn declare_codec_filters<P: Plugin>(notify: bool) {
+    if CODEC_DECLARED.with(Cell::get) {
+        return;
+    }
+    let mut registrar = CodecRegistrar { notify };
+    P::register_codec_filters(&mut registrar);
+    CODEC_DECLARED.with(|c| c.set(true));
+}
+pub fn create_codec_filter<P: Plugin>(factory: u64, init: CodecSessionInit) -> FilterInstanceProxy {
+    declare_codec_filters::<P>(false);
+    let inner = CODEC_FACTORIES.with(|f| {
+        f.borrow()
+            .get(usize::try_from(factory).unwrap_or(usize::MAX))
+            .map(|constructor| constructor(&init))
+    });
+    FilterInstanceProxy::new(inner)
+}
 
-impl GuestFilterInstance for NoopFilterInstance {
-    fn filter(&self, _ctx: CodecContext, _packet: RawPacket) -> FilterOutput {
-        FilterOutput {
-            verdict: CodecVerdict::Pass,
-            packet: None,
-            inject_before: Vec::new(),
-            inject_after: Vec::new(),
+pub struct FilterInstanceProxy {
+    inner: RefCell<Box<dyn CodecFilter>>,
+}
+
+impl FilterInstanceProxy {
+    fn new(inner: Option<Box<dyn CodecFilter>>) -> Self {
+        Self {
+            inner: RefCell::new(inner.unwrap_or_else(|| Box::new(PassthroughFilter))),
         }
     }
-    fn on_state_change(&self, _new_state: ConnectionState) {}
-    fn on_compression_change(&self, _threshold: i32) {}
-    fn on_encryption_enabled(&self) {}
-    fn on_close(&self) {}
+}
+
+impl GuestFilterInstance for FilterInstanceProxy {
+    fn filter(&self, ctx: CodecContext, packet: RawPacket) -> FilterOutput {
+        let mut inner = self.inner.borrow_mut();
+        let mut packet = packet_from_wit(packet);
+        let mut injections = Injections::default();
+        let verdict = inner.filter(&ctx, &mut packet, &mut injections);
+        build_filter_output(verdict, packet, injections)
+    }
+    fn on_state_change(&self, new_state: ConnectionState) {
+        self.inner.borrow_mut().on_state_change(new_state);
+    }
+    fn on_compression_change(&self, threshold: i32) {
+        self.inner.borrow_mut().on_compression_change(threshold);
+    }
+    fn on_encryption_enabled(&self) {
+        self.inner.borrow_mut().on_encryption_enabled();
+    }
+    fn on_close(&self) {
+        self.inner.borrow_mut().on_close();
+    }
+}
+
+struct PassthroughFilter;
+
+impl CodecFilter for PassthroughFilter {
+    fn filter(&mut self, _ctx: &CodecContext, _packet: &mut Packet, _out: &mut Injections) -> Verdict {
+        Verdict::Pass
+    }
 }

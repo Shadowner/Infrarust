@@ -16,6 +16,6 @@ wit_bindgen::generate!({
 
 pub use exports::infrarust::plugin::{codec_filter, guest};
 pub use infrarust::plugin::{
-    ban_service, command_manager, config_service, event_bus, log, player_registry, scheduler,
-    server_manager, types,
+    ban_service, codec_registry, command_manager, config_service, event_bus, log, player_registry,
+    scheduler, server_manager, types,
 };

@@ -9,6 +9,8 @@ mod bindings;
 #[cfg(feature = "wasm")]
 mod cache;
 #[cfg(feature = "wasm")]
+mod codec;
+#[cfg(feature = "wasm")]
 mod consts;
 #[cfg(feature = "wasm")]
 mod convert;

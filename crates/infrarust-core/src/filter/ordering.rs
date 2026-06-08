@@ -52,11 +52,11 @@ pub fn resolve_filter_order(filters: &[FilterMetadata]) -> Result<Vec<String>, F
         return Ok(Vec::new());
     }
 
-    let available: HashSet<&str> = filters.iter().map(|f| f.id).collect();
+    let available: HashSet<&str> = filters.iter().map(|f| f.id.as_str()).collect();
     let priority_map: HashMap<&str, (FilterPriority, usize)> = filters
         .iter()
         .enumerate()
-        .map(|(i, f)| (f.id, (f.priority, i)))
+        .map(|(i, f)| (f.id.as_str(), (f.priority, i)))
         .collect();
 
     // Build the dependency graph: edges[a] contains b means "a must come after b"
@@ -64,25 +64,27 @@ pub fn resolve_filter_order(filters: &[FilterMetadata]) -> Result<Vec<String>, F
     let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();
 
     for f in filters {
-        in_degree.entry(f.id).or_insert(0);
+        in_degree.entry(f.id.as_str()).or_insert(0);
     }
 
     // Process `after` constraints: f.after("dep") means f depends on dep
     for f in filters {
-        for &dep in &f.after {
+        for dep in &f.after {
+            let dep = dep.as_str();
             if available.contains(dep) {
-                *in_degree.entry(f.id).or_insert(0) += 1;
-                dependents.entry(dep).or_default().push(f.id);
+                *in_degree.entry(f.id.as_str()).or_insert(0) += 1;
+                dependents.entry(dep).or_default().push(f.id.as_str());
             }
         }
     }
 
     // Process `before` constraints: f.before("target") means target depends on f
     for f in filters {
-        for &target in &f.before {
+        for target in &f.before {
+            let target = target.as_str();
             if available.contains(target) {
                 *in_degree.entry(target).or_insert(0) += 1;
-                dependents.entry(f.id).or_default().push(target);
+                dependents.entry(f.id.as_str()).or_default().push(target);
             }
         }
     }
@@ -92,10 +94,10 @@ pub fn resolve_filter_order(filters: &[FilterMetadata]) -> Result<Vec<String>, F
 
     // Use the original filter order to seed the heap (deterministic)
     for f in filters {
-        if in_degree.get(f.id) == Some(&0) {
-            let (priority, insertion_order) = priority_map[f.id];
+        if in_degree.get(f.id.as_str()) == Some(&0) {
+            let (priority, insertion_order) = priority_map[f.id.as_str()];
             heap.push(PriorityEntry {
-                id: f.id,
+                id: f.id.as_str(),
                 priority,
                 insertion_order,
             });
@@ -147,10 +149,10 @@ mod tests {
         before: Vec<&'static str>,
     ) -> FilterMetadata {
         FilterMetadata {
-            id,
+            id: id.to_string(),
             priority,
-            after,
-            before,
+            after: after.into_iter().map(String::from).collect(),
+            before: before.into_iter().map(String::from).collect(),
         }
     }
 

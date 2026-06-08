@@ -16,6 +16,11 @@ pub trait Plugin: 'static {
     fn on_disable(&self, _ctx: &Context) -> Result<(), String> {
         Ok(())
     }
+    fn register_codec_filters(_reg: &mut crate::codec::CodecRegistrar)
+    where
+        Self: Sized,
+    {
+    }
 }
 
 impl PluginMetadata {

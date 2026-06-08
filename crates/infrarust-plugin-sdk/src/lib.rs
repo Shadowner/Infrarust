@@ -23,6 +23,7 @@
 //! ```
 
 pub mod bindings;
+pub mod codec;
 pub mod component;
 pub mod context;
 pub mod event;
@@ -33,6 +34,10 @@ pub mod runtime;
 pub mod services;
 
 pub use bindings::export;
+pub use codec::{
+    CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionSide, ConnectionState,
+    FilterPriority, Injections, Packet, Verdict,
+};
 pub use component::Component;
 pub use context::{CommandBuilder, CommandInvocation, Context, EventSubscription, TaskHandle};
 pub use event::{EventPriority, GuestEvent};
@@ -61,6 +66,10 @@ macro_rules! error {
 }
 
 pub mod prelude {
+    pub use crate::codec::{
+        CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionState,
+        FilterPriority, Injections, Packet, Verdict,
+    };
     pub use crate::component::Component;
     pub use crate::context::{CommandInvocation, Context, EventSubscription, TaskHandle};
     pub use crate::event::*;

@@ -69,6 +69,21 @@ interface command-manager {                                                   //
     unregister: func(name: string);
 }
 
+interface codec-registry {                                                    // gated: codec-filter
+    use types.{handler-id};
+
+    // Flat metadata (no &'static str on the wire). priority: 0=first .. 4=last.
+    record codec-filter-metadata {
+        id: string,
+        priority: u8,
+        after: list<string>,
+        before: list<string>,
+    }
+
+    register-codec-filter: func(metadata: codec-filter-metadata, factory: handler-id);
+    unregister-codec-filter: func(id: string);
+}
+
 interface scheduler {                                                         // gated: scheduler
     use types.{task-handle};
 

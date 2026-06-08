@@ -36,7 +36,7 @@ impl TransportFilterRegistryImpl {
                 .filter_map(|id| {
                     filters
                         .iter()
-                        .find(|f| TransportFilter::metadata(f.as_ref()).id == id)
+                        .find(|f| TransportFilter::metadata(f.as_ref()).id.as_str() == id.as_str())
                         .cloned()
                 })
                 .collect();
@@ -80,7 +80,7 @@ mod tests {
     impl TransportFilter for MockTransportFilter {
         fn metadata(&self) -> FilterMetadata {
             FilterMetadata {
-                id: self.id,
+                id: self.id.to_string(),
                 priority: self.priority,
                 after: vec![],
                 before: vec![],

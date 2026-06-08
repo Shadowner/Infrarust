@@ -6,8 +6,8 @@ use wasmtime::Engine;
 use wasmtime::component::{HasSelf, Linker};
 
 use crate::bindings::infrarust::plugin::{
-    ban_service, command_manager, config_service, event_bus, limbo, log, player_registry,
-    scheduler, server_manager,
+    ban_service, codec_registry, command_manager, config_service, event_bus, limbo, log,
+    player_registry, scheduler, server_manager,
 };
 use crate::error::WasmLoaderError;
 use crate::store_state::PluginStoreState;
@@ -72,6 +72,9 @@ pub(crate) fn build_linker(
     if caps.has(Capability::Ban) {
         link!(linker, plugin_id, ban_service);
     }
+    if caps.has(Capability::CodecFilter) {
+        link!(linker, plugin_id, codec_registry);
+    }
 
     Ok(linker)
 }
@@ -90,5 +93,6 @@ pub(crate) fn build_probe_linker(
     link!(linker, plugin_id, config_service);
     link!(linker, plugin_id, server_manager);
     link!(linker, plugin_id, ban_service);
+    link!(linker, plugin_id, codec_registry);
     Ok(linker)
 }

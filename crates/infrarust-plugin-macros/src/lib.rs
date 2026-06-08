@@ -205,13 +205,13 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
         }
 
         impl ::infrarust_plugin_sdk::bindings::codec_filter::Guest for __InfrarustPluginComponent {
-            type FilterInstance = ::infrarust_plugin_sdk::runtime::NoopFilterInstance;
+            type FilterInstance = ::infrarust_plugin_sdk::runtime::FilterInstanceProxy;
             fn create(
-                _factory: u64,
-                _init: ::infrarust_plugin_sdk::bindings::codec_filter::CodecSessionInit,
+                factory: u64,
+                init: ::infrarust_plugin_sdk::bindings::codec_filter::CodecSessionInit,
             ) -> ::infrarust_plugin_sdk::bindings::codec_filter::FilterInstance {
                 ::infrarust_plugin_sdk::bindings::codec_filter::FilterInstance::new(
-                    ::infrarust_plugin_sdk::runtime::NoopFilterInstance,
+                    ::infrarust_plugin_sdk::runtime::create_codec_filter::<#ty>(factory, init),
                 )
             }
         }
