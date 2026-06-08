@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use infrarust_api::player::Player;
+use infrarust_api::types::PlayerId;
 use uuid::Uuid;
 
 use crate::player::PlayerSession;
@@ -15,6 +16,7 @@ use crate::player::PlayerSession;
 /// Handlers call `register()` at start, `unregister()` at end.
 pub struct ConnectionRegistry {
     sessions: DashMap<Uuid, Arc<PlayerSession>>,
+    id_index: DashMap<PlayerId, Uuid>,
 }
 
 impl ConnectionRegistry {
@@ -22,13 +24,18 @@ impl ConnectionRegistry {
     pub fn new() -> Self {
         Self {
             sessions: DashMap::new(),
+            id_index: DashMap::new(),
         }
     }
 
     /// Registers a player session, keyed by profile UUID.
     pub fn register(&self, session: Arc<PlayerSession>) -> Uuid {
         let uuid = session.profile().uuid;
+        self.id_index.insert(session.id(), uuid);
         if let Some(previous) = self.sessions.insert(uuid, Arc::clone(&session)) {
+            if previous.id() != session.id() {
+                self.id_index.remove(&previous.id());
+            }
             previous.shutdown_token().cancel();
             previous.set_disconnected();
             tracing::warn!(
@@ -43,9 +50,15 @@ impl ConnectionRegistry {
     /// Removes a session by UUID, marking it as disconnected.
     pub fn unregister(&self, session_uuid: &Uuid) -> Option<Arc<PlayerSession>> {
         self.sessions.remove(session_uuid).map(|(_, session)| {
+            self.id_index.remove(&session.id());
             session.set_disconnected();
             session
         })
+    }
+
+    pub fn find_by_id(&self, id: PlayerId) -> Option<Arc<PlayerSession>> {
+        let uuid = *self.id_index.get(&id)?;
+        self.get(&uuid)
     }
 
     /// Returns a reference-counted handle to the session.
@@ -124,6 +137,26 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
+    fn make_session_with_id(id: u64, username: &str, server: &str) -> Arc<PlayerSession> {
+        let (tx, _rx) = mpsc::channel::<PlayerCommand>(32);
+        Arc::new(PlayerSession::new(
+            PlayerId::new(id),
+            GameProfile {
+                uuid: Uuid::new_v4(),
+                username: username.to_string(),
+                properties: vec![],
+            },
+            infrarust_api::types::ProtocolVersion::new(767),
+            "127.0.0.1:12345".parse().unwrap(),
+            Some(ServerId::new(server)),
+            false,
+            false,
+            tx,
+            CancellationToken::new(),
+            crate::permissions::default_checker(),
+        ))
+    }
+
     fn make_session(username: &str, server: &str) -> Arc<PlayerSession> {
         let (tx, _rx) = mpsc::channel::<PlayerCommand>(32);
         Arc::new(PlayerSession::new(
@@ -172,6 +205,23 @@ mod tests {
         let found = registry.find_by_username("bob").unwrap();
         assert_eq!(found.current_server().unwrap().as_str(), "survival");
         assert!(registry.find_by_username("charlie").is_none());
+    }
+
+    #[test]
+    fn find_by_id_is_correct_and_cleaned_up() {
+        let registry = ConnectionRegistry::new();
+        registry.register(make_session_with_id(1, "alice", "lobby"));
+        let bob = make_session_with_id(2, "bob", "survival");
+        let bob_uuid = bob.profile().uuid;
+        registry.register(bob);
+
+        let found = registry.find_by_id(PlayerId::new(2)).unwrap();
+        assert_eq!(found.profile().username, "bob");
+        assert!(registry.find_by_id(PlayerId::new(99)).is_none());
+
+        registry.unregister(&bob_uuid);
+        assert!(registry.find_by_id(PlayerId::new(2)).is_none());
+        assert!(registry.find_by_id(PlayerId::new(1)).is_some());
     }
 
     #[test]

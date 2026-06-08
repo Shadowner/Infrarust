@@ -36,11 +36,7 @@ impl PlayerRegistry for PlayerRegistryImpl {
     }
 
     fn get_player_by_id(&self, id: PlayerId) -> Option<Arc<dyn Player>> {
-        self.registry
-            .all()
-            .into_iter()
-            .find(|s| s.id() == id)
-            .map(|s| s as Arc<dyn Player>)
+        self.registry.find_by_id(id).map(|s| s as Arc<dyn Player>)
     }
 
     fn get_players_on_server(&self, server: &ServerId) -> Vec<Arc<dyn Player>> {
