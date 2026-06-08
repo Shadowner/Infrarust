@@ -5,7 +5,7 @@ use std::path::Path;
 
 use rand::Rng;
 
-const GENERATED_SECRET_LENGTH: usize = 12;
+const GENERATED_SECRET_LENGTH: usize = 32;
 
 pub fn load_or_generate_secret(path: &Path) -> Result<Vec<u8>, std::io::Error> {
     if path.exists() {
@@ -65,7 +65,11 @@ mod tests {
         let path = dir.path().join("test.secret");
 
         let secret = load_or_generate_secret(&path).unwrap();
-        assert_eq!(secret.len(), 12);
+        assert_eq!(secret.len(), GENERATED_SECRET_LENGTH);
+        assert!(
+            secret.len() >= 32,
+            "generated forwarding secret must be at least 32 chars (~190 bits)"
+        );
         assert!(path.exists());
 
         let s = String::from_utf8(secret).unwrap();
