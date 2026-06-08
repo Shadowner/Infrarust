@@ -20,6 +20,13 @@ use crate::player::packets::encode_packet;
 /// considering the client timed out.
 const KEEPALIVE_TIMEOUT_SECS: u64 = 15;
 
+/// Outcome of a keepalive interval tick.
+pub(crate) enum KeepAliveTick {
+    Send(PacketFrame),
+    Idle,
+    Timeout,
+}
+
 /// Tracks the keepalive handshake with a single client.
 pub(crate) struct KeepAliveState {
     last_sent_id: i64,
@@ -36,19 +43,27 @@ impl KeepAliveState {
         }
     }
 
-    /// Generates a new keepalive frame if one should be sent.
+    /// Advances the keepalive state machine on a periodic interval tick.
     ///
-    /// Returns `Some(frame)` with a fresh `CKeepAlive` packet, or `None` if
-    /// the client has not responded within 15 seconds (timeout).
+    /// - If no keepalive is outstanding, emits a fresh ping ([`KeepAliveTick::Send`]).
+    /// - If a keepalive is outstanding but the grace window has not elapsed,
+    ///   returns [`KeepAliveTick::Idle`] (it deliberately does **not** send another
+    ///   ping, which would reset the timer so the timeout could never fire).
+    /// - If a keepalive is outstanding past the timeout, returns
+    ///   [`KeepAliveTick::Timeout`] so the caller can drop the connection.
+    ///
+    /// This separation is what makes the timeout reachable when the tick interval
+    /// is shorter than `KEEPALIVE_TIMEOUT_SECS`.
     pub fn tick(
         &mut self,
         version: ProtocolVersion,
         registry: &PacketRegistry,
-    ) -> Result<Option<PacketFrame>, CoreError> {
-        if self.awaiting_response
-            && self.last_sent_at.elapsed() > Duration::from_secs(KEEPALIVE_TIMEOUT_SECS)
-        {
-            return Ok(None); // Client timed out
+    ) -> Result<KeepAliveTick, CoreError> {
+        if self.awaiting_response {
+            if self.last_sent_at.elapsed() >= Duration::from_secs(KEEPALIVE_TIMEOUT_SECS) {
+                return Ok(KeepAliveTick::Timeout);
+            }
+            return Ok(KeepAliveTick::Idle);
         }
 
         let id = if version.less_than(ProtocolVersion::V1_12_2) {
@@ -65,7 +80,7 @@ impl KeepAliveState {
         self.awaiting_response = true;
 
         let frame = encode_packet(&CKeepAlive { id }, version, registry)?;
-        Ok(Some(frame))
+        Ok(KeepAliveTick::Send(frame))
     }
 
     /// Processes a keepalive response from the client.
@@ -114,28 +129,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tick_returns_some_on_first_call() {
+    fn tick_sends_on_first_call() {
         let registry = test_registry();
         let mut state = KeepAliveState::new();
 
         let result = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
-        assert!(result.is_some(), "first tick should produce a frame");
+        assert!(
+            matches!(result, KeepAliveTick::Send(_)),
+            "first tick should produce a frame"
+        );
         assert!(state.awaiting_response);
     }
 
-    #[tokio::test]
-    async fn tick_returns_none_after_timeout() {
+    #[test]
+    fn second_tick_without_response_is_idle_not_resend() {
+        // Regression: previously every tick reset `last_sent_at` and re-sent a
+        // ping, so the timeout could never accumulate. A second tick while still
+        // awaiting a response must NOT send another ping — it must idle so the
+        // timer keeps running. No backdating required to expose the old bug.
         let registry = test_registry();
         let mut state = KeepAliveState::new();
 
-        // Send a keepalive
-        let _ = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
+        assert!(matches!(
+            state.tick(ProtocolVersion::V1_21, &registry).unwrap(),
+            KeepAliveTick::Send(_)
+        ));
+        let result = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
+        assert!(
+            matches!(result, KeepAliveTick::Idle),
+            "a second tick with no response must idle, not resend"
+        );
+    }
 
-        // Simulate timeout by backdating last_sent_at
+    #[test]
+    fn tick_times_out_after_grace_without_response() {
+        let registry = test_registry();
+        let mut state = KeepAliveState::new();
+
+        let _ = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
+        // Advance time past the timeout while still awaiting the response.
         state.last_sent_at = Instant::now() - Duration::from_secs(KEEPALIVE_TIMEOUT_SECS + 1);
 
         let result = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
-        assert!(result.is_none(), "should return None after timeout");
+        assert!(
+            matches!(result, KeepAliveTick::Timeout),
+            "an unanswered keepalive past the grace window must time out"
+        );
+    }
+
+    #[test]
+    fn tick_resends_after_a_valid_response() {
+        let registry = test_registry();
+        let mut state = KeepAliveState::new();
+
+        let _ = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
+        assert!(state.on_response(state.last_sent_id), "valid id clears pending");
+        assert!(!state.awaiting_response);
+
+        let result = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
+        assert!(
+            matches!(result, KeepAliveTick::Send(_)),
+            "after a confirmed response the next tick sends a fresh ping"
+        );
     }
 
     #[test]

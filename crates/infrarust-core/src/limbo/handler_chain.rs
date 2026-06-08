@@ -16,7 +16,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use super::chat::{ClientMessage, parse_client_message};
-use super::keepalive::{KeepAliveState, extract_keepalive_id, is_keepalive_response};
+use super::keepalive::{KeepAliveState, KeepAliveTick, extract_keepalive_id, is_keepalive_response};
 use super::session::LimboSessionImpl;
 use super::spawn::send_spawn_sequence;
 use super::virtual_session::VirtualSessionCore;
@@ -173,12 +173,15 @@ async fn wait_for_hold(
 
             _ = keepalive_interval.tick() => {
                 match limbo_state.keepalive.tick(core.protocol_version, &core.packet_registry) {
-                    Ok(Some(frame)) => {
+                    Ok(KeepAliveTick::Send(frame)) => {
                         if client.write_frame(&frame).await.is_err() {
                             return HandlerAction::Exit(LimboChainResult::ClientDisconnected);
                         }
                     }
-                    Ok(None) | Err(_) => return HandlerAction::Exit(LimboChainResult::Timeout),
+                    Ok(KeepAliveTick::Idle) => {}
+                    Ok(KeepAliveTick::Timeout) | Err(_) => {
+                        return HandlerAction::Exit(LimboChainResult::Timeout);
+                    }
                 }
             }
 
