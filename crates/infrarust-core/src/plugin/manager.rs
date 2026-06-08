@@ -207,7 +207,9 @@ impl PluginManager {
 
     /// Disables all plugins in reverse order, then unloads via loaders.
     pub async fn shutdown(&mut self) {
-        for loaded in self.plugins.iter().rev() {
+        let plugins = std::mem::take(&mut self.plugins);
+
+        for loaded in plugins.iter().rev() {
             let state = self.states.get(&loaded.metadata.id);
             if !matches!(state, Some(PluginState::Enabled)) {
                 continue;
@@ -231,7 +233,7 @@ impl PluginManager {
             }
         }
 
-        for loaded in self.plugins.iter().rev() {
+        for loaded in plugins.iter().rev() {
             let loader = self.loaders.iter().find(|l| l.name() == loaded.loader_name);
 
             if let Some(loader) = loader
