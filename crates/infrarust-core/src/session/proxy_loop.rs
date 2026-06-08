@@ -102,13 +102,12 @@ pub async fn proxy_loop(
     client_codec_chain: &mut CodecFilterChain,
     server_codec_chain: &mut CodecFilterChain,
 ) -> ProxyLoopOutcome {
-    let outcome = loop {
+    loop {
         tokio::select! {
             frame = client.read_frame() => {
                 match frame {
                     Ok(Some(frame)) => {
                         if let Err(e) = handle_client_to_backend(client, backend, frame, registry, services, player_id, client_codec_chain).await {
-
                             if e.is_expected_disconnect() {
                                 break ProxyLoopOutcome::BackendDisconnected { reason: Some(e.to_string()) };
                             }
@@ -150,9 +149,7 @@ pub async fn proxy_loop(
                 break ProxyLoopOutcome::Shutdown;
             }
         }
-    };
-
-    outcome
+    }
 }
 
 /// What `handle_player_command` resolved to.
