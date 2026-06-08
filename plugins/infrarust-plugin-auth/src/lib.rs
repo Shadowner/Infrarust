@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::event::bus::EventBusExt;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
+use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::types::PlayerId;
@@ -253,7 +253,7 @@ impl LimboHandler for AuthLimbo {
         (**self).on_chat(session, message)
     }
 
-    fn on_disconnect(&self, player_id: PlayerId) -> BoxFuture<'_, ()> {
-        (**self).on_disconnect(player_id)
+    fn on_session_end(&self, player_id: PlayerId, reason: SessionEndReason) -> BoxFuture<'_, ()> {
+        (**self).on_session_end(player_id, reason)
     }
 }

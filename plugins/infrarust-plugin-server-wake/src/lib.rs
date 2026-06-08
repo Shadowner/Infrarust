@@ -87,12 +87,7 @@ impl Plugin for ServerWakePlugin {
 
         Box::pin(async move {
             if let Some(state) = state {
-                let keys: Vec<_> = state.waiting.iter().map(|e| *e.key()).collect();
-                for player_id in keys {
-                    if let Some((_, entry)) = state.waiting.remove(&player_id) {
-                        entry.cancel.cancel();
-                    }
-                }
+                state.waiting.clear();
             }
             tracing::info!("[ServerWakePlugin] Disabled");
             Ok(())
@@ -124,7 +119,6 @@ fn handle_state_change(
 
             for player_id in players {
                 if let Some((_, entry)) = state.waiting.remove(&player_id) {
-                    entry.cancel.cancel();
                     let title = infrarust_api::types::TitleData::new(
                         ready_title.clone(),
                         ready_subtitle.clone(),
@@ -148,7 +142,6 @@ fn handle_state_change(
             );
             for player_id in players {
                 if let Some((_, entry)) = state.waiting.remove(&player_id) {
-                    entry.cancel.cancel();
                     entry
                         .session_handle
                         .complete(HandlerResult::Deny(Component::from_legacy(

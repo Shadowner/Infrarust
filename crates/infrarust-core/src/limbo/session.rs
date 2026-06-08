@@ -3,9 +3,11 @@
 //! Bridges the API-level [`LimboSession`] trait to concrete packet encoding
 //! and an mpsc channel that the limbo engine loop drains.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 
 use tokio::sync::{mpsc, watch};
+use tokio_util::sync::CancellationToken;
 
 use infrarust_api::error::PlayerError;
 use infrarust_api::limbo::context::LimboEntryContext;
@@ -30,11 +32,14 @@ pub(crate) struct LimboSessionImpl {
     entry_context: LimboEntryContext,
     client_sender: mpsc::Sender<PacketFrame>,
     complete_sender: watch::Sender<Option<HandlerResult>>,
+    limbo_token: CancellationToken,
+    hold_seq: AtomicU64,
     packet_registry: Arc<PacketRegistry>,
     self_ref: OnceLock<Weak<Self>>,
 }
 
 impl LimboSessionImpl {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         player_id: PlayerId,
         profile: GameProfile,
@@ -42,6 +47,7 @@ impl LimboSessionImpl {
         entry_context: LimboEntryContext,
         client_sender: mpsc::Sender<PacketFrame>,
         complete_sender: watch::Sender<Option<HandlerResult>>,
+        limbo_token: CancellationToken,
         packet_registry: Arc<PacketRegistry>,
     ) -> Self {
         Self {
@@ -51,6 +57,8 @@ impl LimboSessionImpl {
             entry_context,
             client_sender,
             complete_sender,
+            limbo_token,
+            hold_seq: AtomicU64::new(0),
             packet_registry,
             self_ref: OnceLock::new(),
         }
@@ -58,6 +66,14 @@ impl LimboSessionImpl {
 
     pub(crate) fn set_self_ref(&self, weak: Weak<Self>) {
         let _ = self.self_ref.set(weak);
+    }
+
+    pub(crate) fn begin_handler(&self) {
+        self.hold_seq.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn current_hold_id(&self) -> u64 {
+        self.hold_seq.load(Ordering::SeqCst)
     }
 }
 
@@ -113,7 +129,13 @@ impl LimboSession for LimboSessionImpl {
     }
 
     fn complete(&self, result: HandlerResult) {
-        let _ = self.complete_sender.send(Some(result));
+        self.complete_scoped(self.current_hold_id(), result);
+    }
+
+    fn complete_scoped(&self, hold_id: u64, result: HandlerResult) {
+        if hold_id == self.current_hold_id() {
+            let _ = self.complete_sender.send(Some(result));
+        }
     }
 
     fn handle(&self) -> SessionHandle {
@@ -124,7 +146,11 @@ impl LimboSession for LimboSessionImpl {
         let arc = weak
             .upgrade()
             .expect("session Arc must be alive while session is in use");
-        SessionHandle::new(arc as Arc<dyn LimboSession>)
+        SessionHandle::new(arc as Arc<dyn LimboSession>, self.current_hold_id())
+    }
+
+    fn cancellation_token(&self) -> CancellationToken {
+        self.limbo_token.clone()
     }
 }
 
@@ -154,6 +180,7 @@ mod tests {
             LimboEntryContext::PluginRedirect { from_server: None },
             tx,
             complete_tx,
+            CancellationToken::new(),
             registry,
         );
         (session, rx, complete_rx)
@@ -216,6 +243,30 @@ mod tests {
     }
 
     #[test]
+    fn stale_handle_cannot_complete_a_later_hold() {
+        let (session, _rx, mut crx) = make_session();
+        let session = Arc::new(session);
+        session.set_self_ref(Arc::downgrade(&session));
+
+        session.begin_handler(); // generation 1
+        let stale = session.handle(); // captures generation 1
+        session.begin_handler(); // advance to generation 2 (a later handler)
+
+        stale.complete(HandlerResult::Accept);
+        assert!(
+            crx.borrow_and_update().is_none(),
+            "stale handle should be a no-op"
+        );
+
+        let current = session.handle(); // captures generation 2
+        current.complete(HandlerResult::Accept);
+        assert!(
+            crx.borrow_and_update().is_some(),
+            "current-generation handle should complete the Hold"
+        );
+    }
+
+    #[test]
     fn send_message_fails_when_channel_closed() {
         let (tx, rx) = mpsc::channel(1);
         let (complete_tx, _complete_rx) = watch::channel(None);
@@ -228,6 +279,7 @@ mod tests {
             LimboEntryContext::PluginRedirect { from_server: None },
             tx,
             complete_tx,
+            CancellationToken::new(),
             registry,
         );
 

@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
+use tokio_util::sync::CancellationToken;
+
 use crate::error::PlayerError;
 use crate::types::{Component, GameProfile, PlayerId, TitleData};
 
@@ -17,6 +19,7 @@ pub struct RecordingLimboSession {
     titles: Mutex<Vec<TitleData>>,
     action_bars: Mutex<Vec<Component>>,
     completions: Mutex<Vec<HandlerResult>>,
+    cancel: CancellationToken,
     self_ref: OnceLock<Weak<Self>>,
 }
 
@@ -35,6 +38,7 @@ impl RecordingLimboSession {
             titles: Mutex::new(Vec::new()),
             action_bars: Mutex::new(Vec::new()),
             completions: Mutex::new(Vec::new()),
+            cancel: CancellationToken::new(),
             self_ref: OnceLock::new(),
         });
         let _ = session.self_ref.set(Arc::downgrade(&session));
@@ -102,12 +106,23 @@ impl LimboSession for RecordingLimboSession {
             .push(result);
     }
 
+    fn complete_scoped(&self, _hold_id: u64, result: HandlerResult) {
+        self.completions
+            .lock()
+            .expect("lock poisoned")
+            .push(result);
+    }
+
     fn handle(&self) -> SessionHandle {
         let arc = self
             .self_ref
             .get()
             .and_then(Weak::upgrade)
             .expect("RecordingLimboSession must be constructed via new()");
-        SessionHandle::new(arc)
+        SessionHandle::new(arc, 0)
+    }
+
+    fn cancellation_token(&self) -> CancellationToken {
+        self.cancel.clone()
     }
 }

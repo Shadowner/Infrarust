@@ -2,7 +2,6 @@ use std::sync::atomic::AtomicU32;
 
 use dashmap::DashMap;
 use tokio::time::Instant;
-use tokio_util::sync::CancellationToken;
 
 use infrarust_api::limbo::handle::SessionHandle;
 use infrarust_api::types::{PlayerId, ServerId};
@@ -44,7 +43,6 @@ pub struct WaitingEntry {
     pub session_handle: SessionHandle,
     pub started_waiting: Instant,
     pub tick: AtomicU32,
-    pub cancel: CancellationToken,
 }
 
 pub fn animated_dots(tick: u32) -> &'static str {

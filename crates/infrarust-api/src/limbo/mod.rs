@@ -17,5 +17,5 @@ pub mod test_util;
 
 pub use context::LimboEntryContext;
 pub use handle::SessionHandle;
-pub use handler::{HandlerResult, LimboHandler};
+pub use handler::{HandlerResult, LimboHandler, SessionEndReason};
 pub use session::LimboSession;

@@ -1,5 +1,7 @@
 //! Limbo handler trait.
 
+use std::time::Duration;
+
 use crate::event::BoxFuture;
 use crate::types::{Component, PlayerId, ServerId};
 
@@ -19,6 +21,35 @@ pub enum HandlerResult {
     /// Redirect — send the player to a specific server.
     Redirect(ServerId),
     SendToLimbo(Vec<String>),
+    /// Hold, but auto-complete with `on_timeout` if [`LimboSession::complete`] is
+    /// not called within `after`. The engine owns the timer, so the deadline holds
+    /// even if the handler's own tasks die. `on_timeout` must be terminal
+    /// (`Accept`/`Deny`/`Redirect`/`SendToLimbo`); a nested hold is treated as
+    /// `Accept` to avoid re-arming forever.
+    HoldWithTimeout {
+        /// How long to wait before auto-completing.
+        after: Duration,
+        /// The result to apply when the deadline elapses.
+        on_timeout: Box<HandlerResult>,
+    },
+}
+
+/// Why a player's limbo session ended. Passed to [`LimboHandler::on_session_end`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SessionEndReason {
+    /// The client disconnected while in limbo.
+    Disconnected,
+    /// A handler completed the chain, the player is released to the backend.
+    Released,
+    /// A handler denied the player (kick).
+    Kicked,
+    /// A handler redirected the player to another server.
+    Redirected,
+    /// The keepalive liveness check timed out.
+    TimedOut,
+    /// The proxy is shutting down.
+    Shutdown,
 }
 
 /// A handler for a limbo stage (Tier 2).
@@ -89,6 +120,19 @@ pub trait LimboHandler: Send + Sync {
     ///
     /// The default implementation does nothing.
     fn on_disconnect(&self, _player_id: PlayerId) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
+
+    /// Called when the player's limbo session ends, for ANY reason.
+    ///
+    /// Unlike [`on_disconnect`](Self::on_disconnect) (client drop only), this fires
+    /// on every terminal outcome : released, kicked, redirected, timed out, or
+    /// shutdown so handlers can tear down retained state (registry entries,
+    /// spawned tasks) uniformly. The per-session cancellation token
+    /// ([`LimboSession::cancellation_token`]) is cancelled around the same time.
+    ///
+    /// The default implementation does nothing.
+    fn on_session_end(&self, _player_id: PlayerId, _reason: SessionEndReason) -> BoxFuture<'_, ()> {
         Box::pin(async {})
     }
 }

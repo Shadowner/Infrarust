@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use infrarust_api::event::BoxFuture;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
+use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, PlayerId, TitleData};
@@ -23,7 +23,6 @@ struct AuthSessionState {
     failed_attempts: u32,
     needs_register: bool,
     username: Username,
-    cancel_token: CancellationToken,
     force_completed: bool,
 }
 
@@ -84,9 +83,7 @@ impl AuthHandler {
     }
 
     fn cleanup_session(&self, player_id: PlayerId) {
-        if let Some((_, state)) = self.sessions.remove(&player_id) {
-            state.cancel_token.cancel();
-        }
+        self.sessions.remove(&player_id);
     }
 
     fn msg(&self, template: &str, replacements: &[(&str, &str)]) -> Component {
@@ -101,28 +98,6 @@ impl AuthHandler {
                 .stay(0)
                 .fade_out(0),
         );
-    }
-
-    fn spawn_timeout_task(&self, player_id: PlayerId, cancel_token: CancellationToken) {
-        let timeout_secs = self.config.security.login_timeout_seconds;
-        if timeout_secs == 0 {
-            return;
-        }
-
-        let player_registry = Arc::clone(&self.player_registry);
-        let config = Arc::clone(&self.config);
-        let cancel = cancel_token.clone();
-
-        tokio::spawn(async move {
-            tokio::select! {
-                () = tokio::time::sleep(Duration::from_secs(timeout_secs)) => {
-                    if let Some(player) = player_registry.get_player_by_id(player_id) {
-                        player.disconnect(parse_colored(&config.messages.login_timeout)).await;
-                    }
-                }
-                () = cancel.cancelled() => {}
-            }
-        });
     }
 
     fn spawn_reminder_task(&self, player_id: PlayerId, cancel_token: CancellationToken) {
@@ -274,7 +249,6 @@ impl LimboHandler for AuthHandler {
 
         let username = Username::new(&profile.username);
         let display_name = profile.username.clone();
-        let cancel_token = CancellationToken::new();
 
         let needs_register = !self.storage.has_account_blocking(&username);
 
@@ -309,17 +283,26 @@ impl LimboHandler for AuthHandler {
                 failed_attempts: 0,
                 needs_register,
                 username,
-                cancel_token: cancel_token.clone(),
                 force_completed: false,
             },
         );
 
-        self.spawn_timeout_task(player_id, cancel_token.clone());
-        self.spawn_reminder_task(player_id, cancel_token);
+        self.spawn_reminder_task(player_id, session.cancellation_token());
 
         tracing::debug!(player_id = ?player_id, display_name, "Player entered auth limbo");
 
-        Box::pin(async { HandlerResult::Hold })
+        let timeout_secs = self.config.security.login_timeout_seconds;
+        if timeout_secs == 0 {
+            Box::pin(async { HandlerResult::Hold })
+        } else {
+            let on_timeout = HandlerResult::Deny(parse_colored(&self.config.messages.login_timeout));
+            Box::pin(async move {
+                HandlerResult::HoldWithTimeout {
+                    after: Duration::from_secs(timeout_secs),
+                    on_timeout: Box::new(on_timeout),
+                }
+            })
+        }
     }
 
     fn on_command<'a>(
@@ -579,9 +562,9 @@ impl LimboHandler for AuthHandler {
         Box::pin(async {})
     }
 
-    fn on_disconnect(&self, player_id: PlayerId) -> BoxFuture<'_, ()> {
+    fn on_session_end(&self, player_id: PlayerId, _reason: SessionEndReason) -> BoxFuture<'_, ()> {
         self.cleanup_session(player_id);
-        tracing::debug!(player_id = ?player_id, "Auth session cleaned up on disconnect");
+        tracing::debug!(player_id = ?player_id, "Auth session cleaned up on session end");
         Box::pin(async {})
     }
 }

@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use tokio_util::sync::CancellationToken;
+
 use crate::error::PlayerError;
 use crate::types::{Component, PlayerId, TitleData};
 
@@ -15,11 +17,14 @@ use super::session::LimboSession;
 #[derive(Clone)]
 pub struct SessionHandle {
     inner: Arc<dyn LimboSession>,
+    /// The Hold generation captured when this handle was minted. Completion is
+    /// scoped to it so a stale handle can't release a later Hold.
+    hold_id: u64,
 }
 
 impl SessionHandle {
-    pub fn new(inner: Arc<dyn LimboSession>) -> Self {
-        Self { inner }
+    pub fn new(inner: Arc<dyn LimboSession>, hold_id: u64) -> Self {
+        Self { inner, hold_id }
     }
 
     pub fn player_id(&self) -> PlayerId {
@@ -39,7 +44,15 @@ impl SessionHandle {
     }
 
     pub fn complete(&self, result: HandlerResult) {
-        self.inner.complete(result);
+        self.inner.complete_scoped(self.hold_id, result);
+    }
+
+    /// The session's cancellation token, cancelled when the limbo session ends.
+    ///
+    /// Store-and-`select!` on `cancellation_token().cancelled()` to stop background
+    /// tasks on any session exit, without managing a separate token.
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.inner.cancellation_token()
     }
 
     pub fn as_session(&self) -> Arc<dyn LimboSession> {

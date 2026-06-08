@@ -3,11 +3,10 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use infrarust_api::prelude::ConfigService;
-use tokio_util::sync::CancellationToken;
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::context::LimboEntryContext;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
+use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::services::server_manager::{ServerManager, ServerState};
 use infrarust_api::types::{Component, PlayerId, ServerId, TitleData};
@@ -66,11 +65,11 @@ impl ServerWakeHandler {
         handle: infrarust_api::limbo::handle::SessionHandle,
         player_id: PlayerId,
         server: ServerId,
-        cancel: CancellationToken,
     ) {
         let interval_secs = state.config.timing.title_refresh_interval_seconds;
         let messages = state.config.messages.clone();
         let show_action_bar = state.config.timing.show_waiting_count;
+        let cancel = handle.cancellation_token();
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
@@ -115,36 +114,6 @@ impl ServerWakeHandler {
         });
     }
 
-    fn spawn_timeout(
-        state: Arc<WakeState>,
-        handle: infrarust_api::limbo::handle::SessionHandle,
-        player_id: PlayerId,
-        cancel: CancellationToken,
-    ) {
-        let timeout_secs = state.config.timing.start_timeout_seconds;
-        if timeout_secs == 0 {
-            return;
-        }
-        let kick_msg = state.config.messages.timeout_kick.clone();
-
-        tokio::spawn(async move {
-            tokio::select! {
-                () = tokio::time::sleep(Duration::from_secs(timeout_secs)) => {
-                    if state.waiting.remove(&player_id).is_some() {
-                        cancel.cancel();
-                        tracing::info!(
-                            player_id = player_id.as_u64(),
-                            "server wake timeout, kicking player"
-                        );
-                        handle.complete(HandlerResult::Deny(
-                            Component::from_legacy(&kick_msg),
-                        ));
-                    }
-                }
-                () = cancel.cancelled() => {}
-            }
-        });
-    }
 }
 
 impl LimboHandler for ServerWakeHandler {
@@ -203,13 +172,11 @@ impl LimboHandler for ServerWakeHandler {
                 )
             };
 
-            let cancel = CancellationToken::new();
             let entry = WaitingEntry {
                 target_server: target.clone(),
                 session_handle: handle.clone(),
                 started_waiting: tokio::time::Instant::now(),
                 tick: std::sync::atomic::AtomicU32::new(0),
-                cancel: cancel.clone(),
             };
             self.state.waiting.insert(session.player_id(), entry);
 
@@ -223,26 +190,32 @@ impl LimboHandler for ServerWakeHandler {
 
             Self::spawn_animation(
                 Arc::clone(&self.state),
-                handle.clone(),
+                handle,
                 session.player_id(),
                 target.clone(),
-                cancel.clone(),
             );
 
-            Self::spawn_timeout(Arc::clone(&self.state), handle, session.player_id(), cancel);
-
-            HandlerResult::Hold
+            let timeout_secs = self.state.config.timing.start_timeout_seconds;
+            if timeout_secs == 0 {
+                HandlerResult::Hold
+            } else {
+                HandlerResult::HoldWithTimeout {
+                    after: Duration::from_secs(timeout_secs),
+                    on_timeout: Box::new(HandlerResult::Deny(Component::from_legacy(
+                        &self.state.config.messages.timeout_kick,
+                    ))),
+                }
+            }
         })
     }
 
-    fn on_disconnect(&self, player_id: PlayerId) -> BoxFuture<'_, ()> {
+    fn on_session_end(&self, player_id: PlayerId, _reason: SessionEndReason) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             if let Some((_, entry)) = self.state.waiting.remove(&player_id) {
-                entry.cancel.cancel();
                 tracing::debug!(
                     player_id = player_id.as_u64(),
                     server = %entry.target_server,
-                    "player disconnected while waiting for server wake"
+                    "server-wake session ended"
                 );
             }
         })

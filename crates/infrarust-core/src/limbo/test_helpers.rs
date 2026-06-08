@@ -14,7 +14,11 @@ use infrarust_api::event::BoxFuture;
 use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
+use std::sync::Mutex;
+
+use tokio_util::sync::CancellationToken;
+
+use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::types::{GameProfile, PlayerId};
 use infrarust_protocol::io::PacketFrame;
@@ -228,5 +232,48 @@ impl LimboHandler for HoldHandler {
 
     fn on_disconnect(&self, _player_id: PlayerId) -> BoxFuture<'_, ()> {
         Box::pin(async {})
+    }
+}
+
+pub struct SessionEndRecorder {
+    pub name: &'static str,
+    pub result: HandlerResult,
+    pub ended: Arc<Mutex<Vec<SessionEndReason>>>,
+}
+
+impl LimboHandler for SessionEndRecorder {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn on_player_enter<'a>(
+        &'a self,
+        _session: &'a dyn LimboSession,
+    ) -> BoxFuture<'a, HandlerResult> {
+        let result = self.result.clone();
+        Box::pin(async move { result })
+    }
+
+    fn on_session_end(&self, _player_id: PlayerId, reason: SessionEndReason) -> BoxFuture<'_, ()> {
+        self.ended.lock().unwrap().push(reason);
+        Box::pin(async {})
+    }
+}
+
+pub struct TokenCaptureHandler {
+    pub name: &'static str,
+    pub result: HandlerResult,
+    pub captured: Arc<Mutex<Option<CancellationToken>>>,
+}
+
+impl LimboHandler for TokenCaptureHandler {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn on_player_enter<'a>(&'a self, session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
+        *self.captured.lock().unwrap() = Some(session.cancellation_token());
+        let result = self.result.clone();
+        Box::pin(async move { result })
     }
 }
