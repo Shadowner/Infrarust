@@ -121,14 +121,23 @@ impl ProviderRegistry {
         drop(tx);
 
         // Phase 3: spawn the event loop
-        let handle = tokio::spawn(event_loop(
-            rx,
-            self.domain_router,
-            self.event_bus,
-            self.status_cache,
-            self.favicon_cache,
-            self.shutdown,
-        ));
+        let shutdown_token = self.shutdown.clone();
+        let handle = tokio::spawn(async move {
+            event_loop(
+                rx,
+                self.domain_router,
+                self.event_bus,
+                self.status_cache,
+                self.favicon_cache,
+                self.shutdown,
+            )
+            .await;
+            if !shutdown_token.is_cancelled() {
+                tracing::error!(
+                    "provider event loop exited unexpectedly, configuration hot-reload is no longer active"
+                );
+            }
+        });
 
         Ok((handle, plugin_tx))
     }
