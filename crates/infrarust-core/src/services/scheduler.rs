@@ -58,6 +58,7 @@ impl Scheduler for SchedulerImpl {
 
         let join_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(period);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             // Skip the first immediate tick
             interval.tick().await;
             loop {
@@ -81,6 +82,7 @@ impl Scheduler for SchedulerImpl {
         let join_handle = tokio::spawn(async move {
             tokio::time::sleep(delay).await;
             let mut interval = tokio::time::interval(period);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
                 task();
