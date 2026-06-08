@@ -25,6 +25,8 @@ use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 
+const SWITCH_CONFIG_PHASE_TIMEOUT_SECS: u64 = 30;
+
 /// Successful server switch result.
 pub struct SwitchSuccess {
     /// The new backend bridge (replaces the old one in the proxy loop).
@@ -218,14 +220,19 @@ pub async fn perform_switch(
 
     // 8. Version-branched switch
     let join_game_frame = if version.no_less_than(ProtocolVersion::V1_20_2) {
-        // 1.20.2+: config phase → JoinGame
-        config_phase::handle_config_phase_switch(
-            client,
-            &mut new_backend,
-            &services.packet_registry,
-            version,
+        // 1.20.2+: config phase → JoinGame, bounded so a stalled/malicious client
+        // cannot pin the connection task forever during the switch.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(SWITCH_CONFIG_PHASE_TIMEOUT_SECS),
+            config_phase::handle_config_phase_switch(
+                client,
+                &mut new_backend,
+                &services.packet_registry,
+                version,
+            ),
         )
-        .await?
+        .await
+        .map_err(|_| CoreError::Timeout("server switch config phase timed out".into()))??
     } else {
         // Pre-1.20.2: read JoinGame directly from new backend
         new_backend
