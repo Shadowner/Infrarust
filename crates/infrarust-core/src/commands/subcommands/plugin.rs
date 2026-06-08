@@ -106,40 +106,47 @@ impl SubcommandHandler for PluginSubcommand {
         })
     }
 
-    fn tab_complete(&self, args: &[&str], services: &CommandServices) -> Vec<String> {
-        match args.len() {
-            0 | 1 => {
-                let prefix = args.first().copied().unwrap_or("");
-                let plugins = services.plugin_registry.list_plugin_info();
-                plugins
-                    .into_iter()
-                    .map(|p| p.id)
-                    .filter(|id| id.starts_with(prefix))
-                    .collect()
-            }
-            2 => {
-                let plugin_id = args[0];
-                let prefix = args[1];
-                services
-                    .command_manager
-                    .commands_for_plugin(plugin_id)
-                    .into_iter()
-                    .map(|(name, _)| name)
-                    .filter(|name| name.starts_with(prefix))
-                    .collect()
-            }
-            _ => {
-                let plugin_id = args[0];
-                let command_name = args[1];
-                if let Some(handler) = services
-                    .command_manager
-                    .find_plugin_command(plugin_id, command_name)
-                {
-                    handler.tab_complete(&args[2..])
-                } else {
-                    vec![]
+    fn tab_complete<'a>(
+        &'a self,
+        args: &'a [String],
+        cursor: u32,
+        services: &'a CommandServices,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            match args.len() {
+                0 | 1 => {
+                    let prefix = args.first().map(String::as_str).unwrap_or("");
+                    let plugins = services.plugin_registry.list_plugin_info();
+                    plugins
+                        .into_iter()
+                        .map(|p| p.id)
+                        .filter(|id| id.starts_with(prefix))
+                        .collect()
+                }
+                2 => {
+                    let plugin_id = args[0].as_str();
+                    let prefix = args[1].as_str();
+                    services
+                        .command_manager
+                        .commands_for_plugin(plugin_id)
+                        .into_iter()
+                        .map(|(name, _)| name)
+                        .filter(|name| name.starts_with(prefix))
+                        .collect()
+                }
+                _ => {
+                    let plugin_id = args[0].as_str();
+                    let command_name = args[1].as_str();
+                    if let Some(handler) = services
+                        .command_manager
+                        .find_plugin_command(plugin_id, command_name)
+                    {
+                        handler.tab_complete(args[2..].to_vec(), cursor).await
+                    } else {
+                        vec![]
+                    }
                 }
             }
-        }
+        })
     }
 }

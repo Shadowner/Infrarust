@@ -49,11 +49,18 @@ pub trait CommandHandler: Send + Sync {
         player_registry: &'a dyn PlayerRegistry,
     ) -> BoxFuture<'a, ()>;
 
-    /// Returns tab-completion suggestions for partial arguments.
+    /// Returns tab-completion suggestions for the partial arguments.
     ///
+    /// `cursor` is the caret's byte offset within the command's argument string
+    /// (per the tab-complete protocol the caret is always at end-of-input).
+    /// Mirrors [`execute`](Self::execute): return `Box::pin(async move { ... })`.
     /// The default implementation returns no suggestions.
-    fn tab_complete(&self, _partial_args: &[&str]) -> Vec<String> {
-        Vec::new()
+    fn tab_complete<'a>(
+        &'a self,
+        _partial_args: Vec<String>,
+        _cursor: u32,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async { Vec::new() })
     }
 }
 

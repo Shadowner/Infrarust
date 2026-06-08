@@ -14,6 +14,14 @@ impl Plugin for CommandPlugin {
             let _ = std::fs::write("command.marker", invocation.args.join(",").as_bytes());
         })
         .description("Greets the caller")
+        .completer(|partial, _cursor| {
+            let p = partial.last().map(String::as_str).unwrap_or("");
+            ["world", "everyone", "friend"]
+                .iter()
+                .filter(|c| c.starts_with(p))
+                .map(|c| (*c).to_string())
+                .collect()
+        })
         .register();
         Ok(())
     }

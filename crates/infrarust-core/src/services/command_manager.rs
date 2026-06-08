@@ -158,12 +158,14 @@ impl CommandManagerImpl {
         commands.get(&name_lower).is_some_and(|cmd| !cmd.is_builtin)
     }
 
-    pub fn tab_complete(&self, input: &str) -> Vec<String> {
+    pub async fn tab_complete(&self, input: &str) -> Vec<String> {
         let input = input.trim_start();
         let (name, rest) = match input.split_once(' ') {
             Some((n, r)) => (n, r),
             None => (input, ""),
         };
+
+        let cursor = u32::try_from(rest.len()).unwrap_or(u32::MAX);
 
         let name_lower = name.to_lowercase();
         let canonical = {
@@ -178,16 +180,16 @@ impl CommandManagerImpl {
 
         match handler {
             Some(handler) => {
-                let partial_args: Vec<&str> = if rest.is_empty() {
+                let partial_args: Vec<String> = if rest.is_empty() {
                     vec![]
                 } else if rest.ends_with(' ') {
-                    let mut args: Vec<&str> = rest.split_whitespace().collect();
-                    args.push("");
+                    let mut args: Vec<String> = rest.split_whitespace().map(String::from).collect();
+                    args.push(String::new());
                     args
                 } else {
-                    rest.split_whitespace().collect()
+                    rest.split_whitespace().map(String::from).collect()
                 };
-                handler.tab_complete(&partial_args)
+                handler.tab_complete(partial_args, cursor).await
             }
             None => vec![],
         }

@@ -341,7 +341,7 @@ async fn handle_client_to_backend(
 
             if should_intercept {
                 let cmd_input = text.trim_start_matches('/');
-                let suggestions = services.command_manager.tab_complete(cmd_input);
+                let suggestions = services.command_manager.tab_complete(cmd_input).await;
                 let last_space = text.rfind(' ').unwrap_or(0) + 1;
                 let response = CTabCompleteResponse {
                     transaction_id: req.transaction_id,

@@ -62,18 +62,25 @@ impl SubcommandHandler for FindSubcommand {
         })
     }
 
-    fn tab_complete(&self, args: &[&str], services: &CommandServices) -> Vec<String> {
-        if args.len() <= 1 {
-            let prefix = args.first().copied().unwrap_or("");
-            services
-                .player_registry
-                .get_all_players()
-                .into_iter()
-                .map(|p| p.profile().username.clone())
-                .filter(|name| name.to_lowercase().starts_with(&prefix.to_lowercase()))
-                .collect()
-        } else {
-            vec![]
-        }
+    fn tab_complete<'a>(
+        &'a self,
+        args: &'a [String],
+        _cursor: u32,
+        services: &'a CommandServices,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            if args.len() <= 1 {
+                let prefix = args.first().map(String::as_str).unwrap_or("");
+                services
+                    .player_registry
+                    .get_all_players()
+                    .into_iter()
+                    .map(|p| p.profile().username.clone())
+                    .filter(|name| name.to_lowercase().starts_with(&prefix.to_lowercase()))
+                    .collect()
+            } else {
+                vec![]
+            }
+        })
     }
 }

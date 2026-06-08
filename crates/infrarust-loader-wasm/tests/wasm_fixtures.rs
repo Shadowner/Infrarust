@@ -322,6 +322,47 @@ async fn test_event_subscriber_receives_post_login() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_multi_handler_ordering_and_independent_cancel() {
+    let (_tmp, plugins_dir) = stage("multi-handler");
+    let loader = fresh_loader();
+    let env = make_env(
+        plugins_dir.clone(),
+        Arc::new(MockPlayerRegistry),
+        Arc::new(MockConfigService),
+    );
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "multi-handler").await;
+
+    let marker = plugins_dir.join("multi-handler").join("multi.marker");
+
+    env.event_bus
+        .fire(PostLoginEvent {
+            profile: nil_profile("Steve"),
+            player_id: PlayerId::new(1),
+            protocol_version: ProtocolVersion::MINECRAFT_1_21,
+        })
+        .await;
+    assert_eq!(
+        std::fs::read_to_string(&marker).expect("marker written on first fire"),
+        "ABCD",
+        "handlers ran in priority order (custom interleaved) with the cancelled one absent"
+    );
+
+    env.event_bus
+        .fire(PostLoginEvent {
+            profile: nil_profile("Alex"),
+            player_id: PlayerId::new(2),
+            protocol_version: ProtocolVersion::MINECRAFT_1_21,
+        })
+        .await;
+    assert_eq!(
+        std::fs::read_to_string(&marker).expect("marker after second fire"),
+        "ABCDABCD",
+        "each handler fired exactly once per event (no double-fire)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_event_modifier_applies_outcome() {
     let (_tmp, plugins_dir) = stage("event-modifier");
     let loader = fresh_loader();
@@ -404,6 +445,33 @@ async fn test_command_plugin_dispatch_reaches_guest() {
     let got =
         std::fs::read_to_string(&marker).expect("guest should record the command args on dispatch");
     assert_eq!(got, "world,peace", "command args reached the guest");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_command_plugin_tab_complete_reaches_guest() {
+    let (_tmp, plugins_dir) = stage("command-plugin");
+    let loader = fresh_loader();
+    let env = make_env(
+        plugins_dir.clone(),
+        Arc::new(MockPlayerRegistry),
+        Arc::new(MockConfigService),
+    );
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "command-plugin").await;
+
+    let one = env.command_manager.tab_complete("greet w").await;
+    assert_eq!(
+        one,
+        vec!["world".to_string()],
+        "prefix 'w' completes to exactly 'world' through the guest completer"
+    );
+
+    let all = env.command_manager.tab_complete("greet ").await;
+    assert_eq!(
+        all.len(),
+        3,
+        "an empty prefix offers all three guest candidates"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

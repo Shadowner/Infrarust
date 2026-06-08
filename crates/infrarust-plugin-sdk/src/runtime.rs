@@ -15,11 +15,13 @@ use crate::plugin::Plugin;
 
 type EventClosure = Box<dyn FnMut(Event) -> EventOutcome>;
 type CommandClosure = Box<dyn FnMut(CommandInvocation)>;
+type CompletionClosure = Box<dyn Fn(&[String], u32) -> Vec<String>>;
 type TaskClosure = Box<dyn FnMut()>;
 
 thread_local! {
     static EVENT_HANDLERS: RefCell<HashMap<u64, EventClosure>> = RefCell::new(HashMap::new());
     static COMMANDS: RefCell<HashMap<u64, CommandClosure>> = RefCell::new(HashMap::new());
+    static COMPLETIONS: RefCell<HashMap<u64, CompletionClosure>> = RefCell::new(HashMap::new());
     static TASKS: RefCell<HashMap<u64, TaskClosure>> = RefCell::new(HashMap::new());
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
     static PLUGIN: RefCell<Option<Box<dyn Plugin>>> = const { RefCell::new(None) };
@@ -63,9 +65,13 @@ pub fn register_command(
     aliases: &[String],
     description: &str,
     handler: CommandClosure,
+    completer: Option<CompletionClosure>,
 ) {
     let id = next_id();
     COMMANDS.with(|c| c.borrow_mut().insert(id, handler));
+    if let Some(completer) = completer {
+        COMPLETIONS.with(|c| c.borrow_mut().insert(id, completer));
+    }
     crate::bindings::command_manager::register(name, aliases, description, id);
 }
 
@@ -115,8 +121,12 @@ pub fn on_scheduled_task(callback_id: u64) {
     }
 }
 
-pub fn tab_complete(_callback_id: u64, _partial: Vec<String>, _cursor: u32) -> Vec<String> {
-    Vec::new()
+pub fn tab_complete(callback_id: u64, partial: Vec<String>, cursor: u32) -> Vec<String> {
+    COMPLETIONS.with(|c| {
+        c.borrow()
+            .get(&callback_id)
+            .map_or_else(Vec::new, |f| f(&partial, cursor))
+    })
 }
 
 pub fn on_enable<P: Plugin + Default>() -> Result<(), String> {

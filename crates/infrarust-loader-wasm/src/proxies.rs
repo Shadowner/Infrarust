@@ -65,8 +65,38 @@ impl CommandHandler for WasmCommandHandler {
         })
     }
 
-    fn tab_complete(&self, _partial_args: &[&str]) -> Vec<String> {
-        Vec::new()
+    fn tab_complete<'a>(
+        &'a self,
+        partial_args: Vec<String>,
+        cursor: u32,
+    ) -> BoxFuture<'a, Vec<String>> {
+        let instance = self.instance.clone();
+        let plugin_id = self.plugin_id.clone();
+        let callback_id = self.callback_id;
+        Box::pin(async move {
+            let Some(arc) = instance.upgrade() else {
+                return Vec::new();
+            };
+            let mut guard = arc.lock().await;
+            let WasmInstance { store, bindings } = &mut *guard;
+            if store.data().is_poisoned() {
+                return Vec::new();
+            }
+            store.data_mut().reset_epoch_budget();
+            match bindings
+                .infrarust_plugin_guest()
+                .call_tab_complete(&mut *store, callback_id, &partial_args, cursor)
+                .await
+            {
+                Ok(suggestions) => suggestions,
+                Err(trap) => {
+                    tracing::error!(plugin = %plugin_id, callback = callback_id, error = %trap,
+                        "wasm guest trapped in tab-complete; poisoning instance");
+                    store.data_mut().set_poisoned();
+                    Vec::new()
+                }
+            }
+        })
     }
 }
 

@@ -77,18 +77,25 @@ impl SubcommandHandler for ServerSubcommand {
         })
     }
 
-    fn tab_complete(&self, args: &[&str], services: &CommandServices) -> Vec<String> {
-        if args.len() <= 1 {
-            let prefix = args.first().copied().unwrap_or("");
-            services
-                .config_service
-                .get_all_server_configs()
-                .into_iter()
-                .map(|cfg| cfg.id.as_str().to_string())
-                .filter(|name| name.starts_with(prefix))
-                .collect()
-        } else {
-            vec![]
-        }
+    fn tab_complete<'a>(
+        &'a self,
+        args: &'a [String],
+        _cursor: u32,
+        services: &'a CommandServices,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            if args.len() <= 1 {
+                let prefix = args.first().map(String::as_str).unwrap_or("");
+                services
+                    .config_service
+                    .get_all_server_configs()
+                    .into_iter()
+                    .map(|cfg| cfg.id.as_str().to_string())
+                    .filter(|name| name.starts_with(prefix))
+                    .collect()
+            } else {
+                vec![]
+            }
+        })
     }
 }

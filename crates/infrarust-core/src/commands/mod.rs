@@ -39,8 +39,13 @@ pub(crate) trait SubcommandHandler: Send + Sync {
         services: &'a CommandServices,
     ) -> BoxFuture<'a, ()>;
 
-    fn tab_complete(&self, _args: &[&str], _services: &CommandServices) -> Vec<String> {
-        vec![]
+    fn tab_complete<'a>(
+        &'a self,
+        _args: &'a [String],
+        _cursor: u32,
+        _services: &'a CommandServices,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async { Vec::new() })
     }
 }
 
@@ -149,25 +154,32 @@ impl CommandHandler for InfrarustRootCommand {
         })
     }
 
-    fn tab_complete(&self, partial_args: &[&str]) -> Vec<String> {
-        match partial_args.len() {
-            0 | 1 => {
-                let prefix = partial_args.first().copied().unwrap_or("");
-                self.subcommands
-                    .keys()
-                    .filter(|name| name.starts_with(prefix))
-                    .cloned()
-                    .collect()
-            }
-            _ => {
-                let sub_name = partial_args[0].to_lowercase();
-                if let Some(sub) = self.subcommands.get(&sub_name) {
-                    sub.tab_complete(&partial_args[1..], &self.services)
-                } else {
-                    vec![]
+    fn tab_complete<'a>(
+        &'a self,
+        partial_args: Vec<String>,
+        cursor: u32,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            match partial_args.len() {
+                0 | 1 => {
+                    let prefix = partial_args.first().map(String::as_str).unwrap_or("");
+                    self.subcommands
+                        .keys()
+                        .filter(|name| name.starts_with(prefix))
+                        .cloned()
+                        .collect()
+                }
+                _ => {
+                    let sub_name = partial_args[0].to_lowercase();
+                    if let Some(sub) = self.subcommands.get(&sub_name) {
+                        sub.tab_complete(&partial_args[1..], cursor, &self.services)
+                            .await
+                    } else {
+                        vec![]
+                    }
                 }
             }
-        }
+        })
     }
 }
 

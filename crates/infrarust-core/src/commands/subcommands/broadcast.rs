@@ -110,26 +110,33 @@ impl SubcommandHandler for BroadcastSubcommand {
         })
     }
 
-    fn tab_complete(&self, args: &[&str], services: &CommandServices) -> Vec<String> {
-        let last = args.last().copied().unwrap_or("");
-        let prev = if args.len() >= 2 {
-            args[args.len() - 2]
-        } else {
-            ""
-        };
+    fn tab_complete<'a>(
+        &'a self,
+        args: &'a [String],
+        _cursor: u32,
+        services: &'a CommandServices,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            let last = args.last().map(String::as_str).unwrap_or("");
+            let prev = if args.len() >= 2 {
+                args[args.len() - 2].as_str()
+            } else {
+                ""
+            };
 
-        if prev == "--server" {
-            services
-                .config_service
-                .get_all_server_configs()
-                .into_iter()
-                .map(|cfg| cfg.id.as_str().to_string())
-                .filter(|name| name.starts_with(last))
-                .collect()
-        } else if "--server".starts_with(last) {
-            vec!["--server".to_string()]
-        } else {
-            vec![]
-        }
+            if prev == "--server" {
+                services
+                    .config_service
+                    .get_all_server_configs()
+                    .into_iter()
+                    .map(|cfg| cfg.id.as_str().to_string())
+                    .filter(|name| name.starts_with(last))
+                    .collect()
+            } else if "--server".starts_with(last) {
+                vec!["--server".to_string()]
+            } else {
+                vec![]
+            }
+        })
     }
 }

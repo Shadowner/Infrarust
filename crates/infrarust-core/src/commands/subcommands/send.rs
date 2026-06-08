@@ -84,29 +84,36 @@ impl SubcommandHandler for SendSubcommand {
         })
     }
 
-    fn tab_complete(&self, args: &[&str], services: &CommandServices) -> Vec<String> {
-        match args.len() {
-            0 | 1 => {
-                let prefix = args.first().copied().unwrap_or("");
-                services
-                    .player_registry
-                    .get_all_players()
-                    .into_iter()
-                    .map(|p| p.profile().username.clone())
-                    .filter(|name| name.to_lowercase().starts_with(&prefix.to_lowercase()))
-                    .collect()
+    fn tab_complete<'a>(
+        &'a self,
+        args: &'a [String],
+        _cursor: u32,
+        services: &'a CommandServices,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            match args.len() {
+                0 | 1 => {
+                    let prefix = args.first().map(String::as_str).unwrap_or("");
+                    services
+                        .player_registry
+                        .get_all_players()
+                        .into_iter()
+                        .map(|p| p.profile().username.clone())
+                        .filter(|name| name.to_lowercase().starts_with(&prefix.to_lowercase()))
+                        .collect()
+                }
+                2 => {
+                    let prefix = args[1].as_str();
+                    services
+                        .config_service
+                        .get_all_server_configs()
+                        .into_iter()
+                        .map(|cfg| cfg.id.as_str().to_string())
+                        .filter(|name| name.starts_with(prefix))
+                        .collect()
+                }
+                _ => vec![],
             }
-            2 => {
-                let prefix = args[1];
-                services
-                    .config_service
-                    .get_all_server_configs()
-                    .into_iter()
-                    .map(|cfg| cfg.id.as_str().to_string())
-                    .filter(|name| name.starts_with(prefix))
-                    .collect()
-            }
-            _ => vec![],
-        }
+        })
     }
 }

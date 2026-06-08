@@ -99,12 +99,15 @@ impl Context {
     }
 }
 
+type CompletionFn = Box<dyn Fn(&[String], u32) -> Vec<String>>;
+
 /// Fluent builder returned by [`Context::command`]; call [`register`](Self::register) to finish.
 pub struct CommandBuilder<'a> {
     name: &'a str,
     aliases: Vec<String>,
     description: String,
     handler: Box<dyn FnMut(CommandInvocation)>,
+    completer: Option<CompletionFn>,
 }
 
 impl CommandBuilder<'_> {
@@ -130,8 +133,23 @@ impl CommandBuilder<'_> {
         self
     }
 
+    #[must_use]
+    pub fn completer(
+        mut self,
+        completer: impl Fn(&[String], u32) -> Vec<String> + 'static,
+    ) -> Self {
+        self.completer = Some(Box::new(completer));
+        self
+    }
+
     pub fn register(self) {
-        runtime::register_command(self.name, &self.aliases, &self.description, self.handler);
+        runtime::register_command(
+            self.name,
+            &self.aliases,
+            &self.description,
+            self.handler,
+            self.completer,
+        );
     }
 }
 
