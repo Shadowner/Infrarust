@@ -67,7 +67,8 @@ impl ServerProvider for LocalProvider {
                 .current_dir(&self.config.working_dir)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true);
 
             let mut child = cmd.spawn().map_err(ServerManagerError::Process)?;
 

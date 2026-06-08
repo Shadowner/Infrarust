@@ -86,6 +86,64 @@ done
     assert_eq!(status, ProviderStatus::Stopped);
 }
 
+#[cfg(target_os = "linux")]
+fn process_is_alive(pid: u32) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat
+            .rsplit(')')
+            .next()
+            .and_then(|rest| rest.split_whitespace().next())
+            .is_some_and(|state| state != "Z"),
+        Err(_) => false,
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn test_child_process_killed_when_provider_dropped() {
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("server.pid");
+    let script_body = format!(
+        "#!/bin/bash\necho $$ > {}\necho 'For help, type \"help\"'\nwhile true; do sleep 1; done\n",
+        pid_file.display()
+    );
+    let script = make_mock_script(dir.path(), "server.sh", &script_body);
+    let config = make_config(&script, dir.path());
+
+    let provider = LocalProvider::new(config);
+    provider.start().await.unwrap();
+
+    let mut pid = None;
+    for _ in 0..100 {
+        if let Ok(s) = std::fs::read_to_string(&pid_file)
+            && let Ok(p) = s.trim().parse::<u32>()
+        {
+            pid = Some(p);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let pid = pid.expect("script should record its PID");
+    assert!(process_is_alive(pid), "process must be alive before drop");
+
+    drop(provider);
+
+    let mut killed = false;
+    for _ in 0..100 {
+        if !process_is_alive(pid) {
+            killed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        killed,
+        "child process {pid} must be killed when the provider is dropped without stop()"
+    );
+}
+
 #[tokio::test]
 async fn test_check_status_starting() {
     let dir = tempfile::tempdir().unwrap();
