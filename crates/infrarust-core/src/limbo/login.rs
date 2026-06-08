@@ -5,6 +5,8 @@
 //! have already been handled by the auth flow, and the client is in Config state.
 //! This module sends registry data (from cache or embedded) and transitions to Play.
 
+use std::time::Duration;
+
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfig, SKnownPacks};
 use infrarust_protocol::registry::PacketRegistry;
@@ -13,6 +15,8 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use crate::error::CoreError;
 use crate::limbo::registry_cache::RegistryCodecCache;
 use crate::session::client_bridge::ClientBridge;
+
+const LIMBO_CONFIG_PHASE_TIMEOUT_SECS: u64 = 10;
 
 /// Completes the configuration phase for a client entering limbo.
 ///
@@ -49,21 +53,12 @@ pub(crate) async fn complete_config_for_limbo(
             version,
         );
 
-        loop {
-            let frame = client
-                .read_frame()
-                .await?
-                .ok_or(CoreError::ConnectionClosed)?;
-
-            if Some(frame.id) == skp_id {
-                break;
-            }
-            // Absorb other client config packets (brand, settings, etc.)
-            tracing::trace!(
-                id = frame.id,
-                "absorbing client config packet during limbo login (known packs phase)"
-            );
-        }
+        absorb_until(
+            client,
+            skp_id,
+            "limbo login: client did not send KnownPacks in time",
+        )
+        .await?;
     }
 
     // 2. Send CRegistryData frames
@@ -97,26 +92,69 @@ pub(crate) async fn complete_config_for_limbo(
         version,
     );
 
-    loop {
-        let frame = client
-            .read_frame()
-            .await?
-            .ok_or(CoreError::ConnectionClosed)?;
-
-        if Some(frame.id) == ack_id {
-            tracing::debug!("client acknowledged finish config (limbo login)");
-            break;
-        }
-
-        // Absorb all other client config packets
-        tracing::trace!(
-            id = frame.id,
-            "absorbing client config packet during limbo login"
-        );
-    }
+    absorb_until(
+        client,
+        ack_id,
+        "limbo login: client did not acknowledge finish config in time",
+    )
+    .await?;
 
     // 5. Transition to Play
     client.set_state(ConnectionState::Play);
 
     Ok(())
+}
+
+/// Reads (and discards) client config-phase packets until one with `target_id`
+/// arrives, bounded by [`LIMBO_CONFIG_PHASE_TIMEOUT_SECS`]. The timeout wraps the
+/// whole loop (not each read), so a client that drip-feeds unrelated packets
+/// cannot keep the connection alive indefinitely.
+async fn absorb_until(
+    client: &mut ClientBridge,
+    target_id: Option<i32>,
+    timeout_message: &'static str,
+) -> Result<(), CoreError> {
+    tokio::time::timeout(Duration::from_secs(LIMBO_CONFIG_PHASE_TIMEOUT_SECS), async {
+        loop {
+            let frame = client
+                .read_frame()
+                .await?
+                .ok_or(CoreError::ConnectionClosed)?;
+
+            if Some(frame.id) == target_id {
+                break;
+            }
+            tracing::trace!(
+                id = frame.id,
+                "absorbing client config packet during limbo login"
+            );
+        }
+        Ok::<(), CoreError>(())
+    })
+    .await
+    .map_err(|_| CoreError::Timeout(timeout_message.into()))?
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::BytesMut;
+    use tokio::net::{TcpListener, TcpStream};
+
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn absorb_until_times_out_when_client_is_silent() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _peer = TcpStream::connect(addr).await.unwrap(); // stays silent
+        let (server_side, _) = listener.accept().await.unwrap();
+
+        let mut client = ClientBridge::new(server_side, BytesMut::new(), ProtocolVersion::V1_21);
+
+        let result = absorb_until(&mut client, Some(0x42), "test timeout").await;
+        assert!(
+            matches!(result, Err(CoreError::Timeout(_))),
+            "expected a timeout, got {result:?}"
+        );
+    }
 }
