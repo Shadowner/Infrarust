@@ -167,7 +167,10 @@ mod tests {
     #[test]
     fn canonicalize_maps_ipv4_mapped_v6_to_v4() {
         let mapped = IpAddr::V6(Ipv4Addr::new(1, 2, 3, 4).to_ipv6_mapped());
-        assert_eq!(canonicalize_ip(mapped), IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)));
+        assert_eq!(
+            canonicalize_ip(mapped),
+            IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4))
+        );
     }
 
     #[test]

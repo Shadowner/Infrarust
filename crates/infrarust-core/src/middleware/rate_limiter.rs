@@ -90,12 +90,17 @@ mod tests {
 
     #[test]
     fn enabled_field_mirrors_config() {
-        let mut cfg = RateLimitConfig::default();
-        cfg.enabled = false;
-        assert!(!RateLimiterMiddleware::new(&cfg).enabled);
+        let disabled = RateLimitConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        assert!(!RateLimiterMiddleware::new(&disabled).enabled);
 
-        cfg.enabled = true;
-        assert!(RateLimiterMiddleware::new(&cfg).enabled);
+        let enabled = RateLimitConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(RateLimiterMiddleware::new(&enabled).enabled);
     }
 
     #[test]

@@ -51,17 +51,20 @@ fn test_blacklist_allows_non_match() {
 }
 
 #[test]
-fn test_whitelist_priority_over_blacklist() {
+fn test_blacklist_applies_even_within_whitelist() {
     let filter = IpFilterConfig {
         whitelist: vec!["192.168.1.0/24".parse().unwrap()],
         blacklist: vec!["192.168.1.100/32".parse().unwrap()],
     };
-    // When whitelist is non-empty, blacklist is ignored.
-    // IP is in whitelist → allowed, even if it would be in blacklist.
-    let ip: IpAddr = "192.168.1.100".parse().unwrap();
-    assert!(filter.is_allowed(&ip));
+    // Both lists apply: a blacklisted IP inside a whitelisted range is denied
+    let blacklisted_in_whitelist: IpAddr = "192.168.1.100".parse().unwrap();
+    assert!(!filter.is_allowed(&blacklisted_in_whitelist));
 
-    // IP not in whitelist → blocked (blacklist is not checked).
-    let ip2: IpAddr = "10.0.0.1".parse().unwrap();
-    assert!(!filter.is_allowed(&ip2));
+    // Whitelisted and not blacklisted → allowed.
+    let whitelisted: IpAddr = "192.168.1.50".parse().unwrap();
+    assert!(filter.is_allowed(&whitelisted));
+
+    // Not in whitelist → blocked.
+    let outside: IpAddr = "10.0.0.1".parse().unwrap();
+    assert!(!filter.is_allowed(&outside));
 }

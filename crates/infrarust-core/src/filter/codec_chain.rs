@@ -158,8 +158,10 @@ mod tests {
         verdict: CodecVerdict,
     }
 
+    type VerdictFn = Box<dyn FnMut(&mut RawPacket, &mut FrameOutput) -> CodecVerdict + Send>;
+
     struct MockInstance {
-        verdict_fn: Box<dyn FnMut(&mut RawPacket, &mut FrameOutput) -> CodecVerdict + Send>,
+        verdict_fn: VerdictFn,
         call_count: Arc<AtomicU32>,
     }
 
