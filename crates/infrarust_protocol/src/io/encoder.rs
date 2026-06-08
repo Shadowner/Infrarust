@@ -46,6 +46,7 @@ pub struct PacketEncoder {
     buf: BytesMut,
     compression_threshold: Option<i32>,
     compress_buf: Vec<u8>,
+    scratch_buf: Vec<u8>,
     compressor: Box<dyn ZlibCompressor + Send + Sync>,
 }
 
@@ -55,6 +56,7 @@ impl PacketEncoder {
             buf: BytesMut::new(),
             compression_threshold: None,
             compress_buf: Vec::new(),
+            scratch_buf: Vec::new(),
             compressor: compression::new_compressor(4),
         }
     }
@@ -90,14 +92,15 @@ impl PacketEncoder {
                 if (uncompressed_len as i32) >= threshold {
                     // Compress: [VarInt(packet_len)] [VarInt(uncompressed_len)] [compressed(VarInt(packet_id) + payload)]
 
-                    // Build uncompressed data
-                    let mut uncompressed_data = Vec::with_capacity(packet_id_size + payload.len());
-                    packet_id_varint.encode(&mut uncompressed_data)?;
-                    uncompressed_data.extend_from_slice(payload);
+                    // Build uncompressed data in the reusable scratch buffer.
+                    self.scratch_buf.clear();
+                    self.scratch_buf.reserve(packet_id_size + payload.len());
+                    packet_id_varint.encode(&mut self.scratch_buf)?;
+                    self.scratch_buf.extend_from_slice(payload);
 
                     // Compress via the abstraction
                     self.compressor
-                        .compress(&uncompressed_data, &mut self.compress_buf)?;
+                        .compress(&self.scratch_buf, &mut self.compress_buf)?;
 
                     let compressed_size = self.compress_buf.len();
                     let data_len_varint = VarInt(uncompressed_len as i32);
