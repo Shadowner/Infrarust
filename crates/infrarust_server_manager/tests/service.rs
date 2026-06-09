@@ -27,10 +27,7 @@ impl MockProvider {
 }
 
 impl ServerProvider for MockProvider {
-    fn start(
-        &self,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), ServerManagerError>> + Send + '_>>
-    {
+    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             self.start_called.store(true, Ordering::Release);
             *self.status.lock().await = ProviderStatus::Starting;
@@ -38,10 +35,7 @@ impl ServerProvider for MockProvider {
         })
     }
 
-    fn stop(
-        &self,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), ServerManagerError>> + Send + '_>>
-    {
+    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             self.stop_called.store(true, Ordering::Release);
             *self.status.lock().await = ProviderStatus::Stopped;
@@ -51,13 +45,7 @@ impl ServerProvider for MockProvider {
 
     fn check_status(
         &self,
-    ) -> Pin<
-        Box<
-            dyn std::future::Future<Output = Result<ProviderStatus, ServerManagerError>>
-                + Send
-                + '_,
-        >,
-    > {
+    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
         Box::pin(async move { Ok(*self.status.lock().await) })
     }
 

@@ -2,11 +2,16 @@
 name = "infrarust-loader-wasm"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 description = "WebAssembly (Component Model) plugin loader for Infrarust"
 keywords = ["minecraft", "proxy", "plugin", "wasm", "wasmtime"]
 categories = ["game-development", "wasm"]
+
+[package.metadata.docs.rs]
+features = ["wasm"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true
@@ -30,7 +35,7 @@ infrarust-api = { workspace = true, features = ["test-util"] }
 infrarust-core = { workspace = true }
 infrarust_config = { workspace = true }
 infrarust-plugin-stats-native = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 tokio-util = { workspace = true }
 tempfile = { workspace = true }
 toml = { workspace = true }

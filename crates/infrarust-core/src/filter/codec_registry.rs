@@ -151,7 +151,7 @@ mod tests {
             connection_id: 1,
             remote_addr: "127.0.0.1:12345".parse().unwrap(),
             real_ip: None,
-            side: infrarust_api::filter::ConnectionSide::ClientSide,
+            side: ConnectionSide::ClientSide,
         }
     }
 

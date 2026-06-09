@@ -27,9 +27,7 @@ impl CraftyProvider {
 impl ServerProvider for CraftyProvider {
     fn start(
         &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), ServerManagerError>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             tracing::info!(server_id = %self.server_id, "sending start action to Crafty");
 
@@ -60,9 +58,7 @@ impl ServerProvider for CraftyProvider {
 
     fn stop(
         &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), ServerManagerError>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             tracing::info!(server_id = %self.server_id, "sending stop action to Crafty");
 
@@ -94,11 +90,7 @@ impl ServerProvider for CraftyProvider {
     fn check_status(
         &self,
     ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<ProviderStatus, ServerManagerError>>
-                + Send
-                + '_,
-        >,
+        Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>,
     > {
         Box::pin(async move {
             let url = format!("{}/api/v2/servers/{}/stats", self.api_url, self.server_id);

@@ -11,6 +11,7 @@
   <a href="https://crates.io/crates/infrarust">
     <img alt="Crates.io" src="https://img.shields.io/crates/v/infrarust?style=flat-square" />
   </a>
+  <img alt="MSRV" src="https://img.shields.io/crates/msrv/infrarust?style=flat-square" />
   <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" />
   <a href="https://discord.gg/sqbJhZVSgG">
     <img alt="Discord" src="https://img.shields.io/discord/1330603066478825502?style=flat-square&label=discord" />
@@ -25,7 +26,7 @@
 </p>
 
 > [!WARNING]
-> Infrarust V2 is currently in active development. Excpect bug with every intercepted mode (client_only / offline)
+> Infrarust V2 is currently in active development. Expect bugs with the intercepted modes (client_only / offline).
 
 ## Features
 
@@ -45,17 +46,20 @@
 ### Install
 
 ```bash
-# Pre-built binary (Linux)
-curl -LO https://github.com/Shadowner/Infrarust/releases/latest/download/infrarust
-chmod +x infrarust && sudo mv infrarust /usr/local/bin/
+# Pre-built binary (Linux x86_64)
+curl -LO https://github.com/Shadowner/Infrarust/releases/latest/download/infrarust-linux-x86_64.tar.gz
+tar xzf infrarust-linux-x86_64.tar.gz
+sudo mv infrarust /usr/local/bin/
 
 # Docker
 docker pull ghcr.io/shadowner/infrarust:latest
 
-# From source (Rust 1.85+)
+# From source (Rust 1.94+)
 git clone https://github.com/Shadowner/Infrarust.git && cd Infrarust
 cargo build --release -p infrarust
 ```
+
+Archives for macOS (`darwin`) and Windows, x86_64 and arm64, are on the [releases page](https://github.com/Shadowner/Infrarust/releases).
 
 ### Configure
 
@@ -128,7 +132,13 @@ Add `[docker]` to your `infrarust.toml` and containers with `infrarust.enable=tr
 
 ## Monitoring
 
-Infrarust exports metrics, traces, and logs via OpenTelemetry. A ready-to-use monitoring stack (Grafana, Prometheus, Tempo) is included in [`docker/monitoring`](docker/monitoring).
+Infrarust exports metrics, traces, and logs via OpenTelemetry (OTLP). Build with the `telemetry` feature and point it at your collector:
+
+```toml
+[telemetry]
+enabled = true
+endpoint = "http://localhost:4317"  # OTLP collector (gRPC)
+```
 
 <p align="center">
   <img src="docs/v1/public/img/grafana_dashboard.png" alt="Grafana monitoring dashboard" width="700" />

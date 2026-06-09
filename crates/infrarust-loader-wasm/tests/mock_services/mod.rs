@@ -23,25 +23,19 @@ pub struct MockPlayerRegistry;
 impl infrarust_api::services::player_registry::private::Sealed for MockPlayerRegistry {}
 
 impl PlayerRegistry for MockPlayerRegistry {
-    fn get_player(&self, _username: &str) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player(&self, _username: &str) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_player_by_uuid(
-        &self,
-        _uuid: &uuid::Uuid,
-    ) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player_by_uuid(&self, _uuid: &uuid::Uuid) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_players_on_server(
-        &self,
-        _server: &ServerId,
-    ) -> Vec<Arc<dyn infrarust_api::player::Player>> {
+    fn get_players_on_server(&self, _server: &ServerId) -> Vec<Arc<dyn Player>> {
         vec![]
     }
-    fn get_all_players(&self) -> Vec<Arc<dyn infrarust_api::player::Player>> {
+    fn get_all_players(&self) -> Vec<Arc<dyn Player>> {
         vec![]
     }
     fn online_count(&self) -> usize {
@@ -107,25 +101,19 @@ pub struct CountingPlayerRegistry {
 impl infrarust_api::services::player_registry::private::Sealed for CountingPlayerRegistry {}
 
 impl PlayerRegistry for CountingPlayerRegistry {
-    fn get_player(&self, _username: &str) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player(&self, _username: &str) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_player_by_uuid(
-        &self,
-        _uuid: &uuid::Uuid,
-    ) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player_by_uuid(&self, _uuid: &uuid::Uuid) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_players_on_server(
-        &self,
-        _server: &ServerId,
-    ) -> Vec<Arc<dyn infrarust_api::player::Player>> {
+    fn get_players_on_server(&self, _server: &ServerId) -> Vec<Arc<dyn Player>> {
         vec![]
     }
-    fn get_all_players(&self) -> Vec<Arc<dyn infrarust_api::player::Player>> {
+    fn get_all_players(&self) -> Vec<Arc<dyn Player>> {
         vec![]
     }
     fn online_count(&self) -> usize {

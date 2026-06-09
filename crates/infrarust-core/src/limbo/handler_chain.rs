@@ -315,7 +315,7 @@ mod tests {
         Arc<LimboSessionImpl>,
         VirtualSessionCore,
         KeepAliveState,
-        Arc<infrarust_protocol::registry::PacketRegistry>,
+        Arc<PacketRegistry>,
     ) {
         let registry = Arc::new(test_registry());
         let player_id = PlayerId::new(1);
@@ -535,7 +535,7 @@ mod tests {
 
         let cancel_clone = cancel.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
             cancel_clone.cancel();
         });
 
@@ -565,7 +565,7 @@ mod tests {
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(HoldHandler { name: "hold" })];
 
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
             drop(raw_stream);
         });
 

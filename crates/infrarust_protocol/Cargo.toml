@@ -2,9 +2,17 @@
 name = "infrarust_protocol"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license = "MIT"
 repository.workspace = true
 description = "Minecraft protocol codec for the Infrarust proxy"
+readme = "README.md"
+keywords = ["minecraft", "protocol", "codec", "nbt"]
+categories = ["game-development", "network-programming", "parser-implementations"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true

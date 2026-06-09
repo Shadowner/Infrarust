@@ -44,7 +44,7 @@ use crate::session::client_bridge::ClientBridge;
 
 pub fn test_profile() -> GameProfile {
     GameProfile {
-        uuid: uuid::Uuid::nil(),
+        uuid: Uuid::nil(),
         username: "LimboTester".to_string(),
         properties: vec![],
     }

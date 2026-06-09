@@ -399,9 +399,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
 
     // Collect limbo handlers registered by plugins and populate the registry
     for handler in plugin_manager.collect_limbo_handlers() {
-        services
-            .limbo_handler_registry
-            .register(std::sync::Arc::from(handler));
+        services.limbo_handler_registry.register(Arc::from(handler));
     }
 
     let plugin_providers = plugin_manager.collect_config_providers();

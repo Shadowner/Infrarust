@@ -38,9 +38,8 @@ impl ConfigProvider for FileProvider {
 
     fn load_initial(
         &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>>
+    {
         Box::pin(async move { self.do_load_initial() })
     }
 
@@ -48,8 +47,7 @@ impl ConfigProvider for FileProvider {
         &self,
         sender: mpsc::Sender<ProviderEvent>,
         shutdown: CancellationToken,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CoreError>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
         Box::pin(self.do_watch(sender, shutdown))
     }
 }

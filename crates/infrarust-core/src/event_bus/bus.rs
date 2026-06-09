@@ -184,10 +184,10 @@ impl EventBusImpl {
             for entry in handlers.iter() {
                 match &entry.kind {
                     HandlerKind::Sync(handler) => {
-                        handler(event as &mut dyn std::any::Any);
+                        handler(event as &mut dyn Any);
                     }
                     HandlerKind::Async(handler) => {
-                        handler(event as &mut dyn std::any::Any).await;
+                        handler(event as &mut dyn Any).await;
                     }
                 }
             }
@@ -343,7 +343,7 @@ mod tests {
     use super::*;
 
     struct TestEvent;
-    impl infrarust_api::event::Event for TestEvent {}
+    impl Event for TestEvent {}
 
     fn noop_handler() -> ErasedHandler {
         Box::new(|_| {})

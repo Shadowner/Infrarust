@@ -49,9 +49,7 @@ impl LocalProvider {
 impl ServerProvider for LocalProvider {
     fn start(
         &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), ServerManagerError>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
             if process_lock.is_some() {
@@ -126,9 +124,7 @@ impl ServerProvider for LocalProvider {
 
     fn stop(
         &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), ServerManagerError>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
             let process =
@@ -174,11 +170,7 @@ impl ServerProvider for LocalProvider {
     fn check_status(
         &self,
     ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<ProviderStatus, ServerManagerError>>
-                + Send
-                + '_,
-        >,
+        Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>,
     > {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;

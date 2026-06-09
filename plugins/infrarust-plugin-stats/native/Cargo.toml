@@ -2,11 +2,16 @@
 name = "infrarust-plugin-stats-native"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 description = "Native build of the Infrarust stats plugin"
 keywords = ["minecraft", "proxy", "plugin"]
 categories = ["game-development"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true

@@ -2,8 +2,10 @@
 name = "infrarust-mc-bench"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
+publish = false
 description = "End-to-end Minecraft Play-state load generator + mock backend for benchmarking Infrarust intercepted mode (Layer D)"
 
 [lints]
@@ -18,8 +20,7 @@ libdeflater = ["infrarust_protocol/libdeflater"]
 
 [dependencies]
 infrarust_protocol = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 clap = { workspace = true }
 hdrhistogram = { workspace = true }
 uuid = { workspace = true }
-bytes = { workspace = true }

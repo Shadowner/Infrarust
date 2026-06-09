@@ -127,9 +127,7 @@ impl FileBanStorage {
 }
 
 impl BanStorage for FileBanStorage {
-    fn load(
-        &self,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), CoreError>> + Send + '_>> {
+    fn load(&self) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
         Box::pin(async move {
             match tokio::fs::read_to_string(&self.file_path).await {
                 Ok(contents) => {
@@ -174,16 +172,14 @@ impl BanStorage for FileBanStorage {
         })
     }
 
-    fn save(
-        &self,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), CoreError>> + Send + '_>> {
+    fn save(&self) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
         Box::pin(async move { self.persist().await })
     }
 
     fn add_ban(
         &self,
         entry: BanEntry,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), CoreError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
         Box::pin(async move {
             match &entry.target {
                 BanTarget::Ip(ip) => {
@@ -223,7 +219,7 @@ impl BanStorage for FileBanStorage {
     fn remove_ban(
         &self,
         target: &BanTarget,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<bool, CoreError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<bool, CoreError>> + Send + '_>> {
         let target = target.clone();
         Box::pin(async move {
             let removed = match &target {
@@ -256,8 +252,7 @@ impl BanStorage for FileBanStorage {
     fn is_banned(
         &self,
         target: &BanTarget,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Option<BanEntry>, CoreError>> + Send + '_>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<Option<BanEntry>, CoreError>> + Send + '_>> {
         let target = target.clone();
         Box::pin(async move {
             match &target {
@@ -306,8 +301,7 @@ impl BanStorage for FileBanStorage {
         ip: &'a IpAddr,
         username: &'a str,
         uuid: Option<&'a Uuid>,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Option<BanEntry>, CoreError>> + Send + 'a>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<Option<BanEntry>, CoreError>> + Send + 'a>> {
         Box::pin(async move {
             // 1. Check by IP
             if let Some(entry) = self.ip_bans.get(ip) {
@@ -345,8 +339,7 @@ impl BanStorage for FileBanStorage {
 
     fn get_all_active(
         &self,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<BanEntry>, CoreError>> + Send + '_>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<BanEntry>, CoreError>> + Send + '_>> {
         Box::pin(async move {
             let mut active = Vec::new();
             for entry in &self.ip_bans {
@@ -368,9 +361,7 @@ impl BanStorage for FileBanStorage {
         })
     }
 
-    fn purge_expired(
-        &self,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<usize, CoreError>> + Send + '_>> {
+    fn purge_expired(&self) -> Pin<Box<dyn Future<Output = Result<usize, CoreError>> + Send + '_>> {
         Box::pin(async move {
             let mut purged = 0usize;
             let mut purged_targets = Vec::new();

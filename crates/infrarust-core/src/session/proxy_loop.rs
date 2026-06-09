@@ -229,7 +229,7 @@ trait FrameWriter {
     fn write_frame(
         &mut self,
         frame: &PacketFrame,
-    ) -> impl std::future::Future<Output = Result<(), CoreError>> + Send;
+    ) -> impl Future<Output = Result<(), CoreError>> + Send;
 }
 
 impl FrameWriter for ClientBridge {
@@ -418,7 +418,7 @@ async fn handle_client_to_backend(
             .event_bus
             .has_packet_listeners(frame.id, api_state, api_direction)
         {
-            let raw_packet = infrarust_api::types::RawPacket::new(frame.id, frame.payload.clone());
+            let raw_packet = RawPacket::new(frame.id, frame.payload.clone());
             let mut event = infrarust_api::events::packet::RawPacketEvent::new(
                 player_id,
                 api_direction,
@@ -518,7 +518,7 @@ async fn handle_backend_to_client(
             .event_bus
             .has_packet_listeners(frame.id, api_state, api_direction)
         {
-            let raw_packet = infrarust_api::types::RawPacket::new(frame.id, frame.payload.clone());
+            let raw_packet = RawPacket::new(frame.id, frame.payload.clone());
             let mut event = infrarust_api::events::packet::RawPacketEvent::new(
                 player_id,
                 api_direction,

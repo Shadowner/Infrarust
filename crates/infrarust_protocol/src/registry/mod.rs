@@ -245,7 +245,7 @@ mod tests {
         let payload = make_handshake_payload(767, "mc.example.com", 25565, 2);
         let frame = PacketFrame {
             id: 0x00,
-            payload: bytes::Bytes::from(payload),
+            payload: Bytes::from(payload),
         };
 
         let decoded = registry
@@ -276,7 +276,7 @@ mod tests {
         let payload = vec![1, 2, 3, 4];
         let frame = PacketFrame {
             id: 0xFF,
-            payload: bytes::Bytes::from(payload.clone()),
+            payload: Bytes::from(payload.clone()),
         };
 
         let decoded = registry
@@ -308,7 +308,7 @@ mod tests {
         let payload = make_handshake_payload(47, "mc.example.com", 25565, 2);
         let frame = PacketFrame {
             id: 0x00,
-            payload: bytes::Bytes::from(payload),
+            payload: Bytes::from(payload),
         };
 
         // V1_8 is not in the registry (only V1_9+)
@@ -525,7 +525,7 @@ mod tests {
         // Truncated payload — VarInt starts but string is missing
         let frame = PacketFrame {
             id: 0x00,
-            payload: bytes::Bytes::from_static(&[0xFF, 0x05]),
+            payload: Bytes::from_static(&[0xFF, 0x05]),
         };
 
         let result = registry.decode_frame(

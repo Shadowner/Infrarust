@@ -379,9 +379,7 @@ impl ConfigProvider for DockerProvider {
 
     fn load_initial(
         &self,
-    ) -> Pin<
-        Box<dyn std::future::Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>,
-    > {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>> {
         Box::pin(async move {
             let docker = self.connect()?;
             let configs = self.scan_containers(&docker).await?;
@@ -404,7 +402,7 @@ impl ConfigProvider for DockerProvider {
         &self,
         sender: mpsc::Sender<ProviderEvent>,
         shutdown: CancellationToken,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), CoreError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
         Box::pin(async move { self.watch_with_reconnect(&sender, &shutdown).await })
     }
 }

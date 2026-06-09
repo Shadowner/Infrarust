@@ -2,11 +2,16 @@
 name = "infrarust-api"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 description = "Plugin API for Infrarust, a Minecraft reverse proxy"
 keywords = ["minecraft", "proxy", "plugin", "api"]
 categories = ["game-development", "network-programming"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true
@@ -17,8 +22,11 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio-util = { workspace = true, features = ["rt"] }
-tracing = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+# Doctest-only (crate-level plugin example).
+tracing = { workspace = true }
 
 [features]
 default = []

@@ -30,10 +30,9 @@ fn test_plugin_context_construction() {
     // For ban_service, server_manager, and config_service, we'd need
     // the full infrastructure. This test verifies the type system works.
     let _event_bus: Arc<dyn infrarust_api::event::bus::EventBus> = event_bus;
-    let _player_registry: Arc<dyn infrarust_api::services::player_registry::PlayerRegistry> =
-        player_registry;
+    let _player_registry: Arc<dyn PlayerRegistry> = player_registry;
     let _command_manager: Arc<dyn infrarust_api::command::CommandManager> = command_manager;
-    let _scheduler: Arc<dyn infrarust_api::services::scheduler::Scheduler> = scheduler;
+    let _scheduler: Arc<dyn Scheduler> = scheduler;
 }
 
 #[tokio::test]
@@ -74,7 +73,7 @@ impl infrarust_api::command::CommandHandler for NoopHandler {
     fn execute<'a>(
         &'a self,
         _ctx: infrarust_api::command::CommandContext,
-        _player_registry: &'a dyn infrarust_api::services::player_registry::PlayerRegistry,
+        _player_registry: &'a dyn PlayerRegistry,
     ) -> infrarust_api::event::BoxFuture<'a, ()> {
         Box::pin(async {})
     }

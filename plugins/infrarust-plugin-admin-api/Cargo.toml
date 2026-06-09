@@ -2,9 +2,14 @@
 name = "infrarust-plugin-admin-api"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 description = "HTTP REST API plugin for Infrarust proxy administration"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true
@@ -16,7 +21,7 @@ infrarust_protocol = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
 tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

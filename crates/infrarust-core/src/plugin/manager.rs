@@ -372,37 +372,35 @@ mod tests {
             self
         }
 
-        fn event_bus(&self) -> &dyn infrarust_api::event::bus::EventBus {
+        fn event_bus(&self) -> &dyn EventBus {
             unimplemented!("mock")
         }
 
-        fn player_registry(&self) -> &dyn infrarust_api::services::player_registry::PlayerRegistry {
+        fn player_registry(&self) -> &dyn PlayerRegistry {
             unimplemented!("mock")
         }
 
-        fn player_registry_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::player_registry::PlayerRegistry> {
+        fn player_registry_handle(&self) -> Arc<dyn PlayerRegistry> {
             unimplemented!("mock")
         }
 
-        fn server_manager(&self) -> &dyn infrarust_api::services::server_manager::ServerManager {
+        fn server_manager(&self) -> &dyn ServerManager {
             unimplemented!("mock")
         }
 
-        fn ban_service(&self) -> &dyn infrarust_api::services::ban_service::BanService {
+        fn ban_service(&self) -> &dyn BanService {
             unimplemented!("mock")
         }
 
-        fn config_service(&self) -> &dyn infrarust_api::services::config_service::ConfigService {
+        fn config_service(&self) -> &dyn ConfigService {
             unimplemented!("mock")
         }
 
-        fn command_manager(&self) -> &dyn infrarust_api::command::CommandManager {
+        fn command_manager(&self) -> &dyn CommandManager {
             unimplemented!("mock")
         }
 
-        fn scheduler(&self) -> &dyn infrarust_api::services::scheduler::Scheduler {
+        fn scheduler(&self) -> &dyn Scheduler {
             unimplemented!("mock")
         }
 
@@ -432,37 +430,31 @@ mod tests {
         fn plugin_id(&self) -> &str {
             &self.plugin_id
         }
-        fn data_dir(&self) -> std::path::PathBuf {
-            std::path::PathBuf::from("plugins").join(&self.plugin_id)
+        fn data_dir(&self) -> PathBuf {
+            PathBuf::from("plugins").join(&self.plugin_id)
         }
-        fn plugin_registry(&self) -> &dyn infrarust_api::services::plugin_registry::PluginRegistry {
+        fn plugin_registry(&self) -> &dyn PluginRegistry {
             unimplemented!("mock")
         }
-        fn plugin_registry_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry> {
+        fn plugin_registry_handle(&self) -> Arc<dyn PluginRegistry> {
             unimplemented!("mock")
         }
-        fn server_manager_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
+        fn server_manager_handle(&self) -> Arc<dyn ServerManager> {
             unimplemented!("mock")
         }
-        fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
+        fn ban_service_handle(&self) -> Arc<dyn BanService> {
             unimplemented!("mock")
         }
-        fn config_service_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
+        fn config_service_handle(&self) -> Arc<dyn ConfigService> {
             unimplemented!("mock")
         }
-        fn event_bus_handle(&self) -> Arc<dyn infrarust_api::event::bus::EventBus> {
+        fn event_bus_handle(&self) -> Arc<dyn EventBus> {
             unimplemented!("mock")
         }
-        fn proxy_shutdown(&self) -> tokio_util::sync::CancellationToken {
-            tokio_util::sync::CancellationToken::new()
+        fn proxy_shutdown(&self) -> CancellationToken {
+            CancellationToken::new()
         }
-        fn proxy_info(&self) -> &infrarust_api::services::proxy_info::ProxyInfo {
+        fn proxy_info(&self) -> &ProxyInfo {
             unimplemented!("mock")
         }
         fn capabilities(&self) -> &infrarust_api::permissions::CapabilitySet {

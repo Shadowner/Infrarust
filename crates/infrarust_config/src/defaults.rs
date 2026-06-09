@@ -106,12 +106,12 @@ pub const fn keepalive_retries() -> u32 {
     3
 }
 
-pub fn ban_file() -> std::path::PathBuf {
-    std::path::PathBuf::from("bans.json")
+pub fn ban_file() -> PathBuf {
+    PathBuf::from("bans.json")
 }
 
-pub const fn ban_purge_interval() -> std::time::Duration {
-    std::time::Duration::from_secs(300)
+pub const fn ban_purge_interval() -> Duration {
+    Duration::from_secs(300)
 }
 
 pub const fn ban_audit_log() -> bool {
@@ -122,12 +122,12 @@ pub fn docker_endpoint() -> String {
     "unix:///var/run/docker.sock".to_string()
 }
 
-pub const fn docker_poll_interval() -> std::time::Duration {
-    std::time::Duration::from_secs(30)
+pub const fn docker_poll_interval() -> Duration {
+    Duration::from_secs(30)
 }
 
-pub const fn docker_reconnect_delay() -> std::time::Duration {
-    std::time::Duration::from_secs(5)
+pub const fn docker_reconnect_delay() -> Duration {
+    Duration::from_secs(5)
 }
 
 pub const fn announce_proxy_commands() -> bool {

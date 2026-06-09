@@ -153,8 +153,8 @@ impl Plugin for AdminApiPlugin {
                             _ = shutdown.cancelled() => break,
                             result = rx.recv() => {
                                 match result {
-                                    Ok(event) => crate::state::push_recent_event(&recent, &event),
-                                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
+                                    Ok(event) => state::push_recent_event(&recent, &event),
+                                    Err(broadcast::error::RecvError::Lagged(_)) => {},
                                     Err(_) => break,
                                 }
                             }
