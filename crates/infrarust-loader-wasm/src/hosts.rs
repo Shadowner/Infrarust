@@ -240,8 +240,16 @@ impl player_registry::HostPlayer for PluginStoreState {
     ) -> wasmtime::Result<()> {
         let player = self.resolve_player(&self_)?;
         let component = convert::component_from_wit(&reason);
+        let plugin_id = self.plugin_id.clone();
         tokio::spawn(async move {
-            player.disconnect(component).await;
+            let player_id = player.id().as_u64();
+            if timeout(HOST_CALL_TIMEOUT, player.disconnect(component))
+                .await
+                .is_err()
+            {
+                tracing::warn!(plugin = %plugin_id, player = player_id,
+                    "player disconnect requested by plugin timed out");
+            }
         });
         Ok(())
     }
@@ -303,10 +311,14 @@ impl player_registry::HostPlayer for PluginStoreState {
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
         let player = self.resolve_player(&self_)?;
         let target = ServerId::from(target);
-        tokio::spawn(async move {
-            let _ = player.switch_server(target).await;
-        });
-        Ok(Ok(()))
+        Ok(
+            match timeout(HOST_CALL_TIMEOUT, player.switch_server(target)).await {
+                Ok(result) => result.map_err(convert::player_error_to_wit),
+                Err(_) => Err(wt::PlayerError::SwitchFailed(
+                    "host call timed out".to_string(),
+                )),
+            },
+        )
     }
 
     async fn is_online_mode(&mut self, self_: Resource<PlayerHandle>) -> wasmtime::Result<bool> {
@@ -501,15 +513,10 @@ impl command_manager::Host for PluginStoreState {
         callback_id: u64,
     ) -> wasmtime::Result<()> {
         let instance = self.instance_ref();
-        let plugin_id = self.plugin_id.clone();
         let Some(ctx) = self.ctx() else {
             return Err(no_ctx());
         };
-        let handler = Box::new(proxies::WasmCommandHandler::new(
-            callback_id,
-            instance,
-            plugin_id,
-        ));
+        let handler = Box::new(proxies::WasmCommandHandler::new(callback_id, instance));
         let alias_refs: Vec<&str> = aliases.iter().map(String::as_str).collect();
         ctx.command_manager()
             .register(&name, &alias_refs, &description, handler);
@@ -541,13 +548,17 @@ impl codec_registry::Host for PluginStoreState {
         factory: u64,
     ) -> wasmtime::Result<()> {
         let Some(instantiator) = self.codec_instantiator().cloned() else {
-            return Ok(());
+            return Err(wasmtime::Error::msg(
+                "codec instantiator unavailable (register-codec-filter called off the load path)",
+            ));
         };
         let Some(ctx) = self.ctx() else {
-            return Ok(());
+            return Err(no_ctx());
         };
         let Some(registry) = ctx.codec_filters() else {
-            return Ok(());
+            return Err(wasmtime::Error::msg(
+                "host context exposes no codec filter registry",
+            ));
         };
         let native_meta = FilterMetadata {
             id: metadata.id,
@@ -575,14 +586,13 @@ impl codec_registry::Host for PluginStoreState {
 impl scheduler::Host for PluginStoreState {
     async fn delay(&mut self, after_ms: u64, callback_id: u64) -> wasmtime::Result<u64> {
         let instance = self.instance_ref();
-        let plugin_id = self.plugin_id.clone();
         let Some(ctx) = self.ctx() else {
             return Err(no_ctx());
         };
         let handle = ctx.scheduler().delay(
             Duration::from_millis(after_ms),
             Box::new(move || {
-                proxies::dispatch_scheduled_task(instance, callback_id, plugin_id);
+                proxies::dispatch_scheduled_task(instance, callback_id);
             }),
         );
         Ok(handle.as_u64())
@@ -590,14 +600,13 @@ impl scheduler::Host for PluginStoreState {
 
     async fn interval(&mut self, period_ms: u64, callback_id: u64) -> wasmtime::Result<u64> {
         let instance = self.instance_ref();
-        let plugin_id = self.plugin_id.clone();
         let Some(ctx) = self.ctx() else {
             return Err(no_ctx());
         };
         let handle = ctx.scheduler().interval(
             Duration::from_millis(period_ms),
             Box::new(move || {
-                proxies::dispatch_scheduled_task(instance.clone(), callback_id, plugin_id.clone());
+                proxies::dispatch_scheduled_task(instance.clone(), callback_id);
             }),
         );
         Ok(handle.as_u64())
@@ -618,12 +627,11 @@ impl limbo::Host for PluginStoreState {
             return Ok(());
         }
         let instance = self.instance_ref();
-        let plugin_id = self.plugin_id.clone();
         let Some(ctx) = self.ctx() else {
-            return Ok(());
+            return Err(no_ctx());
         };
         ctx.register_limbo_handler(Box::new(crate::limbo::WasmLimboHandler::new(
-            handler, name, instance, plugin_id,
+            handler, name, instance,
         )));
         Ok(())
     }

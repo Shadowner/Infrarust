@@ -8,24 +8,18 @@ use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::PlayerId;
 use tokio::sync::Mutex;
 
-use crate::plugin::WasmInstance;
+use crate::plugin::{WasmInstance, call_guest};
 
 pub(crate) struct WasmCommandHandler {
     callback_id: u64,
     instance: Weak<Mutex<WasmInstance>>,
-    plugin_id: String,
 }
 
 impl WasmCommandHandler {
-    pub(crate) fn new(
-        callback_id: u64,
-        instance: Weak<Mutex<WasmInstance>>,
-        plugin_id: String,
-    ) -> Self {
+    pub(crate) fn new(callback_id: u64, instance: Weak<Mutex<WasmInstance>>) -> Self {
         Self {
             callback_id,
             instance,
-            plugin_id,
         }
     }
 }
@@ -37,31 +31,18 @@ impl CommandHandler for WasmCommandHandler {
         _player_registry: &'a dyn PlayerRegistry,
     ) -> BoxFuture<'a, ()> {
         let instance = self.instance.clone();
-        let plugin_id = self.plugin_id.clone();
         let callback_id = self.callback_id;
         Box::pin(async move {
-            let Some(arc) = instance.upgrade() else {
-                return;
-            };
-            let mut guard = arc.lock().await;
-            let WasmInstance { store, bindings } = &mut *guard;
-            if store.data().is_poisoned() {
-                return;
-            }
-            store.data_mut().reset_epoch_budget();
             let player = ctx.player_id.map(PlayerId::as_u64);
-            match bindings
-                .infrarust_plugin_guest()
-                .call_handle_command(&mut *store, callback_id, &ctx.args, player)
-                .await
-            {
-                Ok(()) => {}
-                Err(trap) => {
-                    tracing::error!(plugin = %plugin_id, callback = callback_id, error = %trap,
-                        "wasm guest trapped in handle-command; poisoning instance");
-                    store.data_mut().set_poisoned();
-                }
-            }
+            let _ = call_guest(instance, "handle-command", move |store, bindings| {
+                Box::pin(async move {
+                    bindings
+                        .infrarust_plugin_guest()
+                        .call_handle_command(&mut *store, callback_id, &ctx.args, player)
+                        .await
+                })
+            })
+            .await;
         })
     }
 
@@ -71,61 +52,32 @@ impl CommandHandler for WasmCommandHandler {
         cursor: u32,
     ) -> BoxFuture<'a, Vec<String>> {
         let instance = self.instance.clone();
-        let plugin_id = self.plugin_id.clone();
         let callback_id = self.callback_id;
         Box::pin(async move {
-            let Some(arc) = instance.upgrade() else {
-                return Vec::new();
-            };
-            let mut guard = arc.lock().await;
-            let WasmInstance { store, bindings } = &mut *guard;
-            if store.data().is_poisoned() {
-                return Vec::new();
-            }
-            store.data_mut().reset_epoch_budget();
-            match bindings
-                .infrarust_plugin_guest()
-                .call_tab_complete(&mut *store, callback_id, &partial_args, cursor)
-                .await
-            {
-                Ok(suggestions) => suggestions,
-                Err(trap) => {
-                    tracing::error!(plugin = %plugin_id, callback = callback_id, error = %trap,
-                        "wasm guest trapped in tab-complete; poisoning instance");
-                    store.data_mut().set_poisoned();
-                    Vec::new()
-                }
-            }
+            call_guest(instance, "tab-complete", move |store, bindings| {
+                Box::pin(async move {
+                    bindings
+                        .infrarust_plugin_guest()
+                        .call_tab_complete(&mut *store, callback_id, &partial_args, cursor)
+                        .await
+                })
+            })
+            .await
+            .unwrap_or_default()
         })
     }
 }
 
-pub(crate) fn dispatch_scheduled_task(
-    instance: Weak<Mutex<WasmInstance>>,
-    callback_id: u64,
-    plugin_id: String,
-) {
+pub(crate) fn dispatch_scheduled_task(instance: Weak<Mutex<WasmInstance>>, callback_id: u64) {
     tokio::spawn(async move {
-        let Some(arc) = instance.upgrade() else {
-            return;
-        };
-        let mut guard = arc.lock().await;
-        let WasmInstance { store, bindings } = &mut *guard;
-        if store.data().is_poisoned() {
-            return;
-        }
-        store.data_mut().reset_epoch_budget();
-        match bindings
-            .infrarust_plugin_guest()
-            .call_on_scheduled_task(&mut *store, callback_id)
-            .await
-        {
-            Ok(()) => {}
-            Err(trap) => {
-                tracing::error!(plugin = %plugin_id, callback = callback_id, error = %trap,
-                    "wasm guest trapped in on-scheduled-task; poisoning instance");
-                store.data_mut().set_poisoned();
-            }
-        }
+        let _ = call_guest(instance, "on-scheduled-task", move |store, bindings| {
+            Box::pin(async move {
+                bindings
+                    .infrarust_plugin_guest()
+                    .call_on_scheduled_task(&mut *store, callback_id)
+                    .await
+            })
+        })
+        .await;
     });
 }

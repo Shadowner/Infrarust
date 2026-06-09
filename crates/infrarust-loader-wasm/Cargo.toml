@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 infrarust-api = { workspace = true }
+infrarust-plugin-wit = { workspace = true }
 infrarust_config = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }

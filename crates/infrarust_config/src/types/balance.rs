@@ -115,11 +115,15 @@ const fn default_weight() -> u32 {
 #[serde(untagged)]
 enum AddressEntry {
     Simple(ServerAddress),
-    Weighted {
-        address: ServerAddress,
-        #[serde(default = "default_weight")]
-        weight: u32,
-    },
+    Weighted(WeightedEntry),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WeightedEntry {
+    address: ServerAddress,
+    #[serde(default = "default_weight")]
+    weight: u32,
 }
 
 impl<'de> Deserialize<'de> for WeightedAddress {
@@ -129,7 +133,9 @@ impl<'de> Deserialize<'de> for WeightedAddress {
     {
         match AddressEntry::deserialize(deserializer)? {
             AddressEntry::Simple(address) => Ok(address.into()),
-            AddressEntry::Weighted { address, weight } => Ok(Self { address, weight }),
+            AddressEntry::Weighted(WeightedEntry { address, weight }) => {
+                Ok(Self { address, weight })
+            }
         }
     }
 }

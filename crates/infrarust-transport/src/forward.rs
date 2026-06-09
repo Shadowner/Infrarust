@@ -1,7 +1,7 @@
 //! Bidirectional TCP forwarding.
 //!
 //! Provides two forwarding strategies:
-//! - `CopyForwarder`: portable userspace copy via `tokio::io::copy_bidirectional`
+//! - `CopyForwarder`: portable userspace copy via two spawned `tokio::io::copy` tasks
 //! - `SpliceForwarder`: Linux-only zero-copy via `splice(2)` syscall
 
 use std::future::Future;
@@ -50,7 +50,7 @@ pub trait Forwarder: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = ForwardResult> + Send + '_>>;
 }
 
-/// Portable userspace copy forwarder using `tokio::io::copy_bidirectional`.
+/// Portable userspace copy forwarder spawning one `tokio::io::copy` task per direction.
 #[derive(Debug, Default)]
 pub struct CopyForwarder;
 

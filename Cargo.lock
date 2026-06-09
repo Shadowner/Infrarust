@@ -1955,6 +1955,7 @@ dependencies = [
  "infrarust_server_manager",
  "mimalloc",
  "opentelemetry",
+ "serde",
  "tokio",
  "tokio-util",
  "toml",
@@ -2035,6 +2036,7 @@ dependencies = [
  "infrarust-api",
  "infrarust-core",
  "infrarust-plugin-stats-native",
+ "infrarust-plugin-wit",
  "infrarust_config",
  "sha2 0.11.0",
  "tempfile",
@@ -2058,15 +2060,6 @@ dependencies = [
  "infrarust_protocol",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "infrarust-motd"
-version = "2.0.0-beta.1"
-dependencies = [
- "clap",
- "infrarust_protocol",
- "tokio",
 ]
 
 [[package]]

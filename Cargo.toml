@@ -18,7 +18,6 @@ members = [
     "plugins/infrarust-plugin-admin-api",
     "plugins/infrarust-plugin-stats",
     "plugins/infrarust-plugin-stats/native",
-    "tools/infrarust-motd",
     "tools/registry-extractor",
     "tools/stress-test",
     "tools/mc-bench",

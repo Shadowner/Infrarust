@@ -189,9 +189,13 @@ impl Plugin for AdminApiPlugin {
 
             let shutdown = self.shutdown.clone();
             let handle = tokio::spawn(async move {
-                if let Err(e) = axum::serve(listener, app)
-                    .with_graceful_shutdown(shutdown.cancelled_owned())
-                    .await
+                // ConnectInfo exposes the peer address for per-IP rate limiting.
+                if let Err(e) = axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .with_graceful_shutdown(shutdown.cancelled_owned())
+                .await
                 {
                     tracing::error!(error = %e, "Admin API server error");
                 }
@@ -408,6 +412,10 @@ mod tests {
     // ── Helpers ──
 
     fn test_state() -> Arc<ApiState> {
+        test_state_custom("test-key", 1000)
+    }
+
+    fn test_state_custom(api_key: &str, requests_per_minute: u64) -> Arc<ApiState> {
         let (event_tx, _) = broadcast::channel::<ApiEvent>(16);
         Arc::new(ApiState {
             player_registry: Arc::new(MockPlayerRegistry { count: 3 }),
@@ -417,13 +425,13 @@ mod tests {
             plugin_registry: Arc::new(MockPluginRegistry),
             config: ApiConfig {
                 bind: "127.0.0.1:0".into(),
-                api_key: "test-key".into(),
+                api_key: api_key.into(),
                 cors_origins: vec![],
                 rate_limit: RateLimitConfig::default(),
             },
             start_time: Instant::now(),
             proxy_version: "2.0.0-test".into(),
-            rate_limiter: RateLimiter::new(1000),
+            rate_limiter: RateLimiter::new(requests_per_minute),
             event_tx,
             shutdown: CancellationToken::new(),
             proxy_shutdown: CancellationToken::new(),
@@ -575,6 +583,71 @@ mod tests {
                 .unwrap()
                 .contains("invalid")
         );
+    }
+
+    #[tokio::test]
+    async fn test_empty_configured_key_rejects_empty_token() {
+        let app = build_router(test_state_custom("", 1000), true);
+
+        let request = Request::builder()
+            .uri("/api/v1/proxy")
+            .header(header::AUTHORIZATION, "Bearer ")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_failed_auth_is_rate_limited() {
+        let app = build_router(test_state_custom("test-key", 2), true);
+
+        for _ in 0..2 {
+            let request = Request::builder()
+                .uri("/api/v1/proxy")
+                .header(header::AUTHORIZATION, "Bearer wrong-key")
+                .body(Body::empty())
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        let request = Request::builder()
+            .uri("/api/v1/proxy")
+            .header(header::AUTHORIZATION, "Bearer wrong-key")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn test_sse_routes_are_rate_limited() {
+        let app = build_router(test_state_custom("test-key", 1), true);
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::UNAUTHORIZED);
+
+        let second = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
     #[tokio::test]
@@ -823,6 +896,28 @@ mod tests {
                 .unwrap()
                 .contains("Broadcast")
         );
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_text_too_long_returns_400() {
+        let (status, body) = auth_post(
+            "/api/v1/players/broadcast",
+            serde_json::json!({"text": "x".repeat(257)}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "BAD_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn test_message_text_too_long_returns_400() {
+        let (status, body) = auth_post(
+            "/api/v1/players/unknown/message",
+            serde_json::json!({"text": "x".repeat(257)}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "BAD_REQUEST");
     }
 
     // ── Ban Mutations ──

@@ -35,6 +35,7 @@ bytes = { workspace = true }
 dashmap = { workspace = true }
 governor = { workspace = true }
 arc-swap = { workspace = true }
+smallvec = { workspace = true }
 notify = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

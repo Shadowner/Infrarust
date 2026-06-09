@@ -1,6 +1,6 @@
 //! `WasmPlugin`: adapts an instantiated component to the native `Plugin` trait.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
@@ -11,6 +11,38 @@ use wasmtime::Store;
 use crate::bindings::Plugin as PluginBindings;
 use crate::error::WasmLoaderError;
 use crate::store_state::PluginStoreState;
+
+/// The one async guest-call ceremony: upgrade the weak instance ref, serialize on
+/// the instance lock, refuse poisoned stores, re-arm the epoch budget, then run
+/// `call`; a trap (`Err`) poisons the instance. Returns `None` when the call did
+/// not complete (instance gone, poisoned, or trapped). Call sites only provide the
+/// guest operation, so a future worker-task restructure (C2: a task owning the
+/// `Store` fed by mpsc+oneshot) only has to swap this body.
+pub(crate) async fn call_guest<T>(
+    instance: Weak<Mutex<WasmInstance>>,
+    op: &'static str,
+    call: impl for<'a> FnOnce(
+        &'a mut Store<PluginStoreState>,
+        &'a PluginBindings,
+    ) -> BoxFuture<'a, wasmtime::Result<T>>,
+) -> Option<T> {
+    let arc = instance.upgrade()?;
+    let mut guard = arc.lock().await;
+    let WasmInstance { store, bindings } = &mut *guard;
+    if store.data().is_poisoned() {
+        return None;
+    }
+    store.data_mut().reset_epoch_budget();
+    match call(store, bindings).await {
+        Ok(value) => Some(value),
+        Err(trap) => {
+            tracing::error!(plugin = %store.data().plugin_id, op, error = %trap,
+                "wasm guest trapped; poisoning instance");
+            store.data_mut().set_poisoned();
+            None
+        }
+    }
+}
 
 pub(crate) struct WasmPlugin {
     metadata: PluginMetadata,

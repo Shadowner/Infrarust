@@ -421,8 +421,11 @@ impl Packet for CLoginSuccess {
 
         // Properties: 1.19+
         let properties = if version.no_less_than(ProtocolVersion::V1_19) {
-            let count = r.read_var_int()?.0 as usize;
-            let mut props = Vec::with_capacity(count.min(64));
+            let count = r.read_var_int()?.0;
+            if count < 0 {
+                return Err(ProtocolError::invalid("negative property count"));
+            }
+            let mut props = Vec::with_capacity((count as usize).min(64));
             for _ in 0..count {
                 let name = r.read_string()?;
                 let value = r.read_string()?;
@@ -733,6 +736,25 @@ mod tests {
         assert_eq!(decoded.properties[0].name, "textures");
         assert_eq!(decoded.properties[0].signature, Some("sig123".to_string()));
         assert!(decoded.properties[1].signature.is_none());
+    }
+
+    #[test]
+    fn test_login_success_negative_property_count_rejected() {
+        let mut buf = Vec::new();
+        buf.write_uuid(&uuid::Uuid::from_u128(1)).unwrap();
+        buf.write_string("Notch").unwrap();
+        buf.write_var_int(&VarInt(-1)).unwrap();
+        let err = CLoginSuccess::decode(&mut buf.as_slice(), ProtocolVersion::V1_19).unwrap_err();
+        assert!(matches!(err, ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn test_login_success_hostile_property_count_errors() {
+        let mut buf = Vec::new();
+        buf.write_uuid(&uuid::Uuid::from_u128(1)).unwrap();
+        buf.write_string("Notch").unwrap();
+        buf.write_var_int(&VarInt(i32::MAX)).unwrap();
+        assert!(CLoginSuccess::decode(&mut buf.as_slice(), ProtocolVersion::V1_19).is_err());
     }
 
     #[test]

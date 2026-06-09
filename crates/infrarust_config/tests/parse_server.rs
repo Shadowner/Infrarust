@@ -57,7 +57,6 @@ fn test_parse_survival_motd() {
     assert_eq!(sleeping.version_name.as_deref(), Some("Server Sleeping"));
 
     assert!(config.motd.starting.is_some());
-    assert!(config.motd.offline.is_none());
 }
 
 #[test]

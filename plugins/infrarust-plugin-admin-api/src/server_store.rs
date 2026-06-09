@@ -68,6 +68,9 @@ impl StoredServer {
 pub struct ApiServerStore {
     servers: Mutex<HashMap<String, ServerConfig>>,
     persist_path: PathBuf,
+    /// Serializes writers: snapshots are taken under this lock, so concurrent
+    /// persists cannot interleave in the tmp file or land out of order.
+    persist_lock: tokio::sync::Mutex<()>,
 }
 
 impl ApiServerStore {
@@ -111,16 +114,17 @@ impl ApiServerStore {
         Self {
             servers: Mutex::new(servers),
             persist_path,
+            persist_lock: tokio::sync::Mutex::new(()),
         }
     }
 
-    pub fn insert(&self, config: ServerConfig) {
+    pub async fn insert(&self, config: ServerConfig) {
         let id = config.id.as_str().to_string();
         self.servers
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .insert(id, config);
-        self.persist();
+        self.persist().await;
     }
 
     pub fn get(&self, id: &str) -> Option<ServerConfig> {
@@ -131,14 +135,14 @@ impl ApiServerStore {
             .cloned()
     }
 
-    pub fn remove(&self, id: &str) -> Option<ServerConfig> {
+    pub async fn remove(&self, id: &str) -> Option<ServerConfig> {
         let removed = self
             .servers
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(id);
         if removed.is_some() {
-            self.persist();
+            self.persist().await;
         }
         removed
     }
@@ -159,7 +163,9 @@ impl ApiServerStore {
             .contains_key(id)
     }
 
-    fn persist(&self) {
+    async fn persist(&self) {
+        let _write_guard = self.persist_lock.lock().await;
+
         let stored: Vec<StoredServer> = self
             .servers
             .lock()
@@ -168,19 +174,26 @@ impl ApiServerStore {
             .map(StoredServer::from_config)
             .collect();
 
-        match serde_json::to_string_pretty(&stored) {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(&self.persist_path, json) {
-                    tracing::error!(
-                        error = %e,
-                        path = %self.persist_path.display(),
-                        "Failed to persist servers.json"
-                    );
-                }
-            }
+        let json = match serde_json::to_string_pretty(&stored) {
+            Ok(json) => json,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to serialize servers for persistence");
+                return;
             }
+        };
+
+        let tmp_path = self.persist_path.with_extension("json.tmp");
+        let result = match tokio::fs::write(&tmp_path, json.as_bytes()).await {
+            Ok(()) => tokio::fs::rename(&tmp_path, &self.persist_path).await,
+            Err(e) => Err(e),
+        };
+
+        if let Err(e) = result {
+            tracing::error!(
+                error = %e,
+                path = %self.persist_path.display(),
+                "Failed to persist servers.json"
+            );
         }
     }
 }

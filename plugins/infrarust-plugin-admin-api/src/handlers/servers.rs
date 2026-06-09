@@ -267,7 +267,7 @@ pub async fn create(
         false,
     );
 
-    state.server_store.insert(config.clone());
+    state.server_store.insert(config.clone()).await;
 
     // Emit to the core provider system
     let sender_guard = state.provider_sender.lock().await;
@@ -350,7 +350,7 @@ pub async fn update(
         existing.has_server_manager,
     );
 
-    state.server_store.insert(config.clone());
+    state.server_store.insert(config.clone()).await;
 
     let sender_guard = state.provider_sender.lock().await;
     if let Some(sender) = sender_guard.as_ref() {
@@ -375,6 +375,7 @@ pub async fn delete(
     state
         .server_store
         .remove(&id)
+        .await
         .ok_or_else(|| ApiError::Forbidden("Only API-created servers can be deleted".into()))?;
 
     let server_id = ServerId::new(&id);

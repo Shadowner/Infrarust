@@ -182,9 +182,29 @@ fn declare_codec_filters<P: Plugin>(notify: bool) {
 }
 
 pub fn register_limbo_handler(name: &str, handler: Box<dyn LimboHandler>) {
+    let id = insert_limbo_handler(handler);
+    crate::bindings::limbo::register_limbo_handler(name, id);
+}
+
+fn insert_limbo_handler(handler: Box<dyn LimboHandler>) -> u64 {
     let id = next_id();
     LIMBO_HANDLERS.with(|h| h.borrow_mut().insert(id, handler));
-    crate::bindings::limbo::register_limbo_handler(name, id);
+    id
+}
+
+fn with_limbo_handler<R>(
+    handler: u64,
+    missing: impl FnOnce() -> R,
+    call: impl FnOnce(&dyn LimboHandler) -> R,
+) -> R {
+    let Some(hdlr) = LIMBO_HANDLERS.with(|h| h.borrow_mut().remove(&handler)) else {
+        return missing();
+    };
+    let out = call(hdlr.as_ref());
+    LIMBO_HANDLERS.with(|h| {
+        h.borrow_mut().entry(handler).or_insert(hdlr);
+    });
+    out
 }
 
 fn declare_limbo_handlers<P: Plugin>() {
@@ -200,10 +220,11 @@ pub fn limbo_on_player_enter(
     handler: u64,
     session: &crate::bindings::guest::LimboSession,
 ) -> crate::bindings::guest::HandlerResult {
-    LIMBO_HANDLERS.with(|h| match h.borrow().get(&handler) {
-        Some(hdlr) => hdlr.on_player_enter(&LimboSession::new(session)).into_wit(),
-        None => HandlerOutcome::Accept.into_wit(),
-    })
+    with_limbo_handler(
+        handler,
+        || HandlerOutcome::Accept.into_wit(),
+        |hdlr| hdlr.on_player_enter(&LimboSession::new(session)).into_wit(),
+    )
 }
 
 pub fn limbo_on_command(
@@ -212,11 +233,11 @@ pub fn limbo_on_command(
     command: String,
     args: Vec<String>,
 ) {
-    LIMBO_HANDLERS.with(|h| {
-        if let Some(hdlr) = h.borrow().get(&handler) {
-            hdlr.on_command(&LimboSession::new(session), &command, &args);
-        }
-    });
+    with_limbo_handler(
+        handler,
+        || (),
+        |hdlr| hdlr.on_command(&LimboSession::new(session), &command, &args),
+    );
 }
 
 pub fn limbo_on_chat(
@@ -224,19 +245,15 @@ pub fn limbo_on_chat(
     session: &crate::bindings::guest::LimboSession,
     message: String,
 ) {
-    LIMBO_HANDLERS.with(|h| {
-        if let Some(hdlr) = h.borrow().get(&handler) {
-            hdlr.on_chat(&LimboSession::new(session), &message);
-        }
-    });
+    with_limbo_handler(
+        handler,
+        || (),
+        |hdlr| hdlr.on_chat(&LimboSession::new(session), &message),
+    );
 }
 
 pub fn limbo_on_disconnect(handler: u64, player: u64) {
-    LIMBO_HANDLERS.with(|h| {
-        if let Some(hdlr) = h.borrow().get(&handler) {
-            hdlr.on_disconnect(player);
-        }
-    });
+    with_limbo_handler(handler, || (), |hdlr| hdlr.on_disconnect(player));
 }
 
 pub fn limbo_on_session_end(
@@ -244,11 +261,11 @@ pub fn limbo_on_session_end(
     player: u64,
     reason: crate::bindings::guest::SessionEndReason,
 ) {
-    LIMBO_HANDLERS.with(|h| {
-        if let Some(hdlr) = h.borrow().get(&handler) {
-            hdlr.on_session_end(player, crate::limbo::SessionEndReason::from_wit(reason));
-        }
-    });
+    with_limbo_handler(
+        handler,
+        || (),
+        |hdlr| hdlr.on_session_end(player, crate::limbo::SessionEndReason::from_wit(reason)),
+    );
 }
 pub fn create_codec_filter<P: Plugin>(factory: u64, init: CodecSessionInit) -> FilterInstanceProxy {
     declare_codec_filters::<P>(false);
@@ -307,5 +324,58 @@ impl CodecFilter for PassthroughFilter {
         _out: &mut Injections,
     ) -> Verdict {
         Verdict::Pass
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::limbo::{HandlerOutcome, LimboHandler, LimboSession};
+
+    struct Noop;
+    impl LimboHandler for Noop {
+        fn on_player_enter(&self, _session: &LimboSession) -> HandlerOutcome {
+            HandlerOutcome::Accept
+        }
+    }
+
+    struct Reregistering {
+        calls: Rc<Cell<u32>>,
+        registered_id: Rc<Cell<Option<u64>>>,
+    }
+    impl LimboHandler for Reregistering {
+        fn on_player_enter(&self, _session: &LimboSession) -> HandlerOutcome {
+            HandlerOutcome::Accept
+        }
+        fn on_disconnect(&self, _player_id: u64) {
+            self.calls.set(self.calls.get() + 1);
+            self.registered_id
+                .set(Some(insert_limbo_handler(Box::new(Noop))));
+        }
+    }
+
+    #[test]
+    fn limbo_callback_can_reregister_a_handler() {
+        let calls = Rc::new(Cell::new(0));
+        let registered_id = Rc::new(Cell::new(None));
+        let id = insert_limbo_handler(Box::new(Reregistering {
+            calls: Rc::clone(&calls),
+            registered_id: Rc::clone(&registered_id),
+        }));
+
+        limbo_on_disconnect(id, 1);
+        assert_eq!(calls.get(), 1);
+        let new_id = registered_id.get().expect("callback ran re-registration");
+        LIMBO_HANDLERS.with(|h| {
+            let map = h.borrow();
+            assert!(map.contains_key(&id), "dispatched handler reinserted");
+            assert!(map.contains_key(&new_id), "re-registered handler kept");
+        });
+
+        limbo_on_disconnect(id, 1);
+        assert_eq!(calls.get(), 2, "handler still dispatchable after reinsert");
     }
 }

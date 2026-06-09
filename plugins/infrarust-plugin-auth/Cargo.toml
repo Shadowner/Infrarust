@@ -27,4 +27,5 @@ reqwest = { workspace = true }
 governor = { workspace = true }
 
 [dev-dependencies]
+infrarust-api = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }

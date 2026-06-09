@@ -592,6 +592,68 @@ mod tests {
     }
 
     #[test]
+    fn unknown_node_type_errors() {
+        let mut buf = Vec::new();
+        buf.write_u8(0x03).unwrap(); // type bits = 3 (unknown)
+        buf.write_var_int(&VarInt(0)).unwrap(); // child count
+        let err = decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap_err();
+        assert!(matches!(err, crate::error::ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn negative_child_count_rejected() {
+        let mut buf = Vec::new();
+        buf.write_u8(NODE_TYPE_LITERAL).unwrap();
+        buf.write_var_int(&VarInt(-1)).unwrap();
+        let err = decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap_err();
+        assert!(matches!(err, crate::error::ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn hostile_child_count_errors_without_allocating() {
+        let mut buf = Vec::new();
+        buf.write_u8(NODE_TYPE_LITERAL).unwrap();
+        buf.write_var_int(&VarInt(i32::MAX)).unwrap(); // claims 2^31-1 children, none present
+        assert!(decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).is_err());
+    }
+
+    #[test]
+    fn negative_node_count_rejected() {
+        let mut buf = Vec::new();
+        buf.write_var_int(&VarInt(-5)).unwrap();
+        let err = CCommands::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap_err();
+        assert!(matches!(err, crate::error::ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn hostile_node_count_errors_without_allocating() {
+        let mut buf = Vec::new();
+        buf.write_var_int(&VarInt(i32::MAX)).unwrap(); // claims 2^31-1 nodes, none present
+        assert!(CCommands::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).is_err());
+    }
+
+    #[test]
+    fn truncated_parser_properties_errors() {
+        let mut buf = Vec::new();
+        buf.write_u8(NODE_TYPE_ARGUMENT).unwrap();
+        buf.write_var_int(&VarInt(0)).unwrap(); // no children
+        buf.write_string("arg").unwrap();
+        buf.write_var_int(&VarInt(1)).unwrap(); // float parser
+        buf.write_u8(0x03).unwrap(); // claims min+max follow, then truncated
+        assert!(decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).is_err());
+    }
+
+    #[test]
+    fn truncated_node_name_errors() {
+        let mut buf = Vec::new();
+        buf.write_u8(NODE_TYPE_LITERAL).unwrap();
+        buf.write_var_int(&VarInt(0)).unwrap(); // no children
+        buf.write_var_int(&VarInt(10)).unwrap(); // name claims 10 bytes
+        buf.extend_from_slice(b"ab"); // only 2 present
+        assert!(decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).is_err());
+    }
+
+    #[test]
     fn redirect_node_round_trip() {
         let pkt = CCommands {
             nodes: vec![

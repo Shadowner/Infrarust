@@ -25,13 +25,20 @@ impl AotCache {
     }
 
     fn cache_key(wasm: &[u8]) -> String {
+        use std::fmt::Write;
         let mut hasher = Sha256::new();
         hasher.update(wasm);
         hasher.update(b"\0");
         hasher.update(WASMTIME_CACHE_TAG.as_bytes());
         hasher.update(b"\0");
         hasher.update(WORLD_VERSION.as_bytes());
-        format!("{:x}", hasher.finalize())
+        let digest = hasher.finalize();
+        digest
+            .iter()
+            .fold(String::with_capacity(digest.len() * 2), |mut key, b| {
+                let _ = write!(key, "{b:02x}");
+                key
+            })
     }
 
     pub(crate) fn compile_or_load(

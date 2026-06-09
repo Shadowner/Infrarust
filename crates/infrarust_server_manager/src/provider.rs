@@ -40,6 +40,8 @@ pub trait ServerProvider: Send + Sync {
 pub enum ProviderStatus {
     Running,
     Stopped,
+    /// The server exited unexpectedly (e.g. non-zero exit code).
+    Crashed,
     Starting,
     Stopping,
     Unknown,
@@ -50,6 +52,7 @@ impl From<ProviderStatus> for ServerState {
         match status {
             ProviderStatus::Running => Self::Online,
             ProviderStatus::Stopped => Self::Sleeping,
+            ProviderStatus::Crashed => Self::Crashed,
             ProviderStatus::Starting => Self::Starting,
             ProviderStatus::Stopping => Self::Stopping,
             ProviderStatus::Unknown => Self::Unknown,

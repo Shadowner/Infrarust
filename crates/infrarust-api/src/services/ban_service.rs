@@ -122,7 +122,7 @@ impl BanEntry {
         Self {
             target,
             reason,
-            expires_at: duration.map(|d| now + d),
+            expires_at: duration.and_then(|d| now.checked_add(d)),
             created_at: now,
             source,
         }

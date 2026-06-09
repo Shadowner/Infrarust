@@ -28,7 +28,7 @@ use crate::bindings::exports::infrarust::plugin::guest as wg;
 use crate::bindings::infrarust::plugin::event_bus::EventKind;
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::convert;
-use crate::plugin::WasmInstance;
+use crate::plugin::{WasmInstance, call_guest};
 
 pub(crate) fn priority_from_wit(p: wt::EventPriority) -> EventPriority {
     EventPriority::custom(p)
@@ -164,26 +164,17 @@ async fn dispatch<F: FnOnce(wg::EventOutcome)>(
     wit: wg::Event,
     apply: F,
 ) {
-    let Some(arc) = instance.upgrade() else {
-        return;
-    };
-    let mut guard = arc.lock().await;
-    let WasmInstance { store, bindings } = &mut *guard;
-    if store.data().is_poisoned() {
-        return;
-    }
-    store.data_mut().reset_epoch_budget();
-    match bindings
-        .infrarust_plugin_guest()
-        .call_handle_event(&mut *store, listener_id, &wit)
-        .await
-    {
-        Ok(outcome) => apply(outcome),
-        Err(trap) => {
-            tracing::error!(plugin = %store.data().plugin_id, error = %trap,
-                "wasm guest trapped in handle-event; poisoning instance");
-            store.data_mut().set_poisoned();
-        }
+    let outcome = call_guest(instance, "handle-event", move |store, bindings| {
+        Box::pin(async move {
+            bindings
+                .infrarust_plugin_guest()
+                .call_handle_event(&mut *store, listener_id, &wit)
+                .await
+        })
+    })
+    .await;
+    if let Some(outcome) = outcome {
+        apply(outcome);
     }
 }
 

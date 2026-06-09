@@ -187,12 +187,16 @@ impl ServerProvider for LocalProvider {
                 Some(process) => {
                     // Check if the process has exited by trying try_wait
                     match process.child.try_wait() {
-                        Ok(Some(_status)) => {
+                        Ok(Some(status)) => {
                             // Process has exited — clean up
                             process.stdout_task.abort();
                             process.stderr_task.abort();
                             *process_lock = None;
-                            Ok(ProviderStatus::Stopped)
+                            if status.success() {
+                                Ok(ProviderStatus::Stopped)
+                            } else {
+                                Ok(ProviderStatus::Crashed)
+                            }
                         }
                         Ok(None) => {
                             // Process still running

@@ -33,7 +33,6 @@ impl Default for StatusCacheConfig {
 #[serde(deny_unknown_fields)]
 pub struct MotdConfig {
     pub online: Option<MotdEntry>,
-    pub offline: Option<MotdEntry>,
     pub sleeping: Option<MotdEntry>,
     pub starting: Option<MotdEntry>,
     pub crashed: Option<MotdEntry>,

@@ -84,9 +84,13 @@ impl ZlibDecompressor for Flate2Decompressor {
         decoder
             .read_exact(output)
             .map_err(|_| ProtocolError::invalid("failed to decompress packet data"))?;
-        // Verify no extra data (align with libdeflater behavior)
+        // Verify no extra data (align with libdeflater behavior). This read also
+        // forces stream finalization: a corrupt zlib trailer/checksum errors here.
         let mut extra = [0u8; 1];
-        if decoder.read(&mut extra).unwrap_or(0) > 0 {
+        let extra_read = decoder
+            .read(&mut extra)
+            .map_err(|_| ProtocolError::invalid("corrupt zlib stream trailer"))?;
+        if extra_read > 0 {
             return Err(ProtocolError::invalid(
                 "decompressed data larger than expected size",
             ));
@@ -236,6 +240,22 @@ mod tests {
         let mut output = Vec::new();
         let result = decompressor.decompress(&corrupted, &mut output, 100);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_flate2_corrupt_trailer_rejected() {
+        let mut compressor = Flate2Compressor::new(DEFAULT_PACKET_COMPRESSION_LEVEL);
+        let original = b"trailer integrity check payload";
+        let mut compressed = Vec::new();
+        compressor.compress(original, &mut compressed).unwrap();
+
+        let last = compressed.len() - 1;
+        compressed[last] ^= 0xFF; // corrupt the adler32 trailer
+
+        let mut decompressor = Flate2Decompressor::new();
+        let mut output = Vec::new();
+        let result = decompressor.decompress(&compressed, &mut output, original.len());
+        assert!(result.is_err(), "corrupt zlib trailer must be rejected");
     }
 
     #[test]

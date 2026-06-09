@@ -216,3 +216,17 @@ fn test_invalid_aggression_rejected() {
     );
     assert!(infrarust_config::validate_server_config(&config).is_err());
 }
+
+#[test]
+fn test_weighted_address_unknown_field_rejected() {
+    let result: Result<ServerConfig, _> = toml::from_str(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = [{ address = "10.0.0.1:25565", wieght = 3 }]
+    "#,
+    );
+    assert!(
+        result.is_err(),
+        "typoed weight field must not be silently dropped"
+    );
+}

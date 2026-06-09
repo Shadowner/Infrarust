@@ -97,18 +97,7 @@ impl PacketDecoder {
         // 5. Decode based on compression mode
         #[allow(clippy::branches_sharing_code)]
         // Both branches share initial cursor setup but diverge significantly after
-        if self.compression_threshold.is_none() {
-            // No compression: [VarInt(packet_id)] [payload]
-            let slice = &data[..];
-            let mut cursor = slice;
-            let packet_id = VarInt::decode(&mut cursor)?;
-            let id_size = slice.len() - cursor.len();
-            data.advance(id_size);
-            Ok(Some(PacketFrame {
-                id: packet_id.0,
-                payload: data.freeze(),
-            }))
-        } else {
+        if let Some(threshold) = self.compression_threshold {
             // Compression mode: [VarInt(data_len)] [compressed or raw data]
             let slice = &data[..];
             let mut cursor = slice;
@@ -128,7 +117,13 @@ impl PacketDecoder {
                     payload: data.freeze(),
                 }))
             } else {
-                // Compressed
+                // Compressed: vanilla never compresses below the threshold
+                if data_len.0 < threshold {
+                    return Err(ProtocolError::invalid(format!(
+                        "compressed data_len {} below threshold {threshold}",
+                        data_len.0
+                    )));
+                }
                 let data_len = data_len.0 as usize;
                 if data_len > MAX_PACKET_DATA_SIZE {
                     return Err(ProtocolError::too_large(MAX_PACKET_DATA_SIZE, data_len));
@@ -145,6 +140,16 @@ impl PacketDecoder {
                     payload,
                 }))
             }
+        } else {
+            let slice = &data[..];
+            let mut cursor = slice;
+            let packet_id = VarInt::decode(&mut cursor)?;
+            let id_size = slice.len() - cursor.len();
+            data.advance(id_size);
+            Ok(Some(PacketFrame {
+                id: packet_id.0,
+                payload: data.freeze(),
+            }))
         }
     }
 
@@ -331,6 +336,21 @@ mod tests {
 
         let err = decoder.try_next_frame().unwrap_err();
         assert!(matches!(err, ProtocolError::TooLarge { .. }));
+    }
+
+    #[test]
+    fn test_decode_compressed_below_threshold_rejected() {
+        let mut encoder = PacketEncoder::new();
+        encoder.set_compression(1);
+        encoder.append_raw(0x07, &[0x42; 50]).unwrap();
+        let bytes = encoder.take();
+
+        let mut decoder = PacketDecoder::new();
+        decoder.set_compression(256);
+        decoder.queue_bytes(&bytes);
+
+        let err = decoder.try_next_frame().unwrap_err();
+        assert!(matches!(err, ProtocolError::Invalid { .. }));
     }
 
     #[test]

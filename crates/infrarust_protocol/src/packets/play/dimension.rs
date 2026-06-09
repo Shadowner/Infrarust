@@ -4,7 +4,7 @@
 //! the correct Respawn packet during server switch (pre-1.20.2 only).
 
 use crate::codec::McBufReadExt;
-use crate::error::ProtocolResult;
+use crate::error::{ProtocolError, ProtocolResult};
 use crate::nbt;
 use crate::version::ProtocolVersion;
 
@@ -55,6 +55,9 @@ pub fn extract_dimension_from_join_game(
 
     // Skip world names array
     let world_count = r.read_var_int()?.0;
+    if world_count < 0 {
+        return Err(ProtocolError::invalid("negative world count"));
+    }
     for _ in 0..world_count {
         let _world_name = r.read_string()?;
     }
@@ -170,5 +173,76 @@ mod tests {
     fn test_extract_1_20_2_placeholder() {
         let dim = extract_dimension_from_join_game(&[], ProtocolVersion::V1_20_2).unwrap();
         assert_eq!(dim, DimensionInfo::Named("minecraft:overworld".to_string()));
+    }
+
+    /// Builds the 1.16.2+ header up to (excluding) world names.
+    fn build_1_16_2_header(world_count: i32) -> Vec<u8> {
+        let mut buf: Vec<u8> = Vec::new();
+        buf.write_bool(false).unwrap(); // is_hardcore
+        buf.push(0); // gamemode
+        buf.write_i8(-1).unwrap(); // previous_gamemode
+        buf.write_var_int(&VarInt(world_count)).unwrap();
+        buf
+    }
+
+    #[test]
+    fn test_negative_world_count_rejected() {
+        let buf = build_1_16_2_header(-1);
+        let err = extract_dimension_from_join_game(&buf, ProtocolVersion::V1_16_2).unwrap_err();
+        assert!(matches!(err, ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn test_hostile_world_count_errors() {
+        let buf = build_1_16_2_header(i32::MAX);
+        assert!(extract_dimension_from_join_game(&buf, ProtocolVersion::V1_16_2).is_err());
+    }
+
+    #[test]
+    fn test_truncated_payload_errors() {
+        let payload = build_1_16_2_payload("minecraft:overworld");
+        let end = payload.len() - 10; // strip the unparsed trailing bytes
+        for cut in 0..end {
+            assert!(
+                extract_dimension_from_join_game(&payload[..cut], ProtocolVersion::V1_16_2)
+                    .is_err(),
+                "prefix of {cut} bytes must error"
+            );
+        }
+    }
+
+    #[test]
+    fn test_malformed_dimension_codec_errors() {
+        let mut buf = build_1_16_2_header(0);
+        buf.push(0x07); // dimension_codec must start with TAG_Compound (0x0A)
+        assert!(extract_dimension_from_join_game(&buf, ProtocolVersion::V1_16_2).is_err());
+    }
+
+    #[test]
+    fn test_deeply_nested_dimension_codec_errors() {
+        // List-of-list chain deeper than the NBT depth cap
+        let mut nested = vec![0x01u8]; // innermost element type: TAG_Byte
+        nested.extend_from_slice(&0i32.to_be_bytes()); // count 0
+        for _ in 0..1024 {
+            let mut outer = vec![0x09u8]; // element type: TAG_List
+            outer.extend_from_slice(&1i32.to_be_bytes()); // count 1
+            outer.extend_from_slice(&nested);
+            nested = outer;
+        }
+        let mut codec: Vec<u8> = vec![0x0A]; // TAG_Compound
+        codec.extend_from_slice(&0u16.to_be_bytes()); // root name
+        codec.push(0x09); // child: TAG_List
+        codec.extend_from_slice(&1u16.to_be_bytes());
+        codec.push(b'x');
+        codec.extend_from_slice(&nested);
+        codec.push(0x00); // TAG_End
+
+        let mut buf = build_1_16_2_header(0);
+        buf.extend_from_slice(&codec);
+        let result = extract_dimension_from_join_game(&buf, ProtocolVersion::V1_16_2);
+        assert!(
+            result.is_err(),
+            "deeply nested codec must error, not overflow the stack"
+        );
     }
 }

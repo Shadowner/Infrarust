@@ -107,13 +107,14 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
         )
         .route("/api/v1/proxy/shutdown", post(handlers::proxy::shutdown))
         .route("/api/v1/proxy/gc", post(handlers::proxy::gc))
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            rate_limit::rate_limit_middleware,
-        ))
+        // Rate limiting must wrap auth so failed-auth requests are throttled too.
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
+        ))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::rate_limit_middleware,
         ))
         .route_layer(timeout_layer);
 
@@ -121,7 +122,11 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
     // (auth verified via ?token= query param inside each handler)
     let sse_routes = Router::new()
         .route("/api/v1/events", get(sse::handlers::event_stream))
-        .route("/api/v1/logs", get(sse::handlers::log_stream));
+        .route("/api/v1/logs", get(sse::handlers::log_stream))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::rate_limit_middleware,
+        ));
 
     let router = Router::new()
         .merge(public_routes)
@@ -138,10 +143,11 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
         ServiceBuilder::new()
             .layer(
                 TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                    // Path only: the query string carries the SSE ?token= API key.
                     tracing::info_span!(
                         "http_request",
                         method = %request.method(),
-                        uri = %request.uri(),
+                        path = %request.uri().path(),
                     )
                 }),
             )

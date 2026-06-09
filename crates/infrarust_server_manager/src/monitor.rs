@@ -47,7 +47,11 @@ pub async fn monitor_server(
             continue;
         }
 
-        // 1. Poll provider status
+        // 1. Poll provider status, capturing the generation first so a
+        //    transition during the poll invalidates the result
+        let Some(generation) = service.generation(&server_id) else {
+            continue;
+        };
         let new_status = match service.check_provider_status(&server_id).await {
             Ok(status) => status,
             Err(e) => {
@@ -56,8 +60,8 @@ pub async fn monitor_server(
             }
         };
 
-        // 2. Update state and detect transitions
-        if let Some((_old, new_state)) = service.update_state(&server_id, new_status) {
+        // 2. Update state and detect transitions (drops the result if stale)
+        if let Some((_old, new_state)) = service.update_state(&server_id, new_status, generation) {
             match new_state {
                 ServerState::Online => {
                     service.notify_waiters(&server_id, &Ok(()));
@@ -80,8 +84,11 @@ pub async fn monitor_server(
             }
         }
 
-        // 3. Check auto-shutdown (only when running)
-        if new_status == ProviderStatus::Running {
+        // 3. Check auto-shutdown (only when confirmed Online; a stale Running
+        //    poll must not stop a server a manual op is transitioning)
+        if new_status == ProviderStatus::Running
+            && service.get_state(&server_id) == Some(ServerState::Online)
+        {
             let player_count = player_counter.count_by_server(&server_id);
             check_auto_shutdown(&service, &server_id, player_count).await;
         }
