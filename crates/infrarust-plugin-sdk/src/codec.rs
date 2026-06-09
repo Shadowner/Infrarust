@@ -21,10 +21,39 @@
 //! are per-connection and stateless across connections, so each one builds its own
 //! state from the [`CodecSessionInit`].
 
-pub use crate::bindings::codec_filter::{
-    CodecContext, CodecSessionInit, ConnectionSide, ConnectionState, PlayerInfo,
-};
+pub use crate::bindings::codec_filter::{CodecSessionInit, ConnectionSide, ConnectionState};
 use crate::bindings::codec_filter::RawPacket;
+
+#[derive(Clone, Debug, Default)]
+pub struct PlayerInfo {
+    pub username: String,
+    pub uuid: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CodecContext {
+    pub client_version: i32,
+    pub server_version: Option<i32>,
+    pub state: ConnectionState,
+    pub connection_id: u64,
+    pub side: ConnectionSide,
+    pub player_info: Option<PlayerInfo>,
+    pub is_proxy_consumed: bool,
+}
+
+impl CodecContext {
+    pub(crate) fn from_init(init: &CodecSessionInit) -> Self {
+        Self {
+            client_version: init.client_version,
+            server_version: None,
+            state: ConnectionState::Handshake,
+            connection_id: init.connection_id,
+            side: init.side,
+            player_info: None,
+            is_proxy_consumed: false,
+        }
+    }
+}
 
 /// A framed Minecraft packet. Reads are free; any mutation marks the packet dirty
 /// so the host only re-copies it when it actually changed (`none` = zero-copy pass).
@@ -69,10 +98,10 @@ impl Packet {
         &mut self.data
     }
 
-    fn from_wit(p: RawPacket) -> Self {
+    pub(crate) fn from_parts(id: i32, data: Vec<u8>) -> Self {
         Self {
-            id: p.packet_id,
-            data: p.data,
+            id,
+            data,
             dirty: false,
         }
     }
@@ -206,6 +235,3 @@ pub(crate) fn build_filter_output(
     }
 }
 
-pub(crate) fn packet_from_wit(p: RawPacket) -> Packet {
-    Packet::from_wit(p)
-}

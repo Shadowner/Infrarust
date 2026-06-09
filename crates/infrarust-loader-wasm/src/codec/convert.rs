@@ -1,7 +1,6 @@
 use infrarust_api::event::ConnectionState;
 use infrarust_api::filter::{
-    CodecContext, CodecFilterError, CodecSessionInit, CodecVerdict, ConnectionSide, FrameOutput,
-    PlayerInfo,
+    CodecFilterError, CodecSessionInit, CodecVerdict, ConnectionSide, FrameOutput,
 };
 use infrarust_api::types::RawPacket;
 
@@ -16,18 +15,6 @@ pub(crate) fn session_init_to_wit(init: &CodecSessionInit) -> wit_codec::CodecSe
         remote_addr: init.remote_addr.to_string(),
         real_ip: init.real_ip.map(|ip| ip.to_string()),
         side: connection_side_to_wit(init.side),
-    }
-}
-
-pub(crate) fn codec_context_to_wit(ctx: &CodecContext) -> wit_codec::CodecContext {
-    wit_codec::CodecContext {
-        client_version: ctx.client_version.raw(),
-        server_version: ctx.server_version.map(|v| v.raw()),
-        state: connection_state_to_wit(ctx.state),
-        connection_id: ctx.connection_id,
-        side: connection_side_to_wit(ctx.side),
-        player_info: ctx.player_info.as_ref().map(player_info_to_wit),
-        is_proxy_consumed: ctx.is_proxy_consumed,
     }
 }
 
@@ -48,13 +35,6 @@ fn connection_side_to_wit(side: ConnectionSide) -> wit_codec::ConnectionSide {
     match side {
         ConnectionSide::ClientSide => wit_codec::ConnectionSide::ClientSide,
         ConnectionSide::ServerSide => wit_codec::ConnectionSide::ServerSide,
-    }
-}
-
-fn player_info_to_wit(info: &PlayerInfo) -> wit_codec::PlayerInfo {
-    wit_codec::PlayerInfo {
-        username: info.username.clone(),
-        uuid: info.uuid.map(|u| u.to_string()),
     }
 }
 

@@ -7,11 +7,6 @@ interface codec-filter {                                                      //
 
     enum connection-side { client-side, server-side }
 
-    record player-info {
-        username: string,
-        uuid: option<uuid>,
-    }
-
     record codec-session-init {
         client-version: protocol-version,
         connection-id: u64,
@@ -20,15 +15,6 @@ interface codec-filter {                                                      //
         side: connection-side,
     }
 
-    record codec-context {
-        client-version: protocol-version,
-        server-version: option<protocol-version>,
-        state: connection-state,
-        connection-id: u64,
-        side: connection-side,
-        player-info: option<player-info>,
-        is-proxy-consumed: bool,
-    }
 
     variant codec-filter-error {
         translation-failed(string),
@@ -54,7 +40,7 @@ interface codec-filter {                                                      //
     }
 
     resource filter-instance {
-        filter: func(ctx: codec-context, packet: raw-packet) -> filter-output;
+        filter: func(packet-id: s32, data: list<u8>) -> filter-output;
         on-state-change: func(new-state: connection-state);
         on-compression-change: func(threshold: s32);
         on-encryption-enabled: func();

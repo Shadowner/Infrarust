@@ -6,12 +6,12 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use crate::bindings::codec_filter::{
-    CodecContext, CodecSessionInit, ConnectionState, FilterOutput, GuestFilterInstance, RawPacket,
+    CodecSessionInit, ConnectionState, FilterOutput, GuestFilterInstance,
 };
 use crate::bindings::guest::{Event, EventOutcome};
 use crate::codec::{
-    CodecFilter, CodecRegistrar, FilterConstructor, Injections, Packet, Verdict, build_filter_output,
-    packet_from_wit,
+    CodecContext, CodecFilter, CodecRegistrar, FilterConstructor, Injections, Packet, Verdict,
+    build_filter_output,
 };
 use crate::context::{CommandInvocation, Context};
 use crate::event::{EventPriority, GuestEvent};
@@ -253,30 +253,33 @@ pub fn create_codec_filter<P: Plugin>(factory: u64, init: CodecSessionInit) -> F
             .get(usize::try_from(factory).unwrap_or(usize::MAX))
             .map(|constructor| constructor(&init))
     });
-    FilterInstanceProxy::new(inner)
+    FilterInstanceProxy::new(inner, CodecContext::from_init(&init))
 }
 
 pub struct FilterInstanceProxy {
     inner: RefCell<Box<dyn CodecFilter>>,
+    ctx: RefCell<CodecContext>,
 }
 
 impl FilterInstanceProxy {
-    fn new(inner: Option<Box<dyn CodecFilter>>) -> Self {
+    fn new(inner: Option<Box<dyn CodecFilter>>, ctx: CodecContext) -> Self {
         Self {
             inner: RefCell::new(inner.unwrap_or_else(|| Box::new(PassthroughFilter))),
+            ctx: RefCell::new(ctx),
         }
     }
 }
 
 impl GuestFilterInstance for FilterInstanceProxy {
-    fn filter(&self, ctx: CodecContext, packet: RawPacket) -> FilterOutput {
+    fn filter(&self, packet_id: i32, data: Vec<u8>) -> FilterOutput {
         let mut inner = self.inner.borrow_mut();
-        let mut packet = packet_from_wit(packet);
+        let mut packet = Packet::from_parts(packet_id, data);
         let mut injections = Injections::default();
-        let verdict = inner.filter(&ctx, &mut packet, &mut injections);
+        let verdict = inner.filter(&self.ctx.borrow(), &mut packet, &mut injections);
         build_filter_output(verdict, packet, injections)
     }
     fn on_state_change(&self, new_state: ConnectionState) {
+        self.ctx.borrow_mut().state = new_state;
         self.inner.borrow_mut().on_state_change(new_state);
     }
     fn on_compression_change(&self, threshold: i32) {

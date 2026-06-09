@@ -144,13 +144,6 @@ pub(crate) fn raw_packet_from_wit(p: wit::RawPacket) -> RawPacket {
     RawPacket::new(p.packet_id, bytes::Bytes::from(p.data))
 }
 
-pub(crate) fn raw_packet_to_wit(p: &RawPacket) -> wit::RawPacket {
-    wit::RawPacket {
-        packet_id: p.packet_id,
-        data: p.data.to_vec(),
-    }
-}
-
 pub(crate) fn title_data_from_wit(t: wit::TitleData) -> TitleData {
     TitleData {
         title: component_from_wit(&t.title),

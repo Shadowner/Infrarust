@@ -93,7 +93,7 @@ impl WasmCodecFilterInstance {
 impl CodecFilterInstance for WasmCodecFilterInstance {
     fn filter(
         &mut self,
-        ctx: &CodecContext,
+        _ctx: &CodecContext, // TODO remove
         packet: &mut RawPacket,
         output: &mut FrameOutput,
     ) -> CodecVerdict {
@@ -101,13 +101,12 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
             return CodecVerdict::Pass;
         }
         self.store.set_epoch_deadline(CODEC_EPOCH_DEADLINE_TICKS);
-        let wit_ctx = convert::codec_context_to_wit(ctx);
-        let wit_packet = crate::convert::raw_packet_to_wit(packet);
-        match self
-            .guest
-            .filter_instance()
-            .call_filter(&mut self.store, self.handle, &wit_ctx, &wit_packet)
-        {
+        match self.guest.filter_instance().call_filter(
+            &mut self.store,
+            self.handle,
+            packet.packet_id,
+            &packet.data,
+        ) {
             Ok(out) => convert::apply_filter_output(out, packet, output),
             Err(trap) => {
                 self.poison("filter", &trap);

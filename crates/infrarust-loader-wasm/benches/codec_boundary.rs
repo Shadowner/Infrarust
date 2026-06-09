@@ -48,6 +48,8 @@ mod bench {
     const ITERS: u64 = 200_000;
     const WARMUP: u64 = 20_000;
 
+    const SIZES: &[usize] = &[32, 512, 4096, 16384];
+
     /// A native passthrough filter — the baseline the WASM path is measured against.
     struct NativePassthroughFactory;
     impl CodecFilterFactory for NativePassthroughFactory {
@@ -81,10 +83,10 @@ mod bench {
         client
     }
 
-    /// Times `chain.process` over a fixed, unchanged packet (id `0x10` passes
-    /// through both filters untouched), returning ns/packet.
-    fn ns_per_packet(chain: &mut CodecFilterChain) -> f64 {
-        let mut packet = RawPacket::new(0x10, Bytes::from_static(b"benchmark-packet-payload-32-bytes"));
+    /// Times `chain.process` over a fixed, unchanged packet of `size` bytes (id
+    /// `0x10` passes through both filters untouched), returning ns/packet.
+    fn ns_per_packet(chain: &mut CodecFilterChain, size: usize) -> f64 {
+        let mut packet = RawPacket::new(0x10, Bytes::from(vec![0xABu8; size]));
         for _ in 0..WARMUP {
             let _ = black_box(chain.process(black_box(&mut packet)));
         }
@@ -157,7 +159,6 @@ mod bench {
         let native_registry = CodecFilterRegistryImpl::new();
         native_registry.register(Box::new(NativePassthroughFactory));
         let mut native_chain = client_chain(&native_registry);
-        let native_ns = ns_per_packet(&mut native_chain);
 
         // WASM synchronous filter (production path).
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -167,18 +168,27 @@ mod bench {
         let plugins_dir = staged_plugins_dir();
         let (wasm_registry, _plugin, _loader) = rt.block_on(load_wasm(plugins_dir));
         let mut wasm_chain = client_chain(&wasm_registry);
-        let wasm_ns = ns_per_packet(&mut wasm_chain);
 
-        println!("\ncodec boundary benchmark — {ITERS} iterations/measurement");
-        println!("  native passthrough : {native_ns:>8.1} ns/packet  (baseline)");
-        println!("  wasm sync filter   : {wasm_ns:>8.1} ns/packet  (production path)");
+        println!("\ncodec boundary benchmark — {ITERS} iterations/measurement, id 0x10 (pass-through, zero-copy return)");
         println!(
-            "  wasm boundary cost : {:>8.1} ns/packet  (marshalling + synchronous guest call)",
-            wasm_ns - native_ns
+            "  {:>7}  {:>10}  {:>10}  {:>12}",
+            "size", "native", "wasm", "boundary"
         );
+        let mut boundary_32 = f64::NAN;
+        for &size in SIZES {
+            let native_ns = ns_per_packet(&mut native_chain, size);
+            let wasm_ns = ns_per_packet(&mut wasm_chain, size);
+            let boundary = wasm_ns - native_ns;
+            if size == 32 {
+                boundary_32 = boundary;
+            }
+            println!(
+                "  {size:>5}B  {native_ns:>8.1}ns  {wasm_ns:>8.1}ns  {boundary:>10.1}ns",
+            );
+        }
         println!(
-            "  target              :   100–300 ns/packet  → {}\n",
-            if wasm_ns <= 300.0 { "MET" } else { "over (see report)" }
+            "\n  fixed call overhead ≈ {boundary_32:.1} ns/packet (32B) — target 100–300 → {}\n",
+            if boundary_32 <= 300.0 { "MET" } else { "over (see report)" }
         );
     }
 }
