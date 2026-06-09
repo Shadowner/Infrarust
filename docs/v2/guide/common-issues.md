@@ -61,12 +61,12 @@ You can lower the TTL in `infrarust.toml`:
 ttl = "2s"
 ```
 
-### Custom MOTD for offline state
+### Custom MOTD for unreachable backends
 
-You can configure a per-server MOTD that displays when the backend is down, instead of showing the server as unreachable:
+You can configure a per-server MOTD that displays when the backend is down, instead of the generic unreachable response:
 
 ```toml
-[motd.offline]
+[motd.unreachable]
 text = "Server is under maintenance"
 version_name = "Maintenance"
 max_players = 0

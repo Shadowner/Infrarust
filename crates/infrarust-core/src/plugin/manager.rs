@@ -49,6 +49,7 @@ pub struct PluginManager {
     load_order: Vec<String>,
     loader_mapping: HashMap<String, String>, // plugin_id -> loader_name
     loaded_loaders: Vec<String>,             // loaders whose on_load() succeeded
+    disabled: HashSet<String>,               // plugin ids disabled via config
 }
 
 struct LoadedPlugin {
@@ -67,7 +68,12 @@ impl PluginManager {
             load_order: Vec::new(),
             loader_mapping: HashMap::new(),
             loaded_loaders: Vec::new(),
+            disabled: HashSet::new(),
         }
+    }
+
+    pub fn set_disabled_plugins(&mut self, ids: HashSet<String>) {
+        self.disabled = ids;
     }
 
     /// Discovers all plugins via loaders, detects duplicate IDs,
@@ -131,6 +137,11 @@ impl PluginManager {
         self.loaded_loaders = ok_loaders;
 
         for plugin_id in &load_order {
+            if self.disabled.contains(plugin_id) {
+                tracing::info!(plugin = %plugin_id, "Plugin disabled via config, skipping");
+                self.states.insert(plugin_id.clone(), PluginState::Disabled);
+                continue;
+            }
             let loader_name = match self.loader_mapping.get(plugin_id) {
                 Some(name) => name.clone(),
                 None => {

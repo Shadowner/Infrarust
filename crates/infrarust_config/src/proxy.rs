@@ -122,6 +122,10 @@ pub struct PluginConfig {
     pub permissions: Vec<String>,
 
     /// Whether the plugin is enabled (default: true).
-    #[serde(default)]
-    pub enabled: Option<bool>,
+    #[serde(default = "default_plugin_enabled")]
+    pub enabled: bool,
+}
+
+fn default_plugin_enabled() -> bool {
+    true
 }

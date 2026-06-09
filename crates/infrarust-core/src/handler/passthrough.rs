@@ -104,11 +104,12 @@ impl PassthroughHandler {
 
         // Connect to backend, in the order decided by the backend
         // selection middleware (config order as fallback).
-        let target_addresses = crate::middleware::backend_selection::BackendTargets::addresses_or_config(
-            ctx.extensions
-                .get::<crate::middleware::backend_selection::BackendTargets>(),
-            server_config,
-        );
+        let target_addresses =
+            crate::middleware::backend_selection::BackendTargets::addresses_or_config(
+                ctx.extensions
+                    .get::<crate::middleware::backend_selection::BackendTargets>(),
+                server_config,
+            );
         let backend = match self
             .backend_connector
             .connect(

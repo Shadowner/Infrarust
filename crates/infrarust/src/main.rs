@@ -312,6 +312,13 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     )));
 
     let mut plugin_manager = PluginManager::new(loaders);
+    plugin_manager.set_disabled_plugins(
+        plugin_cfgs
+            .iter()
+            .filter(|(_, c)| !c.enabled)
+            .map(|(id, _)| id.clone())
+            .collect(),
+    );
 
     let services = server.services();
 

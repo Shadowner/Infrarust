@@ -273,6 +273,38 @@ async fn test_enable_all_calls_on_enable() {
 }
 
 #[tokio::test]
+async fn test_config_disabled_plugin_is_skipped() {
+    let loader = StaticPluginLoader::new();
+    let counter = Arc::new(AtomicUsize::new(0));
+
+    let s_on = register_mock(
+        &loader,
+        PluginMetadata::new("on", "on", "1.0"),
+        false,
+        counter.clone(),
+    );
+    let s_off = register_mock(
+        &loader,
+        PluginMetadata::new("off", "off", "1.0"),
+        false,
+        counter,
+    );
+
+    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    manager.set_disabled_plugins(std::collections::HashSet::from(["off".to_string()]));
+    manager.discover_all(Path::new("plugins")).await.unwrap();
+    let errors = manager.load_and_enable_all(&MockPluginContextFactory).await;
+
+    assert!(errors.is_empty());
+    assert!(s_on.on_enable_called.load(Ordering::SeqCst));
+    assert!(!s_off.on_enable_called.load(Ordering::SeqCst));
+    assert!(matches!(
+        manager.plugin_state("off"),
+        Some(PluginState::Disabled)
+    ));
+}
+
+#[tokio::test]
 async fn test_enable_respects_dependency_order() {
     let loader = StaticPluginLoader::new();
     let counter = Arc::new(AtomicUsize::new(0));

@@ -88,21 +88,6 @@ title_reminder_interval_seconds = 5
 
 After `max_login_attempts` wrong passwords, the player is kicked. Set `login_timeout_seconds` to `0` to disable the timeout. Set `title_reminder_interval_seconds` to `0` to disable periodic title reminders.
 
-### Privacy
-
-```toml
-[privacy]
-log_ip_masking = "last_two_octets"
-```
-
-Controls how player IPs appear in logs. Options:
-
-| Value | IPv4 output | IPv6 output |
-|-------|-------------|-------------|
-| `last_two_octets` | `192.168.x.x` | `2001:db8:85a3:x:x:x:x:x` |
-| `last_octet` | `192.168.1.x` | `2001:db8:85a3:1234:x:x:x:x` |
-| `none` | `192.168.1.42` | Full address |
-
 ### Admin
 
 ```toml
@@ -110,7 +95,7 @@ Controls how player IPs appear in logs. Options:
 admin_usernames = []
 ```
 
-Usernames listed here can use admin commands (`/forcelogin`, `/forceunregister`, `/forcechangepassword`). Usernames are case-insensitive. Players with the `auth.admin` permission also have admin access, regardless of this list.
+Usernames listed here can use admin commands (`/forcelogin`, `/forceunregister`, `/forcechangepassword`). Usernames are case-insensitive. Players with the `infrarust.admin` permission also have admin access, regardless of this list.
 
 ### Premium auto-login {#premium}
 
@@ -120,6 +105,7 @@ enabled = false
 cache_ttl_seconds = 600
 rate_limit_per_second = 1
 rate_limit_action = "allow_offline"
+lookup_error_action = "allow_offline"
 premium_name_conflict_action = "kick"
 allow_cracked_command = true
 failed_auth_remember_seconds = 600
@@ -131,6 +117,7 @@ failed_auth_remember_seconds = 600
 | `cache_ttl_seconds` | u64 | `600` | How long to cache Mojang API results (seconds) |
 | `rate_limit_per_second` | u32 | `1` | Max Mojang API lookups per second |
 | `rate_limit_action` | string | `"allow_offline"` | What to do when the rate limit is hit |
+| `lookup_error_action` | string | `"allow_offline"` | What to do when a Mojang lookup fails (network error, bad status, malformed response) |
 | `premium_name_conflict_action` | string | `"kick"` | What to do when a cracked client uses a premium name |
 | `allow_cracked_command` | bool | `true` | Register `/cracked` and `/premium` commands |
 | `failed_auth_remember_seconds` | u64 | `600` | How long to remember a failed premium auth (see below) |
@@ -141,6 +128,8 @@ failed_auth_remember_seconds = 600
 |-------|----------|
 | `"allow_offline"` (default) | Let the player through in offline mode. They see `/login` or `/register` as usual. |
 | `"deny"` | Reject the connection. |
+
+`lookup_error_action` takes the same values and governs Mojang lookup failures other than rate limiting (network errors, unexpected status codes, malformed responses). With `"deny"`, the player is disconnected with the `lookup_failed` message.
 
 `premium_name_conflict_action` values:
 
@@ -162,6 +151,7 @@ premium_name_conflict = "&cThis username belongs to a premium account. Use the o
 cracked_enabled = "&aYou will now login as a cracked player. Reconnect to apply."
 cracked_disabled = "&aYou will now login as a premium player. Reconnect to apply."
 rate_limited = "&cThe server is busy. Please try again in a moment."
+lookup_failed = "&cCould not verify your account status. Please try again later."
 ```
 
 ### Messages
@@ -211,7 +201,7 @@ See the default config for the full list, which also covers `/changepassword`, `
 
 ### Admin commands
 
-These require either the `auth.admin` permission or a username in `admin_usernames`.
+These require either the `infrarust.admin` permission or a username in `admin_usernames`.
 
 | Command | Description |
 |---------|-------------|
