@@ -9,6 +9,12 @@ Infrarust ships with a plugin system that lets you hook into the proxy at every 
 
 Plugins are written in Rust and compiled into the proxy binary. Each plugin implements the `Plugin` trait from `infrarust_api`, declares metadata (id, name, version, dependencies), and receives a `PluginContext` during startup that provides access to everything the proxy offers.
 
+## Native and WASM plugins
+
+Infrarust supports two plugin formats. Native plugins are Rust crates that implement the `Plugin` trait from `infrarust_api` and compile into the proxy binary; they run in-process with access to every proxy service, including transport-level filters, and the built-in plugins use this model. WASM plugins are WebAssembly components loaded at runtime from the plugins directory; they run in a capability-gated sandbox with CPU and memory limits, ship as a single `.wasm` file, and can be written in any language that targets `wasm32-wasip2` (the SDK is Rust).
+
+The [Developing Plugins](./dev/getting-started) guides cover native plugins. For the sandboxed model, start with [WASM Plugins](./wasm/).
+
 ## What plugins can do
 
 **React to events.** The proxy fires events throughout a player's lifecycle: login, disconnect, chat messages, server switches, kicks, and more. A plugin subscribes to these events with a priority level (`FIRST`, `EARLY`, `NORMAL`, `LATE`, `LAST`) and can inspect or modify them before other listeners see them.
@@ -54,4 +60,5 @@ cargo build --release --features "plugin-auth,plugin-server-wake"
 - [Admin API & Web UI](./builtin/admin-api) — REST API and web dashboard for proxy management.
 - [Auth Plugin](./builtin/auth) — Password authentication and limbo login screen.
 - [Server Wake Plugin](./builtin/server-wake) — Hold players while backend servers start.
-- [Developing Plugins](./dev/getting-started) — Build your own plugin from scratch.
+- [WASM Plugins](./wasm/) — Build a sandboxed plugin loaded at runtime from a `.wasm` file.
+- [Developing Native Plugins](./dev/getting-started) — Build a plugin compiled into the proxy binary.
