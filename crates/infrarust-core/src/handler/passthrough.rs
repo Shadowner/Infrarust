@@ -104,10 +104,11 @@ impl PassthroughHandler {
 
         // Connect to backend, in the order decided by the backend
         // selection middleware (config order as fallback).
-        let target_addresses: Vec<infrarust_config::ServerAddress> = ctx
-            .extensions
-            .get::<crate::middleware::backend_selection::BackendTargets>()
-            .map_or_else(|| server_config.address_list(), |t| t.addresses.to_vec());
+        let target_addresses = crate::middleware::backend_selection::BackendTargets::addresses_or_config(
+            ctx.extensions
+                .get::<crate::middleware::backend_selection::BackendTargets>(),
+            server_config,
+        );
         let backend = match self
             .backend_connector
             .connect(

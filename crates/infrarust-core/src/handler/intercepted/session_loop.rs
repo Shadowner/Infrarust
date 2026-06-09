@@ -204,7 +204,6 @@ pub(super) async fn run_session_loop(
                     api_profile.clone(),
                     version,
                     entry_ctx.clone(),
-                    &services.packet_registry,
                     services,
                     session_token.clone(),
                 )

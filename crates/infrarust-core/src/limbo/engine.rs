@@ -41,10 +41,10 @@ pub(crate) async fn enter_limbo(
     profile: GameProfile,
     version: ProtocolVersion,
     entry_context: LimboEntryContext,
-    registry: &PacketRegistry,
     services: &ProxyServices,
     cancel: CancellationToken,
 ) -> LimboExitResult {
+    let registry = Arc::clone(&services.packet_registry);
     let mut core = VirtualSessionCore::new(
         player_id,
         profile,
@@ -78,7 +78,7 @@ pub(crate) async fn enter_limbo(
         services,
         cancel,
         version,
-        registry,
+        &registry,
         true,
     )
     .await;
@@ -87,7 +87,7 @@ pub(crate) async fn enter_limbo(
         chain_result,
         client,
         version,
-        registry,
+        &registry,
         &handlers,
         player_id,
     )
@@ -387,7 +387,6 @@ mod tests {
             LimboEntryContext::InitialConnection {
                 target_server: ServerId::new("lobby"),
             },
-            &services.packet_registry,
             &services,
             CancellationToken::new(),
         )

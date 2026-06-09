@@ -342,9 +342,7 @@ impl Component {
     fn write_nbt_string_field(buf: &mut Vec<u8>, name: &str, value: &str) {
         buf.push(0x08); // TAG_String
         Self::write_nbt_name(buf, name);
-        let bytes = value.as_bytes();
-        buf.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
-        buf.extend_from_slice(bytes);
+        Self::write_nbt_str(buf, value);
     }
 
     /// Writes an NBT TAG_Byte field (type byte + name + value).
@@ -356,7 +354,17 @@ impl Component {
 
     /// Writes an NBT field name (u16 length + UTF-8 bytes).
     fn write_nbt_name(buf: &mut Vec<u8>, name: &str) {
-        let bytes = name.as_bytes();
+        Self::write_nbt_str(buf, name);
+    }
+    fn write_nbt_str(buf: &mut Vec<u8>, s: &str) {
+        let mut bytes = s.as_bytes();
+        if bytes.len() > usize::from(u16::MAX) {
+            let mut end = usize::from(u16::MAX);
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            bytes = &bytes[..end];
+        }
         buf.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
         buf.extend_from_slice(bytes);
     }
@@ -781,6 +789,20 @@ mod tests {
         assert_eq!(t.fade_in_ticks, 5);
         assert_eq!(t.stay_ticks, 100);
         assert_eq!(t.fade_out_ticks, 10);
+    }
+
+    #[test]
+    fn nbt_network_oversized_string_truncated_at_char_boundary() {
+        let mut s = "a".repeat(65_534);
+        s.push('€');
+        let c = Component::text(s);
+        let nbt = c.to_nbt_network();
+        let len = u16::from_be_bytes([nbt[8], nbt[9]]) as usize;
+        assert_eq!(len, 65_534, "must cut before the split char");
+        let value = &nbt[10..10 + len];
+        assert!(std::str::from_utf8(value).is_ok());
+        assert_eq!(nbt[10 + len], 0x00);
+        assert_eq!(nbt.len(), 10 + len + 1);
     }
 
     #[test]
