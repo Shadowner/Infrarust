@@ -26,8 +26,8 @@ impl ConfigServiceImpl {
                 .addresses
                 .iter()
                 .map(|a| ServerAddress {
-                    host: a.host.clone(),
-                    port: a.port,
+                    host: a.address.host.clone(),
+                    port: a.address.port,
                 })
                 .collect(),
             config.domains.clone(),

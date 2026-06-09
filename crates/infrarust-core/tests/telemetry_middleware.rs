@@ -111,6 +111,7 @@ async fn test_middleware_extracts_login_data() {
     ctx.extensions.insert(RoutingData {
         server_config: Arc::new(test_server_config(ProxyMode::Passthrough)),
         config_id: "survival".to_string(),
+        load_balancer: Arc::new(infrarust_core::loadbalancer::FirstAvailable),
     });
 
     middleware.process(&mut ctx).await.unwrap();

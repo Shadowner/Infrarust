@@ -47,7 +47,7 @@ fn test_labels_to_config_custom_port() {
     ]);
     let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25566");
 
-    assert_eq!(config.addresses[0].port, 25566);
+    assert_eq!(config.addresses[0].address.port, 25566);
 }
 
 #[test]

@@ -139,7 +139,7 @@ impl LegacyHandler {
             .backend_connector
             .connect(
                 &config_id,
-                &config.addresses,
+                &config.address_list(),
                 config.timeouts.as_ref().map(|t| t.connect),
                 false, // No proxy protocol for legacy pings
                 &ctx.connection_info(),
@@ -410,7 +410,7 @@ impl LegacyHandler {
             .backend_connector
             .connect(
                 &config_id,
-                &server_config.addresses,
+                &server_config.address_list(),
                 server_config.timeouts.as_ref().map(|t| t.connect),
                 server_config.send_proxy_protocol,
                 &ctx.connection_info(),

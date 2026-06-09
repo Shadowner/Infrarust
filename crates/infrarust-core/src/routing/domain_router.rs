@@ -12,6 +12,7 @@ use wildmatch::WildMatch;
 
 use infrarust_config::ServerConfig;
 
+use crate::loadbalancer::{LoadBalancer, build_load_balancer};
 use crate::provider::ProviderId;
 
 /// Entry stored per provider in the router.
@@ -19,6 +20,9 @@ struct RouterEntry {
     config: Arc<ServerConfig>,
     /// Normalized domains registered by this config (for cleanup on remove).
     domains: Vec<String>,
+    /// One LB instance per config (RR/SWRR state is per-server). Rebuilt
+    /// on add/update, so a config change resets the rotation state.
+    load_balancer: Arc<dyn LoadBalancer>,
 }
 
 /// Pre-compiled wildcard pattern entry.
@@ -92,11 +96,13 @@ impl DomainRouter {
             registered_domains.push(normalized);
         }
 
+        let load_balancer = build_load_balancer(&config.balance_config());
         self.configs.insert(
             id,
             RouterEntry {
                 config: Arc::new(config),
                 domains: registered_domains,
+                load_balancer,
             },
         );
 
@@ -155,6 +161,13 @@ impl DomainRouter {
     /// Exact matches take priority over wildcard matches.
     /// FML markers and trailing dots are stripped before resolution.
     pub fn resolve(&self, domain: &str) -> Option<(ProviderId, Arc<ServerConfig>)> {
+        self.resolve_route(domain).map(|(id, cfg, _lb)| (id, cfg))
+    }
+
+    pub fn resolve_route(
+        &self,
+        domain: &str,
+    ) -> Option<(ProviderId, Arc<ServerConfig>, Arc<dyn LoadBalancer>)> {
         let stripped = normalize_handshake(domain);
         let normalized = stripped.to_lowercase();
 
@@ -162,7 +175,11 @@ impl DomainRouter {
         if let Some(provider_id) = self.exact_domains.get(&normalized)
             && let Some(entry) = self.configs.get(provider_id.value())
         {
-            return Some((provider_id.value().clone(), Arc::clone(&entry.config)));
+            return Some((
+                provider_id.value().clone(),
+                Arc::clone(&entry.config),
+                Arc::clone(&entry.load_balancer),
+            ));
         }
 
         // 2. Wildcard match (sequential scan)
@@ -175,7 +192,11 @@ impl DomainRouter {
                 if wc.matcher.matches(&normalized)
                     && let Some(entry) = self.configs.get(&wc.provider_id)
                 {
-                    return Some((wc.provider_id.clone(), Arc::clone(&entry.config)));
+                    return Some((
+                        wc.provider_id.clone(),
+                        Arc::clone(&entry.config),
+                        Arc::clone(&entry.load_balancer),
+                    ));
                 }
             }
         }

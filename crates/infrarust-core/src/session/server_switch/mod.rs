@@ -152,7 +152,7 @@ pub async fn perform_switch(
     let backend_conn = backend_connector
         .connect(
             effective_target.as_str(),
-            &server_config.addresses,
+            &server_config.address_list(),
             server_config.timeouts.as_ref().map(|t| t.connect),
             server_config.send_proxy_protocol,
             &connection_info,
@@ -165,7 +165,9 @@ pub async fn perform_switch(
             ))
         })?;
 
-    let mut new_backend = BackendBridge::new(backend_conn.into_stream(), version);
+    let connected_address = backend_conn.server_address().clone();
+    let mut new_backend = BackendBridge::new(backend_conn.into_stream(), version)
+        .with_server_address(connected_address);
 
     let handler = services.resolve_forwarding_handler(&server_config);
     let fwd_data = ForwardingData {

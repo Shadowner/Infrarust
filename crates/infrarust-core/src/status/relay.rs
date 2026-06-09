@@ -94,13 +94,19 @@ impl StatusRelayClient {
         protocol_version: ProtocolVersion,
         client_info: &ConnectionInfo,
     ) -> Result<RelayResult, CoreError> {
-        let addresses = &server_config.addresses;
+        let addresses = server_config.address_list();
         let send_proxy_protocol = server_config.send_proxy_protocol;
 
         // 1. Connect to backend
         let conn = self
             .backend_connector
-            .connect(server_id, addresses, None, send_proxy_protocol, client_info)
+            .connect(
+                server_id,
+                &addresses,
+                None,
+                send_proxy_protocol,
+                client_info,
+            )
             .await?;
         let mut stream = conn.into_stream();
 
@@ -208,7 +214,7 @@ fn resolve_relay_domain(handshake_domain: &str, server_config: &ServerConfig) ->
         DomainRewrite::FromBackend => server_config
             .addresses
             .first()
-            .map_or_else(|| handshake_domain.to_string(), |a| a.host.clone()),
+            .map_or_else(|| handshake_domain.to_string(), |a| a.address.host.clone()),
         _ => handshake_domain.to_string(),
     }
 }
@@ -345,7 +351,10 @@ mod tests {
             name: None,
             network: None,
             domains: vec!["test.mc".to_string()],
-            addresses,
+            addresses: addresses.into_iter().map(Into::into).collect(),
+            balance: Default::default(),
+            slow_start: None,
+            slow_start_aggression: 1.0,
             proxy_mode: Default::default(),
             forwarding_mode: None,
             send_proxy_protocol: false,

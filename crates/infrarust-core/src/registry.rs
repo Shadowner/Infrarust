@@ -6,8 +6,10 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use infrarust_api::player::Player;
 use infrarust_api::types::PlayerId;
+use infrarust_config::ServerAddress;
 use uuid::Uuid;
 
+use crate::loadbalancer::AddressConnectionCount;
 use crate::player::PlayerSession;
 
 /// Thread-safe registry of active proxy sessions.
@@ -94,6 +96,13 @@ impl ConnectionRegistry {
             .count()
     }
 
+    pub fn active_connections_for_address(&self, addr: &ServerAddress) -> usize {
+        self.sessions
+            .iter()
+            .filter(|r| r.connected_address().is_some_and(|a| &a == addr))
+            .count()
+    }
+
     /// Returns a snapshot of all active sessions.
     pub fn all(&self) -> Vec<Arc<PlayerSession>> {
         self.sessions.iter().map(|r| Arc::clone(&r)).collect()
@@ -119,6 +128,12 @@ impl ConnectionRegistry {
 impl Default for ConnectionRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl AddressConnectionCount for ConnectionRegistry {
+    fn active_connections_for_address(&self, addr: &ServerAddress) -> usize {
+        self.active_connections_for_address(addr)
     }
 }
 

@@ -22,6 +22,7 @@ use infrarust_api::player::Player;
 use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
 };
+use infrarust_config::ServerAddress;
 
 /// Channel buffer size for player commands.
 const COMMAND_CHANNEL_SIZE: usize = 32;
@@ -59,6 +60,7 @@ pub struct PlayerSession {
     protocol_version: ProtocolVersion,
     remote_addr: SocketAddr,
     current_server: RwLock<Option<ServerId>>,
+    connected_address: RwLock<Option<ServerAddress>>,
     connected: AtomicBool,
     active: bool,
     online_mode: bool,
@@ -99,6 +101,7 @@ impl PlayerSession {
             protocol_version,
             remote_addr,
             current_server: RwLock::new(current_server),
+            connected_address: RwLock::new(None),
             connected: AtomicBool::new(true),
             active,
             online_mode,
@@ -146,6 +149,18 @@ impl PlayerSession {
     pub fn set_current_server(&self, server: ServerId) {
         let mut guard = self.current_server.write().expect("lock poisoned");
         *guard = Some(server);
+    }
+
+    pub fn set_connected_address(&self, address: Option<ServerAddress>) {
+        let mut guard = self.connected_address.write().expect("lock poisoned");
+        *guard = address;
+    }
+
+    pub fn connected_address(&self) -> Option<ServerAddress> {
+        self.connected_address
+            .read()
+            .expect("lock poisoned")
+            .clone()
     }
 
     pub fn shutdown_token(&self) -> &CancellationToken {

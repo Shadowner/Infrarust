@@ -13,6 +13,7 @@ use super::auth::AuthResult;
 use crate::error::CoreError;
 use crate::forwarding::{ForwardingData, build_handshake_for_backend};
 use crate::limbo::registry::LimboHandlerRegistry;
+use crate::middleware::backend_selection::BackendTargets;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
@@ -73,6 +74,7 @@ pub(super) async fn resolve_initial_mode(
     login_completed: &mut bool,
     routing: &RoutingData,
     handshake: &HandshakeData,
+    backend_targets: Option<&BackendTargets>,
     version: ProtocolVersion,
     services: &ProxyServices,
     backend_connector: &BackendConnector,
@@ -186,6 +188,7 @@ pub(super) async fn resolve_initial_mode(
             *login_completed,
             routing,
             handshake,
+            backend_targets,
             version,
             services,
             backend_connector,
@@ -264,6 +267,7 @@ async fn connect_to_backend(
     login_completed: bool,
     routing: &RoutingData,
     handshake: &HandshakeData,
+    backend_targets: Option<&BackendTargets>,
     version: ProtocolVersion,
     services: &ProxyServices,
     backend_connector: &BackendConnector,
@@ -271,17 +275,22 @@ async fn connect_to_backend(
 ) -> Result<BackendBridge, CoreError> {
     let server_config = &routing.server_config;
 
+    let addresses: Vec<infrarust_config::ServerAddress> =
+        backend_targets.map_or_else(|| server_config.address_list(), |t| t.addresses.to_vec());
+
     let backend_conn = backend_connector
         .connect(
             &routing.config_id,
-            &server_config.addresses,
+            &addresses,
             server_config.timeouts.as_ref().map(|t| t.connect),
             server_config.send_proxy_protocol,
             connection_info,
         )
         .await?;
 
-    let mut backend = BackendBridge::new(backend_conn.into_stream(), version);
+    let connected_address = backend_conn.server_address().clone();
+    let mut backend = BackendBridge::new(backend_conn.into_stream(), version)
+        .with_server_address(connected_address);
 
     if login_completed {
         let handler = services.resolve_forwarding_handler(server_config);

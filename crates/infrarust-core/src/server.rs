@@ -25,6 +25,7 @@ use crate::error::CoreError;
 use crate::handler::InterceptedHandler;
 use crate::handler::legacy::LegacyHandler;
 use crate::handler::passthrough::PassthroughHandler;
+use crate::middleware::backend_selection::BackendSelectionMiddleware;
 use crate::middleware::ban_check::BanCheckMiddleware;
 use crate::middleware::ban_ip_check::BanIpCheckMiddleware;
 use crate::middleware::domain_router::DomainRouterMiddleware;
@@ -80,10 +81,12 @@ impl ProxyServer {
         // Create the event bus
         let event_bus = Arc::new(EventBusImpl::new());
 
-        let backend_connector = Arc::new(BackendConnector::new(
-            config.connect_timeout,
-            config.keepalive.clone(),
-        ));
+        let backend_health = Arc::new(crate::loadbalancer::PassiveBackendHealth::new());
+
+        let backend_connector = Arc::new(
+            BackendConnector::new(config.connect_timeout, config.keepalive.clone())
+                .with_observer(Arc::clone(&backend_health) as _),
+        );
         let registry = Arc::new(ConnectionRegistry::new());
 
         // Build status subsystem
@@ -250,14 +253,22 @@ impl ProxyServer {
             &domain_router,
         ))));
 
-        // Build login pipeline: LoginStartParser → BanCheck → Telemetry → ServerManager
+        // Build login pipeline:
+        // LoginStartParser → BanCheck → Telemetry → ServerManager → BackendSelection
         let mut login_pipeline = Pipeline::new();
         login_pipeline.add(Box::new(LoginStartParserMiddleware::new()));
         login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
         login_pipeline.add(Box::new(TelemetryMiddleware));
         if let Some(ref sm) = server_manager {
-            login_pipeline.add(Box::new(ServerManagerMiddleware::new(Arc::clone(sm))));
+            login_pipeline.add(Box::new(
+                ServerManagerMiddleware::new(Arc::clone(sm))
+                    .with_backend_health(Arc::clone(&backend_health)),
+            ));
         }
+        login_pipeline.add(Box::new(BackendSelectionMiddleware::new(
+            Arc::clone(&registry) as _,
+            Arc::clone(&backend_health) as _,
+        )));
 
         // Build ProxyMetrics (telemetry feature only)
         #[cfg(feature = "telemetry")]

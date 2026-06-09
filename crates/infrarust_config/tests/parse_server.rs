@@ -25,10 +25,10 @@ fn test_parse_survival_addresses() {
     let config = load_survival();
 
     assert_eq!(config.addresses.len(), 2);
-    assert_eq!(config.addresses[0].host, "10.0.1.10");
-    assert_eq!(config.addresses[0].port, 25565);
-    assert_eq!(config.addresses[1].host, "10.0.1.11");
-    assert_eq!(config.addresses[1].port, 25565);
+    assert_eq!(config.addresses[0].address.host, "10.0.1.10");
+    assert_eq!(config.addresses[0].address.port, 25565);
+    assert_eq!(config.addresses[1].address.host, "10.0.1.11");
+    assert_eq!(config.addresses[1].address.port, 25565);
 }
 
 #[test]

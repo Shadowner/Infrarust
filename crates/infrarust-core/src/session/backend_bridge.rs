@@ -36,6 +36,7 @@ pub struct BackendBridge {
     /// Protocol version of this connection.
     pub protocol_version: ProtocolVersion,
     read_buf: BytesMut,
+    server_address: Option<infrarust_config::ServerAddress>,
 }
 
 impl BackendBridge {
@@ -47,7 +48,18 @@ impl BackendBridge {
             state: ConnectionState::Login,
             protocol_version,
             read_buf: BytesMut::with_capacity(4096),
+            server_address: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_server_address(mut self, address: infrarust_config::ServerAddress) -> Self {
+        self.server_address = Some(address);
+        self
+    }
+
+    pub const fn server_address(&self) -> Option<&infrarust_config::ServerAddress> {
+        self.server_address.as_ref()
     }
 
     /// Reads the next packet frame from the backend.

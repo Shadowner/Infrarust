@@ -1,0 +1,19 @@
+# Example: level-1 load balancing across replicas of the same logical server.
+#
+# balance:    first_available (default, V1 parity) | round_robin | least_conn
+#             least_conn is the recommended strategy for multi-address servers
+#             (Minecraft sessions are long-lived).
+# slow_start: optional ramp-up window for freshly started/recovered backends
+#             (only effective with round_robin / least_conn).
+
+domains = ["balanced.example.com"]
+balance = "least_conn"
+slow_start = "45s"
+# slow_start_aggression = 2.0   # curve: 1.0 = linear (default), > 1.0 = softer start
+
+# Addresses accept a bare string (weight 1) or a table with a weight.
+addresses = [
+    { address = "10.0.0.1:25565", weight = 3 }, # big node
+    { address = "10.0.0.2:25565", weight = 1 }, # small node
+    "10.0.0.3:25565",                           # implicit weight 1
+]

@@ -80,6 +80,10 @@ impl InterceptedHandler {
             .require_extension::<HandshakeData>("HandshakeData")?
             .clone();
         let login_data = ctx.extensions.get::<LoginData>().cloned();
+        let backend_targets = ctx
+            .extensions
+            .get::<crate::middleware::backend_selection::BackendTargets>()
+            .cloned();
 
         let version = handshake.protocol_version;
         let peer_addr = ctx.peer_addr;
@@ -131,6 +135,7 @@ impl InterceptedHandler {
             &mut login_completed,
             &routing,
             &handshake,
+            backend_targets.as_ref(),
             version,
             &self.services,
             &self.backend_connector,
@@ -183,6 +188,10 @@ impl InterceptedHandler {
             session_token.clone(),
             permission_checker,
         ));
+
+        if let initial_connect::ConnectionMode::Backend(ref backend) = initial_mode {
+            player_session.set_connected_address(backend.server_address().cloned());
+        }
 
         let session_id = self.services.connection_registry.register(player_session);
 

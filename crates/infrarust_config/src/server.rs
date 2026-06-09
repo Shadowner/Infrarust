@@ -1,14 +1,17 @@
 //! Backend server configuration (one per `.toml` file in `servers_dir`).
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
+use crate::types::balance::default_aggression;
 use crate::types::{
-    DomainRewrite, ForwardingMode, IpFilterConfig, MotdConfig, ProxyMode, ServerAddress,
-    ServerManagerConfig, TimeoutConfig,
+    BalanceConfig, BalanceStrategy, DomainRewrite, ForwardingMode, IpFilterConfig, MotdConfig,
+    ProxyMode, ServerAddress, ServerManagerConfig, TimeoutConfig, WeightedAddress,
 };
 
 /// Each file in `servers_dir/` deserializes into this type.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// Unique identifier. Derived from the filename if absent.
@@ -31,8 +34,24 @@ pub struct ServerConfig {
     #[serde(default)]
     pub domains: Vec<String>,
 
-    /// Backend addresses (host:port). Multiple = future load balancing.
-    pub addresses: Vec<ServerAddress>,
+    /// Backend addresses: `"host:port"` or `{ address = "host:port", weight = 3 }`.
+    /// Multiple addresses are load balanced according to `balance`.
+    pub addresses: Vec<WeightedAddress>,
+
+    /// Address selection strategy when several addresses are configured.
+    /// Default: `first_available` (V1 parity). Recommended for
+    /// multi-address servers: `least_conn`.
+    #[serde(default)]
+    pub balance: BalanceStrategy,
+
+    /// Slow-start ramp window for freshly healthy backends (e.g. "45s").
+    /// Only effective with `round_robin` / `least_conn`.
+    #[serde(default, with = "humantime_serde::option")]
+    pub slow_start: Option<Duration>,
+
+    /// Slow-start curve: 1.0 = linear, > 1.0 = softer start.
+    #[serde(default = "default_aggression")]
+    pub slow_start_aggression: f64,
 
     /// Proxy mode for this server
     #[serde(default)]
@@ -96,5 +115,19 @@ impl ServerConfig {
         self.disconnect_message
             .as_deref()
             .unwrap_or("Server is currently unreachable. Please try again later.")
+    }
+
+    /// Load-balancing settings, normalized for the core LB factory.
+    pub const fn balance_config(&self) -> BalanceConfig {
+        BalanceConfig {
+            strategy: self.balance,
+            slow_start: self.slow_start,
+            slow_start_aggression: self.slow_start_aggression,
+        }
+    }
+
+    /// Plain address list in config order (weights stripped).
+    pub fn address_list(&self) -> Vec<ServerAddress> {
+        self.addresses.iter().map(|w| w.address.clone()).collect()
     }
 }

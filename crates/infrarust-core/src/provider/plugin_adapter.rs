@@ -70,9 +70,11 @@ fn convert_api_to_config(
     let addresses = api
         .addresses
         .iter()
-        .map(|a| infrarust_config::ServerAddress {
-            host: a.host.clone(),
-            port: a.port,
+        .map(|a| {
+            infrarust_config::WeightedAddress::from(infrarust_config::ServerAddress {
+                host: a.host.clone(),
+                port: a.port,
+            })
         })
         .collect();
 
@@ -82,6 +84,9 @@ fn convert_api_to_config(
         network: api.network.clone(),
         domains: api.domains.clone(),
         addresses,
+        balance: Default::default(),
+        slow_start: None,
+        slow_start_aggression: 1.0,
         proxy_mode,
         forwarding_mode: None,
         send_proxy_protocol: api.send_proxy_protocol,

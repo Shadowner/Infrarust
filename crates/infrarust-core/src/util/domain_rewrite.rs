@@ -32,7 +32,7 @@ pub fn rewrite_handshake(
         DomainRewrite::Explicit(domain) => encode_handshake_with_domain(handshake_data, domain),
         DomainRewrite::FromBackend => server_config.addresses.first().map_or_else(
             || Ok(first_raw_packet(handshake_data)),
-            |addr| encode_handshake_with_domain(handshake_data, &addr.host),
+            |addr| encode_handshake_with_domain(handshake_data, &addr.address.host),
         ),
         _ => {
             // Future non-exhaustive variants: pass through
@@ -78,7 +78,6 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::default_trait_access)]
     use super::*;
     use bytes::BytesMut;
-    use infrarust_config::ServerAddress;
     use infrarust_protocol::version::ProtocolVersion;
 
     fn make_handshake_data() -> HandshakeData {
@@ -112,7 +111,10 @@ mod tests {
             name: None,
             network: None,
             domains: vec!["play.example.com".to_string()],
-            addresses: vec!["backend.local:25565".parse::<ServerAddress>().unwrap()],
+            addresses: vec!["backend.local:25565".parse().unwrap()],
+            balance: Default::default(),
+            slow_start: None,
+            slow_start_aggression: 1.0,
             proxy_mode: Default::default(),
             forwarding_mode: None,
             send_proxy_protocol: false,

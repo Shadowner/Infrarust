@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use crate::error::ConfigError;
 use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
+use crate::types::BalanceStrategy;
 
 /// Validates a single server configuration.
 ///
@@ -60,6 +61,17 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
         validate_identifier(network, "network", &id)?;
     }
 
+    if !config.slow_start_aggression.is_finite() || config.slow_start_aggression <= 0.0 {
+        return Err(ConfigError::Validation(format!(
+            "server '{id}': slow_start_aggression must be a finite number > 0 (got {})",
+            config.slow_start_aggression
+        )));
+    }
+
+    for warning in balance_warnings(config) {
+        tracing::warn!(server = %id, "{warning}");
+    }
+
     #[cfg(not(target_os = "linux"))]
     if config.proxy_mode == crate::types::ProxyMode::ZeroCopy {
         tracing::warn!(
@@ -69,6 +81,36 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
     }
 
     Ok(())
+}
+
+pub fn balance_warnings(config: &ServerConfig) -> Vec<String> {
+    let mut warnings = Vec::new();
+
+    for wa in &config.addresses {
+        if wa.weight == 0 {
+            warnings.push(format!(
+                "address {} has weight 0, which is treated as weight 1; \
+                 remove the address from the list to drain it",
+                wa.address
+            ));
+        }
+    }
+
+    if config.balance == BalanceStrategy::FirstAvailable {
+        if config.addresses.len() > 1 {
+            warnings.push(format!(
+                "{} addresses configured with balance = \"first_available\": all traffic \
+                 goes to the first healthy address; consider balance = \"least_conn\"",
+                config.addresses.len()
+            ));
+        }
+        if config.slow_start.is_some() {
+            warnings
+                .push("slow_start has no effect with balance = \"first_available\"".to_string());
+        }
+    }
+
+    warnings
 }
 
 fn validate_identifier(value: &str, field: &str, server_id: &str) -> Result<(), ConfigError> {

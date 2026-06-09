@@ -102,12 +102,17 @@ impl PassthroughHandler {
             _ => {} // ConnectTo, SendToLimbo, VirtualBackend — Phase 4
         }
 
-        // Connect to backend
+        // Connect to backend, in the order decided by the backend
+        // selection middleware (config order as fallback).
+        let target_addresses: Vec<infrarust_config::ServerAddress> = ctx
+            .extensions
+            .get::<crate::middleware::backend_selection::BackendTargets>()
+            .map_or_else(|| server_config.address_list(), |t| t.addresses.to_vec());
         let backend = match self
             .backend_connector
             .connect(
                 &routing.config_id,
-                &server_config.addresses,
+                &target_addresses,
                 server_config.timeouts.as_ref().map(|t| t.connect),
                 server_config.send_proxy_protocol,
                 &ctx.connection_info(),
@@ -168,6 +173,7 @@ impl PassthroughHandler {
             crate::permissions::default_checker(),
         ));
 
+        player_session.set_connected_address(Some(backend.server_address().clone()));
         let session_id = self.services.connection_registry.register(player_session);
 
         tracing::info!(
@@ -268,7 +274,7 @@ impl PassthroughHandler {
             }
             DomainRewrite::FromBackend => {
                 if let Some(addr) = server_config.addresses.first() {
-                    self.forward_with_rewritten_handshake(backend, handshake, &addr.host)
+                    self.forward_with_rewritten_handshake(backend, handshake, &addr.address.host)
                         .await?;
                 } else {
                     for raw in &handshake.raw_packets {
