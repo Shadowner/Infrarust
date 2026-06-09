@@ -6,6 +6,7 @@ use infrarust_protocol::codec::McBufWriteExt;
 use infrarust_protocol::packets::login::{CLoginPluginRequest, SLoginPluginResponse};
 use infrarust_protocol::version::ProtocolVersion;
 use sha2::Sha256;
+use hmac::KeyInit;
 
 use super::ForwardingData;
 
