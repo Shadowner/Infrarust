@@ -611,11 +611,7 @@ impl scheduler::Host for PluginStoreState {
     }
 }
 impl limbo::Host for PluginStoreState {
-    async fn register_limbo_handler(
-        &mut self,
-        name: String,
-        handler: u64,
-    ) -> wasmtime::Result<()> {
+    async fn register_limbo_handler(&mut self, name: String, handler: u64) -> wasmtime::Result<()> {
         if !self.capabilities().has(Capability::Limbo) {
             tracing::warn!(plugin = %self.plugin_id, handler = %name,
                 "register_limbo_handler denied: missing Limbo capability");

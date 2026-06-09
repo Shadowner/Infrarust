@@ -303,7 +303,8 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let static_loader = plugins::build_static_loader(web_config.as_mut())?;
     let static_ids = static_loader.registered_ids();
     #[cfg_attr(not(feature = "wasm"), allow(unused_mut))]
-    let mut loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> = vec![Box::new(static_loader)];
+    let mut loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> =
+        vec![Box::new(static_loader)];
 
     #[cfg(feature = "wasm")]
     loaders.push(Box::new(infrarust_loader_wasm::WasmPluginLoader::new(

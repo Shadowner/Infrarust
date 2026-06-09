@@ -8,8 +8,8 @@ use crate::types::{Component, GameProfile, PlayerId, TitleData};
 use super::context::LimboEntryContext;
 use super::handle::SessionHandle;
 use super::handler::HandlerResult;
-use super::session::private::Sealed;
 use super::session::LimboSession;
+use super::session::private::Sealed;
 
 pub struct RecordingLimboSession {
     player_id: PlayerId,
@@ -100,17 +100,11 @@ impl LimboSession for RecordingLimboSession {
     }
 
     fn complete(&self, result: HandlerResult) {
-        self.completions
-            .lock()
-            .expect("lock poisoned")
-            .push(result);
+        self.completions.lock().expect("lock poisoned").push(result);
     }
 
     fn complete_scoped(&self, _hold_id: u64, result: HandlerResult) {
-        self.completions
-            .lock()
-            .expect("lock poisoned")
-            .push(result);
+        self.completions.lock().expect("lock poisoned").push(result);
     }
 
     fn handle(&self) -> SessionHandle {

@@ -87,6 +87,9 @@ impl PluginContextFactory for PluginContextFactoryImpl {
     }
 
     fn forget_context(&self, plugin_id: &str) {
-        self.contexts.lock().expect("lock poisoned").remove(plugin_id);
+        self.contexts
+            .lock()
+            .expect("lock poisoned")
+            .remove(plugin_id);
     }
 }

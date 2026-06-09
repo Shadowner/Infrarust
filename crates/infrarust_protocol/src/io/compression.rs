@@ -251,13 +251,18 @@ mod tests {
     #[cfg(feature = "libdeflater")]
     #[test]
     fn test_cross_backend_interop() {
-        let original: Vec<u8> = (0..4096).map(|i: u32| (i.wrapping_mul(31) % 251) as u8).collect();
+        let original: Vec<u8> = (0..4096)
+            .map(|i: u32| (i.wrapping_mul(31) % 251) as u8)
+            .collect();
 
-        let roundtrip = |mut comp: Box<dyn ZlibCompressor>, mut decomp: Box<dyn ZlibDecompressor>| {
+        let roundtrip = |mut comp: Box<dyn ZlibCompressor>,
+                         mut decomp: Box<dyn ZlibDecompressor>| {
             let mut compressed = Vec::new();
             comp.compress(&original, &mut compressed).unwrap();
             let mut out = Vec::new();
-            decomp.decompress(&compressed, &mut out, original.len()).unwrap();
+            decomp
+                .decompress(&compressed, &mut out, original.len())
+                .unwrap();
             assert_eq!(out, original);
         };
 

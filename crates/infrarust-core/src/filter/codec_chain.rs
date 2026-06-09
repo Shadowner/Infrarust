@@ -471,7 +471,11 @@ mod tests {
             notified: Arc<AtomicBool>,
         }
         impl CodecFilterInstance for StateTracker {
-            fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
+            fn filter(
+                &mut self,
+                _packet: &mut RawPacket,
+                _output: &mut FrameOutput,
+            ) -> CodecVerdict {
                 CodecVerdict::Pass
             }
             fn on_state_change(&mut self, _new_state: ConnectionState) {

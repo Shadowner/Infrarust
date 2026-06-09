@@ -58,11 +58,7 @@ pub(crate) fn apply_filter_output(
     }
 }
 
-fn apply_extras(
-    extras: wit_codec::FilterExtras,
-    packet: &mut RawPacket,
-    output: &mut FrameOutput,
-) {
+fn apply_extras(extras: wit_codec::FilterExtras, packet: &mut RawPacket, output: &mut FrameOutput) {
     if let Some(p) = extras.packet {
         *packet = raw_packet_from_wit(p);
     }
@@ -86,7 +82,9 @@ fn codec_error_from_wit(e: wit_codec::CodecFilterError) -> CodecFilterError {
     match e {
         wit_codec::CodecFilterError::TranslationFailed(s) => CodecFilterError::TranslationFailed(s),
         wit_codec::CodecFilterError::MalformedPayload => CodecFilterError::MalformedPayload,
-        wit_codec::CodecFilterError::UnsupportedVersion(v) => CodecFilterError::UnsupportedVersion(v),
+        wit_codec::CodecFilterError::UnsupportedVersion(v) => {
+            CodecFilterError::UnsupportedVersion(v)
+        }
         wit_codec::CodecFilterError::Internal(s) => CodecFilterError::Internal(s),
     }
 }

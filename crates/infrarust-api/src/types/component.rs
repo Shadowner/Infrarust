@@ -577,9 +577,7 @@ impl Component {
         }
     }
 
-    fn parse_click_event(
-        map: &serde_json::Map<String, serde_json::Value>,
-    ) -> Option<ClickEvent> {
+    fn parse_click_event(map: &serde_json::Map<String, serde_json::Value>) -> Option<ClickEvent> {
         let value = map.get("value").and_then(serde_json::Value::as_str)?;
         match map.get("action").and_then(serde_json::Value::as_str)? {
             "open_url" => Some(ClickEvent::OpenUrl(value.to_string())),
@@ -590,9 +588,7 @@ impl Component {
         }
     }
 
-    fn parse_hover_event(
-        map: &serde_json::Map<String, serde_json::Value>,
-    ) -> Option<HoverEvent> {
+    fn parse_hover_event(map: &serde_json::Map<String, serde_json::Value>) -> Option<HoverEvent> {
         if map.get("action").and_then(serde_json::Value::as_str)? != "show_text" {
             return None;
         }
@@ -985,8 +981,9 @@ mod tests {
 
     #[test]
     fn from_json_hover_contents_roundtrip() {
-        let original = Component::text("hover")
-            .hover(HoverEvent::ShowText(Box::new(Component::text("tip").color("aqua"))));
+        let original = Component::text("hover").hover(HoverEvent::ShowText(Box::new(
+            Component::text("tip").color("aqua"),
+        )));
         let parsed = Component::from_json(&original.to_json()).unwrap();
         match parsed.hover_event {
             Some(HoverEvent::ShowText(inner)) => {

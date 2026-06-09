@@ -183,7 +183,10 @@ mod tests {
         let mut state = KeepAliveState::new();
 
         let _ = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
-        assert!(state.on_response(state.last_sent_id), "valid id clears pending");
+        assert!(
+            state.on_response(state.last_sent_id),
+            "valid id clears pending"
+        );
         assert!(!state.awaiting_response);
 
         let result = state.tick(ProtocolVersion::V1_21, &registry).unwrap();

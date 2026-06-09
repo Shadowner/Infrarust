@@ -21,8 +21,8 @@
 //! are per-connection and stateless across connections, so each one builds its own
 //! state from the [`CodecSessionInit`].
 
-pub use crate::bindings::codec_filter::{CodecSessionInit, ConnectionSide, ConnectionState};
 use crate::bindings::codec_filter::RawPacket;
+pub use crate::bindings::codec_filter::{CodecSessionInit, ConnectionSide, ConnectionState};
 
 #[derive(Clone, Debug, Default)]
 pub struct PlayerInfo {
@@ -211,10 +211,16 @@ pub(crate) fn build_filter_output(
     injections: Injections,
 ) -> crate::bindings::codec_filter::FilterOutput {
     use crate::bindings::codec_filter::{FilterExtras, FilterOutput};
-    let before: Vec<_> = injections.before.into_iter().map(Packet::into_wit).collect();
+    let before: Vec<_> = injections
+        .before
+        .into_iter()
+        .map(Packet::into_wit)
+        .collect();
     let after: Vec<_> = injections.after.into_iter().map(Packet::into_wit).collect();
     match verdict {
-        Verdict::Pass if !packet.dirty && before.is_empty() && after.is_empty() => FilterOutput::Pass,
+        Verdict::Pass if !packet.dirty && before.is_empty() && after.is_empty() => {
+            FilterOutput::Pass
+        }
         Verdict::Pass => FilterOutput::PassModified(FilterExtras {
             packet: packet.dirty.then(|| packet.into_wit()),
             inject_before: before,
@@ -228,4 +234,3 @@ pub(crate) fn build_filter_output(
         }),
     }
 }
-

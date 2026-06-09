@@ -232,7 +232,11 @@ mod tests {
         for cap in Capability::ALL {
             let s = cap.to_kebab();
             assert!(names.insert(s), "duplicate kebab name: {s}");
-            assert_eq!(Capability::from_kebab(s), Some(cap), "from_kebab lost {cap:?}");
+            assert_eq!(
+                Capability::from_kebab(s),
+                Some(cap),
+                "from_kebab lost {cap:?}"
+            );
         }
         assert_eq!(Capability::ALL.len(), 16);
         assert_eq!(names.len(), Capability::ALL.len());

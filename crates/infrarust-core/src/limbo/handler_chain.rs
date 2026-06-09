@@ -16,7 +16,9 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use super::chat::{ClientMessage, parse_client_message};
-use super::keepalive::{KeepAliveState, KeepAliveTick, extract_keepalive_id, is_keepalive_response};
+use super::keepalive::{
+    KeepAliveState, KeepAliveTick, extract_keepalive_id, is_keepalive_response,
+};
 use super::session::LimboSessionImpl;
 use super::spawn::send_spawn_sequence;
 use super::virtual_session::VirtualSessionCore;
@@ -125,7 +127,9 @@ fn process_handler_result(result: HandlerResult) -> HandlerAction {
         HandlerResult::Hold => HandlerAction::Hold(None),
         HandlerResult::HoldWithTimeout { after, on_timeout } => {
             let on_timeout = match *on_timeout {
-                HandlerResult::Hold | HandlerResult::HoldWithTimeout { .. } => HandlerResult::Accept,
+                HandlerResult::Hold | HandlerResult::HoldWithTimeout { .. } => {
+                    HandlerResult::Accept
+                }
                 other => other,
             };
             HandlerAction::Hold(Some(HoldTimeout { after, on_timeout }))

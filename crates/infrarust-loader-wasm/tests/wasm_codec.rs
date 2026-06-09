@@ -142,10 +142,7 @@ async fn codec_filter_modifies_drops_and_injects() {
 
     // id 0x01 → dropped.
     let mut packet = RawPacket::new(0x01, Bytes::from_static(b"x"));
-    assert!(matches!(
-        chain.process(&mut packet),
-        FilterResult::Dropped
-    ));
+    assert!(matches!(chain.process(&mut packet), FilterResult::Dropped));
 
     // id 0x03 → passes with injected frames before and after.
     let mut packet = RawPacket::new(0x03, Bytes::new());
@@ -160,7 +157,11 @@ async fn codec_filter_modifies_drops_and_injects() {
     // any other id → unchanged, zero-copy pass.
     let mut packet = RawPacket::new(0x10, Bytes::from_static(b"keep"));
     assert!(matches!(chain.process(&mut packet), FilterResult::Pass));
-    assert_eq!(&packet.data[..], b"keep", "unmodified packet passes untouched");
+    assert_eq!(
+        &packet.data[..],
+        b"keep",
+        "unmodified packet passes untouched"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -295,7 +295,8 @@ impl LimboHandler for AuthHandler {
         if timeout_secs == 0 {
             Box::pin(async { HandlerResult::Hold })
         } else {
-            let on_timeout = HandlerResult::Deny(parse_colored(&self.config.messages.login_timeout));
+            let on_timeout =
+                HandlerResult::Deny(parse_colored(&self.config.messages.login_timeout));
             Box::pin(async move {
                 HandlerResult::HoldWithTimeout {
                     after: Duration::from_secs(timeout_secs),

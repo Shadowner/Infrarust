@@ -143,7 +143,8 @@ mod bench {
     }
 
     fn staged_plugins_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("infrarust-codec-bench-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("infrarust-codec-bench-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::copy(fixture_path("codec-modify"), dir.join("codec-modify.wasm")).unwrap();
         dir
@@ -164,7 +165,9 @@ mod bench {
         let (wasm_registry, _plugin, _loader) = rt.block_on(load_wasm(plugins_dir));
         let mut wasm_chain = client_chain(&wasm_registry);
 
-        println!("\ncodec boundary benchmark — {ITERS} iterations/measurement, id 0x10 (pass-through, zero-copy return)");
+        println!(
+            "\ncodec boundary benchmark — {ITERS} iterations/measurement, id 0x10 (pass-through, zero-copy return)"
+        );
         println!(
             "  {:>7}  {:>10}  {:>10}  {:>12}",
             "size", "native", "wasm", "boundary"
@@ -177,13 +180,15 @@ mod bench {
             if size == 32 {
                 boundary_32 = boundary;
             }
-            println!(
-                "  {size:>5}B  {native_ns:>8.1}ns  {wasm_ns:>8.1}ns  {boundary:>10.1}ns",
-            );
+            println!("  {size:>5}B  {native_ns:>8.1}ns  {wasm_ns:>8.1}ns  {boundary:>10.1}ns",);
         }
         println!(
             "\n  fixed call overhead ≈ {boundary_32:.1} ns/packet (32B) — target 100–300 → {}\n",
-            if boundary_32 <= 300.0 { "MET" } else { "over (see report)" }
+            if boundary_32 <= 300.0 {
+                "MET"
+            } else {
+                "over (see report)"
+            }
         );
     }
 }

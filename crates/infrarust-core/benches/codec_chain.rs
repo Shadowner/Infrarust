@@ -24,7 +24,7 @@ use infrarust_api::types::RawPacket;
 
 #[path = "shared/filters.rs"]
 mod filters;
-use filters::{COUNTS, SIZES, payload, pass_chain, realistic_chain, scan_chain};
+use filters::{COUNTS, SIZES, pass_chain, payload, realistic_chain, scan_chain};
 
 fn main() {
     divan::main();

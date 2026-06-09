@@ -219,7 +219,11 @@ pub fn limbo_on_command(
     });
 }
 
-pub fn limbo_on_chat(handler: u64, session: &crate::bindings::guest::LimboSession, message: String) {
+pub fn limbo_on_chat(
+    handler: u64,
+    session: &crate::bindings::guest::LimboSession,
+    message: String,
+) {
     LIMBO_HANDLERS.with(|h| {
         if let Some(hdlr) = h.borrow().get(&handler) {
             hdlr.on_chat(&LimboSession::new(session), &message);
@@ -296,7 +300,12 @@ impl GuestFilterInstance for FilterInstanceProxy {
 struct PassthroughFilter;
 
 impl CodecFilter for PassthroughFilter {
-    fn filter(&mut self, _ctx: &CodecContext, _packet: &mut Packet, _out: &mut Injections) -> Verdict {
+    fn filter(
+        &mut self,
+        _ctx: &CodecContext,
+        _packet: &mut Packet,
+        _out: &mut Injections,
+    ) -> Verdict {
         Verdict::Pass
     }
 }

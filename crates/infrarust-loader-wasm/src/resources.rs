@@ -62,9 +62,9 @@ impl PluginStoreState {
         &mut self,
         handle: &Resource<LimboSessionMarker>,
     ) -> wasmtime::Result<Arc<dyn LimboSession>> {
-        let stored: &LimboSessionResource = self
-            .table_mut()
-            .get(&Resource::<LimboSessionResource>::new_own(handle.rep()))?;
+        let stored: &LimboSessionResource =
+            self.table_mut()
+                .get(&Resource::<LimboSessionResource>::new_own(handle.rep()))?;
         Ok(stored.session.clone())
     }
 
@@ -81,7 +81,9 @@ impl PluginStoreState {
         &mut self,
         handle: SessionHandle,
     ) -> wasmtime::Result<Resource<LimboHandleMarker>> {
-        let stored = self.table_mut().push(LimboSessionHandleResource { handle })?;
+        let stored = self
+            .table_mut()
+            .push(LimboSessionHandleResource { handle })?;
         Ok(Resource::new_own(stored.rep()))
     }
 
@@ -89,9 +91,11 @@ impl PluginStoreState {
         &mut self,
         handle: &Resource<LimboHandleMarker>,
     ) -> wasmtime::Result<SessionHandle> {
-        let stored: &LimboSessionHandleResource = self
-            .table_mut()
-            .get(&Resource::<LimboSessionHandleResource>::new_own(handle.rep()))?;
+        let stored: &LimboSessionHandleResource = self.table_mut().get(&Resource::<
+            LimboSessionHandleResource,
+        >::new_own(
+            handle.rep()
+        ))?;
         Ok(stored.handle.clone())
     }
 
@@ -101,7 +105,9 @@ impl PluginStoreState {
     ) -> wasmtime::Result<()> {
         let _ = self
             .table_mut()
-            .delete(Resource::<LimboSessionHandleResource>::new_own(handle.rep()));
+            .delete(Resource::<LimboSessionHandleResource>::new_own(
+                handle.rep(),
+            ));
         Ok(())
     }
 }

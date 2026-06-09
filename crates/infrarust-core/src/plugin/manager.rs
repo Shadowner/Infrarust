@@ -610,7 +610,9 @@ mod tests {
             let log = Arc::clone(&self.log);
             let id = plugin_id.to_string();
             Box::pin(async move {
-                log.lock().expect("lock poisoned").push(format!("load:{id}"));
+                log.lock()
+                    .expect("lock poisoned")
+                    .push(format!("load:{id}"));
                 Ok(Box::new(TestPlugin {
                     id,
                     enabled: Arc::new(AtomicBool::new(false)),
@@ -708,7 +710,10 @@ mod tests {
         // The failed on_load surfaces exactly one error...
         assert_eq!(errors.len(), 1);
         // ...its plugin is marked Error and never loaded...
-        assert!(matches!(mgr.plugin_state("b1"), Some(PluginState::Error(_))));
+        assert!(matches!(
+            mgr.plugin_state("b1"),
+            Some(PluginState::Error(_))
+        ));
         // ...while the healthy loader's plugin still enables.
         assert!(mgr.is_plugin_loaded("g1"));
 

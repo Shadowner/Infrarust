@@ -113,7 +113,6 @@ impl ServerWakeHandler {
             }
         });
     }
-
 }
 
 impl LimboHandler for ServerWakeHandler {

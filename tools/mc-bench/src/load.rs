@@ -64,7 +64,9 @@ struct Counters {
 
 /// Nanoseconds from `base` to now.
 fn elapsed_ns(base: TokioInstant) -> u64 {
-    TokioInstant::now().saturating_duration_since(base).as_nanos() as u64
+    TokioInstant::now()
+        .saturating_duration_since(base)
+        .as_nanos() as u64
 }
 
 pub async fn run(args: LoadArgs) -> std::io::Result<()> {
@@ -196,7 +198,11 @@ async fn run_worker(
     while next < stop_at {
         sleep_until(next).await;
         let recording = next >= warmup_until;
-        let token = if recording { elapsed_ns(grid_start).max(1) } else { 0 };
+        let token = if recording {
+            elapsed_ns(grid_start).max(1)
+        } else {
+            0
+        };
         let payload = token.to_be_bytes();
         if writer
             .write_frame(PING_SERVERBOUND_ID, &payload)
@@ -271,7 +277,12 @@ async fn connect_and_login(
         }
         // CSetCompression — match by typed decode so compression activates.
         if let Ok(infrarust_protocol::registry::DecodedPacket::Typed { packet, .. }) = registry
-            .decode_frame(&frame, ConnectionState::Login, Direction::Clientbound, version)
+            .decode_frame(
+                &frame,
+                ConnectionState::Login,
+                Direction::Clientbound,
+                version,
+            )
             && let Some(c) = packet
                 .as_any()
                 .downcast_ref::<infrarust_protocol::CSetCompression>()

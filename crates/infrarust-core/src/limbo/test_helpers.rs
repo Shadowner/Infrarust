@@ -271,7 +271,10 @@ impl LimboHandler for TokenCaptureHandler {
         self.name
     }
 
-    fn on_player_enter<'a>(&'a self, session: &'a dyn LimboSession) -> BoxFuture<'a, HandlerResult> {
+    fn on_player_enter<'a>(
+        &'a self,
+        session: &'a dyn LimboSession,
+    ) -> BoxFuture<'a, HandlerResult> {
         *self.captured.lock().unwrap() = Some(session.cancellation_token());
         let result = self.result.clone();
         Box::pin(async move { result })

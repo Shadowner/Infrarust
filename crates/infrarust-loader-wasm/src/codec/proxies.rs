@@ -116,11 +116,11 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
         }
         self.store.set_epoch_deadline(CODEC_EPOCH_DEADLINE_TICKS);
         let wit_state = convert::connection_state_to_wit(new_state);
-        if let Err(trap) =
-            self.guest
-                .filter_instance()
-                .call_on_state_change(&mut self.store, self.handle, wit_state)
-        {
+        if let Err(trap) = self.guest.filter_instance().call_on_state_change(
+            &mut self.store,
+            self.handle,
+            wit_state,
+        ) {
             self.poison("on-state-change", &trap);
         }
     }

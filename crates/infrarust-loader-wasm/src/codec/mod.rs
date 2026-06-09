@@ -35,8 +35,8 @@ impl CodecInstantiator {
         let pre = linker
             .instantiate_pre(component)
             .map_err(|e| instantiate_err(&plugin_id, "instantiate_pre", &e))?;
-        let indices =
-            GuestIndices::new(&pre).map_err(|e| instantiate_err(&plugin_id, "guest-indices", &e))?;
+        let indices = GuestIndices::new(&pre)
+            .map_err(|e| instantiate_err(&plugin_id, "guest-indices", &e))?;
         Ok(Self {
             engine,
             pre,
@@ -56,7 +56,9 @@ impl CodecInstantiator {
     ) -> Result<WasmCodecFilterInstance, WasmLoaderError> {
         let mut store = Store::new(&self.engine, CodecStoreState::new());
         store.set_epoch_deadline(CODEC_EPOCH_DEADLINE_TICKS);
-        store.limiter(|s: &mut CodecStoreState| s.limits_mut() as &mut dyn wasmtime::ResourceLimiter);
+        store.limiter(|s: &mut CodecStoreState| {
+            s.limits_mut() as &mut dyn wasmtime::ResourceLimiter
+        });
         let instance = self
             .pre
             .instantiate(&mut store)

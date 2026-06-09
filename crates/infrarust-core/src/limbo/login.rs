@@ -114,23 +114,26 @@ async fn absorb_until(
     target_id: Option<i32>,
     timeout_message: &'static str,
 ) -> Result<(), CoreError> {
-    tokio::time::timeout(Duration::from_secs(LIMBO_CONFIG_PHASE_TIMEOUT_SECS), async {
-        loop {
-            let frame = client
-                .read_frame()
-                .await?
-                .ok_or(CoreError::ConnectionClosed)?;
+    tokio::time::timeout(
+        Duration::from_secs(LIMBO_CONFIG_PHASE_TIMEOUT_SECS),
+        async {
+            loop {
+                let frame = client
+                    .read_frame()
+                    .await?
+                    .ok_or(CoreError::ConnectionClosed)?;
 
-            if Some(frame.id) == target_id {
-                break;
+                if Some(frame.id) == target_id {
+                    break;
+                }
+                tracing::trace!(
+                    id = frame.id,
+                    "absorbing client config packet during limbo login"
+                );
             }
-            tracing::trace!(
-                id = frame.id,
-                "absorbing client config packet during limbo login"
-            );
-        }
-        Ok::<(), CoreError>(())
-    })
+            Ok::<(), CoreError>(())
+        },
+    )
     .await
     .map_err(|_| CoreError::Timeout(timeout_message.into()))?
 }

@@ -22,7 +22,7 @@ use infrarust_protocol::{PacketDecoder, PacketEncoder};
 
 #[path = "shared/filters.rs"]
 mod filters;
-use filters::{SIZES, payload_vec, pass_chain, realistic_chain, scan_chain};
+use filters::{SIZES, pass_chain, payload_vec, realistic_chain, scan_chain};
 
 fn main() {
     divan::main();
