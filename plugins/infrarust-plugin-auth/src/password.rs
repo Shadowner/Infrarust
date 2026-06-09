@@ -33,8 +33,8 @@ pub async fn hash_password(
         OsRng
             .try_fill_bytes(&mut salt_bytes)
             .map_err(|e| AuthError::Hashing(format!("salt generation failed: {e}")))?;
-        let salt = SaltString::encode_b64(&salt_bytes)
-            .map_err(|e| AuthError::Hashing(e.to_string()))?;
+        let salt =
+            SaltString::encode_b64(&salt_bytes).map_err(|e| AuthError::Hashing(e.to_string()))?;
         let params = argon2::Params::new(memory_cost, time_cost, parallelism, None)
             .map_err(|e| AuthError::Hashing(e.to_string()))?;
         let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
