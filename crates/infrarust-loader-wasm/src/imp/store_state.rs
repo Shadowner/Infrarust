@@ -50,6 +50,16 @@ impl PluginStoreState {
         self.ctx.as_ref()
     }
 
+    /// Canonical guard for host functions that need the native context: absent
+    /// ctx (probe store, off the load path) raises a guest trap.
+    pub(crate) fn require_ctx(&self) -> wasmtime::Result<Arc<dyn PluginContext>> {
+        self.ctx.clone().ok_or_else(|| {
+            wasmtime::Error::msg(
+                "plugin context unavailable (host function called off the load path)",
+            )
+        })
+    }
+
     pub(crate) fn capabilities(&self) -> &CapabilitySet {
         &self.capabilities
     }

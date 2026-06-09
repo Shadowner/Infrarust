@@ -206,7 +206,7 @@ fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<P
 
         if let Some(old_config) = known.get(path) {
             // File exists in both — check if changed
-            if !configs_equal(old_config, config) {
+            if old_config != config {
                 events.push(ProviderEvent::Updated(ProviderConfig {
                     id: ProviderId::file(filename),
                     config: config.clone(),
@@ -240,15 +240,6 @@ fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<P
     }
 
     events
-}
-
-/// Compares two configs by their serializable fields to detect changes.
-///
-/// Uses a simple domain+address comparison since `ServerConfig` doesn't
-/// derive `PartialEq`. A content hash would be more robust but this covers
-/// the common cases.
-fn configs_equal(a: &ServerConfig, b: &ServerConfig) -> bool {
-    a == b
 }
 
 /// Loads a single server config from a TOML file.

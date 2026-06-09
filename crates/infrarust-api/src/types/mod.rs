@@ -2,11 +2,10 @@
 //!
 //! This module contains the core data types used throughout the API:
 //! player identifiers, server identifiers, rich text components,
-//! protocol versions, raw packets, and permissions.
+//! protocol versions, and raw packets.
 
 mod component;
 mod extensions;
-mod permission;
 mod player_id;
 mod protocol_version;
 mod raw_packet;
@@ -16,11 +15,10 @@ pub use component::{
     ClickEvent, Component, ComponentParseError, HoverEvent, TitleData, format_placeholders,
 };
 pub use extensions::Extensions;
-pub use permission::Permission;
 pub use player_id::PlayerId;
 pub use protocol_version::ProtocolVersion;
 pub use raw_packet::RawPacket;
-pub use server_id::{ServerAddress, ServerId, ServerInfo};
+pub use server_id::{ServerAddress, ServerId};
 
 /// A player's Mojang game profile.
 ///

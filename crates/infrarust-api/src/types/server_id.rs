@@ -45,14 +45,6 @@ impl From<String> for ServerId {
     }
 }
 
-/// Information about a backend server.
-#[derive(Debug, Clone)]
-pub struct ServerInfo {
-    pub id: ServerId,
-    pub display_name: Option<String>,
-    pub addresses: Vec<ServerAddress>,
-}
-
 /// A network address for a backend server.
 #[derive(Debug, Clone)]
 pub struct ServerAddress {
@@ -101,20 +93,5 @@ mod tests {
         let mut set = HashSet::new();
         set.insert(a);
         assert!(set.contains(&b));
-    }
-
-    #[test]
-    fn server_info_construction() {
-        let info = ServerInfo {
-            id: ServerId::new("lobby"),
-            display_name: Some("Lobby".into()),
-            addresses: vec![ServerAddress {
-                host: "127.0.0.1".into(),
-                port: 25565,
-            }],
-        };
-        assert_eq!(info.id.as_str(), "lobby");
-        assert_eq!(info.addresses.len(), 1);
-        assert_eq!(info.addresses[0].port, 25565);
     }
 }

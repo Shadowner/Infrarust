@@ -19,9 +19,12 @@ pub enum TransportError {
     Accept(std::io::Error),
 
     /// Failed to connect to backend server.
+    ///
+    /// `addr` is the configured `host:port` (before DNS resolution) so
+    /// hostname backends stay diagnosable.
     #[error("failed to connect to backend {addr}: {source}")]
     BackendConnect {
-        addr: SocketAddr,
+        addr: String,
         source: std::io::Error,
     },
 
@@ -30,8 +33,10 @@ pub enum TransportError {
     AllBackendsFailed { server_id: String },
 
     /// Connection to backend timed out.
+    ///
+    /// `addr` is the configured `host:port` (before DNS resolution).
     #[error("connection to {addr} timed out after {timeout:?}")]
-    ConnectTimeout { addr: SocketAddr, timeout: Duration },
+    ConnectTimeout { addr: String, timeout: Duration },
 
     /// Invalid proxy protocol header.
     #[error("invalid proxy protocol: {0}")]

@@ -72,8 +72,8 @@ macro_rules! error {
 
 pub mod prelude {
     pub use crate::codec::{
-        CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionState,
-        FilterPriority, Injections, Packet, Verdict,
+        CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionSide,
+        ConnectionState, FilterPriority, Injections, Packet, Verdict,
     };
     pub use crate::component::Component;
     pub use crate::context::{CommandInvocation, Context, EventSubscription, TaskHandle};
@@ -82,7 +82,10 @@ pub mod prelude {
         EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason,
         SessionHandle, TimeoutOutcome,
     };
-    pub use crate::plugin::{Plugin, PluginMetadata};
-    pub use crate::services::{Bans, Config, Player, Players, Servers};
+    pub use crate::plugin::{Plugin, PluginDependency, PluginMetadata};
+    pub use crate::services::{
+        BanEntry, BanTarget, Bans, Config, PermissionLevel, Player, PlayerError, Players,
+        ServerConfig, ServerState, Servers, ServiceError,
+    };
     pub use crate::{debug, error, info, plugin, trace, warn};
 }

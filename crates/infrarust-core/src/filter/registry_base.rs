@@ -12,7 +12,7 @@ pub trait HasFilterMetadata {
 /// Generic registry that stores filters of type `F`, maintains a resolved
 /// execution order, and provides register/unregister operations.
 pub struct FilterRegistryBase<F: HasFilterMetadata> {
-    items: RwLock<Vec<F>>,
+    items: RwLock<Vec<(FilterMetadata, F)>>,
     ordered_ids: RwLock<Vec<String>>,
     label: &'static str,
 }
@@ -28,13 +28,13 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
 
     /// Registers a filter, replacing any existing filter with the same ID.
     pub fn register(&self, item: F) {
-        let id = item.metadata().id;
-        tracing::debug!(filter_id = %id, kind = self.label, "Registering filter");
+        let metadata = item.metadata();
+        tracing::debug!(filter_id = %metadata.id, kind = self.label, "Registering filter");
 
         {
             let mut items = self.items.write().expect("lock poisoned");
-            items.retain(|f| f.metadata().id != id);
-            items.push(item);
+            items.retain(|(m, _)| m.id != metadata.id);
+            items.push((metadata, item));
         }
 
         self.recalculate_order();
@@ -45,7 +45,7 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
 
         {
             let mut items = self.items.write().expect("lock poisoned");
-            items.retain(|f| f.metadata().id != filter_id);
+            items.retain(|(m, _)| m.id != filter_id);
         }
 
         self.recalculate_order();
@@ -55,9 +55,9 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
         self.items.read().expect("lock poisoned").is_empty()
     }
 
-    /// Provides read access to the items and ordered IDs for building
-    /// output structures (chains, instance lists, etc.).
-    pub fn with_ordered<R>(&self, f: impl FnOnce(&[F], &[String]) -> R) -> R {
+    /// Provides read access to the items (with their cached metadata) and
+    /// ordered IDs for building output structures (chains, instance lists, etc.).
+    pub fn with_ordered<R>(&self, f: impl FnOnce(&[(FilterMetadata, F)], &[String]) -> R) -> R {
         let items = self.items.read().expect("lock poisoned");
         let ordered = self.ordered_ids.read().expect("lock poisoned");
         f(&items, &ordered)
@@ -69,7 +69,7 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
     /// order so the proxy continues operating with a stale order.
     fn recalculate_order(&self) {
         let items = self.items.read().expect("lock poisoned");
-        let metadata: Vec<FilterMetadata> = items.iter().map(|f| f.metadata()).collect();
+        let metadata: Vec<FilterMetadata> = items.iter().map(|(m, _)| m.clone()).collect();
 
         match resolve_filter_order(&metadata) {
             Ok(order) => {

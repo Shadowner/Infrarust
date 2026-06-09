@@ -194,9 +194,7 @@ pub enum PlayerChooseInitialServerResult {
     Allowed,
     /// Redirect to a different server.
     Redirect(ServerId),
-    SendToLimbo {
-        limbo_handlers: Vec<String>,
-    },
+    SendToLimbo { limbo_handlers: Vec<String> },
 }
 
 impl PlayerChooseInitialServerEvent {
@@ -209,12 +207,14 @@ impl PlayerChooseInitialServerEvent {
         }
     }
 
-    pub fn result(&self) -> &PlayerChooseInitialServerResult {
-        &self.result
+    /// Shortcut: redirect the player to a different server.
+    pub fn redirect_to(&mut self, server: ServerId) {
+        self.result = PlayerChooseInitialServerResult::Redirect(server);
     }
 
-    pub fn set_result(&mut self, result: PlayerChooseInitialServerResult) {
-        self.result = result;
+    /// Shortcut: send the player to the limbo handler chain.
+    pub fn send_to_limbo(&mut self, limbo_handlers: Vec<String>) {
+        self.result = PlayerChooseInitialServerResult::SendToLimbo { limbo_handlers };
     }
 }
 
@@ -293,6 +293,47 @@ mod tests {
         assert!(matches!(
             event.result(),
             KickedFromServerResult::RedirectTo(_)
+        ));
+    }
+
+    fn choose_initial_event() -> PlayerChooseInitialServerEvent {
+        PlayerChooseInitialServerEvent::new(
+            PlayerId::new(1),
+            GameProfile {
+                uuid: uuid::Uuid::nil(),
+                username: "Steve".into(),
+                properties: vec![],
+            },
+            ServerId::new("lobby"),
+        )
+    }
+
+    #[test]
+    fn choose_initial_default_allowed() {
+        let event = choose_initial_event();
+        assert!(matches!(
+            event.result(),
+            PlayerChooseInitialServerResult::Allowed
+        ));
+    }
+
+    #[test]
+    fn choose_initial_redirect_shortcut() {
+        let mut event = choose_initial_event();
+        event.redirect_to(ServerId::new("survival"));
+        assert!(matches!(
+            event.result(),
+            PlayerChooseInitialServerResult::Redirect(s) if s.as_str() == "survival"
+        ));
+    }
+
+    #[test]
+    fn choose_initial_send_to_limbo_shortcut() {
+        let mut event = choose_initial_event();
+        event.send_to_limbo(vec!["queue".into()]);
+        assert!(matches!(
+            event.result(),
+            PlayerChooseInitialServerResult::SendToLimbo { limbo_handlers } if limbo_handlers == &["queue".to_string()]
         ));
     }
 

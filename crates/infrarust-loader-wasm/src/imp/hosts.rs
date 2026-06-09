@@ -1,5 +1,4 @@
 use std::future::Future;
-use std::sync::Arc;
 use std::time::Duration;
 
 use infrarust_api::error::ServiceError;
@@ -18,10 +17,6 @@ use crate::bindings::infrarust::plugin::{
 use crate::consts::HOST_CALL_TIMEOUT;
 use crate::store_state::PluginStoreState;
 use crate::{convert, dispatch, proxies};
-
-fn no_ctx() -> wasmtime::Error {
-    wasmtime::Error::msg("plugin context unavailable (host function called off the load path)")
-}
 
 async fn await_service<T>(
     fut: impl Future<Output = Result<T, ServiceError>> + Send,
@@ -65,10 +60,7 @@ impl event_bus::Host for PluginStoreState {
         priority: wt::EventPriority,
     ) -> wasmtime::Result<u64> {
         let instance = self.instance_ref();
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
-        let ctx = Arc::clone(ctx);
+        let ctx = self.require_ctx()?;
         let native_priority = dispatch::priority_from_wit(priority);
         let listener_id = self.mint_listener_id();
         let handle = dispatch::register_event_handler(
@@ -97,13 +89,8 @@ impl player_registry::Host for PluginStoreState {
         &mut self,
         username: String,
     ) -> wasmtime::Result<Option<Resource<PlayerHandle>>> {
-        let player = {
-            let Some(ctx) = self.ctx() else {
-                return Err(no_ctx());
-            };
-            ctx.player_registry().get_player(&username)
-        };
-        match player {
+        let ctx = self.require_ctx()?;
+        match ctx.player_registry().get_player(&username) {
             Some(p) => Ok(Some(self.push_player(p)?)),
             None => Ok(None),
         }
@@ -113,16 +100,10 @@ impl player_registry::Host for PluginStoreState {
         &mut self,
         player_uuid: String,
     ) -> wasmtime::Result<Option<Resource<PlayerHandle>>> {
-        let Ok(uuid) = uuid::Uuid::parse_str(&player_uuid) else {
-            return Ok(None);
-        };
-        let player = {
-            let Some(ctx) = self.ctx() else {
-                return Err(no_ctx());
-            };
-            ctx.player_registry().get_player_by_uuid(&uuid)
-        };
-        match player {
+        let uuid = uuid::Uuid::parse_str(&player_uuid)
+            .map_err(|e| wasmtime::Error::msg(format!("invalid uuid {player_uuid:?}: {e}")))?;
+        let ctx = self.require_ctx()?;
+        match ctx.player_registry().get_player_by_uuid(&uuid) {
             Some(p) => Ok(Some(self.push_player(p)?)),
             None => Ok(None),
         }
@@ -132,13 +113,8 @@ impl player_registry::Host for PluginStoreState {
         &mut self,
         id: u64,
     ) -> wasmtime::Result<Option<Resource<PlayerHandle>>> {
-        let player = {
-            let Some(ctx) = self.ctx() else {
-                return Err(no_ctx());
-            };
-            ctx.player_registry().get_player_by_id(PlayerId::new(id))
-        };
-        match player {
+        let ctx = self.require_ctx()?;
+        match ctx.player_registry().get_player_by_id(PlayerId::new(id)) {
             Some(p) => Ok(Some(self.push_player(p)?)),
             None => Ok(None),
         }
@@ -148,13 +124,10 @@ impl player_registry::Host for PluginStoreState {
         &mut self,
         server: String,
     ) -> wasmtime::Result<Vec<Resource<PlayerHandle>>> {
-        let players = {
-            let Some(ctx) = self.ctx() else {
-                return Err(no_ctx());
-            };
-            ctx.player_registry()
-                .get_players_on_server(&ServerId::from(server))
-        };
+        let ctx = self.require_ctx()?;
+        let players = ctx
+            .player_registry()
+            .get_players_on_server(&ServerId::from(server));
         let mut out = Vec::with_capacity(players.len());
         for p in players {
             out.push(self.push_player(p)?);
@@ -163,12 +136,8 @@ impl player_registry::Host for PluginStoreState {
     }
 
     async fn get_all_players(&mut self) -> wasmtime::Result<Vec<Resource<PlayerHandle>>> {
-        let players = {
-            let Some(ctx) = self.ctx() else {
-                return Err(no_ctx());
-            };
-            ctx.player_registry().get_all_players()
-        };
+        let ctx = self.require_ctx()?;
+        let players = ctx.player_registry().get_all_players();
         let mut out = Vec::with_capacity(players.len());
         for p in players {
             out.push(self.push_player(p)?);
@@ -177,16 +146,12 @@ impl player_registry::Host for PluginStoreState {
     }
 
     async fn online_count(&mut self) -> wasmtime::Result<u32> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         Ok(u32::try_from(ctx.player_registry().online_count()).unwrap_or(u32::MAX))
     }
 
     async fn online_count_on(&mut self, server: String) -> wasmtime::Result<u32> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         let n = ctx
             .player_registry()
             .online_count_on(&ServerId::from(server));
@@ -353,9 +318,7 @@ impl player_registry::HostPlayer for PluginStoreState {
 
 impl server_manager::Host for PluginStoreState {
     async fn get_state(&mut self, server: String) -> wasmtime::Result<Option<wt::ServerState>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         Ok(ctx
             .server_manager()
             .get_state(&ServerId::from(server))
@@ -363,25 +326,19 @@ impl server_manager::Host for PluginStoreState {
     }
 
     async fn start(&mut self, server: String) -> wasmtime::Result<Result<(), wt::ServiceError>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         let sid = ServerId::from(server);
         Ok(await_service(ctx.server_manager().start(&sid)).await)
     }
 
     async fn stop(&mut self, server: String) -> wasmtime::Result<Result<(), wt::ServiceError>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         let sid = ServerId::from(server);
         Ok(await_service(ctx.server_manager().stop(&sid)).await)
     }
 
     async fn get_all_servers(&mut self) -> wasmtime::Result<Vec<(String, wt::ServerState)>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         Ok(ctx
             .server_manager()
             .get_all_servers()
@@ -398,9 +355,7 @@ impl ban_service::Host for PluginStoreState {
         reason: Option<String>,
         duration_ms: Option<u64>,
     ) -> wasmtime::Result<Result<(), wt::ServiceError>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         let Some(native_target) = convert::ban_target_from_wit(&target) else {
             return Ok(Err(wt::ServiceError::OperationFailed(
                 "invalid ban target".to_string(),
@@ -414,9 +369,7 @@ impl ban_service::Host for PluginStoreState {
         &mut self,
         target: wt::BanTarget,
     ) -> wasmtime::Result<Result<bool, wt::ServiceError>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         let Some(t) = convert::ban_target_from_wit(&target) else {
             return Ok(Err(wt::ServiceError::OperationFailed(
                 "invalid ban target".to_string(),
@@ -429,9 +382,7 @@ impl ban_service::Host for PluginStoreState {
         &mut self,
         target: wt::BanTarget,
     ) -> wasmtime::Result<Result<bool, wt::ServiceError>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         let Some(t) = convert::ban_target_from_wit(&target) else {
             return Ok(Err(wt::ServiceError::OperationFailed(
                 "invalid ban target".to_string(),
@@ -444,9 +395,7 @@ impl ban_service::Host for PluginStoreState {
         &mut self,
         target: wt::BanTarget,
     ) -> wasmtime::Result<Result<Option<wt::BanEntry>, wt::ServiceError>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         let Some(t) = convert::ban_target_from_wit(&target) else {
             return Ok(Err(wt::ServiceError::OperationFailed(
                 "invalid ban target".to_string(),
@@ -460,9 +409,7 @@ impl ban_service::Host for PluginStoreState {
     async fn get_all_bans(
         &mut self,
     ) -> wasmtime::Result<Result<Vec<wt::BanEntry>, wt::ServiceError>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         Ok(await_service(ctx.ban_service().get_all_bans())
             .await
             .map(|bans| bans.iter().map(convert::ban_entry_to_wit).collect()))
@@ -474,9 +421,7 @@ impl config_service::Host for PluginStoreState {
         &mut self,
         server: String,
     ) -> wasmtime::Result<Option<wt::ServerConfig>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         Ok(ctx
             .config_service()
             .get_server_config(&ServerId::from(server))
@@ -485,9 +430,7 @@ impl config_service::Host for PluginStoreState {
     }
 
     async fn get_all_server_configs(&mut self) -> wasmtime::Result<Vec<wt::ServerConfig>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         Ok(ctx
             .config_service()
             .get_all_server_configs()
@@ -497,9 +440,7 @@ impl config_service::Host for PluginStoreState {
     }
 
     async fn get_value(&mut self, key: String) -> wasmtime::Result<Option<String>> {
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         Ok(ctx.config_service().get_value(&key))
     }
 }
@@ -513,9 +454,7 @@ impl command_manager::Host for PluginStoreState {
         callback_id: u64,
     ) -> wasmtime::Result<()> {
         let instance = self.instance_ref();
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         let handler = Box::new(proxies::WasmCommandHandler::new(callback_id, instance));
         let alias_refs: Vec<&str> = aliases.iter().map(String::as_str).collect();
         ctx.command_manager()
@@ -552,9 +491,7 @@ impl codec_registry::Host for PluginStoreState {
                 "codec instantiator unavailable (register-codec-filter called off the load path)",
             ));
         };
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         let Some(registry) = ctx.codec_filters() else {
             return Err(wasmtime::Error::msg(
                 "host context exposes no codec filter registry",
@@ -586,9 +523,7 @@ impl codec_registry::Host for PluginStoreState {
 impl scheduler::Host for PluginStoreState {
     async fn delay(&mut self, after_ms: u64, callback_id: u64) -> wasmtime::Result<u64> {
         let instance = self.instance_ref();
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         let handle = ctx.scheduler().delay(
             Duration::from_millis(after_ms),
             Box::new(move || {
@@ -600,9 +535,7 @@ impl scheduler::Host for PluginStoreState {
 
     async fn interval(&mut self, period_ms: u64, callback_id: u64) -> wasmtime::Result<u64> {
         let instance = self.instance_ref();
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         let handle = ctx.scheduler().interval(
             Duration::from_millis(period_ms),
             Box::new(move || {
@@ -627,9 +560,7 @@ impl limbo::Host for PluginStoreState {
             return Ok(());
         }
         let instance = self.instance_ref();
-        let Some(ctx) = self.ctx() else {
-            return Err(no_ctx());
-        };
+        let ctx = self.require_ctx()?;
         ctx.register_limbo_handler(Box::new(crate::limbo::WasmLimboHandler::new(
             handler, name, instance,
         )));
@@ -782,5 +713,21 @@ impl limbo::HostLimboSessionHandle for PluginStoreState {
     async fn drop(&mut self, rep: Resource<limbo::LimboSessionHandle>) -> wasmtime::Result<()> {
         let _ = self.drop_limbo_session_handle(rep);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::bindings::infrarust::plugin::player_registry::Host as _;
+    use crate::store_state::build_probe_state;
+
+    #[tokio::test]
+    async fn get_player_by_uuid_traps_on_malformed_uuid() {
+        let mut state = build_probe_state("test".to_string());
+        let err = state
+            .get_player_by_uuid("not-a-uuid".to_string())
+            .await
+            .expect_err("malformed uuid must trap, not read as player-not-found");
+        assert!(err.to_string().contains("invalid uuid"), "{err}");
     }
 }

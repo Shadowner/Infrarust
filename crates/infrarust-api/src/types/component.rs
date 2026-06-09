@@ -12,6 +12,9 @@ pub const MAX_COMPONENT_DEPTH: usize = 64;
 /// A Minecraft rich text component.
 ///
 /// Supports builder-style construction for readable message creation.
+/// Construct via [`Component::text`] (or [`Component::default`]) and the
+/// builder methods; the struct is `#[non_exhaustive]` so future protocol
+/// fields can be added without a breaking change.
 ///
 /// # Example
 /// ```
@@ -26,6 +29,7 @@ pub const MAX_COMPONENT_DEPTH: usize = 64;
 /// assert_eq!(msg.extra.len(), 1);
 /// ```
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct Component {
     /// The literal text content.
     pub text: String,

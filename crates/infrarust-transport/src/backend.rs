@@ -126,17 +126,13 @@ impl BackendConnector {
 
         let mut stream = tokio::time::timeout(timeout, TcpStream::connect(&connect_addr))
             .await
-            .map_err(|_| {
-                let addr: SocketAddr = connect_addr
-                    .parse()
-                    .unwrap_or_else(|_| SocketAddr::new([0, 0, 0, 0].into(), address.port));
-                TransportError::ConnectTimeout { addr, timeout }
+            .map_err(|_| TransportError::ConnectTimeout {
+                addr: connect_addr.clone(),
+                timeout,
             })?
-            .map_err(|source| {
-                let addr: SocketAddr = connect_addr
-                    .parse()
-                    .unwrap_or_else(|_| SocketAddr::new([0, 0, 0, 0].into(), address.port));
-                TransportError::BackendConnect { addr, source }
+            .map_err(|source| TransportError::BackendConnect {
+                addr: connect_addr,
+                source,
             })?;
 
         let remote_addr = stream.peer_addr().map_err(TransportError::SocketConfig)?;

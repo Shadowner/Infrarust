@@ -34,6 +34,8 @@ thread_local! {
     static CODEC_DECLARED: Cell<bool> = const { Cell::new(false) };
     static LIMBO_HANDLERS: RefCell<HashMap<u64, Box<dyn LimboHandler>>> = RefCell::new(HashMap::new());
     static LIMBO_DECLARED: Cell<bool> = const { Cell::new(false) };
+    static EVENT_DISPATCHING: Cell<Option<u64>> = const { Cell::new(None) };
+    static EVENT_DISPATCH_CANCELLED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn next_id() -> u64 {
@@ -65,8 +67,17 @@ pub fn register_event<E: GuestEvent>(
 
 /// Drop a single event handler by its `listener_id` (see [`register_event`]).
 pub fn unsubscribe_event(handle: u64) {
-    EVENT_HANDLERS.with(|hs| hs.borrow_mut().remove(&handle));
+    remove_event_handler(handle);
     crate::bindings::event_bus::unsubscribe(handle);
+}
+
+/// Tombstones the handle when it is the one currently dispatching (its closure
+/// is out of the map), so [`handle_event`] drops it instead of reinserting it.
+fn remove_event_handler(handle: u64) {
+    if EVENT_DISPATCHING.with(Cell::get) == Some(handle) {
+        EVENT_DISPATCH_CANCELLED.with(|c| c.set(true));
+    }
+    EVENT_HANDLERS.with(|hs| hs.borrow_mut().remove(&handle));
 }
 
 pub fn register_command(
@@ -96,14 +107,22 @@ pub fn schedule_interval(period_ms: u64, task: TaskClosure) -> u64 {
     crate::bindings::scheduler::interval(period_ms, id)
 }
 
+/// Remove-call-reinsert so the handler can (un)subscribe without a `RefCell`
+/// re-borrow panic; a self-unsubscribe during the call is detected via the
+/// tombstone in [`remove_event_handler`] and drops the closure for good.
 pub fn handle_event(listener: u64, ev: Event) -> EventOutcome {
     let closure = EVENT_HANDLERS.with(|hs| hs.borrow_mut().remove(&listener));
     match closure {
         Some(mut closure) => {
+            EVENT_DISPATCHING.with(|d| d.set(Some(listener)));
+            EVENT_DISPATCH_CANCELLED.with(|c| c.set(false));
             let outcome = closure(ev);
-            EVENT_HANDLERS.with(|hs| {
-                hs.borrow_mut().entry(listener).or_insert(closure);
-            });
+            EVENT_DISPATCHING.with(|d| d.set(None));
+            if !EVENT_DISPATCH_CANCELLED.with(Cell::take) {
+                EVENT_HANDLERS.with(|hs| {
+                    hs.borrow_mut().entry(listener).or_insert(closure);
+                });
+            }
             outcome
         }
         None => EventOutcome::None,
@@ -192,6 +211,8 @@ fn insert_limbo_handler(handler: Box<dyn LimboHandler>) -> u64 {
     id
 }
 
+/// Remove-call-reinsert (like [`handle_event`]) so the handler can re-register
+/// from within its own callback without a `RefCell` re-borrow panic.
 fn with_limbo_handler<R>(
     handler: u64,
     missing: impl FnOnce() -> R,
@@ -357,6 +378,8 @@ mod tests {
         }
     }
 
+    /// Re-registering a limbo handler from within a dispatched callback must not
+    /// re-borrow the handler map (previously a `BorrowMutError` panic → trap).
     #[test]
     fn limbo_callback_can_reregister_a_handler() {
         let calls = Rc::new(Cell::new(0));
@@ -377,5 +400,59 @@ mod tests {
 
         limbo_on_disconnect(id, 1);
         assert_eq!(calls.get(), 2, "handler still dispatchable after reinsert");
+    }
+
+    struct DropFlag(Rc<Cell<bool>>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    /// A handler unsubscribing itself mid-dispatch must not be reinserted
+    /// (previously the closure leaked in the registry forever).
+    #[test]
+    fn self_unsubscribe_during_dispatch_drops_the_closure() {
+        let dropped = Rc::new(Cell::new(false));
+        let flag = DropFlag(Rc::clone(&dropped));
+        let id = 9001;
+        EVENT_HANDLERS.with(|hs| {
+            hs.borrow_mut().insert(
+                id,
+                Box::new(move |_| {
+                    let _ = &flag;
+                    remove_event_handler(id);
+                    EventOutcome::None
+                }),
+            );
+        });
+
+        let outcome = handle_event(id, Event::ProxyShutdown);
+        assert!(matches!(outcome, EventOutcome::None));
+        assert!(dropped.get(), "closure dropped, not reinserted");
+        EVENT_HANDLERS.with(|hs| assert!(!hs.borrow().contains_key(&id)));
+    }
+
+    #[test]
+    fn unsubscribing_another_handler_mid_dispatch_keeps_the_running_one() {
+        let (a, b) = (9101, 9102);
+        EVENT_HANDLERS.with(|hs| {
+            let mut hs = hs.borrow_mut();
+            hs.insert(
+                a,
+                Box::new(move |_| {
+                    remove_event_handler(b);
+                    EventOutcome::None
+                }),
+            );
+            hs.insert(b, Box::new(|_| EventOutcome::None));
+        });
+
+        handle_event(a, Event::ProxyShutdown);
+        EVENT_HANDLERS.with(|hs| {
+            let map = hs.borrow();
+            assert!(map.contains_key(&a), "running handler reinserted");
+            assert!(!map.contains_key(&b), "other handler removed");
+        });
     }
 }

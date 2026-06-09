@@ -62,8 +62,11 @@ impl ConfigService for ConfigServiceImpl {
             .collect()
     }
 
+    /// Not implemented: this impl only holds routing tables, and the trait
+    /// is part of the frozen plugin surface, so it always returns `None` —
+    /// callers cannot distinguish "unimplemented" from "key absent".
     fn get_value(&self, _key: &str) -> Option<String> {
-        None // Phase future
+        None
     }
 }
 

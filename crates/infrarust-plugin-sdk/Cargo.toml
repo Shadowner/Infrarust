@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license-file.workspace = true
 repository.workspace = true
-description = "Guest SDK for authoring Infrarust WASM plugins (infrarust:plugin@0.1.0)"
+description = "Guest SDK for authoring Infrarust WASM plugins (infrarust:plugin@0.2.3)"
 keywords = ["minecraft", "proxy", "plugin", "wasm", "wit"]
 categories = ["game-development", "wasm"]
 

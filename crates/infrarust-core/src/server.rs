@@ -412,10 +412,6 @@ impl ProxyServer {
                 }
             }
 
-            // TODO: on_client_data/on_server_data wrapping
-            // These require wrapping the TCP stream to intercept raw bytes.
-            // Will be implemented when a real use case demands it.
-
             let server = Arc::clone(&self);
             tokio::spawn(async move {
                 if let Err(e) = server.handle_connection(accepted, shutdown).await {
