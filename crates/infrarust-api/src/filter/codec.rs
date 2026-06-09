@@ -32,13 +32,7 @@ pub trait CodecFilterInstance: Send {
     /// Filters a single packet.
     ///
     /// May modify the packet in place, inject additional packets via
-    /// `output`, or return a verdict to drop/replace the packet.
-    fn filter(
-        &mut self,
-        ctx: &CodecContext,
-        packet: &mut RawPacket,
-        output: &mut FrameOutput,
-    ) -> CodecVerdict;
+    fn filter(&mut self, packet: &mut RawPacket, output: &mut FrameOutput) -> CodecVerdict;
 
     /// Called when the protocol state changes (e.g. Login -> Config -> Play).
     fn on_state_change(&mut self, _new_state: ConnectionState) {}
@@ -66,34 +60,6 @@ pub struct CodecSessionInit {
     pub real_ip: Option<IpAddr>,
     /// Which side of the connection this instance filters.
     pub side: ConnectionSide,
-}
-
-/// Context passed to each filter invocation.
-#[derive(Debug, Clone)]
-pub struct CodecContext {
-    /// The client's protocol version.
-    pub client_version: ProtocolVersion,
-    /// The backend server's protocol version (if known).
-    pub server_version: Option<ProtocolVersion>,
-    /// Current protocol state.
-    pub state: ConnectionState,
-    /// Unique connection identifier.
-    pub connection_id: u64,
-    /// Which side of the connection this filter is on.
-    pub side: ConnectionSide,
-    /// Player info (available after login).
-    pub player_info: Option<PlayerInfo>,
-    /// `true` if the proxy consumes this packet (KeepAlive, SetCompression, etc.).
-    pub is_proxy_consumed: bool,
-}
-
-/// Information about the connected player.
-#[derive(Debug, Clone)]
-pub struct PlayerInfo {
-    /// The player's username.
-    pub username: String,
-    /// The player's UUID (if authenticated).
-    pub uuid: Option<uuid::Uuid>,
 }
 
 /// Which side of the proxy connection a filter instance handles.

@@ -22,6 +22,7 @@ use crate::store_state::{PluginStoreState, build_load_state, install_epoch_contr
 pub struct WasmPluginLoader {
     engine: Engine,
     discovered: RwLock<HashMap<String, DiscoveredWasm>>,
+    // RAII guard: never read, but its `Drop` stops the epoch-ticker thread.
     #[allow(dead_code)]
     ticker: EpochTicker,
 }

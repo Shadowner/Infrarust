@@ -210,28 +210,22 @@ pub(crate) fn build_filter_output(
     packet: Packet,
     injections: Injections,
 ) -> crate::bindings::codec_filter::FilterOutput {
-    use crate::bindings::codec_filter::{CodecVerdict, FilterOutput};
-    let before = injections.before.into_iter().map(Packet::into_wit).collect();
-    let after = injections.after.into_iter().map(Packet::into_wit).collect();
+    use crate::bindings::codec_filter::{FilterExtras, FilterOutput};
+    let before: Vec<_> = injections.before.into_iter().map(Packet::into_wit).collect();
+    let after: Vec<_> = injections.after.into_iter().map(Packet::into_wit).collect();
     match verdict {
-        Verdict::Pass => FilterOutput {
-            verdict: CodecVerdict::Pass,
+        Verdict::Pass if !packet.dirty && before.is_empty() && after.is_empty() => FilterOutput::Pass,
+        Verdict::Pass => FilterOutput::PassModified(FilterExtras {
             packet: packet.dirty.then(|| packet.into_wit()),
             inject_before: before,
             inject_after: after,
-        },
-        Verdict::Drop => FilterOutput {
-            verdict: CodecVerdict::Drop,
-            packet: None,
-            inject_before: Vec::new(),
-            inject_after: Vec::new(),
-        },
-        Verdict::Replace => FilterOutput {
-            verdict: CodecVerdict::Replace,
+        }),
+        Verdict::Drop => FilterOutput::Drop,
+        Verdict::Replace => FilterOutput::Replace(FilterExtras {
             packet: None,
             inject_before: before,
             inject_after: after,
-        },
+        }),
     }
 }
 

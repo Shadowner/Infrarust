@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use infrarust_api::event::ConnectionState;
 use infrarust_api::filter::{
-    CodecContext, CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict,
-    FilterMetadata, FrameOutput,
+    CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict, FilterMetadata,
+    FrameOutput,
 };
 use infrarust_api::types::RawPacket;
 use wasmtime::Store;
@@ -91,12 +91,7 @@ impl WasmCodecFilterInstance {
 }
 
 impl CodecFilterInstance for WasmCodecFilterInstance {
-    fn filter(
-        &mut self,
-        _ctx: &CodecContext, // TODO remove
-        packet: &mut RawPacket,
-        output: &mut FrameOutput,
-    ) -> CodecVerdict {
+    fn filter(&mut self, packet: &mut RawPacket, output: &mut FrameOutput) -> CodecVerdict {
         if self.poisoned {
             return CodecVerdict::Pass;
         }
@@ -177,12 +172,7 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
 struct PassthroughInstance;
 
 impl CodecFilterInstance for PassthroughInstance {
-    fn filter(
-        &mut self,
-        _ctx: &CodecContext,
-        _packet: &mut RawPacket,
-        _output: &mut FrameOutput,
-    ) -> CodecVerdict {
+    fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
         CodecVerdict::Pass
     }
 }

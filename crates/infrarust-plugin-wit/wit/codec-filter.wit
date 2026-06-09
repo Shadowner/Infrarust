@@ -23,20 +23,21 @@ interface codec-filter {                                                      //
         internal(string),
     }
 
-    // Mirrors native CodecVerdict exactly (replace is unit — the replacement
-    // frames come from inject-*). The possibly-modified packet and the injections
-    // are returned because the boundary has no &mut; packet none == unchanged.
-    variant codec-verdict {
-        pass,
-        drop,
-        replace,
-        error(codec-filter-error),
-    }
-    record filter-output {
-        verdict: codec-verdict,
+    // Extra payload for the uncommon outcomes (a modified/replacement packet
+    // and/or injected frames). The boundary has no &mut, so a changed packet is
+    // returned here; `packet none` = unchanged.
+    record filter-extras {
         packet: option<raw-packet>,
         inject-before: list<raw-packet>,
         inject-after: list<raw-packet>,
+    }
+
+    variant filter-output {
+        pass,
+        drop,
+        pass-modified(filter-extras),
+        replace(filter-extras),
+        error(codec-filter-error),
     }
 
     resource filter-instance {

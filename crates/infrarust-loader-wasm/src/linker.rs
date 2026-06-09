@@ -83,16 +83,5 @@ pub(crate) fn build_probe_linker(
     engine: &Engine,
     plugin_id: &str,
 ) -> Result<Linker<PluginStoreState>, WasmLoaderError> {
-    let mut linker = new_linker_with_wasi(engine, plugin_id)?;
-    link!(linker, plugin_id, log);
-    link!(linker, plugin_id, limbo);
-    link!(linker, plugin_id, event_bus);
-    link!(linker, plugin_id, player_registry);
-    link!(linker, plugin_id, command_manager);
-    link!(linker, plugin_id, scheduler);
-    link!(linker, plugin_id, config_service);
-    link!(linker, plugin_id, server_manager);
-    link!(linker, plugin_id, ban_service);
-    link!(linker, plugin_id, codec_registry);
-    Ok(linker)
+    build_linker(engine, plugin_id, &CapabilitySet::native_trusted())
 }

@@ -103,12 +103,7 @@ macro_rules! raw_fixture {
                 _packet_id: i32,
                 _data: ::std::vec::Vec<u8>,
             ) -> crate::exports::infrarust::plugin::codec_filter::FilterOutput {
-                crate::exports::infrarust::plugin::codec_filter::FilterOutput {
-                    verdict: crate::exports::infrarust::plugin::codec_filter::CodecVerdict::Pass,
-                    packet: ::core::option::Option::None,
-                    inject_before: ::std::vec::Vec::new(),
-                    inject_after: ::std::vec::Vec::new(),
-                }
+                crate::exports::infrarust::plugin::codec_filter::FilterOutput::Pass
             }
             fn on_state_change(
                 &self,

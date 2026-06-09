@@ -49,9 +49,9 @@ pub use crate::message::ProxyMessage;
 
 // Filters
 pub use crate::filter::{
-    CodecContext, CodecFilterError, CodecFilterFactory, CodecFilterInstance, CodecFilterRegistry,
+    CodecFilterError, CodecFilterFactory, CodecFilterInstance, CodecFilterRegistry,
     CodecSessionInit, CodecVerdict, ConnectionSide, FilterMetadata, FilterPriority, FilterVerdict,
-    FrameOutput, PlayerInfo, TransportContext, TransportFilter, TransportFilterRegistry,
+    FrameOutput, TransportContext, TransportFilter, TransportFilterRegistry,
 };
 
 pub use crate::provider::{PluginConfigProvider, PluginProviderEvent, PluginProviderSender};

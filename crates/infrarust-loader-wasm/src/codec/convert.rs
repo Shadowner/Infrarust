@@ -43,21 +43,30 @@ pub(crate) fn apply_filter_output(
     packet: &mut RawPacket,
     output: &mut FrameOutput,
 ) -> CodecVerdict {
-    match out.verdict {
-        wit_codec::CodecVerdict::Pass => {
-            if let Some(p) = out.packet {
-                *packet = raw_packet_from_wit(p);
-            }
-            push_injections(out.inject_before, out.inject_after, output);
+    match out {
+        wit_codec::FilterOutput::Pass => CodecVerdict::Pass,
+        wit_codec::FilterOutput::Drop => CodecVerdict::Drop,
+        wit_codec::FilterOutput::PassModified(extras) => {
+            apply_extras(extras, packet, output);
             CodecVerdict::Pass
         }
-        wit_codec::CodecVerdict::Drop => CodecVerdict::Drop,
-        wit_codec::CodecVerdict::Replace => {
-            push_injections(out.inject_before, out.inject_after, output);
+        wit_codec::FilterOutput::Replace(extras) => {
+            apply_extras(extras, packet, output);
             CodecVerdict::Replace
         }
-        wit_codec::CodecVerdict::Error(e) => CodecVerdict::Error(codec_error_from_wit(e)),
+        wit_codec::FilterOutput::Error(e) => CodecVerdict::Error(codec_error_from_wit(e)),
     }
+}
+
+fn apply_extras(
+    extras: wit_codec::FilterExtras,
+    packet: &mut RawPacket,
+    output: &mut FrameOutput,
+) {
+    if let Some(p) = extras.packet {
+        *packet = raw_packet_from_wit(p);
+    }
+    push_injections(extras.inject_before, extras.inject_after, output);
 }
 
 fn push_injections(

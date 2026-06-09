@@ -16,8 +16,8 @@ pub mod registry;
 pub mod transport;
 
 pub use codec::{
-    CodecContext, CodecFilterError, CodecFilterFactory, CodecFilterInstance, CodecSessionInit,
-    CodecVerdict, ConnectionSide, FrameOutput, PlayerInfo,
+    CodecFilterError, CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict,
+    ConnectionSide, FrameOutput,
 };
 pub use metadata::{FilterMetadata, FilterPriority};
 pub use registry::{CodecFilterRegistry, TransportFilterRegistry};

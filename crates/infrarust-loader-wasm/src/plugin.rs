@@ -76,6 +76,7 @@ impl Plugin for WasmPlugin {
                     };
                     tracing::error!(plugin = %self.plugin_id, error = %err,
                         "wasm guest trapped during on_enable");
+                    store.data_mut().set_poisoned();
                     Err(err.into_plugin_error())
                 }
             }

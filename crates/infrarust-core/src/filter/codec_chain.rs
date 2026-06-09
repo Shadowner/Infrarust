@@ -4,7 +4,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use infrarust_api::event::ConnectionState;
 use infrarust_api::filter::{
-    CodecContext, CodecFilterInstance, CodecSessionInit, CodecVerdict, ConnectionSide, FrameOutput,
+    CodecFilterInstance, CodecSessionInit, CodecVerdict, ConnectionSide, FrameOutput,
 };
 use infrarust_api::types::{ProtocolVersion, RawPacket};
 
@@ -25,7 +25,6 @@ pub enum FilterResult {
 /// A chain of [`CodecFilterInstance`]s for one side of one connection.
 pub struct CodecFilterChain {
     instances: Vec<Box<dyn CodecFilterInstance>>,
-    context: CodecContext,
 }
 
 impl CodecFilterChain {
@@ -41,7 +40,7 @@ impl CodecFilterChain {
         let mut output = FrameOutput::new();
 
         for instance in &mut self.instances {
-            match instance.filter(&self.context, packet, &mut output) {
+            match instance.filter(packet, &mut output) {
                 CodecVerdict::Pass => continue,
                 CodecVerdict::Drop => return FilterResult::Dropped,
                 CodecVerdict::Replace => return FilterResult::Replaced(output),
@@ -61,7 +60,6 @@ impl CodecFilterChain {
 
     /// Notifies all filter instances of a protocol state change.
     pub fn notify_state_change(&mut self, new_state: ConnectionState) {
-        self.context.state = new_state;
         for instance in &mut self.instances {
             instance.on_state_change(new_state);
         }
@@ -115,28 +113,12 @@ pub fn build_codec_chains(
     let client_instances = registry.create_instances(&client_init);
     let server_instances = registry.create_instances(&server_init);
 
-    let client_ctx = CodecContext {
-        client_version,
-        server_version: None,
-        state: ConnectionState::Handshake,
-        connection_id,
-        side: ConnectionSide::ClientSide,
-        player_info: None,
-        is_proxy_consumed: false,
-    };
-    let server_ctx = CodecContext {
-        side: ConnectionSide::ServerSide,
-        ..client_ctx.clone()
-    };
-
     (
         CodecFilterChain {
             instances: client_instances,
-            context: client_ctx,
         },
         CodecFilterChain {
             instances: server_instances,
-            context: server_ctx,
         },
     )
 }
@@ -166,12 +148,7 @@ mod tests {
     }
 
     impl CodecFilterInstance for MockInstance {
-        fn filter(
-            &mut self,
-            _ctx: &CodecContext,
-            packet: &mut RawPacket,
-            output: &mut FrameOutput,
-        ) -> CodecVerdict {
+        fn filter(&mut self, packet: &mut RawPacket, output: &mut FrameOutput) -> CodecVerdict {
             self.call_count.fetch_add(1, Ordering::Relaxed);
             (self.verdict_fn)(packet, output)
         }
@@ -205,34 +182,12 @@ mod tests {
         }
     }
 
-    fn empty_chain(side: ConnectionSide) -> CodecFilterChain {
-        CodecFilterChain {
-            instances: vec![],
-            context: CodecContext {
-                client_version: ProtocolVersion::new(767),
-                server_version: None,
-                state: ConnectionState::Play,
-                connection_id: 1,
-                side,
-                player_info: None,
-                is_proxy_consumed: false,
-            },
-        }
+    fn empty_chain(_side: ConnectionSide) -> CodecFilterChain {
+        CodecFilterChain { instances: vec![] }
     }
 
     fn chain_with_instances(instances: Vec<Box<dyn CodecFilterInstance>>) -> CodecFilterChain {
-        CodecFilterChain {
-            instances,
-            context: CodecContext {
-                client_version: ProtocolVersion::new(767),
-                server_version: None,
-                state: ConnectionState::Play,
-                connection_id: 1,
-                side: ConnectionSide::ClientSide,
-                player_info: None,
-                is_proxy_consumed: false,
-            },
-        }
+        CodecFilterChain { instances }
     }
 
     struct CloseTrackingInstance {
@@ -241,12 +196,7 @@ mod tests {
     }
 
     impl CodecFilterInstance for CloseTrackingInstance {
-        fn filter(
-            &mut self,
-            _ctx: &CodecContext,
-            _packet: &mut RawPacket,
-            _output: &mut FrameOutput,
-        ) -> CodecVerdict {
+        fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
             self.filter_count.fetch_add(1, Ordering::Relaxed);
             CodecVerdict::Pass
         }
@@ -453,12 +403,7 @@ mod tests {
             notified: Arc<AtomicBool>,
         }
         impl CodecFilterInstance for StateTracker {
-            fn filter(
-                &mut self,
-                _ctx: &CodecContext,
-                _packet: &mut RawPacket,
-                _output: &mut FrameOutput,
-            ) -> CodecVerdict {
+            fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
                 CodecVerdict::Pass
             }
             fn on_state_change(&mut self, _new_state: ConnectionState) {

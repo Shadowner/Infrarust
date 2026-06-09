@@ -54,8 +54,9 @@ impl CodecInstantiator {
         factory_id: u64,
         init: &CodecSessionInit,
     ) -> Result<WasmCodecFilterInstance, WasmLoaderError> {
-        let mut store = Store::new(&self.engine, CodecStoreState);
+        let mut store = Store::new(&self.engine, CodecStoreState::new());
         store.set_epoch_deadline(CODEC_EPOCH_DEADLINE_TICKS);
+        store.limiter(|s: &mut CodecStoreState| s.limits_mut() as &mut dyn wasmtime::ResourceLimiter);
         let instance = self
             .pre
             .instantiate(&mut store)

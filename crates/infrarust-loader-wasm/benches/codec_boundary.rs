@@ -25,8 +25,8 @@ mod bench {
 
     use bytes::Bytes;
     use infrarust_api::filter::{
-        CodecContext, CodecFilterFactory, CodecFilterInstance, CodecFilterRegistry,
-        CodecSessionInit, CodecVerdict, FilterMetadata, FrameOutput,
+        CodecFilterFactory, CodecFilterInstance, CodecFilterRegistry, CodecSessionInit,
+        CodecVerdict, FilterMetadata, FrameOutput,
     };
     use infrarust_api::loader::{PluginContextFactory, PluginLoader};
     use infrarust_api::types::{ProtocolVersion, RawPacket};
@@ -62,12 +62,7 @@ mod bench {
     }
     struct NativePassthrough;
     impl CodecFilterInstance for NativePassthrough {
-        fn filter(
-            &mut self,
-            _ctx: &CodecContext,
-            _packet: &mut RawPacket,
-            _output: &mut FrameOutput,
-        ) -> CodecVerdict {
+        fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
             CodecVerdict::Pass
         }
     }

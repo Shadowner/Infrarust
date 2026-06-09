@@ -111,12 +111,7 @@ mod tests {
     }
 
     impl CodecFilterInstance for MockInstance {
-        fn filter(
-            &mut self,
-            _ctx: &CodecContext,
-            _packet: &mut RawPacket,
-            _output: &mut FrameOutput,
-        ) -> CodecVerdict {
+        fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
             CodecVerdict::Pass
         }
     }
