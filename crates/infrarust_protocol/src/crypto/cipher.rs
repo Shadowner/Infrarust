@@ -7,7 +7,7 @@
 use aes::Aes128;
 use cfb8::Decryptor as Cfb8Decryptor;
 use cfb8::Encryptor as Cfb8Encryptor;
-use cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use cipher::{Array, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 
 /// Encrypts a byte stream using AES-128-CFB8.
 ///
@@ -46,10 +46,10 @@ impl EncryptCipher {
     ///
     /// The cipher state advances by `data.len()` bytes.
     pub fn encrypt(&mut self, data: &mut [u8]) {
-        // CFB8 has BlockSize=U1, so we process byte-by-byte via BlockEncryptMut
+        // CFB8 has BlockSize=U1, so we process byte-by-byte via BlockModeEncrypt
         for byte in data.iter_mut() {
-            let mut block = cipher::generic_array::GenericArray::from([*byte]);
-            self.inner.encrypt_block_mut(&mut block);
+            let mut block = Array::from([*byte]);
+            self.inner.encrypt_block(&mut block);
             *byte = block[0];
         }
     }
@@ -75,8 +75,8 @@ impl DecryptCipher {
     /// The cipher state advances by `data.len()` bytes.
     pub fn decrypt(&mut self, data: &mut [u8]) {
         for byte in data.iter_mut() {
-            let mut block = cipher::generic_array::GenericArray::from([*byte]);
-            self.inner.decrypt_block_mut(&mut block);
+            let mut block = Array::from([*byte]);
+            self.inner.decrypt_block(&mut block);
             *byte = block[0];
         }
     }

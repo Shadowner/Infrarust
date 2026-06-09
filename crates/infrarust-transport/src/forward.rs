@@ -206,7 +206,7 @@ mod splice_impl {
             let (read_fd, write_fd) = nix::unistd::pipe().map_err(std::io::Error::other)?;
 
             // Set nonblocking
-            for fd in [read_fd.as_raw_fd(), write_fd.as_raw_fd()] {
+            for fd in [&read_fd, &write_fd] {
                 nix::fcntl::fcntl(
                     fd,
                     nix::fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::O_NONBLOCK),
@@ -216,10 +216,7 @@ mod splice_impl {
 
             // Try to set pipe size
             // Pipe size is always a reasonable value (e.g. 64 KiB), safe to truncate to i32.
-            let _ = nix::fcntl::fcntl(
-                write_fd.as_raw_fd(),
-                nix::fcntl::FcntlArg::F_SETPIPE_SZ(size as i32),
-            );
+            let _ = nix::fcntl::fcntl(&write_fd, nix::fcntl::FcntlArg::F_SETPIPE_SZ(size as i32));
 
             Ok(Self { read_fd, write_fd })
         }

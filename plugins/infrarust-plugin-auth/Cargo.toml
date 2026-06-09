@@ -21,7 +21,6 @@ toml = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 argon2 = { workspace = true }
-password-hash = { workspace = true }
 bcrypt = { workspace = true }
 rand_core = { workspace = true }
 reqwest = { workspace = true }

@@ -50,7 +50,7 @@ fn test_nodelay_configured() {
         retries: 3,
     };
     configure_stream_socket(&stream_socket, &keepalive).unwrap();
-    assert!(stream_socket.nodelay().unwrap());
+    assert!(stream_socket.tcp_nodelay().unwrap());
 }
 
 #[test]

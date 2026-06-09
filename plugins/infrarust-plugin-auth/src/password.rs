@@ -1,8 +1,8 @@
 //! Password hashing and verification via `spawn_blocking`.
 
-use argon2::password_hash::SaltString;
+use argon2::password_hash::{Salt, SaltString};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use rand_core::OsRng;
+use rand_core::{OsRng, TryRngCore};
 
 use crate::account::PasswordHash as AuthPasswordHash;
 use crate::config::HashingConfig;
@@ -29,7 +29,12 @@ pub async fn hash_password(
     let parallelism = config.argon2_parallelism;
 
     tokio::task::spawn_blocking(move || {
-        let salt = SaltString::generate(&mut OsRng);
+        let mut salt_bytes = [0u8; Salt::RECOMMENDED_LENGTH];
+        OsRng
+            .try_fill_bytes(&mut salt_bytes)
+            .map_err(|e| AuthError::Hashing(format!("salt generation failed: {e}")))?;
+        let salt = SaltString::encode_b64(&salt_bytes)
+            .map_err(|e| AuthError::Hashing(e.to_string()))?;
         let params = argon2::Params::new(memory_cost, time_cost, parallelism, None)
             .map_err(|e| AuthError::Hashing(e.to_string()))?;
         let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);

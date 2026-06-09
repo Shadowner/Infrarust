@@ -14,8 +14,9 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use bollard::Docker;
-use bollard::container::{InspectContainerOptions, ListContainersOptions};
-use bollard::system::EventsOptions;
+use bollard::query_parameters::{
+    EventsOptionsBuilder, InspectContainerOptions, ListContainersOptionsBuilder,
+};
 use futures_util::StreamExt;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -63,11 +64,10 @@ impl DockerProvider {
         filters.insert("label", vec!["infrarust.enable=true"]);
         filters.insert("status", vec!["running"]);
 
-        let options = ListContainersOptions {
-            all: false,
-            filters,
-            ..Default::default()
-        };
+        let options = ListContainersOptionsBuilder::default()
+            .all(false)
+            .filters(&filters)
+            .build();
 
         let containers = docker
             .list_containers(Some(options))
@@ -235,10 +235,7 @@ impl DockerProvider {
             ],
         );
 
-        let options = EventsOptions {
-            filters,
-            ..Default::default()
-        };
+        let options = EventsOptionsBuilder::default().filters(&filters).build();
 
         let mut stream = docker.events(Some(options));
 
