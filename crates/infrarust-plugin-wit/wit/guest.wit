@@ -6,7 +6,7 @@ interface guest {
     use types.{plugin-metadata, component, server-id, player-id, game-profile,
                protocol-version, server-state, listener-handle, handler-id,
                raw-packet, packet-direction, permission-level};
-    use limbo.{limbo-session, handler-result};
+    use limbo.{limbo-session, limbo-session-handle, handler-result, session-end-reason};
 
     record pre-login-event {
         profile: game-profile,
@@ -180,6 +180,7 @@ interface guest {
     limbo-on-command: func(handler: handler-id, session: borrow<limbo-session>, command: string, args: list<string>);
     limbo-on-chat: func(handler: handler-id, session: borrow<limbo-session>, message: string);
     limbo-on-disconnect: func(handler: handler-id, player: player-id);
+    limbo-on-session-end: func(handler: handler-id, player: player-id, reason: session-end-reason);
 
     // Custom permission checker dispatch (marker+proxy), keyed by handler-id.
     permission-level-of: func(handler: handler-id) -> permission-level;

@@ -693,12 +693,90 @@ impl limbo::HostLimboSession for PluginStoreState {
         outcome: limbo::HandlerResult,
     ) -> wasmtime::Result<()> {
         let session = self.resolve_limbo_session(&self_)?;
-        session.complete(convert::handler_result_from_wit(outcome));
+        session.complete(convert::complete_result_from_wit(outcome));
         Ok(())
+    }
+
+    async fn acquire_handle(
+        &mut self,
+        self_: Resource<limbo::LimboSession>,
+    ) -> wasmtime::Result<Resource<limbo::LimboSessionHandle>> {
+        let session = self.resolve_limbo_session(&self_)?;
+        self.push_limbo_session_handle(session.handle())
     }
 
     async fn drop(&mut self, rep: Resource<limbo::LimboSession>) -> wasmtime::Result<()> {
         let _ = self.drop_limbo_session(rep);
+        Ok(())
+    }
+}
+
+impl limbo::HostLimboSessionHandle for PluginStoreState {
+    async fn player_id(
+        &mut self,
+        self_: Resource<limbo::LimboSessionHandle>,
+    ) -> wasmtime::Result<u64> {
+        Ok(self
+            .resolve_limbo_session_handle(&self_)?
+            .player_id()
+            .as_u64())
+    }
+
+    async fn send_message(
+        &mut self,
+        self_: Resource<limbo::LimboSessionHandle>,
+        message: String,
+    ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
+        let handle = self.resolve_limbo_session_handle(&self_)?;
+        Ok(handle
+            .send_message(convert::component_from_wit(&message))
+            .map_err(convert::player_error_to_wit))
+    }
+
+    async fn send_title(
+        &mut self,
+        self_: Resource<limbo::LimboSessionHandle>,
+        title: wt::TitleData,
+    ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
+        let handle = self.resolve_limbo_session_handle(&self_)?;
+        Ok(handle
+            .send_title(convert::title_data_from_wit(title))
+            .map_err(convert::player_error_to_wit))
+    }
+
+    async fn send_action_bar(
+        &mut self,
+        self_: Resource<limbo::LimboSessionHandle>,
+        message: String,
+    ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
+        let handle = self.resolve_limbo_session_handle(&self_)?;
+        Ok(handle
+            .send_action_bar(convert::component_from_wit(&message))
+            .map_err(convert::player_error_to_wit))
+    }
+
+    async fn complete(
+        &mut self,
+        self_: Resource<limbo::LimboSessionHandle>,
+        outcome: limbo::HandlerResult,
+    ) -> wasmtime::Result<()> {
+        let handle = self.resolve_limbo_session_handle(&self_)?;
+        handle.complete(convert::complete_result_from_wit(outcome));
+        Ok(())
+    }
+
+    async fn cancelled(
+        &mut self,
+        self_: Resource<limbo::LimboSessionHandle>,
+    ) -> wasmtime::Result<bool> {
+        Ok(self
+            .resolve_limbo_session_handle(&self_)?
+            .cancellation_token()
+            .is_cancelled())
+    }
+
+    async fn drop(&mut self, rep: Resource<limbo::LimboSessionHandle>) -> wasmtime::Result<()> {
+        let _ = self.drop_limbo_session_handle(rep);
         Ok(())
     }
 }

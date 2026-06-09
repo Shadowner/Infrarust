@@ -64,6 +64,12 @@ macro_rules! raw_fixture {
             ) {
             }
             fn limbo_on_disconnect(_handler: u64, _player: u64) {}
+            fn limbo_on_session_end(
+                _handler: u64,
+                _player: u64,
+                _reason: crate::exports::infrarust::plugin::guest::SessionEndReason,
+            ) {
+            }
             fn permission_level_of(
                 _handler: u64,
             ) -> crate::exports::infrarust::plugin::guest::PermissionLevel {

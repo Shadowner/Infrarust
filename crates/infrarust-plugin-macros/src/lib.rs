@@ -198,6 +198,13 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
             fn limbo_on_disconnect(handler: u64, player: u64) {
                 ::infrarust_plugin_sdk::runtime::limbo_on_disconnect(handler, player)
             }
+            fn limbo_on_session_end(
+                handler: u64,
+                player: u64,
+                reason: ::infrarust_plugin_sdk::bindings::guest::SessionEndReason,
+            ) {
+                ::infrarust_plugin_sdk::runtime::limbo_on_session_end(handler, player, reason)
+            }
             fn permission_level_of(
                 _handler: u64,
             ) -> ::infrarust_plugin_sdk::bindings::guest::PermissionLevel {

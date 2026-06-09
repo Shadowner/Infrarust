@@ -34,7 +34,7 @@ pub(crate) const CACHE_SUBDIR: &str = ".cache";
 pub(crate) const WASMTIME_CACHE_TAG: &str = "wasmtime-45";
 
 /// WIT world version mixed into the cache key so a world bump invalidates artifacts.
-pub(crate) const WORLD_VERSION: &str = "0.2.1";
+pub(crate) const WORLD_VERSION: &str = "0.2.2";
 
 /// Upper bound on a single async host service call (ban/server start-stop). Epoch
 /// interruption cannot preempt a guest parked inside a host `.await`, so each such

@@ -87,7 +87,12 @@ pub(crate) async fn run_handler_chain(
                 {
                     HandlerAction::Continue => continue,
                     HandlerAction::Exit(chain_result) => return chain_result,
-                    HandlerAction::Hold(_) => unreachable!("complete() cannot return Hold"),
+                    HandlerAction::Hold(_) => {
+                        tracing::warn!(
+                            "limbo complete() delivered a Hold result; treating as Accept"
+                        );
+                        continue;
+                    }
                 }
             }
         }

@@ -31,8 +31,19 @@ pub struct Context {
     _priv: (),
 }
 
+impl Default for Context {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Context {
-    pub(crate) fn new() -> Self {
+    /// Obtain the ambient host gateway. `Context` is a zero-sized handle to the
+    /// guest runtime, so this is free — use it from callbacks that don't receive
+    /// a `&Context` (e.g. a [`LimboHandler`](crate::limbo::LimboHandler) wanting
+    /// to schedule a task or subscribe to an event).
+    #[must_use]
+    pub fn new() -> Self {
         Self { _priv: () }
     }
 

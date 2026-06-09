@@ -42,7 +42,10 @@ pub use codec::{
 pub use component::Component;
 pub use context::{CommandBuilder, CommandInvocation, Context, EventSubscription, TaskHandle};
 pub use event::{EventPriority, GuestEvent};
-pub use limbo::{EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession};
+pub use limbo::{
+    EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason,
+    SessionHandle, TimeoutOutcome,
+};
 pub use infrarust_plugin_macros::plugin;
 pub use plugin::{Plugin, PluginDependency, PluginMetadata};
 
@@ -76,7 +79,8 @@ pub mod prelude {
     pub use crate::context::{CommandInvocation, Context, EventSubscription, TaskHandle};
     pub use crate::event::*;
     pub use crate::limbo::{
-        EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession,
+        EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason,
+        SessionHandle, TimeoutOutcome,
     };
     pub use crate::plugin::{Plugin, PluginMetadata};
     pub use crate::services::{Bans, Config, Player, Players, Servers};

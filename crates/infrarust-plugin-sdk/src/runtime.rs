@@ -234,6 +234,18 @@ pub fn limbo_on_disconnect(handler: u64, player: u64) {
         }
     });
 }
+
+pub fn limbo_on_session_end(
+    handler: u64,
+    player: u64,
+    reason: crate::bindings::guest::SessionEndReason,
+) {
+    LIMBO_HANDLERS.with(|h| {
+        if let Some(hdlr) = h.borrow().get(&handler) {
+            hdlr.on_session_end(player, crate::limbo::SessionEndReason::from_wit(reason));
+        }
+    });
+}
 pub fn create_codec_filter<P: Plugin>(factory: u64, init: CodecSessionInit) -> FilterInstanceProxy {
     declare_codec_filters::<P>(false);
     let inner = CODEC_FACTORIES.with(|f| {

@@ -1,7 +1,9 @@
 // The Infrarust plugin world: the host/guest contract.
 // Versioned and frozen. v0.2 adds raw-packet events, codec filters, limbo, and
 // custom permission checkers; virtual backend stays deferred to a later minor.
-package infrarust:plugin@0.2.0;
+// @0.2.2 mirrors the native limbo completion model to guests: hold-with-timeout,
+// on-session-end, and the own-able limbo-session-handle resource.
+package infrarust:plugin@0.2.2;
 
 world plugin {
     import types;

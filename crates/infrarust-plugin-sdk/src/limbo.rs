@@ -24,16 +24,48 @@
 //! }
 //! ```
 
-use crate::bindings::guest::{HandlerResult as WitHandlerResult, LimboSession as RawSession};
-use crate::bindings::limbo::LimboEntryContext as WitEntryContext;
+use std::time::Duration;
+
+use crate::bindings::guest::{
+    HandlerResult as WitHandlerResult, LimboSession as RawSession,
+    SessionEndReason as WitSessionEndReason,
+};
+use crate::bindings::limbo::{
+    HoldTimeout as WitHoldTimeout, LimboEntryContext as WitEntryContext,
+    LimboSessionHandle as RawSessionHandle, TimeoutOutcome as WitTimeoutOutcome,
+};
 use crate::component::Component;
 
 pub use crate::bindings::types::{GameProfile, PlayerError, TitleData};
+
+/// A terminal Hold outcome — what a [`HandlerOutcome::HoldWithTimeout`] resolves to
+/// when its deadline elapses. Cannot itself be a Hold (the type forbids re-arming).
+pub enum TimeoutOutcome {
+    Accept,
+    Deny(Component),
+    Redirect(String),
+    SendToLimbo(Vec<String>),
+}
+
+impl TimeoutOutcome {
+    pub(crate) fn into_wit(self) -> WitTimeoutOutcome {
+        match self {
+            TimeoutOutcome::Accept => WitTimeoutOutcome::Accept,
+            TimeoutOutcome::Deny(reason) => WitTimeoutOutcome::Deny(reason.into_json()),
+            TimeoutOutcome::Redirect(server) => WitTimeoutOutcome::Redirect(server),
+            TimeoutOutcome::SendToLimbo(names) => WitTimeoutOutcome::SendToLimbo(names),
+        }
+    }
+}
 
 pub enum HandlerOutcome {
     Accept,
     Deny(Component),
     Hold,
+    HoldWithTimeout {
+        after: Duration,
+        on_timeout: TimeoutOutcome,
+    },
     Redirect(String),
     SendToLimbo(Vec<String>),
 }
@@ -44,8 +76,38 @@ impl HandlerOutcome {
             HandlerOutcome::Accept => WitHandlerResult::Accept,
             HandlerOutcome::Deny(reason) => WitHandlerResult::Deny(reason.into_json()),
             HandlerOutcome::Hold => WitHandlerResult::Hold,
+            HandlerOutcome::HoldWithTimeout { after, on_timeout } => {
+                let after_ms = u64::try_from(after.as_millis()).unwrap_or(u64::MAX);
+                WitHandlerResult::HoldWithTimeout(WitHoldTimeout {
+                    after_ms,
+                    on_timeout: on_timeout.into_wit(),
+                })
+            }
             HandlerOutcome::Redirect(server) => WitHandlerResult::Redirect(server),
             HandlerOutcome::SendToLimbo(names) => WitHandlerResult::SendToLimbo(names),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionEndReason {
+    Disconnected,
+    Released,
+    Kicked,
+    Redirected,
+    TimedOut,
+    Shutdown,
+}
+
+impl SessionEndReason {
+    pub(crate) fn from_wit(r: WitSessionEndReason) -> Self {
+        match r {
+            WitSessionEndReason::Disconnected => SessionEndReason::Disconnected,
+            WitSessionEndReason::Released => SessionEndReason::Released,
+            WitSessionEndReason::Kicked => SessionEndReason::Kicked,
+            WitSessionEndReason::Redirected => SessionEndReason::Redirected,
+            WitSessionEndReason::TimedOut => SessionEndReason::TimedOut,
+            WitSessionEndReason::Shutdown => SessionEndReason::Shutdown,
         }
     }
 }
@@ -115,6 +177,55 @@ impl<'a> LimboSession<'a> {
     pub fn complete(&self, outcome: HandlerOutcome) {
         self.raw.complete(&outcome.into_wit());
     }
+
+    #[must_use]
+    pub fn handle(&self) -> SessionHandle {
+        SessionHandle {
+            raw: self.raw.acquire_handle(),
+        }
+    }
+}
+
+pub struct SessionHandle {
+    raw: RawSessionHandle,
+}
+
+impl SessionHandle {
+    #[must_use]
+    pub fn player_id(&self) -> u64 {
+        self.raw.player_id()
+    }
+
+    /// # Errors
+    /// Returns [`PlayerError`] if the message could not be delivered.
+    pub fn send_message(&self, message: Component) -> Result<(), PlayerError> {
+        self.raw.send_message(&message.into_json())
+    }
+
+    /// # Errors
+    /// Returns [`PlayerError`] if the title could not be delivered.
+    pub fn send_title(&self, title: TitleData) -> Result<(), PlayerError> {
+        self.raw.send_title(&title)
+    }
+
+    /// # Errors
+    /// Returns [`PlayerError`] if the message could not be delivered.
+    pub fn send_action_bar(&self, message: Component) -> Result<(), PlayerError> {
+        self.raw.send_action_bar(&message.into_json())
+    }
+
+    /// Releases (or redirects/denies) the held player. A no-op if the session has
+    /// already ended or advanced past the Hold this handle was minted for.
+    pub fn complete(&self, outcome: HandlerOutcome) {
+        self.raw.complete(&outcome.into_wit());
+    }
+
+    /// True once the session has ended (the engine cancelled it). Poll this in a
+    /// repeating scheduled task to know when to stop.
+    #[must_use]
+    pub fn cancelled(&self) -> bool {
+        self.raw.cancelled()
+    }
 }
 
 pub trait LimboHandler {
@@ -125,6 +236,11 @@ pub trait LimboHandler {
     fn on_chat(&self, _session: &LimboSession, _message: &str) {}
 
     fn on_disconnect(&self, _player_id: u64) {}
+
+    /// Called when the player's limbo session ends, for ANY reason (released,
+    /// kicked, timed out, disconnected, …). The place to drop a stored
+    /// [`SessionHandle`] and cancel any scheduled tasks.
+    fn on_session_end(&self, _player_id: u64, _reason: SessionEndReason) {}
 }
 
 /// Collects a plugin's limbo-handler declarations. Passed to

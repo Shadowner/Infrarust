@@ -12,12 +12,41 @@ interface limbo {
         plugin-redirect(option<server-id>),
     }
 
+    // Terminal outcomes only (no nested hold) — what a timed-out Hold resolves to.
+    // Mirrors the native `HandlerResult` minus the holding variants, so a timeout
+    // can never re-arm another Hold (enforced at the type level).
+    variant timeout-outcome {
+        accept,
+        deny(component),
+        redirect(server-id),
+        send-to-limbo(list<string>),
+    }
+
+    record hold-timeout {
+        after-ms: u64,
+        on-timeout: timeout-outcome,
+    }
+
     variant handler-result {
         accept,
         deny(component),
         hold,
+        // Hold, but auto-complete with `on-timeout` if `complete` is not called
+        // within `after-ms`. The engine owns the timer (fires even if the guest's
+        // own scheduled tasks die).
+        hold-with-timeout(hold-timeout),
         redirect(server-id),
         send-to-limbo(list<string>),
+    }
+
+    // Why a player's limbo session ended (mirrors native SessionEndReason).
+    enum session-end-reason {
+        disconnected,
+        released,
+        kicked,
+        redirected,
+        timed-out,
+        shutdown,
     }
 
     // Host resource: the live native session, handed to the guest by borrow for
@@ -30,6 +59,25 @@ interface limbo {
         send-title: func(title: title-data) -> result<_, player-error>;
         send-action-bar: func(message: component) -> result<_, player-error>;
         complete: func(outcome: handler-result);
+        // Mint an OWN-able handle the guest can store across dispatches and
+        // complete later (from on-scheduled-task or an event). Mirrors native
+        // LimboSession::handle(); the captured Hold generation makes a stale
+        // completion a safe no-op. (Named `acquire-handle` to avoid colliding with
+        // wasmtime resource-machinery names.)
+        acquire-handle: func() -> limbo-session-handle;
+    }
+
+    // Guest-owned handle to a limbo session: storable across calls, completes a
+    // Hold from a background callback. Backed host-side by the native SessionHandle.
+    resource limbo-session-handle {
+        player-id: func() -> player-id;
+        send-message: func(message: component) -> result<_, player-error>;
+        send-title: func(title: title-data) -> result<_, player-error>;
+        send-action-bar: func(message: component) -> result<_, player-error>;
+        complete: func(outcome: handler-result);
+        // True once the session has ended (the engine cancelled it) — lets a
+        // stored handle's scheduled task know to stop.
+        cancelled: func() -> bool;
     }
     register-limbo-handler: func(name: string, handler: handler-id);
 }

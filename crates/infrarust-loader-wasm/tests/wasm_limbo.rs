@@ -136,7 +136,11 @@ async fn registers_named_handlers_and_holds_on_entry() {
     let _plugin = load_enabled(&loader, &factory, FIXTURE).await;
 
     let handlers = take_handlers(&factory, FIXTURE);
-    assert_eq!(handlers.len(), 2, "the guest registered `gate` and `boom`");
+    assert_eq!(
+        handlers.len(),
+        4,
+        "the guest registered `gate`, `boom`, `timed-gate`, `delayed-gate`"
+    );
     let gate = find_handler(handlers, "gate");
 
     let session = test_session(1);
@@ -241,5 +245,75 @@ async fn trapped_entry_handler_fails_closed() {
     assert!(
         matches!(outcome, HandlerResult::Deny(_)),
         "a guest trap in on_player_enter denies the player (fail-closed)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn timed_gate_holds_with_timeout_then_command_accepts() {
+    let (_tmp, dir) = stage(FIXTURE);
+    let loader = fresh_loader();
+    let factory = limbo_env(dir.clone(), FIXTURE, true);
+    loader.discover(&dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &factory, FIXTURE).await;
+    let gate = find_handler(take_handlers(&factory, FIXTURE), "timed-gate");
+
+    let session = test_session(21);
+    let outcome = gate.on_player_enter(session.as_ref()).await;
+    match outcome {
+        HandlerResult::HoldWithTimeout { after, on_timeout } => {
+            assert_eq!(
+                after,
+                std::time::Duration::from_secs(5),
+                "the guest's 5s deadline survives the round-trip"
+            );
+            assert!(
+                matches!(*on_timeout, HandlerResult::Deny(_)),
+                "the timeout outcome is a terminal Deny, got {on_timeout:?}"
+            );
+        }
+        other => panic!("expected HoldWithTimeout, got {other:?}"),
+    }
+
+    gate.on_command(session.as_ref(), "continue", &[]).await;
+    let completions = session.completions();
+    assert!(
+        matches!(completions.last(), Some(HandlerResult::Accept)),
+        "`/continue` releases the timed hold, got {completions:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn delayed_gate_completes_from_scheduled_task() {
+    let (_tmp, dir) = stage(FIXTURE);
+    let loader = fresh_loader();
+    let factory = limbo_env(dir.clone(), FIXTURE, true);
+    loader.discover(&dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &factory, FIXTURE).await;
+    let gate = find_handler(take_handlers(&factory, FIXTURE), "delayed-gate");
+
+    let session = test_session(34);
+    // The guest stores `session.handle()`, schedules a 50ms delay, and returns Hold.
+    let outcome = gate.on_player_enter(session.as_ref()).await;
+    assert!(
+        matches!(outcome, HandlerResult::Hold),
+        "the delayed gate holds while it waits for its timer, got {outcome:?}"
+    );
+    assert!(
+        session.completions().is_empty(),
+        "nothing is completed synchronously during on_player_enter"
+    );
+
+    let mut released = false;
+    for _ in 0..200 {
+        if matches!(session.completions().last(), Some(HandlerResult::Accept)) {
+            released = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        released,
+        "the scheduled task completed the held player via the stored handle, got {:?}",
+        session.completions()
     );
 }

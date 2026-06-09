@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::time::Duration;
 
 use infrarust_plugin_sdk::prelude::*;
 
@@ -54,6 +55,45 @@ impl LimboHandler for Boom {
     }
 }
 
+struct TimedGate;
+
+impl LimboHandler for TimedGate {
+    fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
+        session
+            .send_message(Component::text("Type /continue within 5s"))
+            .ok();
+        HandlerOutcome::HoldWithTimeout {
+            after: Duration::from_secs(5),
+            on_timeout: TimeoutOutcome::Deny(Component::text("Timed out")),
+        }
+    }
+
+    fn on_command(&self, session: &LimboSession, command: &str, _args: &[String]) {
+        if command == "continue" {
+            session.complete(HandlerOutcome::Accept);
+        }
+    }
+
+    fn on_session_end(&self, _player_id: u64, _reason: SessionEndReason) {
+        // Engine owns the timeout; nothing to tear down here (demo of the hook).
+    }
+}
+
+struct DelayedGate;
+
+impl LimboHandler for DelayedGate {
+    fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
+        // The handle outlives this dispatch (moved into the scheduled closure).
+        let handle = session.handle();
+        Context::new().delay(Duration::from_millis(50), move || {
+            if !handle.cancelled() {
+                handle.complete(HandlerOutcome::Accept);
+            }
+        });
+        HandlerOutcome::Hold
+    }
+}
+
 #[plugin(id = "limbo-handler", name = "Limbo Handler Fixture")]
 impl Plugin for LimboPlugin {
     fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
@@ -68,5 +108,7 @@ impl Plugin for LimboPlugin {
             },
         );
         reg.add("boom", Boom);
+        reg.add("timed-gate", TimedGate);
+        reg.add("delayed-gate", DelayedGate);
     }
 }

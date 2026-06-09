@@ -1,7 +1,7 @@
 use std::sync::Weak;
 
 use infrarust_api::event::BoxFuture;
-use infrarust_api::limbo::{HandlerResult, LimboHandler, LimboSession};
+use infrarust_api::limbo::{HandlerResult, LimboHandler, LimboSession, SessionEndReason};
 use infrarust_api::types::{Component, PlayerId};
 use tokio::sync::Mutex;
 use wasmtime::component::Resource;
@@ -192,6 +192,34 @@ impl LimboHandler for WasmLimboHandler {
             {
                 tracing::error!(plugin = %plugin_id, handler = %name, error = %trap,
                     "wasm guest trapped in limbo-on-disconnect; poisoning instance");
+                store.data_mut().set_poisoned();
+            }
+        })
+    }
+
+    fn on_session_end(&self, player_id: PlayerId, reason: SessionEndReason) -> BoxFuture<'_, ()> {
+        let instance = self.instance.clone();
+        let plugin_id = self.plugin_id.clone();
+        let name = self.name.clone();
+        let handler_id = self.handler_id;
+        let wit_reason = convert::session_end_reason_to_wit(reason);
+        Box::pin(async move {
+            let Some(arc) = instance.upgrade() else {
+                return;
+            };
+            let mut guard = arc.lock().await;
+            let WasmInstance { store, bindings } = &mut *guard;
+            if store.data().is_poisoned() {
+                return;
+            }
+            store.data_mut().reset_epoch_budget();
+            if let Err(trap) = bindings
+                .infrarust_plugin_guest()
+                .call_limbo_on_session_end(&mut *store, handler_id, player_id.as_u64(), wit_reason)
+                .await
+            {
+                tracing::error!(plugin = %plugin_id, handler = %name, error = %trap,
+                    "wasm guest trapped in limbo-on-session-end; poisoning instance");
                 store.data_mut().set_poisoned();
             }
         })

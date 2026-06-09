@@ -1,7 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use infrarust_api::error::{PlayerError, ServiceError};
-use infrarust_api::limbo::{HandlerResult, LimboEntryContext};
+use infrarust_api::limbo::{HandlerResult, LimboEntryContext, SessionEndReason};
 use infrarust_api::permissions::PermissionLevel;
 use infrarust_api::services::ban_service::{BanEntry, BanTarget};
 use infrarust_api::services::config_service::{ProxyMode, ServerConfig};
@@ -166,8 +166,40 @@ pub(crate) fn handler_result_from_wit(r: wl::HandlerResult) -> HandlerResult {
         wl::HandlerResult::Accept => HandlerResult::Accept,
         wl::HandlerResult::Deny(c) => HandlerResult::Deny(component_from_wit(&c)),
         wl::HandlerResult::Hold => HandlerResult::Hold,
+        wl::HandlerResult::HoldWithTimeout(t) => HandlerResult::HoldWithTimeout {
+            after: Duration::from_millis(t.after_ms),
+            on_timeout: Box::new(timeout_outcome_from_wit(t.on_timeout)),
+        },
         wl::HandlerResult::Redirect(s) => HandlerResult::Redirect(ServerId::from(s)),
         wl::HandlerResult::SendToLimbo(v) => HandlerResult::SendToLimbo(v),
+    }
+}
+
+pub(crate) fn timeout_outcome_from_wit(t: wl::TimeoutOutcome) -> HandlerResult {
+    match t {
+        wl::TimeoutOutcome::Accept => HandlerResult::Accept,
+        wl::TimeoutOutcome::Deny(c) => HandlerResult::Deny(component_from_wit(&c)),
+        wl::TimeoutOutcome::Redirect(s) => HandlerResult::Redirect(ServerId::from(s)),
+        wl::TimeoutOutcome::SendToLimbo(v) => HandlerResult::SendToLimbo(v),
+    }
+}
+
+pub(crate) fn complete_result_from_wit(r: wl::HandlerResult) -> HandlerResult {
+    match handler_result_from_wit(r) {
+        HandlerResult::Hold | HandlerResult::HoldWithTimeout { .. } => HandlerResult::Accept,
+        other => other,
+    }
+}
+
+pub(crate) fn session_end_reason_to_wit(r: SessionEndReason) -> wl::SessionEndReason {
+    match r {
+        SessionEndReason::Disconnected => wl::SessionEndReason::Disconnected,
+        SessionEndReason::Released => wl::SessionEndReason::Released,
+        SessionEndReason::Kicked => wl::SessionEndReason::Kicked,
+        SessionEndReason::Redirected => wl::SessionEndReason::Redirected,
+        SessionEndReason::TimedOut => wl::SessionEndReason::TimedOut,
+        SessionEndReason::Shutdown => wl::SessionEndReason::Shutdown,
+        _ => wl::SessionEndReason::Disconnected,
     }
 }
 
@@ -186,5 +218,73 @@ pub(crate) fn limbo_entry_context_to_wit(c: &LimboEntryContext) -> wl::LimboEntr
             from_server.as_ref().map(|s| s.as_str().to_string()),
         ),
         _ => wl::LimboEntryContext::PluginRedirect(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hold_with_timeout_maps_to_native_with_terminal_outcome() {
+        let wit = wl::HandlerResult::HoldWithTimeout(wl::HoldTimeout {
+            after_ms: 1500,
+            on_timeout: wl::TimeoutOutcome::Deny("bye".to_string()),
+        });
+        match handler_result_from_wit(wit) {
+            HandlerResult::HoldWithTimeout { after, on_timeout } => {
+                assert_eq!(after, Duration::from_millis(1500));
+                assert!(matches!(*on_timeout, HandlerResult::Deny(_)));
+            }
+            other => panic!("expected HoldWithTimeout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn timeout_outcome_never_yields_a_hold() {
+        assert!(matches!(
+            timeout_outcome_from_wit(wl::TimeoutOutcome::Accept),
+            HandlerResult::Accept
+        ));
+        assert!(matches!(
+            timeout_outcome_from_wit(wl::TimeoutOutcome::SendToLimbo(vec!["a".to_string()])),
+            HandlerResult::SendToLimbo(_)
+        ));
+    }
+
+    #[test]
+    fn complete_coerces_holds_to_accept() {
+        assert!(matches!(
+            complete_result_from_wit(wl::HandlerResult::Hold),
+            HandlerResult::Accept
+        ));
+        let hwt = wl::HandlerResult::HoldWithTimeout(wl::HoldTimeout {
+            after_ms: 1,
+            on_timeout: wl::TimeoutOutcome::Accept,
+        });
+        assert!(matches!(
+            complete_result_from_wit(hwt),
+            HandlerResult::Accept
+        ));
+        assert!(matches!(
+            complete_result_from_wit(wl::HandlerResult::Redirect("lobby".to_string())),
+            HandlerResult::Redirect(_)
+        ));
+    }
+
+    #[test]
+    fn session_end_reason_maps_each_variant() {
+        assert!(matches!(
+            session_end_reason_to_wit(SessionEndReason::Released),
+            wl::SessionEndReason::Released
+        ));
+        assert!(matches!(
+            session_end_reason_to_wit(SessionEndReason::TimedOut),
+            wl::SessionEndReason::TimedOut
+        ));
+        assert!(matches!(
+            session_end_reason_to_wit(SessionEndReason::Disconnected),
+            wl::SessionEndReason::Disconnected
+        ));
     }
 }
