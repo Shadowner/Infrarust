@@ -14,6 +14,7 @@ use crate::filter::transport_chain::TransportFilterChain;
 use crate::forwarding::{ForwardingHandler, ForwardingMode, build_forwarding_handler};
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::limbo::registry_cache::RegistryCodecCache;
+use crate::loadbalancer::BackendHealthView;
 use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::provider::ProviderEvent;
@@ -46,6 +47,9 @@ pub struct ProxyServices {
     pub config: Arc<ProxyConfig>,
     /// Domain router for resolving server configs by domain.
     pub domain_router: Arc<DomainRouter>,
+    /// Per-address backend health, consumed for backend selection outside
+    /// the login pipeline (server switches, limbo exits).
+    pub backend_health: Arc<dyn BackendHealthView>,
     /// Codec filter registry for building per-connection filter chains.
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     /// Transport filter chain applied to accepted connections.

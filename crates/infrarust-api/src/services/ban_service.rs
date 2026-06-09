@@ -232,6 +232,18 @@ mod tests {
     }
 
     #[test]
+    fn ban_entry_overflowing_duration_is_permanent() {
+        let entry = BanEntry::new(
+            BanTarget::Username("griefer".into()),
+            None,
+            Some(Duration::MAX),
+            "admin".into(),
+        );
+        assert!(entry.is_permanent());
+        assert!(!entry.is_expired());
+    }
+
+    #[test]
     fn ban_target_display() {
         assert_eq!(
             BanTarget::Ip("1.2.3.4".parse().unwrap()).to_string(),

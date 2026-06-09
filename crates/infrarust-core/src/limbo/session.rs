@@ -4,9 +4,9 @@
 //! and an mpsc channel that the limbo engine loop drains.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::error::PlayerError;
@@ -24,14 +24,14 @@ use crate::player::packets;
 /// Concrete implementation of [`LimboSession`] used by the limbo engine.
 ///
 /// Holds the player identity, a sender half of the outgoing packet channel,
-/// and a watch channel used to signal handler completion.
+/// and a per-handler oneshot used to signal completion.
 pub(crate) struct LimboSessionImpl {
     player_id: PlayerId,
     profile: GameProfile,
     protocol_version: ProtocolVersion,
     entry_context: LimboEntryContext,
     client_sender: mpsc::Sender<PacketFrame>,
-    complete_sender: watch::Sender<Option<HandlerResult>>,
+    complete_slot: Mutex<Option<oneshot::Sender<HandlerResult>>>,
     limbo_token: CancellationToken,
     hold_seq: AtomicU64,
     packet_registry: Arc<PacketRegistry>,
@@ -39,14 +39,12 @@ pub(crate) struct LimboSessionImpl {
 }
 
 impl LimboSessionImpl {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         player_id: PlayerId,
         profile: GameProfile,
         protocol_version: ProtocolVersion,
         entry_context: LimboEntryContext,
         client_sender: mpsc::Sender<PacketFrame>,
-        complete_sender: watch::Sender<Option<HandlerResult>>,
         limbo_token: CancellationToken,
         packet_registry: Arc<PacketRegistry>,
     ) -> Self {
@@ -56,7 +54,7 @@ impl LimboSessionImpl {
             protocol_version,
             entry_context,
             client_sender,
-            complete_sender,
+            complete_slot: Mutex::new(None),
             limbo_token,
             hold_seq: AtomicU64::new(0),
             packet_registry,
@@ -68,12 +66,22 @@ impl LimboSessionImpl {
         let _ = self.self_ref.set(weak);
     }
 
-    pub(crate) fn begin_handler(&self) {
+    pub(crate) fn begin_handler(&self) -> oneshot::Receiver<HandlerResult> {
+        let (tx, rx) = oneshot::channel();
+        let mut slot = self.lock_slot();
         self.hold_seq.fetch_add(1, Ordering::SeqCst);
+        *slot = Some(tx);
+        rx
     }
 
     fn current_hold_id(&self) -> u64 {
         self.hold_seq.load(Ordering::SeqCst)
+    }
+
+    fn lock_slot(&self) -> MutexGuard<'_, Option<oneshot::Sender<HandlerResult>>> {
+        self.complete_slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -133,8 +141,11 @@ impl LimboSession for LimboSessionImpl {
     }
 
     fn complete_scoped(&self, hold_id: u64, result: HandlerResult) {
-        if hold_id == self.current_hold_id() {
-            let _ = self.complete_sender.send(Some(result));
+        let mut slot = self.lock_slot();
+        if hold_id == self.current_hold_id()
+            && let Some(tx) = slot.take()
+        {
+            let _ = tx.send(result);
         }
     }
 
@@ -164,13 +175,8 @@ mod tests {
     use infrarust_api::types::PlayerId;
     use infrarust_protocol::version::ProtocolVersion;
 
-    fn make_session() -> (
-        LimboSessionImpl,
-        mpsc::Receiver<PacketFrame>,
-        watch::Receiver<Option<HandlerResult>>,
-    ) {
+    fn make_session() -> (LimboSessionImpl, mpsc::Receiver<PacketFrame>) {
         let (tx, rx) = mpsc::channel(64);
-        let (complete_tx, complete_rx) = watch::channel(None);
         let registry = Arc::new(infrarust_protocol::registry::build_default_registry());
 
         let session = LimboSessionImpl::new(
@@ -179,28 +185,27 @@ mod tests {
             ProtocolVersion::V1_21,
             LimboEntryContext::PluginRedirect { from_server: None },
             tx,
-            complete_tx,
             CancellationToken::new(),
             registry,
         );
-        (session, rx, complete_rx)
+        (session, rx)
     }
 
     #[test]
     fn player_id_returns_correct_value() {
-        let (session, _rx, _crx) = make_session();
+        let (session, _rx) = make_session();
         assert_eq!(session.player_id(), PlayerId::new(1));
     }
 
     #[test]
     fn profile_returns_correct_username() {
-        let (session, _rx, _crx) = make_session();
+        let (session, _rx) = make_session();
         assert_eq!(session.profile().username, "LimboTester");
     }
 
     #[test]
     fn entry_context_returns_plugin_redirect() {
-        let (session, _rx, _crx) = make_session();
+        let (session, _rx) = make_session();
         assert!(matches!(
             session.entry_context(),
             LimboEntryContext::PluginRedirect { from_server: None }
@@ -209,7 +214,7 @@ mod tests {
 
     #[test]
     fn send_message_pushes_to_channel() {
-        let (session, mut rx, _crx) = make_session();
+        let (session, mut rx) = make_session();
         let component = Component::text("Hello from limbo");
         session.send_message(component).unwrap();
 
@@ -219,7 +224,7 @@ mod tests {
 
     #[test]
     fn send_action_bar_pushes_to_channel() {
-        let (session, mut rx, _crx) = make_session();
+        let (session, mut rx) = make_session();
         let component = Component::text("Action bar test");
         session.send_action_bar(component).unwrap();
 
@@ -228,40 +233,62 @@ mod tests {
     }
 
     #[test]
-    fn complete_triggers_watch() {
-        let (session, _rx, mut crx) = make_session();
-        assert!(crx.borrow().is_none());
+    fn complete_before_hold_is_latched_for_that_handler() {
+        let (session, _rx) = make_session();
+        let mut complete_rx = session.begin_handler();
 
         session.complete(HandlerResult::Accept);
 
-        // The watch should now have a value
-        assert!(crx.borrow_and_update().is_some());
-        match crx.borrow().as_ref().unwrap() {
-            HandlerResult::Accept => {} // expected
-            other => panic!("expected Accept, got {other:?}"),
+        match complete_rx.try_recv() {
+            Ok(HandlerResult::Accept) => {}
+            other => panic!("expected latched Accept, got {other:?}"),
         }
     }
 
     #[test]
+    fn second_complete_within_same_hold_is_a_noop() {
+        let (session, _rx) = make_session();
+        let mut complete_rx = session.begin_handler();
+
+        session.complete(HandlerResult::Accept);
+        session.complete(HandlerResult::Deny(Component::text("late")));
+
+        match complete_rx.try_recv() {
+            Ok(HandlerResult::Accept) => {}
+            other => panic!("expected first Accept to win, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unconsumed_completion_is_dropped_when_next_handler_begins() {
+        let (session, _rx) = make_session();
+        let _rx1 = session.begin_handler();
+        session.complete(HandlerResult::Accept); // latched, never consumed
+
+        let mut rx2 = session.begin_handler();
+        assert!(
+            rx2.try_recv().is_err(),
+            "a previous handler's stale completion must not reach the next handler"
+        );
+    }
+
+    #[test]
     fn stale_handle_cannot_complete_a_later_hold() {
-        let (session, _rx, mut crx) = make_session();
+        let (session, _rx) = make_session();
         let session = Arc::new(session);
         session.set_self_ref(Arc::downgrade(&session));
 
-        session.begin_handler(); // generation 1
+        let _rx1 = session.begin_handler(); // generation 1
         let stale = session.handle(); // captures generation 1
-        session.begin_handler(); // advance to generation 2 (a later handler)
+        let mut rx2 = session.begin_handler(); // advance to generation 2 (a later handler)
 
         stale.complete(HandlerResult::Accept);
-        assert!(
-            crx.borrow_and_update().is_none(),
-            "stale handle should be a no-op"
-        );
+        assert!(rx2.try_recv().is_err(), "stale handle should be a no-op");
 
         let current = session.handle(); // captures generation 2
         current.complete(HandlerResult::Accept);
         assert!(
-            crx.borrow_and_update().is_some(),
+            rx2.try_recv().is_ok(),
             "current-generation handle should complete the Hold"
         );
     }
@@ -269,7 +296,6 @@ mod tests {
     #[test]
     fn send_message_fails_when_channel_closed() {
         let (tx, rx) = mpsc::channel(1);
-        let (complete_tx, _complete_rx) = watch::channel(None);
         let registry = Arc::new(infrarust_protocol::registry::build_default_registry());
 
         let session = LimboSessionImpl::new(
@@ -278,7 +304,6 @@ mod tests {
             ProtocolVersion::V1_21,
             LimboEntryContext::PluginRedirect { from_server: None },
             tx,
-            complete_tx,
             CancellationToken::new(),
             registry,
         );

@@ -101,6 +101,7 @@ pub fn test_proxy_services() -> ProxyServices {
         )),
         config: Arc::new(toml::from_str("").unwrap()),
         domain_router: Arc::new(DomainRouter::new()),
+        backend_health: Arc::new(crate::loadbalancer::PassiveBackendHealth::new()),
         codec_filter_registry: Arc::new(CodecFilterRegistryImpl::new()),
         transport_filter_chain: TransportFilterChain::empty(),
         limbo_handler_registry: Arc::new(LimboHandlerRegistry::new()),
@@ -183,10 +184,6 @@ impl LimboHandler for FixedHandler {
         let result = self.result.clone();
         Box::pin(async move { result })
     }
-
-    fn on_disconnect(&self, _player_id: PlayerId) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
-    }
 }
 
 pub struct TrackingHandler {
@@ -208,10 +205,6 @@ impl LimboHandler for TrackingHandler {
         let result = self.result.clone();
         Box::pin(async move { result })
     }
-
-    fn on_disconnect(&self, _player_id: PlayerId) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
-    }
 }
 
 pub struct HoldHandler {
@@ -228,10 +221,6 @@ impl LimboHandler for HoldHandler {
         _session: &'a dyn LimboSession,
     ) -> BoxFuture<'a, HandlerResult> {
         Box::pin(async { HandlerResult::Hold })
-    }
-
-    fn on_disconnect(&self, _player_id: PlayerId) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
     }
 }
 

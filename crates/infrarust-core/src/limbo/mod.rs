@@ -7,13 +7,13 @@ pub(crate) mod chat; // Client message parsing
 pub(crate) mod engine; // enter_limbo() orchestrator
 pub(crate) mod handler_chain; // Limbo-specific dispatch loop
 pub(crate) mod keepalive; // KeepAlive state machine
-pub(crate) mod login;
+pub(crate) mod login; // Login without backend
 pub(crate) mod registry; // LimboHandlerRegistry
 pub(crate) mod registry_cache; // Config-phase frame cache for limbo login
 pub(crate) mod registry_nbt; // Minimal NBT registry codec for 1.16–1.20.1
 pub(crate) mod session; // LimboSessionImpl
 pub(crate) mod spawn; // Spawn sequence (version-branched)
-pub(crate) mod virtual_session; // VirtualSessionCore — shared plumbing // Login without backend
+pub(crate) mod virtual_session; // VirtualSessionCore — shared plumbing
 
 #[cfg(test)]
 mod test_helpers; // Shared test utilities

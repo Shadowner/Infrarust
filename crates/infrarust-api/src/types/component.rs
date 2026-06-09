@@ -5,6 +5,10 @@
 
 use std::fmt;
 
+/// Maximum nesting depth accepted by [`Component::from_json`]; deeper
+/// structures are truncated to empty components (untrusted plugin ingress).
+pub const MAX_COMPONENT_DEPTH: usize = 64;
+
 /// A Minecraft rich text component.
 ///
 /// Supports builder-style construction for readable message creation.
@@ -524,16 +528,19 @@ impl Component {
     /// where the first element is the parent and the rest become `extra`).
     /// Fields this type does not model (e.g. `translate`, `score`, `selector`)
     /// are dropped. Malformed JSON returns [`ComponentParseError::InvalidJson`];
-    /// this never panics, even on hostile input (the recursion depth is bounded
-    /// by `serde_json`'s parser limit).
+    /// this never panics, even on hostile input (nesting beyond
+    /// [`MAX_COMPONENT_DEPTH`] levels is truncated to an empty component).
     pub fn from_json(s: &str) -> Result<Self, ComponentParseError> {
         let value: serde_json::Value =
             serde_json::from_str(s).map_err(|e| ComponentParseError::InvalidJson(e.to_string()))?;
-        Ok(Self::from_json_value(&value))
+        Ok(Self::from_json_value(&value, 0))
     }
 
-    fn from_json_value(value: &serde_json::Value) -> Self {
+    fn from_json_value(value: &serde_json::Value, depth: usize) -> Self {
         use serde_json::Value;
+        if depth >= MAX_COMPONENT_DEPTH {
+            return Self::text("");
+        }
         match value {
             Value::String(s) => Self::text(s.clone()),
             Value::Bool(b) => Self::text(b.to_string()),
@@ -544,9 +551,9 @@ impl Component {
                 let Some(first) = iter.next() else {
                     return Self::text("");
                 };
-                let mut root = Self::from_json_value(first);
+                let mut root = Self::from_json_value(first, depth + 1);
                 for item in iter {
-                    root.extra.push(Self::from_json_value(item));
+                    root.extra.push(Self::from_json_value(item, depth + 1));
                 }
                 root
             }
@@ -562,7 +569,10 @@ impl Component {
                 c.strikethrough = map.get("strikethrough").and_then(Value::as_bool);
                 c.obfuscated = map.get("obfuscated").and_then(Value::as_bool);
                 if let Some(extra) = map.get("extra").and_then(Value::as_array) {
-                    c.extra = extra.iter().map(Self::from_json_value).collect();
+                    c.extra = extra
+                        .iter()
+                        .map(|item| Self::from_json_value(item, depth + 1))
+                        .collect();
                 }
                 c.click_event = map
                     .get("clickEvent")
@@ -571,7 +581,7 @@ impl Component {
                 c.hover_event = map
                     .get("hoverEvent")
                     .and_then(Value::as_object)
-                    .and_then(Self::parse_hover_event);
+                    .and_then(|m| Self::parse_hover_event(m, depth));
                 c
             }
         }
@@ -588,7 +598,10 @@ impl Component {
         }
     }
 
-    fn parse_hover_event(map: &serde_json::Map<String, serde_json::Value>) -> Option<HoverEvent> {
+    fn parse_hover_event(
+        map: &serde_json::Map<String, serde_json::Value>,
+        depth: usize,
+    ) -> Option<HoverEvent> {
         if map.get("action").and_then(serde_json::Value::as_str)? != "show_text" {
             return None;
         }
@@ -596,6 +609,7 @@ impl Component {
         let contents = map.get("contents").or_else(|| map.get("value"))?;
         Some(HoverEvent::ShowText(Box::new(Self::from_json_value(
             contents,
+            depth + 1,
         ))))
     }
 }
@@ -1004,5 +1018,22 @@ mod tests {
     fn from_json_unknown_fields_dropped() {
         let c = Component::from_json(r#"{"text":"x","translate":"k","extra_unknown":1}"#).unwrap();
         assert_eq!(c.text, "x");
+    }
+
+    #[test]
+    fn from_json_deep_nesting_truncated_not_panic() {
+        // 100 nested arrays: under serde_json's parser limit, over ours.
+        let depth = 100;
+        let json = format!("{}\"x\"{}", r#"["a","#.repeat(depth), "]".repeat(depth));
+        let c = Component::from_json(&json).unwrap();
+
+        let mut levels = 0;
+        let mut cur = &c;
+        while let Some(child) = cur.extra.first() {
+            levels += 1;
+            cur = child;
+        }
+        assert!(levels <= MAX_COMPONENT_DEPTH);
+        assert_eq!(cur.text, "", "innermost payload must be truncated");
     }
 }

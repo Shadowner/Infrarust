@@ -62,10 +62,10 @@ pub async fn perform_switch(
 ) -> Result<SwitchResult, CoreError> {
     let version = protocol_version;
 
-    // 1. Resolve target server config
-    let server_config = services
+    // 1. Resolve target server config + its load balancer
+    let (server_config, load_balancer) = services
         .domain_router
-        .find_by_server_id(target.as_str())
+        .find_route_by_server_id(target.as_str())
         .ok_or_else(|| CoreError::Rejected(format!("unknown server: {}", target.as_str())))?;
 
     let current_config = services
@@ -126,10 +126,10 @@ pub async fn perform_switch(
     };
 
     // Re-resolve if redirected
-    let server_config = if effective_target != target {
+    let (server_config, load_balancer) = if effective_target != target {
         services
             .domain_router
-            .find_by_server_id(effective_target.as_str())
+            .find_route_by_server_id(effective_target.as_str())
             .ok_or_else(|| {
                 CoreError::Rejected(format!(
                     "unknown redirect server: {}",
@@ -137,7 +137,7 @@ pub async fn perform_switch(
                 ))
             })?
     } else {
-        server_config
+        (server_config, load_balancer)
     };
 
     // 3. Connect to new backend
@@ -149,10 +149,18 @@ pub async fn perform_switch(
         connected_at: tokio::time::Instant::now(),
     };
 
+    // Same strategy + unhealthy-last ordering as the login pipeline.
+    let addresses = crate::loadbalancer::select_backend_addresses(
+        &server_config,
+        load_balancer.as_ref(),
+        services.connection_registry.as_ref(),
+        services.backend_health.as_ref(),
+    );
+
     let backend_conn = backend_connector
         .connect(
             effective_target.as_str(),
-            &server_config.address_list(),
+            &addresses,
             server_config.timeouts.as_ref().map(|t| t.connect),
             server_config.send_proxy_protocol,
             &connection_info,
@@ -223,8 +231,12 @@ pub async fn perform_switch(
     // 8. Version-branched switch
     let join_game_frame = if version.no_less_than(ProtocolVersion::V1_20_2) {
         // 1.20.2+: config phase → JoinGame, bounded so a stalled/malicious client
-        // cannot pin the connection task forever during the switch.
-        tokio::time::timeout(
+        let session_token = services
+            .connection_registry
+            .find_by_id(player_id)
+            .map(|s| s.shutdown_token().clone())
+            .unwrap_or_default();
+        let config_phase = tokio::time::timeout(
             std::time::Duration::from_secs(SWITCH_CONFIG_PHASE_TIMEOUT_SECS),
             config_phase::handle_config_phase_switch(
                 client,
@@ -232,9 +244,12 @@ pub async fn perform_switch(
                 &services.packet_registry,
                 version,
             ),
-        )
-        .await
-        .map_err(|_| CoreError::Timeout("server switch config phase timed out".into()))??
+        );
+        tokio::select! {
+            () = session_token.cancelled() => return Err(CoreError::ConnectionClosed),
+            result = config_phase => result
+                .map_err(|_| CoreError::Timeout("server switch config phase timed out".into()))??,
+        }
     } else {
         // Pre-1.20.2: read JoinGame directly from new backend
         new_backend

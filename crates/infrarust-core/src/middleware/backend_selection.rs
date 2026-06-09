@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use smallvec::SmallVec;
 
-use infrarust_config::ServerAddress;
+use infrarust_config::{ServerAddress, ServerConfig};
 
 use crate::error::CoreError;
-use crate::loadbalancer::{AddressConnectionCount, BackendCandidate, BackendHealthView};
+use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, select_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::types::RoutingData;
@@ -20,16 +20,11 @@ pub struct BackendTargets {
 }
 
 impl BackendTargets {
-    pub fn single(addr: ServerAddress) -> Self {
-        Self {
-            addresses: smallvec::smallvec![addr],
-        }
-    }
-
-    pub fn from_ordered(ordered: &[&BackendCandidate]) -> Self {
-        Self {
-            addresses: ordered.iter().map(|c| c.address.clone()).collect(),
-        }
+    pub fn addresses_or_config(
+        targets: Option<&Self>,
+        server: &ServerConfig,
+    ) -> Vec<ServerAddress> {
+        targets.map_or_else(|| server.address_list(), |t| t.addresses.to_vec())
     }
 }
 
@@ -60,36 +55,16 @@ impl Middleware for BackendSelectionMiddleware {
             let Some(routing) = ctx.extensions.get::<RoutingData>() else {
                 return Ok(MiddlewareResult::Continue); // status ping, etc.
             };
-            let server = &routing.server_config;
-
-            // Shortcut: a single address -> nothing to balance.
-            if let [only] = server.addresses.as_slice() {
-                let targets = BackendTargets::single(only.address.clone());
-                ctx.extensions.insert(targets);
-                return Ok(MiddlewareResult::Continue);
-            }
-
-            // Snapshot: config (weights) x connection registry x health view.
-            let candidates: Vec<BackendCandidate> = server
-                .addresses
-                .iter()
-                .map(|wa| {
-                    let (healthy, healthy_since) = self.health.snapshot(&wa.address);
-                    BackendCandidate {
-                        address: wa.address.clone(),
-                        weight: wa.weight,
-                        active_connections: self
-                            .registry
-                            .active_connections_for_address(&wa.address),
-                        healthy,
-                        healthy_since,
-                    }
-                })
-                .collect();
 
             // Selection through the strategy carried by the resolved config.
-            let ordered = routing.load_balancer.order(&candidates);
-            let targets = BackendTargets::from_ordered(&ordered);
+            let targets = BackendTargets {
+                addresses: select_backend_addresses(
+                    &routing.server_config,
+                    routing.load_balancer.as_ref(),
+                    self.registry.as_ref(),
+                    self.health.as_ref(),
+                ),
+            };
 
             tracing::trace!(
                 server = %routing.config_id,

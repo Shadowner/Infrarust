@@ -252,6 +252,42 @@ mod tests {
     }
 
     #[test]
+    fn per_address_count_lifecycle() {
+        let registry = ConnectionRegistry::new();
+        let a = ServerAddress {
+            host: "10.0.0.1".to_string(),
+            port: 25565,
+        };
+        let b = ServerAddress {
+            host: "10.0.0.2".to_string(),
+            port: 25565,
+        };
+        let session = make_session("alice", "lobby");
+        let uuid = session.profile().uuid;
+        registry.register(Arc::clone(&session));
+        assert_eq!(registry.active_connections_for_address(&a), 0);
+
+        // Initial connect
+        session.set_connected_address(Some(a.clone()));
+        assert_eq!(registry.active_connections_for_address(&a), 1);
+
+        // Server switch
+        session.set_connected_address(Some(b.clone()));
+        assert_eq!(registry.active_connections_for_address(&a), 0);
+        assert_eq!(registry.active_connections_for_address(&b), 1);
+
+        // Limbo: connected to no backend address
+        session.set_connected_address(None);
+        assert_eq!(registry.active_connections_for_address(&b), 0);
+
+        // Limbo exit then disconnect
+        session.set_connected_address(Some(a.clone()));
+        assert_eq!(registry.active_connections_for_address(&a), 1);
+        registry.unregister(&uuid);
+        assert_eq!(registry.active_connections_for_address(&a), 0);
+    }
+
+    #[test]
     fn concurrent_access() {
         use std::sync::Arc;
         use std::thread;

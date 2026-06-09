@@ -126,7 +126,18 @@ impl ProxyServer {
         }
 
         // Start all providers (loads initial configs + starts watchers)
-        let (_provider_handle, provider_event_sender) = provider_registry.start().await?;
+        let (provider_handle, provider_event_sender) = provider_registry.start().await?;
+        // A panic unwinds past the event loop's own exit logging.
+        tokio::spawn(async move {
+            if let Err(e) = provider_handle.await
+                && e.is_panic()
+            {
+                tracing::error!(
+                    error = %e,
+                    "provider event loop panicked, configuration hot-reload is no longer active"
+                );
+            }
+        });
 
         // Build server manager from configs that have a server_manager
         let managed_configs: Vec<(String, infrarust_config::ServerManagerConfig)> = domain_router
@@ -229,6 +240,7 @@ impl ProxyServer {
             ban_manager: Arc::clone(&ban_manager),
             config: Arc::new(config.clone()),
             domain_router: Arc::clone(&domain_router),
+            backend_health: Arc::clone(&backend_health) as _,
             codec_filter_registry: Arc::clone(&codec_filter_registry),
             transport_filter_chain: crate::filter::transport_chain::TransportFilterChain::empty(),
             limbo_handler_registry,

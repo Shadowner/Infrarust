@@ -6,6 +6,7 @@ mod first_available;
 mod health;
 mod least_conn;
 mod round_robin;
+mod selection;
 mod slow_start;
 
 pub use factory::build_load_balancer;
@@ -13,6 +14,7 @@ pub use first_available::FirstAvailable;
 pub use health::{BackendHealthView, PassiveBackendHealth};
 pub use least_conn::LeastConnections;
 pub use round_robin::RoundRobin;
+pub use selection::select_backend_addresses;
 pub use slow_start::SlowStartConfig;
 
 use std::time::Instant;

@@ -13,6 +13,7 @@ use smallvec::SmallVec;
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_core::loadbalancer::{
     AddressConnectionCount, BackendCandidate, BackendHealthView, LeastConnections, LoadBalancer,
+    select_backend_addresses,
 };
 use infrarust_core::middleware::backend_selection::{BackendSelectionMiddleware, BackendTargets};
 use infrarust_core::pipeline::context::ConnectionContext;
@@ -252,6 +253,31 @@ async fn test_full_flow_least_conn_balances() {
     for (host, n) in &distribution {
         assert_eq!(*n, 10, "uneven distribution for {host}: {distribution:?}");
     }
+}
+
+#[test]
+fn test_select_backend_addresses_shared_helper() {
+    let counts = MockCounts::default();
+    let health = MockHealth::default();
+    counts.set(&addr("10.0.0.1"), 5);
+    counts.set(&addr("10.0.0.2"), 1);
+    health.set(&addr("10.0.0.2"), false, None);
+    let lb = LeastConnections::new(None);
+
+    let config = server_config(&["10.0.0.1:25565", "10.0.0.2:25565", "10.0.0.3:25565"]);
+    let ordered = select_backend_addresses(&config, &lb, &counts, &health);
+    assert_eq!(
+        ordered.as_slice(),
+        [addr("10.0.0.3"), addr("10.0.0.1"), addr("10.0.0.2")],
+        "least loaded healthy first, unhealthy last"
+    );
+
+    // Single address: returned as-is, no balancing.
+    let single = server_config(&["10.0.0.9:25565"]);
+    let capturing = CapturingLb::default();
+    let ordered = select_backend_addresses(&single, &capturing, &counts, &health);
+    assert_eq!(ordered.as_slice(), [addr("10.0.0.9")]);
+    assert_eq!(capturing.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

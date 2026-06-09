@@ -210,10 +210,23 @@ impl DomainRouter {
     }
 
     pub fn find_by_server_id(&self, server_id: &str) -> Option<Arc<ServerConfig>> {
+        self.find_route_by_server_id(server_id)
+            .map(|(cfg, _lb)| cfg)
+    }
+
+    pub fn find_route_by_server_id(
+        &self,
+        server_id: &str,
+    ) -> Option<(Arc<ServerConfig>, Arc<dyn LoadBalancer>)> {
         self.configs
             .iter()
             .find(|entry| entry.value().config.effective_id() == server_id)
-            .map(|entry| Arc::clone(&entry.value().config))
+            .map(|entry| {
+                (
+                    Arc::clone(&entry.value().config),
+                    Arc::clone(&entry.value().load_balancer),
+                )
+            })
     }
 
     pub fn list_all(&self) -> Vec<(ProviderId, Arc<ServerConfig>)> {

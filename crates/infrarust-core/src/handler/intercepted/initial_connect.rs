@@ -275,8 +275,7 @@ async fn connect_to_backend(
 ) -> Result<BackendBridge, CoreError> {
     let server_config = &routing.server_config;
 
-    let addresses: Vec<infrarust_config::ServerAddress> =
-        backend_targets.map_or_else(|| server_config.address_list(), |t| t.addresses.to_vec());
+    let addresses = BackendTargets::addresses_or_config(backend_targets, server_config);
 
     let backend_conn = backend_connector
         .connect(

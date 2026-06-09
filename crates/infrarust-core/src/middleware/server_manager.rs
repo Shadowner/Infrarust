@@ -72,8 +72,13 @@ impl Middleware for ServerManagerMiddleware {
                     match self.server_manager.ensure_started(&server_id).await {
                         Ok(()) => {
                             if let Some(ref health) = self.backend_health {
+                                let window = routing
+                                    .server_config
+                                    .balance_config()
+                                    .slow_start
+                                    .unwrap_or_default();
                                 for wa in &routing.server_config.addresses {
-                                    health.mark_warming(&wa.address);
+                                    health.mark_warming(&wa.address, window);
                                 }
                             }
                             Ok(MiddlewareResult::Continue)
