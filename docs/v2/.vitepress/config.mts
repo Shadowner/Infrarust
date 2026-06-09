@@ -225,6 +225,7 @@ export default
             items: [
               { text: 'Architecture Overview', link: '/reference/architecture' },
               { text: 'Performance Tuning', link: '/reference/performance' },
+              { text: 'Benchmarking', link: '/reference/benchmarking' },
               { text: 'Zerocopy & Splice', link: '/reference/zerocopy' },
             ],
           },

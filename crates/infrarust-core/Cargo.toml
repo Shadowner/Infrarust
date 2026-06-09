@@ -11,6 +11,9 @@ workspace = true
 [features]
 default = []
 docker = ["dep:bollard", "dep:futures-util"]
+# Per-filter / per-packet hot-path timing, emitted on the `infrarust::bench_timing`
+# tracing target. Off by default — compiles out entirely in normal builds.
+bench-timing = ["dep:quanta"]
 telemetry = [
     "dep:opentelemetry",
     "dep:opentelemetry_sdk",
@@ -48,6 +51,9 @@ minus = { workspace = true }
 humantime = { workspace = true }
 flate2 = { workspace = true }
 
+# Hot-path timing (optional, `bench-timing` feature)
+quanta = { workspace = true, optional = true }
+
 # Docker provider (optional)
 bollard = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
@@ -73,3 +79,12 @@ flate2 = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
 tempfile = { workspace = true }
+divan = { workspace = true }
+
+[[bench]]
+name = "codec_chain"
+harness = false
+
+[[bench]]
+name = "intercepted_pipeline"
+harness = false

@@ -26,3 +26,8 @@ cfb8 = { workspace = true }
 cipher = { workspace = true }
 
 [dev-dependencies]
+divan = { workspace = true }
+
+[[bench]]
+name = "frame_codec"
+harness = false

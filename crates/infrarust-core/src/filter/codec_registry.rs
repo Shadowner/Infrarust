@@ -51,6 +51,35 @@ impl CodecFilterRegistryImpl {
         })
     }
 
+    /// Like [`create_instances`](Self::create_instances), but also returns each
+    /// instance's resolved filter id (in execution order) for per-filter timing
+    /// attribution. Only built under the `bench-timing` feature.
+    #[cfg(feature = "bench-timing")]
+    pub fn create_instances_with_ids(
+        &self,
+        init: &infrarust_api::filter::CodecSessionInit,
+    ) -> (
+        Vec<Box<dyn infrarust_api::filter::CodecFilterInstance>>,
+        Vec<std::sync::Arc<str>>,
+    ) {
+        self.base.with_ordered(|factories, ordered| {
+            let factory_map: HashMap<String, &dyn CodecFilterFactory> = factories
+                .iter()
+                .map(|f| (CodecFilterFactory::metadata(f.as_ref()).id, f.as_ref()))
+                .collect();
+
+            let mut instances = Vec::with_capacity(ordered.len());
+            let mut ids = Vec::with_capacity(ordered.len());
+            for id in ordered {
+                if let Some(f) = factory_map.get(id.as_str()) {
+                    instances.push(f.create(init));
+                    ids.push(std::sync::Arc::from(id.as_str()));
+                }
+            }
+            (instances, ids)
+        })
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.base.is_empty()

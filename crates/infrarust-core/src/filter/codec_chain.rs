@@ -25,6 +25,24 @@ pub enum FilterResult {
 /// A chain of [`CodecFilterInstance`]s for one side of one connection.
 pub struct CodecFilterChain {
     instances: Vec<Box<dyn CodecFilterInstance>>,
+    /// Resolved filter ids, parallel to `instances`, for per-filter timing
+    /// attribution under the `bench-timing` feature.
+    #[cfg(feature = "bench-timing")]
+    filter_ids: Vec<std::sync::Arc<str>>,
+}
+
+/// Emits the per-packet total codec time on the `infrarust::bench_timing`
+/// tracing target (only built under the `bench-timing` feature).
+#[cfg(feature = "bench-timing")]
+#[inline]
+fn emit_packet_total(packet: &RawPacket, start: quanta::Instant) {
+    tracing::debug!(
+        target: "infrarust::bench_timing",
+        id = packet.packet_id,
+        len = packet.data.len(),
+        ns = start.elapsed().as_nanos() as u64,
+        "codec_packet"
+    );
 }
 
 impl CodecFilterChain {
@@ -37,19 +55,49 @@ impl CodecFilterChain {
             return FilterResult::Pass;
         }
 
+        #[cfg(feature = "bench-timing")]
+        let packet_start = quanta::Instant::now();
+
         let mut output = FrameOutput::new();
 
+        #[cfg(feature = "bench-timing")]
+        let mut ids = self.filter_ids.iter();
+
         for instance in &mut self.instances {
-            match instance.filter(packet, &mut output) {
+            #[cfg(feature = "bench-timing")]
+            let filter_start = quanta::Instant::now();
+
+            let verdict = instance.filter(packet, &mut output);
+
+            #[cfg(feature = "bench-timing")]
+            tracing::trace!(
+                target: "infrarust::bench_timing",
+                filter = ids.next().map_or("?", |s| s.as_ref()),
+                ns = filter_start.elapsed().as_nanos() as u64,
+                "codec_filter"
+            );
+
+            match verdict {
                 CodecVerdict::Pass => continue,
-                CodecVerdict::Drop => return FilterResult::Dropped,
-                CodecVerdict::Replace => return FilterResult::Replaced(output),
+                CodecVerdict::Drop => {
+                    #[cfg(feature = "bench-timing")]
+                    emit_packet_total(packet, packet_start);
+                    return FilterResult::Dropped;
+                }
+                CodecVerdict::Replace => {
+                    #[cfg(feature = "bench-timing")]
+                    emit_packet_total(packet, packet_start);
+                    return FilterResult::Replaced(output);
+                }
                 CodecVerdict::Error(e) => {
                     tracing::warn!(error = %e, "CodecFilter error, passing frame through");
                     continue;
                 }
             }
         }
+
+        #[cfg(feature = "bench-timing")]
+        emit_packet_total(packet, packet_start);
 
         if output.has_injections() {
             FilterResult::PassWithInjections(output)
@@ -110,15 +158,27 @@ pub fn build_codec_chains(
         side: ConnectionSide::ServerSide,
     };
 
-    let client_instances = registry.create_instances(&client_init);
-    let server_instances = registry.create_instances(&server_init);
+    #[cfg(not(feature = "bench-timing"))]
+    let (client_instances, server_instances) = (
+        registry.create_instances(&client_init),
+        registry.create_instances(&server_init),
+    );
+    #[cfg(feature = "bench-timing")]
+    let ((client_instances, client_ids), (server_instances, server_ids)) = (
+        registry.create_instances_with_ids(&client_init),
+        registry.create_instances_with_ids(&server_init),
+    );
 
     (
         CodecFilterChain {
             instances: client_instances,
+            #[cfg(feature = "bench-timing")]
+            filter_ids: client_ids,
         },
         CodecFilterChain {
             instances: server_instances,
+            #[cfg(feature = "bench-timing")]
+            filter_ids: server_ids,
         },
     )
 }
@@ -183,11 +243,19 @@ mod tests {
     }
 
     fn empty_chain(_side: ConnectionSide) -> CodecFilterChain {
-        CodecFilterChain { instances: vec![] }
+        CodecFilterChain {
+            instances: vec![],
+            #[cfg(feature = "bench-timing")]
+            filter_ids: vec![],
+        }
     }
 
     fn chain_with_instances(instances: Vec<Box<dyn CodecFilterInstance>>) -> CodecFilterChain {
-        CodecFilterChain { instances }
+        CodecFilterChain {
+            instances,
+            #[cfg(feature = "bench-timing")]
+            filter_ids: vec![],
+        }
     }
 
     struct CloseTrackingInstance {

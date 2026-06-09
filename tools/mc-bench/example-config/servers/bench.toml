@@ -1,0 +1,6 @@
+# Server route used by the benchmark. The `domains` entry must match the
+# `--server-address` passed to `mc-bench load` (default 127.0.0.1), and
+# `addresses` must point at the mock backend (`mc-bench serve-backend`).
+domains = ["127.0.0.1"]
+addresses = ["127.0.0.1:25566"]
+proxy_mode = "offline"

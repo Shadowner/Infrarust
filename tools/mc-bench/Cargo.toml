@@ -1,0 +1,22 @@
+[package]
+name = "infrarust-mc-bench"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "End-to-end Minecraft Play-state load generator + mock backend for benchmarking Infrarust intercepted mode (Layer D)"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "mc-bench"
+path = "src/main.rs"
+
+[dependencies]
+infrarust_protocol = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+clap = { workspace = true }
+hdrhistogram = { workspace = true }
+uuid = { workspace = true }
+bytes = { workspace = true }
