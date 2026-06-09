@@ -57,7 +57,9 @@ impl PacketEncoder {
             compression_threshold: None,
             compress_buf: Vec::new(),
             scratch_buf: Vec::new(),
-            compressor: compression::new_compressor(4),
+            compressor: compression::new_compressor(
+                compression::DEFAULT_PACKET_COMPRESSION_LEVEL,
+            ),
         }
     }
 

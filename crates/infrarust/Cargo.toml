@@ -14,10 +14,11 @@ name = "infrarust"
 path = "src/main.rs"
 
 [features]
-default = ["default-plugins"]
+default = ["default-plugins", "libdeflater"]
 telemetry = ["infrarust-core/telemetry", "dep:opentelemetry", "dep:tracing-opentelemetry"]
 docker = ["infrarust-core/docker"]
 default-plugins = ["plugin-auth", "plugin-server-wake"]
+libdeflater = ["infrarust_protocol/libdeflater", "infrarust-core/libdeflater"]
 plugin-auth = ["dep:infrarust-plugin-auth"]
 plugin-hello = ["dep:infrarust-plugin-hello"]
 plugin-server-wake = ["dep:infrarust-plugin-server-wake"]

@@ -11,6 +11,7 @@ workspace = true
 [features]
 default = []
 docker = ["dep:bollard", "dep:futures-util"]
+libdeflater = ["infrarust_protocol/libdeflater"]
 # Per-filter / per-packet hot-path timing, emitted on the `infrarust::bench_timing`
 # tracing target. Off by default — compiles out entirely in normal builds.
 bench-timing = ["dep:quanta"]

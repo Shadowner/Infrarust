@@ -13,6 +13,9 @@ workspace = true
 name = "mc-bench"
 path = "src/main.rs"
 
+[features]
+libdeflater = ["infrarust_protocol/libdeflater"]
+
 [dependencies]
 infrarust_protocol = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

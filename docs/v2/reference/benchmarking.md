@@ -59,11 +59,14 @@ A few highlights from one run. VarInt decode is about 9 ns, encode about 14 ns. 
 near-free and size-independent (~46 ns), because payloads are zero-copy `Bytes` slices.
 Uncompressed encode is a memcpy: ~70 ns at 32 B, ~6 µs at 16 KB.
 
-Compression is the cost that matters. With the default `flate2`/miniz backend, a 512 B
+Compression is the cost that matters. With the pure-Rust `flate2`/miniz backend, a 512 B
 packet jumps from ~75 ns uncompressed to roughly 120 µs once it crosses the compression
-threshold, because each packet rebuilds a fresh deflate stream. Build the protocol crate
-with the `libdeflater` feature for a large win, and prefer it for compression-heavy
-workloads.
+threshold, because each packet rebuilds a fresh deflate stream.
+
+The shipped `infrarust` binary defaults to the `libdeflater` backend (libdeflate, C) for a
+~2-3x win. Build with `--no-default-features` to fall back to the pure-Rust flate2 backend.
+The Layer B microbench (`cargo bench -p infrarust_protocol`) uses flate2 by default; add
+`--features libdeflater` to reproduce the shipped backend.
 
 The `*_compressed` minus `*_uncompressed` deltas attribute the zlib cost; the AES benches
 attribute the online-mode encryption cost.

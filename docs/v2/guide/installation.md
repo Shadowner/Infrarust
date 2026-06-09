@@ -62,7 +62,9 @@ docker build -t infrarust .
 ### Requirements
 
 - **Rust 1.85 or later** (edition 2024)
-- A C linker (`gcc` or `clang`)
+- A C compiler and linker (`gcc` or `clang`). The default build compiles `libdeflate` for
+  packet compression. For a pure-Rust build with no C toolchain, see
+  [Optional features](#optional-features).
 - OpenSSL development headers (for TLS support)
 
 On Debian/Ubuntu:
@@ -95,6 +97,7 @@ Enable features at compile time with `--features`:
 
 | Feature | What it adds |
 |---------|-------------|
+| `libdeflater` | libdeflate packet compression (on by default; needs a C compiler) |
 | `telemetry` | OpenTelemetry tracing export |
 | `plugin-auth` | Built-in authentication plugin |
 | `plugin-hello` | Example hello-world plugin |
@@ -102,6 +105,13 @@ Enable features at compile time with `--features`:
 
 ```bash
 cargo build --release -p infrarust --features telemetry,plugin-auth
+```
+
+To build without a C toolchain, drop the default `libdeflater` feature. The proxy then uses
+the pure-Rust flate2 backend for packet compression:
+
+```bash
+cargo build --release -p infrarust --no-default-features --features default-plugins
 ```
 
 ### Static linking (musl)

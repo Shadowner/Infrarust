@@ -1,9 +1,15 @@
 //! Zlib compression abstraction with compile-time backend selection.
 //!
-//! By default, uses `flate2` (pure Rust via `miniz_oxide`). With the `libdeflater`
-//! feature flag, switches to `libdeflate` for 2-3x better performance.
+//! By default (the `libdeflater` feature, enabled by the `infrarust` binary), uses
+//! `libdeflate` (C) for ~2-3x better performance. Building with `--no-default-features`
+//! falls back to `flate2` (pure Rust via `miniz_oxide`), which needs no C toolchain.
+//!
+//! Note: the two backends use different level scales — zlib (flate2) is 0-9, libdeflate
+//! is 1-12. A given numeric level is therefore not equivalent across backends.
 
 use crate::error::{ProtocolError, ProtocolResult};
+
+pub const DEFAULT_PACKET_COMPRESSION_LEVEL: u32 = 4;
 
 /// Compresses data in zlib format.
 pub trait ZlibCompressor {
@@ -240,5 +246,28 @@ mod tests {
         let result = decompressor.decompress(&[], &mut output, 0);
         // Either Ok (0 bytes) or Err — the important thing is no panic
         let _ = result;
+    }
+
+    #[cfg(feature = "libdeflater")]
+    #[test]
+    fn test_cross_backend_interop() {
+        let original: Vec<u8> = (0..4096).map(|i: u32| (i.wrapping_mul(31) % 251) as u8).collect();
+
+        let roundtrip = |mut comp: Box<dyn ZlibCompressor>, mut decomp: Box<dyn ZlibDecompressor>| {
+            let mut compressed = Vec::new();
+            comp.compress(&original, &mut compressed).unwrap();
+            let mut out = Vec::new();
+            decomp.decompress(&compressed, &mut out, original.len()).unwrap();
+            assert_eq!(out, original);
+        };
+
+        roundtrip(
+            Box::new(Flate2Compressor::new(DEFAULT_PACKET_COMPRESSION_LEVEL)),
+            Box::new(LibdeflateDecompressor::new()),
+        );
+        roundtrip(
+            Box::new(LibdeflateCompressor::new(DEFAULT_PACKET_COMPRESSION_LEVEL)),
+            Box::new(Flate2Decompressor::new()),
+        );
     }
 }

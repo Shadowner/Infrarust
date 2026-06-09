@@ -142,15 +142,14 @@ fn build_pre_1_14_empty_chunk(buf: &mut Vec<u8>, version: ProtocolVersion) {
 }
 
 fn zlib_compress(data: &[u8]) -> Vec<u8> {
-    use flate2::Compression;
-    use flate2::write::ZlibEncoder;
-    use std::io::Write;
+    use crate::io::compression::new_compressor;
 
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(data)
+    let mut compressor = new_compressor(6);
+    let mut out = Vec::new();
+    compressor
+        .compress(data, &mut out)
         .expect("zlib compression should not fail");
-    encoder.finish().expect("zlib finish should not fail")
+    out
 }
 
 fn encode_empty_chunk_sections(num_sections: usize, version: ProtocolVersion) -> Vec<u8> {
