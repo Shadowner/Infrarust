@@ -10,8 +10,8 @@ A WASM plugin is a WebAssembly Component that Infrarust loads at startup. The pr
 
 The contract splits into two halves:
 
-- **Imports** are the host services a plugin calls (logging, the event bus, the player registry, and more).
-- **Exports** are the entry points the host calls on the plugin (lifecycle, the unified event dispatch, command and scheduler callbacks, limbo handlers, codec filters).
+- Imports are the host services a plugin calls (logging, the event bus, the player registry, and more).
+- Exports are the entry points the host calls on the plugin (lifecycle, the unified event dispatch, command and scheduler callbacks, limbo handlers, codec filters).
 
 The rest of this page explains both halves, the dispatch direction, and how Infrarust turns a guest-registered handler id into a native callback.
 
@@ -152,11 +152,11 @@ When the host hands a session to `limbo-on-player-enter`, it pushes the native s
 The host links host services per plugin. Six baseline capabilities are granted to every WASM plugin: `event-bus`, `player-read`, `player-write`, `command`, `scheduler`, and `config-read`. Opt-in imports such as `server-manage`, `ban`, and `codec-filter` are linked only when the plugin lists the matching capability in its TOML permissions:
 
 ```toml
-[plugins.my-plugin.permissions]
-capabilities = ["server-manage", "ban", "codec-filter"]
+[plugins.my_plugin]
+permissions = ["server-manage", "ban", "codec-filter"]
 ```
 
-If a plugin imports an interface it has no capability for, the host never links it and instantiation fails for that plugin. Capability strings are kebab-case. The `limbo` import is always linked, but the host enforces the `limbo` capability when it mints a session for a plugin, not at link time. [Capabilities](./capabilities) lists every string, its default state, and what it grants.
+If a plugin imports an interface it has no capability for, the host never links it and instantiation fails for that plugin. Capability strings are kebab-case. The `limbo` import is always linked, but the host enforces the `limbo` capability at registration: `register-limbo-handler` is a no-op for a plugin that lacks the capability, so enforcement happens there rather than at link time. [Capabilities](./capabilities) lists every string, its default state, and what it grants.
 
 :::info Virtual Backend is planned
 The Virtual Backend capability is defined in the contract but not yet enforced, and no WASM bridge exists for it. Treat it as a future feature.

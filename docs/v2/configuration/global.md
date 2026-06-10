@@ -1,6 +1,6 @@
 ---
 title: Global Settings
-description: Reference for infrarust.toml — bind address, workers, timeouts, rate limits, keepalive, bans, and other proxy-wide settings.
+description: Reference for infrarust.toml. Bind address, workers, timeouts, rate limits, keepalive, bans, forwarding, ip_filter, web admin API, permissions, and other proxy-wide settings.
 outline: [2, 3]
 ---
 
@@ -9,6 +9,8 @@ outline: [2, 3]
 The `infrarust.toml` file controls the proxy process itself: what address it listens on, how many threads it uses, and how it handles connections before they reach any backend server.
 
 Every field has a default value. An empty file (or no file at all) starts the proxy on `0.0.0.0:25565` with sane defaults.
+
+The config struct uses `serde(deny_unknown_fields)`, so unrecognized keys are a hard parse error rather than a silent no-op.
 
 ## Bind address and port
 
@@ -50,13 +52,22 @@ How long the proxy waits when opening a TCP connection to a backend server. If t
 
 All duration fields accept human-readable strings: `"5s"`, `"30s"`, `"1m"`, `"2m30s"`.
 
-## Server directory
+## Server and plugin directories
 
 ```toml
 servers_dir = "./servers"
+plugins_dir = "./plugins"
 ```
 
-Path to the directory containing per-server `.toml` files. Relative paths are resolved from the working directory where Infrarust starts. See the [Configuration Overview](./) for the per-server config format.
+`servers_dir` is the path to the directory containing per-server `.toml` files. `plugins_dir` is where Infrarust looks for WASM plugin files. Both are resolved from the working directory where Infrarust starts. See the [Configuration Overview](./) for the per-server config format.
+
+## Announce proxy commands
+
+```toml
+announce_proxy_commands = true
+```
+
+When `true` (the default), the proxy announces its built-in `/ir` command tree to clients via the Minecraft command graph packet. Set to `false` to hide the proxy command suggestions from the player's tab completion.
 
 ## Proxy protocol
 
@@ -95,17 +106,16 @@ What happens when a player connects with a domain that doesn't match any server 
 
 ```toml
 [rate_limit]
+enabled = false
 max_connections = 3
 window = "10s"
-status_max = 30
+status_max = 300
 status_window = "10s"
 ```
 
-Controls how many connections a single IP can make within a sliding time window. Login attempts and status pings have separate limits.
+Controls how many connections a single IP can make within a sliding time window. Rate limiting is disabled by default; set `enabled = true` to activate it. Login attempts and status pings have separate limits.
 
-`max_connections` is the number of login attempts allowed per IP within `window`. `status_max` and `status_window` do the same for server-list ping requests.
-
-The defaults allow 3 login attempts and 30 status pings per 10-second window per IP. Set `max_connections = 0` to disable login rate limiting.
+`max_connections` is the number of login attempts allowed per IP within `window`. `status_max` and `status_window` do the same for server-list ping requests. The defaults allow 3 login attempts and 300 status pings per 10-second window per IP.
 
 ## Status cache
 
@@ -167,7 +177,7 @@ Each MOTD entry supports these fields:
 
 ```toml
 [telemetry]
-enabled = false
+enabled = true
 endpoint = "http://localhost:4317"
 protocol = "grpc"
 
@@ -183,7 +193,7 @@ sampling_ratio = 0.1
 service_name = "infrarust"
 ```
 
-Infrarust can export metrics and traces via OpenTelemetry. Set `enabled = true` and point `endpoint` at your OTLP collector. When `endpoint` is omitted, the OpenTelemetry SDK default is used.
+Infrarust can export metrics and traces via OpenTelemetry. The `[telemetry]` section is absent by default (no telemetry); add it and set `enabled = true` to activate export. Point `endpoint` at your OTLP collector; when omitted, the OpenTelemetry SDK default is used.
 
 `protocol` is either `"grpc"` or `"http"`, matching the OTLP export protocol your collector expects.
 
@@ -192,7 +202,7 @@ Infrarust can export metrics and traces via OpenTelemetry. Set `enabled = true` 
 `service_name` is set as an OTEL resource attribute. `service_version` defaults to the Infrarust binary version and is usually left unset.
 
 ::: tip
-Telemetry is fully disabled by default. Setting `enabled = false` (or omitting the section entirely) means no collector connection is attempted.
+Omitting the `[telemetry]` section entirely disables telemetry. No collector connection is attempted.
 :::
 
 ## Docker provider
@@ -214,20 +224,97 @@ The provider uses Docker events for real-time updates and falls back to polling 
 The `[docker]` section is optional. Omit it entirely to disable Docker discovery.
 :::
 
+## IP filter
+
+```toml
+[ip_filter]
+whitelist = ["10.0.0.0/8", "192.168.0.0/16"]
+blacklist = ["10.6.6.0/24"]
+```
+
+Global IP filtering using CIDR ranges. An IP is allowed when it is not in the `blacklist` and (the `whitelist` is empty or the IP is in the `whitelist`). The blacklist always wins: a blacklisted address inside a whitelisted range is still rejected.
+
+If `whitelist` is empty, all IPs are allowed except those in `blacklist`. Both lists can be used together.
+
+Individual servers can define their own `[ip_filter]` in addition to, or instead of, the global one.
+
+## Forwarding
+
+```toml
+[forwarding]
+mode = "none"
+secret_file = "forwarding.secret"
+bungeecord_channel = true
+```
+
+Player IP forwarding passes the real client IP and UUID to backend servers. The `mode` values are:
+
+| Mode | Description |
+|------|-------------|
+| `none` | No forwarding (default) |
+| `bungeecord` / `legacy` | BungeeCord-style legacy forwarding in the handshake |
+| `bungeeguard` | BungeeCord forwarding with a shared HMAC token |
+| `velocity` / `modern` | Velocity modern forwarding (recommended if your backends support it) |
+
+`secret_file` is the path to the shared secret used by `bungeeguard` and `velocity`. The file is created automatically if it does not exist.
+
+`bungeecord_channel` enables the `BungeeCord` plugin messaging channel. The `[forwarding.channel_permissions]` subtable controls which sub-channels are allowed; most are enabled by default, and `connect_other`, `message`, `message_raw`, `kick_player`, and `kick_player_raw` are disabled by default.
+
+::: warning
+BungeeCord legacy forwarding sends the real IP in plain text in the handshake. Anyone who can reach your backend port can spoof it. Use `bungeeguard` or `velocity` if you need IP forwarding and cannot fully firewall the backend.
+:::
+
+## Web admin API
+
+```toml
+[web]
+enable_api = true
+enable_webui = true
+bind = "127.0.0.1:8080"
+api_key = "your-api-key-here"
+
+[web.rate_limit]
+requests_per_minute = 60
+```
+
+Enables the HTTP admin API (and optional web UI) used by management tools and the CLI. The section is optional; omit it entirely to keep the web interface off.
+
+`bind` defaults to `127.0.0.1:8080`. If you bind to a non-loopback address, `api_key` is required and must be at least 16 characters. When bound to loopback without a key, Infrarust generates an ephemeral key and logs it at startup.
+
+`cors_origins` accepts a list of allowed CORS origins (empty by default, meaning no cross-origin access).
+
+::: danger
+Never expose the admin API on a public interface without a strong `api_key`. There is no second authentication layer.
+:::
+
+## Permissions
+
+```toml
+[permissions]
+admins = ["PlayerName", "AnotherPlayer"]
+player_commands = []
+```
+
+`admins` is a list of player names (or UUIDs) granted the Admin permission level. Admin players can run all `/ir` subcommands including `broadcast`, `kick`, `reload`, `send`, `plugin`, and `plugins`.
+
+`player_commands` overrides which `/ir` subcommands non-admin players can run. By default, players can use `help`, `version`, `list`, `find`, and `server`.
+
+Plugins can register custom permission checkers that extend or replace this list.
+
 ## Plugins
 
 ```toml
 [plugins.my_plugin]
-path = "/opt/infrarust/plugins/my_plugin.so"
-permissions = ["config_provider", "event_handler"]
+path = "./plugins/my_plugin.wasm"
+permissions = ["event_handler"]
 enabled = true
 ```
 
-Plugin configurations are keyed by plugin ID. Each entry can specify a `path` to the plugin binary, a list of `permissions`, and whether the plugin is `enabled` (defaults to `true` when omitted).
+Plugin configurations are keyed by plugin ID. Each entry can specify a `path` to the plugin binary, a list of `permissions`, and whether the plugin is `enabled` (defaults to `true` when omitted). WASM plugins are loaded from `plugins_dir` by default; `path` overrides the location for that specific plugin.
 
 ## Full example
 
-A complete `infrarust.toml` with every section and its defaults:
+A complete `infrarust.toml` showing all sections and their defaults:
 
 ```toml
 bind = "0.0.0.0:25565"
@@ -235,14 +322,17 @@ max_connections = 0
 connect_timeout = "5s"
 receive_proxy_protocol = false
 servers_dir = "./servers"
+plugins_dir = "./plugins"
 worker_threads = 0
 unknown_domain_behavior = "default_motd"
 so_reuseport = false
+announce_proxy_commands = true
 
 [rate_limit]
+enabled = false
 max_connections = 3
 window = "10s"
-status_max = 30
+status_max = 300
 status_window = "10s"
 
 [status_cache]
@@ -259,19 +349,34 @@ file = "bans.json"
 purge_interval = "300s"
 enable_audit_log = true
 
-[telemetry]
-enabled = false
-endpoint = "http://localhost:4317"
-protocol = "grpc"
+# [telemetry]
+# enabled = true
+# endpoint = "http://localhost:4317"
+# protocol = "grpc"
+#
+# [telemetry.metrics]
+# enabled = true
+# export_interval = "15s"
+#
+# [telemetry.traces]
+# enabled = true
+# sampling_ratio = 0.1
+#
+# [telemetry.resource]
+# service_name = "infrarust"
 
-[telemetry.metrics]
-enabled = true
-export_interval = "15s"
+# [ip_filter]
+# whitelist = []
+# blacklist = []
 
-[telemetry.traces]
-enabled = true
-sampling_ratio = 0.1
+# [forwarding]
+# mode = "none"
+# secret_file = "forwarding.secret"
 
-[telemetry.resource]
-service_name = "infrarust"
+# [web]
+# bind = "127.0.0.1:8080"
+# api_key = "change-me-min-16-chars"
+
+# [permissions]
+# admins = []
 ```

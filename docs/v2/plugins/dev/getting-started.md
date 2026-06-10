@@ -1,6 +1,6 @@
 ---
 title: Getting Started with Plugin Development
-description: Build your first Infrarust plugin from scratch — project setup, the Plugin trait, event listeners, and commands.
+description: Build your first Infrarust plugin from scratch. Covers project setup, the Plugin trait, event listeners, and commands.
 outline: [2, 3]
 ---
 
@@ -10,7 +10,7 @@ This tutorial walks you through creating a plugin that logs player connections a
 
 ## Prerequisites
 
-- Rust toolchain (edition 2024)
+- A Rust toolchain new enough for edition 2024. Infrarust pins its MSRV at 1.94 in the workspace `Cargo.toml`.
 - The Infrarust source code checked out locally
 - Familiarity with `async`/`await` in Rust
 
@@ -37,15 +37,25 @@ infrarust-api = { path = "../../crates/infrarust-api" }
 tracing = "0.1"
 ```
 
-`infrarust-api` provides the `Plugin` trait, events, commands, and every type you need. `tracing` is the logging framework used across Infrarust.
+`infrarust-api` provides the `Plugin` trait, events, commands, and every type you need. `tracing` is the logging framework used across Infrarust. The bundled plugins (`plugins/infrarust-plugin-hello` and friends) pull these in through `{ workspace = true }` instead of a literal path; either form works once the crate is part of the workspace.
+
+The root workspace lists its members explicitly, so add the new crate to the `members` array in the top-level `Cargo.toml` or Cargo will not build it:
+
+```toml{4}
+[workspace]
+members = [
+    # ... existing members ...
+    "plugins/infrarust-plugin-greet",
+]
+```
 
 ## The Plugin trait
 
 Every plugin implements `Plugin` from the prelude. The trait has three parts:
 
-- `metadata()` — returns your plugin's id, name, and version.
-- `on_enable()` — called at startup with a `PluginContext`. Register your listeners, commands, and handlers here.
-- `on_disable()` — called at shutdown. Optional; the default implementation does nothing. All listeners and commands you registered are automatically cleaned up.
+- `metadata()` returns your plugin's id, name, and version.
+- `on_enable()` is called at startup with a `PluginContext`. Register your listeners, commands, and handlers here.
+- `on_disable()` is called at shutdown. It is optional; the default implementation does nothing. All listeners and commands you registered are automatically cleaned up.
 
 Open `src/lib.rs` and replace the contents:
 
@@ -300,6 +310,9 @@ impl CommandHandler for GreetCommand {
 
 ## Next steps
 
-- [Plugin Overview](../index.md) — Full list of what plugins can do.
-- Study the built-in [hello plugin](https://github.com/Shadowner/Infrarust/tree/main/plugins/infrarust-plugin-hello) for examples of limbo handlers and scheduled tasks.
-- Check the `infrarust_api::prelude` module for the full list of available types, events, and services.
+- [Plugin overview](../index.md) for the full list of what plugins can do.
+- [Events](./events.md) for the complete event catalog and how `ResultedEvent` outcomes are applied.
+- [Commands](./commands.md) for tab completion, permission gating, and argument parsing.
+- [Lifecycle](./lifecycle.md) for the load, enable, disable, and unload flow.
+- The built-in [hello plugin](https://github.com/Shadowner/Infrarust/tree/main/plugins/infrarust-plugin-hello) for examples of limbo handlers and scheduled tasks.
+- The `infrarust_api::prelude` module for the full list of available types, events, and services.

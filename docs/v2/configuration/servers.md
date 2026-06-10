@@ -42,17 +42,17 @@ whitelist = ["192.168.1.0/24"]
 blacklist = ["10.0.0.5/32"]
 
 [motd.online]
-text = "§aSurvival §7— §fWelcome!"
+text = "§aSurvival §7- §fWelcome!"
 favicon = "./icons/survival.png"
 version_name = "Survival 1.21"
 max_players = 100
 
 [motd.sleeping]
-text = "§eSurvival §7— §fConnect to wake up!"
+text = "§eSurvival §7- §fConnect to wake up!"
 version_name = "Server Sleeping"
 
 [motd.starting]
-text = "§eSurvival §7— §fStarting..."
+text = "§eSurvival §7- §fStarting..."
 
 [server_manager]
 type = "pterodactyl"
@@ -71,8 +71,8 @@ poll_interval = "5s"
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `id` | string | filename | Unique identifier. Set automatically from the filename if omitted. |
-| `name` | string | — | Human-readable name. Takes priority over `id` as the server's identity. Must match `[a-z0-9_-]+`, max 64 characters. |
-| `network` | string | — | Network group for server switching. Players can only switch between servers in the same network. Omit to isolate the server. Must match `[a-z0-9_-]+`. |
+| `name` | string | none | Human-readable name. Takes priority over `id` as the server's identity. Must match `[a-z0-9_-]+`, max 64 characters. |
+| `network` | string | none | Network group for server switching. Players can only switch between servers in the same network. Omit to isolate the server. Must match `[a-z0-9_-]+`. |
 
 The effective server ID is resolved as: `name` > `id` > `"unknown"`. Duplicate IDs across all server files cause a startup error.
 
@@ -83,7 +83,7 @@ The effective server ID is resolved as: `name` > `id` > `"unknown"`. Duplicate I
 | `domains` | list of strings | `[]` | Domains that route players to this server. Supports wildcards like `*.mc.example.com`. |
 | `addresses` | list of strings | *required* | Backend server addresses in `host:port` format. If you omit the port, it defaults to `25565`. |
 
-`addresses` is the only required field. You must provide at least one address.
+`addresses` is the only required field. You must provide at least one address. When you list several, Infrarust tries them in order and uses the first one that accepts the connection (sequential failover). Per-backend load balancing such as round-robin is planned, not yet available.
 
 Wildcard domains match any subdomain at that level. `*.mc.example.com` matches `survival.mc.example.com` and `creative.mc.example.com`, but not `mc.example.com` itself. Exact matches always take priority over wildcards.
 
@@ -96,11 +96,12 @@ Forwarding proxy modes (`passthrough`, `zero_copy`, `server_only`) require at le
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `proxy_mode` | string | `"passthrough"` | How the proxy handles traffic. See below. |
+| `forwarding_mode` | string | `"none"` | Per-server override of the player info forwarding format sent to the backend: `none`, `bungee_cord` (alias `legacy`), `bungee_guard`, `velocity` (alias `modern`). Omit to use the global `[forwarding]` mode. |
 | `send_proxy_protocol` | bool | `false` | Send HAProxy proxy protocol v1/v2 headers to the backend. |
 | `domain_rewrite` | string | `"none"` | Rewrite the domain in the Minecraft handshake before forwarding. |
 | `max_players` | integer | `0` | Maximum players allowed on this server. `0` means unlimited. |
 | `disconnect_message` | string | `"Server is currently unreachable. Please try again later."` | Message shown to players when the backend is unreachable. |
-| `limbo_handlers` | list of strings | `[]` | Plugin IDs for the limbo handler chain, executed in order. |
+| `limbo_handlers` | list of strings | `[]` | Registered handler names for the limbo handler chain, executed in order. |
 
 #### Proxy modes
 
@@ -113,9 +114,8 @@ All modes use `snake_case` in the config file.
 | Client-only | `"client_only"` | Proxy handles Mojang authentication. Backend runs in `online_mode=false`. |
 | Offline | `"offline"` | No authentication. Transparent relay. |
 | Server-only | `"server_only"` | Authentication handled entirely by the backend. |
-| Full | `"full"` | Encryption on both client and server sides. |
 
-Passthrough, zero-copy, and server-only are "forwarding" modes: the proxy relays raw bytes after the handshake. Client-only, offline, and full are "intercepted" modes: the proxy parses and may modify packets.
+Passthrough, zero-copy, and server-only are "forwarding" modes: the proxy relays raw bytes after the handshake. Client-only and offline are "intercepted" modes: the proxy parses and may modify packets.
 
 ::: tip
 Zero-copy mode only works on Linux. On other platforms, Infrarust logs a warning and still accepts the config, but performance won't differ from passthrough.
@@ -129,12 +129,12 @@ Controls what domain the backend sees in the Minecraft handshake packet.
 |-------|-------------|
 | `"none"` | Forward the original domain as-is. Default. |
 | `"from_backend"` | Use the host from the first entry in `addresses`. |
-| `{ "explicit": "mc.local" }` | Rewrite to the specified domain. |
+| `{ explicit = "mc.local" }` | Rewrite to the specified domain. |
 
 The explicit variant uses TOML inline table syntax:
 
 ```toml
-domain_rewrite = { "explicit" = "mc.local" }
+domain_rewrite = { explicit = "mc.local" }
 ```
 
 ### Timeouts
@@ -166,7 +166,7 @@ whitelist = ["192.168.1.0/24", "10.0.0.0/8"]
 blacklist = ["10.0.0.5/32"]
 ```
 
-If `whitelist` is non-empty, only IPs matching the whitelist are allowed. The whitelist is evaluated before the blacklist.
+The blacklist is evaluated first and always wins: a blacklisted address inside a whitelisted range is still denied. If the whitelist is non-empty and an address is not blacklisted, it must also match the whitelist to be allowed.
 
 ### MOTD
 
@@ -174,29 +174,29 @@ Configure the server list appearance for different server states. Each state is 
 
 ```toml
 [motd.online]
-text = "§aSurvival §7— §fWelcome!"
+text = "§aSurvival §7- §fWelcome!"
 favicon = "./icons/survival.png"
 version_name = "Survival 1.21"
 max_players = 100
 
 [motd.offline]
-text = "§cSurvival §7— §fOffline"
+text = "§cSurvival §7- §fOffline"
 
 [motd.sleeping]
-text = "§eSurvival §7— §fConnect to wake up!"
+text = "§eSurvival §7- §fConnect to wake up!"
 version_name = "Server Sleeping"
 
 [motd.starting]
-text = "§eSurvival §7— §fStarting..."
+text = "§eSurvival §7- §fStarting..."
 
 [motd.crashed]
-text = "§4Survival §7— §fCrashed"
+text = "§4Survival §7- §fCrashed"
 
 [motd.stopping]
-text = "§6Survival §7— §fStopping..."
+text = "§6Survival §7- §fStopping..."
 
 [motd.unreachable]
-text = "§cSurvival §7— §fUnreachable"
+text = "§cSurvival §7- §fUnreachable"
 ```
 
 Available states: `online`, `offline`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`.
@@ -239,7 +239,7 @@ start_timeout = "60s"
 | `args` | list of strings | `[]` | Arguments passed to the command. |
 | `ready_pattern` | string | `'For help, type "help"'` | Log line that indicates the server is ready. |
 | `shutdown_timeout` | duration | `"30s"` | How long to wait for graceful shutdown before killing the process. |
-| `shutdown_after` | duration | — | Idle time before auto-shutdown. Omit to keep the server running. |
+| `shutdown_after` | duration | none | Idle time before auto-shutdown. Omit to keep the server running. |
 | `start_timeout` | duration | `"60s"` | How long to wait for the ready pattern before giving up. |
 
 #### Pterodactyl
@@ -262,7 +262,7 @@ poll_interval = "5s"
 | `api_url` | string | *required* | Pterodactyl panel URL. |
 | `api_key` | string | *required* | API key for authentication. |
 | `server_id` | string | *required* | Server identifier in the panel. |
-| `shutdown_after` | duration | — | Idle time before auto-shutdown. |
+| `shutdown_after` | duration | none | Idle time before auto-shutdown. |
 | `start_timeout` | duration | `"60s"` | How long to wait for the server to start. |
 | `poll_interval` | duration | `"5s"` | How often to check the server's state. |
 

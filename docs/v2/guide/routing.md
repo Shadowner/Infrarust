@@ -57,22 +57,10 @@ This matches `survival.mc.example.com`, `creative.mc.example.com`, and any other
 ### Priority rules
 
 1. Exact domains always win over wildcards, regardless of insertion order.
-2. Among wildcards, the first matching pattern wins. Put more specific patterns before broader ones.
-
-```toml
-# servers/survival.toml — loaded first
-domains = ["*.survival.example.com"]
-addresses = ["10.0.1.10:25565"]
-
-# servers/catch-all.toml — loaded second
-domains = ["*.example.com"]
-addresses = ["10.0.1.1:25565"]
-```
-
-A player connecting to `play.survival.example.com` matches `*.survival.example.com` because that pattern was registered first. A player connecting to `creative.example.com` falls through to `*.example.com`.
+2. Among wildcards, the first matching pattern in the internal list wins. However, the internal wildcard list is rebuilt from an unordered map whenever configs change, so the relative order of wildcard patterns is not stable across reloads.
 
 ::: warning
-Wildcard ordering depends on the order server config files are loaded. Name your files so that more specific configs sort before broader ones (e.g., `01-survival.toml` before `99-catch-all.toml`), or use exact domains where possible.
+You cannot rely on file-naming conventions to control wildcard priority. If two wildcard patterns could both match the same domain, use exact domains for the ones that need deterministic routing, or restructure your domain scheme so patterns do not overlap.
 :::
 
 ## Domain conflicts
@@ -148,8 +136,8 @@ When a player connects with a domain that matches no server config, the `unknown
 unknown_domain_behavior = "default_motd"
 ```
 
-- `default_motd` (default) — responds with the global default MOTD for status pings, and rejects login attempts.
-- `drop` — silently closes the connection.
+- `default_motd` (default): responds with the global default MOTD for status pings, and rejects login attempts.
+- `drop`: silently closes the connection.
 
 ## Servers without domains
 

@@ -54,7 +54,7 @@ ExecStart=/opt/infrarust/infrarust --config /opt/infrarust/infrarust.toml
 Restart=on-failure
 RestartSec=5
 
-# Shutdown grace period — Infrarust drains active connections
+# Shutdown grace period: Infrarust drains active connections
 # for up to 30 seconds before forcing exit
 TimeoutStopSec=35
 
@@ -72,7 +72,7 @@ WantedBy=multi-user.target
 ```
 
 ::: tip
-`TimeoutStopSec=35` gives Infrarust time to finish its 30-second connection drain before systemd sends SIGKILL. If you change the drain timeout in the source, adjust this value to match.
+`TimeoutStopSec=35` gives Infrarust time to finish its 30-second connection drain before systemd sends SIGKILL. The 5-second buffer between 30 and 35 accounts for plugin shutdown before the drain starts.
 :::
 
 Reload systemd and enable the service:
@@ -108,7 +108,7 @@ The `RUST_LOG` environment variable takes priority over `--log-level`. To set it
 
 ```ini
 [Service]
-Environment=RUST_LOG=infrarust_core=debug,infrarust_proxy=info
+Environment=RUST_LOG=infrarust_core=debug,infrarust=info
 ```
 
 ## Reading logs with journald
@@ -139,25 +139,27 @@ Filter by time range:
 journalctl -u infrarust --since "2025-01-15 10:00" --until "2025-01-15 12:00"
 ```
 
-Show only errors and warnings:
+Show only errors and worse:
 
 ```bash
 journalctl -u infrarust -p err
 ```
 
+To include warnings as well, use `-p warning`.
+
 ## Binding to port 25565
 
 Ports below 1024 require extra privileges. Since the service runs as the `infrarust` user, you have two options.
 
-**Option A: use a port above 1024.** Bind Infrarust to port 25577 and redirect traffic with iptables:
+Option A: use a port above 1024. Bind Infrarust to port 25577 and redirect traffic with iptables:
 
 ```bash
 sudo iptables -t nat -A PREROUTING -p tcp --dport 25565 -j REDIRECT --to-port 25577
 ```
 
-Set `bind = "0.0.0.0:25577"` in your `infrarust.toml`.
+Set `bind = "0.0.0.0:25577"` in your `infrarust.toml`, or pass `--bind 0.0.0.0:25577` on the `ExecStart` line to avoid editing the config file.
 
-**Option B: grant the binary the capability to bind low ports.** Add the `AmbientCapabilities` directive to the unit file:
+Option B: grant the binary the capability to bind low ports. Add the `AmbientCapabilities` directive to the unit file:
 
 ```ini{5}
 [Service]

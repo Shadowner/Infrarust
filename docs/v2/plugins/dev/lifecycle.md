@@ -1,6 +1,6 @@
 ---
 title: Plugin Lifecycle
-description: How Infrarust plugins are discovered, loaded, enabled, and shut down — the Plugin trait, PluginMetadata, dependency resolution, and automatic resource cleanup.
+description: How Infrarust plugins are discovered, loaded, enabled, and shut down. Covers the Plugin trait, PluginMetadata, dependency resolution, and automatic resource cleanup.
 outline: [2, 3]
 ---
 
@@ -25,17 +25,17 @@ discover_all()               load_and_enable_all()                shutdown()
                               └─────────┘
 ```
 
-**Discover** — each `PluginLoader` scans the plugin directory and returns `PluginMetadata` for every plugin it can load. The manager rejects duplicate IDs across loaders.
+**Discover.** Each `PluginLoader` scans the plugin directory and returns `PluginMetadata` for every plugin it can load. The manager rejects duplicate IDs across loaders.
 
-**Resolve deps** — the manager runs a topological sort (Kahn's algorithm) on the collected metadata. This determines load order so that dependencies are enabled before the plugins that need them.
+**Resolve deps.** The manager runs a topological sort (Kahn's algorithm) on the collected metadata. This determines load order so that dependencies are enabled before the plugins that need them.
 
-**Loading** — the manager calls `loader.load()` for each plugin in the resolved order, then sets the plugin's state to `Loading`.
+**Loading.** Before any plugin loads, the manager calls `loader.on_load()` once per loader so loaders that host a runtime (the WASM loader, for example) can initialize it. Then for each plugin in the resolved order it calls `loader.load()` and sets the plugin's state to `Loading`. If a loader's `on_load()` fails, all of that loader's plugins are skipped and marked `Error`.
 
-**Enabled** — the manager calls `plugin.on_enable(ctx)`. If it succeeds, state moves to `Enabled`. If it fails, state moves to `Error` and the context is cleaned up immediately.
+**Enabled.** The manager calls `plugin.on_enable(ctx)`. If it succeeds, state moves to `Enabled`. If it fails, state moves to `Error` and the context is cleaned up immediately.
 
-**Disabled** — during shutdown, the manager iterates plugins in reverse order. It calls `on_disable()`, then runs automatic cleanup regardless of whether `on_disable` succeeded.
+**Disabled.** During shutdown, the manager iterates plugins in reverse order. It calls `on_disable()`, then runs automatic cleanup regardless of whether `on_disable` succeeded.
 
-**Unloaded** — after all plugins are disabled, the manager calls `loader.unload()` for each plugin to release loader-level resources.
+**Unloaded.** After all plugins are disabled, the manager calls `loader.unload()` for each plugin to release loader-level resources, then `loader.on_shutdown()` once per loader (only for loaders whose `on_load()` succeeded) to tear down the runtime.
 
 ## PluginState
 
@@ -50,7 +50,7 @@ pub enum PluginState {
 }
 ```
 
-You can query a plugin's state through the console with the `plugin <id>` command, or programmatically via `PluginManager::plugin_state()`.
+Query a plugin's state programmatically via `PluginManager::plugin_state()`, which returns `Option<&PluginState>`. The in-game `plugins` subcommand lists loaded plugins, and `plugin <id>` lists or runs a plugin's commands, but neither exposes the raw lifecycle state.
 
 ## The Plugin trait
 
@@ -148,9 +148,9 @@ A missing required dependency prevents all plugins from loading, not just the on
 
 ## Enable flow in detail
 
-When `load_and_enable_all()` runs, it processes each plugin in the resolved order:
+When `load_and_enable_all()` runs, it first calls `on_load()` on every loader and records which ones succeeded. Then it processes each plugin in the resolved order:
 
-1. Finds the correct loader for the plugin (based on discovery mapping).
+1. Finds the correct loader for the plugin (based on discovery mapping). If that loader's `on_load()` failed, the plugin is marked `Error` and skipped.
 2. Calls `loader.load(plugin_id, context_factory)` to instantiate the plugin.
 3. Creates a per-plugin `PluginContext` via the context factory.
 4. Sets state to `Loading`.
@@ -169,6 +169,7 @@ Errors during loading or enabling don't stop other plugins. The manager collects
 3. Calls `plugin.on_disable()`. Errors are logged but don't stop the shutdown.
 4. Runs `cleanup()` on the plugin's context. This happens even if `on_disable` failed.
 5. After all plugins are disabled, calls `loader.unload()` for each plugin.
+6. Calls `loader.on_shutdown()` on each loader that booted successfully, in reverse order. Shutdown is idempotent, so calling it twice runs `on_shutdown()` only once.
 
 ## Automatic resource cleanup
 
@@ -185,7 +186,7 @@ During cleanup (on disable or on enable failure), the context automatically:
 This means you don't need to manually unsubscribe listeners or cancel tasks in `on_disable`. The proxy handles it.
 
 ```rust
-// During on_enable — just register, don't store the handle
+// During on_enable: just register, don't store the handle
 ctx.event_bus().subscribe::<PostLoginEvent, _>(
     EventPriority::NORMAL,
     |event| {
@@ -193,7 +194,7 @@ ctx.event_bus().subscribe::<PostLoginEvent, _>(
     },
 );
 
-// During shutdown — the proxy unsubscribes this automatically
+// During shutdown: the proxy unsubscribes this automatically
 ```
 
 ::: tip
@@ -204,7 +205,7 @@ Only override `on_disable` if you have resources the proxy can't track: database
 
 `PluginContext` is a sealed trait. Only the proxy implements it. Plugins receive it as `&dyn PluginContext` during `on_enable`.
 
-Available services:
+Some of the available services:
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
@@ -215,13 +216,20 @@ Available services:
 | `server_manager()` | `&dyn ServerManager` | Query and manage backend servers |
 | `ban_service()` | `&dyn BanService` | Ban/unban players |
 | `config_service()` | `&dyn ConfigService` | Read proxy configuration |
-| `register_limbo_handler()` | — | Register a limbo handler |
-| `register_config_provider()` | — | Register a config provider |
-| `codec_filters()` | `Option<&dyn CodecFilterRegistry>` | Register codec filters (native only) |
-| `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register transport filters (native only) |
+| `plugin_registry()` | `&dyn PluginRegistry` | Inspect other loaded plugins |
+| `register_limbo_handler()` | `()` | Register a limbo handler |
+| `register_config_provider()` | `()` | Register a config provider |
+| `codec_filters()` | `Option<&dyn CodecFilterRegistry>` | Register packet-level filters, `Some` only with the `CodecFilter` capability |
+| `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register TCP-level filters, `Some` only with the `TransportFilter` capability |
 | `plugin_id()` | `&str` | This plugin's ID |
+| `data_dir()` | `PathBuf` | This plugin's data directory |
+| `proxy_shutdown()` | `CancellationToken` | A token that fires when the proxy shuts down |
+| `proxy_info()` | `&ProxyInfo` | Proxy name and version |
+| `capabilities()` | `&CapabilitySet` | Capabilities granted to this plugin |
 
-Methods ending in `_handle()` (like `player_registry_handle()`) return `Arc` references suitable for capturing in closures and spawning into async tasks.
+The two filter registries return `None` unless the plugin holds the matching capability. Compiled-in native plugins are trusted and receive both; WASM plugins are gated by config.
+
+Most accessors have an `_handle()` companion (`event_bus_handle()`, `player_registry_handle()`, and so on) that returns an `Arc` instead of a borrow. Use the `Arc` form when you need to capture the service in a closure or move it into a spawned async task.
 
 ## Plugin loaders
 
@@ -235,6 +243,11 @@ pub trait PluginLoader: Send + Sync {
         &'a self, plugin_dir: &'a Path,
     ) -> BoxFuture<'a, Result<Vec<PluginMetadata>, LoaderError>>;
 
+    // Defaults to a no-op. Runs once, before any of this loader's plugins load.
+    fn on_load<'a>(
+        &'a self, context_factory: &'a dyn PluginContextFactory,
+    ) -> BoxFuture<'a, Result<(), LoaderError>> { /* ... */ }
+
     fn load<'a>(
         &'a self, plugin_id: &'a str,
         context_factory: &'a dyn PluginContextFactory,
@@ -243,10 +256,15 @@ pub trait PluginLoader: Send + Sync {
     fn unload<'a>(
         &'a self, plugin_id: &'a str,
     ) -> BoxFuture<'a, Result<(), LoaderError>>;
+
+    // Defaults to a no-op. Runs once, after all this loader's plugins unload.
+    fn on_shutdown<'a>(&'a self) -> BoxFuture<'a, Result<(), LoaderError>> { /* ... */ }
 }
 ```
 
-Infrarust ships with a `StaticPluginLoader` that loads plugins compiled directly into the binary. Plugins are registered with a metadata struct and a factory closure:
+`discover()` runs before the context factory exists, so a loader cannot rely on its own hosted runtime to enumerate plugins. `on_load()` is where a runtime gets initialized, and `on_shutdown()` is where it is torn down. Both have default no-op implementations, so simple loaders only implement `name`, `discover`, `load`, and `unload`.
+
+Infrarust ships with a `StaticPluginLoader` that loads plugins compiled directly into the binary. Plugins are registered with a metadata struct and a factory closure. Its `discover()` ignores the plugin directory argument, and `register()` panics if you register two plugins with the same ID.
 
 ```rust
 let loader = StaticPluginLoader::new();
@@ -256,7 +274,7 @@ loader.register(
 );
 ```
 
-The loader architecture supports future formats (WASM, dynamic libraries) by adding new `PluginLoader` implementations.
+The WASM loader is a second `PluginLoader` implementation that discovers and runs `wasm32-wasip2` components from the plugins directory. New formats slot in the same way, by adding another `PluginLoader`.
 
 ## Error handling
 
@@ -273,8 +291,13 @@ Errors during the lifecycle surface as `PluginError` or `LoaderError` depending 
 | `UnloadFailed` | Cleanup after disable failed |
 | `DuplicateId` | Two loaders found plugins with the same ID |
 
-`PluginError::InitFailed` covers dependency resolution failures (missing required dependency, circular dependency) and wraps `on_enable` failures.
+`PluginError` has two variants:
 
-During `load_and_enable_all`, errors are collected into a `Vec<PluginError>` and returned to the caller. Each failed plugin is marked with `PluginState::Error` while the remaining plugins continue loading.
+| Variant | When |
+|---------|------|
+| `InitFailed(String)` | Dependency resolution failures (missing required dependency, circular dependency), loader discovery or `on_load` failures, and the message the manager records for a failed `load()`. |
+| `Custom(String)` | Anything else. `String` and `&str` convert into this variant via `From`, so a plugin can return `Err("reason".into())` from `on_enable`. |
+
+`discover_all()` returns a single `PluginError` on the first fatal problem (a duplicate ID, a loader discovery failure, or an unresolvable dependency graph), and no plugins load. `load_and_enable_all()` is more forgiving: it collects every error into a `Vec<PluginError>` and returns them. An error returned from a plugin's own `on_enable` is collected as-is, not re-wrapped. Each failed plugin is marked `PluginState::Error` while the remaining plugins continue loading.
 
 During `shutdown`, errors from `on_disable` and `unload` are logged but don't interrupt the process. Every plugin gets its cleanup pass regardless of errors in other plugins.

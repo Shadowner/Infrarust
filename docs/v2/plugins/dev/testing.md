@@ -12,7 +12,7 @@ This page covers three levels of testing, from isolated unit tests to end-to-end
 
 ## Mock services
 
-The `PluginContext` trait is sealed (only the proxy implements it), but every service it exposes is a trait you can mock independently. Infrarust's own test suite includes no-op mocks for the three services that require storage backends.
+`PluginContext` is the proxy's own type in production, but every service it hands out is a separate trait you can mock on its own. Each of those service traits is sealed through a public `private::Sealed` marker, so a test mock implements both the service trait and `Sealed`. Infrarust's own test suite ships no-op mocks for the three services that would otherwise need a storage backend, in `crates/infrarust-core/tests/mock_services/mod.rs`.
 
 ### MockPlayerRegistry
 
@@ -132,14 +132,16 @@ impl infrarust_api::services::config_service::ConfigService
 
 ### MockPluginContext
 
-When you need to test `on_enable` in isolation without a real `PluginManager`, you can implement `PluginContext` directly. Stub methods you don't need with `unimplemented!("mock")` so your test panics if the plugin calls something unexpected:
+When you need to test `on_enable` in isolation without a real `PluginManager`, you can implement `PluginContext` directly. The trait is large, so stub the methods you don't need with `unimplemented!("mock")` and your test panics if the plugin reaches for something unexpected. Every method on the trait must be present or the impl will not compile. This mirrors the mock in `crates/infrarust-core/src/plugin/static_loader.rs`.
 
 ```rust
 use std::sync::Arc;
+use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
 
 struct MockPluginContext {
     plugin_id: String,
+    capabilities: CapabilitySet,
 }
 
 impl infrarust_api::plugin::private::Sealed for MockPluginContext {}
@@ -150,8 +152,14 @@ impl PluginContext for MockPluginContext {
     fn data_dir(&self) -> std::path::PathBuf {
         std::path::PathBuf::from("plugins").join(&self.plugin_id)
     }
+    fn capabilities(&self) -> &CapabilitySet { &self.capabilities }
 
     fn event_bus(&self) -> &dyn infrarust_api::event::bus::EventBus {
+        unimplemented!("mock")
+    }
+    fn event_bus_handle(
+        &self,
+    ) -> Arc<dyn infrarust_api::event::bus::EventBus> {
         unimplemented!("mock")
     }
     fn player_registry(
@@ -194,6 +202,16 @@ impl PluginContext for MockPluginContext {
     ) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
         unimplemented!("mock")
     }
+    fn plugin_registry(
+        &self,
+    ) -> &dyn infrarust_api::services::plugin_registry::PluginRegistry {
+        unimplemented!("mock")
+    }
+    fn plugin_registry_handle(
+        &self,
+    ) -> Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry> {
+        unimplemented!("mock")
+    }
     fn command_manager(
         &self,
     ) -> &dyn infrarust_api::command::CommandManager {
@@ -202,11 +220,6 @@ impl PluginContext for MockPluginContext {
     fn scheduler(
         &self,
     ) -> &dyn infrarust_api::services::scheduler::Scheduler {
-        unimplemented!("mock")
-    }
-    fn event_bus_handle(
-        &self,
-    ) -> Arc<dyn infrarust_api::event::bus::EventBus> {
         unimplemented!("mock")
     }
     fn register_limbo_handler(
@@ -230,13 +243,22 @@ impl PluginContext for MockPluginContext {
     ) -> Option<&dyn infrarust_api::filter::registry::TransportFilterRegistry> {
         None
     }
+    fn proxy_shutdown(&self) -> tokio_util::sync::CancellationToken {
+        tokio_util::sync::CancellationToken::new()
+    }
+    fn proxy_info(&self) -> &infrarust_api::services::proxy_info::ProxyInfo {
+        unimplemented!("mock")
+    }
 }
 ```
+
+The `capabilities` field controls what `codec_filters()` and `transport_filters()` would return on a real context, and it is what a plugin reads through `ctx.capabilities()`. For most tests `CapabilitySet::native_trusted()` grants everything; `CapabilitySet::baseline()` gives the default grant set instead.
 
 You can also wrap this in a factory so the `PluginManager` can create per-plugin contexts:
 
 ```rust
-use infrarust_core::plugin::context_factory::PluginContextFactory;
+use infrarust_api::permissions::CapabilitySet;
+use infrarust_core::plugin::PluginContextFactory;
 
 struct MockPluginContextFactory;
 
@@ -246,10 +268,13 @@ impl PluginContextFactory for MockPluginContextFactory {
     ) -> Arc<dyn PluginContext> {
         Arc::new(MockPluginContext {
             plugin_id: plugin_id.to_string(),
+            capabilities: CapabilitySet::native_trusted(),
         })
     }
 }
 ```
+
+`PluginContextFactory` is defined in `infrarust-api` (`infrarust_api::loader::PluginContextFactory`) and re-exported from `infrarust_core::plugin`. The trait also has a `forget_context(&self, plugin_id: &str)` method with a no-op default, so the impl above is complete.
 
 ## Unit testing a plugin
 
@@ -260,6 +285,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
+use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 
 struct MyPlugin {
@@ -291,6 +317,7 @@ async fn test_enable_sets_flag() {
 
     let ctx = Arc::new(MockPluginContext {
         plugin_id: "my_plugin".into(),
+        capabilities: CapabilitySet::native_trusted(),
     });
 
     plugin.on_enable(ctx.as_ref()).await.unwrap();
@@ -326,6 +353,7 @@ async fn test_enable_returns_error() {
     let plugin = FailingPlugin;
     let ctx = Arc::new(MockPluginContext {
         plugin_id: "fail".into(),
+        capabilities: CapabilitySet::native_trusted(),
     });
 
     let result = plugin.on_enable(ctx.as_ref()).await;
@@ -344,9 +372,11 @@ For tests that need real event dispatch, command registration, or scheduling, us
 ```rust
 use std::path::PathBuf;
 use std::collections::HashMap;
+use tokio_util::sync::CancellationToken;
+use infrarust_api::services::proxy_info::ProxyInfo;
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::manager::PluginServices;
-use infrarust_core::plugin::PluginContextFactoryImpl;
+use infrarust_core::plugin::{PluginContextFactoryImpl, PluginRegistryImpl};
 use infrarust_core::services::command_manager::CommandManagerImpl;
 use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::NoopServerManager;
@@ -362,6 +392,7 @@ let services = PluginServices {
     command_manager: Arc::new(CommandManagerImpl::new()),
     scheduler: Arc::new(SchedulerImpl::new()),
     config_service: Arc::new(MockConfigService),
+    plugin_registry: Arc::new(PluginRegistryImpl::new()),
     codec_filter_registry: Arc::new(
         infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
     ),
@@ -371,6 +402,8 @@ let services = PluginServices {
     domain_router: Arc::new(
         infrarust_core::routing::DomainRouter::new(),
     ),
+    proxy_shutdown: CancellationToken::new(),
+    proxy_info: ProxyInfo::default(),
     plugins_dir: PathBuf::from("plugins"),
 };
 
@@ -379,7 +412,7 @@ let factory = PluginContextFactoryImpl::new(
 );
 ```
 
-The `EventBusImpl`, `CommandManagerImpl`, and `SchedulerImpl` are real implementations that work without any proxy infrastructure. `NoopServerManager` is a built-in stub for proxies without managed servers.
+`PluginServices` has every field the proxy fills in, so a test has to supply all of them. `EventBusImpl`, `CommandManagerImpl`, `SchedulerImpl`, and `PluginRegistryImpl` are real implementations that work without any proxy infrastructure. `NoopServerManager` is a built-in stub for proxies without managed servers. `proxy_shutdown` is a `CancellationToken` the proxy triggers at shutdown, and `proxy_info` carries static metadata; both have sensible test defaults. The second argument to `PluginContextFactoryImpl::new` is a `HashMap<String, PluginPermissions>` mapping plugin IDs to their configured capabilities; an empty map gives every plugin the baseline grant set.
 
 ### Testing event handling
 
@@ -517,14 +550,14 @@ async fn test_listeners_removed_after_shutdown() {
 
     // ... build services with this event_bus, register plugin ...
 
-    // Fire before shutdown — handler runs
+    // Fire before shutdown: handler runs
     event_bus.fire(ProxyInitializeEvent).await;
     assert_eq!(call_count.load(Ordering::SeqCst), 1);
 
     // Shutdown removes all listeners
     manager.shutdown().await;
 
-    // Fire again — handler does NOT run
+    // Fire again: handler does NOT run
     event_bus.fire(ProxyInitializeEvent).await;
     assert_eq!(call_count.load(Ordering::SeqCst), 1);
 }
@@ -565,7 +598,7 @@ cargo test -p infrarust-core --test plugin_context
 cargo test -p infrarust-plugin-hello
 ```
 
-Add `infrarust-core` as a dev-dependency in your plugin crate if you need the real service implementations:
+A plugin only needs `infrarust-api` to build, but the test patterns above also reach into `infrarust-core` for the real service implementations (`EventBusImpl`, `PluginManager`, `StaticPluginLoader`, and friends). Add it as a dev-dependency. The plugin crates that ship in this repo are workspace members and write `infrarust-core = { workspace = true }`; an out-of-tree plugin uses a path or version instead:
 
 ```toml
 [dev-dependencies]
@@ -582,7 +615,7 @@ uuid = "1"
 | `on_enable` / `on_disable` logic | `MockPluginContext` with `unimplemented!` stubs | `Plugin`, `PluginContext` |
 | Event subscription and dispatch | Real `EventBusImpl` + mock services | `EventBusExt::subscribe`, `EventBusImpl::fire` |
 | Command registration | Real `CommandManagerImpl` | `CommandManager::register` |
-| Dependency ordering | `MockPluginContextFactory` + `PluginManager` | `PluginMetadata::depends_on` |
+| Dependency ordering | `PluginContextFactoryImpl` + `PluginManager` | `PluginMetadata::depends_on` |
 | Cleanup after disable | Real `PluginContextFactoryImpl` with tracking wrappers | `PluginManager::shutdown` |
 | Full lifecycle | `PluginServices` + `StaticPluginLoader` + `PluginManager` | All of the above |
 

@@ -37,9 +37,9 @@ ban:
 
 All three options are optional. The defaults above apply if you omit the `[ban]` section entirely.
 
-## Console Commands
+## Console commands
 
-Manage bans from the Infrarust console. Duration values use the `humantime` format: `30s`, `10m`, `2h`, `7d`, `1y`, or `permanent`.
+Manage bans from the Infrarust console. Duration values use the `humantime` format: `30s`, `10m`, `2h`, `7d`, `1y`, or `permanent` (also `perm`).
 
 ### ban
 
@@ -106,12 +106,12 @@ baninfo 192.168.1.100
 baninfo 550e8400-e29b-41d4-a716-446655440000
 ```
 
-## How Bans Are Checked
+## How bans are checked
 
 Infrarust checks bans at two points in the connection pipeline:
 
-1. **IP check** runs before the handshake. If the connecting IP is banned, the connection is dropped immediately with no server response.
-2. **Full check** runs during login, after the client sends its username. This checks the player's IP, username (case-insensitive), and UUID against the ban list.
+1. An IP check runs before the handshake. If the connecting IP is banned, the connection is dropped immediately with no server response.
+2. A full check runs during login, after the client sends its username. This checks the player's IP, username (case-insensitive), and UUID against the ban list.
 
 Banned players see a kick message with the ban reason and, for temporary bans, the remaining time.
 
@@ -134,7 +134,7 @@ A ban entry looks like this:
 Permanent bans have `expires_at` set to `null`. The `source` field records who issued the ban: `"console"` for console commands, `"plugin"` for plugin-initiated bans.
 
 ::: tip
-You don't need to create `bans.json` manually. Infrarust creates it the first time you issue a ban. If the file doesn't exist at startup, the proxy starts with an empty ban list.
+You don't need to create `bans.json` manually. Infrarust creates it the first time you issue a ban. If the file doesn't exist at startup, the proxy starts with an empty ban list. If the file is corrupt, Infrarust renames it to `bans.json.bak` and starts fresh rather than refusing to start.
 :::
 
 Writes are crash-safe: the proxy writes to a temporary file first, then atomically renames it over the existing file. The audit log is capped at 10,000 entries to keep the file from growing without bound.
@@ -143,10 +143,10 @@ Writes are crash-safe: the proxy writes to a temporary file first, then atomical
 
 Plugins can manage bans through the `BanService` trait, available via `PluginContext::ban_service()`. The API provides five methods:
 
-- `ban(target, reason, duration)` — add a ban (duration `None` = permanent)
-- `unban(target)` — remove a ban, returns `true` if one was removed
-- `is_banned(target)` — check if a target is banned, returns `true`/`false`
-- `get_ban(target)` — get the full `BanEntry` if banned
-- `get_all_bans()` — list all active bans
+- `ban(target, reason, duration)` adds a ban (duration `None` means permanent)
+- `unban(target)` removes a ban and returns `true` if one was removed
+- `is_banned(target)` checks if a target is banned and returns `true` or `false`
+- `get_ban(target)` returns the full `BanEntry` if banned
+- `get_all_bans()` lists all active bans
 
 Ban targets are constructed with `BanTarget::Ip(addr)`, `BanTarget::Username(name)`, or `BanTarget::Uuid(uuid)`.

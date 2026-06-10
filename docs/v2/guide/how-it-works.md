@@ -33,7 +33,7 @@ flowchart TD
     TEL --> SM[Server manager]
 
     SM --> MODE{Proxy mode?}
-    MODE -->|passthrough / zerocopy| PT[Passthrough handler]
+    MODE -->|passthrough / zero_copy / server_only| PT[Passthrough handler]
     MODE -->|client_only| CO[Intercepted handler + Mojang auth]
     MODE -->|offline| OFF[Intercepted handler, no auth]
 
@@ -44,7 +44,7 @@ flowchart TD
 
 ## TCP accept and transport filters
 
-Infrarust binds a TCP listener on the configured address (default `0.0.0.0:25565`). Each accepted connection gets a semaphore permit from the `max_connections` pool. If the pool is exhausted, new connections wait until a slot opens.
+Infrarust binds a TCP listener on the configured address (default `0.0.0.0:25565`). The default `max_connections` is `0`, which means unlimited and no limiting. When `max_connections` is set above zero, the listener creates a semaphore of that size and acquires a permit before each accept; once the permits run out, new connections wait until an open one is dropped. The permit is held for the lifetime of the connection.
 
 Before any packet parsing, plugins can register transport filters that inspect the raw `TransportContext` (remote address, local address, connection time). A filter returning `Reject` drops the connection immediately. This runs before the proxy even reads a byte from the client.
 
@@ -104,15 +104,13 @@ The result is stored as `RoutingData` containing the matched `ServerConfig` and 
 
 ## Intent branching
 
-After the common pipeline completes, the connection branches on the `next_state` field from the handshake:
+After the common pipeline completes, the connection branches on the `next_state` field from the handshake.
 
-**Status** connections go to the status handler, which returns the server list ping response (MOTD, player count, favicon). If the server manager is configured, offline servers show a "starting" message.
-
-**Login** connections continue into the login pipeline.
+Status connections go to the status handler, which returns the server list ping response (MOTD, player count, favicon). If the server manager is configured, offline servers show a "starting" message. Login connections continue into the login pipeline.
 
 ## The login pipeline
 
-Login connections run through a second pipeline with four middlewares.
+Login connections run through a second pipeline: the login start parser, the ban check, and telemetry, plus a server manager middleware that is added only when at least one server has a `server_manager` configuration.
 
 ### Login start parser
 
@@ -136,17 +134,17 @@ After both pipelines complete, the connection is dispatched to a handler based o
 
 ### Passthrough handler
 
-Used by both `passthrough` and `zerocopy` modes. The handler:
+Used by the forwarding modes: `passthrough`, `zero_copy`, and `server_only`. The handler:
 
-1. Fires a `ServerPreConnectEvent` through the event bus (plugins can deny or redirect)
+1. Fires a `ServerPreConnectEvent` through the event bus (a plugin can deny the connection here; redirect results such as send-to-limbo are ignored in passthrough and only acted on by the intercepted handler)
 2. Connects to the backend server using the addresses from the server config
 3. Forwards the raw handshake and login packets to the backend
 4. Registers a `PlayerSession` in the connection registry
 5. Starts bidirectional forwarding between the client and backend TCP streams
 
-If `domain_rewrite` is configured, the handler re-encodes the handshake packet with the new domain before forwarding. Three rewrite modes exist: `none` (forward as-is), `explicit` (use a fixed string), and `from_backend` (use the backend server's address).
+If `domain_rewrite` is configured, the handler re-encodes the handshake packet with the new domain before forwarding. Three rewrite modes exist: `none` (forward as-is), `explicit` (use a fixed string), and `from_backend` (use the host of the first backend address).
 
-The forwarder is selected based on proxy mode. On Linux with `zerocopy` mode, Infrarust uses `splice(2)` for kernel-level data transfer without copying bytes into userspace. All other modes use `tokio::io::copy_bidirectional`.
+The forwarder is selected based on proxy mode. On Linux with `zero_copy` mode, Infrarust uses `splice(2)` for kernel-level data transfer without copying bytes into userspace. Every other mode, including `zero_copy` on non-Linux platforms, uses `tokio::io::copy_bidirectional`.
 
 When either side closes the connection, the handler unregisters the session and fires a `DisconnectEvent`.
 

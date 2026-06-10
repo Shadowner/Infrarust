@@ -16,7 +16,7 @@ Infrarust supports four forwarding modes:
 
 | Mode | Protocol | Security | Backend support |
 |---|---|---|---|
-| `none` | — | — | Backend handles auth itself |
+| `none` | n/a | n/a | Backend handles auth itself |
 | `velocity` | Plugin message channel | HMAC-SHA256 signed | Paper, Purpur, Fabric (via mod) |
 | `bungeecord` | Handshake injection | None (trust-based) | Spigot, Paper, most forks |
 | `bungeeguard` | Handshake injection + token | Shared token | Spigot/Paper with BungeeGuard plugin |
@@ -85,7 +85,7 @@ Velocity is the recommended forwarding mode. It uses a plugin message channel (`
 
 ### Secret file
 
-The secret file is shared between the proxy and all backend servers. If the file doesn't exist, Infrarust generates a random 12-character alphanumeric secret and creates it with `0600` permissions (Unix).
+The secret file is shared between the proxy and all backend servers. If the file doesn't exist, Infrarust generates a random 32-character alphanumeric secret and creates it with `0600` permissions (Unix).
 
 Copy this secret to each backend:
 

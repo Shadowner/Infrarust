@@ -1,14 +1,14 @@
 ---
 title: Plugin API Reference
-description: Complete reference for PluginContext, services, and types available to Infrarust plugins.
+description: Reference for the Plugin trait, PluginContext, services, and types available to native Infrarust plugins.
 outline: [2, 3]
 ---
 
 # Plugin API Reference
 
-Every plugin receives a `PluginContext` during `on_enable`. This is your gateway to the proxy's services: player registry, scheduler, server manager, ban service, config service, event bus, and command manager.
+Every native plugin implements the `Plugin` trait and receives a `PluginContext` during `on_enable`. The context is your access point to the proxy's services: player registry, scheduler, server manager, ban service, config service, event bus, command manager, plugin registry, and read-only proxy info.
 
-All services are trait objects. The proxy is the sole implementor. You access them through the context and, where needed, capture `Arc` handles for use inside closures.
+All services are trait objects, and the proxy is the sole implementor. You reach them through the context and, where needed, capture `Arc` handles for use inside closures.
 
 ```rust
 use infrarust_api::prelude::*;
@@ -23,6 +23,48 @@ fn on_enable<'a>(&'a self, ctx: &'a dyn PluginContext) -> BoxFuture<'a, Result<(
     })
 }
 ```
+
+Import everything with `use infrarust_api::prelude::*;`. All crates are at version `2.0.0-beta.1` (Rust edition 2024, MSRV 1.94).
+
+## The Plugin trait
+
+Every plugin implements `Plugin`, which has two methods. `metadata` returns a `PluginMetadata` describing the plugin, and `on_enable` is the entry point where you register listeners, commands, and handlers. `on_disable` has a default implementation that does nothing, so override it only when you need to clean up.
+
+```rust
+use infrarust_api::prelude::*;
+
+struct MyPlugin;
+
+impl Plugin for MyPlugin {
+    fn metadata(&self) -> PluginMetadata {
+        PluginMetadata::new("my_plugin", "My Plugin", "1.0.0")
+            .author("Alice")
+            .description("A cool plugin")
+            .depends_on("core_plugin")
+    }
+
+    fn on_enable<'a>(&'a self, ctx: &'a dyn PluginContext) -> BoxFuture<'a, Result<(), PluginError>> {
+        Box::pin(async move {
+            // register event listeners, commands, etc.
+            Ok(())
+        })
+    }
+
+    fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+```
+
+`PluginMetadata` is a builder. `new(id, name, version)` takes the three required fields, and the chainable methods add the rest:
+
+| Builder method | Field | Description |
+|----------------|-------|-------------|
+| `new(id, name, version)` | `id`, `name`, `version` | `id` is a `snake_case` identifier; `version` is a semver string |
+| `author(name)` | `authors` | Adds an author (call once per author) |
+| `description(text)` | `description` | Sets an optional description |
+| `depends_on(id)` | `dependencies` | Adds a required dependency on another plugin |
+| `optional_dependency(id)` | `dependencies` | Adds a dependency the plugin can run without |
 
 ## PluginContext
 
@@ -42,11 +84,19 @@ The `PluginContext` trait provides access to every service and registration meth
 | `config_service_handle()` | `Arc<dyn ConfigService>` | Cloneable handle for closures |
 | `command_manager()` | `&dyn CommandManager` | Register and unregister commands |
 | `scheduler()` | `&dyn Scheduler` | Schedule delayed and recurring tasks |
-| `codec_filters()` | `Option<&dyn CodecFilterRegistry>` | Register packet-level filters |
-| `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register TCP-level filters |
-| `register_limbo_handler()` | — | Register a limbo handler |
-| `register_config_provider()` | — | Register a dynamic config provider |
+| `plugin_registry()` | `&dyn PluginRegistry` | Read-only view of loaded plugins |
+| `plugin_registry_handle()` | `Arc<dyn PluginRegistry>` | Cloneable handle for closures |
+| `codec_filters()` | `Option<&dyn CodecFilterRegistry>` | Register packet-level filters (needs the `CodecFilter` capability) |
+| `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register TCP-level filters (needs the `TransportFilter` capability) |
+| `register_limbo_handler(handler)` | `()` | Register a limbo handler |
+| `register_config_provider(provider)` | `()` | Register a dynamic config provider |
+| `proxy_info()` | `&ProxyInfo` | Read-only proxy version and runtime settings |
+| `capabilities()` | `&CapabilitySet` | Capabilities granted to this plugin |
+| `data_dir()` | `PathBuf` | This plugin's data directory |
+| `proxy_shutdown()` | `CancellationToken` | Token that fires when the proxy shuts down |
 | `plugin_id()` | `&str` | This plugin's ID |
+
+`codec_filters()` and `transport_filters()` return `None` unless the plugin holds the matching capability in its Infrarust config, with the transport filter capability reserved for trusted native plugins.
 
 The `_handle()` variants return `Arc` so you can move them into event handlers, scheduled tasks, or any `'static` closure:
 
@@ -114,12 +164,18 @@ let profile: &GameProfile = player.profile();
 let version: ProtocolVersion = player.protocol_version();
 let addr: SocketAddr = player.remote_addr();
 let server: Option<ServerId> = player.current_server();
+let connected_at: SystemTime = player.connected_at();
 
 // State
 let connected: bool = player.is_connected();
 let active: bool = player.is_active();
+let online_mode: bool = player.is_online_mode();
 
-// Actions (require active proxy mode)
+// Permissions
+let level: PermissionLevel = player.permission_level();
+let can_do_it: bool = player.has_permission("my_plugin.feature");
+
+// Actions (require an active proxy mode)
 player.send_message(Component::text("Hi").color("green"))?;
 player.send_title(TitleData::new(
     Component::text("Welcome").color("gold"),
@@ -133,8 +189,10 @@ player.switch_server(ServerId::new("survival")).await?;
 player.disconnect(Component::text("Goodbye")).await;
 ```
 
+`permission_level()` returns a `PermissionLevel`, which is either `Player` or `Admin` (there are exactly two levels). `has_permission()` checks a named permission against any custom checkers a plugin has registered.
+
 ::: warning
-Methods like `send_message`, `send_title`, `send_action_bar`, `send_packet`, and `switch_server` only work in active proxy modes (ClientOnly, Offline, ServerOnly). In passive modes (Passthrough, ZeroCopy), they return `Err(PlayerError::NotActive)`. Check `player.is_active()` first.
+`send_message`, `send_title`, `send_action_bar`, `send_packet`, and `switch_server` only work when the player is on an active proxy path, which means `ClientOnly` or `Offline` mode. On passive paths (`Passthrough`, `ZeroCopy`, `ServerOnly`) they return `Err(PlayerError::NotActive)`. Check `player.is_active()` first. `disconnect` always works.
 :::
 
 ## Scheduler
@@ -169,10 +227,11 @@ ctx.scheduler().cancel(interval_handle);
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `delay` | `(Duration, Box<dyn FnOnce() + Send>) -> TaskHandle` | Run once after a delay |
-| `interval` | `(Duration, Box<dyn Fn() + Send + Sync>) -> TaskHandle` | Run repeatedly at fixed intervals |
+| `interval` | `(Duration, Box<dyn Fn() + Send + Sync>) -> TaskHandle` | Run repeatedly at a fixed interval |
+| `interval_with_delay` | `(Duration, Duration, Box<dyn Fn() + Send + Sync>) -> TaskHandle` | Repeat at a fixed interval, after an initial delay |
 | `cancel` | `(TaskHandle)` | Cancel a scheduled task |
 
-`TaskHandle` is an opaque ID returned by `delay` and `interval`. Store it if you need to cancel the task later.
+`TaskHandle` is an opaque ID returned by `delay`, `interval`, and `interval_with_delay`. Store it if you need to cancel the task later.
 
 ## ServerManager
 
@@ -335,17 +394,25 @@ impl CommandHandler for HelloCommand {
         })
     }
 
-    fn tab_complete(&self, _partial_args: &[&str]) -> Vec<String> {
-        vec!["world".into(), "proxy".into()]
+    fn tab_complete<'a>(
+        &'a self,
+        _partial_args: Vec<String>,
+        _cursor: u32,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async { vec!["world".into(), "proxy".into()] })
     }
 }
 ```
 
-`CommandContext` provides `player_id` (None for console commands), `args` (split by whitespace), and `raw` (the full command string).
+`execute` is required. `tab_complete` is async like `execute`, takes the partial arguments and a `cursor` byte offset, and has a default implementation that returns no suggestions. Override `tab_complete_for` instead if your suggestions depend on which player is typing; its default delegates to `tab_complete`.
+
+`CommandContext` provides `player_id` (`None` for console commands), `args` (split by whitespace), and `raw` (the full command string).
+
+`CommandManager::register` takes the name, an alias slice, a description, and the boxed handler. There is also a `register_with_plugin_id` variant that associates the command with a specific plugin for cleanup on unload.
 
 ## EventBus
 
-Subscribe to proxy events using typed handlers. See the [Events page](./events.md) for the full list of available events.
+Subscribe to proxy events using typed handlers. See the [Events page](./events) for the full list of available events.
 
 ```rust
 // Synchronous handler
@@ -431,4 +498,4 @@ Import everything you need with a single `use` statement:
 use infrarust_api::prelude::*;
 ```
 
-This brings in all the types, traits, events, services, and error types covered on this page, plus `Arc` from the standard library.
+This brings in the common types, traits, events, services, and error types covered on this page, plus `Arc` from the standard library. A few items live outside the prelude: `PermissionLevel` and `CapabilitySet` are in `infrarust_api::permissions`, and `ProxyInfo` and `PluginRegistry` are in `infrarust_api::services`. Import those directly when you need them.

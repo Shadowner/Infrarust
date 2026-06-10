@@ -87,10 +87,10 @@ pub trait VirtualBackendSession: Send + Sync + private::Sealed {
 
 ### The capability
 
-`Capability::VirtualBackend` is a variant in the capability enum (`crates/infrarust-api/src/permissions.rs`), and its kebab-case config string is `virtual-backend`. Its presence in the enum is the full extent of the integration today.
+`Capability::VirtualBackend` is a variant in the `Capability` enum (`crates/infrarust-api/src/permissions.rs`), and `to_kebab()` maps it to the config string `virtual-backend`. Its presence in the enum is the full extent of the integration today.
 
 ```rust
-// crates/infrarust-api/src/permissions.rs
+// crates/infrarust-api/src/permissions.rs, Capability::to_kebab()
 Capability::VirtualBackend => "virtual-backend",
 ```
 
@@ -102,20 +102,31 @@ Capability::VirtualBackend => "virtual-backend",
 
 Three pieces are missing before a WASM plugin can host a backend:
 
-- Enforcement: nothing in the host checks `virtual-backend` (the linker gates `event-bus`, `player-read`, `command`, `scheduler`, `config-read`, `server-manage`, `ban`, `codec-filter`, `limbo`, and `raw-packet`, but never this one).
+- Enforcement: nothing in the host checks `virtual-backend`. The WASM linker (`crates/infrarust-loader-wasm/src/linker.rs`) conditionally links a host interface only for `event-bus`, `player-read`, `command`, `scheduler`, `config-read`, `server-manage`, `ban`, and `codec-filter`. There is no branch for `virtual-backend`.
 - Dispatch: the proxy has no path that routes a player's connection to a registered `VirtualBackendHandler`.
 - WASM bridge: there is no host wrapper that forwards `on_session_start`, `on_packet_received`, and `on_session_end` to guest exports.
 
-The WIT contract (`infrarust:plugin@0.2.3`) reflects this. Its header comment states the scope of v0.2 and lists Virtual Backend as out of scope:
+The WIT contract (`infrarust:plugin@0.2.3`) reflects this. The world header in `crates/infrarust-plugin-wit/wit/world.wit` states the scope of v0.2 and defers virtual backend to a later minor, and the `guest` interface in `guest.wit` repeats it next to the event types:
 
 ```wit
-// v0.2 adds raw-packet events, codec filters, limbo, and
+// world.wit
+// Versioned and frozen. v0.2 adds raw-packet events, codec filters, limbo, and
 // custom permission checkers; virtual backend stays deferred to a later minor.
+
+// guest.wit
+// ServerPreConnectResult::VirtualBackend stays deferred to a later minor and is
+// absent from event-outcome.
 ```
+
+The `server-pre-connect-result` variant in `guest.wit` has exactly four arms (`allowed`, `connect-to`, `send-to-limbo`, `denied`); there is no `virtual-backend` arm, so a guest has no way to return the marker the dispatch would need.
 
 ## The planned approach
 
-The loader spec describes how Virtual Backend will reach WASM once the native dispatch is operational. It reuses the marker-plus-proxy pattern already used for Limbo and custom permission checkers.
+When Virtual Backend reaches WASM, the likely shape reuses the marker-plus-proxy pattern that already drives Limbo and custom permission checkers. Nothing below is implemented; it is the intended design, not current behavior.
+
+In that pattern (see [Architecture](./architecture)), a guest registers a `handler-id`, the host wraps that id in a small native struct, and each native callback is forwarded to a guest export keyed by the id. Limbo does this today with `WasmLimboHandler` (`crates/infrarust-loader-wasm/src/limbo.rs`), which implements the native `LimboHandler` trait and calls back into `limbo-on-player-enter`, `limbo-on-command`, and the rest.
+
+A Virtual Backend bridge would follow the same outline:
 
 ```mermaid
 sequenceDiagram
@@ -127,7 +138,7 @@ sequenceDiagram
     Client->>Proxy: connect
     Proxy->>Guest: pre-connect event
     Guest-->>Proxy: outcome = virtual-backend(handler-id)
-    Proxy->>Host: wrap marker in WasmVirtualBackendHandler
+    Proxy->>Host: wrap marker, implement VirtualBackendHandler
     Host->>Guest: on_session_start(session)
     Client->>Host: raw packet
     Host->>Guest: on_packet_received(session, packet)
@@ -135,13 +146,7 @@ sequenceDiagram
     Host->>Guest: on_session_end(player_id)
 ```
 
-The flow, per the spec:
-
-1. A guest plugin registers a `handler-id`.
-2. On a pre-connect event whose result carries a backend handler, the guest returns a `virtual-backend(handler-id)` marker in its `event-outcome`.
-3. The host wraps that marker in a native `Box<dyn VirtualBackendHandler>` (a `WasmVirtualBackendHandler`) that dispatches each callback to the matching guest export.
-
-Shipping this is a minor WIT bump, not a refactor, because the bridge shape is already designed. The spec ties the timeline to the native side: Virtual Backend is "Tier 3 défini, pas pleinement opérationnel" (defined, not fully operational), so the WASM exposure waits on that maturing first.
+For this to work, two contract changes are needed that do not exist today: a `virtual-backend(handler-id)` arm on `server-pre-connect-result` (so the guest can return the marker through its `event-outcome`), and guest export functions plus a host wrapper that implements `Box<dyn VirtualBackendHandler>` over a `handler-id`. Because the wrapper shape mirrors the working Limbo bridge, this is a minor WIT bump rather than a redesign, but it still waits on the native dispatch becoming operational first.
 
 ## Until then
 

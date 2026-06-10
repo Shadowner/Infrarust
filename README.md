@@ -33,12 +33,12 @@
 | | |
 |---|---|
 | **Routing** | Domain and subdomain-based routing with wildcard support. One port, many servers. |
-| **Proxy modes** | `passthrough`, `zerocopy`, `client_only`, `offline`, `server_only` - from raw TCP relay to full Mojang auth interception. |
+| **Proxy modes** | `passthrough`, `zerocopy`, `client_only`, `offline`, `server_only`. From raw TCP relay to full Mojang auth interception. |
 | **Web dashboard** | Built-in admin panel with REST API, real-time event streaming (SSE), and log viewer. Add `[web]` to your config and it's running. |
 | **Docker** | Auto-discover Minecraft containers via labels - no config files needed for Docker-managed servers. Scratch-based image, multi-arch. |
 | **Plugins** | Event-driven plugin system with built-in auth, server wake, and queue plugins. Write your own in Rust. |
 | **Security** | Rate limiting, IP filtering, ban system (IP / UUID / username). |
-| **Observability** | OpenTelemetry export for metrics, traces, and logs. Ships with a Grafana dashboard. |
+| **Observability** | OpenTelemetry (OTLP) export for metrics, traces, and logs to any collector. |
 | **Hot reload** | Drop a `.toml` file in `servers/` and the proxy picks it up. No restart. |
 
 ## Quick Start
@@ -132,19 +132,7 @@ Add `[docker]` to your `infrarust.toml` and containers with `infrarust.enable=tr
 
 ## Monitoring
 
-Infrarust exports metrics, traces, and logs via OpenTelemetry (OTLP). Build with the `telemetry` feature and point it at your collector:
-
-```toml
-[telemetry]
-enabled = true
-endpoint = "http://localhost:4317"  # OTLP collector (gRPC)
-```
-
-<p align="center">
-  <img src="docs/v1/public/img/grafana_dashboard.png" alt="Grafana monitoring dashboard" width="700" />
-</p>
-
-> Need to be updated for V2 dashboards
+Infrarust exports metrics, traces, and logs over OpenTelemetry (OTLP). Point it at any OTLP collector by adding a `[telemetry]` section to your `infrarust.toml`. See the [telemetry docs](https://infrarust.dev/configuration/monitoring/telemetry) for the options.
 
 ## Documentation
 

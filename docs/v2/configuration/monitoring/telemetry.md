@@ -36,7 +36,7 @@ export_interval = "15s"
 
 [telemetry.resource]
 service_name = "infrarust"
-service_version = "0.1.0"               # defaults to Infrarust's crate version
+service_version = "2.0.0-beta.1"        # defaults to Infrarust's crate version
 ```
 
 ## Configuration reference
@@ -46,7 +46,7 @@ service_version = "0.1.0"               # defaults to Infrarust's crate version
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Master switch. When `false`, no exporters are created. |
-| `endpoint` | string | `"http://localhost:4317"` | OTLP endpoint URL. |
+| `endpoint` | string | `"http://localhost:4317"` | OTLP endpoint URL. Omit the field to use the default; the config key is optional. |
 | `protocol` | string | `"grpc"` | Export protocol. Accepts `"grpc"` or `"http"`. |
 
 ### `[telemetry.traces]`
@@ -125,14 +125,14 @@ All metrics use the `infrarust` meter name. They are exported at the interval se
 
 | Metric | Type | Unit | Labels | Description |
 |--------|------|------|--------|-------------|
-| `infrarust.connections.total` | Counter | — | `server`, `proxy_mode` | Total connections received |
-| `infrarust.connections.active` | UpDownCounter | — | — | Currently open connections |
-| `infrarust.connections.rejected` | Counter | — | `reason` | Rejected connections |
-| `infrarust.players.online` | UpDownCounter | — | `server` | Players currently connected |
+| `infrarust.connections.total` | Counter | none | `server`, `proxy_mode` | Total connections received |
+| `infrarust.connections.active` | UpDownCounter | none | none | Currently open connections |
+| `infrarust.connections.rejected` | Counter | none | `reason` | Rejected connections |
+| `infrarust.players.online` | UpDownCounter | none | `server` | Players currently connected |
 | `infrarust.connection.duration` | Histogram | seconds | `server`, `proxy_mode` | How long each connection lasted |
-| `infrarust.handshake.duration` | Histogram | seconds | — | Time spent processing the handshake |
+| `infrarust.handshake.duration` | Histogram | seconds | none | Time spent processing the handshake |
 | `infrarust.backend.connect.duration` | Histogram | seconds | `server` | Time to establish a backend connection |
-| `infrarust.packets.relayed` | Counter | — | `direction` | Total packets forwarded |
+| `infrarust.packets.relayed` | Counter | none | `direction` | Total packets forwarded |
 
 ## Feature gate
 
@@ -140,36 +140,9 @@ Telemetry is compiled behind the `telemetry` Cargo feature. If you build Infraru
 
 The telemetry middleware itself uses only the `tracing` crate, not `opentelemetry` directly. When no OTel subscriber is installed, spans are no-ops with roughly 2 nanoseconds of overhead per connection.
 
-## Example: Grafana + Tempo + Prometheus
+## Connecting to a collector
 
-A typical Docker Compose setup:
-
-```yaml
-services:
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
-    ports:
-      - "4317:4317"   # OTLP gRPC
-    volumes:
-      - ./otel-config.yaml:/etc/otelcol-contrib/config.yaml
-
-  tempo:
-    image: grafana/tempo:latest
-    ports:
-      - "3200:3200"
-
-  prometheus:
-    image: prom/prometheus:latest
-    ports:
-      - "9090:9090"
-
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3000:3000"
-```
-
-Point Infrarust at the collector:
+Any OTLP-compatible collector works. A common pattern is to run the [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) on the same host or in the same Docker network, then point Infrarust at it:
 
 ```toml
 [telemetry]
@@ -177,6 +150,4 @@ enabled = true
 endpoint = "http://otel-collector:4317"
 ```
 
-::: tip
-The OTel Collector can fan out traces to Tempo and metrics to Prometheus from a single OTLP endpoint. This keeps the Infrarust config simple.
-:::
+The collector can then forward traces and metrics to whatever backend you prefer (Jaeger, Grafana Tempo, Prometheus, etc.). Infrarust sends standard OTLP; no Infrarust-specific setup is required on the collector side.

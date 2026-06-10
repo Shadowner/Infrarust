@@ -24,7 +24,7 @@ infrarust --help
 
 ## Docker
 
-Infrarust ships a minimal Docker image built from `scratch` with a statically linked binary. The image exposes port `25565` and expects your configuration at `/app/config`.
+Infrarust ships a minimal Docker image built from `scratch` with a statically linked binary. The image exposes ports `25565` (proxy) and `8080` (admin API), and expects your configuration at `/app/config`.
 
 ```bash
 docker run -d \
@@ -34,7 +34,7 @@ docker run -d \
   ghcr.io/shadowner/infrarust:latest
 ```
 
-Create a `config/` directory with your `infrarust.toml` and a `proxies/` subdirectory for server definitions before starting the container.
+Create a `config/` directory with your `infrarust.toml`, a `servers/` subdirectory for server definitions, and a `plugins/` subdirectory before starting the container.
 
 ### Docker Compose
 
@@ -44,6 +44,7 @@ services:
     image: ghcr.io/shadowner/infrarust:latest
     ports:
       - "25565:25565"
+      - "8080:8080"
     volumes:
       - ./config:/app/config
     restart: unless-stopped
@@ -51,7 +52,7 @@ services:
 
 ### Building the image yourself
 
-The included `Dockerfile` uses a multi-stage build with Alpine and produces a statically linked binary. It supports x86_64, aarch64, and armv7:
+The included `Dockerfile` uses a multi-stage build with Alpine and produces a statically linked binary. It also builds the admin frontend with Node.js. Supported architectures are x86_64, aarch64, and armv7:
 
 ```bash
 docker build -t infrarust .
@@ -61,7 +62,7 @@ docker build -t infrarust .
 
 ### Requirements
 
-- **Rust 1.85 or later** (edition 2024)
+- Rust 1.94 or later (edition 2024)
 - A C compiler and linker (`gcc` or `clang`). The default build compiles `libdeflate` for
   packet compression. For a pure-Rust build with no C toolchain, see
   [Optional features](#optional-features).
@@ -95,13 +96,16 @@ The binary is at `target/release/infrarust`.
 
 Enable features at compile time with `--features`:
 
-| Feature | What it adds |
-|---------|-------------|
-| `libdeflater` | libdeflate packet compression (on by default; needs a C compiler) |
-| `telemetry` | OpenTelemetry tracing export |
-| `plugin-auth` | Built-in authentication plugin |
-| `plugin-hello` | Example hello-world plugin |
-| `plugin-server-wake` | Wake-on-LAN / server start plugin |
+| Feature | Default | What it adds |
+|---------|---------|-------------|
+| `libdeflater` | yes | libdeflate packet compression (needs a C compiler) |
+| `default-plugins` | yes | Bundles `plugin-auth` and `plugin-server-wake` |
+| `plugin-auth` | via `default-plugins` | Built-in authentication plugin |
+| `plugin-server-wake` | via `default-plugins` | Holds players in limbo while their target server starts up |
+| `plugin-hello` | no | Example hello-world plugin |
+| `docker` | no | Docker integration for managing backend containers |
+| `telemetry` | no | OpenTelemetry tracing export |
+| `wasm` | no | WASM plugin loader |
 
 ```bash
 cargo build --release -p infrarust --features telemetry,plugin-auth
@@ -135,9 +139,10 @@ infrarust [OPTIONS]
 | `-c, --config <PATH>` | `infrarust.toml` | Path to the proxy configuration file |
 | `-b, --bind <ADDR>` | (from config) | Override the bind address, e.g. `0.0.0.0:25577` |
 | `-l, --log-level <LEVEL>` | `info` | Log level filter (`trace`, `debug`, `info`, `warn`, `error`) |
+| `--plugins-dir <PATH>` | (from config) | Override the plugins directory path |
 
 The `RUST_LOG` environment variable takes priority over `--log-level` when both are set.
 
 ## Next steps
 
-Once Infrarust is installed, head to [Quick Start](./quick-start.md) to set up your first proxy configuration.
+Once Infrarust is installed, head to [Quick Start](./quick-start) to set up your first proxy configuration.

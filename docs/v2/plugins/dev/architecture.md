@@ -1,12 +1,14 @@
 ---
 title: Plugin Architecture
-description: How Infrarust's four hook layers work — TransportFilter, CodecFilter, EventBus, and LimboHandler — and where each one sits in the connection pipeline.
+description: How Infrarust's four native hook layers work (TransportFilter, CodecFilter, EventBus, and LimboHandler) and where each one sits in the connection pipeline.
 outline: [2, 3]
 ---
 
 # Plugin Architecture
 
 Infrarust processes every player connection through a layered pipeline. Each layer operates at a different level of abstraction, from raw TCP bytes to high-level game events. Plugins hook into whichever layer matches what they need to do.
+
+Native plugins are Rust crates compiled into the proxy binary. They run in-process with full access to every proxy service, including the transport-level byte stream. There is no sandbox: a native plugin is trusted code that the operator chose to compile in, and a misbehaving one can crash or stall the proxy. WASM plugins use a separate capability-gated model and do not reach the lowest layers described here. This page covers the native layers.
 
 ## The pipeline
 
@@ -128,7 +130,6 @@ The per-connection instance trait:
 pub trait CodecFilterInstance: Send {
     fn filter(
         &mut self,
-        ctx: &CodecContext,
         packet: &mut RawPacket,
         output: &mut FrameOutput,
     ) -> CodecVerdict;
@@ -140,7 +141,7 @@ pub trait CodecFilterInstance: Send {
 }
 ```
 
-The `filter` method is the hot path. It receives the packet, a context with protocol version and connection state, and a `FrameOutput` for injecting extra packets:
+The `filter` method is the hot path. It receives the packet and a `FrameOutput` for injecting extra packets. The instance learns about protocol state through the `on_state_change`, `on_compression_change`, and `on_encryption_enabled` callbacks rather than a per-call context, and the protocol version and side were fixed at creation time by `CodecSessionInit`:
 
 ```rust
 pub enum CodecVerdict {
@@ -178,11 +179,13 @@ Events fall into categories:
 
 | Category | Events |
 |----------|--------|
-| Lifecycle | `PreLoginEvent`, `PostLoginEvent`, `DisconnectEvent` |
+| Lifecycle | `PreLoginEvent`, `PostLoginEvent`, `DisconnectEvent`, `OnlineAuthFailed`, `PermissionsSetupEvent` |
 | Connection | `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerSwitchEvent`, `KickedFromServerEvent` |
 | Chat | `ChatMessageEvent` |
 | Proxy | `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `ConfigReloadEvent`, `ServerStateChangeEvent` |
-| Packet | `RawPacketEvent` |
+| Packet (Tier 3) | `RawPacketEvent` |
+
+The [events page](./events) documents each event's fields and result type.
 
 ### Subscribing to events
 
@@ -216,14 +219,14 @@ For example, `PreLoginEvent` supports these results:
 
 ```rust
 pub enum PreLoginResult {
-    Allowed,                    // Default — proceed normally.
+    Allowed,                       // Default. Proceed normally.
     Denied { reason: Component },  // Kick the player.
-    ForceOffline,               // Skip Mojang authentication.
-    ForceOnline,                // Force Mojang authentication.
+    ForceOffline,                  // Skip Mojang authentication.
+    ForceOnline,                   // Force Mojang authentication.
 }
 ```
 
-`ServerPreConnectEvent` lets you redirect players, send them to limbo, route them to a virtual backend, or deny the connection entirely.
+`ServerPreConnectEvent` lets you redirect players to another backend, send them to a limbo handler chain, or deny the connection entirely. Its result enum also has a `VirtualBackend` arm, but routing to a virtual backend is not wired into the proxy yet (see below).
 
 `ChatMessageEvent` lets you allow, deny, or modify messages.
 
@@ -232,11 +235,11 @@ pub enum PreLoginResult {
 Listeners run in priority order from lowest value (FIRST = 0) to highest value (LAST = 255). Each listener sees modifications made by previous listeners.
 
 ```rust
-EventPriority::FIRST   // 0   — runs first
-EventPriority::EARLY   // 64  — before normal
-EventPriority::NORMAL  // 128 — default
-EventPriority::LATE    // 192 — after normal
-EventPriority::LAST    // 255 — runs last
+EventPriority::FIRST   // 0   runs first
+EventPriority::EARLY   // 64  before normal
+EventPriority::NORMAL  // 128 default
+EventPriority::LATE    // 192 after normal
+EventPriority::LAST    // 255 runs last
 ```
 
 Use `EventPriority::custom(u8)` for values between the named constants.
@@ -296,8 +299,15 @@ pub trait LimboHandler: Send + Sync {
     fn on_disconnect(&self, _player_id: PlayerId) -> BoxFuture<'_, ()> {
         Box::pin(async {})
     }
+
+    fn on_session_end(&self, _player_id: PlayerId, _reason: SessionEndReason)
+        -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 ```
+
+`on_disconnect` fires only when the client drops. `on_session_end` fires on every terminal outcome (released, kicked, redirected, timed out, or shutdown, via the `SessionEndReason` enum), so it is the right place to tear down retained state uniformly. The per-session cancellation token from `LimboSession::cancellation_token()` is cancelled around the same time.
 
 `on_player_enter` determines what happens when the player arrives. The handler returns a `HandlerResult`:
 
@@ -308,10 +318,14 @@ pub enum HandlerResult {
     Hold,                // Keep the player in limbo until complete() is called.
     Redirect(ServerId),  // Send to a specific server.
     SendToLimbo(Vec<String>),  // Chain into another set of limbo handlers.
+    HoldWithTimeout {    // Like Hold, but auto-complete after the deadline.
+        after: Duration,
+        on_timeout: Box<HandlerResult>,
+    },
 }
 ```
 
-When a handler returns `Hold`, the player stays in the void world. The handler uses the `LimboSession` to communicate: send chat messages, display titles, show action bar text. When it's done (player authenticated, server finished booting), it calls `session.complete(result)` to release the player.
+When a handler returns `Hold`, the player stays in the void world. The handler uses the `LimboSession` to communicate: send chat messages, display titles, show action bar text. When it's done (player authenticated, server finished booting), it calls `session.complete(result)` to release the player. `HoldWithTimeout` is the same, except the engine owns a timer and applies `on_timeout` if `complete()` is not called within `after`. The deadline holds even if the handler's own task dies, and `on_timeout` must be a terminal result (`Accept`, `Deny`, `Redirect`, or `SendToLimbo`); a nested hold there is treated as `Accept`.
 
 Limbo handlers are chained. Each server configuration lists which limbo handlers run and in what order. A player passes through them sequentially.
 
@@ -329,10 +343,10 @@ Both TransportFilter and CodecFilter use `FilterMetadata` for ordering within th
 
 ```rust
 pub struct FilterMetadata {
-    pub id: &'static str,
+    pub id: String,
     pub priority: FilterPriority,
-    pub after: Vec<&'static str>,
-    pub before: Vec<&'static str>,
+    pub after: Vec<String>,
+    pub before: Vec<String>,
 }
 ```
 
@@ -358,13 +372,13 @@ The layers map to three plugin complexity tiers:
 |------|-----------|------------|
 | 1 | Event listeners, commands, services | `Plugin`, `EventBus` |
 | 2 | Limbo handlers (proxy manages protocol) | `LimboHandler`, `LimboSession` |
-| 3 | Codec/transport filters, virtual backends (full packet control) | `CodecFilterFactory`, `TransportFilter`, `VirtualBackendHandler` |
+| 3 | Codec and transport filters, full packet control | `CodecFilterFactory`, `TransportFilter` |
 
-Most plugins only need Tier 1. The auth plugin uses Tier 1 + Tier 2 (events for login flow, limbo for the login screen). Packet-rewriting plugins use Tier 3.
+Most plugins only need Tier 1. The auth plugin uses Tier 1 plus Tier 2 (events for login flow, limbo for the login screen). Packet-rewriting plugins use Tier 3.
 
-### Virtual backends (Tier 3)
+### Virtual backends (planned)
 
-Virtual backends are the most advanced hook point. A `VirtualBackendHandler` takes full control of the client connection and speaks raw Minecraft packets directly. Unlike limbo handlers where the proxy manages the protocol, virtual backends must handle everything themselves: JoinGame, chunks, KeepAlive responses.
+A virtual backend is a proxy-hosted "server" that speaks raw Minecraft packets directly to the client. Unlike a limbo handler, where the proxy manages the protocol for you, a virtual backend handles everything itself: JoinGame, chunks, KeepAlive responses. The `VirtualBackendHandler` trait and the `ServerPreConnectResult::VirtualBackend` arm both exist in `infrarust_api`:
 
 ```rust
 pub trait VirtualBackendHandler: Send + Sync {
@@ -377,7 +391,11 @@ pub trait VirtualBackendHandler: Send + Sync {
 }
 ```
 
-Virtual backends are routed to via `ServerPreConnectResult::VirtualBackend` in an event handler.
+The proxy core does not act on the `VirtualBackend` result yet. Returning it from an event handler is a no-op on the current release, so treat virtual backends as planned, not available. Use a limbo handler for proxy-hosted screens today.
+
+::: info Planned
+Virtual backend routing is not implemented in the proxy on 2.0.0-beta.1. The trait is published so the API can stabilize ahead of the runtime support.
+:::
 
 ## Choosing the right layer
 
@@ -390,4 +408,4 @@ Virtual backends are routed to via `ServerPreConnectResult::VirtualBackend` in a
 | Redirect players between servers | EventBus (`ServerPreConnectEvent`) |
 | Customize the server list ping | EventBus (`ProxyPingEvent`) |
 | Hold a player in a waiting room | LimboHandler |
-| Build a proxy-hosted minigame | VirtualBackendHandler |
+| Build a proxy-hosted screen or minigame | LimboHandler (VirtualBackendHandler is planned) |

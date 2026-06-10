@@ -49,6 +49,10 @@ struct Cli {
     /// Override the plugins directory path
     #[arg(long)]
     plugins_dir: Option<std::path::PathBuf>,
+
+    /// Override the servers directory path
+    #[arg(long)]
+    servers_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -89,6 +93,9 @@ fn main() -> ExitCode {
                 }
                 if let Some(ref plugins_dir) = cli.plugins_dir {
                     c.plugins_dir = plugins_dir.clone();
+                }
+                if let Some(ref servers_dir) = cli.servers_dir {
+                    c.servers_dir = servers_dir.clone();
                 }
                 c
             }
@@ -227,6 +234,9 @@ fn load_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
     }
     if let Some(ref plugins_dir) = cli.plugins_dir {
         config.plugins_dir = plugins_dir.clone();
+    }
+    if let Some(ref servers_dir) = cli.servers_dir {
+        config.servers_dir = servers_dir.clone();
     }
 
     infrarust_config::validate_proxy_config(&config).context("configuration validation failed")?;

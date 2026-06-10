@@ -1,11 +1,22 @@
 ---
 title: Docker Deployment
-description: Run Infrarust in Docker with volume mounts, environment variables, Docker Compose, and automatic server discovery from container labels.
+description: Run Infrarust in Docker with volume mounts, exposed ports, environment variables, Docker Compose, and automatic server discovery from container labels.
 ---
 
 # Docker Deployment
 
 Infrarust ships a minimal Docker image built from `scratch`. The image contains a statically linked binary, CA certificates, and nothing else. It supports x86_64, aarch64, and armv7.
+
+## Exposed ports
+
+The image exposes two ports:
+
+| Port | Purpose |
+|------|---------|
+| `25565` | Minecraft proxy (players connect here) |
+| `8080` | Web admin API and dashboard (optional, see below) |
+
+Publish only the ports you need. For a basic proxy without the admin interface, `-p 25565:25565` is enough.
 
 ## Directory structure
 
@@ -14,15 +25,17 @@ Infrarust inside Docker expects a config volume mounted at `/app/config`. The la
 ```
 config/
 ├── infrarust.toml
+├── plugins/
 └── servers/
     └── survival.toml
 ```
 
-Set `servers_dir` in your `infrarust.toml` to the path inside the container:
+Set `servers_dir` and `plugins_dir` in your `infrarust.toml` to paths inside the container:
 
 ```toml
 bind = "0.0.0.0:25565"
 servers_dir = "/app/config/servers"
+plugins_dir = "/app/config/plugins"
 ```
 
 ## Running with docker run
@@ -37,6 +50,8 @@ docker run -d \
 ```
 
 The `--config` flag tells Infrarust where to find `infrarust.toml` inside the container. If you don't pass it, the binary looks for `infrarust.toml` in the working directory (`/app`).
+
+To also expose the web admin API, add `-p 8080:8080` and set `bind = "0.0.0.0:8080"` (or any non-loopback address) in the `[web]` section of your config. The API requires an `api_key` when bound to a non-loopback address.
 
 ## Docker Compose
 
@@ -99,6 +114,7 @@ These flags are passed after the image name in `docker run`, or in the `command`
 | `-c, --config <PATH>` | `infrarust.toml` | Path to the proxy configuration file |
 | `-b, --bind <ADDR>` | from config | Override the bind address |
 | `-l, --log-level <LEVEL>` | `info` | Log level filter (overridden by `RUST_LOG`) |
+| `--plugins-dir <PATH>` | from config | Override the plugins directory path |
 
 ## Auto-discovery with Docker labels
 
@@ -190,7 +206,7 @@ Without this setting, Infrarust picks the first available network IP from each c
 
 ## Building the image yourself
 
-The included `Dockerfile` uses a multi-stage build: Alpine + Rust for compilation, `scratch` for the final image.
+The included `Dockerfile` uses a three-stage build: Node on Alpine builds the admin frontend, Rust on Alpine compiles the statically linked binary, and the final stage copies only the binary and CA certificates into a `scratch` image.
 
 ```bash
 docker build -t infrarust .

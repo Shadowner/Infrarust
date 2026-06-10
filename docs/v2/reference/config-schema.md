@@ -8,8 +8,8 @@ outline: [2, 3]
 
 Infrarust uses two kinds of TOML files:
 
-- `infrarust.toml` — global proxy settings (bind address, rate limits, Docker, telemetry, etc.)
-- `servers/*.toml` — one file per backend server (domains, addresses, proxy mode, MOTD, etc.)
+- `infrarust.toml` holds the global proxy settings (bind address, rate limits, Docker, telemetry, and so on).
+- `servers/*.toml` is one file per backend server (domains, addresses, proxy mode, MOTD, and so on).
 
 All duration values use human-readable strings: `"5s"`, `"10m"`, `"1h30m"`.
 
@@ -24,9 +24,13 @@ All duration values use human-readable strings: `"5s"`, `"10m"`, `"1h30m"`.
 | `connect_timeout` | duration | `"5s"` | Timeout when connecting to a backend server |
 | `receive_proxy_protocol` | boolean | `false` | Accept HAProxy v1/v2 PROXY protocol from upstream |
 | `servers_dir` | string | `"./servers"` | Path to the directory containing server TOML files |
+| `plugins_dir` | string | `"./plugins"` | Path to the directory containing WASM plugin files |
 | `worker_threads` | integer | `0` | Number of tokio worker threads. 0 = auto (one per CPU core) |
 | `so_reuseport` | boolean | `false` | Enable `SO_REUSEPORT` socket option (Linux only) |
 | `unknown_domain_behavior` | string | `"default_motd"` | What to do when a player connects with an unknown domain. `"default_motd"` shows the default MOTD, `"drop"` silently closes the connection |
+| `announce_proxy_commands` | boolean | `true` | Advertise built-in `/ir` subcommands to clients that support command suggestions |
+
+Parsing is strict. The global file deserializes with `deny_unknown_fields`, so an unknown or misspelled top-level key is a hard error rather than a silent no-op. The same applies to every table below.
 
 Minimal example:
 
@@ -37,20 +41,22 @@ servers_dir = "./servers"
 
 ### `[rate_limit]`
 
-Per-IP rate limiting applied globally. Login attempts and status pings have separate limits.
+Per-IP rate limiting. Login attempts and status pings have separate limits. Rate limiting is off by default; set `enabled = true` to turn it on.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Master switch for rate limiting |
 | `max_connections` | integer | `3` | Maximum login connections per IP per window |
 | `window` | duration | `"10s"` | Time window for login rate limiting |
-| `status_max` | integer | `30` | Maximum status ping connections per IP per window |
+| `status_max` | integer | `300` | Maximum status ping connections per IP per window |
 | `status_window` | duration | `"10s"` | Time window for status ping rate limiting |
 
 ```toml
 [rate_limit]
+enabled = true
 max_connections = 5
 window = "10s"
-status_max = 50
+status_max = 300
 status_window = "10s"
 ```
 
@@ -182,19 +188,87 @@ sampling_ratio = 0.1
 service_name = "infrarust"
 ```
 
-### `[plugins.<id>]`
+### `[ip_filter]`
 
-Plugin configuration, keyed by plugin ID.
+CIDR-based access control can be set globally to gate every connection before routing, using the same fields and precedence as the per-server `[ip_filter]` documented in the server config section below. A global whitelist or blacklist applies to all incoming connections; a per-server filter narrows access further for one backend.
+
+```toml
+[ip_filter]
+blacklist = ["203.0.113.0/24"]
+```
+
+### `[forwarding]`
+
+Player info forwarding to the backend, the same mechanism Velocity and BungeeCord use to pass the real player identity and IP through the proxy. Set this globally to apply one mode to every server.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `path` | string | none | Path to the plugin binary or library |
+| `mode` | string | `"none"` | Forwarding scheme: `"none"`, `"bungee_cord"`, `"bungee_guard"`, or `"velocity"` |
+| `secret_file` | string | `"forwarding.secret"` | Path to the shared secret file for `velocity` and `bungee_guard`. Created automatically if absent |
+| `bungeecord_channel` | boolean | `true` | Handle BungeeCord plugin messaging channel requests |
+
+`mode` accepts two aliases for backward compatibility: `"legacy"` maps to `bungee_cord` and `"modern"` maps to `velocity`. A `[forwarding.channel_permissions]` sub-table controls which BungeeCord channel subchannels are answered (Connect, IP, PlayerCount, and similar); most are enabled by default while `ConnectOther`, `Message`, `MessageRaw`, `KickPlayer`, and `KickPlayerRaw` are off. See [Proxy forwarding](../configuration/proxy-forwarding) for the protocol details.
+
+```toml
+[forwarding]
+mode = "velocity"
+secret_file = "forwarding.secret"
+```
+
+### `[web]`
+
+Web admin API and UI. Absent from the file means the web plugin is not loaded.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable_api` | boolean | `true` | Serve the REST admin API |
+| `enable_webui` | boolean | `true` | Serve the bundled web UI |
+| `bind` | string | `"127.0.0.1:8080"` | Listen address for the web server |
+| `api_key` | string | none | API key for authenticating requests. Must be at least 16 characters |
+| `cors_origins` | array of strings | `[]` | Allowed CORS origins |
+
+If `bind` is a loopback address and no `api_key` is set, Infrarust generates an ephemeral key at startup and logs a warning. If `bind` is reachable from outside the host and no key (or the placeholder `CHANGE-ME`) is set, Infrarust refuses to start. A `[web.rate_limit]` sub-table sets `requests_per_minute` (default `60`).
+
+```toml
+[web]
+enable_api = true
+enable_webui = true
+bind = "127.0.0.1:8080"
+api_key = "a-strong-api-key-at-least-16-chars"
+```
+
+::: warning
+Do not expose the web API on a non-loopback address without a strong `api_key`. Infrarust will refuse to start in that case rather than serve an unauthenticated admin API.
+:::
+
+### `[permissions]`
+
+Maps players to the admin permission level and grants Player-level access to specific `/ir` subcommands. The model has two levels only, Player and Admin, with Player < Admin.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `admins` | array of strings | `[]` | Players granted the Admin level (by name or UUID) |
+| `player_commands` | array of strings | `[]` | `/ir` subcommands made available to all players, not just admins |
+
+```toml
+[permissions]
+admins = ["Notch", "00000000-0000-0000-0000-000000000000"]
+player_commands = ["list", "find"]
+```
+
+### `[plugins.<id>]`
+
+Per-plugin configuration, keyed by plugin ID. Plugins are WASM components; if `path` is omitted the plugin is discovered from `plugins_dir`.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `path` | string | none | Explicit path to the plugin `.wasm` file. Omit to load it from `plugins_dir` |
 | `permissions` | array of strings | `[]` | Permissions granted to this plugin |
-| `enabled` | boolean | none | Whether the plugin is enabled |
+| `enabled` | boolean | none | Whether the plugin is enabled. Treated as enabled when unset |
 
 ```toml
 [plugins.auth]
-path = "./plugins/libauth.so"
+path = "./plugins/auth.wasm"
 permissions = ["limbo", "command"]
 enabled = true
 ```
@@ -213,8 +287,9 @@ Each file in the `servers_dir` directory defines one backend server. The filenam
 | `name` | string | none | Human-readable name. Becomes the server ID if set. Must match `[a-z0-9_-]+` |
 | `network` | string | none | Network group for server switching. Only servers in the same network can switch between each other. Omit to isolate the server |
 | `domains` | array of strings | `[]` | Domains that route to this server. Supports wildcards like `"*.mc.example.com"`. Empty means the server is only reachable via server switching |
-| `addresses` | array of strings | **required** | Backend server addresses in `"host:port"` format. Port defaults to 25565 if omitted |
+| `addresses` | array of strings | **required** | Backend server addresses in `"host:port"` format. Port defaults to 25565 if omitted. Multiple addresses are tried in order as sequential failover, not load balancing |
 | `proxy_mode` | string | `"passthrough"` | How the proxy handles traffic. See [Proxy modes](#proxy-modes) |
+| `forwarding_mode` | string | none | Per-server override of the global `[forwarding]` mode: `"none"`, `"bungee_cord"`, `"bungee_guard"`, or `"velocity"`. Inherits the global setting when omitted |
 | `send_proxy_protocol` | boolean | `false` | Send PROXY protocol header to the backend |
 | `domain_rewrite` | string or table | `"none"` | Rewrite the domain in the handshake before forwarding. `"none"`, `"from_backend"`, or `{ explicit = "domain" }` |
 | `max_players` | integer | `0` | Maximum players on this server. 0 = unlimited |
@@ -252,13 +327,14 @@ limbo_handlers = ["server_wake"]
 | Client Only | `"client_only"` | Proxy handles Mojang authentication. Backend runs in `online_mode=false` |
 | Offline | `"offline"` | No authentication. Transparent relay with packet parsing |
 | Server Only | `"server_only"` | Authentication handled entirely by the backend |
-| Full | `"full"` | Encryption on both proxy-to-client and proxy-to-backend sides |
 
 ::: tip
 `passthrough`, `zero_copy`, and `server_only` forward raw bytes after the handshake. The proxy cannot inspect or modify packets in these modes.
 
-`client_only`, `offline`, and `full` parse packets, which enables features like server switching and limbo handlers.
+`client_only` and `offline` parse packets, which enables server switching and limbo handlers.
 :::
+
+Each mode has its own page under [Proxy modes](../configuration/proxy-modes/) with the full behavior and trade-offs.
 
 ### `[motd]`
 
@@ -307,12 +383,14 @@ write = "60s"
 
 ### `[ip_filter]`
 
-IP-based access control using CIDR notation. If `whitelist` is set, only matching IPs can connect. Otherwise, `blacklist` rejects matching IPs.
+IP-based access control using CIDR notation. This table can also be set globally in `infrarust.toml`; a per-server filter narrows access further for one backend.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `whitelist` | array of strings | `[]` | CIDR ranges to allow. Takes priority over blacklist |
+| `whitelist` | array of strings | `[]` | CIDR ranges to allow. An empty whitelist allows everything not blacklisted |
 | `blacklist` | array of strings | `[]` | CIDR ranges to reject |
+
+An IP is allowed when it is not in the `blacklist` and the `whitelist` is empty or the IP is in the `whitelist`. The blacklist always applies, so a blacklisted address inside a whitelisted range is still rejected. The two lists can be used together.
 
 ```toml
 [ip_filter]
@@ -323,10 +401,6 @@ whitelist = ["192.168.1.0/24", "10.0.0.0/8"]
 [ip_filter]
 blacklist = ["203.0.113.0/24"]
 ```
-
-::: warning
-If both `whitelist` and `blacklist` are set, only the whitelist is evaluated. The blacklist is ignored when a whitelist is present.
-:::
 
 ### `[server_manager]`
 
@@ -413,17 +487,20 @@ A complete `infrarust.toml` with all sections:
 ```toml
 bind = "0.0.0.0:25565"
 servers_dir = "./servers"
+plugins_dir = "./plugins"
 max_connections = 500
 connect_timeout = "5s"
 worker_threads = 0
 receive_proxy_protocol = false
 so_reuseport = false
 unknown_domain_behavior = "default_motd"
+announce_proxy_commands = true
 
 [rate_limit]
+enabled = true
 max_connections = 3
 window = "10s"
-status_max = 30
+status_max = 300
 status_window = "10s"
 
 [status_cache]
@@ -467,8 +544,21 @@ sampling_ratio = 0.1
 [telemetry.resource]
 service_name = "infrarust"
 
+[forwarding]
+mode = "velocity"
+secret_file = "forwarding.secret"
+
+[web]
+enable_api = true
+bind = "127.0.0.1:8080"
+api_key = "a-strong-api-key-at-least-16-chars"
+
+[permissions]
+admins = ["Notch"]
+player_commands = ["list", "find"]
+
 [plugins.auth]
-path = "./plugins/libauth.so"
+path = "./plugins/auth.wasm"
 permissions = ["limbo", "command"]
 enabled = true
 ```

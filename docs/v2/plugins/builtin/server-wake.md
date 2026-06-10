@@ -12,10 +12,22 @@ The server wake plugin holds players in a limbo state while their target server 
 1. A player connects (or gets kicked from a server that's restarting).
 2. The plugin checks the target server's state through the server manager.
 3. If the server is sleeping, crashed, or offline, the plugin tells the provider to start it.
-4. The player enters limbo and sees an animated "Server Starting" title with rotating dots.
+4. The player enters limbo and sees an animated "Server Starting" title with cycling dots.
 5. An action bar shows how many players are waiting for the same server.
 6. When the server comes online, all waiting players see "Server Ready!" and get forwarded.
 7. If the server crashes or the timeout expires, waiting players are kicked with an error message.
+
+If a player connects while the server is already stopping, the plugin holds them in limbo with the `stopping_*` messages and waits for the server to come back online rather than issuing a fresh start command.
+
+## Activating the plugin
+
+Add `"server_wake"` to the `limbo_handlers` list in each server config where you want wake-on-connect behavior:
+
+```toml
+limbo_handlers = ["server_wake"]
+```
+
+The plugin will not intercept connections for a server that doesn't list it here. A server config without a `[server_manager]` section is also passed through without any limbo hold.
 
 ## Server manager configuration
 
@@ -139,7 +151,7 @@ timeout_kick = "&cThe server took too long to start. Please try again."
 waiting_action_bar = "&7{count} player(s) waiting for &e{server}"
 ```
 
-The `starting_*` messages show while a server is booting. The `stopping_*` messages show if a player connects while the server is shutting down (the plugin waits for it to stop, then start again). The `ready_*` title flashes briefly before the player gets forwarded.
+The `starting_*` messages show while a server is booting. The `stopping_*` messages show when a player connects while the server is shutting down; the plugin holds them in limbo and forwards once the server comes back online. The `ready_*` title flashes briefly before the player gets forwarded.
 
 ## MOTD during startup
 
@@ -168,7 +180,7 @@ Each MOTD entry accepts these fields:
 | `version_name` | string | none | Custom version string in the server list |
 | `max_players` | integer | none | Max player count shown in the server list |
 
-If you don't configure a custom MOTD for a state, Infrarust uses built-in defaults: "Server sleeping — Connect to wake up!" for sleeping, "Server is starting..." for starting, "Server is stopping..." for stopping, and "Server unavailable" for crashed.
+If you don't configure a custom MOTD for a state, Infrarust falls back to built-in defaults: "Server sleeping - Connect to wake up!" for sleeping, "Server is starting..." for starting, "Server is stopping..." for stopping, and "Server unavailable" for crashed.
 
 ## Auto-shutdown
 
@@ -181,11 +193,10 @@ The monitor polls the provider at `poll_interval` intervals during state transit
 A server config file with Pterodactyl management and custom MOTD:
 
 ```toml
-addresses = ["survival.example.com"]
+domains = ["survival.example.com"]
+addresses = ["10.0.0.5:25565"]
 proxy_mode = "client_only"
-
-[proxy_to]
-address = "10.0.0.5:25565"
+limbo_handlers = ["server_wake"]
 
 [server_manager]
 type = "pterodactyl"

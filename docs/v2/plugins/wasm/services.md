@@ -1,6 +1,6 @@
 ---
 title: Host Services
-description: Query players, manage servers and bans, read config, schedule tasks, log, and build chat components from a WASM plugin.
+description: Query players, manage servers and bans, read config, register commands and codec filters, schedule tasks, log, and build chat components from a WASM plugin.
 outline: [2, 3]
 ---
 
@@ -36,6 +36,8 @@ The accessors return zero-sized handles, so calling `ctx.player_registry()` is f
 | Servers | `ctx.server_manager()` | `server-manage` | opt-in |
 | Bans | `ctx.ban_service()` | `ban` | opt-in |
 | Config | `ctx.config_service()` | `config-read` | baseline |
+| Commands | `ctx.command(name, handler)` | `command` | baseline |
+| Codec filters | `Plugin::register_codec_filters` | `codec-filter` | opt-in |
 | Scheduler | `ctx.delay` / `ctx.interval` / `ctx.cancel` | `scheduler` | baseline |
 | Logging | `info!` family | always available | always |
 
@@ -192,6 +194,10 @@ let greeting = ctx.config_service()
     .unwrap_or_else(|| "Welcome".to_string());
 ```
 
+## Commands and codec filters
+
+Two more host services register guest callbacks rather than reading state, and each has its own page. Command registration is baseline (`command`): call `ctx.command(name, handler)` to get a `CommandBuilder`, chain `alias`, `aliases`, `description`, and `completer`, then `register()`. Codec-filter registration is the opt-in `codec-filter` capability and goes through the `Plugin::register_codec_filters(reg: &mut CodecRegistrar)` method, where `reg.add(id, priority, constructor)` declares one filter. See [Commands](./commands) and [Codec filters](./codec-filters) for the full contracts.
+
 ## Scheduler
 
 Scheduling is baseline (`scheduler`). The methods are on `Context` and return a `TaskHandle` (a `u64`).
@@ -297,6 +303,7 @@ impl Plugin for HostCaller {
 - [Capabilities](./capabilities): the full capability list and how grants work
 - [Events](./events): react to player and server lifecycle changes
 - [Commands](./commands): register commands that call these services
+- [Codec filters](./codec-filters): register codec filters and the per-call budget
 - [Limbo](./limbo): hold players in a virtual world from a handler
 - [API reference](./api-reference): the complete SDK surface
 - [Examples](./examples): runnable plugins

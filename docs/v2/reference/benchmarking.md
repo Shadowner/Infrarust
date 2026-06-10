@@ -5,7 +5,7 @@ description: How Infrarust's intercepted-mode packet path is benchmarked (per-pa
 
 # Benchmarking
 
-Infrarust's intercepted modes (`client_only`, `offline`, `full`) decode every packet,
+Infrarust's intercepted modes (`client_only`, `offline`) decode every packet,
 run it through the codec filter chain, and re-encode it. This page covers how that hot
 path is measured, so you can answer two questions with real numbers:
 
@@ -24,7 +24,7 @@ proxy-added cost, which Layer D measures directly.
 
 | Tool | Used for |
 |------|----------|
-| [divan](https://github.com/nvzqz/divan) | sub-microsecond microbenchmarks (Layers A–C), `harness = false` |
+| [divan](https://github.com/nvzqz/divan) | sub-microsecond microbenchmarks (Layers A to C), `harness = false` |
 | [hdrhistogram](https://github.com/HdrHistogram/HdrHistogram_rust) | low-overhead latency recording in the load tool (Layer D) |
 | [quanta](https://github.com/metrics-rs/quanta) | cheap TSC timestamps for the `bench-timing` feature (Layer E) |
 | tracing | per-filter spans on the `infrarust::bench_timing` target (Layer E) |
@@ -113,9 +113,10 @@ cargo run -p infrarust-mc-bench --release -- load \
   --concurrency 500 --duration 120 --warmup 60
 ```
 
-The proxy-added latency is the delta between (2b) and (2a). The tool reports throughput
-and p50/p90/p99/p99.9/max. `tools/stress-test` stays the tool for SLP/status-flood and
-malformed-packet resilience; it never enters Play state.
+The proxy-added latency is the delta between (2b) and (2a). The tool reports connection
+counts, throughput (echoes/sec), and mean plus p50/p90/p99/p99.9/max latency in
+microseconds. `tools/stress-test` is the tool for SLP/status-flood and malformed-packet
+resilience; it never enters Play state.
 
 ## Layer E: live per-filter timing
 
@@ -156,6 +157,6 @@ and built fixtures. Migrating it to divan is a mechanical follow-up gated on tha
 build.
 
 For deterministic CI regression gates, `iai-callgrind` (instruction counts, immune to CI
-noise) layers cleanly onto Layers A–C, though it is not wired into CI yet. For CPU hotspot
+noise) layers cleanly onto Layers A to C, though it is not wired into CI yet. For CPU hotspot
 analysis under load, profile the proxy with `samply` or `cargo flamegraph` while Layer D
 applies load.

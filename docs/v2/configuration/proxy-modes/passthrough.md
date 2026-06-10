@@ -67,7 +67,7 @@ write = "30s"
 | `send_proxy_protocol` | bool | `false` | Send PROXY protocol header when connecting to the backend. |
 | `domain_rewrite` | string or table | `"none"` | Rewrite the hostname in the handshake packet. See [Domain rewrite](#domain-rewrite). |
 | `max_players` | integer | `0` | Maximum players on this server. `0` means unlimited. |
-| `disconnect_message` | string | `"Server is currently unreachable..."` | Message sent to the player when the backend is down. |
+| `disconnect_message` | string | `"Server is currently unreachable. Please try again later."` | Message sent to the player when the backend is down. |
 | `timeouts.connect` | duration | `"5s"` | How long to wait when connecting to the backend. |
 | `timeouts.read` | duration | `"30s"` | Read timeout on the backend connection. |
 | `timeouts.write` | duration | `"30s"` | Write timeout on the backend connection. |
@@ -79,7 +79,7 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 ## How it works
 
 1. The proxy reads the client's handshake and login start packets.
-2. It fires a `ServerPreConnectEvent`, giving plugins a chance to deny or redirect the connection.
+2. It fires a `ServerPreConnectEvent`, giving plugins a chance to deny the connection. Passthrough honors only the deny result; redirect and limbo outcomes are ignored in this mode.
 3. It connects to one of the configured backend addresses.
 4. It forwards those initial packets to the backend, applying domain rewrite if configured.
 5. It registers a player session (with `active: false`, since passthrough can't inject packets).

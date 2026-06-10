@@ -114,7 +114,7 @@ See [Limbo](./limbo).
 
 ### Call host services
 
-Read the player registry, manage servers, query config, and use the ban service through typed accessors. Each accessor maps to a host import gated by a capability — `Players` and `Config` reads are baseline, while `Servers` start/stop needs `server-manage` and `Bans` needs `ban`.
+Read the player registry, manage servers, query config, and use the ban service through typed accessors. Each accessor maps to a host import gated by a capability. `Players` and `Config` reads are baseline, while `Servers` start/stop needs `server-manage` and `Bans` needs `ban`.
 
 ```rust
 let online = Players.online_count();
