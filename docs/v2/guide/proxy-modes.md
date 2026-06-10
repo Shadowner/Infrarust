@@ -16,9 +16,9 @@ Forwarding modes relay raw TCP bytes. The proxy reads the handshake packet to fi
 
 Three modes belong to this family:
 
-- **passthrough** (the default) copies bytes in userspace with `tokio::io::copy`.
-- **zero_copy** uses the Linux `splice(2)` syscall to move bytes through kernel pipes, avoiding userspace copies entirely.
-- **server_only** behaves the same as passthrough. It exists as a config signal that the backend handles authentication with `online-mode=true`.
+- `passthrough` (the default) copies bytes in userspace with `tokio::io::copy_bidirectional`.
+- `zero_copy` uses the Linux `splice(2)` syscall to move bytes through kernel pipes, avoiding userspace copies entirely.
+- `server_only` behaves the same as passthrough. It exists as a config signal that the backend handles authentication with `online-mode=true`.
 
 Because the proxy only reads the handshake (unchanged since Minecraft 1.7), forwarding modes work with every Minecraft version, including modded servers and future releases. The proxy adds almost no overhead to the connection.
 
@@ -46,8 +46,8 @@ Intercepted modes terminate the player's connection at the proxy. The proxy hand
 
 Two modes belong to this family:
 
-- **client_only** performs Mojang authentication at the proxy. The backend runs with `online-mode=false`.
-- **offline** skips authentication. The proxy still parses packets and supports all the same features, but any username can connect.
+- `client_only` performs Mojang authentication at the proxy. The backend runs with `online-mode=false`.
+- `offline` skips authentication. The proxy still parses packets and supports all the same features, but any username can connect.
 
 ```toml
 domains = ["hub.mc.example.com"]
@@ -69,7 +69,7 @@ Use an intercepted mode when you need the proxy to understand what's happening i
 - You want centralized Mojang authentication across multiple backend servers.
 - You need the proxy to start a backend on demand and hold the player in limbo until it's ready.
 
-The tradeoff: intercepted modes depend on Infrarust's protocol implementation. They work with Minecraft 1.7 through 1.21.x. Future protocol versions require an Infrarust update before they'll work in intercepted mode. Parsing every packet also uses more CPU than raw byte copying.
+The tradeoff: intercepted modes depend on Infrarust's protocol implementation. They work with Minecraft 1.7.2 through 1.21.11. Future protocol versions require an Infrarust update before they'll work in intercepted mode. Parsing every packet also uses more CPU than raw byte copying.
 
 ## Choosing between the two
 
@@ -85,19 +85,19 @@ If yes, use an intercepted mode. You get server switching, plugin support, and f
 | Packet inspection | No | Yes |
 | Server switching | No | Yes |
 | Plugin support | No | Yes |
-| Minecraft versions | All (1.7+) | 1.7 through 1.21.x |
+| Minecraft versions | All (1.7+) | 1.7.2 through 1.21.11 |
 | Backend `online-mode` | `true` | `false` |
 | Requires domain | Yes | Optional (if in a network) |
 
 ### Quick decision guide
 
-Start with **passthrough** if you're unsure. It's the default, works everywhere, and adds the least overhead. You can always switch to an intercepted mode later when you need its features.
+Start with `passthrough` if you're unsure. It's the default, works everywhere, and adds the least overhead. You can always switch to an intercepted mode later when you need its features.
 
-Pick **client_only** when you need server switching, plugin features, or centralized Mojang auth. This is the mode for server networks.
+Pick `client_only` when you need server switching, plugin features, or centralized Mojang auth. This is the mode for server networks.
 
-Pick **offline** when you need the same capabilities as client_only but don't want Mojang authentication. Useful for cracked servers or local development.
+Pick `offline` when you need the same capabilities as client_only but don't want Mojang authentication. Useful for cracked servers or local development.
 
-Pick **zero_copy** if you're on Linux and want to squeeze out lower CPU usage on a high-traffic forwarding setup.
+Pick `zero_copy` if you're on Linux and want to squeeze out lower CPU usage on a high-traffic forwarding setup.
 
 ## Example: single server with domain routing
 
@@ -146,6 +146,7 @@ Only the entry point server in a network needs a domain. Other servers can omit 
 
 - [Passthrough configuration](../configuration/proxy-modes/passthrough.md) for detailed options and behavior
 - [Zero-copy configuration](../configuration/proxy-modes/zerocopy.md) for Linux kernel-level forwarding
+- [Server-only configuration](../configuration/proxy-modes/server-only.md) for backend-side authentication
 - [Client-only configuration](../configuration/proxy-modes/client-only.md) for Mojang auth and server networks
 - [Offline configuration](../configuration/proxy-modes/offline.md) for no-auth setups
 - [Proxy modes overview](../configuration/proxy-modes/) for the full comparison table

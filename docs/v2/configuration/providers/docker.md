@@ -57,7 +57,7 @@ If you omit `infrarust.domains`, the container name becomes the domain with a `.
 
 Infrarust resolves the container address in this order:
 
-1. The IP from the preferred Docker network (set via `network` in `[docker]` config or `infrarust.network` label), or the first available network IP.
+1. The IP from the preferred Docker network (set via `network` in `[docker]` config), or the first available network IP.
 2. Port bindings from the host config (e.g., `0.0.0.0:25565` mapped port).
 3. The container name as a hostname (last resort).
 
@@ -134,7 +134,7 @@ services:
       infrarust.domains: "survival.mc.example.com"
       infrarust.proxy_mode: "client_only"
       infrarust.network: "main"
-      infrarust.motd.text: "§aSurvival §7— §fWelcome!"
+      infrarust.motd.text: "§aSurvival §7| §fWelcome!"
     networks:
       - minecraft
     restart: unless-stopped

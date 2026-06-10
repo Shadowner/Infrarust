@@ -71,7 +71,7 @@ Reference the registered name from the server config:
 limbo_handlers = ["gate"]
 ```
 
-The proxy routes a player into limbo for that server using the chain in `limbo_handlers`. See [Configuration](../../configuration/) for where `limbo_handlers` lives.
+The proxy routes a player into limbo for that server using the chain in `limbo_handlers`, executed in order. See [Server configuration](../../configuration/servers) for where `limbo_handlers` lives.
 
 ## The LimboHandler trait
 

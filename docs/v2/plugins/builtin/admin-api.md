@@ -1,11 +1,11 @@
 ---
 title: Admin API & Web Interface
-description: Built-in REST API and web dashboard for managing your Infrarust proxy — monitor players, servers, bans, and stream logs in real time.
+description: Built-in REST API and web dashboard for managing your Infrarust proxy. Monitor players, servers, bans, and stream logs in real time.
 ---
 
 # Admin API & Web Interface
 
-The admin API plugin exposes a REST API and an embedded web dashboard for managing your Infrarust proxy over HTTP. You can list players, kick or move them between servers, manage bans, check server health, reload configuration, and stream live events and logs — all without touching the Minecraft client or the terminal.
+The admin API plugin exposes a REST API and an embedded web dashboard for managing your Infrarust proxy over HTTP. You can list players, kick or move them between servers, manage bans, check server health, reload configuration, and stream live events and logs, all without touching the Minecraft client or the terminal.
 
 The plugin is always compiled into the binary. It activates when a `[web]` section is present in `infrarust.toml`.
 
@@ -17,60 +17,46 @@ Add a `[web]` section to your `infrarust.toml`:
 [web]
 ```
 
-That's it. All three fields have defaults:
+That is enough. All fields have defaults:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enable_api` | bool | `true` | Start the REST API |
 | `enable_webui` | bool | `true` | Serve the embedded web dashboard |
-| `listen_port` | u16 | `8080` | Port the HTTP server binds to |
+| `bind` | string | `"127.0.0.1:8080"` | Socket address the HTTP server listens on |
+| `api_key` | string | *(see below)* | Bearer token for authentication. Must be at least 16 characters. |
+| `cors_origins` | string[] | `[]` | Allowed CORS origins. Empty means no CORS headers are sent. |
+| `rate_limit.requests_per_minute` | u64 | `60` | Maximum requests per minute across all clients on authenticated endpoints |
 
-To change the port or disable the web UI while keeping the API:
+To change the bind address or disable the web UI while keeping the API:
 
 ```toml
 [web]
-listen_port = 9090
+bind = "127.0.0.1:9090"
 enable_webui = false
 ```
 
-On first start, the plugin generates `plugins/admin_api/config.toml` with a random API key. You'll see it in the logs:
+### API key behavior
+
+If `api_key` is not set and `bind` resolves to a loopback address (`127.0.0.1`, `::1`, `localhost`), the plugin generates a random UUID v4 key at startup and logs it as a warning:
 
 ```
-INFO Generated admin API key: a1b2c3d4-e5f6-7890-abcd-ef1234567890
-INFO Config written to plugins/admin_api/config.toml
+WARN No API key configured for loopback bind (127.0.0.1:8080) — generated an ephemeral key: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+This key is not written to disk. It changes on every restart. For a persistent key, set one explicitly:
+
+```toml
+[web]
+api_key = "your-strong-key-here"
 ```
 
 ::: warning
-Save your API key somewhere safe. It is the only credential protecting the admin API.
+If `bind` is set to a non-loopback address (e.g. `0.0.0.0:8080`) and no `api_key` is configured, the plugin refuses to start. You must supply a key of at least 16 characters before binding to any externally reachable address.
 :::
 
-## Plugin configuration
-
-The plugin reads its own config from `plugins/admin_api/config.toml`:
-
-```toml
-bind = "127.0.0.1:8080"
-
-# API key for authentication (auto-generated, min 16 characters)
-api_key = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-
-# CORS origins for the web dashboard (empty = no CORS headers)
-# cors_origins = ["http://localhost:3000"]
-
-# Rate limiting for authenticated endpoints
-# [rate_limit]
-# requests_per_minute = 60
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `bind` | string | `"127.0.0.1:8080"` | Address the HTTP server listens on |
-| `api_key` | string | *(auto-generated)* | Bearer token for authentication. Must be at least 16 characters. |
-| `cors_origins` | string[] | `[]` | Allowed CORS origins. Empty means no CORS headers are sent. |
-| `rate_limit.requests_per_minute` | u64 | `60` | Maximum requests per minute per client on authenticated endpoints |
-
 ::: danger
-Do not expose the admin API to the public internet without a reverse proxy or firewall. The default bind address `127.0.0.1` restricts access to the local machine.
+Do not expose the admin API to the public internet without a reverse proxy or firewall. The default bind `127.0.0.1` restricts access to the local machine.
 :::
 
 ## Authentication
@@ -93,7 +79,7 @@ GET /api/v1/events?token=YOUR_API_KEY&types=player.join,player.leave
 
 ## Rate limiting
 
-Authenticated endpoints are rate-limited to `requests_per_minute` (default 60). The health endpoint is exempt.
+Authenticated endpoints are rate-limited to `requests_per_minute` (default 60). The counter is shared across all clients. It tracks total requests to the API, not per-IP. The health endpoint is exempt.
 
 Response headers on every authenticated request:
 
@@ -174,7 +160,7 @@ Paginated endpoints accept `?page=1&per_page=20` query parameters. Maximum `per_
 |--------|------|-------------|
 | GET | `/api/v1/servers` | List all configured servers |
 | GET | `/api/v1/servers/{id}` | Get a server's configuration and state |
-| POST | `/api/v1/servers` | Create a server (API-managed, stored in `plugins/admin_api/servers.json`) |
+| POST | `/api/v1/servers` | Create a server (API-managed, stored in the plugin's data directory) |
 | PUT | `/api/v1/servers/{id}` | Update a server's configuration |
 | DELETE | `/api/v1/servers/{id}` | Delete an API-managed server |
 | POST | `/api/v1/servers/{id}/start` | Start a server |
@@ -271,7 +257,7 @@ Cache headers:
 
 ```bash
 curl -s \
-  -H "Authorization: Bearer $(cat plugins/admin_api/config.toml | grep api_key | cut -d'"' -f2)" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   http://127.0.0.1:8080/api/v1/players | jq
 ```
 
@@ -282,9 +268,11 @@ curl -s \
       "id": 1,
       "username": "Steve",
       "uuid": "069a79f4-44e9-4726-a5be-fca90e38aaf5",
+      "ip": "203.0.113.7",
       "server": "survival",
-      "proxy_mode": "client_only",
-      "connected_at": "2025-01-15T10:30:00Z"
+      "is_active": true,
+      "connected_since": "2025-01-15T10:30:00Z",
+      "connected_duration": "1h 12m 5s"
     }
   ],
   "meta": {

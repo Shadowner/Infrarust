@@ -53,14 +53,17 @@ max_connections = 0
 connect_timeout = "5s"
 receive_proxy_protocol = false
 servers_dir = "./servers"
+plugins_dir = "./plugins"
 worker_threads = 0
 unknown_domain_behavior = "default_motd"
+announce_proxy_commands = true
 so_reuseport = false
 
 [rate_limit]
+enabled = false
 max_connections = 3
 window = "10s"
-status_max = 30
+status_max = 300
 status_window = "10s"
 
 [status_cache]
@@ -102,7 +105,7 @@ service_version = "2.0.0"
 
 Durations use human-readable strings: `"5s"`, `"10m"`, `"1h"`. This applies to all timeout and interval fields.
 
-For details on each section, see [Global Settings](./global.md).
+For details on each section, see [Global Settings](./global).
 
 ## Server config files
 
@@ -122,19 +125,19 @@ read = "30s"
 write = "30s"
 
 [motd.online]
-text = "§aSurvival §7— §fWelcome!"
+text = "§aSurvival §7- §fWelcome!"
 favicon = "./icons/survival.png"
 
 [motd.sleeping]
-text = "§eSurvival §7— §fConnect to wake up!"
+text = "§eSurvival §7- §fConnect to wake up!"
 version_name = "Server Sleeping"
 ```
 
 Domains support wildcard patterns. `*.mc.example.com` matches `survival.mc.example.com`, `creative.mc.example.com`, and so on. Exact domain matches take priority over wildcards.
 
-Available proxy modes: `passthrough` (default), `zerocopy`, `client_only`, `offline`, `server_only`. See [Proxy Modes](./proxy-modes/) for what each one does.
+Available proxy modes: `passthrough` (default), `zero_copy`, `client_only`, `offline`, `server_only`. See [Proxy Modes](./proxy-modes/) for what each one does.
 
-For the full list of server config fields, see [Server Definitions](./servers.md).
+For the full list of server config fields, see [Server Definitions](./servers).
 
 ## Hot-reload
 
@@ -160,7 +163,7 @@ Both `infrarust.toml` and server files use strict parsing (`deny_unknown_fields`
 
 The file provider described above is always active, but Infrarust also supports other configuration sources:
 
-- **Docker provider** discovers servers from running containers using labels. See [Docker Discovery](./providers/docker.md).
+- **Docker provider** discovers servers from running containers using labels. See [Docker Discovery](./providers/docker).
 - **Plugins** can register as configuration providers to supply server definitions from external sources.
 
 All providers feed into the same routing system. A server defined via Docker labels works the same way as one defined in a `.toml` file.

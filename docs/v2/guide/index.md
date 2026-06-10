@@ -1,6 +1,6 @@
 ---
 title: What is Infrarust?
-description: Infrarust is a Minecraft reverse proxy written in Rust. It routes players to backend servers based on the domain they connect with.
+description: Infrarust is a Minecraft reverse proxy written in Rust. It routes players to backend servers by domain, with five proxy modes, native and WASM plugins, limbo, server auto start/stop, OpenTelemetry, a web admin API, and built-in security controls.
 ---
 
 # What is Infrarust?
@@ -43,31 +43,58 @@ Infrarust watches this directory for changes. Add, edit, or remove a server file
 
 ## Proxy modes
 
-Infrarust supports six proxy modes. Each mode controls how much the proxy inspects or modifies the traffic between client and server:
+Infrarust supports five proxy modes. Each mode controls how much the proxy inspects or modifies the traffic between client and server:
 
 | Mode | What it does |
 |------|-------------|
 | `passthrough` | Forwards raw bytes after the handshake. Default mode. |
-| `zerocopy` | Uses Linux `splice(2)` for kernel-level forwarding. Linux only. |
-| `client_only` | Handles Mojang authentication on the proxy side. Backend runs `online_mode=false`. |
+| `zero_copy` | Uses Linux `splice(2)` for kernel-level forwarding. Linux only. |
+| `client_only` | Handles Mojang authentication on the proxy side. Backend runs `online-mode=false`. |
 | `offline` | No authentication. Transparent relay. |
-| `server_only` | Authentication handled by the backend server. |
-| `full` | Encryption on both the client and server sides. |
+| `server_only` | Forwards raw bytes; authentication is handled by the backend. |
 
-You set the mode per server in its config file. Pick `passthrough` unless you need the proxy to handle authentication or packet inspection.
+The first two modes (`passthrough`, `zero_copy`) and `server_only` are the forwarding family: they relay raw bytes after the handshake with no packet inspection. The remaining two (`client_only`, `offline`) are the intercepted family: the proxy parses packets, which enables server switching and limbo.
+
+You set the mode per server in its config file.
 
 ## Key features
 
-**Domain routing** matches players to servers by the hostname they connect with. Exact domains resolve through a hash map lookup. Wildcard patterns like `*.mc.example.com` are pre-compiled when the config loads.
+### Domain routing
 
-**Server discovery** works through two providers. The file provider watches your `servers/` directory for TOML config changes. The Docker provider reads container labels from the Docker socket and watches for container start/stop events.
+Players are matched to servers by the hostname they connect with. Exact domains resolve through a hash map lookup. Wildcard patterns like `*.mc.example.com` are pre-compiled when the config loads.
 
-**Plugins** extend the proxy without modifying its source. Built-in plugins handle Mojang authentication, player queuing when a server is full, and starting stopped servers when a player connects. You can write your own plugins against the `infrarust-api` crate.
+### Server discovery
 
-**Security** includes per-IP rate limiting, a ban system with expiry and audit logging, IP allow/deny lists per server, and HAProxy proxy protocol support for preserving client IPs behind load balancers.
+Two providers register backends. The file provider watches your `servers/` directory for TOML config changes. The Docker provider reads container labels from the Docker socket and watches for container start/stop events.
 
-**Telemetry** exports traces and metrics via OpenTelemetry to any OTLP-compatible backend (Jaeger, Grafana Tempo, etc.).
+### Server auto start/stop
+
+Infrarust can launch a backend when a player connects and shut it down when idle. The `[server_manager]` table in a server config supports local processes, Pterodactyl, and Crafty controllers. Players are held in limbo while the server boots.
+
+### Limbo
+
+Limbo is a proxy-side virtual world that holds players between connection states. Plugins use it to show a login screen, display a queue position, or keep players connected while a backend server restarts. Players in limbo see a void world and receive chat and title messages from the proxy.
+
+### Plugins
+
+Plugins extend the proxy without modifying its source. Native plugins are Rust crates compiled into the proxy binary and can access every proxy service, including transport-level packet filters. WASM plugins are sandboxed WebAssembly components loaded at runtime from the `plugins/` directory; they run with CPU and memory limits and can be written in any language targeting `wasm32-wasip2`. Built-in plugins cover Mojang authentication, server wake-on-connect, and player queuing.
+
+### Web admin API and UI
+
+A built-in REST API ships with an embedded dashboard. Add `[web]` to `infrarust.toml` to enable it. The dashboard shows connected players, server status, and logs, and the API supports real-time event streaming over SSE.
+
+### BungeeCord and Velocity forwarding
+
+Forwarding passes real player IP addresses and UUIDs to backend servers. Configure the `[forwarding]` table globally in `infrarust.toml` with `mode = "bungee_cord"` (alias `legacy`), `mode = "velocity"` (alias `modern`), or `mode = "bungee_guard"`.
+
+### Security
+
+Security controls include per-IP rate limiting, a ban system with expiry and audit logging (file `bans.json`), IP allow/deny lists per server or globally, and HAProxy proxy protocol support for preserving client IPs behind load balancers.
+
+### Telemetry
+
+Infrarust exports traces and metrics via OpenTelemetry OTLP to any compatible backend (Jaeger, Tempo, and similar). Configure the `[telemetry]` table; the default endpoint is `http://localhost:4317`.
 
 ## Next steps
 
-Ready to set up Infrarust? Head to the [Quick Start](./quick-start.md) guide to get a working proxy in a few minutes.
+Ready to set up Infrarust? Head to the [Quick Start](./quick-start) guide to get a working proxy in a few minutes.

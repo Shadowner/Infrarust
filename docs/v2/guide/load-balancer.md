@@ -17,13 +17,19 @@ Players → Load Balancer (TCP, port 25565) → Infrarust → Backend Servers
 
 The load balancer distributes TCP connections to one or more Infrarust instances. Each Infrarust instance routes players to the correct backend based on the domain they connected with.
 
-## Proxy Protocol
+## Multiple backend addresses
+
+A server config can list several addresses in the `addresses` array. Infrarust tries each one in order and uses the first that connects successfully. This is sequential failover, not load balancing: Infrarust does not distribute connections across backends.
+
+Per-backend load balancing (round-robin, least-connections) is planned but not yet available on the main branch.
+
+## Proxy protocol
 
 When a load balancer sits in front of Infrarust, the source IP of every connection becomes the load balancer's IP instead of the player's real IP. Proxy protocol fixes this. The load balancer prepends a small header to each TCP connection that contains the original client address.
 
 Infrarust supports both proxy protocol v1 (text) and v2 (binary).
 
-### Receiving Proxy Protocol
+### Receiving proxy protocol
 
 To accept proxy protocol headers from your load balancer, set `receive_proxy_protocol` in your global config:
 
@@ -36,7 +42,7 @@ receive_proxy_protocol = true
 Only enable `receive_proxy_protocol` if your load balancer actually sends proxy protocol headers. If you enable it without a load balancer in front, clients can forge their source IP by sending a fake proxy protocol header.
 :::
 
-### Sending Proxy Protocol to Backends
+### Sending proxy protocol to backends
 
 If your backend Minecraft servers also need to know the real client IP (for ban lists, logging, or plugins), Infrarust can forward proxy protocol v2 headers to them. Set this per server:
 
@@ -48,7 +54,7 @@ send_proxy_protocol = true
 
 The backend server must support proxy protocol. For vanilla Minecraft, you'll need a plugin like [HAProxyDetector](https://github.com/andylizi/haproxy-detector) or a modded server that understands proxy protocol.
 
-### HAProxy Configuration
+### HAProxy configuration
 
 Configure HAProxy to forward TCP traffic with proxy protocol v2:
 
@@ -66,7 +72,7 @@ backend infrarust
 
 Then enable `receive_proxy_protocol = true` in Infrarust.
 
-### nginx Configuration
+### nginx configuration
 
 nginx supports proxy protocol through its stream module:
 
@@ -85,15 +91,15 @@ stream {
 }
 ```
 
-### Cloud Load Balancers
+### Cloud load balancers
 
 Most cloud providers offer TCP load balancers with proxy protocol support:
 
-- **AWS NLB:** Enable proxy protocol v2 on the target group.
-- **GCP TCP Load Balancer:** Enable PROXY protocol in the backend service configuration.
-- **Azure Load Balancer:** Azure's standard load balancer does not support proxy protocol. Use HAProxy or nginx on a VM instead.
+- AWS NLB: enable proxy protocol v2 on the target group.
+- GCP TCP Load Balancer: enable PROXY protocol in the backend service configuration.
+- Azure Load Balancer: Azure's standard load balancer does not support proxy protocol. Use HAProxy or nginx on a VM instead.
 
-## TCP Keepalive
+## TCP keepalive
 
 Load balancers drop idle TCP connections after a timeout (typically 60-350 seconds depending on the provider). Minecraft players sitting in a server selection screen or AFK can trigger this. TCP keepalive probes prevent the load balancer from closing connections that are still alive.
 
@@ -133,7 +139,7 @@ so_reuseport = true
 
 This only works on Linux.
 
-## Connection Limits
+## Connection limits
 
 To prevent a single Infrarust instance from accepting more connections than it can handle, set `max_connections`:
 
@@ -144,7 +150,7 @@ max_connections = 10000
 
 A value of `0` (the default) means no limit.
 
-## Common Pitfalls
+## Common pitfalls
 
 ### Proxy protocol mismatch
 

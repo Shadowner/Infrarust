@@ -76,12 +76,12 @@ export default
         { text: 'Plugins', link: '/plugins/', activeMatch: '/plugins/' },
         { text: 'Reference', link: '/reference/', activeMatch: '/reference/' },
         {
-          text: 'v2.0-alpha01',
+          text: 'v2.0.0-beta.1',
           items: [
             {
               text: 'Release',
               items: [
-                { text: 'Changelog', link: 'https://github.com/Shadowner/Infrarust/blob/main/CHANGELOG.md' },
+                { text: 'Releases', link: 'https://github.com/Shadowner/Infrarust/releases' },
                 { text: 'Contributing', link: 'https://github.com/Shadowner/Infrarust/blob/main/CONTRIBUTING.md' },
                 { text: 'Acknowledgements', link: '/thank-you-open-source' },
               ],
@@ -112,6 +112,7 @@ export default
               { text: 'How it Works', link: '/guide/how-it-works' },
               { text: 'Proxy Modes', link: '/guide/proxy-modes' },
               { text: 'Routing & Wildcards', link: '/guide/routing' },
+              { text: 'Authentication & Encryption', link: '/guide/authentication' },
             ],
           },
           {
@@ -120,6 +121,7 @@ export default
               { text: 'Docker', link: '/guide/docker' },
               { text: 'Docker Compose', link: '/guide/docker-compose' },
               { text: 'Systemd Service', link: '/guide/systemd' },
+              { text: 'Server Management', link: '/guide/server-management' },
               { text: 'Behind a Load Balancer', link: '/guide/load-balancer' },
             ],
           },
@@ -237,6 +239,7 @@ export default
               { text: 'Overview', link: '/reference/' },
               { text: 'Config Schema', link: '/reference/config-schema' },
               { text: 'CLI Reference', link: '/reference/cli' },
+              { text: 'In-game Commands', link: '/reference/commands' },
               { text: 'Error Codes', link: '/reference/error-codes' },
               { text: 'Proxy Protocol Spec', link: '/reference/proxy-protocol' },
             ],

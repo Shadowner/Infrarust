@@ -38,7 +38,7 @@ A list of admin identifiers. Each entry can be a Mojang UUID (with dashes) or a 
 A player is recognized as admin when both conditions are met:
 
 1. Their UUID matches an entry in `admins`.
-2. They authenticated in online mode (`client_only` or `ForceOnline`).
+2. They authenticated in online mode (`client_only`).
 
 ::: warning
 Offline-mode players can never be admin, even if their UUID appears in the list. This prevents UUID spoofing.
@@ -77,6 +77,7 @@ These commands are always admin-only. Adding them to `player_commands` has no ef
 | `broadcast` | Broadcast a message to all players |
 | `reload` | Configuration reload |
 | `plugin` | Run a plugin command by namespace |
+| `plugins` | List loaded plugins |
 
 ## Tab-completion filtering
 

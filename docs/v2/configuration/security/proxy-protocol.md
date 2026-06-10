@@ -13,8 +13,7 @@ Infrarust supports both receiving proxy protocol headers from an upstream proxy 
 
 Set `receive_proxy_protocol` in your `infrarust.toml` to decode incoming proxy protocol headers:
 
-```toml{3}
-[proxy]
+```toml{2}
 bind = "0.0.0.0:25565"
 receive_proxy_protocol = true
 ```
@@ -82,7 +81,6 @@ Player → Load Balancer (adds PP header) → Infrarust (decodes PP) → Backend
 The `infrarust.toml` config for this scenario:
 
 ```toml
-[proxy]
 bind = "0.0.0.0:25565"
 receive_proxy_protocol = true
 ```

@@ -115,7 +115,7 @@ impl CommandHandler for ChangePasswordCommand {
 
 ## Tab completion
 
-Override `tab_complete` to provide suggestions when a player presses Tab. The default implementation returns no suggestions.
+Override `tab_complete` to provide suggestions when a player presses Tab. Like `execute`, it is async and returns a `BoxFuture`. The default implementation returns no suggestions.
 
 ```rust
 impl CommandHandler for MyCommand {
@@ -127,16 +127,38 @@ impl CommandHandler for MyCommand {
         Box::pin(async move { /* ... */ })
     }
 
-    fn tab_complete(&self, partial_args: &[&str]) -> Vec<String> {
-        match partial_args.len() {
-            0 | 1 => vec!["survival".into(), "creative".into(), "lobby".into()],
-            _ => vec![],
-        }
+    fn tab_complete<'a>(
+        &'a self,
+        partial_args: Vec<String>,
+        cursor: u32,
+    ) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            match partial_args.len() {
+                0 | 1 => vec!["survival".into(), "creative".into(), "lobby".into()],
+                _ => vec![],
+            }
+        })
     }
 }
 ```
 
-`partial_args` contains what the player has typed so far, split by whitespace.
+`partial_args` holds the arguments typed after the command name, split by whitespace, with the command name already stripped. When the input ends with a space, the proxy pushes an empty trailing element so you can tell a new argument has started. `cursor` is the caret's byte offset within the argument string; per the tab-complete protocol the caret is always at end of input.
+
+To make suggestions depend on the requesting player (for example, hiding admin-only options), override `tab_complete_for` instead. It receives the same `partial_args` and `cursor` plus an `Option<PlayerId>`. The default implementation delegates to `tab_complete`.
+
+```rust
+fn tab_complete_for<'a>(
+    &'a self,
+    partial_args: Vec<String>,
+    cursor: u32,
+    player_id: Option<PlayerId>,
+) -> BoxFuture<'a, Vec<String>> {
+    Box::pin(async move {
+        // inspect player_id, then return suggestions
+        self.tab_complete(partial_args, cursor).await
+    })
+}
+```
 
 ## Sharing state with a handler
 

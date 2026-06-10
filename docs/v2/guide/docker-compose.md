@@ -35,6 +35,8 @@ network = "minecraft"
 
 The `[docker]` section activates the Docker provider. Setting `network = "minecraft"` tells Infrarust to resolve container IPs from that specific Docker network. Without it, Infrarust picks the first available network IP from each container, which can be wrong if containers are attached to multiple networks.
 
+Note that `[docker].network` is about IP resolution only. The `infrarust.network` container label is a separate concept: it groups servers into a named set for in-game server switching.
+
 ## Full docker-compose.yml
 
 ```yaml
@@ -47,7 +49,6 @@ services:
   infrarust:
     image: ghcr.io/shadowner/infrarust:latest
     container_name: infrarust
-    command: ["--config", "/app/config/infrarust.toml"]
     ports:
       - "25565:25565"
     volumes:
@@ -88,7 +89,7 @@ services:
       infrarust.domains: "survival.mc.example.com"
       infrarust.proxy_mode: "client_only"
       infrarust.network: "main"
-      infrarust.motd.text: "§aSurvival §7— §fWelcome!"
+      infrarust.motd.text: "§aSurvival §7- §fWelcome!"
     networks:
       - minecraft
     restart: unless-stopped
@@ -133,7 +134,7 @@ Every Minecraft container needs `infrarust.enable: "true"` for Infrarust to pick
 | `infrarust.send_proxy_protocol` | `false` | Set to `"true"` or `"1"` to send PROXY protocol headers. |
 | `infrarust.name` | none | Human-readable name for server switching. |
 | `infrarust.network` | none | Network group for server switching. |
-| `infrarust.motd.text` | none | Custom MOTD text shown in the server list. |
+| `infrarust.motd.text` | none | MOTD text shown when the server is online. |
 
 If you skip `infrarust.domains`, the container name becomes the domain with a `.docker.local` suffix. A container named `lobby` gets `lobby.docker.local`.
 

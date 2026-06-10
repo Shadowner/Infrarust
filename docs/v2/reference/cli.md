@@ -21,6 +21,8 @@ infrarust [OPTIONS]
 | `--config <PATH>` | `-c` | `infrarust.toml` | Path to the proxy configuration file |
 | `--bind <ADDR>` | `-b` | *(from config)* | Override the bind address (e.g. `0.0.0.0:25577`) |
 | `--log-level <LEVEL>` | `-l` | `info` | Log level filter. Overridden by the `RUST_LOG` env var |
+| `--plugins-dir <PATH>` | | *(from config)* | Override the plugins directory path |
+| `--servers-dir <PATH>` | | *(from config)* | Override the servers directory path |
 | `--version` | `-V` | | Print version |
 | `--help` | `-h` | | Print help |
 
@@ -64,7 +66,7 @@ Build with telemetry support:
 cargo build --release --features telemetry
 ```
 
-### Interactive Console
+### Interactive console
 
 Once running, Infrarust drops you into an interactive console. Type `help` to see all commands. The full list is below, grouped by category.
 
@@ -80,6 +82,9 @@ Once running, Infrarust drops you into an interactive console. Type `help` to se
 | `send-all` | `sendall` | `send-all <server>` | Transfer all players to a server |
 | `msg` | `tell`, `whisper` | `msg <player> <message...>` | Send a message to a player |
 | `broadcast` | `bc`, `say` | `broadcast <message...>` | Broadcast to all players |
+| `op` | | `op <username>` | Grant admin to a player (effective until restart unless persisted in config) |
+| `deop` | | `deop <username>` | Revoke admin from a player |
+| `ops` | `oplist` | `ops` | List current admins |
 
 #### Bans
 
@@ -125,6 +130,41 @@ Once running, Infrarust drops you into an interactive console. Type `help` to se
 | `stop` | `shutdown`, `exit`, `quit` | `stop` | Shut down the proxy |
 | `clear` | `cls` | `clear` | Clear the screen |
 | `gc` | | `gc` | Run garbage collection |
+
+---
+
+## infrarust migrate
+
+Migrates V1 proxy configs (YAML) to the V2 format (TOML). Run it once when upgrading from V1.
+
+```bash
+infrarust migrate <INPUT> [OPTIONS]
+```
+
+`INPUT` is the directory containing V1 server YAML files.
+
+### Options
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--output <DIR>` | `-o` | `./servers` | Directory where converted TOML files are written |
+| `--config <PATH>` | | | Path to a V1 global `config.yaml` to migrate alongside server configs |
+
+### Examples
+
+Migrate server configs only:
+
+```bash
+infrarust migrate ./old-servers
+```
+
+Migrate server configs and the global config at the same time:
+
+```bash
+infrarust migrate ./old-servers --output ./servers --config ./old-config.yaml
+```
+
+The command prints a summary of converted files, along with any warnings or errors encountered during migration. It exits with a non-zero code if any conversion fails.
 
 ---
 
@@ -228,7 +268,7 @@ The tool prints live stats every 5 seconds (successes, errors, connection failur
 
 ---
 
-## Environment Variables
+## Environment variables
 
 | Variable | Description |
 |----------|-------------|

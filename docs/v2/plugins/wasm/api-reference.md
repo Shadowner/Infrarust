@@ -369,7 +369,7 @@ variant raw-packet-result { pass, modify(raw-packet), drop }
 ```
 
 ::: info Virtual Backend is not in the contract
-`server-pre-connect-result` has no `virtual-backend` arm. Virtual Backend is planned and stays deferred to a later minor; the native traits exist but no WASM bridge does. See [Capabilities](./capabilities).
+`server-pre-connect-result` has no `virtual-backend` arm. Virtual Backend is planned and stays deferred to a later minor; the native traits exist but no WASM bridge does. See [Virtual Backend](./virtual-backend).
 :::
 
 ### Command and scheduler callbacks
@@ -665,4 +665,5 @@ crate-type = ["cdylib"]
 - [Limbo](./limbo): the limbo handler and session-completion model.
 - [Codec Filters](./codec-filters): the `filter-instance` trait and chain ordering.
 - [Capabilities](./capabilities): baseline vs opt-in capability strings and the TOML permissions block.
+- [Virtual Backend](./virtual-backend): the planned `virtual-backend` capability, deferred to a later minor.
 - [Overview](./): the WASM plugin section landing page.

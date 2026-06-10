@@ -36,7 +36,9 @@ Once a proxy protocol header is decoded, the client's real IP and port are store
 
 ### What gets parsed
 
-The decoder reads up to 536 bytes from the start of the connection. It checks for the v2 binary signature first (12-byte magic), then falls back to the v1 text prefix (`PROXY `). Both IPv4 and IPv6 addresses are supported in either version. If neither signature matches after 16 bytes, the connection is closed with an error.
+The decoder reads up to 536 bytes from the start of the connection. It checks for the v2 binary signature first (the 12-byte magic), then falls back to the v1 text prefix (`PROXY `). Both IPv4 and IPv6 addresses are supported in either version. If neither signature matches after 16 bytes, the connection is closed with an error. The whole header must arrive within 5 seconds, otherwise the read times out and the connection is dropped.
+
+A v1 `PROXY UNKNOWN` header is accepted (HAProxy sends it for health checks) but carries no address, so no real client IP is recorded for that connection. Address families other than TCP over IPv4 or IPv6, such as Unix sockets, are rejected.
 
 ## Sending proxy protocol
 
@@ -45,12 +47,12 @@ Add `send_proxy_protocol = true` to a server configuration file:
 ```toml{5}
 domains = ["survival.mc.example.com"]
 addresses = ["10.0.1.5:25565"]
-proxy_mode = "Intercepted"
+proxy_mode = "passthrough"
 
 send_proxy_protocol = true
 ```
 
-When enabled, Infrarust writes a v2 binary header to the backend connection before sending any Minecraft packets. The header contains the player's real address: if a proxy protocol header was received on the incoming side, the original client IP is forwarded. Otherwise, the TCP peer address is used.
+When enabled, Infrarust writes a v2 binary header to the backend connection before sending any Minecraft packets. The header contains the player's real address: if a proxy protocol header was received on the incoming side, the original client IP is forwarded. Otherwise, the TCP peer address is used. This is independent of `proxy_mode`, so it works with any mode.
 
 ### Docker configuration
 
@@ -61,7 +63,7 @@ labels:
   infrarust.send_proxy_protocol: "true"
 ```
 
-The label accepts `true`, `1`, `false`, or `0`. It defaults to `false`.
+Only `true` or `1` turns it on. Any other value, or the absence of the label, leaves it off.
 
 ## Chaining proxies
 
@@ -96,15 +98,12 @@ When the source and destination addresses use different IP versions (one IPv4, o
 | `InvalidProxyProtocol: header exceeds maximum size` | Header larger than 536 bytes |
 | `InvalidProxyProtocol: connection closed before proxy protocol header` | Connection dropped before header was complete |
 | `InvalidProxyProtocol: data does not start with a proxy protocol signature` | No v1 or v2 signature found in the first 16 bytes |
-| `InvalidProxyProtocol: unsupported address family` | Address family other than IPv4/IPv6 (e.g., Unix sockets) |
+| `InvalidProxyProtocol: unsupported address family in v2 header` | Address family other than TCP over IPv4 or IPv6 (for example, Unix sockets) |
+| `ProxyProtocolDecode: proxy protocol header read timed out` | Header did not arrive within 5 seconds |
 | `ProxyProtocolDecode` | Malformed header that matches a signature but fails to parse |
 
 All proxy protocol errors are fatal. The connection is closed immediately with no fallback.
 
 ## Backend compatibility
 
-Your Minecraft server needs proxy protocol support to use `send_proxy_protocol`. Some options:
-
-- **BungeeCord/Velocity** support proxy protocol natively through their configuration
-- **Paper** does not support proxy protocol directly, but you can place it behind Velocity with proxy protocol enabled
-- Another Infrarust instance can receive proxy protocol from the first one
+Your Minecraft server needs proxy protocol support to use `send_proxy_protocol`. BungeeCord and Velocity support it natively through their configuration. Paper does not support it directly, but you can place Paper behind Velocity with proxy protocol enabled. Another Infrarust instance can also receive proxy protocol from the first one, which is the chaining case described above.

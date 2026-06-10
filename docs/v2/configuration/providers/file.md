@@ -44,10 +44,10 @@ addresses = ["10.0.1.10:25565"]
 # Domains that route to this server (supports wildcards)
 domains = ["survival.mc.example.com", "*.survival.example.com"]
 
-# Backend addresses (host:port, port defaults to 25565)
+# Backend addresses (host:port, port defaults to 25565). Multiple = sequential failover.
 addresses = ["10.0.1.10:25565", "10.0.1.11:25565"]
 
-# Proxy mode: passthrough, zero_copy, client_only, offline, server_only, full
+# Proxy mode: passthrough, zero_copy, client_only, offline, server_only
 proxy_mode = "passthrough"
 
 # Forward PROXY protocol headers to the backend
@@ -74,15 +74,15 @@ write = "30s"
 
 # MOTD per server state
 [motd.online]
-text = "§aSurvival §7— §fWelcome!"
+text = "§aSurvival §7| §fWelcome!"
 favicon = "./icons/survival.png"
 
 [motd.sleeping]
-text = "§eSurvival §7— §fConnect to wake up!"
+text = "§eSurvival §7| §fConnect to wake up!"
 version_name = "Server Sleeping"
 
 [motd.starting]
-text = "§eSurvival §7— §fStarting..."
+text = "§eSurvival §7| §fStarting..."
 ```
 
 ### All fields
@@ -93,12 +93,13 @@ text = "§eSurvival §7— §fStarting..."
 | `name` | string | none | Human-readable name. Takes priority over `id` for identification. Must match `[a-z0-9_-]+`. |
 | `network` | string | none | Network group for server switching. Only servers in the same network can switch between each other. |
 | `domains` | list of strings | `[]` | Domains that route to this server. Supports wildcards (`*.example.com`). |
-| `addresses` | list of strings | required | Backend addresses in `host:port` format. Port defaults to `25565` if omitted. |
-| `proxy_mode` | string | `"passthrough"` | One of: `passthrough`, `zero_copy`, `client_only`, `offline`, `server_only`, `full`. |
+| `addresses` | list of strings | required | Backend addresses in `host:port` format. Port defaults to `25565` if omitted. Multiple addresses use sequential failover (tried in order). |
+| `proxy_mode` | string | `"passthrough"` | One of: `passthrough`, `zero_copy`, `client_only`, `offline`, `server_only`. |
+| `forwarding_mode` | string | `"none"` | Per-server player identity forwarding override. One of: `none`, `bungee_cord` (alias `legacy`), `bungee_guard`, `velocity` (alias `modern`). Overrides the global `[forwarding]` setting for this server only. |
 | `send_proxy_protocol` | bool | `false` | Send PROXY protocol to the backend. |
 | `domain_rewrite` | string or table | `"none"` | Rewrite domain in handshake: `"none"`, `"from_backend"`, or `{ explicit = "domain" }`. |
 | `max_players` | integer | `0` | Max players for status response. 0 means unlimited. |
-| `disconnect_message` | string | `"Server is currently unreachable..."` | Message sent when backend is unreachable. |
+| `disconnect_message` | string | `"Server is currently unreachable. Please try again later."` | Message sent when backend is unreachable. |
 | `limbo_handlers` | list of strings | `[]` | Plugin IDs for the limbo handler chain. |
 
 #### Nested sections
@@ -145,9 +146,9 @@ The file provider watches the `servers_dir` directory using OS-level file notifi
 
 Three types of changes are detected:
 
-- **New file** — a `.toml` file appears in the directory. The server is added to the router.
-- **Modified file** — an existing file's content changes. The server config is updated.
-- **Removed file** — a `.toml` file is deleted. The server is removed from the router.
+- A new `.toml` file appears in the directory. The server is added to the router.
+- An existing file's content changes. The server config is updated in place.
+- A `.toml` file is deleted. The server is removed from the router.
 
 ::: warning
 If you save a file with invalid TOML or a config that fails validation, the previous version stays active. Infrarust logs a warning but does not remove the server.
@@ -202,7 +203,7 @@ read = "30s"
 write = "30s"
 
 [motd.online]
-text = "§aSurvival §7— §fWelcome!"
+text = "§aSurvival §7| §fWelcome!"
 ```
 
 ```toml [creative.toml]

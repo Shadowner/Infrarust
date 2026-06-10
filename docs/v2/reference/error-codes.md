@@ -8,7 +8,7 @@ outline: [2, 3]
 
 Infrarust uses typed errors across its crates. When something goes wrong, the error message tells you which category the problem falls into. This page lists every error variant, what triggers it, and what you can do about it.
 
-## Core Errors
+## Core errors
 
 These come from `infrarust-core` and represent top-level failures during proxy operation.
 
@@ -112,11 +112,19 @@ telemetry initialization error: <details>
 
 OpenTelemetry setup failed. Check your telemetry configuration (endpoint URL, authentication) and verify the collector is reachable.
 
+### `Forwarding`
+
+```
+forwarding error: <details>
+```
+
+An error in the IP forwarding layer (Velocity modern forwarding). See [Forwarding Errors](#forwarding-errors) for the specific variants.
+
 ### `Other`
 
 A catch-all for errors that don't fit other categories. The message string contains the details.
 
-## Transport Errors
+## Transport errors
 
 These come from `infrarust-transport` and cover network-level failures.
 
@@ -208,7 +216,7 @@ shutdown
 
 The transport layer received a shutdown signal. This is expected during graceful proxy shutdown.
 
-## Protocol Errors
+## Protocol errors
 
 These come from `infrarust_protocol` and indicate problems with Minecraft protocol data.
 
@@ -240,7 +248,51 @@ A packet exceeds the size limit. This is a potential attack vector (clients send
 
 An I/O error occurred during protocol read/write. The original `std::io::Error` is preserved. `WouldBlock` and `UnexpectedEof` are treated as non-fatal; everything else closes the connection.
 
-## Configuration Errors
+## Forwarding errors
+
+These come from the forwarding module in `infrarust-core` and relate to Velocity modern forwarding handshakes.
+
+### `NoVelocityRequest`
+
+```
+backend did not send login plugin request for velocity:player_info
+```
+
+The backend accepted the connection but never sent the `velocity:player_info` login plugin request. Verify that Velocity modern forwarding is enabled on the backend and that the secret matches.
+
+### `InvalidSignature`
+
+```
+HMAC-SHA256 verification failed
+```
+
+The backend's forwarding signature does not match. Check that the `forwarding_secret` in the proxy config matches the secret configured in Velocity.
+
+### `UnsupportedVersion`
+
+```
+unsupported velocity forwarding version: <version>
+```
+
+The backend negotiated a Velocity forwarding protocol version the proxy doesn't recognize. Update the proxy or the backend to a compatible version.
+
+### `Disconnected`
+
+```
+backend disconnected during forwarding
+```
+
+The backend closed the connection before the forwarding handshake completed. Check the backend server logs for login errors.
+
+### `Rejected`
+
+```
+backend rejected connection during forwarding: <reason>
+```
+
+The backend sent an explicit disconnect during the forwarding handshake. The reason string comes from the backend.
+
+## Configuration errors
 
 These come from `infrarust_config` and are raised when loading or validating config files.
 
@@ -274,7 +326,7 @@ A server address in the config isn't a valid `host:port` pair. Check the `addres
 server '<id>' uses <mode> mode which requires at least one domain
 ```
 
-Forwarding proxy modes (anything other than `Passthrough`) need at least one domain so the proxy knows which server to route to. Add a `domains` entry to the server config.
+The forwarding proxy modes (`passthrough`, `zero_copy`, `server_only`) require at least one domain entry so the proxy knows which server to route traffic to. Add a `domains` entry to the server config.
 
 ### `NoAddresses`
 
@@ -298,7 +350,7 @@ Two server configs have the same ID. Each server config must have a unique ident
 config directory not found: <path>
 ```
 
-The configured directory for server config files doesn't exist. Create the directory or update the `config_path` in your main config.
+The configured directory for server config files doesn't exist. Create the directory or update `servers_dir` in your main config.
 
 ### `Validation`
 
@@ -308,7 +360,7 @@ validation error: <details>
 
 A catch-all for config validation failures that don't fit other variants.
 
-## Server Manager Errors
+## Server manager errors
 
 These come from `infrarust_server_manager` and relate to server lifecycle operations (start, stop, wake).
 
@@ -384,43 +436,43 @@ shutdown in progress
 
 The server manager is shutting down and can't accept new operations. This is expected during graceful proxy shutdown.
 
-## Plugin API Errors
+## Plugin API errors
 
 These come from `infrarust-api` and are used by plugins to report failures.
 
-### Player Errors
+### Player errors
 
 Returned by player interaction methods within filters and plugins.
 
-`NotActive` — the player is in passthrough or zero-copy mode, so per-packet operations aren't available. Switch to a proxy mode that intercepts packets.
+`NotActive`: the player is in passthrough or zero-copy mode, so per-packet operations aren't available. Switch to a proxy mode that intercepts packets.
 
-`Disconnected` — the player already left. No action needed.
+`Disconnected`: the player already left. No action needed.
 
-`SendFailed` — a packet couldn't be delivered to the player. The connection may have dropped between your check and the send.
+`SendFailed`: a packet couldn't be delivered to the player. The connection may have dropped between your check and the send.
 
-`ServerNotFound` — the target server for a switch doesn't exist in the config. Check the server ID.
+`ServerNotFound`: the target server for a switch doesn't exist in the config. Check the server ID.
 
-`SwitchFailed` — a server transfer failed. The error message contains the specific reason.
+`SwitchFailed`: a server transfer failed. The error message contains the specific reason.
 
-### Service Errors
+### Service errors
 
 Returned when interacting with proxy services from plugin code.
 
-`NotFound` — the requested resource doesn't exist.
+`NotFound`: the requested resource doesn't exist.
 
-`OperationFailed` — the operation couldn't be completed.
+`OperationFailed`: the operation couldn't be completed.
 
-`Unavailable` — the service is temporarily down.
+`Unavailable`: the service is temporarily down.
 
-### Plugin Lifecycle Errors
+### Plugin lifecycle errors
 
-`InitFailed` — plugin initialization failed. Check plugin configuration and dependencies.
+`InitFailed`: plugin initialization failed. Check plugin configuration and dependencies.
 
-`Custom` — a plugin-specific error. The message comes from the plugin itself.
+`Custom`: a plugin-specific error. The message comes from the plugin itself.
 
-## Plugin Loader Errors
+## Plugin loader errors
 
-These come from `infrarust-core`'s plugin loading system.
+These come from `infrarust-api`'s plugin loader interface and surface during plugin discovery and loading.
 
 ### `DirectoryNotAccessible`
 
@@ -470,7 +522,7 @@ duplicate plugin id '<plugin_id>' (found in loader '<first>' and '<second>')
 
 Two different plugin sources provide a plugin with the same ID. Rename one of the plugins or remove the duplicate.
 
-## Filter Ordering Errors
+## Filter ordering errors
 
 ### `CyclicDependency`
 
@@ -480,19 +532,19 @@ circular dependency detected involving: <filter_names>
 
 Your filter `before`/`after` constraints form a cycle. For example, filter A declares `after: B` and filter B declares `after: A`. Remove or adjust the conflicting constraint.
 
-## Codec Filter Errors
+## Codec filter errors
 
 These come from `infrarust-api`'s codec filter system.
 
-`TranslationFailed` — packet translation between protocol versions failed. This can happen with unsupported packet types during version bridging.
+`TranslationFailed`: packet translation between protocol versions failed. This can happen with unsupported packet types during version bridging.
 
-`MalformedPayload` — the packet payload doesn't match the expected structure for its packet ID.
+`MalformedPayload`: the packet payload doesn't match the expected structure for its packet ID.
 
-`UnsupportedVersion` — the protocol version isn't supported by this codec filter.
+`UnsupportedVersion`: the protocol version isn't supported by this codec filter.
 
-`Internal` — an unexpected error within the codec filter itself.
+`Internal`: an unexpected error within the codec filter itself.
 
-## Server Switch Errors
+## Server switch errors
 
 ### `DifferentNetworks`
 
@@ -500,30 +552,30 @@ These come from `infrarust-api`'s codec filter system.
 servers are in different networks: '<current>' vs '<target>'
 ```
 
-A player tried to switch between servers that aren't in the same network. Servers must share a `network` value in their config to allow transfers between them.
+A player tried to switch between servers that have different `network` values set. Two servers are blocked from switching only when both have a `network` field and the values differ. If either server omits `network`, the switch is allowed. To fix this, either give both servers the same `network` value or remove the `network` field from one of them.
 
-## Auth Plugin Errors
+## Auth plugin errors
 
 These come from the `infrarust-plugin-auth` plugin.
 
-### Auth Errors
+### Auth errors
 
-`Storage` — the auth storage backend returned an error. See storage errors below.
+`Storage`: the auth storage backend returned an error. See storage errors below.
 
-`Hashing` — password hashing failed. This usually indicates a system-level issue with the hashing library.
+`Hashing`: password hashing failed. This usually indicates a system-level issue with the hashing library.
 
-`Config` — the auth plugin configuration is invalid. Check the plugin config file.
+`Config`: the auth plugin configuration is invalid. Check the plugin config file.
 
-`Io` — a file I/O error during auth operations.
+`Io`: a file I/O error during auth operations.
 
-`PasswordValidation` — a password didn't meet the validation requirements. The `reason` field explains which requirement failed.
+`PasswordValidation`: a password didn't meet the validation requirements. The `reason` field explains which requirement failed.
 
-### Auth Storage Errors
+### Auth storage errors
 
-`AccountAlreadyExists` — tried to create an account with a username that's already registered.
+`AccountAlreadyExists`: tried to create an account with a username that's already registered.
 
-`AccountNotFound` — tried to look up or modify an account that doesn't exist.
+`AccountNotFound`: tried to look up or modify an account that doesn't exist.
 
-`Io` — file I/O error in the storage layer.
+`Io`: file I/O error in the storage layer.
 
-`Serialization` — failed to serialize or deserialize account data. The storage file may be corrupted.
+`Serialization`: failed to serialize or deserialize account data. The storage file may be corrupted.

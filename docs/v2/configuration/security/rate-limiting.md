@@ -11,23 +11,25 @@ Two independent buckets exist for each IP: one for **login/transfer** attempts a
 
 ## Configuration
 
-Add a `rate_limit` section to your `infrarust.toml`:
+Rate limiting is **disabled by default** (`enabled = false`). To turn it on, add a `[rate_limit]` section to your `infrarust.toml` with `enabled = true`:
 
-```yaml
+```toml
 [rate_limit]
+enabled = true
 max_connections = 3      # logins per IP per window
 window = "10s"           # login window duration
-status_max = 30          # status pings per IP per window
+status_max = 300         # status pings per IP per window
 status_window = "10s"    # status ping window duration
 ```
 
-All four fields are optional. If you omit the entire `[rate_limit]` section, Infrarust uses the defaults shown above.
+All fields are optional. If you omit the entire `[rate_limit]` section, Infrarust uses the defaults shown below.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the rate limiter |
 | `max_connections` | integer | `3` | Max login/transfer connections per IP in the window |
 | `window` | duration | `10s` | Time window for the login bucket |
-| `status_max` | integer | `30` | Max status pings per IP in the window |
+| `status_max` | integer | `300` | Max status pings per IP in the window |
 | `status_window` | duration | `10s` | Time window for the status bucket |
 
 Duration values use the `humantime` format: `10s`, `1m`, `500ms`, `2m30s`.
@@ -45,7 +47,7 @@ The Minecraft protocol declares an intent in the handshake packet: `Status`, `Lo
 - `Login` and `Transfer` use `max_connections` / `window`
 - `Status` uses `status_max` / `status_window`
 
-This means a player who refreshes their server list 30 times won't consume any login tokens.
+This means a player who refreshes their server list repeatedly won't consume any login tokens.
 
 ## Examples
 
@@ -53,8 +55,9 @@ This means a player who refreshes their server list 30 times won't consume any l
 
 Allow only 2 logins per 30 seconds, but let status pings flow freely:
 
-```yaml
+```toml
 [rate_limit]
+enabled = true
 max_connections = 2
 window = "30s"
 status_max = 100
@@ -65,8 +68,9 @@ status_window = "10s"
 
 Useful if you're under a bot attack that targets both status and login:
 
-```yaml
+```toml
 [rate_limit]
+enabled = true
 max_connections = 1
 window = "5s"
 status_max = 5

@@ -62,7 +62,7 @@ read = "30s"
 write = "30s"
 
 [motd.online]
-text = "§6Survival — Online"
+text = "§6Survival - Online"
 ```
 
 ### Config options
@@ -91,8 +91,8 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 2. It fires a `PreLoginEvent`, giving plugins a chance to deny the connection.
 3. It performs Mojang authentication: sends an `EncryptionRequest` with the proxy's RSA public key, reads the `EncryptionResponse`, decrypts the shared secret, and verifies the session against `sessionserver.mojang.com`.
 4. On success, it sends `LoginSuccess` to the client with the player's UUID, username, and skin properties from Mojang.
-5. For 1.20.2+, it waits for the client's `LoginAcknowledged` packet and transitions to the Configuration state. For older versions, it transitions directly to Play state.
-6. It fires a `PostLoginEvent`.
+5. It fires a `PostLoginEvent`.
+6. For 1.20.2+, it waits for the client's `LoginAcknowledged` packet and transitions to the Configuration state. For older versions, it transitions directly to Play state.
 7. It connects to the backend in offline mode, replaying the login sequence.
 8. It enters the session loop, parsing and relaying packets in both directions.
 
@@ -114,7 +114,10 @@ Client ──TCP──▶ Infrarust ──TCP──▶ Backend
          verify session with Mojang
                    │
          LoginSuccess ──▶ Client
-         (1.20.2+: LoginAcknowledged)
+                   │
+         PostLoginEvent (plugins notified)
+                   │
+         (1.20.2+: waits for LoginAcknowledged)
                    │
          connects to backend (offline mode)
                    │
@@ -147,7 +150,7 @@ addresses = ["192.168.1.10:25565"]
 proxy_mode = "client_only"
 
 [motd.online]
-text = "§6My Network — Hub"
+text = "§6My Network - Hub"
 ```
 
 ```toml
@@ -192,7 +195,7 @@ When a player connects and the backend is down, the proxy starts the server proc
 Client-only is an intercepted mode. These rules apply:
 
 - The backend **must** run with `online-mode=false`. The proxy already authenticated the player.
-- Works with Minecraft versions that Infrarust can parse (currently 1.7 through 1.21.x). Future protocol versions require an Infrarust update.
+- Works with Minecraft versions that Infrarust can parse (currently 1.7.2 through 1.21.11). Future protocol versions require an Infrarust update.
 - Domains are optional if the server belongs to a network and is only reachable via server switching.
 - Higher resource usage than forwarding modes because the proxy parses every packet instead of copying raw bytes.
 

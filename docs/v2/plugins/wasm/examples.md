@@ -1,6 +1,6 @@
 ---
 title: Examples & Cookbook
-description: Compiling WASM plugin examples for each capability, taken verbatim from the SDK test fixtures.
+description: WASM plugin examples for each capability, taken verbatim from the SDK test fixtures.
 outline: [2, 3]
 ---
 
@@ -212,7 +212,7 @@ impl Plugin for CodecModify {
 }
 ```
 
-Codec filters are registered from the `register_codec_filters` associated function, not from `on_enable`. `reg.add(name, priority, factory)` installs a factory that builds one filter per connection. `Verdict::Drop` removes the packet, `packet.set_data(...)` rewrites its payload, and `out.before` / `out.after` queue injected packets on either side. The `codec-filter` capability is opt-in; declare it in the plugin's TOML permissions. See [Codec Filters](./codec-filters).
+Codec filters are registered from the `register_codec_filters` associated function, not from `on_enable`. `reg.add(name, priority, factory)` installs a factory that builds one filter per connection. `Verdict::Drop` removes the packet, `packet.set_data(...)` rewrites its payload, and `out.before` / `out.after` queue injected packets on either side. The `codec-filter` capability is opt-in, so the operator has to list it in the plugin's `permissions` in config; see [Capabilities](./capabilities). The filter model itself is in [Codec Filters](./codec-filters).
 
 ## codec-stateful
 
@@ -265,7 +265,7 @@ The factory closure builds a fresh `Counter` per connection, so `&mut self` insi
 
 What it shows: holding a player in limbo, completing on a command, timing out, and completing from a scheduled closure after the dispatch returns. This fixture registers four handlers to cover each case.
 
-The `limbo` capability is opt-in and must be listed in the plugin's TOML permissions. See [Limbo](./limbo) for the session model and outcomes.
+The `limbo` capability is opt-in, so the operator has to list it in the plugin's `permissions` in config; see [Capabilities](./capabilities). The session model and outcomes are in [Limbo](./limbo).
 
 :::details Full limbo-handler source
 ```rust
@@ -433,3 +433,4 @@ impl Plugin for HostCaller {
 - [Codec Filters](./codec-filters): the per-connection filter model and verdicts.
 - [Limbo](./limbo): session handling, outcomes, and timeouts.
 - [Services](./services): read and write host services available to plugins.
+- [Capabilities](./capabilities): the baseline grants and the opt-ins like `codec-filter` and `limbo`.

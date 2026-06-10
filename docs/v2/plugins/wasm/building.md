@@ -81,7 +81,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-infrarust-plugin-sdk = "0.1"
+infrarust-plugin-sdk = "2.0.0-beta.1"
 
 [profile.release]
 opt-level = "s"
@@ -175,7 +175,7 @@ edition.workspace = true
 description = "Shared logic for the Infrarust stats plugin (native + WASM double distribution)"
 ```
 
-The **wasm** crate is the component target. It is a `cdylib`, depends on the core crate and the SDK, and declares its own `[workspace]` so it builds independently of the main workspace:
+The wasm crate is the component target. It is a `cdylib`, depends on the core crate and the SDK, and declares its own `[workspace]` so it builds independently of the main workspace:
 
 ```toml
 # plugins/infrarust-plugin-stats/wasm/Cargo.toml
@@ -263,7 +263,7 @@ If the `wasm32-wasip2` target is missing, the build script detects it and emits 
 
 ## Next steps
 
-- [Getting Started](./getting-started) — write the plugin body: events, commands, and services.
+- [Getting Started](./getting-started): write the plugin body: events, commands, and services.
 - [Deploying](./deploying): install the `.wasm`, grant capabilities, and configure the plugin.
 - [Examples](./examples): full plugins, including the dual native + WASM stats plugin.
 - [WASM plugins overview](./): how the host loads and sandboxes components.

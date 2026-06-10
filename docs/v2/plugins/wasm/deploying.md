@@ -49,7 +49,6 @@ Plugin settings live in a `[plugins.<plugin-id>]` table. The table is keyed by t
 # infrarust.toml
 [plugins.my_plugin]
 permissions = ["ban", "server-manage"]  # [!code focus]
-enabled = true
 ```
 
 The `PluginConfig` table accepts three keys:
@@ -57,19 +56,19 @@ The `PluginConfig` table accepts three keys:
 | Key | Type | Default | Applies to |
 |-----|------|---------|------------|
 | `permissions` | list of strings | `[]` | All plugins. Opt-in capability strings (kebab-case). |
-| `enabled` | bool | `true` | All plugins. Set `false` to skip loading. |
+| `enabled` | bool | unset | Parsed but not yet enforced; removing the file is the current way to skip a plugin. |
 | `path` | string | none | Native plugins only. WASM plugins omit it. |
 
 ::: warning
 `path` points a native plugin at a compiled library on disk. WASM plugins are always resolved from `plugins_dir` by scanning, so a WASM plugin never sets `path`. Setting it has no effect on WASM resolution.
 :::
 
-A plugin with no `[plugins.<id>]` table loads with the baseline capabilities and `enabled = true`. Add a table only to grant opt-in capabilities or to disable the plugin.
+A plugin with no `[plugins.<id>]` table loads with the baseline capabilities. Add a table only to grant opt-in capabilities.
 
 ```toml
-# Disable a plugin without removing its file
+# Grant opt-in capabilities to a specific plugin
 [plugins.analytics]
-enabled = false
+permissions = ["ban", "server-manage"]
 ```
 
 ## Capabilities
@@ -82,9 +81,9 @@ Baseline (always granted):
 
 Opt-in (must be listed in `permissions`):
 
-`ban`, `server-manage`, `codec-filter`, `limbo`, `raw-packet`, `network`, `filesystem-extended`, `permission-provider`, and others.
+`ban`, `server-manage`, `codec-filter`, `limbo`, `raw-packet`, `network`, `filesystem-extended`, `permission-provider`, `virtual-backend`.
 
-Capability strings are kebab-case. An unknown string, or one that is not grantable through config, is ignored with a warning at load and the plugin loads without it.
+Capability strings are kebab-case. An unknown string, or one that is not grantable through config, is ignored with a warning at load and the plugin loads without it. The `transport-filter` capability exists internally but cannot be granted via config and is always rejected with a warning.
 
 ```toml
 [plugins.my_plugin]
@@ -121,6 +120,8 @@ sequenceDiagram
 ### Missing capability
 
 If a plugin imports a host interface it was not granted, instantiation fails. The host reports a capability-denied error and the plugin does not load. Grant the matching capability in `permissions` to fix it.
+
+One exception: the `limbo` interface is always linked regardless of the `limbo` capability. Importing it never blocks load. If the `limbo` capability is absent, calls to `register-limbo-handler` are ignored at runtime (the host logs a warning) rather than causing a load failure.
 
 ### A trap poisons the plugin
 

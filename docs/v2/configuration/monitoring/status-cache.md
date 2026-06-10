@@ -22,7 +22,7 @@ max_entries = 1000
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `ttl` | duration | `5s` | How long a cached response stays fresh. Uses `humantime` format (`5s`, `30s`, `2m`). |
-| `max_entries` | integer | `1000` | Maximum number of cached server entries. |
+| `max_entries` | integer | `1000` | Soft bound on cached server entries. The field is accepted and stored, but the internal cache does not currently enforce a hard eviction limit. |
 
 The `ttl` controls how often Infrarust actually connects to your backend for status. A 5-second TTL means at most one backend connection per server every 5 seconds, regardless of how many clients request status in that window.
 
@@ -30,10 +30,10 @@ The `ttl` controls how often Infrarust actually connects to your backend for sta
 
 The status handler follows this decision tree for each incoming status ping:
 
-1. If the server has a **fresh** cache entry (within TTL), return it immediately.
-2. If no fresh entry exists, acquire a per-server lock and relay the ping to the backend.
-3. Store the backend response in cache for next time.
-4. If the relay fails, fall back to a **stale** cache entry (expired but still stored).
+1. If the server has a fresh cache entry (within TTL), return it immediately.
+2. If no fresh entry exists, acquire a per-server lock, then check fresh again (another request may have just populated it).
+3. If the cache is still empty, relay the ping to the backend and store the response.
+4. If the relay fails, fall back to a stale cache entry (expired but still stored).
 5. If no stale entry exists either, return a synthetic "Server unreachable" MOTD.
 
 The per-server lock prevents cache stampede: when 50 clients ping at the same moment and the cache has expired, only one relay runs. The other 49 wait for that relay to finish, then all read from cache.
@@ -48,11 +48,11 @@ For stronger protection, combine the cache with the rate limiter. The `rate_limi
 
 ```toml
 [rate_limit]
-status_max = 30
+status_max = 300
 status_window = "10s"
 ```
 
-This limits each IP address to 30 status pings per 10-second window. Clients that exceed the limit are dropped before they reach the cache.
+This limits each IP address to 300 status pings per 10-second window. Clients that exceed the limit are dropped before they reach the cache.
 
 ::: tip
 The default TTL of 5 seconds works well for most setups. Players refreshing their server list won't notice a 5-second delay in player count updates. If you run a large public server and see heavy ping traffic in your logs, increase the TTL to `15s` or `30s`.
@@ -60,7 +60,7 @@ The default TTL of 5 seconds works well for most setups. Players refreshing thei
 
 ## Stale fallback
 
-When a backend goes down, Infrarust keeps serving the last known response instead of showing an error. This stale fallback has no separate TTL; entries remain in memory until the proxy restarts or you add/remove a server config (which invalidates that server's cache entry).
+When a backend goes down, Infrarust keeps serving the last known response instead of showing an error. This stale fallback has no separate TTL; entries remain in memory until the proxy restarts or a config reload happens (which clears the entire cache).
 
 This means players still see a reasonable MOTD and player count in their server list even during brief backend outages or restarts.
 

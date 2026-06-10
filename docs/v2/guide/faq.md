@@ -9,9 +9,9 @@ description: Answers to frequent questions about Infrarust, including supported 
 
 It depends on the proxy mode.
 
-**Forwarding modes** (passthrough, zero_copy, server_only) work with every Minecraft version from 1.7 onward, including snapshots, modded servers, and future releases. The proxy only reads the handshake packet, which hasn't changed since 1.7. It never parses game packets, so the client version doesn't matter.
+Forwarding modes (passthrough, zero_copy, server_only) work with every Minecraft version from 1.7 onward, including snapshots, modded servers, and future releases. The proxy only reads the handshake packet, which hasn't changed since 1.7. It never parses game packets, so the client version doesn't matter.
 
-**Intercepted modes** (client_only, offline) parse and re-encode game packets, so they depend on Infrarust's protocol implementation. The protocol crate currently defines versions from 1.7.2 (protocol 4) through 1.21.11 (protocol 774). The limbo system handles version-specific spawn sequences for clients as old as pre-1.16.
+Intercepted modes (client_only, offline) parse and re-encode game packets, so they depend on Infrarust's protocol implementation. The protocol crate currently defines 34 versions, from 1.7.2 (protocol 4) through 1.21.11 (protocol 774). The limbo system handles version-specific spawn sequences for clients as old as pre-1.16.
 
 Legacy clients (Beta 1.8 through 1.6) are detected during the handshake and handled separately. They receive a legacy ping response but cannot log in through the proxy.
 
@@ -24,12 +24,12 @@ If you're unsure, use passthrough mode. It works with any Minecraft version and 
 No hard-coded limit. The `max_players` field in a server config controls per-server caps, and `max_connections` in `infrarust.toml` sets a global connection limit. Both default to 0 (unlimited).
 
 ```toml
-# infrarust.toml — global limit
+# infrarust.toml: global limit
 max_connections = 500
 ```
 
 ```toml
-# servers/survival.toml — per-server limit
+# servers/survival.toml: per-server limit
 max_players = 100
 ```
 
@@ -37,7 +37,7 @@ In practice, the limit comes from your OS (file descriptors, TCP buffers) and th
 
 ## How much CPU and memory does Infrarust use?
 
-Forwarding modes (passthrough, zero_copy) add minimal overhead. The proxy copies TCP streams without decrypting or parsing packets. On Linux, zero_copy mode uses the `splice(2)` syscall to move data through kernel pipes, avoiding userspace copies entirely.
+Forwarding modes (passthrough, zero_copy, server_only) add minimal overhead. The proxy copies TCP streams without decrypting or parsing packets. On Linux, zero_copy mode uses the `splice(2)` syscall to move data through kernel pipes, avoiding userspace copies entirely.
 
 Intercepted modes (client_only, offline) use more CPU because every packet passes through the proxy's codec. The exact cost depends on the number of active players and how much traffic flows through the connection.
 
@@ -52,17 +52,17 @@ Velocity is a Minecraft proxy written in Java. It terminates the Minecraft proto
 Infrarust does the same thing in its client_only and offline modes. The main differences:
 
 - Infrarust is written in Rust and runs as a single static binary. No JVM, no Java runtime.
-- Infrarust offers forwarding modes (passthrough, zero_copy) that Velocity does not. These modes relay raw bytes without parsing, which means lower overhead and version-independent operation.
-- Velocity has a mature plugin ecosystem with community support. Infrarust's plugin system is newer and has fewer third-party plugins.
+- Infrarust offers forwarding modes (passthrough, zero_copy, server_only) that Velocity does not. These modes relay raw bytes without parsing, which means lower overhead and version-independent operation.
+- Velocity has a large catalog of community plugins. Infrarust's plugin system is newer and has fewer third-party plugins.
 - Velocity supports player info forwarding to backends (modern forwarding). Infrarust handles authentication at the proxy and tells backends to run with `online-mode=false`.
 
 If you need a transparent TCP proxy with domain routing and don't need packet inspection, Infrarust's forwarding modes have no equivalent in Velocity.
 
-If you need a full protocol-aware proxy with a large plugin ecosystem, Velocity is more mature in that area.
+If you need a full protocol-aware proxy with a large selection of existing plugins, Velocity is more mature in that area.
 
 ## How does Infrarust compare to BungeeCord?
 
-BungeeCord is the original Minecraft proxy, also written in Java. It predates Velocity and serves a similar role: protocol termination, authentication, and server switching.
+BungeeCord is the original Minecraft proxy, also written in Java. It predates Velocity and has a similar role: protocol termination, authentication, and server switching.
 
 BungeeCord has known limitations that both Velocity and Infrarust address:
 

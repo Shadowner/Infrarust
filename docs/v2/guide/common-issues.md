@@ -5,7 +5,7 @@ description: Troubleshooting guide for frequent Infrarust problems including off
 
 # Common Issues
 
-## Server Shows Offline in the Server List
+## Server shows offline in the server list
 
 When a player pings a server through Infrarust and the backend is unreachable, the server appears offline in the Minecraft server list. Several things can cause this.
 
@@ -61,18 +61,18 @@ You can lower the TTL in `infrarust.toml`:
 ttl = "2s"
 ```
 
-### Custom MOTD for offline state
+### Custom MOTD for unreachable state
 
-You can configure a per-server MOTD that displays when the backend is down, instead of showing the server as unreachable:
+You can configure a per-server MOTD that displays when the backend is unreachable, instead of showing the default "§cServer unreachable" response:
 
 ```toml
-[motd.offline]
+[motd.unreachable]
 text = "Server is under maintenance"
 version_name = "Maintenance"
 max_players = 0
 ```
 
-## Players Kicked on Connect
+## Players kicked on connect
 
 Players see a disconnect message right after joining. The cause depends on what the message says.
 
@@ -120,7 +120,7 @@ The default connect timeout is 5 seconds. The read/write timeouts default to 30 
 
 Infrarust supports Minecraft protocol versions from beta through current releases. If a player uses a client version that the backend doesn't support, the backend itself will kick them. Infrarust passes through whatever disconnect reason the backend sends.
 
-## Proxy Protocol Not Working
+## Proxy protocol not working
 
 Infrarust supports HAProxy PROXY protocol v1 and v2 for preserving the client's real IP address. There are two separate settings: one for receiving proxy protocol from an upstream proxy, and one for sending it to backends.
 
@@ -149,9 +149,9 @@ addresses = ["192.168.1.10:25565"]
 
 The backend must be configured to accept proxy protocol. For common setups:
 
-- **BungeeCord/Velocity**: These are Minecraft proxies themselves and don't typically accept PROXY protocol on their Minecraft port. Use their own IP forwarding mechanisms instead.
-- **Paper/Spigot with HAProxyDetector or similar plugin**: Install a plugin that reads PROXY protocol on the Minecraft port.
-- **Vanilla behind another proxy**: Vanilla servers don't support PROXY protocol natively. You need a mod or wrapper.
+- BungeeCord/Velocity: these are Minecraft proxies themselves and don't typically accept PROXY protocol on their Minecraft port. Use their own IP forwarding mechanisms instead.
+- Paper/Spigot with HAProxyDetector or similar plugin: install a plugin that reads PROXY protocol on the Minecraft port.
+- Vanilla behind another proxy: vanilla servers don't support PROXY protocol natively. You need a mod or wrapper.
 
 Infrarust always sends **v2 (binary)** when `send_proxy_protocol` is enabled. It can receive both v1 (text) and v2 (binary).
 
@@ -159,7 +159,7 @@ Infrarust always sends **v2 (binary)** when `send_proxy_protocol` is enabled. It
 
 When the client connects over IPv4 but the backend listens on IPv6 (or vice versa), Infrarust maps IPv4 addresses to IPv6 (`::ffff:1.2.3.4`) in the proxy protocol header. Some backends may not handle mapped addresses correctly. If the backend logs unexpected IPs, check whether it supports IPv4-mapped IPv6 addresses.
 
-## Config Not Reloading
+## Config not reloading
 
 Infrarust watches the server config directory for changes and applies them automatically. You don't need to restart the proxy or run a reload command.
 

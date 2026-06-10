@@ -13,13 +13,15 @@ Infrarust fires events at key points in a player's lifecycle, from initial conne
 A player connection follows this path:
 
 ```
-PreLoginEvent → Authentication → PostLoginEvent
+PreLoginEvent → Authentication → PermissionsSetupEvent → PostLoginEvent
     → PlayerChooseInitialServerEvent → ServerPreConnectEvent
     → Backend connection → ServerConnectedEvent
     → Play state (ChatMessageEvent, RawPacketEvent)
     → Server switch → ServerPreConnectEvent → ServerSwitchEvent
     → DisconnectEvent
 ```
+
+If Mojang authentication fails at the Authentication step (a cracked client that cannot complete encryption), the proxy fires `OnlineAuthFailed` and disconnects the player instead of continuing the flow.
 
 ## Subscribing to events
 
@@ -104,6 +106,50 @@ ctx.event_bus().subscribe::<PreLoginEvent, _>(
     },
 );
 ```
+
+### OnlineAuthFailed
+
+Fired when online-mode authentication fails, for example a cracked client that cannot complete the encryption handshake. This covers both forced online auth (`ForceOnline` returned from `PreLoginEvent` while the server is in offline mode) and the default online auth used by `client_only` mode. A plugin can listen for this to remember the username and return `ForceOffline` on the player's next connection attempt. Informational only.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `username` | `String` | The username that failed online authentication |
+
+`OnlineAuthFailed` is not re-exported from the prelude. Import it from its module: `use infrarust_api::events::lifecycle::OnlineAuthFailed;`.
+
+### PermissionsSetupEvent
+
+Fired after authentication, before the player session is fully built. This is the extension point for replacing the default permission checker with one backed by LuckPerms, a database, or any external permission system. If no listener provides a custom checker, the proxy keeps its built-in `ConfigPermissionChecker`, which reads admin UUIDs from `[permissions].admins`. See [permissions](../../configuration/security/permissions.md) for the two-level model (Player and Admin).
+
+**Type:** Resulted
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `player_id` | `PlayerId` | The player's session ID |
+| `profile` | `GameProfile` | The authenticated profile |
+| `online_mode` | `bool` | Whether the player authenticated via Mojang |
+
+**Results** (`PermissionsSetupResult`):
+
+| Variant | Description |
+|---------|-------------|
+| `UseDefault` (default) | Use the proxy's built-in config-based checker |
+| `Custom(Arc<dyn PermissionChecker>)` | Use a plugin-provided checker |
+
+```rust
+use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
+
+ctx.event_bus().subscribe::<PermissionsSetupEvent, _>(
+    EventPriority::NORMAL,
+    |event| {
+        event.set_result(PermissionsSetupResult::Custom(
+            Arc::new(MyPermissionChecker::new()),
+        ));
+    },
+);
+```
+
+Like `OnlineAuthFailed`, this type is reached through `infrarust_api::events::lifecycle`, not the prelude glob.
 
 ### PostLoginEvent
 

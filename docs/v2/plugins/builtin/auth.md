@@ -211,14 +211,13 @@ See the default config for the full list, which also covers `/changepassword`, `
 
 ### Admin commands
 
-These require either the `auth.admin` permission or a username in `admin_usernames`.
+These require either the `infrarust.admin` permission or a username in `admin_usernames`.
 
 | Command | Description |
 |---------|-------------|
 | `/forcelogin <username>` | Force-authenticate a player stuck in auth limbo |
 | `/forceunregister <username>` | Delete another player's account |
 | `/forcechangepassword <username> <password>` | Reset another player's password |
-| `/authreload` | Reload the auth config from disk |
 
 ## Account storage format
 
