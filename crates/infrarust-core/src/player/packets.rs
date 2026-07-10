@@ -174,8 +174,5 @@ pub(crate) fn encode_packet<P: Packet + 'static>(
         .encode(&mut payload, version)
         .map_err(|e| CoreError::Other(e.to_string()))?;
 
-    Ok(PacketFrame {
-        id: packet_id,
-        payload: Bytes::from(payload),
-    })
+    Ok(PacketFrame::new(packet_id, Bytes::from(payload)))
 }

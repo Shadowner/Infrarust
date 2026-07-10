@@ -31,7 +31,7 @@ fn write_varint(buf: &mut BytesMut, varint: VarInt) -> ProtocolResult<()> {
 /// let mut decoder = PacketDecoder::new();
 ///
 /// // Encode a frame
-/// let frame = PacketFrame { id: 0x42, payload: Bytes::from_static(b"hello") };
+/// let frame = PacketFrame::new(0x42, Bytes::from_static(b"hello"));
 /// encoder.append_frame(&frame).unwrap();
 ///
 /// // Feed encoded bytes into the decoder
@@ -138,11 +138,20 @@ impl PacketEncoder {
         Ok(())
     }
 
-    /// Encodes a [`PacketFrame`] directly (shortcut for [`append_raw`](Self::append_raw)).
+    /// Encodes a [`PacketFrame`] directly.
+    ///
+    /// Unmodified frames decoded under the same compression threshold are
+    /// forwarded as their original wire bytes, skipping re-encoding (and in
+    /// particular re-compression). Anything else goes through
+    /// [`append_raw`](Self::append_raw).
     ///
     /// # Errors
     /// Returns an error if the packet exceeds size limits or compression fails.
     pub fn append_frame(&mut self, frame: &PacketFrame) -> ProtocolResult<()> {
+        if let Some(wire) = frame.raw_wire(self.compression_threshold) {
+            self.buf.extend_from_slice(wire);
+            return Ok(());
+        }
         self.append_raw(frame.id, &frame.payload)
     }
 
@@ -196,10 +205,7 @@ mod tests {
 
     #[test]
     fn test_encode_frame_shortcut() {
-        let frame = PacketFrame {
-            id: 0x0F,
-            payload: bytes::Bytes::from_static(b"test"),
-        };
+        let frame = PacketFrame::new(0x0F, bytes::Bytes::from_static(b"test"));
 
         let mut enc1 = PacketEncoder::new();
         enc1.append_frame(&frame).unwrap();

@@ -5,9 +5,11 @@ description: How Infrarust's intercepted-mode packet path is benchmarked (per-pa
 
 # Benchmarking
 
-Infrarust's intercepted modes (`client_only`, `offline`) decode every packet,
-run it through the codec filter chain, and re-encode it. This page covers how that hot
-path is measured, so you can answer two questions with real numbers:
+Infrarust's intercepted modes (`client_only`, `offline`) decode every packet and run it
+through the codec filter chain. Unmodified frames are then forwarded as their original
+wire bytes; only packets that a filter or the proxy modifies are re-encoded (and
+re-compressed). This page covers how that hot path is measured, so you can answer two
+questions with real numbers:
 
 1. How long does a packet take to cross the proxy in intercepted mode?
 2. How much time does each plugin/filter add ("timing between plugins")?
@@ -69,7 +71,9 @@ The Layer B microbench (`cargo bench -p infrarust_protocol`) uses flate2 by defa
 `--features libdeflater` to reproduce the shipped backend.
 
 The `*_compressed` minus `*_uncompressed` deltas attribute the zlib cost; the AES benches
-attribute the online-mode encryption cost.
+attribute the online-mode encryption cost. AES-CFB8 is asymmetric: decryption computes
+its keystream in batches (about 360 MB/s on the reference machine), while encryption is
+sequential by construction, one full AES latency per byte (about 58 MB/s).
 
 ## Layer C: full intercepted CPU pipeline
 
@@ -81,8 +85,15 @@ listeners. This is the literal "ns per packet through intercepted mode" at the C
 The socket I/O on top is measured end-to-end by Layer D.
 
 Example with one inspecting plugin and no compression: about 106 ns at 32 B, 200 ns at
-512 B, and 3.2 µs at 16 KB. Turn compression on and a 512 B packet costs about 27 µs, the
-same compression cliff Layer B isolates, now in context.
+512 B, and 3.2 µs at 16 KB. Turn compression on and a re-encoded 512 B packet costs about
+27 µs with the flate2 backend (6.3 µs with libdeflater), the same compression cliff
+Layer B isolates, now in context.
+
+The `forward_*` variants measure the filter-less forward path, where raw pass-through
+applies: an unmodified compressed 512 B packet crosses the pipeline in about 120 ns and a
+16 KiB one in about 1 µs (libdeflater), because the re-compression is skipped entirely
+and only the inflate cost remains. The `empty_*`/`scan_*`/`realistic_*` numbers above are
+what packets pay when something did modify them.
 
 Read the deltas: `*_compressed` minus `*_uncompressed` is the zlib cost in context, and
 `scan_*` or `realistic_*` minus `empty_*` is the codec-plugin cost in context.
@@ -115,7 +126,9 @@ cargo run -p infrarust-mc-bench --release -- load \
 
 The proxy-added latency is the delta between (2b) and (2a). The tool reports connection
 counts, throughput (echoes/sec), and mean plus p50/p90/p99/p99.9/max latency in
-microseconds. `tools/stress-test` is the tool for SLP/status-flood and malformed-packet
+microseconds. To measure the compressed path, start the backend with `--compression 256`
+and pass `--payload-size 512` to `load`: the pings then cross the compression threshold
+in both directions. `tools/stress-test` is the tool for SLP/status-flood and malformed-packet
 resilience; it never enters Play state.
 
 ## Layer E: live per-filter timing

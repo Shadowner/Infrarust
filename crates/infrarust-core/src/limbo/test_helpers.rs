@@ -64,10 +64,7 @@ pub fn build_frame<P: Packet + 'static>(
         .expect("packet ID should exist in registry");
     let mut payload = Vec::new();
     packet.encode(&mut payload, version).unwrap();
-    PacketFrame {
-        id: packet_id,
-        payload: Bytes::from(payload),
-    }
+    PacketFrame::new(packet_id, Bytes::from(payload))
 }
 
 /// Returns `(server-side ClientBridge, raw client TcpStream)` via loopback.

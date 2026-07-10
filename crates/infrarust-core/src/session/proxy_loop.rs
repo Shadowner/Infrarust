@@ -25,8 +25,9 @@ use infrarust_protocol::packets::play::disconnect::CDisconnect;
 use infrarust_protocol::packets::play::tab_complete::{
     CTabCompleteResponse, STabCompleteRequest, TabCompleteMatch,
 };
+use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
-use infrarust_protocol::version::{ConnectionState, Direction};
+use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::event_bus::conversion::{protocol_direction_to_api, protocol_state_to_api};
@@ -72,9 +73,45 @@ fn frame_to_raw(frame: &PacketFrame) -> RawPacket {
 
 #[inline]
 fn raw_to_frame(raw: &RawPacket) -> PacketFrame {
-    PacketFrame {
-        id: raw.packet_id,
-        payload: raw.data.clone(),
+    PacketFrame::new(raw.packet_id, raw.data.clone())
+}
+
+#[inline]
+fn filter_modified(frame: &PacketFrame, raw: &RawPacket) -> bool {
+    raw.packet_id != frame.id
+        || raw.data.len() != frame.payload.len()
+        || raw.data.as_ptr() != frame.payload.as_ptr()
+}
+
+struct HotIds {
+    s_chat_session: Option<i32>,
+    s_tab_request: Option<i32>,
+    c_tab_response: Option<i32>,
+    s_chat_command: Option<i32>,
+    s_chat_message: Option<i32>,
+    c_disconnect: Option<i32>,
+    c_commands: Option<i32>,
+}
+
+impl HotIds {
+    fn resolve(registry: &PacketRegistry, version: ProtocolVersion) -> Self {
+        use ConnectionState::Play;
+        use Direction::{Clientbound, Serverbound};
+        Self {
+            s_chat_session: registry.get_packet_id::<SChatSessionUpdate>(
+                Play, Serverbound, version,
+            ),
+            s_tab_request: registry.get_packet_id::<STabCompleteRequest>(
+                Play, Serverbound, version,
+            ),
+            c_tab_response: registry.get_packet_id::<CTabCompleteResponse>(
+                Play, Clientbound, version,
+            ),
+            s_chat_command: registry.get_packet_id::<SChatCommand>(Play, Serverbound, version),
+            s_chat_message: registry.get_packet_id::<SChatMessage>(Play, Serverbound, version),
+            c_disconnect: registry.get_packet_id::<CDisconnect>(Play, Clientbound, version),
+            c_commands: registry.get_packet_id::<CCommands>(Play, Clientbound, version),
+        }
     }
 }
 
@@ -102,16 +139,42 @@ pub async fn proxy_loop(
     client_codec_chain: &mut CodecFilterChain,
     server_codec_chain: &mut CodecFilterChain,
 ) -> ProxyLoopOutcome {
+    let hot_ids = HotIds::resolve(registry, client.protocol_version);
     loop {
         tokio::select! {
             frame = client.read_frame() => {
                 match frame {
                     Ok(Some(frame)) => {
-                        if let Err(e) = handle_client_to_backend(client, backend, frame, registry, services, player_id, client_codec_chain).await {
+                        let mut result = handle_client_to_backend(client, backend, frame, registry, services, player_id, client_codec_chain, &hot_ids).await;
+                        let mut command_outcome = drain_player_commands(client, command_rx, registry);
+                        while result.is_ok() && command_outcome.is_none() {
+                            match client.try_next_frame() {
+                                Ok(Some(frame)) => {
+                                    result = handle_client_to_backend(client, backend, frame, registry, services, player_id, client_codec_chain, &hot_ids).await;
+                                    command_outcome = drain_player_commands(client, command_rx, registry);
+                                }
+                                Ok(None) => break,
+                                Err(e) => result = Err(e),
+                            }
+                        }
+                        if result.is_ok() {
+                            result = backend.flush().await;
+                        }
+                        if result.is_ok() {
+                            result = client.flush().await; // tab-complete responses etc.
+                        }
+                        if let Err(e) = result {
+                            let _ = backend.flush().await;
+                            let _ = client.flush().await;
                             if e.is_expected_disconnect() {
                                 break ProxyLoopOutcome::BackendDisconnected { reason: Some(e.to_string()) };
                             }
                             break ProxyLoopOutcome::Error(e);
+                        }
+                        match command_outcome {
+                            Some(CommandResult::Kick) => break ProxyLoopOutcome::ClientDisconnected,
+                            Some(CommandResult::Switch(target)) => break ProxyLoopOutcome::SwitchRequested { target },
+                            _ => {}
                         }
                     }
                     Ok(None) => break ProxyLoopOutcome::ClientDisconnected,
@@ -121,12 +184,42 @@ pub async fn proxy_loop(
             frame = backend.read_frame() => {
                 match frame {
                     Ok(Some(frame)) => {
-                        match handle_backend_to_client(client, backend, frame, registry, services, player_id, server_codec_chain).await {
-                            Ok(BackendAction::Continue) => {}
-                            Ok(BackendAction::Disconnected(reason)) => {
-                                break ProxyLoopOutcome::BackendDisconnected { reason };
+                        let mut result = handle_backend_to_client(client, backend, frame, registry, services, player_id, server_codec_chain, &hot_ids).await;
+                        let mut command_outcome = drain_player_commands(client, command_rx, registry);
+                        while matches!(result, Ok(BackendAction::Continue)) && command_outcome.is_none() {
+                            match backend.try_next_frame() {
+                                Ok(Some(frame)) => {
+                                    result = handle_backend_to_client(client, backend, frame, registry, services, player_id, server_codec_chain, &hot_ids).await;
+                                    command_outcome = drain_player_commands(client, command_rx, registry);
+                                }
+                                Ok(None) => break,
+                                Err(e) => result = Err(e),
                             }
-                            Err(e) => break ProxyLoopOutcome::Error(e),
+                        }
+                        match result {
+                            Ok(action) => {
+                                if let Err(e) = client.flush().await {
+                                    break ProxyLoopOutcome::Error(e);
+                                }
+                                if let Err(e) = backend.flush().await {
+                                    break ProxyLoopOutcome::Error(e);
+                                }
+                                match action {
+                                    BackendAction::Continue => {}
+                                    BackendAction::Disconnected(reason) => {
+                                        break ProxyLoopOutcome::BackendDisconnected { reason };
+                                    }
+                                }
+                                match command_outcome {
+                                    Some(CommandResult::Kick) => break ProxyLoopOutcome::ClientDisconnected,
+                                    Some(CommandResult::Switch(target)) => break ProxyLoopOutcome::SwitchRequested { target },
+                                    _ => {}
+                                }
+                            }
+                            Err(e) => {
+                                let _ = client.flush().await;
+                                break ProxyLoopOutcome::Error(e);
+                            }
                         }
                     }
                     Ok(None) => break ProxyLoopOutcome::BackendDisconnected { reason: None },
@@ -134,7 +227,11 @@ pub async fn proxy_loop(
                 }
             }
             Some(cmd) = command_rx.recv() => {
-                match handle_player_command(client, cmd, registry).await {
+                let result = handle_player_command(client, cmd, registry);
+                if let Err(e) = client.flush().await {
+                    tracing::warn!("failed to flush player command: {e}");
+                }
+                match result {
                     Ok(CommandResult::Continue) => {}
                     Ok(CommandResult::Kick) => break ProxyLoopOutcome::ClientDisconnected,
                     Ok(CommandResult::Switch(target)) => {
@@ -162,8 +259,25 @@ enum CommandResult {
     Switch(ServerId),
 }
 
+fn drain_player_commands(
+    client: &mut ClientBridge,
+    command_rx: &mut mpsc::Receiver<PlayerCommand>,
+    registry: &PacketRegistry,
+) -> Option<CommandResult> {
+    while let Ok(cmd) = command_rx.try_recv() {
+        match handle_player_command(client, cmd, registry) {
+            Ok(CommandResult::Continue) => {}
+            Ok(outcome) => return Some(outcome),
+            Err(e) => tracing::warn!("failed to handle player command: {e}"),
+        }
+    }
+    None
+}
+
 /// Handles a player command from the plugin system.
-async fn handle_player_command(
+///
+/// Frames are queued on the client bridge; the caller flushes.
+fn handle_player_command(
     client: &mut ClientBridge,
     cmd: PlayerCommand,
     registry: &PacketRegistry,
@@ -175,25 +289,25 @@ async fn handle_player_command(
     match cmd {
         PlayerCommand::SendMessage(component) => {
             let frame = packets::build_system_chat_message(&component, version, registry)?;
-            client.write_frame(&frame).await?;
+            client.queue_frame(&frame)?;
         }
         PlayerCommand::SendActionBar(component) => {
             let frame = packets::build_action_bar(&component, version, registry)?;
-            client.write_frame(&frame).await?;
+            client.queue_frame(&frame)?;
         }
         PlayerCommand::SendTitle(title_data) => {
             let frames = packets::build_title_packets(&title_data, version, registry)?;
             for frame in &frames {
-                client.write_frame(frame).await?;
+                client.queue_frame(frame)?;
             }
         }
         PlayerCommand::SendPacket(raw_packet) => {
             let frame = raw_to_frame(&raw_packet);
-            client.write_frame(&frame).await?;
+            client.queue_frame(&frame)?;
         }
         PlayerCommand::Kick(reason) => {
             let frame = packets::build_disconnect(&reason, version, registry)?;
-            client.write_frame(&frame).await?;
+            client.queue_frame(&frame)?;
             return Ok(CommandResult::Kick);
         }
         PlayerCommand::SwitchServer(target) => {
@@ -204,8 +318,8 @@ async fn handle_player_command(
     Ok(CommandResult::Continue)
 }
 
-/// Sends injected frames from a codec filter's FrameOutput.
-async fn send_injected_frames(
+/// Queues injected frames from a codec filter's FrameOutput.
+fn send_injected_frames(
     writer: &mut impl FrameWriter,
     output: &mut infrarust_api::filter::FrameOutput,
     send_before: bool,
@@ -213,43 +327,41 @@ async fn send_injected_frames(
 ) -> Result<(), CoreError> {
     if send_before {
         for raw in output.take_before() {
-            writer.write_frame(&raw_to_frame(&raw)).await?;
+            writer.queue_frame(&raw_to_frame(&raw))?;
         }
     }
     if send_after {
         for raw in output.take_after() {
-            writer.write_frame(&raw_to_frame(&raw)).await?;
+            writer.queue_frame(&raw_to_frame(&raw))?;
         }
     }
     Ok(())
 }
 
-/// Helper trait to abstract over client/backend bridge for writing.
+/// Helper trait to abstract over client/backend bridge for queueing writes.
+/// Queued frames are sent by the arm-end `flush()` in `proxy_loop`.
 trait FrameWriter {
-    fn write_frame(
-        &mut self,
-        frame: &PacketFrame,
-    ) -> impl Future<Output = Result<(), CoreError>> + Send;
+    fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError>;
 }
 
 impl FrameWriter for ClientBridge {
-    async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
-        ClientBridge::write_frame(self, frame).await
+    fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
+        ClientBridge::queue_frame(self, frame)
     }
 }
 
 impl FrameWriter for BackendBridge {
-    async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
-        BackendBridge::write_frame(self, frame).await
+    fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
+        BackendBridge::queue_frame(self, frame)
     }
 }
 
 /// Applies codec filter chain to a frame and handles the result.
 ///
-/// Returns `Ok(true)` if the frame was consumed (dropped/replaced) and should
-/// NOT be forwarded further. Returns `Ok(false)` if processing should continue
-/// with the (possibly modified) frame.
-async fn apply_codec_filter(
+/// Returns `Ok(true)` if the frame was consumed (dropped/replaced/queued with
+/// injections) and should NOT be forwarded further. Returns `Ok(false)` if
+/// processing should continue with the (possibly modified) frame.
+fn apply_codec_filter(
     chain: &mut CodecFilterChain,
     frame: &mut PacketFrame,
     writer: &mut impl FrameWriter,
@@ -261,22 +373,25 @@ async fn apply_codec_filter(
     let mut raw = frame_to_raw(frame);
     match chain.process(&mut raw) {
         FilterResult::Pass => {
-            // Update the frame in case a filter modified it in place
-            *frame = raw_to_frame(&raw);
+            if filter_modified(frame, &raw) {
+                *frame = raw_to_frame(&raw);
+            }
             Ok(false)
         }
         FilterResult::Dropped => Ok(true),
         FilterResult::Replaced(mut output) => {
-            send_injected_frames(writer, &mut output, true, true).await?;
+            send_injected_frames(writer, &mut output, true, true)?;
             Ok(true) // Original frame is NOT sent
         }
         FilterResult::PassWithInjections(mut output) => {
-            // Send before-injections, then the (possibly modified) original, then after-injections
-            send_injected_frames(writer, &mut output, true, false).await?;
-            *frame = raw_to_frame(&raw);
-            writer.write_frame(frame).await?;
-            send_injected_frames(writer, &mut output, false, true).await?;
-            Ok(true) // Frame already sent with injections
+            // Queue before-injections, then the (possibly modified) original, then after-injections
+            send_injected_frames(writer, &mut output, true, false)?;
+            if filter_modified(frame, &raw) {
+                *frame = raw_to_frame(&raw);
+            }
+            writer.queue_frame(frame)?;
+            send_injected_frames(writer, &mut output, false, true)?;
+            Ok(true) // Frame already queued with injections
         }
     }
 }
@@ -284,6 +399,7 @@ async fn apply_codec_filter(
 /// Handles a packet from the client, forwarding it to the backend.
 ///
 /// Order: CodecFilter → Chat/Command interception → EventBus → forward.
+#[allow(clippy::too_many_arguments)]
 async fn handle_client_to_backend(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
@@ -292,33 +408,24 @@ async fn handle_client_to_backend(
     services: &ProxyServices,
     player_id: PlayerId,
     codec_chain: &mut CodecFilterChain,
+    hot_ids: &HotIds,
 ) -> Result<(), CoreError> {
     let version = client.protocol_version;
     let state = client.state();
 
     // In Play state: CodecFilter → chat/command → RawPacketEvent → forward
     if state == ConnectionState::Play {
-        if apply_codec_filter(codec_chain, &mut frame, backend).await? {
+        if apply_codec_filter(codec_chain, &mut frame, backend)? {
             return Ok(()); // Frame consumed by filter
         }
 
         // Drop SChatSessionUpdate (offline backends can't validate signatures)
-        let chat_session_id = registry.get_packet_id::<SChatSessionUpdate>(
-            ConnectionState::Play,
-            Direction::Serverbound,
-            version,
-        );
-        if Some(frame.id) == chat_session_id {
+        if Some(frame.id) == hot_ids.s_chat_session {
             tracing::debug!("dropping Chat Session Update (offline backend)");
             return Ok(());
         }
 
-        let tab_complete_id = registry.get_packet_id::<STabCompleteRequest>(
-            ConnectionState::Play,
-            Direction::Serverbound,
-            version,
-        );
-        if Some(frame.id) == tab_complete_id
+        if Some(frame.id) == hot_ids.s_tab_request
             && let Ok(DecodedPacket::Typed { id: _, packet }) =
                 registry.decode_frame(&frame, state, Direction::Serverbound, version)
             && let Some(req) = packet.as_any().downcast_ref::<STabCompleteRequest>()
@@ -354,21 +461,13 @@ async fn handle_client_to_backend(
                         })
                         .collect(),
                 };
-                let resp_id = registry.get_packet_id::<CTabCompleteResponse>(
-                    ConnectionState::Play,
-                    Direction::Clientbound,
-                    version,
-                );
-                if let Some(resp_id) = resp_id {
+                if let Some(resp_id) = hot_ids.c_tab_response {
                     let mut buf = Vec::new();
                     if infrarust_protocol::packets::Packet::encode(&response, &mut buf, version)
                         .is_ok()
                     {
-                        let resp_frame = PacketFrame {
-                            id: resp_id,
-                            payload: buf.into(),
-                        };
-                        client.write_frame(&resp_frame).await?;
+                        let resp_frame = PacketFrame::new(resp_id, buf.into());
+                        client.queue_frame(&resp_frame)?;
                         return Ok(());
                     }
                 }
@@ -376,7 +475,9 @@ async fn handle_client_to_backend(
         }
 
         // Chat/command detection (serverbound only)
-        if let Some(action) = detect_chat_or_command(&frame, registry, version) {
+        if let Some(action) =
+            detect_chat_or_command(&frame, hot_ids.s_chat_command, hot_ids.s_chat_message, version)
+        {
             match action {
                 ChatAction::Command(input) => {
                     // CommandManager first
@@ -431,10 +532,7 @@ async fn handle_client_to_backend(
             match event.result() {
                 infrarust_api::events::packet::RawPacketResult::Pass => {}
                 infrarust_api::events::packet::RawPacketResult::Modify { packet } => {
-                    frame = PacketFrame {
-                        id: packet.packet_id,
-                        payload: packet.data.clone(),
-                    };
+                    frame = PacketFrame::new(packet.packet_id, packet.data.clone());
                 }
                 infrarust_api::events::packet::RawPacketResult::Drop => {
                     return Ok(());
@@ -443,7 +541,7 @@ async fn handle_client_to_backend(
             }
         }
 
-        backend.write_frame(&frame).await?;
+        backend.queue_frame(&frame)?;
         return Ok(());
     }
 
@@ -456,7 +554,7 @@ async fn handle_client_to_backend(
                 .is_some()
             {
                 // Client acknowledged login success → transition to Config
-                backend.write_frame(&frame).await?;
+                backend.queue_frame(&frame)?;
                 client.set_state(ConnectionState::Config);
                 backend.set_state(ConnectionState::Config);
                 codec_chain.notify_state_change(protocol_state_to_api(ConnectionState::Config));
@@ -470,7 +568,7 @@ async fn handle_client_to_backend(
                 .is_some()
             {
                 // Client acknowledged finish config → transition to Play
-                backend.write_frame(&frame).await?;
+                backend.queue_frame(&frame)?;
                 client.set_state(ConnectionState::Play);
                 backend.set_state(ConnectionState::Play);
                 codec_chain.notify_state_change(protocol_state_to_api(ConnectionState::Play));
@@ -479,11 +577,11 @@ async fn handle_client_to_backend(
             }
 
             // All other typed packets: forward
-            backend.write_frame(&frame).await?;
+            backend.queue_frame(&frame)?;
         }
         Ok(DecodedPacket::Opaque { .. }) | Err(_) => {
             // Unknown or decode error: forward opaquely
-            backend.write_frame(&frame).await?;
+            backend.queue_frame(&frame)?;
         }
     }
 
@@ -493,6 +591,7 @@ async fn handle_client_to_backend(
 /// Handles a packet from the backend, forwarding it to the client.
 ///
 /// Order: CodecFilter → EventBus → state interception → forward.
+#[allow(clippy::too_many_arguments)]
 async fn handle_backend_to_client(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
@@ -501,13 +600,14 @@ async fn handle_backend_to_client(
     services: &ProxyServices,
     player_id: PlayerId,
     codec_chain: &mut CodecFilterChain,
+    hot_ids: &HotIds,
 ) -> Result<BackendAction, CoreError> {
     let version = client.protocol_version;
     let state = backend.state;
 
     // In Play state: CodecFilter → RawPacketEvent → disconnect detection
     if state == ConnectionState::Play {
-        if apply_codec_filter(codec_chain, &mut frame, client).await? {
+        if apply_codec_filter(codec_chain, &mut frame, client)? {
             return Ok(BackendAction::Continue); // Frame consumed by filter
         }
 
@@ -531,10 +631,7 @@ async fn handle_backend_to_client(
             match event.result() {
                 infrarust_api::events::packet::RawPacketResult::Pass => {}
                 infrarust_api::events::packet::RawPacketResult::Modify { packet } => {
-                    frame = PacketFrame {
-                        id: packet.packet_id,
-                        payload: packet.data.clone(),
-                    };
+                    frame = PacketFrame::new(packet.packet_id, packet.data.clone());
                 }
                 infrarust_api::events::packet::RawPacketResult::Drop => {
                     return Ok(BackendAction::Continue);
@@ -543,11 +640,17 @@ async fn handle_backend_to_client(
             }
         }
 
-        // Disconnect detection
+        let intercepted = Some(frame.id) == hot_ids.c_disconnect
+            || (Some(frame.id) == hot_ids.c_commands && services.config.announce_proxy_commands);
+        if !intercepted {
+            client.queue_frame(&frame)?;
+            return Ok(BackendAction::Continue);
+        }
+
         match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
             Ok(DecodedPacket::Typed { id, packet }) => {
                 if let Some(disc) = packet.as_any().downcast_ref::<CDisconnect>() {
-                    client.write_frame(&frame).await?;
+                    client.queue_frame(&frame)?;
                     let reason = disc
                         .as_json()
                         .map(|s| s.to_string())
@@ -578,27 +681,24 @@ async fn handle_backend_to_client(
                             &modified, &mut buf, version,
                         ) {
                             tracing::warn!("failed to re-encode CCommands: {e}");
-                            client.write_frame(&frame).await?;
+                            client.queue_frame(&frame)?;
                         } else {
-                            let new_frame = PacketFrame {
-                                id,
-                                payload: buf.into(),
-                            };
-                            client.write_frame(&new_frame).await?;
+                            let new_frame = PacketFrame::new(id, buf.into());
+                            client.queue_frame(&new_frame)?;
                         }
                     } else {
-                        client.write_frame(&frame).await?;
+                        client.queue_frame(&frame)?;
                     }
                 } else {
-                    client.write_frame(&frame).await?;
+                    client.queue_frame(&frame)?;
                 }
             }
             Ok(DecodedPacket::Opaque { .. }) => {
-                client.write_frame(&frame).await?;
+                client.queue_frame(&frame)?;
             }
             Err(_) => {
                 // Should not happen with encode_only cleanup, but forward anyway
-                client.write_frame(&frame).await?;
+                client.queue_frame(&frame)?;
             }
         }
         return Ok(BackendAction::Continue);
@@ -607,12 +707,11 @@ async fn handle_backend_to_client(
     // Login/Config: full interception logic
     match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
         Ok(DecodedPacket::Typed { packet, .. }) => {
-            // SetCompression — activate on both sides, forward to client
             if let Some(set_comp) = packet.as_any().downcast_ref::<CSetCompression>() {
                 let threshold = set_comp.threshold.0;
                 backend.set_compression(threshold);
+                client.queue_frame(&frame)?;
                 client.set_compression(threshold);
-                client.write_frame(&frame).await?;
                 codec_chain.notify_compression_change(threshold);
                 tracing::debug!(threshold, "compression activated");
                 return Ok(BackendAction::Continue);
@@ -620,10 +719,10 @@ async fn handle_backend_to_client(
 
             // LoginSuccess — forward, transition state
             if packet.as_any().downcast_ref::<CLoginSuccess>().is_some() {
-                client.write_frame(&frame).await?;
+                client.queue_frame(&frame)?;
                 // State transition happens when client sends LoginAcknowledged (1.20.2+)
                 // or immediately for older versions
-                if version.less_than(infrarust_protocol::version::ProtocolVersion::V1_20_2) {
+                if version.less_than(ProtocolVersion::V1_20_2) {
                     client.set_state(ConnectionState::Play);
                     backend.set_state(ConnectionState::Play);
                     codec_chain.notify_state_change(protocol_state_to_api(ConnectionState::Play));
@@ -636,13 +735,13 @@ async fn handle_backend_to_client(
 
             // LoginDisconnect
             if let Some(disconnect) = packet.as_any().downcast_ref::<CLoginDisconnect>() {
-                client.write_frame(&frame).await?;
+                client.queue_frame(&frame)?;
                 return Ok(BackendAction::Disconnected(Some(disconnect.reason.clone())));
             }
 
             // Play Disconnect (should not occur in Login/Config, but handle defensively)
             if packet.as_any().downcast_ref::<CDisconnect>().is_some() {
-                client.write_frame(&frame).await?;
+                client.queue_frame(&frame)?;
                 return Ok(BackendAction::Disconnected(Some(
                     "backend disconnect".to_string(),
                 )));
@@ -651,7 +750,7 @@ async fn handle_backend_to_client(
             // FinishConfig — forward, state transition happens when client ACKs
             if packet.as_any().downcast_ref::<CFinishConfig>().is_some() {
                 services.registry_codec_cache.finalize(version);
-                client.write_frame(&frame).await?;
+                client.queue_frame(&frame)?;
                 // Transition happens in handle_client_to_backend
                 // when SAcknowledgeFinishConfig is received
                 return Ok(BackendAction::Continue);
@@ -678,7 +777,7 @@ async fn handle_backend_to_client(
             }
 
             // All other typed packets: forward
-            client.write_frame(&frame).await?;
+            client.queue_frame(&frame)?;
         }
         Ok(DecodedPacket::Opaque { .. }) => {
             if state == ConnectionState::Config {
@@ -686,12 +785,12 @@ async fn handle_backend_to_client(
                     .registry_codec_cache
                     .collect_registry_frame(version, frame.clone());
             }
-            client.write_frame(&frame).await?;
+            client.queue_frame(&frame)?;
         }
         Err(e) => {
             tracing::warn!("failed to decode backend frame: {e}");
             // Forward anyway (best effort)
-            client.write_frame(&frame).await?;
+            client.queue_frame(&frame)?;
         }
     }
 

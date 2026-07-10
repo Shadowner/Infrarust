@@ -7,7 +7,7 @@ description: "Tuning knobs for high-throughput Infrarust deployments: worker thr
 
 Infrarust runs fast on its defaults, so most deployments need no tuning at all. This page is for the cases where you are pushing a lot of connections through one process, or you want to understand which knob affects which cost. Every option here lives in `infrarust.toml` (the [config reference](./config-schema) has the full schema) or in the build itself.
 
-Before tuning, know which path your traffic takes. The forwarding modes (`passthrough`, `zero_copy`, `server_only`) relay raw bytes after the handshake and never decode packets, so their per-connection cost is dominated by the kernel and the runtime, not by Infrarust. The intercepted modes (`client_only` and `offline`) decode and re-encode every packet, which is where compression and the codec chain matter. The [benchmarking](./benchmarking) page measures both.
+Before tuning, know which path your traffic takes. The forwarding modes (`passthrough`, `zero_copy`, `server_only`) relay raw bytes after the handshake and never decode packets, so their per-connection cost is dominated by the kernel and the runtime, not by Infrarust. The intercepted modes (`client_only` and `offline`) decode every packet; unmodified packets are then forwarded as their original wire bytes, and only the ones a filter or the proxy changes are re-encoded and re-compressed, which is where compression and the codec chain matter. The [benchmarking](./benchmarking) page measures both.
 
 ## Worker threads
 

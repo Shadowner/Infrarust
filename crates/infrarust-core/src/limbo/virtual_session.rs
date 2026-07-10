@@ -68,10 +68,7 @@ mod tests {
             registry,
         );
 
-        let frame = PacketFrame {
-            id: 42,
-            payload: bytes::Bytes::from_static(b"test"),
-        };
+        let frame = PacketFrame::new(42, bytes::Bytes::from_static(b"test"));
         core.outgoing_tx.send(frame.clone()).await.unwrap();
 
         let received = core.outgoing_rx.recv().await.unwrap();
