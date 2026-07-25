@@ -1,7 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+use command_fds::{CommandFdExt, FdMapping};
 use infrarust_config::KeepaliveConfig;
 use infrarust_transport::socket::*;
+use rusty_fork::{fork, rusty_fork_id};
 use std::net::SocketAddr;
+use std::os::fd::AsFd;
 use std::time::Duration;
 
 #[test]
@@ -10,6 +13,59 @@ fn test_configure_listener_socket_binds() {
     let socket = configure_listener_socket(addr, false).unwrap();
     let local = socket.local_addr().unwrap();
     assert!(local.as_socket().unwrap().port() > 0);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn test_configure_listener_socket_activation() {
+    let fork_result = fork(
+        "test_configure_listener_socket_activation",
+        rusty_fork_id!(),
+        move |cmd: &mut std::process::Command| {
+            let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+            let bound_socket = configure_listener_socket(addr, false).unwrap();
+            let bound_port = bound_socket
+                .local_addr()
+                .unwrap()
+                .as_socket()
+                .unwrap()
+                .port();
+            println!("Port: {}", bound_port);
+
+            cmd.fd_mappings(vec![FdMapping {
+                parent_fd: bound_socket.as_fd().try_clone_to_owned().unwrap(),
+                child_fd: 3,
+            }])
+            .unwrap();
+
+            cmd.env("LISTEN_FDS", "1");
+            cmd.env("TEST_PORT_SHOULD_BE", bound_port.to_string());
+        },
+        |child, _| {
+            let status = child.wait().unwrap();
+            assert!(
+                status.success(),
+                "child process failed with exit code: {:?}",
+                status.code()
+            );
+        },
+        || {
+            let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+            let activated_socket = configure_listener_socket(addr, false).unwrap();
+            let activated_port = activated_socket
+                .local_addr()
+                .unwrap()
+                .as_socket()
+                .unwrap()
+                .port();
+            let bound_port = std::env::var("TEST_PORT_SHOULD_BE")
+                .unwrap()
+                .parse::<u16>()
+                .unwrap();
+            assert!(bound_port == activated_port);
+        },
+    );
+    fork_result.expect("Fork failed");
 }
 
 #[test]

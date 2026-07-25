@@ -6,6 +6,7 @@
 
 use std::net::SocketAddr;
 
+use listenfd::ListenFd;
 use socket2::{Domain, Protocol, Socket, TcpKeepalive, Type};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -14,6 +15,8 @@ use infrarust_config::KeepaliveConfig;
 use crate::error::TransportError;
 
 /// Creates and configures a listener socket.
+/// If socket activation (`LISTEN_FDS` env var) is configured,
+/// that socket is used instead of creating a new one.
 ///
 /// Sets `SO_REUSEADDR` (always), `SO_REUSEPORT` (Linux, if requested),
 /// nonblocking mode, then binds and listens with a backlog of 1024.
@@ -21,11 +24,25 @@ use crate::error::TransportError;
 /// # Errors
 ///
 /// Returns [`TransportError::SocketConfig`] if socket creation or
-/// configuration fails, or [`TransportError::Bind`] if binding fails.
+/// configuration fails, [`TransportError::Bind`] if binding fails,
+/// or [`TransportError::SocketFileDescriptor`] if socket activation
+/// fails.
 pub fn configure_listener_socket(
     addr: SocketAddr,
     reuseport: bool,
 ) -> Result<Socket, TransportError> {
+    // Check for socket activation and use a socket on a file descriptor if available
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let mut listenfd = ListenFd::from_env();
+        if let Some(listener) = listenfd
+            .take_tcp_listener(0)
+            .map_err(TransportError::SocketFileDescriptor)?
+        {
+            return Ok(Socket::from(listener));
+        }
+    }
+
     let domain = if addr.is_ipv4() {
         Domain::IPV4
     } else {
