@@ -3,7 +3,7 @@ name = "infrarust-plugin-auth"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 description = "Offline-mode authentication plugin for the Infrarust Minecraft proxy (login/register, premium auto-login)"
 
