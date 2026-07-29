@@ -7,9 +7,8 @@ pub(crate) mod packets;
 pub mod registry;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::SystemTime;
 
 use tokio::sync::mpsc;
@@ -23,6 +22,8 @@ use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
 };
 use infrarust_config::ServerAddress;
+
+use crate::loadbalancer::BackendLoad;
 
 /// Channel buffer size for player commands.
 const COMMAND_CHANNEL_SIZE: usize = 32;
@@ -61,6 +62,7 @@ pub struct PlayerSession {
     remote_addr: SocketAddr,
     current_server: RwLock<Option<ServerId>>,
     connected_address: RwLock<Option<ServerAddress>>,
+    backend_load: Arc<BackendLoad>,
     connected: AtomicBool,
     active: bool,
     online_mode: bool,
@@ -94,6 +96,7 @@ impl PlayerSession {
         command_tx: mpsc::Sender<PlayerCommand>,
         shutdown_token: CancellationToken,
         permission_checker: Arc<dyn PermissionChecker>,
+        backend_load: Arc<BackendLoad>,
     ) -> Self {
         Self {
             player_id,
@@ -102,6 +105,7 @@ impl PlayerSession {
             remote_addr,
             current_server: RwLock::new(current_server),
             connected_address: RwLock::new(None),
+            backend_load,
             connected: AtomicBool::new(true),
             active,
             online_mode,
@@ -132,6 +136,7 @@ impl PlayerSession {
             tx,
             CancellationToken::new(),
             Arc::new(DefaultPermissionChecker),
+            Arc::new(BackendLoad::new()),
         );
         (session, rx)
     }
@@ -143,23 +148,38 @@ impl PlayerSession {
     /// Marks the player as disconnected (called by handlers during cleanup).
     pub fn set_disconnected(&self) {
         self.connected.store(false, Ordering::Release);
+        self.set_connected_address(None);
     }
 
     /// Updates the current server (called by the proxy loop on server switch).
     pub fn set_current_server(&self, server: ServerId) {
-        let mut guard = self.current_server.write().expect("lock poisoned");
+        let mut guard = self
+            .current_server
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
         *guard = Some(server);
     }
 
     pub fn set_connected_address(&self, address: Option<ServerAddress>) {
-        let mut guard = self.connected_address.write().expect("lock poisoned");
-        *guard = address;
+        let mut guard = self
+            .connected_address
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        if *guard == address {
+            return;
+        }
+        if let Some(next) = &address {
+            self.backend_load.acquire(next);
+        }
+        if let Some(previous) = std::mem::replace(&mut *guard, address) {
+            self.backend_load.release(&previous);
+        }
     }
 
     pub fn connected_address(&self) -> Option<ServerAddress> {
         self.connected_address
             .read()
-            .expect("lock poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
 
@@ -185,6 +205,19 @@ impl PlayerSession {
     }
 }
 
+impl Drop for PlayerSession {
+    fn drop(&mut self) {
+        if let Some(address) = self
+            .connected_address
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
+            self.backend_load.release(&address);
+        }
+    }
+}
+
 // Sealed trait implementation — allows PlayerSession to implement Player.
 impl infrarust_api::player::private::Sealed for PlayerSession {}
 
@@ -206,7 +239,10 @@ impl Player for PlayerSession {
     }
 
     fn current_server(&self) -> Option<ServerId> {
-        self.current_server.read().expect("lock poisoned").clone()
+        self.current_server
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn is_connected(&self) -> bool {

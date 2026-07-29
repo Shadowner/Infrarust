@@ -44,7 +44,7 @@ addresses = ["10.0.1.10:25565"]
 # Domains that route to this server (supports wildcards)
 domains = ["survival.mc.example.com", "*.survival.example.com"]
 
-# Backend addresses (host:port, port defaults to 25565). Multiple = sequential failover.
+# Backend addresses (host:port, port defaults to 25565). Multiple = load balanced.
 addresses = ["10.0.1.10:25565", "10.0.1.11:25565"]
 
 # Proxy mode: passthrough, zero_copy, client_only, offline, server_only
@@ -93,7 +93,7 @@ text = "§eSurvival §7| §fStarting..."
 | `name` | string | none | Human-readable name. Takes priority over `id` for identification. Must match `[a-z0-9_-]+`. |
 | `network` | string | none | Network group for server switching. Only servers in the same network can switch between each other. |
 | `domains` | list of strings | `[]` | Domains that route to this server. Supports wildcards (`*.example.com`). |
-| `addresses` | list of strings | required | Backend addresses in `host:port` format. Port defaults to `25565` if omitted. Multiple addresses use sequential failover (tried in order). |
+| `addresses` | list | required | Backend addresses, each `"host:port"` or `{ address = "host:port", weight = 3 }`. Port defaults to `25565`. Multiple addresses are load balanced per the server's `balance` strategy. |
 | `proxy_mode` | string | `"passthrough"` | One of: `passthrough`, `zero_copy`, `client_only`, `offline`, `server_only`. |
 | `forwarding_mode` | string | `"none"` | Per-server player identity forwarding override. One of: `none`, `bungee_cord` (alias `legacy`), `bungee_guard`, `velocity` (alias `modern`). Overrides the global `[forwarding]` setting for this server only. |
 | `send_proxy_protocol` | bool | `false` | Send PROXY protocol to the backend. |

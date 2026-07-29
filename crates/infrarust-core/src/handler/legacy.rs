@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
-use infrarust_config::MotdConfig;
+use infrarust_config::{MotdConfig, ServerAddress, ServerConfig};
 use infrarust_protocol::legacy::{
     LegacyPingVariant, build_legacy_kick, parse_legacy_handshake, parse_legacy_ping,
 };
@@ -13,6 +13,7 @@ use infrarust_server_manager::{ServerManagerService, ServerState};
 use infrarust_transport::{BackendConnector, select_forwarder};
 
 use crate::error::CoreError;
+use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, select_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
@@ -28,16 +29,21 @@ pub struct LegacyHandler {
     server_manager: Option<Arc<ServerManagerService>>,
     connection_registry: Arc<ConnectionRegistry>,
     backend_connector: Arc<BackendConnector>,
+    counts: Arc<dyn AddressConnectionCount>,
+    health: Arc<dyn BackendHealthView>,
     shutdown: CancellationToken,
 }
 
 impl LegacyHandler {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         domain_router: Arc<DomainRouter>,
         default_motd: Option<MotdConfig>,
         server_manager: Option<Arc<ServerManagerService>>,
         connection_registry: Arc<ConnectionRegistry>,
         backend_connector: Arc<BackendConnector>,
+        counts: Arc<dyn AddressConnectionCount>,
+        health: Arc<dyn BackendHealthView>,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
@@ -46,8 +52,19 @@ impl LegacyHandler {
             server_manager,
             connection_registry,
             backend_connector,
+            counts,
+            health,
             shutdown,
         }
+    }
+
+    fn ordered_addresses(
+        &self,
+        config: &ServerConfig,
+        load_balancer: &dyn crate::loadbalancer::LoadBalancer,
+    ) -> Vec<ServerAddress> {
+        select_backend_addresses(config, load_balancer, self.counts.as_ref(), self.health.as_ref())
+            .to_vec()
     }
 
     /// Handles a legacy connection (ping or login).
@@ -90,14 +107,15 @@ impl LegacyHandler {
             }
         };
 
-        let server_config = self.domain_router.resolve(&hostname.to_lowercase());
+        let server_config = self.domain_router.resolve_route(&hostname.to_lowercase());
 
         let response_bytes = match server_config {
-            Some((_provider_id, config)) => {
+            Some((_provider_id, config, load_balancer)) => {
+                let addresses = self.ordered_addresses(&config, load_balancer.as_ref());
                 let full_ping = self.reconstruct_ping_packet(&raw_data);
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(5),
-                    self.forward_ping_to_backend(&full_ping, &config, ctx),
+                    self.forward_ping_to_backend(&full_ping, &config, &addresses, ctx),
                 )
                 .await
                 {
@@ -130,7 +148,8 @@ impl LegacyHandler {
     async fn forward_ping_to_backend(
         &self,
         raw_ping: &[u8],
-        config: &infrarust_config::ServerConfig,
+        config: &ServerConfig,
+        addresses: &[ServerAddress],
         ctx: &ConnectionContext,
     ) -> Result<Vec<u8>, CoreError> {
         let config_id = config.effective_id();
@@ -139,7 +158,7 @@ impl LegacyHandler {
             .backend_connector
             .connect(
                 &config_id,
-                &config.address_list(),
+                addresses,
                 config.timeouts.as_ref().map(|t| t.connect),
                 false, // No proxy protocol for legacy pings
                 &ctx.connection_info(),
@@ -203,7 +222,7 @@ impl LegacyHandler {
     fn build_config_response(
         &self,
         variant: &LegacyPingVariant,
-        config: Option<&infrarust_config::ServerConfig>,
+        config: Option<&ServerConfig>,
     ) -> Vec<u8> {
         let (motd, online, max) = if let Some(cfg) = config {
             let config_id = cfg.effective_id();
@@ -261,7 +280,7 @@ impl LegacyHandler {
     fn build_state_response(
         &self,
         variant: &LegacyPingVariant,
-        cfg: &infrarust_config::ServerConfig,
+        cfg: &ServerConfig,
         state: ServerState,
         config_id: &str,
     ) -> Result<Vec<u8>, CoreError> {
@@ -397,7 +416,9 @@ impl LegacyHandler {
 
         // Route to backend
         let domain = handshake.hostname.to_lowercase();
-        let Some((_provider_id, server_config)) = self.domain_router.resolve(&domain) else {
+        let Some((_provider_id, server_config, load_balancer)) =
+            self.domain_router.resolve_route(&domain)
+        else {
             tracing::debug!(domain = %domain, "legacy login: unknown domain");
             self.send_legacy_kick(ctx, "Unknown server").await;
             return Ok(());
@@ -410,7 +431,7 @@ impl LegacyHandler {
             .backend_connector
             .connect(
                 &config_id,
-                &server_config.address_list(),
+                &self.ordered_addresses(&server_config, load_balancer.as_ref()),
                 server_config.timeouts.as_ref().map(|t| t.connect),
                 server_config.send_proxy_protocol,
                 &ctx.connection_info(),

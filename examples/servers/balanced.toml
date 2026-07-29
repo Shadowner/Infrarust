@@ -17,3 +17,8 @@ addresses = [
     { address = "10.0.0.2:25565", weight = 1 }, # small node
     "10.0.0.3:25565",                           # implicit weight 1
 ]
+
+# Optional per-server override of the global [active_health] block.
+# [active_health]
+# kind = "status_ping"
+# probe_healthy = true

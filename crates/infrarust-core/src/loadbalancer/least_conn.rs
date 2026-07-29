@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn test_lc_unhealthy_in_queue() {
         let mut candidates = vec![with_conns("a", 5), with_conns("free", 0)];
-        candidates[1].healthy = false;
+        candidates[1].state = crate::loadbalancer::BackendState::Unhealthy;
         let ordered = LeastConnections::new(None).order(&candidates);
         // Even with 0 connections, the unhealthy address stays last.
         assert_eq!(ordered[0].address.host, "a");

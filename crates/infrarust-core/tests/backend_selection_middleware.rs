@@ -2,17 +2,17 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use smallvec::SmallVec;
 
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_core::loadbalancer::{
-    AddressConnectionCount, BackendCandidate, BackendHealthView, LeastConnections, LoadBalancer,
+    AddressConnectionCount, BackendCandidate, BackendHealthView, BackendState, HealthSnapshot, LeastConnections, LoadBalancer, PendingRegistry, PendingTicket,
     select_backend_addresses,
 };
 use infrarust_core::middleware::backend_selection::{BackendSelectionMiddleware, BackendTargets};
@@ -81,26 +81,53 @@ impl AddressConnectionCount for MockCounts {
 /// Health view with per-address overrides (default: healthy, stable).
 #[derive(Default)]
 struct MockHealth {
-    overrides: Mutex<HashMap<ServerAddress, (bool, Option<Instant>)>>,
+    overrides: Mutex<HashMap<ServerAddress, HealthSnapshot>>,
+    claimable: Mutex<HashSet<ServerAddress>>,
 }
 
 impl MockHealth {
     fn set(&self, a: &ServerAddress, healthy: bool, since: Option<Instant>) {
-        self.overrides
-            .lock()
-            .unwrap()
-            .insert(a.clone(), (healthy, since));
+        let state = if healthy {
+            BackendState::Healthy
+        } else {
+            BackendState::Unhealthy
+        };
+        self.overrides.lock().unwrap().insert(
+            a.clone(),
+            HealthSnapshot {
+                state,
+                healthy_since: since,
+            },
+        );
+    }
+
+    fn set_probing(&self, a: &ServerAddress) {
+        self.overrides.lock().unwrap().insert(
+            a.clone(),
+            HealthSnapshot {
+                state: BackendState::Probing,
+                healthy_since: None,
+            },
+        );
+        self.claimable.lock().unwrap().insert(a.clone());
     }
 }
 
 impl BackendHealthView for MockHealth {
-    fn snapshot(&self, a: &ServerAddress) -> (bool, Option<Instant>) {
+    fn snapshot(&self, a: &ServerAddress) -> HealthSnapshot {
         self.overrides
             .lock()
             .unwrap()
             .get(a)
             .copied()
-            .unwrap_or((true, None))
+            .unwrap_or(HealthSnapshot {
+                state: BackendState::Healthy,
+                healthy_since: None,
+            })
+    }
+
+    fn claim_probe(&self, a: &ServerAddress) -> bool {
+        self.claimable.lock().unwrap().remove(a)
     }
 }
 
@@ -189,11 +216,11 @@ async fn test_middleware_builds_candidates() {
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0].address, addr("10.0.0.1"));
     assert_eq!(seen[0].active_connections, 7);
-    assert!(seen[0].healthy);
+    assert!(seen[0].is_healthy());
     assert_eq!(seen[0].healthy_since, Some(since));
     assert_eq!(seen[1].address, addr("10.0.0.2"));
     assert_eq!(seen[1].active_connections, 0);
-    assert!(!seen[1].healthy);
+    assert!(!seen[1].is_healthy());
 }
 
 #[tokio::test]
@@ -278,6 +305,100 @@ fn test_select_backend_addresses_shared_helper() {
     let ordered = select_backend_addresses(&single, &capturing, &counts, &health);
     assert_eq!(ordered.as_slice(), [addr("10.0.0.9")]);
     assert_eq!(capturing.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn test_claimed_probe_is_tried_first() {
+    let counts = MockCounts::default();
+    let health = MockHealth::default();
+    counts.set(&addr("10.0.0.1"), 0);
+    health.set_probing(&addr("10.0.0.3"));
+    let lb = LeastConnections::new(None);
+    let config = server_config(&["10.0.0.1:25565", "10.0.0.2:25565", "10.0.0.3:25565"]);
+
+    let ordered = select_backend_addresses(&config, &lb, &counts, &health);
+    assert_eq!(
+        ordered.first(),
+        Some(&addr("10.0.0.3")),
+        "the claimed recovery probe leads, healthy addresses follow as failover"
+    );
+    assert_eq!(ordered.len(), 3);
+
+    // The claim is consumed: the next selection leaves it in the tail.
+    let ordered = select_backend_addresses(&config, &lb, &counts, &health);
+    assert_eq!(ordered.last(), Some(&addr("10.0.0.3")));
+}
+
+/// Without reservations, every login started before the first one attaches
+/// its address reads the same counts and piles onto the same backend.
+#[tokio::test]
+async fn test_pending_reservations_spread_a_login_burst() {
+    let attached = Arc::new(MockCounts::default());
+    let pending = Arc::new(PendingRegistry::new(
+        Arc::clone(&attached) as _,
+        Duration::from_secs(10),
+    ));
+    // Unequal counts, so the tie-breaker rotation cannot be what spreads them.
+    attached.set(&addr("10.0.0.1"), 2);
+
+    let middleware = BackendSelectionMiddleware::new(
+        Arc::clone(&attached) as _,
+        Arc::new(MockHealth::default()),
+    )
+    .with_pending(Arc::clone(&pending));
+    let lb = Arc::new(LeastConnections::new(None));
+    let config = server_config(&["10.0.0.1:25565", "10.0.0.2:25565", "10.0.0.3:25565"]);
+
+    // Six logins in flight at once: none of them has attached yet.
+    let mut contexts = Vec::new();
+    for _ in 0..6 {
+        let mut ctx = make_test_ctx().await;
+        insert_routing(&mut ctx, config.clone(), lb.clone());
+        middleware.process(&mut ctx).await.unwrap();
+        contexts.push(ctx);
+    }
+
+    let picked: Vec<ServerAddress> = contexts
+        .iter()
+        .map(|ctx| {
+            ctx.extensions.get::<BackendTargets>().unwrap().addresses[0].clone()
+        })
+        .collect();
+    let onto_one = picked.iter().filter(|a| **a == addr("10.0.0.2")).count();
+    assert!(
+        onto_one < 6,
+        "a burst must not all land on one backend, got {picked:?}"
+    );
+    assert_eq!(
+        pending.active_connections_for_address(&addr("10.0.0.2")),
+        onto_one,
+        "in-flight logins must be counted while they negotiate"
+    );
+
+    // Tickets released once the sessions attach.
+    for ctx in &mut contexts {
+        ctx.extensions.remove::<PendingTicket>();
+    }
+    assert_eq!(pending.active_connections_for_address(&addr("10.0.0.2")), 0);
+}
+
+#[test]
+fn test_total_outage_keeps_strategy_ordering() {
+    let counts = MockCounts::default();
+    let health = MockHealth::default();
+    counts.set(&addr("10.0.0.1"), 9);
+    counts.set(&addr("10.0.0.2"), 1);
+    for host in ["10.0.0.1", "10.0.0.2"] {
+        health.set(&addr(host), false, None);
+    }
+
+    let config = server_config(&["10.0.0.1:25565", "10.0.0.2:25565"]);
+    let ordered = select_backend_addresses(&config, &LeastConnections::new(None), &counts, &health);
+    assert_eq!(
+        ordered.as_slice(),
+        [addr("10.0.0.2"), addr("10.0.0.1")],
+        "with everything ejected, order by strategy rather than by config"
+    );
 }
 
 #[tokio::test]

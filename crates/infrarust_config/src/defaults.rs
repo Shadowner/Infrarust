@@ -8,6 +8,10 @@ pub fn bind() -> SocketAddr {
     SocketAddr::from(([0, 0, 0, 0], 25565))
 }
 
+pub const fn connect_max_attempts() -> usize {
+    3
+}
+
 pub const fn connect_timeout() -> Duration {
     Duration::from_secs(5)
 }

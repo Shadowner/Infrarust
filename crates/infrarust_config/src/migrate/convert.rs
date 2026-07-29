@@ -177,6 +177,7 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
         id: None,
         name,
         network: None,
+        active_health: None,
         domains: v1.domains.clone(),
         addresses,
         balance: BalanceStrategy::default(),
@@ -490,8 +491,8 @@ fn convert_ip_filter(
 use super::v1_types::V1InfrarustConfig;
 use crate::proxy::ProxyConfig;
 use crate::types::{
-    BanConfig, DockerProviderConfig, KeepaliveConfig, MetricsConfig, RateLimitConfig,
-    ResourceConfig, StatusCacheConfig, TelemetryConfig, TracesConfig,
+    ActiveHealthConfig, BanConfig, DockerProviderConfig, KeepaliveConfig, MetricsConfig,
+    RateLimitConfig, ResourceConfig, StatusCacheConfig, TelemetryConfig, TracesConfig,
 };
 
 pub struct ProxyMigrationResult {
@@ -733,8 +734,10 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
 
     let config = ProxyConfig {
         bind,
+        active_health: ActiveHealthConfig::default(),
         max_connections: 0,
         connect_timeout: crate::defaults::connect_timeout(),
+        connect_max_attempts: crate::defaults::connect_max_attempts(),
         receive_proxy_protocol,
         servers_dir,
         plugins_dir: crate::defaults::plugins_dir(),

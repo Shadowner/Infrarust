@@ -140,6 +140,7 @@ export default
               { text: 'Overview', link: '/configuration/' },
               { text: 'Global Settings', link: '/configuration/global' },
               { text: 'Server Definitions', link: '/configuration/servers' },
+              { text: 'Load Balancing', link: '/configuration/load-balancing' },
             ],
           },
           {

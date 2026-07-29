@@ -93,7 +93,7 @@ pub(super) async fn resolve_initial_mode(
     let choose = services.event_bus.fire(choose).await;
 
     let mut initial_mode: Option<ConnectionMode> = None;
-    let target_server_id = match choose.result() {
+    let mut target_server_id = match choose.result() {
         infrarust_api::events::connection::PlayerChooseInitialServerResult::Allowed => {
             initial_server.clone()
         }
@@ -156,13 +156,54 @@ pub(super) async fn resolve_initial_mode(
                 initial_mode = Some(ConnectionMode::Limbo(
                     handlers,
                     LimboEntryContext::InitialConnection {
-                        target_server: initial_server.clone(),
+                        target_server: target_server_id.clone(),
                     },
                 ));
             }
-            _ => {} // ConnectTo, VirtualBackend -- Phase 4
+            infrarust_api::events::connection::ServerPreConnectResult::ConnectTo(id) => {
+                target_server_id = id.clone();
+            }
+            _ => {}
         }
     }
+
+    let redirected = if target_server_id.as_str() == routing.config_id {
+        None
+    } else {
+        let Some((server_config, load_balancer)) = services
+            .domain_router
+            .find_route_by_server_id(target_server_id.as_str())
+        else {
+            tracing::warn!(
+                from = %routing.config_id,
+                to = %target_server_id,
+                "plugin redirected to an unknown server"
+            );
+            client
+                .disconnect("Unknown server", &services.packet_registry)
+                .await
+                .ok();
+            return Ok(InitialMode::Denied);
+        };
+        Some(RoutingData {
+            server_config,
+            config_id: target_server_id.to_string(),
+            load_balancer,
+        })
+    };
+
+    let routing = redirected.as_ref().unwrap_or(routing);
+    let server_config = &routing.server_config;
+
+    let redirected_targets = redirected.as_ref().map(|r| BackendTargets {
+        addresses: crate::loadbalancer::select_backend_addresses(
+            &r.server_config,
+            r.load_balancer.as_ref(),
+            services.pending_backends.as_ref(),
+            services.backend_health.as_ref(),
+        ),
+    });
+    let backend_targets = redirected_targets.as_ref().or(backend_targets);
 
     if initial_mode.is_none() && !server_config.limbo_handlers.is_empty() {
         prepare_client_for_limbo(client, auth_result, login_completed, version, services).await?;
@@ -173,7 +214,7 @@ pub(super) async fn resolve_initial_mode(
             initial_mode = Some(ConnectionMode::Limbo(
                 handlers,
                 LimboEntryContext::InitialConnection {
-                    target_server: initial_server.clone(),
+                    target_server: target_server_id.clone(),
                 },
             ));
         }
@@ -418,4 +459,128 @@ async fn ensure_login_complete_for_limbo(
 
     *login_completed = true;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    use infrarust_api::event::bus::{EventBus, EventBusExt};
+    use infrarust_api::event::EventPriority;
+    use infrarust_api::events::connection::{
+        PlayerChooseInitialServerEvent, PlayerChooseInitialServerResult,
+    };
+    use infrarust_api::types::ServerId;
+    use infrarust_config::ServerConfig;
+    use tokio::net::TcpListener;
+
+    use crate::pipeline::types::ConnectionIntent;
+
+    use crate::limbo::test_helpers::{test_client_bridge, test_profile, test_proxy_services};
+
+    fn config(name: &str, address: &str) -> ServerConfig {
+        toml::from_str(&format!(
+            "name = \"{name}\"\ndomains = [\"{name}.test\"]\naddresses = [\"{address}\"]\nproxy_mode = \"offline\"\n"
+        ))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn redirect_connects_to_the_redirected_server() {
+        let origin_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_addr = origin_listener.local_addr().unwrap();
+        let target_addr = target_listener.local_addr().unwrap();
+
+        let services = test_proxy_services();
+        services.domain_router.add(
+            crate::provider::ProviderId::file("origin"),
+            config("origin", &origin_addr.to_string()),
+        );
+        services.domain_router.add(
+            crate::provider::ProviderId::file("target"),
+            config("target", &target_addr.to_string()),
+        );
+
+        let bus: &dyn EventBus = services.event_bus.as_ref();
+        bus.subscribe::<PlayerChooseInitialServerEvent, _>(
+            EventPriority::NORMAL,
+            |event: &mut PlayerChooseInitialServerEvent| {
+                event.set_result(PlayerChooseInitialServerResult::Redirect(ServerId::new(
+                    "target",
+                )));
+            },
+        );
+
+        let version = ProtocolVersion::V1_20_2;
+        let (mut client, _client_stream) = test_client_bridge(version).await;
+        let (origin_config, load_balancer) = services
+            .domain_router
+            .find_route_by_server_id("origin")
+            .unwrap();
+
+        let auth_result = AuthResult {
+            player_id: infrarust_api::types::PlayerId::new(1),
+            player_uuid: uuid::Uuid::nil(),
+            username: "Redirected".to_string(),
+            api_profile: test_profile(),
+            login_completed: false,
+            online_mode: false,
+        };
+        let handshake = HandshakeData {
+            domain: "origin.test".to_string(),
+            port: 25565,
+            protocol_version: version,
+            intent: ConnectionIntent::Login,
+            raw_packets: vec![],
+        };
+        let peer_addr = "127.0.0.1:40000".parse().unwrap();
+        let connection_info = infrarust_transport::ConnectionInfo {
+            peer_addr,
+            real_ip: None,
+            real_port: None,
+            local_addr: peer_addr,
+            connected_at: tokio::time::Instant::now(),
+        };
+        // Stale pipeline targets: they still point at the origin server.
+        let stale_targets = BackendTargets {
+            addresses: smallvec::smallvec![origin_config.addresses[0].address.clone()],
+        };
+
+        let mode = resolve_initial_mode(
+            &mut client,
+            &auth_result,
+            &mut false,
+            &RoutingData {
+                server_config: origin_config,
+                config_id: "origin".to_string(),
+                load_balancer,
+            },
+            &handshake,
+            Some(&stale_targets),
+            version,
+            &services,
+            &BackendConnector::new(
+                std::time::Duration::from_secs(2),
+                infrarust_config::KeepaliveConfig::default(),
+            ),
+            &connection_info,
+        )
+        .await
+        .unwrap();
+
+        let InitialMode::Connected { mode, server_id } = mode else {
+            panic!("expected a backend connection");
+        };
+        assert_eq!(server_id.as_str(), "target");
+        let ConnectionMode::Backend(backend) = *mode else {
+            panic!("expected backend mode, got limbo");
+        };
+        assert_eq!(
+            backend.server_address().map(|a| a.port),
+            Some(target_addr.port()),
+            "the socket must reach the redirected server"
+        );
+    }
 }

@@ -27,8 +27,17 @@ fn test_gauge_up_down() {
 fn test_histogram_record() {
     let metrics = ProxyMetrics::new();
     metrics.record_connection_end(1.5, "test-server", "passthrough");
-    metrics.record_backend_connect(0.05, "test-server");
+    metrics.record_backend_connect(0.05, "test-server", "10.0.0.1:25565", true);
+    metrics.record_backend_connect(0.05, "test-server", "10.0.0.2:25565", false);
+    metrics.record_backend_status_latency(0.02, "test-server", "10.0.0.1:25565");
     metrics.record_handshake(0.01);
+}
+
+#[test]
+fn test_backend_health_transitions() {
+    let metrics = ProxyMetrics::new();
+    metrics.record_backend_health_transition("10.0.0.1:25565", "unhealthy");
+    metrics.record_backend_health_transition("10.0.0.1:25565", "healthy");
 }
 
 #[test]

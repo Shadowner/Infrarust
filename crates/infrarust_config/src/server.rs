@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::balance::default_aggression;
 use crate::types::{
-    BalanceConfig, BalanceStrategy, DomainRewrite, ForwardingMode, IpFilterConfig, MotdConfig,
-    ProxyMode, ServerAddress, ServerManagerConfig, TimeoutConfig, WeightedAddress,
+    ActiveHealthConfig, BalanceConfig, BalanceStrategy, DomainRewrite, ForwardingMode,
+    IpFilterConfig, MotdConfig, ProxyMode, ServerAddress, ServerManagerConfig, TimeoutConfig,
+    WeightedAddress,
 };
 
 /// Each file in `servers_dir/` deserializes into this type.
@@ -52,6 +53,10 @@ pub struct ServerConfig {
     /// Slow-start curve: 1.0 = linear, > 1.0 = softer start.
     #[serde(default = "default_aggression")]
     pub slow_start_aggression: f64,
+
+    /// Overrides the proxy-wide `active_health` settings for this server.
+    #[serde(default)]
+    pub active_health: Option<ActiveHealthConfig>,
 
     /// Proxy mode for this server
     #[serde(default)]

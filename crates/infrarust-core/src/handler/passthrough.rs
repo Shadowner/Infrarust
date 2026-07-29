@@ -173,10 +173,14 @@ impl PassthroughHandler {
             cmd_tx,
             session_token.clone(),
             crate::permissions::default_checker(),
+            Arc::clone(&self.services.backend_load),
         ));
 
         player_session.set_connected_address(Some(backend.server_address().clone()));
-        let session_id = self.services.connection_registry.register(player_session);
+        ctx.extensions
+            .remove::<crate::loadbalancer::PendingTicket>();
+        let session_guard = self.services.connection_registry.register(player_session);
+        let session_id = session_guard.uuid();
 
         tracing::info!(
             session = %session_id,
@@ -209,8 +213,7 @@ impl PassthroughHandler {
         )
         .await;
 
-        // Cleanup
-        let _ = self.services.connection_registry.unregister(&session_id);
+        drop(session_guard);
 
         // Record end metrics
         #[cfg(feature = "telemetry")]

@@ -9,7 +9,9 @@ use smallvec::SmallVec;
 use infrarust_config::{ServerAddress, ServerConfig};
 
 use crate::error::CoreError;
-use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, select_backend_addresses};
+use crate::loadbalancer::{
+    AddressConnectionCount, BackendHealthView, PendingRegistry, select_backend_addresses,
+};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::types::RoutingData;
@@ -31,6 +33,7 @@ impl BackendTargets {
 pub struct BackendSelectionMiddleware {
     registry: Arc<dyn AddressConnectionCount>,
     health: Arc<dyn BackendHealthView>,
+    pending: Option<Arc<PendingRegistry>>,
 }
 
 impl BackendSelectionMiddleware {
@@ -38,7 +41,18 @@ impl BackendSelectionMiddleware {
         registry: Arc<dyn AddressConnectionCount>,
         health: Arc<dyn BackendHealthView>,
     ) -> Self {
-        Self { registry, health }
+        Self {
+            registry,
+            health,
+            pending: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_pending(mut self, pending: Arc<PendingRegistry>) -> Self {
+        self.registry = Arc::clone(&pending) as _;
+        self.pending = Some(pending);
+        self
     }
 }
 
@@ -73,6 +87,9 @@ impl Middleware for BackendSelectionMiddleware {
                 "backend selection"
             );
 
+            if let (Some(pending), Some(picked)) = (&self.pending, targets.addresses.first()) {
+                ctx.extensions.insert(pending.reserve(picked));
+            }
             ctx.extensions.insert(targets);
             Ok(MiddlewareResult::Continue)
         })

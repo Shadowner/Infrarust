@@ -50,7 +50,28 @@ connect_timeout = "5s"
 
 How long the proxy waits when opening a TCP connection to a backend server. If the backend doesn't respond within this window, the connection attempt fails and the player sees an error.
 
+```toml
+connect_max_attempts = 3
+```
+
+How many of a server's backend addresses the proxy tries before giving up, which bounds worst-case login latency to `connect_max_attempts × connect_timeout`. Set it to `0` to try every address. See [Load balancing](./load-balancing).
+
 All duration fields accept human-readable strings: `"5s"`, `"30s"`, `"1m"`, `"2m30s"`.
+
+## Backend health probing
+
+```toml
+[active_health]
+enabled = true
+kind = "tcp"
+unhealthy_interval = "10s"
+probe_healthy = false
+interval = "30s"
+timeout = "3s"
+max_concurrent = 8
+```
+
+Background probing that brings ejected backend addresses back into rotation. Recovery probing is on by default and only touches addresses that are currently ejected, so it costs nothing while everything is healthy. Every key is documented in [Load balancing](./load-balancing), and any server can override the whole block.
 
 ## Server and plugin directories
 

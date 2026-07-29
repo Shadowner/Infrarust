@@ -73,6 +73,15 @@ impl DomainRouter {
     /// registered by another provider, the new registration wins
     /// (last-write-wins) and a warning is logged.
     pub fn add(&self, id: ProviderId, config: ServerConfig) {
+        self.insert(id, config, None);
+    }
+
+    fn insert(
+        &self,
+        id: ProviderId,
+        config: ServerConfig,
+        load_balancer: Option<Arc<dyn LoadBalancer>>,
+    ) {
         let mut registered_domains = Vec::new();
         let mut has_wildcards = false;
 
@@ -96,7 +105,8 @@ impl DomainRouter {
             registered_domains.push(normalized);
         }
 
-        let load_balancer = build_load_balancer(&config.balance_config());
+        let load_balancer =
+            load_balancer.unwrap_or_else(|| build_load_balancer(&config.balance_config()));
         self.configs.insert(
             id,
             RouterEntry {
@@ -114,9 +124,19 @@ impl DomainRouter {
     /// Updates an existing configuration.
     ///
     /// Removes old domain entries and re-registers with the new config.
+    /// The load balancer instance survives when nothing it depends on
+    /// changed, so an unrelated edit does not reset the rotation state.
     pub fn update(&self, id: ProviderId, config: ServerConfig) {
+        let reusable = self
+            .configs
+            .get(&id)
+            .filter(|entry| {
+                entry.config.balance_config() == config.balance_config()
+                    && entry.config.addresses == config.addresses
+            })
+            .map(|entry| Arc::clone(&entry.load_balancer));
         self.remove(&id);
-        self.add(id, config);
+        self.insert(id, config, reusable);
     }
 
     /// Removes a configuration and all its domain entries.

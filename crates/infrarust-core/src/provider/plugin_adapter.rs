@@ -87,6 +87,7 @@ fn convert_api_to_config(
         balance: Default::default(),
         slow_start: None,
         slow_start_aggression: 1.0,
+        active_health: None,
         proxy_mode,
         forwarding_mode: None,
         send_proxy_protocol: api.send_proxy_protocol,

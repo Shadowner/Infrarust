@@ -5,14 +5,27 @@ mod factory;
 mod first_available;
 mod health;
 mod least_conn;
+mod load;
+mod observer;
+mod pending;
+mod prober;
 mod round_robin;
 mod selection;
 mod slow_start;
 
 pub use factory::build_load_balancer;
 pub use first_available::FirstAvailable;
-pub use health::{BackendHealthView, PassiveBackendHealth};
+pub use health::{
+    BackendHealthView, BackendState, HealthSnapshot, HealthTransitionListener,
+    PassiveBackendHealth,
+};
 pub use least_conn::LeastConnections;
+pub use load::BackendLoad;
+pub use observer::BackendAttemptObserver;
+#[cfg(feature = "telemetry")]
+pub use observer::HealthTransitionMetrics;
+pub use pending::{PendingRegistry, PendingTicket};
+pub use prober::ActiveHealthProber;
 pub use round_robin::RoundRobin;
 pub use selection::select_backend_addresses;
 pub use slow_start::SlowStartConfig;
@@ -28,8 +41,15 @@ pub struct BackendCandidate {
     pub address: ServerAddress,
     pub weight: u32,
     pub active_connections: usize,
-    pub healthy: bool,
+    pub state: BackendState,
     pub healthy_since: Option<Instant>,
+    pub probe: bool,
+}
+
+impl BackendCandidate {
+    pub const fn is_healthy(&self) -> bool {
+        matches!(self.state, BackendState::Healthy)
+    }
 }
 
 /// Ordering strategy for the backend addresses of a `ServerConfig`, applied
@@ -47,10 +67,13 @@ pub trait LoadBalancer: Send + Sync {
     /// - `candidates` is never empty (guaranteed by the middleware; a
     ///   `ServerConfig` always has ≥ 1 address).
     /// - **Healthy** candidates come first, ordered by the strategy.
-    /// - **Unhealthy** candidates are appended at the tail (config order)
-    ///   as a last-resort failover.
-    /// - If *all* are unhealthy: all returned in config order. Never an
+    /// - **Ejected** candidates are appended at the tail as a last-resort
+    ///   failover, probe-eligible ones first, config order within each group.
+    /// - If *all* are ejected: all returned in that tail order. Never an
     ///   empty list — better to try and fail than deny any chance.
+    ///
+    /// Probe hoisting is applied by [`select_backend_addresses`] on top of
+    /// this order, so strategies never deal with it.
     fn order<'a>(&self, candidates: &'a [BackendCandidate]) -> SmallVec<[&'a BackendCandidate; 4]>;
 }
 
@@ -63,7 +86,10 @@ pub trait AddressConnectionCount: Send + Sync {
     fn active_connections_for_address(&self, addr: &ServerAddress) -> usize;
 }
 
-/// Splits healthy / unhealthy, preserving config order within each group.
+/// Splits selectable / last-resort, preserving config order within each group.
+///
+/// The tail keeps probe-eligible addresses ahead of still-ejected ones, so a
+/// forced failover prefers the address closest to recovery.
 fn split_health(
     candidates: &[BackendCandidate],
 ) -> (
@@ -71,19 +97,33 @@ fn split_health(
     SmallVec<[&BackendCandidate; 4]>,
 ) {
     let mut healthy = SmallVec::new();
-    let mut unhealthy = SmallVec::new();
+    let mut probing = SmallVec::new();
+    let mut unhealthy: SmallVec<[&BackendCandidate; 4]> = SmallVec::new();
     for c in candidates {
-        if c.healthy {
-            healthy.push(c);
-        } else {
-            unhealthy.push(c);
+        match c.state {
+            BackendState::Healthy => healthy.push(c),
+            BackendState::Probing => probing.push(c),
+            BackendState::Unhealthy => unhealthy.push(c),
         }
     }
-    (healthy, unhealthy)
+    probing.extend(unhealthy);
+    (healthy, probing)
 }
 
 #[cfg(test)]
 pub(crate) fn test_candidate(host: &str, healthy: bool) -> BackendCandidate {
+    test_candidate_in(
+        host,
+        if healthy {
+            BackendState::Healthy
+        } else {
+            BackendState::Unhealthy
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn test_candidate_in(host: &str, state: BackendState) -> BackendCandidate {
     BackendCandidate {
         address: ServerAddress {
             host: host.to_string(),
@@ -91,8 +131,9 @@ pub(crate) fn test_candidate(host: &str, healthy: bool) -> BackendCandidate {
         },
         weight: 1,
         active_connections: 0,
-        healthy,
+        state,
         healthy_since: None,
+        probe: false,
     }
 }
 
@@ -128,8 +169,16 @@ mod tests {
         for lb in strategies() {
             let ordered = lb.order(&candidates);
             assert_eq!(ordered.len(), 4, "{}", lb.name());
-            assert!(ordered[0].healthy && ordered[1].healthy, "{}", lb.name());
-            assert!(!ordered[2].healthy && !ordered[3].healthy, "{}", lb.name());
+            assert!(
+                ordered[0].is_healthy() && ordered[1].is_healthy(),
+                "{}",
+                lb.name()
+            );
+            assert!(
+                !ordered[2].is_healthy() && !ordered[3].is_healthy(),
+                "{}",
+                lb.name()
+            );
         }
     }
 
@@ -148,17 +197,31 @@ mod tests {
     }
 
     #[test]
+    fn test_order_puts_probing_ahead_of_unhealthy() {
+        let candidates = vec![
+            test_candidate_in("a", BackendState::Unhealthy),
+            test_candidate_in("b", BackendState::Probing),
+            test_candidate_in("c", BackendState::Healthy),
+        ];
+        for lb in strategies() {
+            let ordered = lb.order(&candidates);
+            let hosts: Vec<&str> = ordered.iter().map(|c| c.address.host.as_str()).collect();
+            assert_eq!(hosts, ["c", "b", "a"], "{}", lb.name());
+        }
+    }
+
+    #[test]
     fn test_split_health_preserves_config_order() {
         let candidates = vec![
             test_candidate("a", true),
             test_candidate("b", false),
             test_candidate("c", true),
-            test_candidate("d", false),
+            test_candidate_in("d", BackendState::Probing),
         ];
-        let (healthy, unhealthy) = split_health(&candidates);
+        let (healthy, tail) = split_health(&candidates);
         let h: Vec<&str> = healthy.iter().map(|c| c.address.host.as_str()).collect();
-        let u: Vec<&str> = unhealthy.iter().map(|c| c.address.host.as_str()).collect();
+        let t: Vec<&str> = tail.iter().map(|c| c.address.host.as_str()).collect();
         assert_eq!(h, ["a", "c"]);
-        assert_eq!(u, ["b", "d"]);
+        assert_eq!(t, ["d", "b"], "probe-eligible before still-ejected");
     }
 }

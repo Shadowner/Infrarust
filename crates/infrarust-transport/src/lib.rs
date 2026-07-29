@@ -12,7 +12,7 @@ pub mod listener;
 pub mod proxy_protocol;
 pub mod socket;
 
-pub use backend::{BackendConnection, BackendConnector, ConnectAttemptObserver};
+pub use backend::{BackendConnection, BackendConnector, ConnectAttempt, ConnectAttemptObserver};
 pub use connection::{ClientConnection, ConnectionInfo};
 pub use error::{TransportError, TransportResult};
 pub use forward::{CopyForwarder, ForwardEndReason, ForwardResult, Forwarder, select_forwarder};

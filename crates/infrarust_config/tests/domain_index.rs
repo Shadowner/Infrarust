@@ -11,6 +11,7 @@ fn make_config(id: &str, domains: &[&str], addr: &str) -> ServerConfig {
         balance: Default::default(),
         slow_start: None,
         slow_start_aggression: 1.0,
+        active_health: None,
         proxy_mode: ProxyMode::default(),
         forwarding_mode: None,
         send_proxy_protocol: false,

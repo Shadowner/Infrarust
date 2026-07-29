@@ -19,9 +19,7 @@ The load balancer distributes TCP connections to one or more Infrarust instances
 
 ## Multiple backend addresses
 
-A server config can list several addresses in the `addresses` array. Infrarust tries each one in order and uses the first that connects successfully. This is sequential failover, not load balancing: Infrarust does not distribute connections across backends.
-
-Per-backend load balancing (round-robin, least-connections) is planned but not yet available on the main branch.
+A server config can list several addresses in the `addresses` array, and Infrarust distributes sessions across them with weighted round-robin or least-connections. That is a separate concern from the load balancer in front of the proxy, and it is documented in [Load balancing](../configuration/load-balancing).
 
 ## Proxy protocol
 

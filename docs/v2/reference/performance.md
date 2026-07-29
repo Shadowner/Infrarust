@@ -112,7 +112,7 @@ Set this as a backstop against resource exhaustion (file descriptors, memory) ra
 
 ## A note on load balancing
 
-Listing several `addresses` for one server does sequential failover, not load balancing: Infrarust tries each address in order until one connects. Per-backend load balancing (round-robin, least-connections) is not on the main branch. Treat it as planned, not available.
+Listing several `addresses` for one server spreads sessions across them. The default strategy is `first_available`, which keeps the old sequential failover behavior; switch to `round_robin` or `least_conn` to actually distribute load. Per-address connection counting is O(1), so it costs nothing measurable per login. See [Load balancing](../configuration/load-balancing).
 
 ## Where to measure
 

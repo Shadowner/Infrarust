@@ -153,7 +153,7 @@ pub async fn perform_switch(
     let addresses = crate::loadbalancer::select_backend_addresses(
         &server_config,
         load_balancer.as_ref(),
-        services.connection_registry.as_ref(),
+        services.pending_backends.as_ref(),
         services.backend_health.as_ref(),
     );
 

@@ -16,4 +16,4 @@ pub(crate) mod spawn; // Spawn sequence (version-branched)
 pub(crate) mod virtual_session; // VirtualSessionCore — shared plumbing
 
 #[cfg(test)]
-mod test_helpers; // Shared test utilities
+pub(crate) mod test_helpers; // Shared test utilities

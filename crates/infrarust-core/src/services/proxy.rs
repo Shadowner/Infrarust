@@ -37,6 +37,11 @@ pub struct ProxyServices {
     pub command_manager: Arc<CommandManagerImpl>,
     /// Connection registry for tracking active player sessions.
     pub connection_registry: Arc<ConnectionRegistry>,
+    /// Per-address session counts, handed to every `PlayerSession`.
+    pub backend_load: Arc<crate::loadbalancer::BackendLoad>,
+    /// Counts as backend selection sees them: attached sessions plus logins
+    /// still negotiating. Used for selection outside the login pipeline.
+    pub pending_backends: Arc<crate::loadbalancer::PendingRegistry>,
     /// Packet registry for decoding/encoding packets by version.
     pub packet_registry: Arc<PacketRegistry>,
     /// Server manager for starting/stopping managed servers.

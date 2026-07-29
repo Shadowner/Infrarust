@@ -80,6 +80,7 @@ pub async fn test_client_bridge(version: ProtocolVersion) -> (ClientBridge, TcpS
 
 pub fn test_proxy_services() -> ProxyServices {
     let connection_registry = Arc::new(ConnectionRegistry::new());
+    let backend_load = Arc::new(crate::loadbalancer::BackendLoad::new());
     let packet_registry = Arc::new(test_registry());
     let ban_storage: Arc<dyn BanStorage> = Arc::new(NullBanStorage);
     let provider: Arc<dyn crate::registry_data::RegistryDataProvider> =
@@ -90,6 +91,11 @@ pub fn test_proxy_services() -> ProxyServices {
         player_registry: Arc::new(PlayerRegistryImpl::new(Arc::clone(&connection_registry))),
         command_manager: Arc::new(CommandManagerImpl::new()),
         connection_registry,
+        pending_backends: Arc::new(crate::loadbalancer::PendingRegistry::new(
+            Arc::clone(&backend_load) as _,
+            std::time::Duration::from_secs(10),
+        )),
+        backend_load,
         packet_registry,
         server_manager: None,
         ban_manager: Arc::new(BanManager::new(

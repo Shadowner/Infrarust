@@ -179,33 +179,36 @@ impl InterceptedHandler {
             auth_result.api_profile.clone(),
             infrarust_api::types::ProtocolVersion::new(version.0),
             ctx.peer_addr,
-            Some(infrarust_api::types::ServerId::new(
-                routing.config_id.clone(),
-            )),
+            Some(target_server_id.clone()),
             true, // active: intercepted modes support packet injection
             auth_result.online_mode,
             cmd_tx,
             session_token.clone(),
             permission_checker,
+            Arc::clone(&self.services.backend_load),
         ));
 
         if let initial_connect::ConnectionMode::Backend(ref backend) = initial_mode {
             player_session.set_connected_address(backend.server_address().cloned());
         }
+        // The session now owns the accounting for this address.
+        ctx.extensions
+            .remove::<crate::loadbalancer::PendingTicket>();
 
-        let session_id = self.services.connection_registry.register(player_session);
+        let session_guard = self.services.connection_registry.register(player_session);
+        let session_id = session_guard.uuid();
 
         let mode_label = self.auth_strategy.mode_label();
         tracing::info!(
             session = %session_id,
-            server = %routing.config_id,
+            server = %target_server_id,
             username = %auth_result.username,
             mode = mode_label,
             "session started"
         );
 
         #[cfg(feature = "telemetry")]
-        super::helpers::record_session_start(&self.metrics, &routing.config_id, mode_label);
+        super::helpers::record_session_start(&self.metrics, target_server_id.as_str(), mode_label);
 
         let (mut client_codec_chain, mut server_codec_chain) =
             crate::filter::codec_chain::build_codec_chains(
@@ -216,6 +219,7 @@ impl InterceptedHandler {
                 Some(ctx.client_ip),
             );
 
+        let session_server = target_server_id.clone();
         let mut cmd_rx = cmd_rx;
         let outcome = session_loop::run_session_loop(
             &mut client,
@@ -245,19 +249,17 @@ impl InterceptedHandler {
             &self.services.event_bus,
             auth_result.player_id,
             auth_result.username.clone(),
-            Some(infrarust_api::types::ServerId::new(
-                routing.config_id.clone(),
-            )),
+            Some(session_server.clone()),
         )
         .await;
 
-        let _ = self.services.connection_registry.unregister(&session_id);
+        drop(session_guard);
 
         #[cfg(feature = "telemetry")]
         super::helpers::record_session_end(
             &self.metrics,
             ctx.connection_duration(),
-            &routing.config_id,
+            session_server.as_str(),
             mode_label,
         );
 
