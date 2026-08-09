@@ -8,6 +8,7 @@ import {
 } from '@heroicons/vue/24/outline';
 import type { ProxyStatus, ServerDto, StatsDto, ApiEnvelope, MutationResult, RecentEventDto } from '~/types/api';
 import { formatDuration } from '~/utils/time';
+import { resolveServerStatus } from '~/utils/serverStatus';
 import type { PlayerJoinPayload, PlayerLeavePayload, ServerStateChangePayload, BanEventPayload } from '~/types/events';
 
 const { request } = useApi();
@@ -55,14 +56,7 @@ const liveUptime = computed(() => {
   return formatDuration(uptimeBaseSeconds.value + elapsed);
 });
 
-function serverDotClass(server: ServerDto) {
-  const h = getHealth(server.id);
-  if (h) return h.online ? 'bg-[var(--ir-success)] status-pulse' : 'bg-[var(--ir-danger)]';
-  if (server.state === 'online') return 'bg-[var(--ir-success)] status-pulse';
-  if (server.state === 'crashed') return 'bg-[var(--ir-danger)]';
-  if (['starting', 'stopping'].includes(server.state ?? '')) return 'bg-[var(--ir-warn)]';
-  return 'bg-slate-500';
-}
+const serverStatus = (server: ServerDto) => resolveServerStatus(server, getHealth(server.id));
 
 function addEvent(type: string, summary: string, timestamp?: string) {
   eventItems.value = [
@@ -77,11 +71,28 @@ onEvent('stats.tick', (data) => {
   if (proxyStatus.value) {
     if (d.players_online !== undefined) proxyStatus.value = { ...proxyStatus.value, players_online: d.players_online };
   }
+  if (stats.value) {
+    stats.value = { ...stats.value, ...d };
+  }
   if (typeof d.uptime_seconds === 'number') {
     uptimeBaseSeconds.value = d.uptime_seconds;
     uptimeBaseTime.value = Date.now();
   }
 });
+
+const fleetBreakdown = computed(() => [
+  { label: 'online', count: stats.value?.servers_online ?? 0, dot: 'bg-[var(--ir-success)]' },
+  { label: 'sleeping', count: stats.value?.servers_sleeping ?? 0, dot: 'bg-slate-400' },
+  { label: 'offline', count: stats.value?.servers_offline ?? 0, dot: 'bg-[var(--ir-danger)]' },
+]);
+
+const playersOn = (id: string) => stats.value?.players_by_server?.[id] ?? 0;
+
+const busiestServers = computed(() =>
+  Object.entries(stats.value?.players_by_server ?? {})
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1])
+);
 
 // Player events → event feed
 onEvent('player.join', (data) => {
@@ -147,20 +158,33 @@ const quickActions = [
 <template>
   <div class="grid gap-5">
     <!-- Metric tiles -->
-    <section class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <section class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       <StatCard label="Version" :value="proxyStatus?.version ?? '—'" hint="Proxy build" />
       <StatCard label="Uptime" :value="liveUptime" hint="Since last restart" />
       <StatCard label="Players Online" :value="proxyStatus?.players_online ?? 0" hint="Active connections" />
-      <StatCard label="Servers" :value="proxyStatus?.servers_count ?? 0" hint="Configured nodes" />
+      <StatCard
+        label="Servers"
+        :value="stats?.servers_total ?? proxyStatus?.servers_count ?? 0"
+        :hint="`${stats?.servers_online ?? 0} online · ${stats?.servers_sleeping ?? 0} sleeping · ${stats?.servers_offline ?? 0} offline`"
+      />
+      <StatCard label="Active Bans" :value="stats?.bans_active ?? 0" hint="Currently enforced" />
     </section>
 
     <!-- Main grid: Fleet + Activity + Actions -->
     <section class="grid gap-4 lg:grid-cols-[2fr_1fr] xl:grid-cols-[3fr_2fr_auto]">
       <!-- Server Fleet Mini -->
       <div class="glass-pane p-5">
-        <div class="mb-4 flex items-center gap-2">
-          <ServerStackIcon class="h-4 w-4 text-[var(--ir-accent)]" />
-          <h2 class="text-sm font-semibold uppercase tracking-[0.08em]">Server Fleet</h2>
+        <div class="mb-4 flex flex-wrap items-center gap-3">
+          <div class="flex items-center gap-2">
+            <ServerStackIcon class="h-4 w-4 text-[var(--ir-accent)]" />
+            <h2 class="text-sm font-semibold uppercase tracking-[0.08em]">Server Fleet</h2>
+          </div>
+          <div v-if="stats" class="flex items-center gap-3">
+            <span v-for="entry in fleetBreakdown" :key="entry.label" class="flex items-center gap-1.5 text-[10px] text-[var(--ir-text-muted)]">
+              <span class="h-1.5 w-1.5 rounded-full" :class="entry.dot" />
+              {{ entry.count }} {{ entry.label }}
+            </span>
+          </div>
         </div>
         <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           <NuxtLink
@@ -169,11 +193,17 @@ const quickActions = [
             :to="`/servers/${server.id}`"
             class="flex items-center gap-3 rounded-lg border border-[var(--ir-border)] bg-[var(--ir-surface-soft)] p-3 transition-all duration-150 hover:border-[var(--ir-border-strong)] hover:bg-[var(--ir-surface)]"
           >
-            <span class="h-2.5 w-2.5 shrink-0 rounded-full" :class="serverDotClass(server)" />
+            <ServerStateDot :status="serverStatus(server)" />
             <div class="min-w-0 flex-1">
               <p class="truncate text-sm font-medium">{{ server.id }}</p>
-              <p class="truncate text-[10px] text-[var(--ir-text-muted)]">{{ server.domains?.join(', ') }}</p>
+              <p class="truncate text-[10px] text-[var(--ir-text-muted)]">
+                <span class="uppercase tracking-[0.08em]">{{ serverStatus(server) }}</span>
+                <template v-if="server.domains?.length"> · {{ server.domains.join(', ') }}</template>
+              </p>
             </div>
+            <span v-if="playersOn(server.id) > 0" class="shrink-0 rounded-full bg-[var(--ir-accent-soft)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--ir-accent)]">
+              {{ playersOn(server.id) }}p
+            </span>
             <span v-if="getHealth(server.id)?.latency_ms != null" class="shrink-0 font-mono text-[10px] text-[var(--ir-text-muted)]">
               {{ getHealth(server.id)?.latency_ms }}ms
             </span>
@@ -189,6 +219,21 @@ const quickActions = [
       <div class="glass-pane p-5">
         <h2 class="mb-4 text-sm font-semibold uppercase tracking-[0.08em]">Activity</h2>
         <EventFeed :items="eventItems" />
+
+        <div v-if="busiestServers.length" class="mt-5 border-t border-[var(--ir-border)] pt-4">
+          <h3 class="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Players by server</h3>
+          <div class="space-y-1.5">
+            <NuxtLink
+              v-for="[id, count] in busiestServers"
+              :key="id"
+              :to="`/servers/${id}`"
+              class="flex items-center justify-between gap-3 text-xs text-[var(--ir-text-muted)] transition-colors hover:text-white"
+            >
+              <span class="truncate font-mono">{{ id }}</span>
+              <span class="font-mono text-[var(--ir-text)]">{{ count }}</span>
+            </NuxtLink>
+          </div>
+        </div>
       </div>
 
       <!-- Quick Actions -->

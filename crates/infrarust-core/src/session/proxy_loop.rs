@@ -19,13 +19,13 @@ use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfi
 use infrarust_protocol::packets::login::{
     CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged,
 };
+use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::packets::play::chat_session::SChatSessionUpdate;
 use infrarust_protocol::packets::play::commands::CCommands;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
 use infrarust_protocol::packets::play::tab_complete::{
     CTabCompleteResponse, STabCompleteRequest, TabCompleteMatch,
 };
-use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
@@ -99,13 +99,19 @@ impl HotIds {
         use Direction::{Clientbound, Serverbound};
         Self {
             s_chat_session: registry.get_packet_id::<SChatSessionUpdate>(
-                Play, Serverbound, version,
+                Play,
+                Serverbound,
+                version,
             ),
             s_tab_request: registry.get_packet_id::<STabCompleteRequest>(
-                Play, Serverbound, version,
+                Play,
+                Serverbound,
+                version,
             ),
             c_tab_response: registry.get_packet_id::<CTabCompleteResponse>(
-                Play, Clientbound, version,
+                Play,
+                Clientbound,
+                version,
             ),
             s_chat_command: registry.get_packet_id::<SChatCommand>(Play, Serverbound, version),
             s_chat_message: registry.get_packet_id::<SChatMessage>(Play, Serverbound, version),
@@ -475,9 +481,12 @@ async fn handle_client_to_backend(
         }
 
         // Chat/command detection (serverbound only)
-        if let Some(action) =
-            detect_chat_or_command(&frame, hot_ids.s_chat_command, hot_ids.s_chat_message, version)
-        {
+        if let Some(action) = detect_chat_or_command(
+            &frame,
+            hot_ids.s_chat_command,
+            hot_ids.s_chat_message,
+            version,
+        ) {
             match action {
                 ChatAction::Command(input) => {
                     // CommandManager first

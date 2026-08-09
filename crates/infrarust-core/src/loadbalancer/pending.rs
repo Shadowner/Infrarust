@@ -149,7 +149,9 @@ mod tests {
     fn expired_reservations_are_swept_without_their_ticket() {
         let registry = registry(Duration::ZERO);
         let a = addr("a");
-        let leaked: Vec<PendingTicket> = (0..=SWEEP_INTERVAL_OPS).map(|_| registry.reserve(&a)).collect();
+        let leaked: Vec<PendingTicket> = (0..=SWEEP_INTERVAL_OPS)
+            .map(|_| registry.reserve(&a))
+            .collect();
         assert_eq!(
             registry.pending_for(&a),
             0,

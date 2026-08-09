@@ -72,7 +72,11 @@ impl ProxyServer {
     /// Returns `CoreError` on favicon loading, provider initialization,
     /// or Mojang auth key generation failures.
     #[allow(clippy::too_many_lines)]
-    pub async fn new(config: ProxyConfig, shutdown: CancellationToken) -> Result<Self, CoreError> {
+    pub async fn new(
+        config: ProxyConfig,
+        config_path: std::path::PathBuf,
+        shutdown: CancellationToken,
+    ) -> Result<Self, CoreError> {
         // Create domain router (initially empty — providers populate it)
         let domain_router = Arc::new(DomainRouter::new());
 
@@ -91,6 +95,10 @@ impl ProxyServer {
             crate::loadbalancer::HealthTransitionMetrics(Arc::clone(&proxy_metrics)),
         ));
         let backend_health = Arc::new(backend_health);
+        backend_health.add_listener(Arc::new(crate::loadbalancer::HealthTransitionEvents::new(
+            Arc::clone(&domain_router),
+            Arc::clone(&event_bus),
+        )));
 
         let backend_observer = Arc::new(crate::loadbalancer::BackendAttemptObserver::new(
             Arc::clone(&backend_health),
@@ -268,8 +276,16 @@ impl ProxyServer {
             server_manager: server_manager.clone(),
             ban_manager: Arc::clone(&ban_manager),
             config: Arc::new(config.clone()),
+            config_path,
             domain_router: Arc::clone(&domain_router),
             backend_health: Arc::clone(&backend_health) as _,
+            load_balancer_service: Arc::new(
+                crate::services::load_balancer_service::LoadBalancerServiceImpl::new(
+                    Arc::clone(&domain_router),
+                    Arc::clone(&backend_health),
+                    Arc::clone(&pending_backends) as _,
+                ),
+            ),
             codec_filter_registry: Arc::clone(&codec_filter_registry),
             transport_filter_chain: crate::filter::transport_chain::TransportFilterChain::empty(),
             limbo_handler_registry,
@@ -383,19 +399,15 @@ impl ProxyServer {
             .ban_manager
             .start_purge_task(config.ban.purge_interval, self.shutdown.clone());
 
-        let _prober_handle = if config.active_health.enabled {
-            Some(
-                Arc::new(crate::loadbalancer::ActiveHealthProber::new(
-                    Arc::clone(&self.services.domain_router),
-                    Arc::clone(&self.backend_health),
-                    Arc::clone(&self.services.packet_registry),
-                    config,
-                ))
-                .spawn(self.shutdown.clone()),
-            )
-        } else {
-            None
-        };
+        // Always spawned: whether an address is probed is resolved per server,
+        // so a server can opt in while the proxy-wide block opts out.
+        let _prober_handle = Arc::new(crate::loadbalancer::ActiveHealthProber::new(
+            Arc::clone(&self.services.domain_router),
+            Arc::clone(&self.backend_health),
+            Arc::clone(&self.services.packet_registry),
+            config,
+        ))
+        .spawn(self.shutdown.clone());
 
         // Config hot-reload is handled by the ProviderRegistry (started in new())
 

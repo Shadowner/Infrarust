@@ -184,13 +184,14 @@ pub fn validate_server_configs(configs: &[ServerConfig]) -> Result<(), ConfigErr
     Ok(())
 }
 
-/// Validates the global proxy configuration.
+/// Validates the global proxy configuration the proxy is about to run on.
 ///
 /// Checks:
 /// - `servers_dir` exists on disk
 /// - `connect_timeout`, rate-limit windows and `docker.poll_interval` are non-zero
 /// - `telemetry.protocol` is `"grpc"` or `"http"`
 /// - `web.bind` is a parseable `host:port` and does not collide with `bind`
+/// - `web.api_key` is one [`WebConfig::resolve_api_key`](crate::WebConfig::resolve_api_key) accepts
 ///
 /// Logs a warning when plugins are configured but `plugins_dir` is missing
 /// (not fatal: built-in plugins don't need the directory).
@@ -205,6 +206,31 @@ pub fn validate_proxy_config(config: &ProxyConfig) -> Result<(), ConfigError> {
         return Err(ConfigError::DirectoryNotFound(config.servers_dir.clone()));
     }
 
+    validate_proxy_document(config)?;
+
+    if !config.plugins.is_empty() && !config.plugins_dir.is_dir() {
+        tracing::warn!(
+            plugins_dir = %config.plugins_dir.display(),
+            "plugins are configured but plugins_dir does not exist \
+             (only built-in plugins will be available)"
+        );
+    }
+
+    Ok(())
+}
+
+/// Validates everything in a proxy configuration document except where its
+/// directories point.
+///
+/// A running proxy may have been started with `--servers-dir` or
+/// `--plugins-dir`, so the paths a document carries do not decide whether it
+/// boots; [`validate_proxy_config`] checks them against the process that is
+/// about to use them.
+///
+/// # Errors
+///
+/// Returns [`ConfigError::Validation`] for any failed check.
+pub fn validate_proxy_document(config: &ProxyConfig) -> Result<(), ConfigError> {
     if config.connect_timeout.is_zero() {
         return Err(ConfigError::Validation(
             "connect_timeout must be greater than zero".to_string(),
@@ -243,14 +269,16 @@ pub fn validate_proxy_config(config: &ProxyConfig) -> Result<(), ConfigError> {
 
     if let Some(web) = &config.web {
         validate_web_bind(&web.bind, config.bind)?;
-    }
-
-    if !config.plugins.is_empty() && !config.plugins_dir.is_dir() {
-        tracing::warn!(
-            plugins_dir = %config.plugins_dir.display(),
-            "plugins are configured but plugins_dir does not exist \
-             (only built-in plugins will be available)"
-        );
+        if web.enable_webui == Some(true) && !web.enable_api {
+            return Err(ConfigError::Validation(
+                "web.enable_webui requires web.enable_api: the dashboard is served by the \
+                 admin API and cannot run without it"
+                    .to_string(),
+            ));
+        }
+        if web.enable_api {
+            web.check_api_key().map_err(ConfigError::Validation)?;
+        }
     }
 
     Ok(())

@@ -17,7 +17,9 @@ use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::NoopServerManager;
 
 mod mock_services;
-use mock_services::{MockBanService, MockConfigService, MockPlayerRegistry};
+use mock_services::{
+    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
+};
 
 struct DummyLimbo;
 
@@ -43,6 +45,7 @@ fn build_services() -> PluginServices {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        load_balancer_service: Arc::new(MockLoadBalancerService),
         plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),

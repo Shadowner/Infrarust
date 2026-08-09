@@ -194,7 +194,9 @@ pub enum PlayerChooseInitialServerResult {
     Allowed,
     /// Redirect to a different server.
     Redirect(ServerId),
-    SendToLimbo { limbo_handlers: Vec<String> },
+    SendToLimbo {
+        limbo_handlers: Vec<String>,
+    },
 }
 
 impl PlayerChooseInitialServerEvent {

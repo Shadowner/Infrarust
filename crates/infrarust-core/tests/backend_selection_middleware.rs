@@ -12,8 +12,8 @@ use smallvec::SmallVec;
 
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_core::loadbalancer::{
-    AddressConnectionCount, BackendCandidate, BackendHealthView, BackendState, HealthSnapshot, LeastConnections, LoadBalancer, PendingRegistry, PendingTicket,
-    select_backend_addresses,
+    AddressConnectionCount, BackendCandidate, BackendHealthView, BackendState, HealthSnapshot,
+    LeastConnections, LoadBalancer, PendingRegistry, PendingTicket, select_backend_addresses,
 };
 use infrarust_core::middleware::backend_selection::{BackendSelectionMiddleware, BackendTargets};
 use infrarust_core::pipeline::context::ConnectionContext;
@@ -143,6 +143,14 @@ impl LoadBalancer for CapturingLb {
         "capturing"
     }
 
+    fn order_selectable<'a>(
+        &self,
+        selectable: &[&'a BackendCandidate],
+    ) -> SmallVec<[&'a BackendCandidate; 4]> {
+        selectable.iter().copied().collect()
+    }
+
+    /// Overridden to capture every candidate, ejected ones included.
     fn order<'a>(&self, candidates: &'a [BackendCandidate]) -> SmallVec<[&'a BackendCandidate; 4]> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         *self.seen.lock().unwrap() = candidates.to_vec();
@@ -360,9 +368,7 @@ async fn test_pending_reservations_spread_a_login_burst() {
 
     let picked: Vec<ServerAddress> = contexts
         .iter()
-        .map(|ctx| {
-            ctx.extensions.get::<BackendTargets>().unwrap().addresses[0].clone()
-        })
+        .map(|ctx| ctx.extensions.get::<BackendTargets>().unwrap().addresses[0].clone())
         .collect();
     let onto_one = picked.iter().filter(|a| **a == addr("10.0.0.2")).count();
     assert!(

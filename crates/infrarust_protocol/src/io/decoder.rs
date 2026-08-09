@@ -107,7 +107,12 @@ impl PacketDecoder {
             let packet_id = VarInt::decode(&mut cursor)?;
             let id_size = data.len() - cursor.len();
             let payload = data.slice(id_size..);
-            Ok(Some(PacketFrame::with_raw(packet_id.0, payload, wire, None)))
+            Ok(Some(PacketFrame::with_raw(
+                packet_id.0,
+                payload,
+                wire,
+                None,
+            )))
         } else {
             // Compression mode: [VarInt(data_len)] [compressed or raw data]
             let mut cursor = &data[..];

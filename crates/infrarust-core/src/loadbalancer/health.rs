@@ -1,11 +1,11 @@
 //! Backend health view consumed by the load balancer.
 
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 
 use infrarust_config::ServerAddress;
 use infrarust_transport::{ConnectAttempt, ConnectAttemptObserver};
@@ -15,6 +15,21 @@ pub enum BackendState {
     Healthy,
     Probing,
     Unhealthy,
+    /// Taken out of rotation by an operator. Distinct from `Unhealthy`: a
+    /// drained address is not even offered as a last-resort failover.
+    Draining,
+}
+
+impl BackendState {
+    pub const fn to_api(self) -> infrarust_api::services::load_balancer::BackendState {
+        use infrarust_api::services::load_balancer::BackendState as Api;
+        match self {
+            Self::Healthy => Api::Healthy,
+            Self::Probing => Api::Probing,
+            Self::Unhealthy => Api::Unhealthy,
+            Self::Draining => Api::Draining,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +45,15 @@ impl HealthSnapshot {
             healthy_since: None,
         }
     }
+}
+
+/// Everything the admin API reports about one address.
+#[derive(Debug, Clone, Copy)]
+pub struct BackendReport {
+    pub state: BackendState,
+    pub healthy_since: Option<Instant>,
+    pub ejections: u32,
+    pub last_failure: Option<Instant>,
 }
 
 pub trait BackendHealthView: Send + Sync {
@@ -86,6 +110,16 @@ impl AddressHealth {
         self.last_failure
             .is_some_and(|at| now.duration_since(at) >= self.backoff())
     }
+
+    fn state(&self, now: Instant) -> BackendState {
+        if self.healthy {
+            BackendState::Healthy
+        } else if self.backoff_elapsed(now) {
+            BackendState::Probing
+        } else {
+            BackendState::Unhealthy
+        }
+    }
 }
 
 pub trait HealthTransitionListener: Send + Sync {
@@ -94,9 +128,12 @@ pub trait HealthTransitionListener: Send + Sync {
 
 pub struct PassiveBackendHealth {
     state: DashMap<ServerAddress, AddressHealth>,
+    /// Operator intent, kept apart from observed health: it must outlive both
+    /// pruning and an address leaving every config, which `state` must not.
+    drained: DashSet<ServerAddress>,
     failure_threshold: u32,
     inserts_since_prune: AtomicU32,
-    listener: Option<Arc<dyn HealthTransitionListener>>,
+    listeners: RwLock<Vec<Arc<dyn HealthTransitionListener>>>,
 }
 
 impl PassiveBackendHealth {
@@ -107,20 +144,33 @@ impl PassiveBackendHealth {
     pub fn with_threshold(failure_threshold: u32) -> Self {
         Self {
             state: DashMap::new(),
+            drained: DashSet::new(),
             failure_threshold: failure_threshold.max(1),
             inserts_since_prune: AtomicU32::new(0),
-            listener: None,
+            listeners: RwLock::new(Vec::new()),
         }
     }
 
     #[must_use]
-    pub fn with_listener(mut self, listener: Arc<dyn HealthTransitionListener>) -> Self {
-        self.listener = Some(listener);
+    pub fn with_listener(self, listener: Arc<dyn HealthTransitionListener>) -> Self {
+        self.add_listener(listener);
         self
     }
 
+    pub fn add_listener(&self, listener: Arc<dyn HealthTransitionListener>) {
+        self.listeners
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(listener);
+    }
+
     fn notify(&self, addr: &ServerAddress, to: BackendState) {
-        if let Some(ref listener) = self.listener {
+        for listener in self
+            .listeners
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+        {
             listener.on_transition(addr, to);
         }
     }
@@ -134,21 +184,22 @@ impl PassiveBackendHealth {
             entry.first_failure = None;
             entry.probe_claimed_at = None;
             if entry.healthy {
-                false
+                None
             } else {
+                let now = Instant::now();
                 entry.healthy = true;
-                entry.healthy_since = Some(Instant::now());
+                entry.healthy_since = Some(now);
                 tracing::info!(address = %addr, "backend address healthy again");
-                true
+                Some(entry.state(now))
             }
         };
-        if recovered {
-            self.notify(addr, BackendState::Healthy);
+        if let Some(state) = recovered {
+            self.notify(addr, state);
         }
     }
 
     pub fn record_failure(&self, addr: &ServerAddress) {
-        let mut ejected = false;
+        let mut ejected = None;
         {
             let now = Instant::now();
             let mut entry = self
@@ -178,7 +229,7 @@ impl PassiveBackendHealth {
                 entry.healthy = false;
                 entry.healthy_since = None;
                 entry.ejections = entry.ejections.saturating_add(1);
-                ejected = true;
+                ejected = Some(entry.state(now));
                 tracing::warn!(
                     address = %addr,
                     failures = entry.consecutive_failures,
@@ -189,10 +240,88 @@ impl PassiveBackendHealth {
                 entry.ejections = entry.ejections.saturating_add(1);
             }
         }
-        if ejected {
-            self.notify(addr, BackendState::Unhealthy);
+        if let Some(state) = ejected {
+            self.notify(addr, state);
         }
         self.maybe_prune();
+    }
+
+    /// Takes an address out of rotation, or puts it back. Observed health
+    /// keeps being tracked underneath, and is what the address goes back to.
+    pub fn set_drained(&self, addr: &ServerAddress, drained: bool) {
+        let changed = if drained {
+            self.drained.insert(addr.clone())
+        } else {
+            self.drained.remove(addr).is_some()
+        };
+        if !changed {
+            return;
+        }
+        tracing::info!(address = %addr, drained, "backend address drain state changed");
+        let to = if drained {
+            BackendState::Draining
+        } else {
+            self.observed(addr)
+        };
+        self.notify(addr, to);
+    }
+
+    fn observed(&self, addr: &ServerAddress) -> BackendState {
+        self.state
+            .get(addr)
+            .map_or(BackendState::Healthy, |entry| entry.state(Instant::now()))
+    }
+
+    /// Forgets the failure history of an address: it rejoins the pool and
+    /// ramps back up through slow start.
+    pub fn reset(&self, addr: &ServerAddress) {
+        let transition = {
+            let Some(mut entry) = self.state.get_mut(addr) else {
+                return;
+            };
+            let now = Instant::now();
+            entry.consecutive_failures = 0;
+            entry.first_failure = None;
+            entry.last_failure = None;
+            entry.ejections = 0;
+            entry.probe_claimed_at = None;
+            if entry.healthy {
+                None
+            } else {
+                entry.healthy = true;
+                entry.healthy_since = Some(now);
+                Some(entry.state(now))
+            }
+        };
+        if let Some(state) = transition {
+            self.notify(addr, state);
+        }
+    }
+
+    pub fn report(&self, addr: &ServerAddress) -> BackendReport {
+        let drained = self.drained.contains(addr);
+        let Some(entry) = self.state.get(addr) else {
+            return BackendReport {
+                state: if drained {
+                    BackendState::Draining
+                } else {
+                    BackendState::Healthy
+                },
+                healthy_since: None,
+                ejections: 0,
+                last_failure: None,
+            };
+        };
+        BackendReport {
+            state: if drained {
+                BackendState::Draining
+            } else {
+                entry.state(Instant::now())
+            },
+            healthy_since: entry.healthy.then_some(entry.healthy_since).flatten(),
+            ejections: entry.ejections,
+            last_failure: entry.last_failure,
+        }
     }
 
     pub fn mark_warming(&self, addr: &ServerAddress, ramp_window: Duration) {
@@ -257,23 +386,22 @@ impl Default for PassiveBackendHealth {
 
 impl BackendHealthView for PassiveBackendHealth {
     fn snapshot(&self, addr: &ServerAddress) -> HealthSnapshot {
+        if self.drained.contains(addr) {
+            return HealthSnapshot {
+                state: BackendState::Draining,
+                healthy_since: None,
+            };
+        }
         let Some(entry) = self.state.get(addr) else {
             return HealthSnapshot::stable_healthy();
         };
-        if entry.healthy {
-            return HealthSnapshot {
-                state: BackendState::Healthy,
-                healthy_since: entry.healthy_since,
-            };
-        }
-        let state = if entry.backoff_elapsed(Instant::now()) {
-            BackendState::Probing
-        } else {
-            BackendState::Unhealthy
-        };
+        let state = entry.state(Instant::now());
         HealthSnapshot {
             state,
-            healthy_since: None,
+            healthy_since: match state {
+                BackendState::Healthy => entry.healthy_since,
+                BackendState::Probing | BackendState::Unhealthy | BackendState::Draining => None,
+            },
         }
     }
 
@@ -309,6 +437,8 @@ impl ConnectAttemptObserver for PassiveBackendHealth {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
 
     fn addr(host: &str) -> ServerAddress {
@@ -540,6 +670,113 @@ mod tests {
         assert_ne!(state(&health, &flaky), BackendState::Healthy);
         assert!(health.snapshot(&warming).healthy_since.is_some());
         assert_eq!(state(&health, &stable), BackendState::Healthy);
+    }
+
+    #[test]
+    fn drain_survives_traffic_and_is_cleared_only_by_set_drained() {
+        let health = PassiveBackendHealth::with_threshold(1);
+        let a = addr("a");
+        health.set_drained(&a, true);
+        assert_eq!(state(&health, &a), BackendState::Draining);
+
+        health.record_success(&a);
+        assert_eq!(state(&health, &a), BackendState::Draining);
+        health.record_failure(&a);
+        assert_eq!(state(&health, &a), BackendState::Draining);
+        health.mark_warming(&a, Duration::from_secs(45));
+        assert_eq!(state(&health, &a), BackendState::Draining);
+        health.reset(&a);
+        assert_eq!(state(&health, &a), BackendState::Draining);
+
+        health.set_drained(&a, false);
+        assert_eq!(state(&health, &a), BackendState::Healthy);
+    }
+
+    #[test]
+    fn drained_address_survives_prune() {
+        let health = PassiveBackendHealth::with_threshold(3);
+        let drained = addr("drained");
+        health.set_drained(&drained, true);
+
+        let flaky = addr("flaky");
+        for _ in 0..=PRUNE_INTERVAL_OPS {
+            health.record_failure(&flaky);
+        }
+
+        assert_eq!(
+            state(&health, &drained),
+            BackendState::Draining,
+            "a pruned drain would silently rejoin the pool"
+        );
+    }
+
+    #[test]
+    fn reset_zeroes_the_ejection_history() {
+        let health = PassiveBackendHealth::with_threshold(1);
+        let a = addr("a");
+        health.record_failure(&a);
+        health.record_success(&a);
+        health.record_failure(&a);
+        assert_eq!(health.report(&a).ejections, 2);
+
+        health.reset(&a);
+        let report = health.report(&a);
+        assert_eq!(report.ejections, 0);
+        assert_eq!(report.state, BackendState::Healthy);
+        assert!(report.last_failure.is_none());
+        assert!(
+            report.healthy_since.is_some(),
+            "a reinstated address must ramp back up"
+        );
+    }
+
+    #[test]
+    fn drain_outlives_an_address_leaving_every_config() {
+        let health = PassiveBackendHealth::new();
+        let a = addr("a");
+        health.set_drained(&a, true);
+
+        health.retain_known(&HashSet::new());
+
+        assert_eq!(
+            state(&health, &a),
+            BackendState::Draining,
+            "a config that leaves and comes back must not lift an operator drain"
+        );
+        assert_eq!(health.report(&a).state, BackendState::Draining);
+    }
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<BackendState>>);
+
+    impl HealthTransitionListener for Recorder {
+        fn on_transition(&self, _address: &ServerAddress, to: BackendState) {
+            self.0.lock().unwrap().push(to);
+        }
+    }
+
+    #[test]
+    fn a_drained_address_still_reports_its_health_transitions() {
+        let recorder = Arc::new(Recorder::default());
+        let health = PassiveBackendHealth::with_threshold(1)
+            .with_listener(Arc::clone(&recorder) as Arc<dyn HealthTransitionListener>);
+        let a = addr("a");
+
+        health.set_drained(&a, true);
+        health.record_failure(&a);
+        health.record_success(&a);
+        health.set_drained(&a, false);
+
+        assert_eq!(
+            *recorder.0.lock().unwrap(),
+            [
+                BackendState::Draining,
+                BackendState::Unhealthy,
+                BackendState::Healthy,
+                BackendState::Healthy,
+            ],
+            "drain must not hide ejection and recovery from listeners"
+        );
     }
 
     #[test]

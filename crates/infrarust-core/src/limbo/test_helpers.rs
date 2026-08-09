@@ -81,20 +81,31 @@ pub async fn test_client_bridge(version: ProtocolVersion) -> (ClientBridge, TcpS
 pub fn test_proxy_services() -> ProxyServices {
     let connection_registry = Arc::new(ConnectionRegistry::new());
     let backend_load = Arc::new(crate::loadbalancer::BackendLoad::new());
+    let backend_health = Arc::new(crate::loadbalancer::PassiveBackendHealth::new());
+    let domain_router = Arc::new(DomainRouter::new());
     let packet_registry = Arc::new(test_registry());
     let ban_storage: Arc<dyn BanStorage> = Arc::new(NullBanStorage);
     let provider: Arc<dyn crate::registry_data::RegistryDataProvider> =
         Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider);
+
+    let pending_backends = Arc::new(crate::loadbalancer::PendingRegistry::new(
+        Arc::clone(&backend_load) as _,
+        std::time::Duration::from_secs(10),
+    ));
 
     ProxyServices {
         event_bus: Arc::new(EventBusImpl::new()),
         player_registry: Arc::new(PlayerRegistryImpl::new(Arc::clone(&connection_registry))),
         command_manager: Arc::new(CommandManagerImpl::new()),
         connection_registry,
-        pending_backends: Arc::new(crate::loadbalancer::PendingRegistry::new(
-            Arc::clone(&backend_load) as _,
-            std::time::Duration::from_secs(10),
-        )),
+        load_balancer_service: Arc::new(
+            crate::services::load_balancer_service::LoadBalancerServiceImpl::new(
+                Arc::clone(&domain_router),
+                Arc::clone(&backend_health),
+                Arc::clone(&pending_backends) as _,
+            ),
+        ),
+        pending_backends,
         backend_load,
         packet_registry,
         server_manager: None,
@@ -103,8 +114,9 @@ pub fn test_proxy_services() -> ProxyServices {
             Arc::new(ConnectionRegistry::new()),
         )),
         config: Arc::new(toml::from_str("").unwrap()),
-        domain_router: Arc::new(DomainRouter::new()),
-        backend_health: Arc::new(crate::loadbalancer::PassiveBackendHealth::new()),
+        config_path: std::path::PathBuf::from("infrarust.toml"),
+        domain_router,
+        backend_health,
         codec_filter_registry: Arc::new(CodecFilterRegistryImpl::new()),
         transport_filter_chain: TransportFilterChain::empty(),
         limbo_handler_registry: Arc::new(LimboHandlerRegistry::new()),

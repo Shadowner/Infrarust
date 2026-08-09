@@ -26,13 +26,13 @@ use super::STATUS_PROTOCOL_VERSION;
 use super::cache::StatusCache;
 use super::favicon::FaviconCache;
 use super::relay::StatusRelayClient;
-use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, select_backend_addresses};
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
 use crate::event_bus::conversion::{
     component_to_json_value, core_to_api_ping_response, merge_ping_event,
 };
+use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, select_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::registry::ConnectionRegistry;

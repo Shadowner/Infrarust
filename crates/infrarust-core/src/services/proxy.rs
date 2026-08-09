@@ -50,11 +50,15 @@ pub struct ProxyServices {
     pub ban_manager: Arc<BanManager>,
     /// Proxy configuration.
     pub config: Arc<ProxyConfig>,
+    /// Path of the `infrarust.toml` the proxy was started from.
+    pub config_path: std::path::PathBuf,
     /// Domain router for resolving server configs by domain.
     pub domain_router: Arc<DomainRouter>,
     /// Per-address backend health, consumed for backend selection outside
     /// the login pipeline (server switches, limbo exits).
     pub backend_health: Arc<dyn BackendHealthView>,
+    /// Backend visibility and drain control, handed to plugins.
+    pub load_balancer_service: Arc<crate::services::load_balancer_service::LoadBalancerServiceImpl>,
     /// Codec filter registry for building per-connection filter chains.
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     /// Transport filter chain applied to accepted connections.

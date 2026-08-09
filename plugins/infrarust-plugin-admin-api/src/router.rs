@@ -50,11 +50,28 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
             get(handlers::servers::list).post(handlers::servers::create),
         )
         .route(
+            "/api/v1/servers/validate",
+            post(handlers::servers::validate),
+        )
+        .route(
             "/api/v1/servers/{id}",
             get(handlers::servers::get)
                 .put(handlers::servers::update)
                 .delete(handlers::servers::delete),
         )
+        .route(
+            "/api/v1/servers/{id}/raw",
+            get(handlers::servers::get_raw).put(handlers::servers::update_raw),
+        )
+        .route(
+            "/api/v1/servers/{id}/config",
+            get(handlers::servers::get_config),
+        )
+        .route(
+            "/api/v1/servers/{id}/backends",
+            get(handlers::backends::list),
+        )
+        .route("/api/v1/health/backends", get(handlers::backends::list_all))
         .route("/api/v1/plugins", get(handlers::plugins::list))
         .route("/api/v1/plugins/{id}", get(handlers::plugins::get))
         .route("/api/v1/stats", get(handlers::stats::overview))
@@ -62,6 +79,15 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
         .route(
             "/api/v1/config/providers",
             get(handlers::config::list_providers),
+        )
+        .route("/api/v1/config/proxy", get(handlers::config::get_proxy))
+        .route(
+            "/api/v1/config/proxy/raw",
+            get(handlers::config::get_proxy_raw).put(handlers::config::update_proxy_raw),
+        )
+        .route(
+            "/api/v1/config/proxy/validate",
+            post(handlers::config::validate_proxy),
         )
         // ── Log history (REST, not SSE) ──
         .route("/api/v1/logs/history", get(sse::handlers::log_history))
@@ -95,6 +121,18 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
         .route(
             "/api/v1/servers/{id}/health/cached",
             get(handlers::servers::health_cached),
+        )
+        .route(
+            "/api/v1/servers/{id}/backends/{address}/drain",
+            post(handlers::backends::drain),
+        )
+        .route(
+            "/api/v1/servers/{id}/backends/{address}/enable",
+            post(handlers::backends::enable),
+        )
+        .route(
+            "/api/v1/servers/{id}/backends/{address}/reset",
+            post(handlers::backends::reset),
         )
         .route("/api/v1/config/reload", post(handlers::config::reload))
         .route(

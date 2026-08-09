@@ -223,12 +223,12 @@ Web admin API and UI. Absent from the file means the web plugin is not loaded.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enable_api` | boolean | `true` | Serve the REST admin API |
-| `enable_webui` | boolean | `true` | Serve the bundled web UI |
+| `enable_webui` | boolean | follows `enable_api` | Serve the bundled web UI. Cannot be `true` while `enable_api` is `false` |
 | `bind` | string | `"127.0.0.1:8080"` | Listen address for the web server |
 | `api_key` | string | none | API key for authenticating requests. Must be at least 16 characters |
 | `cors_origins` | array of strings | `[]` | Allowed CORS origins |
 
-If `bind` is a loopback address and no `api_key` is set, Infrarust generates an ephemeral key at startup and logs a warning. If `bind` is reachable from outside the host and no key (or the placeholder `CHANGE-ME`) is set, Infrarust refuses to start. A `[web.rate_limit]` sub-table sets `requests_per_minute` (default `60`).
+`enable_webui` follows `enable_api` unless you set it, so `enable_api = false` alone turns the UI off too. Setting `enable_webui = true` with `enable_api = false` is a configuration error: the UI is served by the API's HTTP server and calls it for every screen. If `bind` is a loopback address and no `api_key` is set, Infrarust generates an ephemeral key at startup and logs a warning. If `bind` is reachable from outside the host and no key (or the placeholder `CHANGE-ME`) is set, Infrarust refuses to start. A key shorter than 16 characters is refused on any bind, and the API refuses to write a config that would fail either rule. A `[web.rate_limit]` sub-table sets `requests_per_minute` (default `60`).
 
 ```toml
 [web]

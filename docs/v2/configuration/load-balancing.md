@@ -57,6 +57,23 @@ An ejected address is retried after a backoff that grows with each ejection, sta
 
 If every address of a server ends up ejected, Infrarust still balances across them rather than falling back to config order. A network blip that ejects everything should not turn into a stampede onto the first address.
 
+### Draining an address
+
+Ejection is what the proxy decides. Draining is what you decide, for a restart, a disk swap, or anything else where you want an address emptied on purpose:
+
+```bash
+curl -X POST -H "Authorization: Bearer $API_KEY" \
+  http://127.0.0.1:8080/api/v1/servers/lobby/backends/10.0.0.2:25565/drain
+```
+
+A drained address takes no new sessions. Players already on it stay where they are, so the address empties as they leave rather than all at once. `POST .../enable` puts it back. Drain never touches the health record underneath, so an address that stayed healthy while drained returns at its full weight instead of ramping in.
+
+Drain outranks ejection in the last-resort fallback above: when everything else is ejected, Infrarust reinstates the ejected addresses and leaves the drained one alone. Draining every address of a server is the one case where drain is ignored, so a drain can never black-hole a server.
+
+The intent is stored in the admin API's data directory and replayed at startup, since health state itself is rebuilt from scratch on every start. `POST .../reset` clears an address's failure counters, ejection count, and backoff, which is the way to end a backoff early after fixing a backend; it does not lift a drain.
+
+Drain is only reachable through the [admin API](../plugins/builtin/admin-api). There is no config key for it, because it is an operational state rather than a configured one.
+
 ### Active probing
 
 The recovery attempt above normally comes from a background prober rather than from a player, so nobody pays a connect timeout for it.
@@ -77,7 +94,9 @@ Recovery probing is on by default and costs nothing while everything is healthy,
 
 The `tcp` probe opens a connection and closes it, which is exactly what the proxy does when it dials a backend, so it cannot disagree with reality. The `status_ping` probe runs the full Minecraft status exchange and proves the server actually answers.
 
-Any server can override the whole block with its own `[active_health]` table.
+Any server can override the whole block with its own `[active_health]` table, and each address is probed on its own server's cadence. `enabled` is part of that block, so a server can turn probing on for itself while the proxy-wide block leaves it off, and the other way round. One task drives every server: it wakes on the shortest interval configured anywhere, probes only the addresses whose own interval has elapsed, and never wakes more than once a second whatever you set.
+
+`max_concurrent` is the exception. It caps how many probes are in flight across the whole sweep, so it is read from the global block and a per-server override of that one key does nothing.
 
 ## Bounding failover latency
 
@@ -104,10 +123,12 @@ With the `telemetry` feature built in, these instruments carry an `address` attr
 |--------|------|-------------|
 | `infrarust.backend.connect.duration` | histogram | Time to open a backend connection |
 | `infrarust.backend.connect.failures` | counter | Failed connection attempts |
-| `infrarust.backend.health.transitions` | counter | Ejections and recoveries, tagged with the new state |
+| `infrarust.backend.health.transitions` | counter | Ejections, recoveries, and drain changes, tagged with the new state. `draining` counts drain operations only: a drained address that goes down and comes back still reports `unhealthy` then `healthy` |
 | `infrarust.backend.status.latency` | histogram | Status ping round-trip time |
 
 Cardinality is bounded by the addresses you declare, so these are safe to keep on.
+
+Without telemetry there is still `GET /api/v1/servers/{id}/backends` on the admin API, which reports the state, the effective weight after slow start, the live connection count, and the ejection count for every address. The same transitions arrive on its `backend.health_change` event stream.
 
 ## Scope
 

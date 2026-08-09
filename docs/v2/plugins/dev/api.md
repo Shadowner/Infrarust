@@ -80,8 +80,10 @@ The `PluginContext` trait provides access to every service and registration meth
 | `server_manager_handle()` | `Arc<dyn ServerManager>` | Cloneable handle for closures |
 | `ban_service()` | `&dyn BanService` | Ban and unban players |
 | `ban_service_handle()` | `Arc<dyn BanService>` | Cloneable handle for closures |
-| `config_service()` | `&dyn ConfigService` | Read proxy and server configuration |
+| `config_service()` | `&dyn ConfigService` | Read proxy and server configuration, and rewrite the global one with the `ConfigWrite` capability |
 | `config_service_handle()` | `Arc<dyn ConfigService>` | Cloneable handle for closures |
+| `load_balancer_service()` | `&dyn LoadBalancerService` | Read per-address backend status, drain or reset an address |
+| `load_balancer_service_handle()` | `Arc<dyn LoadBalancerService>` | Cloneable handle for closures |
 | `command_manager()` | `&dyn CommandManager` | Register and unregister commands |
 | `scheduler()` | `&dyn Scheduler` | Schedule delayed and recurring tasks |
 | `plugin_registry()` | `&dyn PluginRegistry` | Read-only view of loaded plugins |
@@ -318,7 +320,7 @@ let all_bans = bans.get_all_bans().await?;
 
 ## ConfigService
 
-Read-only access to proxy configuration.
+Access to proxy configuration. Everything but the global write is readable by any plugin.
 
 ```rust
 let config = ctx.config_service();
@@ -355,6 +357,53 @@ if let Some(val) = config.get_value("some.key") {
 | `disconnect_message` | `Option<String>` | Message when backend is unreachable |
 | `send_proxy_protocol` | `bool` | Whether PROXY protocol is sent to backend |
 | `has_server_manager` | `bool` | Whether auto start/stop is configured |
+
+`ServerConfig` only carries the fields this crate models. For the rest, read the document:
+
+```rust
+// The server's full TOML, whatever provider supplied it
+let document = config.get_server_document(&ServerId::new("lobby"));
+
+// Where each server came from: file, docker, plugin:<id>:<type>
+for source in config.list_server_sources() {
+    tracing::info!("{} from {} (editable: {})", source.id, source.provider_type, source.editable);
+}
+```
+
+`get_proxy_config_document()` returns `infrarust.toml` with every secret field replaced by `<redacted>`, and `write_proxy_config_document(&toml)` replaces it. `get_effective_proxy_config_document()` returns the same document with the CLI overrides the process was started with applied, and `get_server_document()` redacts server credentials the same way. The write needs the `ConfigWrite` capability: without it the plugin is handed a read-only service that answers `ConfigWriteError::PermissionDenied`, and there is no ungated handle to reach around it. Secret fields the submitted document leaves out or carries redacted keep the value already on disk, so a document read back from `get_proxy_config_document()` can be submitted unchanged. Nothing is applied to the running proxy; the new file takes effect on restart.
+
+## LoadBalancerService
+
+Per-address visibility and maintenance controls for a server's backends. See [Load balancing](../../configuration/load-balancing) for the behavior behind them.
+
+```rust
+let lb = ctx.load_balancer_service();
+let lobby = ServerId::new("lobby");
+
+for backend in lb.backends(&lobby) {
+    tracing::info!(
+        "{} is {} ({} connections, weight {}/{})",
+        backend.address,
+        backend.state.as_str(),
+        backend.active_connections,
+        backend.effective_weight,
+        backend.weight,
+    );
+}
+
+let address = ServerAddress { host: "10.0.0.2".into(), port: 25565 };
+
+// Take an address out of rotation for maintenance, then put it back
+lb.set_drained(&lobby, &address, true)?;
+lb.set_drained(&lobby, &address, false)?;
+
+// Clear an ejected address's failure history so it retries now
+lb.reset_backend(&lobby, &address)?;
+```
+
+`strategy()` names the balancing strategy of a server, and returns `None` for a server that is not routed. `BackendStatus` carries the address, its configured `weight` and the `effective_weight` selection actually uses after the slow-start ramp, its `state` (`healthy`, `probing`, `unhealthy`, `draining`), the live connection count, and the failure history. Both mutations return `LbError` when the server or the address is unknown, so a typo cannot drain something you did not name.
+
+Draining stops new sessions from reaching an address without closing the ones already on it, and it survives the passive health checks underneath. It is not persisted: the proxy rebuilds health state on every start, so a plugin that wants a drain to outlive a restart has to store it and replay it, which is what the admin API does.
 
 ## CommandManager
 
@@ -470,6 +519,17 @@ impl PluginConfigProvider for MyProvider {
         })
     }
 
+    fn load_initial_documents(
+        &self,
+    ) -> BoxFuture<'_, Result<Vec<ServerDocument>, PluginError>> {
+        Box::pin(async {
+            Ok(vec![ServerDocument {
+                id: ServerId::new("survival"),
+                toml: r#"addresses = ["10.0.0.1:25565"]"#.to_string(),
+            }])
+        })
+    }
+
     fn watch(
         &self,
         sender: Box<dyn PluginProviderSender>,
@@ -477,8 +537,8 @@ impl PluginConfigProvider for MyProvider {
         Box::pin(async move {
             while !sender.is_shutdown() {
                 // Poll for changes, emit events:
-                // sender.send(PluginProviderEvent::Added(config)).await;
-                // sender.send(PluginProviderEvent::Updated(config)).await;
+                // sender.send(PluginProviderEvent::AddedDocument(doc)).await;
+                // sender.send(PluginProviderEvent::UpdatedDocument(doc)).await;
                 // sender.send(PluginProviderEvent::Removed(server_id)).await;
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             }
@@ -488,7 +548,13 @@ impl PluginConfigProvider for MyProvider {
 }
 ```
 
-The proxy calls `load_initial` once after all plugins are enabled, then spawns `watch` in a background task. Use the `PluginProviderSender` to emit `Added`, `Updated`, or `Removed` events as configurations change.
+The proxy calls `load_initial` and `load_initial_documents` once after all plugins are enabled, then spawns `watch` in a background task. Use the `PluginProviderSender` to emit `Added`, `Updated`, `AddedDocument`, `UpdatedDocument`, or `Removed` events as configurations change.
+
+### Configs or documents
+
+A provider supplies either form, or both. `ServerConfig` is the projection this crate models, so it reaches `domains`, `addresses`, `proxy_mode`, `limbo_handlers` and little else; a config built that way gets the defaults for everything the struct does not carry.
+
+A `ServerDocument` is raw TOML that the proxy parses against its own full schema, the same one `servers_dir` files use, so it is the only way to reach `balance`, `slow_start`, `[active_health]`, `[motd]`, `[server_manager]`, `[timeouts]` or `ip_filter` from a provider. Its `id` identifies the document within the provider and becomes the server id when the TOML itself sets neither `name` nor `id`. A document that fails to parse or validate is logged and skipped, and the server keeps whatever configuration it already had.
 
 ## Prelude
 

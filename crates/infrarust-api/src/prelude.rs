@@ -31,8 +31,9 @@ pub use crate::player::Player;
 
 // Services
 pub use crate::services::{
-    BanEntry, BanService, BanTarget, ConfigService, PlayerRegistry, PluginRegistry, ProxyInfo,
-    ProxyMode, Scheduler, ServerConfig, ServerManager, ServerState, TaskHandle,
+    BackendState, BackendStatus, BanEntry, BanService, BanTarget, ConfigService, ConfigWriteError,
+    LbError, LoadBalancerService, PlayerRegistry, PluginRegistry, ProxyInfo, ProxyMode, Scheduler,
+    ServerConfig, ServerManager, ServerState, TaskHandle,
 };
 
 // Permissions and capabilities
@@ -59,7 +60,9 @@ pub use crate::filter::{
     FrameOutput, TransportContext, TransportFilter, TransportFilterRegistry,
 };
 
-pub use crate::provider::{PluginConfigProvider, PluginProviderEvent, PluginProviderSender};
+pub use crate::provider::{
+    PluginConfigProvider, PluginProviderEvent, PluginProviderSender, ServerDocument,
+};
 
 // Standard library
 pub use std::sync::Arc;

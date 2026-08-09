@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use smallvec::SmallVec;
 
 use super::slow_start::{SlowStartConfig, effective_weight};
-use super::{BackendCandidate, LoadBalancer, split_health};
+use super::{BackendCandidate, LoadBalancer};
 
 pub struct LeastConnections {
     tie_breaker: AtomicUsize,
@@ -24,20 +24,20 @@ impl LoadBalancer for LeastConnections {
         "least_conn"
     }
 
-    fn order<'a>(&self, candidates: &'a [BackendCandidate]) -> SmallVec<[&'a BackendCandidate; 4]> {
-        let (healthy, unhealthy) = split_health(candidates);
-        if healthy.is_empty() {
-            return candidates.iter().collect();
-        }
-
-        let scores: SmallVec<[f64; 4]> = healthy
+    fn order_selectable<'a>(
+        &self,
+        selectable: &[&'a BackendCandidate],
+    ) -> SmallVec<[&'a BackendCandidate; 4]> {
+        let scores: SmallVec<[f64; 4]> = selectable
             .iter()
             .map(|c| {
                 (c.active_connections + 1) as f64 / effective_weight(c, self.slow_start.as_ref())
             })
             .collect();
 
-        let min = scores.iter().copied().fold(f64::INFINITY, f64::min);
+        let Some(min) = scores.iter().copied().reduce(f64::min) else {
+            return SmallVec::new();
+        };
         let tied: SmallVec<[usize; 4]> = scores
             .iter()
             .enumerate()
@@ -47,7 +47,7 @@ impl LoadBalancer for LeastConnections {
 
         let pick = tied[self.tie_breaker.fetch_add(1, Ordering::Relaxed) % tied.len()];
 
-        let mut rest: SmallVec<[usize; 4]> = (0..healthy.len()).filter(|i| *i != pick).collect();
+        let mut rest: SmallVec<[usize; 4]> = (0..selectable.len()).filter(|i| *i != pick).collect();
         rest.sort_by(|a, b| {
             scores[*a]
                 .partial_cmp(&scores[*b])
@@ -55,9 +55,8 @@ impl LoadBalancer for LeastConnections {
         });
 
         let mut result = SmallVec::new();
-        result.push(healthy[pick]);
-        result.extend(rest.into_iter().map(|i| healthy[i]));
-        result.extend(unhealthy);
+        result.push(selectable[pick]);
+        result.extend(rest.into_iter().map(|i| selectable[i]));
         result
     }
 }

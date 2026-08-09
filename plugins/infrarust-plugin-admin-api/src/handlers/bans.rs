@@ -14,8 +14,8 @@ use crate::response::{
     ApiResponse, MutationResult, PaginatedResponse, PaginationParams, created, default_page,
     default_per_page, mutation_ok, ok,
 };
-use crate::state::ApiState;
-use crate::util::{ban_target_type_str, parse_ban_target};
+use crate::state::{ApiEvent, ApiState};
+use crate::util::{ban_target_type_str, ban_target_value, now_iso8601, parse_ban_target};
 
 #[derive(Debug, Deserialize)]
 pub struct BanListQuery {
@@ -119,11 +119,22 @@ pub async fn create(
         "Ban created via Admin API"
     );
 
+    let target_type = ban_target_type_str(&target);
+    let target_value = ban_target_value(&target);
+
     state
         .ban_service
-        .ban(target, body.reason, duration)
+        .ban(target, body.reason.clone(), duration)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to create ban: {e}")))?;
+
+    let _ = state.event_tx.send(ApiEvent::BanCreated {
+        target_type: target_type.to_string(),
+        target_value,
+        reason: body.reason,
+        source: "admin_api".to_string(),
+        timestamp: now_iso8601(),
+    });
 
     Ok(created(MutationResult {
         success: true,
@@ -153,6 +164,11 @@ pub async fn delete(
         .map_err(|e| ApiError::Internal(format!("Failed to remove ban: {e}")))?;
 
     if removed {
+        let _ = state.event_tx.send(ApiEvent::BanRemoved {
+            target_type: ban_target_type_str(&target).to_string(),
+            target_value: ban_target_value(&target),
+            timestamp: now_iso8601(),
+        });
         Ok(mutation_ok("Ban removed"))
     } else {
         Err(ApiError::NotFound(format!(

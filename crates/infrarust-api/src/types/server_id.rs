@@ -46,10 +46,16 @@ impl From<String> for ServerId {
 }
 
 /// A network address for a backend server.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ServerAddress {
     pub host: String,
     pub port: u16,
+}
+
+impl fmt::Display for ServerAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.host, self.port)
+    }
 }
 
 #[cfg(test)]

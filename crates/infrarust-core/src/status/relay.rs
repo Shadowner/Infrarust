@@ -559,14 +559,20 @@ mod tests {
     #[test]
     fn test_resolve_relay_domain_none() {
         let cfg = make_server_config(vec!["backend:25565".parse().unwrap()]);
-        assert_eq!(resolve_relay_domain("play.mc", &cfg, &connected()), "play.mc");
+        assert_eq!(
+            resolve_relay_domain("play.mc", &cfg, &connected()),
+            "play.mc"
+        );
     }
 
     #[test]
     fn test_resolve_relay_domain_explicit() {
         let mut cfg = make_server_config(vec!["backend:25565".parse().unwrap()]);
         cfg.domain_rewrite = DomainRewrite::Explicit("custom.host".to_string());
-        assert_eq!(resolve_relay_domain("play.mc", &cfg, &connected()), "custom.host");
+        assert_eq!(
+            resolve_relay_domain("play.mc", &cfg, &connected()),
+            "custom.host"
+        );
     }
 
     #[test]

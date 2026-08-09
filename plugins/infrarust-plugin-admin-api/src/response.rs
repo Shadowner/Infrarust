@@ -18,6 +18,14 @@ pub struct MutationResult {
     pub details: Option<serde_json::Value>,
 }
 
+/// Outcome of a write the running proxy does not pick up on its own.
+#[derive(Serialize)]
+pub struct RestartAwareResult {
+    pub success: bool,
+    pub message: String,
+    pub requires_restart: bool,
+}
+
 pub fn mutation_ok(message: impl Into<String>) -> Json<ApiResponse<MutationResult>> {
     ok(MutationResult {
         success: true,

@@ -142,7 +142,8 @@ async fn handle_conn(
             // Echo the full payload so the clientbound direction carries the
             // same size (and crosses the compression threshold when the
             // serverbound ping does).
-            conn.write_frame(PING_CLIENTBOUND_ID, &frame.payload).await?;
+            conn.write_frame(PING_CLIENTBOUND_ID, &frame.payload)
+                .await?;
         }
     }
 }

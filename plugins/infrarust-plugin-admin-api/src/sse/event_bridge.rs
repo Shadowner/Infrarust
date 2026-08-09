@@ -4,13 +4,13 @@ use infrarust_api::event::EventPriority;
 use infrarust_api::event::bus::EventBusExt;
 use infrarust_api::events::connection::ServerSwitchEvent;
 use infrarust_api::events::lifecycle::{DisconnectEvent, PostLoginEvent};
-use infrarust_api::events::proxy::{ConfigReloadEvent, ServerStateChangeEvent};
+use infrarust_api::events::proxy::{BackendHealthEvent, ConfigReloadEvent, ServerStateChangeEvent};
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use tokio::sync::broadcast;
 
 use crate::state::ApiEvent;
-use crate::util::now_iso8601;
+use crate::util::{format_address, now_iso8601};
 
 /// Bridges proxy EventBus events to the API broadcast channel.
 ///
@@ -97,6 +97,22 @@ impl EventBridge {
         ctx.event_bus()
             .subscribe::<ConfigReloadEvent, _>(EventPriority::LAST, move |_event| {
                 let _ = tx.send(ApiEvent::ConfigReload {
+                    timestamp: now_iso8601(),
+                });
+            });
+
+        // BackendHealthEvent → BackendHealthChange
+        let tx = self.event_tx.clone();
+        ctx.event_bus()
+            .subscribe::<BackendHealthEvent, _>(EventPriority::LAST, move |event| {
+                let _ = tx.send(ApiEvent::BackendHealthChange {
+                    address: format_address(&event.address),
+                    server_ids: event
+                        .servers
+                        .iter()
+                        .map(|s| s.as_str().to_string())
+                        .collect(),
+                    state: event.state.as_str().to_string(),
                     timestamp: now_iso8601(),
                 });
             });

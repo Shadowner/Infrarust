@@ -27,6 +27,8 @@ servers/
 
 Files without a `.toml` extension are ignored. Subdirectories are not scanned.
 
+This directory belongs to the file provider alone. A server you create through the [admin API](../../plugins/builtin/admin-api) is written to that plugin's own data directory instead, so nothing else edits your files behind your back. Both sets of servers show up together in the router and in `GET /api/v1/servers`.
+
 ## Server config format
 
 Each file deserializes into a `ServerConfig`. Here is a minimal example:

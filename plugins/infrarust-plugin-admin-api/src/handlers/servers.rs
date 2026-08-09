@@ -3,22 +3,25 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::IntoResponse;
 
-use infrarust_api::provider::PluginProviderEvent;
-use infrarust_api::services::config_service::ServerConfig;
+use infrarust_api::provider::{PluginProviderEvent, ServerDocument};
 use infrarust_api::services::server_manager::ServerState;
-use infrarust_api::types::{ServerAddress, ServerId};
+use infrarust_api::types::ServerId;
+use infrarust_config::ServerConfig;
+use infrarust_config::secrets::{SERVER_SECRETS, redact, reinject, still_redacted};
+use toml_edit::DocumentMut;
 
 use crate::dto::player::PlayerSummary;
 use crate::dto::server::{
-    CreateServerRequest, HealthCheckResponse, ServerDetailResponse, ServerResponse,
-    UpdateServerRequest,
+    HealthCheckResponse, ServerDetailResponse, ServerResponse, ValidationResponse,
 };
 use crate::error::ApiError;
 use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
+use crate::server_dir::{Committed, DocumentId, MAX_ID_LEN, Ownership, to_document_text};
 use crate::state::ApiState;
-use crate::util::{parse_proxy_mode, proxy_mode_str};
+use crate::util::proxy_mode_str;
 
 fn server_state_str(state: &ServerState) -> &'static str {
     match state {
@@ -35,10 +38,88 @@ fn server_state_str(state: &ServerState) -> &'static str {
     }
 }
 
+const UNKNOWN_SOURCE: &str = "unknown";
+
+/// The providers claiming each server id. An id claimed more than once is
+/// routed with whichever copy the router iterates first, so the count matters
+/// as much as the names.
+fn sources(state: &ApiState) -> HashMap<String, Vec<String>> {
+    let mut sources: HashMap<String, Vec<String>> = HashMap::new();
+    for source in state.config_service.list_server_sources() {
+        sources
+            .entry(source.id)
+            .or_default()
+            .push(source.provider_type);
+    }
+    for providers in sources.values_mut() {
+        providers.sort();
+    }
+    sources
+}
+
+fn source_label(providers: Option<&Vec<String>>) -> String {
+    providers
+        .and_then(|providers| providers.first())
+        .cloned()
+        .unwrap_or_else(|| UNKNOWN_SOURCE.to_string())
+}
+
+/// Whether writing `id` through this plugin reaches the config the proxy
+/// actually routes with: it must be served by the document filed under that
+/// name, and by nothing else.
+fn is_editable(state: &ApiState, id: &str, providers: Option<&Vec<String>>) -> bool {
+    state.server_dir.owns(id) && providers.is_none_or(|providers| providers.len() == 1)
+}
+
+fn not_ours(id: &str, providers: Option<&Vec<String>>) -> ApiError {
+    match providers {
+        Some(providers) => ApiError::Forbidden(format!(
+            "Server '{id}' comes from the '{}' provider and is read-only here",
+            source_label(Some(providers))
+        )),
+        None => ApiError::NotFound(format!("Server '{id}' not found")),
+    }
+}
+
+/// Rejects writes to servers this plugin does not own, so a config coming
+/// from `servers_dir` or Docker can never be silently shadowed.
+fn ensure_editable(state: &ApiState, id: &str) -> Result<DocumentId, ApiError> {
+    let sources = sources(state);
+    let providers = sources.get(id);
+
+    let Some(document) = DocumentId::new(id) else {
+        return Err(not_ours(id, providers));
+    };
+
+    match state.server_dir.ownership(&document) {
+        Ownership::Owned => {}
+        Ownership::Absent => return Err(not_ours(id, providers)),
+        Ownership::Shadowed => {
+            return Err(ApiError::Conflict(format!(
+                "Server '{id}' is served by a document filed under another name; \
+                 rename that file to '{id}.toml' before editing it here"
+            )));
+        }
+    }
+
+    if !is_editable(state, id, providers) {
+        return Err(ApiError::Conflict(format!(
+            "Server '{id}' is also supplied by another provider ({}); \
+             remove the duplicate before editing it here",
+            providers
+                .map(|providers| providers.join(", "))
+                .unwrap_or_default()
+        )));
+    }
+
+    Ok(document)
+}
+
 pub async fn list(
     State(state): State<Arc<ApiState>>,
 ) -> Result<Json<ApiResponse<Vec<ServerResponse>>>, ApiError> {
     let configs = state.config_service.get_all_server_configs();
+    let sources = sources(&state);
     let states: HashMap<String, ServerState> = state
         .server_manager
         .get_all_servers()
@@ -52,9 +133,11 @@ pub async fn list(
             let id_str = config.id.as_str().to_string();
             let server_state = states.get(&id_str);
             let player_count = state.player_registry.online_count_on(&config.id);
+            let providers = sources.get(&id_str);
 
             ServerResponse {
-                is_api_managed: state.server_store.contains(&id_str),
+                source: source_label(providers),
+                editable: is_editable(&state, &id_str, providers),
                 has_server_manager: config.has_server_manager,
                 id: id_str,
                 addresses: config
@@ -87,9 +170,12 @@ pub async fn get(
 
     let server_state = state.server_manager.get_state(&server_id);
     let players = state.player_registry.get_players_on_server(&server_id);
+    let sources = sources(&state);
+    let providers = sources.get(&id);
 
     let response = ServerDetailResponse {
-        is_api_managed: state.server_store.contains(&id),
+        source: source_label(providers),
+        editable: is_editable(&state, &id, providers),
         has_server_manager: config.has_server_manager,
         id,
         addresses: config
@@ -170,115 +256,81 @@ pub async fn stop(
     Ok(mutation_ok(format!("Server '{id}' stop requested")))
 }
 
-fn parse_address(s: &str) -> Result<ServerAddress, ApiError> {
-    // Handle IPv6 bracket notation: [::1]:25565
-    if let Some(rest) = s.strip_prefix('[') {
-        let (host, port_str) = rest.split_once("]:").ok_or_else(|| {
-            ApiError::BadRequest(format!("invalid IPv6 address '{s}': expected [host]:port"))
-        })?;
-        let port: u16 = port_str
-            .parse()
-            .map_err(|_| ApiError::BadRequest(format!("invalid port in '{s}'")))?;
-        return Ok(ServerAddress {
-            host: host.to_string(),
-            port,
-        });
+/// Resolves the identity of a submitted config against the id it is filed
+/// under, filling it in when the document leaves it implicit.
+fn settle_id(config: &mut ServerConfig, expected: &str) -> Result<DocumentId, ApiError> {
+    if config.id.is_none() && config.name.is_none() {
+        config.id = Some(expected.to_string());
     }
-
-    let (host, port_str) = s.rsplit_once(':').ok_or_else(|| {
-        ApiError::BadRequest(format!("invalid address '{s}': expected host:port"))
-    })?;
-    let port: u16 = port_str
-        .parse()
-        .map_err(|_| ApiError::BadRequest(format!("invalid port in '{s}'")))?;
-    Ok(ServerAddress {
-        host: host.to_string(),
-        port,
-    })
-}
-
-const MAX_SERVER_ID_LEN: usize = 64;
-
-fn validate_server_id(id: &str) -> Result<(), ApiError> {
-    if id.is_empty() {
-        return Err(ApiError::BadRequest("server ID cannot be empty".into()));
-    }
-    if id.len() > MAX_SERVER_ID_LEN {
+    let id = config.effective_id();
+    if id != expected {
         return Err(ApiError::BadRequest(format!(
-            "server ID too long ({} chars, max {MAX_SERVER_ID_LEN})",
-            id.len()
+            "config identifies as '{id}' but was submitted as '{expected}'"
         )));
     }
-    if !id
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(ApiError::BadRequest(
-            "server ID must be alphanumeric with dashes/underscores".into(),
-        ));
+    let document = DocumentId::new(expected).ok_or_else(|| {
+        ApiError::BadRequest(format!(
+            "server ID '{expected}' must be 1 to {MAX_ID_LEN} characters of \
+             [a-z0-9._-], must not start with '.' and must not contain '..'"
+        ))
+    })?;
+    infrarust_config::validate_server_config(config)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+
+    Ok(document)
+}
+
+/// Tells the proxy about a change while it still holds the directory's write
+/// lock, so concurrent writers reach the router in the order they reached the
+/// disk.
+async fn announce(state: &ApiState, committed: Committed<'_>, event: PluginProviderEvent) {
+    let sender_guard = state.provider_sender.lock().await;
+    if let Some(sender) = sender_guard.as_ref() {
+        sender.send(event).await;
     }
-    Ok(())
+    drop(committed);
+}
+
+fn document_event(
+    committed: &Committed<'_>,
+    text: String,
+    event: fn(ServerDocument) -> PluginProviderEvent,
+) -> PluginProviderEvent {
+    event(ServerDocument {
+        id: ServerId::new(committed.id().as_str()),
+        toml: text,
+    })
 }
 
 pub async fn create(
     State(state): State<Arc<ApiState>>,
-    Json(req): Json<CreateServerRequest>,
+    Json(mut config): Json<ServerConfig>,
 ) -> Result<(StatusCode, Json<ApiResponse<MutationResult>>), ApiError> {
-    validate_server_id(&req.id)?;
-
-    if req.domains.is_empty() {
-        return Err(ApiError::BadRequest(
-            "At least one domain is required".into(),
-        ));
-    }
-    if req.addresses.is_empty() {
-        return Err(ApiError::BadRequest(
-            "At least one address is required".into(),
-        ));
+    if config.id.is_none() && config.name.is_none() {
+        return Err(ApiError::BadRequest("server ID is required".into()));
     }
 
-    // Check for duplicates
-    let server_id = ServerId::new(&req.id);
-    if state.config_service.get_server_config(&server_id).is_some() {
-        return Err(ApiError::Conflict(format!(
-            "Server '{}' already exists",
-            req.id
-        )));
+    let id = config.effective_id();
+    let document = settle_id(&mut config, &id)?;
+
+    if state.server_dir.ownership(&document) != Ownership::Absent
+        || state
+            .config_service
+            .get_server_config(&ServerId::new(&id))
+            .is_some()
+    {
+        return Err(ApiError::Conflict(format!("Server '{id}' already exists")));
     }
 
-    let addresses: Vec<ServerAddress> = req
-        .addresses
-        .iter()
-        .map(|a| parse_address(a))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let proxy_mode = parse_proxy_mode(&req.proxy_mode)?;
-
-    let config = ServerConfig::new(
-        server_id,
-        None,
-        addresses,
-        req.domains,
-        proxy_mode,
-        req.limbo_handlers,
-        0,
-        None,
-        false,
-        false,
-    );
-
-    state.server_store.insert(config.clone()).await;
-
-    // Emit to the core provider system
-    let sender_guard = state.provider_sender.lock().await;
-    if let Some(sender) = sender_guard.as_ref() {
-        sender.send(PluginProviderEvent::Added(config)).await;
-    }
+    let text = restore_secrets(&to_document_text(&config)?, None)?;
+    let committed = state.server_dir.create(&document, text.clone()).await?;
+    let event = document_event(&committed, text, PluginProviderEvent::AddedDocument);
+    announce(&state, committed, event).await;
 
     tracing::info!(
         target: "audit",
         action = "server_create",
-        server = %req.id,
+        server = %id,
         source = "admin_api",
         "Server created via Admin API"
     );
@@ -287,102 +339,184 @@ pub async fn create(
         StatusCode::CREATED,
         ok(MutationResult {
             success: true,
-            message: format!("Server '{}' created", req.id),
+            message: format!("Server '{id}' created"),
             details: None,
         }),
     ))
 }
 
+/// Full replace: the submitted document becomes the server's entire config,
+/// every field left out reverts to its default.
 pub async fn update(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
-    Json(req): Json<UpdateServerRequest>,
+    Json(mut config): Json<ServerConfig>,
 ) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
-    let existing = state
-        .server_store
-        .get(&id)
-        .ok_or_else(|| ApiError::Forbidden("Only API-created servers can be edited".into()))?;
+    let document = ensure_editable(&state, &id)?;
+    settle_id(&mut config, &id)?;
 
-    let addresses = match req.addresses {
-        Some(ref addrs) => {
-            if addrs.is_empty() {
-                return Err(ApiError::BadRequest(
-                    "At least one address is required".into(),
-                ));
-            }
-            addrs
-                .iter()
-                .map(|a| parse_address(a))
-                .collect::<Result<Vec<_>, _>>()?
-        }
-        None => existing.addresses,
-    };
-
-    let domains = match req.domains {
-        Some(ref d) => {
-            if d.is_empty() {
-                return Err(ApiError::BadRequest(
-                    "At least one domain is required".into(),
-                ));
-            }
-            d.clone()
-        }
-        None => existing.domains,
-    };
-
-    let proxy_mode = match req.proxy_mode {
-        Some(ref m) => parse_proxy_mode(m)?,
-        None => existing.proxy_mode,
-    };
-
-    let limbo_handlers = req.limbo_handlers.unwrap_or(existing.limbo_handlers);
-
-    let config = ServerConfig::new(
-        ServerId::new(&id),
-        existing.network,
-        addresses,
-        domains,
-        proxy_mode,
-        limbo_handlers,
-        existing.max_players,
-        existing.disconnect_message,
-        existing.send_proxy_protocol,
-        existing.has_server_manager,
-    );
-
-    state.server_store.insert(config.clone()).await;
-
-    let sender_guard = state.provider_sender.lock().await;
-    if let Some(sender) = sender_guard.as_ref() {
-        sender.send(PluginProviderEvent::Updated(config)).await;
-    }
+    let text = restore_secrets(
+        &to_document_text(&config)?,
+        state.server_dir.document_text(&id),
+    )?;
+    let committed = state.server_dir.replace(&document, text.clone()).await?;
+    let event = document_event(&committed, text, PluginProviderEvent::UpdatedDocument);
+    announce(&state, committed, event).await;
 
     tracing::info!(
         target: "audit",
         action = "server_update",
         server = %id,
         source = "admin_api",
-        "Server updated via Admin API"
+        "Server replaced via Admin API"
     );
 
-    Ok(mutation_ok(format!("Server '{id}' updated")))
+    Ok(mutation_ok(format!("Server '{id}' replaced")))
+}
+
+/// The server's document as a client may see it: whatever provider supplies
+/// it, with every secret redacted.
+fn document_of(state: &ApiState, id: &str) -> Result<String, ApiError> {
+    let text = state
+        .config_service
+        .get_server_document(&ServerId::new(id))
+        .or_else(|| state.server_dir.document_text(id))
+        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+
+    let mut document = text
+        .parse::<DocumentMut>()
+        .map_err(|e| ApiError::Internal(format!("the config of '{id}' is unreadable: {e}")))?;
+    redact(&mut document, SERVER_SECRETS);
+    Ok(document.to_string())
+}
+
+/// Puts back the secrets [`document_of`] redacted, so a client can save a
+/// document it was never shown the credentials of. `stored` is the document
+/// being replaced, if any.
+fn restore_secrets(text: &str, stored: Option<String>) -> Result<String, ApiError> {
+    let mut document = text
+        .parse::<DocumentMut>()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+
+    if let Some(stored) = stored.and_then(|text| text.parse::<DocumentMut>().ok()) {
+        reinject(&mut document, &stored, SERVER_SECRETS);
+    }
+
+    let unrestored = still_redacted(&document, SERVER_SECRETS);
+    if !unrestored.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "nothing to restore the redacted {} from: submit the real value",
+            unrestored.join(", ")
+        )));
+    }
+
+    Ok(document.to_string())
+}
+
+pub async fn get_raw(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok((
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        document_of(&state, &id)?,
+    ))
+}
+
+/// The whole config as JSON, the read counterpart of the full-replace
+/// [`update`]. Unlike [`get`] it loses no field.
+pub async fn get_config(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<ServerConfig>>, ApiError> {
+    let document = document_of(&state, &id)?;
+    let mut config: ServerConfig = toml::from_str(&document)
+        .map_err(|e| ApiError::Internal(format!("the config of '{id}' is unreadable: {e}")))?;
+    if config.id.is_none() && config.name.is_none() {
+        config.id = Some(id);
+    }
+
+    Ok(ok(config))
+}
+
+/// Full replace from a raw TOML document, stored verbatim.
+pub async fn update_raw(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    text: String,
+) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
+    let document = ensure_editable(&state, &id)?;
+    let text = restore_secrets(&text, state.server_dir.document_text(&id))?;
+
+    let mut config: ServerConfig =
+        toml::from_str(&text).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    settle_id(&mut config, &id)?;
+
+    let committed = state.server_dir.replace(&document, text.clone()).await?;
+    let event = document_event(&committed, text, PluginProviderEvent::UpdatedDocument);
+    announce(&state, committed, event).await;
+
+    tracing::info!(
+        target: "audit",
+        action = "server_update_raw",
+        server = %id,
+        source = "admin_api",
+        "Server replaced from raw TOML via Admin API"
+    );
+
+    Ok(mutation_ok(format!("Server '{id}' replaced")))
+}
+
+/// Checks a config without persisting it. Accepts TOML when the request
+/// carries a text content type, JSON otherwise.
+pub async fn validate(headers: HeaderMap, body: String) -> Json<ApiResponse<ValidationResponse>> {
+    let is_toml = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|ct| ct.contains("toml") || ct.starts_with("text/"));
+
+    let parsed: Result<ServerConfig, String> = if is_toml {
+        toml::from_str(&body).map_err(|e| e.to_string())
+    } else {
+        serde_json::from_str(&body).map_err(|e| e.to_string())
+    };
+
+    let response = match parsed {
+        Err(e) => ValidationResponse {
+            valid: false,
+            errors: vec![e],
+            warnings: vec![],
+        },
+        Ok(config) => {
+            let errors = infrarust_config::validate_server_config(&config)
+                .err()
+                .map(|e| vec![e.to_string()])
+                .unwrap_or_default();
+            ValidationResponse {
+                valid: errors.is_empty(),
+                errors,
+                warnings: infrarust_config::balance_warnings(&config),
+            }
+        }
+    };
+
+    ok(response)
 }
 
 pub async fn delete(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
-    state
-        .server_store
-        .remove(&id)
-        .await
-        .ok_or_else(|| ApiError::Forbidden("Only API-created servers can be deleted".into()))?;
+    let document = ensure_editable(&state, &id)?;
 
-    let server_id = ServerId::new(&id);
-    let sender_guard = state.provider_sender.lock().await;
-    if let Some(sender) = sender_guard.as_ref() {
-        sender.send(PluginProviderEvent::Removed(server_id)).await;
-    }
+    let removed = state
+        .server_dir
+        .remove(&document)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+
+    let event = PluginProviderEvent::Removed(ServerId::new(removed.id().as_str()));
+    announce(&state, removed, event).await;
 
     tracing::info!(
         target: "audit",

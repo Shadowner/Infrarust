@@ -6,6 +6,7 @@ pub mod error;
 pub mod migrate;
 pub mod provider;
 pub mod proxy;
+pub mod secrets;
 pub mod server;
 pub mod types;
 pub mod validation;
@@ -18,5 +19,6 @@ pub use proxy::{ProxyConfig, UnknownDomainBehavior};
 pub use server::ServerConfig;
 pub use types::*;
 pub use validation::{
-    balance_warnings, validate_proxy_config, validate_server_config, validate_server_configs,
+    balance_warnings, validate_proxy_config, validate_proxy_document, validate_server_config,
+    validate_server_configs,
 };

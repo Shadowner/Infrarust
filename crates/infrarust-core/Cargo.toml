@@ -51,6 +51,7 @@ uuid = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
+toml_edit = { workspace = true }
 reqwest = { workspace = true }
 wildmatch = { workspace = true }
 comfy-table = { workspace = true }

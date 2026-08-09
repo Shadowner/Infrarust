@@ -298,11 +298,13 @@ api_key = "your-api-key-here"
 requests_per_minute = 60
 ```
 
-Enables the HTTP admin API (and optional web UI) used by management tools and the CLI. The section is optional; omit it entirely to keep the web interface off.
+Enables the HTTP admin API (and optional web UI) used by management tools and the CLI. The section is optional; omit it entirely to keep the web interface off. `enable_webui` follows `enable_api` when you do not set it, so `enable_api = false` on its own turns both off. Setting `enable_webui = true` next to `enable_api = false` is rejected at startup, since the dashboard is served by the API's own HTTP server and calls it for every screen.
 
 `bind` defaults to `127.0.0.1:8080`. If you bind to a non-loopback address, `api_key` is required and must be at least 16 characters. When bound to loopback without a key, Infrarust generates an ephemeral key and logs it at startup.
 
 `cors_origins` accepts a list of allowed CORS origins (empty by default, meaning no cross-origin access).
+
+The API can rewrite this file through `PUT /api/v1/config/proxy/raw`. Nothing is hot-applied: the proxy keeps running on the configuration it started with until you restart it. Reads replace `api_key` with `<redacted>` and a write puts the stored value back, so editing the config through the dashboard cannot destroy the key. A write is refused when it carries `<redacted>` and there is no stored key to restore, and the proxy refuses to start if `<redacted>` ever reaches the file itself. See [Admin API & Web UI](../plugins/builtin/admin-api).
 
 ::: danger
 Never expose the admin API on a public interface without a strong `api_key`. There is no second authentication layer.

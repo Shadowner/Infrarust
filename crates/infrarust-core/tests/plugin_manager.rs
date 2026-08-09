@@ -17,7 +17,9 @@ use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::NoopServerManager;
 
 mod mock_services;
-use mock_services::{MockBanService, MockConfigService, MockPlayerRegistry};
+use mock_services::{
+    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
+};
 
 struct MockPluginContext {
     plugin_id: String,
@@ -95,6 +97,16 @@ impl PluginContext for MockPluginContext {
     fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
         unimplemented!("mock")
     }
+    fn load_balancer_service(
+        &self,
+    ) -> &dyn infrarust_api::services::load_balancer::LoadBalancerService {
+        unimplemented!("mock")
+    }
+    fn load_balancer_service_handle(
+        &self,
+    ) -> Arc<dyn infrarust_api::services::load_balancer::LoadBalancerService> {
+        unimplemented!("mock")
+    }
     fn config_service_handle(
         &self,
     ) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
@@ -142,6 +154,7 @@ fn make_services() -> PluginServices {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        load_balancer_service: Arc::new(MockLoadBalancerService),
         plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
@@ -455,6 +468,7 @@ async fn test_cleanup_on_disable() {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        load_balancer_service: Arc::new(MockLoadBalancerService),
         plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),

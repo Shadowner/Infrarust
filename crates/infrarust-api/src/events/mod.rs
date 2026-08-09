@@ -25,6 +25,6 @@ pub use lifecycle::{
 };
 pub use packet::{PacketDirection, RawPacketEvent, RawPacketResult};
 pub use proxy::{
-    ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent, ProxyShutdownEvent,
-    ServerStateChangeEvent,
+    BackendHealthEvent, ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent,
+    ProxyShutdownEvent, ServerStateChangeEvent,
 };

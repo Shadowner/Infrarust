@@ -315,6 +315,65 @@ fn test_proxy_web_bind_is_checked() {
 }
 
 #[test]
+fn test_proxy_webui_without_api_is_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    for (api, ui, ok) in [
+        (true, true, true),
+        (true, false, true),
+        (false, false, true),
+        (false, true, false),
+    ] {
+        let config = proxy_from_toml(
+            &format!("[web]\nenable_api = {api}\nenable_webui = {ui}"),
+            dir.path(),
+        );
+        assert_eq!(
+            validate_proxy_config(&config).is_ok(),
+            ok,
+            "enable_api = {api}, enable_webui = {ui}"
+        );
+    }
+}
+
+/// The dashboard cannot run without the API, so the minimal way to turn the
+/// admin API off must not be the one combination that refuses to boot.
+#[test]
+fn test_proxy_disabling_the_api_alone_is_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("[web]\nenable_api = false", dir.path());
+
+    assert!(validate_proxy_config(&config).is_ok());
+    assert!(!config.web.as_ref().expect("a [web] section").webui_enabled());
+}
+
+#[test]
+fn test_proxy_api_key_rules_match_startup() {
+    let dir = tempfile::tempdir().unwrap();
+    for (web, ok) in [
+        ("bind = \"127.0.0.1:8080\"", true),
+        ("bind = \"127.0.0.1:8080\"\napi_key = \"hunter2\"", false),
+        (
+            "bind = \"127.0.0.1:8080\"\napi_key = \"a-strong-enough-api-key\"",
+            true,
+        ),
+        ("bind = \"0.0.0.0:8080\"", false),
+        ("bind = \"0.0.0.0:8080\"\napi_key = \"\"", false),
+        ("bind = \"0.0.0.0:8080\"\napi_key = \"CHANGE-ME\"", false),
+        (
+            "bind = \"0.0.0.0:8080\"\napi_key = \"a-strong-enough-api-key\"",
+            true,
+        ),
+        (
+            "enable_api = false\nbind = \"0.0.0.0:8080\"\napi_key = \"hunter2\"",
+            true,
+        ),
+    ] {
+        let config = proxy_from_toml(&format!("[web]\n{web}"), dir.path());
+        assert_eq!(validate_proxy_config(&config).is_ok(), ok, "[web]\n{web}");
+    }
+}
+
+#[test]
 fn test_proxy_web_bind_collision_is_invalid() {
     let dir = tempfile::tempdir().unwrap();
     // Default proxy bind is 0.0.0.0:25565, which covers every interface.
@@ -333,6 +392,7 @@ fn test_proxy_web_bind_collision_is_invalid() {
 
         [web]
         bind = "192.168.1.5:25565"
+        api_key = "a-strong-enough-api-key"
     "#,
         dir.path(),
     );

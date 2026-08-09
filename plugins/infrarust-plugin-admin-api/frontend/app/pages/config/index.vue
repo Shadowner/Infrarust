@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import {
   ArrowPathIcon,
+  ArrowRightIcon,
+  Cog6ToothIcon,
+  ExclamationTriangleIcon,
   TrashIcon,
   PowerIcon,
 } from '@heroicons/vue/24/outline';
@@ -9,6 +12,7 @@ import type { ProxyStatus, ProviderDto, ApiEnvelope, MutationResult } from '~/ty
 const { request } = useApi();
 const { push } = useToast();
 const { ask } = useConfirm();
+const { pending: restartPending, clear: clearRestart } = useRestartRequired();
 
 const providers = ref<ProviderDto[]>([]);
 const proxyConfig = ref<ProxyStatus | null>(null);
@@ -70,6 +74,30 @@ async function handleOperation(op: typeof operations[number]) {
 <template>
   <div class="grid gap-5">
     <h2 class="text-xl font-bold tracking-tight">Configuration</h2>
+
+    <div
+      v-if="restartPending"
+      class="glass-pane flex flex-wrap items-center gap-3 border-[rgba(233,160,71,0.3)] bg-[rgba(233,160,71,0.08)] p-4"
+    >
+      <ExclamationTriangleIcon class="h-4 w-4 shrink-0 text-[var(--ir-warn)]" />
+      <p class="flex-1 text-sm text-[#ffd8ad]">
+        A config change is saved to disk but the running proxy still uses the old one. Restart it to apply.
+      </p>
+      <button class="btn btn-secondary text-xs" @click="clearRestart()">Dismiss</button>
+    </div>
+
+    <NuxtLink to="/config/proxy" class="glass-pane glass-pane-interactive flex items-center gap-4 p-5">
+      <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--ir-accent-soft)]">
+        <Cog6ToothIcon class="h-5 w-5 text-[var(--ir-accent)]" />
+      </div>
+      <div class="min-w-0 flex-1">
+        <p class="font-semibold">Proxy config</p>
+        <p class="mt-0.5 text-xs text-[var(--ir-text-muted)]">
+          Read <span class="font-mono">infrarust.toml</span>, edit it as TOML, validate before saving.
+        </p>
+      </div>
+      <ArrowRightIcon class="h-4 w-4 shrink-0 text-[var(--ir-text-muted)]" />
+    </NuxtLink>
 
     <div class="grid gap-4 md:grid-cols-2">
       <div class="glass-pane p-5">

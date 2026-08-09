@@ -63,7 +63,8 @@ impl ConnectionRegistry {
         let (_, session) = self
             .sessions
             .remove_if(session_uuid, |_, s| s.id() == player_id)?;
-        self.id_index.remove_if(&player_id, |_, u| u == session_uuid);
+        self.id_index
+            .remove_if(&player_id, |_, u| u == session_uuid);
         session.set_disconnected();
         Some(session)
     }
@@ -253,7 +254,10 @@ mod tests {
 
         assert_eq!(registry.get(&uuid).map(|s| s.id()), Some(PlayerId::new(2)));
         assert!(second.is_connected());
-        assert_eq!(registry.find_by_id(PlayerId::new(2)).unwrap().id().as_u64(), 2);
+        assert_eq!(
+            registry.find_by_id(PlayerId::new(2)).unwrap().id().as_u64(),
+            2
+        );
     }
 
     #[test]

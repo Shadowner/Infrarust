@@ -35,9 +35,15 @@ pub fn select_backend_addresses(
         })
         .collect();
 
+    // Nothing selectable left: reinstate the whole pool rather than deny the
+    // connection. Drained addresses are spared unless draining is all there
+    // is, so a drain can never black-hole a server.
     if !candidates.iter().any(BackendCandidate::is_healthy) {
+        let spare_drained = candidates.iter().any(|c| !c.is_draining());
         for c in &mut candidates {
-            c.state = BackendState::Healthy;
+            if !(spare_drained && c.is_draining()) {
+                c.state = BackendState::Healthy;
+            }
         }
     }
 
@@ -49,4 +55,85 @@ pub fn select_backend_addresses(
         .chain(ordered.iter().filter(|c| !c.probe))
         .map(|c| c.address.clone())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::loadbalancer::{FirstAvailable, HealthSnapshot};
+
+    struct NoConnections;
+
+    impl AddressConnectionCount for NoConnections {
+        fn active_connections_for_address(&self, _addr: &ServerAddress) -> usize {
+            0
+        }
+    }
+
+    struct FixedHealth(HashMap<ServerAddress, BackendState>);
+
+    impl BackendHealthView for FixedHealth {
+        fn snapshot(&self, addr: &ServerAddress) -> HealthSnapshot {
+            HealthSnapshot {
+                state: self.0.get(addr).copied().unwrap_or(BackendState::Healthy),
+                healthy_since: None,
+            }
+        }
+    }
+
+    fn addr(host: &str) -> ServerAddress {
+        ServerAddress {
+            host: host.to_string(),
+            port: 25565,
+        }
+    }
+
+    fn server() -> ServerConfig {
+        toml::from_str(
+            "name = \"lobby\"\ndomains = [\"lobby.test\"]\naddresses = [\"a:25565\", \"b:25565\"]\n",
+        )
+        .unwrap()
+    }
+
+    fn selected(states: &[(&str, BackendState)]) -> Vec<String> {
+        let health = FixedHealth(
+            states
+                .iter()
+                .map(|(host, state)| (addr(host), *state))
+                .collect(),
+        );
+        select_backend_addresses(&server(), &FirstAvailable, &NoConnections, &health)
+            .into_iter()
+            .map(|a| a.host)
+            .collect()
+    }
+
+    #[test]
+    fn draining_leaves_the_selectable_pool() {
+        assert_eq!(selected(&[("a", BackendState::Draining)]), ["b"]);
+    }
+
+    #[test]
+    fn draining_is_not_a_last_resort_failover() {
+        assert_eq!(
+            selected(&[
+                ("a", BackendState::Draining),
+                ("b", BackendState::Unhealthy)
+            ]),
+            ["b"],
+            "the ejected address is preferred over the drained one"
+        );
+    }
+
+    #[test]
+    fn draining_every_address_does_not_black_hole_the_server() {
+        assert_eq!(
+            selected(&[("a", BackendState::Draining), ("b", BackendState::Draining)]),
+            ["a", "b"],
+            "with nothing else left, drain is ignored"
+        );
+    }
 }

@@ -16,9 +16,9 @@ use crate::event::bus::EventBus;
 use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use crate::limbo::LimboHandler;
 use crate::services::{
-    ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
-    plugin_registry::PluginRegistry, proxy_info::ProxyInfo, scheduler::Scheduler,
-    server_manager::ServerManager,
+    ban_service::BanService, config_service::ConfigService, load_balancer::LoadBalancerService,
+    player_registry::PlayerRegistry, plugin_registry::PluginRegistry, proxy_info::ProxyInfo,
+    scheduler::Scheduler, server_manager::ServerManager,
 };
 
 /// Metadata describing a plugin.
@@ -167,6 +167,10 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     fn config_service(&self) -> &dyn ConfigService;
 
     fn config_service_handle(&self) -> Arc<dyn ConfigService>;
+
+    fn load_balancer_service(&self) -> &dyn LoadBalancerService;
+
+    fn load_balancer_service_handle(&self) -> Arc<dyn LoadBalancerService>;
 
     fn command_manager(&self) -> &dyn CommandManager;
 

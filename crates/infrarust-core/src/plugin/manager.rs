@@ -9,9 +9,9 @@ use infrarust_api::error::PluginError;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::{
-    ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
-    plugin_registry::PluginRegistry, proxy_info::ProxyInfo, scheduler::Scheduler,
-    server_manager::ServerManager,
+    ban_service::BanService, config_service::ConfigService, load_balancer::LoadBalancerService,
+    player_registry::PlayerRegistry, plugin_registry::PluginRegistry, proxy_info::ProxyInfo,
+    scheduler::Scheduler, server_manager::ServerManager,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -33,6 +33,7 @@ pub struct PluginServices {
     pub command_manager: Arc<dyn CommandManager>,
     pub scheduler: Arc<dyn Scheduler>,
     pub config_service: Arc<dyn ConfigService>,
+    pub load_balancer_service: Arc<dyn LoadBalancerService>,
     pub plugin_registry: Arc<dyn PluginRegistry>,
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
@@ -457,6 +458,12 @@ mod tests {
             unimplemented!("mock")
         }
         fn config_service_handle(&self) -> Arc<dyn ConfigService> {
+            unimplemented!("mock")
+        }
+        fn load_balancer_service(&self) -> &dyn LoadBalancerService {
+            unimplemented!("mock")
+        }
+        fn load_balancer_service_handle(&self) -> Arc<dyn LoadBalancerService> {
             unimplemented!("mock")
         }
         fn event_bus_handle(&self) -> Arc<dyn EventBus> {

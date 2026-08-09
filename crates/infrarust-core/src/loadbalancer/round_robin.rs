@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 use infrarust_config::ServerAddress;
 
 use super::slow_start::{SlowStartConfig, effective_weight};
-use super::{BackendCandidate, LoadBalancer, split_health};
+use super::{BackendCandidate, LoadBalancer};
 
 pub struct RoundRobin {
     state: Mutex<HashMap<ServerAddress, f64>>,
@@ -27,51 +27,47 @@ impl LoadBalancer for RoundRobin {
         "round_robin"
     }
 
-    fn order<'a>(&self, candidates: &'a [BackendCandidate]) -> SmallVec<[&'a BackendCandidate; 4]> {
-        let (healthy, unhealthy) = split_health(candidates);
-        if healthy.is_empty() {
-            return candidates.iter().collect();
-        }
-
+    fn order_selectable<'a>(
+        &self,
+        selectable: &[&'a BackendCandidate],
+    ) -> SmallVec<[&'a BackendCandidate; 4]> {
         let mut cw = self
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-        cw.retain(|addr, _| healthy.iter().any(|c| &c.address == addr));
+        cw.retain(|addr, _| selectable.iter().any(|c| &c.address == addr));
 
         let mut total = 0.0_f64;
-        for c in &healthy {
+        for c in selectable {
             let eff = effective_weight(c, self.slow_start.as_ref());
             *cw.entry(c.address.clone()).or_insert(0.0) += eff;
             total += eff;
         }
 
-        let pick_idx = healthy
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| {
-                cw[&a.address]
-                    .partial_cmp(&cw[&b.address])
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .map_or(0, |(i, _)| i);
+        let picked = selectable.iter().enumerate().max_by(|(_, a), (_, b)| {
+            cw[&a.address]
+                .partial_cmp(&cw[&b.address])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let Some((pick_idx, picked)) = picked else {
+            return SmallVec::new();
+        };
 
-        if let Some(w) = cw.get_mut(&healthy[pick_idx].address) {
+        if let Some(w) = cw.get_mut(&picked.address) {
             *w -= total;
         }
         drop(cw);
 
         let mut result = SmallVec::new();
-        result.push(healthy[pick_idx]);
+        result.push(*picked);
         result.extend(
-            healthy
+            selectable
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| *i != pick_idx)
                 .map(|(_, c)| *c),
         );
-        result.extend(unhealthy);
         result
     }
 }

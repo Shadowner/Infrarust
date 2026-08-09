@@ -36,7 +36,7 @@ pub fn build_static_loader(
     }
 
     // Admin API: always compiled, conditionally registered based on [web] config
-    if let Some(web) = web_config {
+    if let Some(web) = web_config.filter(|w| w.enable_api) {
         use infrarust_api::plugin::Plugin;
         use infrarust_plugin_admin_api::config::{ApiConfig, RateLimitConfig};
 
@@ -44,7 +44,7 @@ pub fn build_static_loader(
             .resolve_api_key()
             .map_err(|e| anyhow::anyhow!("Invalid web API configuration: {e}"))?;
 
-        let enable_webui = web.enable_webui;
+        let enable_webui = web.webui_enabled();
 
         let config = ApiConfig {
             bind: web.bind.clone(),
@@ -70,4 +70,38 @@ pub fn build_static_loader(
         "Static plugins registered"
     );
     Ok(loader)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn web(enable_api: bool) -> WebConfig {
+        WebConfig {
+            enable_api,
+            enable_webui: Some(enable_api),
+            ..WebConfig::default()
+        }
+    }
+
+    #[test]
+    fn admin_api_is_registered_when_the_api_is_enabled() {
+        let mut config = web(true);
+        let loader = build_static_loader(Some(&mut config)).expect("loopback bind is accepted");
+        assert!(loader.registered_ids().contains(&"admin_api".to_string()));
+    }
+
+    #[test]
+    fn admin_api_is_not_registered_when_the_api_is_disabled() {
+        let mut config = web(false);
+        let loader = build_static_loader(Some(&mut config)).expect("nothing to resolve");
+        assert!(!loader.registered_ids().contains(&"admin_api".to_string()));
+        assert!(config.api_key.is_none(), "no key should be generated");
+    }
+
+    #[test]
+    fn admin_api_is_not_registered_without_a_web_section() {
+        let loader = build_static_loader(None).expect("nothing to resolve");
+        assert!(!loader.registered_ids().contains(&"admin_api".to_string()));
+    }
 }

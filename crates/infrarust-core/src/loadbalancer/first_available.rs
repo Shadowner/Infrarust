@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use super::{BackendCandidate, LoadBalancer, split_health};
+use super::{BackendCandidate, LoadBalancer};
 
 pub struct FirstAvailable;
 
@@ -9,10 +9,11 @@ impl LoadBalancer for FirstAvailable {
         "first_available"
     }
 
-    fn order<'a>(&self, candidates: &'a [BackendCandidate]) -> SmallVec<[&'a BackendCandidate; 4]> {
-        let (mut healthy, unhealthy) = split_health(candidates);
-        healthy.extend(unhealthy);
-        healthy
+    fn order_selectable<'a>(
+        &self,
+        selectable: &[&'a BackendCandidate],
+    ) -> SmallVec<[&'a BackendCandidate; 4]> {
+        selectable.iter().copied().collect()
     }
 }
 

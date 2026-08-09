@@ -16,8 +16,9 @@ use infrarust_api::provider::PluginConfigProvider;
 use infrarust_api::services::proxy_info::ProxyInfo;
 use infrarust_api::services::scheduler::{Scheduler, TaskHandle};
 use infrarust_api::services::{
-    ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
-    plugin_registry::PluginRegistry, server_manager::ServerManager,
+    ban_service::BanService, config_service::ConfigService, load_balancer::LoadBalancerService,
+    player_registry::PlayerRegistry, plugin_registry::PluginRegistry,
+    server_manager::ServerManager,
 };
 
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
@@ -39,6 +40,7 @@ pub struct PluginContextImpl {
     server_manager: Arc<dyn ServerManager>,
     ban_service: Arc<dyn BanService>,
     config_service: Arc<dyn ConfigService>,
+    load_balancer_service: Arc<dyn LoadBalancerService>,
     plugin_registry: Arc<dyn PluginRegistry>,
     command_manager: Arc<TrackingCommandManager>,
     scheduler: Arc<TrackingScheduler>,
@@ -70,6 +72,7 @@ impl PluginContextImpl {
         server_manager: Arc<dyn ServerManager>,
         ban_service: Arc<dyn BanService>,
         config_service: Arc<dyn ConfigService>,
+        load_balancer_service: Arc<dyn LoadBalancerService>,
         plugin_registry: Arc<dyn PluginRegistry>,
         command_manager: Arc<dyn CommandManager>,
         scheduler: Arc<dyn Scheduler>,
@@ -99,12 +102,21 @@ impl PluginContextImpl {
             Arc::clone(&registered_tasks),
         ));
 
+        let config_service: Arc<dyn ConfigService> = if capabilities.has(Capability::ConfigWrite) {
+            config_service
+        } else {
+            Arc::new(crate::services::config_service::ReadOnlyConfigService::new(
+                config_service,
+            ))
+        };
+
         Self {
             event_bus: tracking_bus,
             player_registry,
             server_manager,
             ban_service,
             config_service,
+            load_balancer_service,
             plugin_registry,
             command_manager: tracking_cmd,
             scheduler: tracking_sched,
@@ -232,6 +244,14 @@ impl PluginContext for PluginContextImpl {
 
     fn config_service_handle(&self) -> Arc<dyn ConfigService> {
         Arc::clone(&self.config_service)
+    }
+
+    fn load_balancer_service(&self) -> &dyn LoadBalancerService {
+        self.load_balancer_service.as_ref()
+    }
+
+    fn load_balancer_service_handle(&self) -> Arc<dyn LoadBalancerService> {
+        Arc::clone(&self.load_balancer_service)
     }
 
     fn command_manager(&self) -> &dyn CommandManager {

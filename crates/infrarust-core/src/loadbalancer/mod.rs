@@ -16,19 +16,20 @@ mod slow_start;
 pub use factory::build_load_balancer;
 pub use first_available::FirstAvailable;
 pub use health::{
-    BackendHealthView, BackendState, HealthSnapshot, HealthTransitionListener,
+    BackendHealthView, BackendReport, BackendState, HealthSnapshot, HealthTransitionListener,
     PassiveBackendHealth,
 };
 pub use least_conn::LeastConnections;
 pub use load::BackendLoad;
-pub use observer::BackendAttemptObserver;
 #[cfg(feature = "telemetry")]
 pub use observer::HealthTransitionMetrics;
+pub use observer::{BackendAttemptObserver, HealthTransitionEvents};
 pub use pending::{PendingRegistry, PendingTicket};
 pub use prober::ActiveHealthProber;
 pub use round_robin::RoundRobin;
 pub use selection::select_backend_addresses;
 pub use slow_start::SlowStartConfig;
+pub(crate) use slow_start::effective_weight;
 
 use std::time::Instant;
 
@@ -50,6 +51,10 @@ impl BackendCandidate {
     pub const fn is_healthy(&self) -> bool {
         matches!(self.state, BackendState::Healthy)
     }
+
+    pub const fn is_draining(&self) -> bool {
+        matches!(self.state, BackendState::Draining)
+    }
 }
 
 /// Ordering strategy for the backend addresses of a `ServerConfig`, applied
@@ -61,6 +66,20 @@ pub trait LoadBalancer: Send + Sync {
     /// Name for logging and metrics (e.g. "least_conn").
     fn name(&self) -> &'static str;
 
+    /// Orders the selectable candidates, i.e. the healthy ones.
+    ///
+    /// Strategies only ever see candidates they are allowed to return, so a
+    /// drained address cannot leak out of one and the empty case needs no
+    /// special handling: with nothing selectable, the order is empty and
+    /// [`LoadBalancer::order`] falls back to the last-resort tail on its own.
+    ///
+    /// Probe hoisting is applied by [`select_backend_addresses`] on top of
+    /// this order, so strategies never deal with it either.
+    fn order_selectable<'a>(
+        &self,
+        selectable: &[&'a BackendCandidate],
+    ) -> SmallVec<[&'a BackendCandidate; 4]>;
+
     /// Returns the candidates in the order to try them.
     ///
     /// Contract:
@@ -71,10 +90,15 @@ pub trait LoadBalancer: Send + Sync {
     ///   failover, probe-eligible ones first, config order within each group.
     /// - If *all* are ejected: all returned in that tail order. Never an
     ///   empty list — better to try and fail than deny any chance.
-    ///
-    /// Probe hoisting is applied by [`select_backend_addresses`] on top of
-    /// this order, so strategies never deal with it.
-    fn order<'a>(&self, candidates: &'a [BackendCandidate]) -> SmallVec<[&'a BackendCandidate; 4]>;
+    /// - **Draining** candidates are dropped entirely.
+    ///   [`select_backend_addresses`] guarantees at least one candidate is
+    ///   not draining, so the result still cannot be empty.
+    fn order<'a>(&self, candidates: &'a [BackendCandidate]) -> SmallVec<[&'a BackendCandidate; 4]> {
+        let (selectable, last_resort) = split_health(candidates);
+        let mut ordered = self.order_selectable(&selectable);
+        ordered.extend(last_resort);
+        ordered
+    }
 }
 
 /// Per-address active connection count, fed to [`BackendCandidate`].
@@ -104,6 +128,9 @@ fn split_health(
             BackendState::Healthy => healthy.push(c),
             BackendState::Probing => probing.push(c),
             BackendState::Unhealthy => unhealthy.push(c),
+            // Dropped from both groups: a drained address is not even a
+            // last-resort failover.
+            BackendState::Draining => {}
         }
     }
     probing.extend(unhealthy);
@@ -223,5 +250,68 @@ mod tests {
         let t: Vec<&str> = tail.iter().map(|c| c.address.host.as_str()).collect();
         assert_eq!(h, ["a", "c"]);
         assert_eq!(t, ["d", "b"], "probe-eligible before still-ejected");
+    }
+
+    #[test]
+    fn test_split_health_drops_draining_from_both_groups() {
+        let candidates = vec![
+            test_candidate("a", true),
+            test_candidate_in("b", BackendState::Draining),
+            test_candidate("c", false),
+        ];
+        let (healthy, tail) = split_health(&candidates);
+        let h: Vec<&str> = healthy.iter().map(|c| c.address.host.as_str()).collect();
+        let t: Vec<&str> = tail.iter().map(|c| c.address.host.as_str()).collect();
+        assert_eq!(h, ["a"]);
+        assert_eq!(t, ["c"], "a drained address is not a last-resort failover");
+    }
+
+    #[test]
+    fn test_order_drops_draining_with_nothing_healthy_left() {
+        let candidates = vec![
+            test_candidate_in("drained", BackendState::Draining),
+            test_candidate_in("ejected", BackendState::Unhealthy),
+            test_candidate_in("probing", BackendState::Probing),
+        ];
+        for lb in strategies() {
+            let hosts: Vec<&str> = lb
+                .order(&candidates)
+                .iter()
+                .map(|c| c.address.host.as_str())
+                .collect();
+            assert_eq!(
+                hosts,
+                ["probing", "ejected"],
+                "{}: a drained address is not a last-resort failover",
+                lb.name()
+            );
+        }
+    }
+
+    #[test]
+    fn test_order_of_only_draining_candidates_is_empty() {
+        let candidates = vec![
+            test_candidate_in("a", BackendState::Draining),
+            test_candidate_in("b", BackendState::Draining),
+        ];
+        for lb in strategies() {
+            assert!(lb.order(&candidates).is_empty(), "{}", lb.name());
+        }
+    }
+
+    #[test]
+    fn test_order_never_returns_a_draining_candidate() {
+        let candidates = vec![
+            test_candidate_in("a", BackendState::Draining),
+            test_candidate("b", true),
+        ];
+        for lb in strategies() {
+            let hosts: Vec<&str> = lb
+                .order(&candidates)
+                .iter()
+                .map(|c| c.address.host.as_str())
+                .collect();
+            assert_eq!(hosts, ["b"], "{}", lb.name());
+        }
     }
 }

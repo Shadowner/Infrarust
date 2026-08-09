@@ -1,3 +1,5 @@
+import type { BackendState } from './api';
+
 export type AdminEventType =
   | 'stats.tick'
   | 'player.join'
@@ -7,6 +9,7 @@ export type AdminEventType =
   | 'config.reload'
   | 'ban.created'
   | 'ban.removed'
+  | 'backend.health_change'
   | string;
 
 export interface AdminEvent<T = unknown> {
@@ -54,6 +57,12 @@ export interface ServerStateChangePayload {
   old_state: string;
   new_state: string;
   timestamp: string;
+}
+
+export interface BackendHealthChangePayload {
+  address: string;
+  server_ids: string[];
+  state: BackendState;
 }
 
 export interface BanEventPayload {

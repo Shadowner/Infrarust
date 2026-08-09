@@ -38,6 +38,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 serde_yml = "0.0.13"
 toml = "0.9.8"
+toml_edit = "0.25.13"
 fastnbt = "2.6.1"
 
 # Data types

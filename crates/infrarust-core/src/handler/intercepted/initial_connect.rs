@@ -466,8 +466,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
-    use infrarust_api::event::bus::{EventBus, EventBusExt};
     use infrarust_api::event::EventPriority;
+    use infrarust_api::event::bus::{EventBus, EventBusExt};
     use infrarust_api::events::connection::{
         PlayerChooseInitialServerEvent, PlayerChooseInitialServerResult,
     };

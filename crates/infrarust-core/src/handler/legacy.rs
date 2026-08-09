@@ -63,8 +63,13 @@ impl LegacyHandler {
         config: &ServerConfig,
         load_balancer: &dyn crate::loadbalancer::LoadBalancer,
     ) -> Vec<ServerAddress> {
-        select_backend_addresses(config, load_balancer, self.counts.as_ref(), self.health.as_ref())
-            .to_vec()
+        select_backend_addresses(
+            config,
+            load_balancer,
+            self.counts.as_ref(),
+            self.health.as_ref(),
+        )
+        .to_vec()
     }
 
     /// Handles a legacy connection (ping or login).
