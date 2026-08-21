@@ -180,6 +180,11 @@ pub(super) async fn resolve_initial_mode(
     let mode = if let Some(limbo_mode) = initial_mode {
         limbo_mode
     } else {
+        let forwarding_handler = services.resolve_forwarding_handler(server_config);
+        if requires_proxy_completed_login(&forwarding_handler, *login_completed) {
+            ensure_login_complete(client, auth_result, login_completed, version, services).await?;
+        }
+
         match connect_to_backend(
             client,
             auth_result,
@@ -304,7 +309,11 @@ async fn connect_to_backend(
                 .await?;
         }
 
-        let velocity_ctx = services.forwarding_secret().map(|s| (&fwd_data, s));
+        let velocity_ctx = if handler.is_velocity() {
+            services.forwarding_secret().map(|s| (&fwd_data, s))
+        } else {
+            None
+        };
 
         if let Err(e) = backend
             .consume_backend_login(&services.packet_registry, version, velocity_ctx)
@@ -358,8 +367,7 @@ async fn prepare_client_for_limbo(
     version: ProtocolVersion,
     services: &ProxyServices,
 ) -> Result<(), CoreError> {
-    ensure_login_complete_for_limbo(client, auth_result, login_completed, version, services)
-        .await?;
+    ensure_login_complete(client, auth_result, login_completed, version, services).await?;
 
     if version.no_less_than(ProtocolVersion::V1_20_2)
         && let Err(e) = crate::limbo::login::complete_config_for_limbo(
@@ -381,7 +389,7 @@ async fn prepare_client_for_limbo(
     Ok(())
 }
 
-async fn ensure_login_complete_for_limbo(
+async fn ensure_login_complete(
     client: &mut ClientBridge,
     auth_result: &AuthResult,
     login_completed: &mut bool,
@@ -410,4 +418,30 @@ async fn ensure_login_complete_for_limbo(
 
     *login_completed = true;
     Ok(())
+}
+
+const fn requires_proxy_completed_login(
+    handler: &crate::forwarding::ForwardingHandler,
+    login_completed: bool,
+) -> bool {
+    handler.is_velocity() && !login_completed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::requires_proxy_completed_login;
+    use crate::forwarding::{ForwardingHandler, ForwardingMode, build_forwarding_handler};
+
+    #[test]
+    fn velocity_requires_proxy_completed_login_for_offline_flow() {
+        let velocity = build_forwarding_handler(&ForwardingMode::Velocity {
+            secret: b"test-secret".to_vec(),
+        });
+        assert!(requires_proxy_completed_login(&velocity, false));
+        assert!(!requires_proxy_completed_login(&velocity, true));
+        assert!(!requires_proxy_completed_login(
+            &ForwardingHandler::None,
+            false
+        ));
+    }
 }
