@@ -53,8 +53,6 @@ pub async fn extract_registry_data(
         &mut encoder,
         &handshake,
         &registry,
-        ConnectionState::Handshake,
-        Direction::Serverbound,
         protocol_version,
     )
     .await?;
@@ -70,8 +68,6 @@ pub async fn extract_registry_data(
         &mut encoder,
         &login_start,
         &registry,
-        ConnectionState::Login,
-        Direction::Serverbound,
         protocol_version,
     )
     .await?;
@@ -170,16 +166,7 @@ async fn handle_login_frame(
                 tracing::info!("LoginSuccess received, sending LoginAcknowledged");
 
                 if version.no_less_than(ProtocolVersion::V1_20_2) {
-                    send_packet(
-                        stream,
-                        encoder,
-                        &SLoginAcknowledged,
-                        registry,
-                        ConnectionState::Login,
-                        Direction::Serverbound,
-                        version,
-                    )
-                    .await?;
+                    send_packet(stream, encoder, &SLoginAcknowledged, registry, version).await?;
                     *state = ConnectionState::Config;
                     tracing::info!("Transitioned to Config state");
                 } else {
@@ -218,16 +205,8 @@ async fn handle_config_frame(
     registry_frames: &mut Vec<FrameData>,
     known_packs: &mut Option<FrameData>,
 ) -> anyhow::Result<bool> {
-    let known_packs_id = registry.get_packet_id::<CKnownPacks>(
-        ConnectionState::Config,
-        Direction::Clientbound,
-        version,
-    );
-    let finish_config_id = registry.get_packet_id::<CFinishConfig>(
-        ConnectionState::Config,
-        Direction::Clientbound,
-        version,
-    );
+    let known_packs_id = registry.get_packet_id::<CKnownPacks>(version);
+    let finish_config_id = registry.get_packet_id::<CFinishConfig>(version);
 
     if finish_config_id == Some(frame.id) {
         tracing::debug!("CFinishConfig received, sending SAcknowledgeFinishConfig");
@@ -236,8 +215,6 @@ async fn handle_config_frame(
             encoder,
             &SAcknowledgeFinishConfig,
             registry,
-            ConnectionState::Config,
-            Direction::Serverbound,
             version,
         )
         .await?;
@@ -252,16 +229,7 @@ async fn handle_config_frame(
         });
 
         let response = SKnownPacks { packs: vec![] };
-        send_packet(
-            stream,
-            encoder,
-            &response,
-            registry,
-            ConnectionState::Config,
-            Direction::Serverbound,
-            version,
-        )
-        .await?;
+        send_packet(stream, encoder, &response, registry, version).await?;
         tracing::debug!("SKnownPacks (empty) sent");
         return Ok(false);
     }
@@ -280,24 +248,22 @@ async fn handle_config_frame(
     Ok(false)
 }
 
-async fn send_packet<P: Packet + 'static>(
+async fn send_packet<P: Packet>(
     stream: &mut TcpStream,
     encoder: &mut PacketEncoder,
     packet: &P,
     registry: &PacketRegistry,
-    state: ConnectionState,
-    direction: Direction,
     version: ProtocolVersion,
 ) -> anyhow::Result<()> {
-    let packet_id = registry
-        .get_packet_id::<P>(state, direction, version)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "No packet ID for {} in {state:?}/{direction:?}/{}",
-                P::NAME,
-                version.0,
-            )
-        })?;
+    let packet_id = registry.get_packet_id::<P>(version).ok_or_else(|| {
+        anyhow::anyhow!(
+            "No packet ID for {} in {}/{}/{}",
+            P::NAME,
+            P::STATE,
+            P::DIRECTION,
+            version.0,
+        )
+    })?;
 
     let mut payload = Vec::new();
     packet.encode(&mut payload, version)?;

@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::packets::login::CLoginDisconnect;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::ProtocolVersion;
 use infrarust_protocol::{Packet, PacketRegistry};
 
 use crate::error::CoreError;
@@ -74,7 +74,7 @@ pub(crate) async fn send_login_disconnect(
     };
 
     let packet_id = packet_registry
-        .get_packet_id::<CLoginDisconnect>(ConnectionState::Login, Direction::Clientbound, version)
+        .get_packet_id::<CLoginDisconnect>(version)
         .unwrap_or(0x00);
 
     let mut payload = Vec::new();

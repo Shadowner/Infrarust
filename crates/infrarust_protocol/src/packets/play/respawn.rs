@@ -1,6 +1,6 @@
 use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 #[derive(Debug, Clone)]
@@ -44,13 +44,32 @@ impl Default for CRespawn {
 impl Packet for CRespawn {
     const NAME: &'static str = "CRespawn";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x07,
+        V1_9    => 0x33,
+        V1_12   => 0x34,
+        V1_12_1 => 0x35,
+        V1_13   => 0x38,
+        V1_14   => 0x3A,
+        V1_15   => 0x3B,
+        V1_16   => 0x3A,
+        V1_16_2 => 0x39,
+        V1_17   => 0x3D,
+        V1_19   => 0x3B,
+        V1_19_1 => 0x3E,
+        V1_19_3 => 0x3D,
+        V1_19_4 => 0x41,
+        V1_20_2 => 0x43,
+        V1_20_3 => 0x45,
+        V1_20_5 => 0x47,
+        V1_21_2 => 0x4C,
+        V1_21_5 => 0x4B,
+        V1_21_9 => 0x50,
+        V26_1   => 0x52,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         if version.less_than(ProtocolVersion::V1_20_2) {

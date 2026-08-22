@@ -1,6 +1,6 @@
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 pub fn pack_block_position(x: i32, y: i32, z: i32) -> i64 {
@@ -38,13 +38,30 @@ impl CSetDefaultSpawnPosition {
 impl Packet for CSetDefaultSpawnPosition {
     const NAME: &'static str = "CSetDefaultSpawnPosition";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x05,
+        V1_9    => 0x43,
+        V1_12   => 0x46,
+        V1_13   => 0x49,
+        V1_14   => 0x4D,
+        V1_15   => 0x4E,
+        V1_16   => 0x42,
+        V1_17   => 0x4B,
+        V1_18   => 0x4C,
+        V1_19   => 0x4A,
+        V1_19_1 => 0x4D,
+        V1_19_3 => 0x4C,
+        V1_19_4 => 0x50,
+        V1_20_2 => 0x52,
+        V1_20_3 => 0x54,
+        V1_20_5 => 0x56,
+        V1_21_2 => 0x5B,
+        V1_21_5 => 0x5A,
+        V1_21_9 => 0x5F,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let dimension_name = if version.no_less_than(ProtocolVersion::V1_21_9) {

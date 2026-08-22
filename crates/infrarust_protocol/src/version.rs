@@ -94,16 +94,8 @@ impl ProtocolVersion {
         self < other
     }
 
-    pub fn greater_than(self, other: Self) -> bool {
-        self > other
-    }
-
     pub const fn is_legacy(self) -> bool {
         self.0 <= Self::LEGACY.0 && self.0 >= 0
-    }
-
-    pub fn is_unknown(self) -> bool {
-        self == Self::UNKNOWN
     }
 
     pub const fn name(self) -> &'static str {
@@ -154,13 +146,6 @@ impl ProtocolVersion {
             .iter()
             .copied()
             .filter(move |v| v.no_less_than(from) && v.no_greater_than(to))
-    }
-
-    pub fn range_count(from: Self, to: Self) -> usize {
-        Self::SUPPORTED
-            .iter()
-            .filter(|v| v.no_less_than(from) && v.no_greater_than(to))
-            .count()
     }
 }
 
@@ -219,16 +204,6 @@ impl fmt::Display for ConnectionState {
 pub enum Direction {
     Serverbound,
     Clientbound,
-}
-
-impl Direction {
-    #[allow(clippy::return_self_not_must_use)]
-    pub const fn opposite(self) -> Self {
-        match self {
-            Self::Serverbound => Self::Clientbound,
-            Self::Clientbound => Self::Serverbound,
-        }
-    }
 }
 
 impl fmt::Display for Direction {
@@ -291,26 +266,10 @@ mod tests {
     }
 
     #[test]
-    fn test_version_range_count_matches_iterator() {
-        let from = ProtocolVersion::V1_16;
-        let to = ProtocolVersion::V1_19;
-        assert_eq!(
-            ProtocolVersion::range_count(from, to),
-            ProtocolVersion::range(from, to).count()
-        );
-    }
-
-    #[test]
     fn test_legacy_detection() {
         assert!(ProtocolVersion::LEGACY.is_legacy());
         assert!(!ProtocolVersion::V1_7_2.is_legacy());
         assert!(!ProtocolVersion::V1_8.is_legacy());
-    }
-
-    #[test]
-    fn test_unknown_detection() {
-        assert!(ProtocolVersion::UNKNOWN.is_unknown());
-        assert!(!ProtocolVersion::V1_8.is_unknown());
     }
 
     #[test]
@@ -329,7 +288,6 @@ mod tests {
                 "no_greater_than({a:?}, {b:?})"
             );
             assert_eq!(a.less_than(b), a < b, "less_than({a:?}, {b:?})");
-            assert_eq!(a.greater_than(b), a > b, "greater_than({a:?}, {b:?})");
         }
     }
 
@@ -415,12 +373,6 @@ mod tests {
         assert_eq!(format!("{}", ConnectionState::Status), "status");
         assert_eq!(format!("{}", ConnectionState::Login), "login");
         assert_eq!(format!("{}", ConnectionState::Config), "config");
-    }
-
-    #[test]
-    fn test_opposite() {
-        assert_eq!(Direction::Serverbound.opposite(), Direction::Clientbound);
-        assert_eq!(Direction::Clientbound.opposite(), Direction::Serverbound);
     }
 
     #[test]

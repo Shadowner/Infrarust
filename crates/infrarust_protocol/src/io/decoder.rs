@@ -440,23 +440,25 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_raw_forces_reencoding() {
+    fn test_raw_wire_is_gated_on_threshold_and_survives_clone() {
         let big = vec![0x42; 512];
         let bytes = wire_frame(0x10, &big, Some(64));
         let mut decoder = PacketDecoder::new();
         decoder.set_compression(64);
         decoder.queue_bytes(&bytes);
-        let mut frame = decoder.try_next_frame().unwrap().unwrap();
+        let frame = decoder.try_next_frame().unwrap().unwrap();
 
         assert!(frame.raw_wire(Some(64)).is_some());
         assert!(frame.raw_wire(Some(256)).is_none(), "threshold gate");
         assert!(frame.raw_wire(None).is_none(), "threshold gate");
-        frame.strip_raw();
-        assert!(frame.raw_wire(Some(64)).is_none());
-
-        decoder.queue_bytes(&bytes);
-        let frame = decoder.try_next_frame().unwrap().unwrap();
         assert!(frame.clone().raw_wire(Some(64)).is_some());
+
+        assert!(
+            PacketFrame::new(frame.id, frame.payload.clone())
+                .raw_wire(Some(64))
+                .is_none(),
+            "a rebuilt frame carries no wire bytes and must be re-encoded"
+        );
     }
 
     #[test]

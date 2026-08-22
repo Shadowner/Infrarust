@@ -38,8 +38,4 @@ impl PacketFrame {
             .filter(|raw| raw.threshold == threshold)
             .map(|raw| raw.bytes.as_ref())
     }
-
-    pub fn strip_raw(&mut self) {
-        self.raw = None;
-    }
 }

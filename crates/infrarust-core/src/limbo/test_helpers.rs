@@ -24,7 +24,7 @@ use infrarust_api::types::{GameProfile, PlayerId};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::ban::manager::BanManager;
 use crate::ban::storage::BanStorage;
@@ -54,13 +54,13 @@ pub fn test_registry() -> PacketRegistry {
     infrarust_protocol::registry::build_default_registry()
 }
 
-pub fn build_frame<P: Packet + 'static>(
+pub fn build_frame<P: Packet>(
     packet: &P,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> PacketFrame {
     let packet_id = registry
-        .get_packet_id::<P>(ConnectionState::Play, Direction::Serverbound, version)
+        .get_packet_id::<P>(version)
         .expect("packet ID should exist in registry");
     let mut payload = Vec::new();
     packet.encode(&mut payload, version).unwrap();

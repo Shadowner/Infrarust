@@ -95,28 +95,14 @@ struct HotIds {
 
 impl HotIds {
     fn resolve(registry: &PacketRegistry, version: ProtocolVersion) -> Self {
-        use ConnectionState::Play;
-        use Direction::{Clientbound, Serverbound};
         Self {
-            s_chat_session: registry.get_packet_id::<SChatSessionUpdate>(
-                Play,
-                Serverbound,
-                version,
-            ),
-            s_tab_request: registry.get_packet_id::<STabCompleteRequest>(
-                Play,
-                Serverbound,
-                version,
-            ),
-            c_tab_response: registry.get_packet_id::<CTabCompleteResponse>(
-                Play,
-                Clientbound,
-                version,
-            ),
-            s_chat_command: registry.get_packet_id::<SChatCommand>(Play, Serverbound, version),
-            s_chat_message: registry.get_packet_id::<SChatMessage>(Play, Serverbound, version),
-            c_disconnect: registry.get_packet_id::<CDisconnect>(Play, Clientbound, version),
-            c_commands: registry.get_packet_id::<CCommands>(Play, Clientbound, version),
+            s_chat_session: registry.get_packet_id::<SChatSessionUpdate>(version),
+            s_tab_request: registry.get_packet_id::<STabCompleteRequest>(version),
+            c_tab_response: registry.get_packet_id::<CTabCompleteResponse>(version),
+            s_chat_command: registry.get_packet_id::<SChatCommand>(version),
+            s_chat_message: registry.get_packet_id::<SChatMessage>(version),
+            c_disconnect: registry.get_packet_id::<CDisconnect>(version),
+            c_commands: registry.get_packet_id::<CCommands>(version),
         }
     }
 }
@@ -767,11 +753,7 @@ async fn handle_backend_to_client(
 
             if state == ConnectionState::Config {
                 let is_known_packs = registry
-                    .get_packet_id::<infrarust_protocol::CKnownPacks>(
-                        ConnectionState::Config,
-                        Direction::Clientbound,
-                        version,
-                    )
+                    .get_packet_id::<infrarust_protocol::CKnownPacks>(version)
                     .is_some_and(|id| id == frame.id);
 
                 if is_known_packs {

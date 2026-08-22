@@ -22,7 +22,7 @@ use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::packets::play::chat_session::SChatSessionUpdate;
 use infrarust_protocol::packets::play::tab_complete::STabCompleteRequest;
 use infrarust_protocol::registry::build_default_registry;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::ProtocolVersion;
 use infrarust_protocol::{PacketDecoder, PacketEncoder};
 
 #[path = "shared/filters.rs"]
@@ -126,26 +126,10 @@ fn forward_compressed(bencher: Bencher, size: usize) {
 fn hot_ids(registry: &infrarust_protocol::PacketRegistry) -> [Option<i32>; 4] {
     let version = ProtocolVersion(PROTOCOL);
     [
-        registry.get_packet_id::<SChatSessionUpdate>(
-            ConnectionState::Play,
-            Direction::Serverbound,
-            version,
-        ),
-        registry.get_packet_id::<STabCompleteRequest>(
-            ConnectionState::Play,
-            Direction::Serverbound,
-            version,
-        ),
-        registry.get_packet_id::<SChatCommand>(
-            ConnectionState::Play,
-            Direction::Serverbound,
-            version,
-        ),
-        registry.get_packet_id::<SChatMessage>(
-            ConnectionState::Play,
-            Direction::Serverbound,
-            version,
-        ),
+        registry.get_packet_id::<SChatSessionUpdate>(version),
+        registry.get_packet_id::<STabCompleteRequest>(version),
+        registry.get_packet_id::<SChatCommand>(version),
+        registry.get_packet_id::<SChatMessage>(version),
     ]
 }
 

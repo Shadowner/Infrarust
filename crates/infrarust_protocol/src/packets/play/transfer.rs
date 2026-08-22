@@ -1,6 +1,6 @@
 use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 #[derive(Debug, Clone)]
@@ -12,13 +12,15 @@ pub struct CTransfer {
 impl Packet for CTransfer {
     const NAME: &'static str = "CTransfer";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_20_5 => 0x73,
+        V1_21_2 => 0x7A,
+        V1_21_9 => 0x7F,
+        V26_1   => 0x81,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let host = r.read_string()?;

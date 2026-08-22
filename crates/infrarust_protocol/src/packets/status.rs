@@ -2,7 +2,7 @@ use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-use super::Packet;
+use super::{Packet, PacketMapping};
 
 #[derive(Debug, Clone)]
 pub struct SStatusRequest;
@@ -10,13 +10,11 @@ pub struct SStatusRequest;
 impl Packet for SStatusRequest {
     const NAME: &'static str = "SStatusRequest";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Status
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Status;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x00,
+    ];
 
     fn decode(_r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         Ok(Self)
@@ -39,13 +37,11 @@ pub struct CStatusResponse {
 impl Packet for CStatusResponse {
     const NAME: &'static str = "CStatusResponse";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Status
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Status;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x00,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let json_response = r.read_string()?;
@@ -70,13 +66,11 @@ pub struct SPingRequest {
 impl Packet for SPingRequest {
     const NAME: &'static str = "SPingRequest";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Status
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Status;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x01,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let payload = r.read_i64_be()?;
@@ -101,13 +95,11 @@ pub struct CPingResponse {
 impl Packet for CPingResponse {
     const NAME: &'static str = "CPingResponse";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Status
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Status;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x01,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let payload = r.read_i64_be()?;

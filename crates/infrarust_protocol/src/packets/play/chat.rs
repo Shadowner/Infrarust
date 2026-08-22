@@ -1,6 +1,6 @@
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 #[derive(Debug, Clone)]
@@ -28,13 +28,22 @@ impl CSystemChatMessage {
 impl Packet for CSystemChatMessage {
     const NAME: &'static str = "CSystemChatMessage";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_19   => 0x5F,
+        V1_19_1 => 0x62,
+        V1_19_3 => 0x60,
+        V1_19_4 => 0x64,
+        V1_20_2 => 0x67,
+        V1_20_3 => 0x69,
+        V1_20_5 => 0x6C,
+        V1_21_2 => 0x73,
+        V1_21_5 => 0x72,
+        V1_21_9 => 0x77,
+        V26_1   => 0x79,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         if version.less_than(ProtocolVersion::V1_20_3) {
@@ -83,13 +92,17 @@ pub struct CChatMessageLegacy {
 impl Packet for CChatMessageLegacy {
     const NAME: &'static str = "CChatMessageLegacy";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x02,
+        V1_9   => 0x0F,
+        V1_13  => 0x0E,
+        V1_15  => 0x0F,
+        V1_16  => 0x0E,
+        V1_17  => 0x0F,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let content = r.read_string()?;
@@ -129,13 +142,21 @@ pub struct SChatMessage {
 impl Packet for SChatMessage {
     const NAME: &'static str = "SChatMessage";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x01,
+        V1_9    => 0x02,
+        V1_12   => 0x03,
+        V1_12_1 => 0x02,
+        V1_14   => 0x03,
+        V1_19   => 0x05,
+        V1_20_2 => 0x06,
+        V1_21_2 => 0x07,
+        V1_21_6 => 0x08,
+        V26_1   => 0x09,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let message = r.read_string()?;
@@ -163,13 +184,15 @@ pub struct SChatCommand {
 impl Packet for SChatCommand {
     const NAME: &'static str = "SChatCommand";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_19   => 0x04,
+        V1_21_2 => 0x05,
+        V1_21_6 => 0x06,
+        V26_1   => 0x07,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let command = r.read_string()?;

@@ -251,7 +251,7 @@ async fn connect_and_login(
         next_state: ConnectionState::Login,
     };
     let hs_id = registry
-        .get_packet_id::<SHandshake>(ConnectionState::Handshake, Direction::Serverbound, version)
+        .get_packet_id::<SHandshake>(version)
         .unwrap_or(0x00);
     let mut payload = Vec::new();
     handshake
@@ -267,7 +267,7 @@ async fn connect_and_login(
         signature_data: None,
     };
     let login_id = registry
-        .get_packet_id::<SLoginStart>(ConnectionState::Login, Direction::Serverbound, version)
+        .get_packet_id::<SLoginStart>(version)
         .unwrap_or(0x00);
     let mut payload = Vec::new();
     login
@@ -277,7 +277,7 @@ async fn connect_and_login(
 
     // Read clientbound login frames until CLoginSuccess; then we're in Play.
     let success_id = registry
-        .get_packet_id::<CLoginSuccess>(ConnectionState::Login, Direction::Clientbound, version)
+        .get_packet_id::<CLoginSuccess>(version)
         .unwrap_or(0x02);
     loop {
         let frame = conn

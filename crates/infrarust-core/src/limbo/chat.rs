@@ -6,7 +6,7 @@
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::ProtocolVersion;
 
 use crate::session::chat_utils::{ChatAction, detect_chat_or_command};
 
@@ -27,16 +27,8 @@ pub(crate) fn parse_client_message(
     registry: &PacketRegistry,
     version: ProtocolVersion,
 ) -> Option<ClientMessage> {
-    let chat_cmd_id = registry.get_packet_id::<SChatCommand>(
-        ConnectionState::Play,
-        Direction::Serverbound,
-        version,
-    );
-    let chat_msg_id = registry.get_packet_id::<SChatMessage>(
-        ConnectionState::Play,
-        Direction::Serverbound,
-        version,
-    );
+    let chat_cmd_id = registry.get_packet_id::<SChatCommand>(version);
+    let chat_msg_id = registry.get_packet_id::<SChatMessage>(version);
     let action = detect_chat_or_command(frame, chat_cmd_id, chat_msg_id, version)?;
 
     match action {

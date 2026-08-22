@@ -2,7 +2,7 @@ use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-use super::Packet;
+use super::{Packet, PacketMapping};
 
 #[derive(Debug, Clone)]
 pub struct SHandshake {
@@ -15,13 +15,11 @@ pub struct SHandshake {
 impl Packet for SHandshake {
     const NAME: &'static str = "SHandshake";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Handshake
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Handshake;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x00,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let protocol_version = r.read_var_int()?;

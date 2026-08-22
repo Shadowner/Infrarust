@@ -1,7 +1,7 @@
 use crate::codec::varint::VarInt;
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 #[derive(Debug, Clone)]
@@ -21,13 +21,30 @@ pub struct CSynchronizePlayerPosition {
 impl Packet for CSynchronizePlayerPosition {
     const NAME: &'static str = "CSynchronizePlayerPosition";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x08,
+        V1_9    => 0x2E,
+        V1_12_1 => 0x2F,
+        V1_13   => 0x32,
+        V1_14   => 0x35,
+        V1_15   => 0x36,
+        V1_16   => 0x35,
+        V1_16_2 => 0x34,
+        V1_17   => 0x38,
+        V1_18   => 0x39,
+        V1_19   => 0x36,
+        V1_19_1 => 0x39,
+        V1_19_3 => 0x38,
+        V1_19_4 => 0x3C,
+        V1_20_2 => 0x3E,
+        V1_20_3 => 0x40,
+        V1_20_5 => 0x42,
+        V1_21_5 => 0x41,
+        V1_21_9 => 0x46,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         if version.no_less_than(ProtocolVersion::V1_21_2) {

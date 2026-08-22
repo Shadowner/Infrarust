@@ -42,29 +42,27 @@ fn encode_switch_respawn(
     dimension: &DimensionInfo,
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
-    let pvn = version.0;
-
-    if pvn < 477 {
+    if version.less_than(ProtocolVersion::V1_14) {
         let dim_id = dimension_as_i32(dimension);
         w.write_i32_be(dim_id)?;
         w.write_u8(2)?;
         w.write_u8(0)?;
         w.write_string("default")?;
-    } else if pvn < 573 {
+    } else if version.less_than(ProtocolVersion::V1_15) {
         let dim_id = dimension_as_i32(dimension);
         w.write_i32_be(dim_id)?;
         w.write_u8(0)?;
         w.write_string("default")?;
-    } else if pvn < 735 {
+    } else if version.less_than(ProtocolVersion::V1_16) {
         let dim_id = dimension_as_i32(dimension);
         w.write_i32_be(dim_id)?;
         w.write_i64_be(0)?;
         w.write_u8(0)?;
         w.write_string("default")?;
-    } else if pvn < 751 {
+    } else if version.less_than(ProtocolVersion::V1_16_2) {
         let dim_name = dimension_as_name(dimension);
 
-        write_minimal_dimension_nbt(w, &dim_name)?;
+        write_minimal_dimension_nbt(w)?;
 
         w.write_string(&dim_name)?;
         w.write_i64_be(0)?;
@@ -73,7 +71,7 @@ fn encode_switch_respawn(
         w.write_bool(false)?;
         w.write_bool(false)?;
         w.write_bool(true)?;
-    } else if pvn < 759 {
+    } else if version.less_than(ProtocolVersion::V1_19) {
         let dim_name = dimension_as_name(dimension);
         w.write_string(&dim_name)?;
         w.write_string(&dim_name)?;
@@ -83,7 +81,7 @@ fn encode_switch_respawn(
         w.write_bool(false)?;
         w.write_bool(false)?;
         w.write_bool(true)?;
-    } else if pvn < 761 {
+    } else if version.less_than(ProtocolVersion::V1_19_3) {
         let dim_name = dimension_as_name(dimension);
         w.write_string(&dim_name)?;
         w.write_string(&dim_name)?;
@@ -94,7 +92,7 @@ fn encode_switch_respawn(
         w.write_bool(false)?;
         w.write_bool(true)?;
         w.write_bool(false)?;
-    } else if pvn < 762 {
+    } else if version.less_than(ProtocolVersion::V1_19_4) {
         let dim_name = dimension_as_name(dimension);
         w.write_string(&dim_name)?;
         w.write_string(&dim_name)?;
@@ -144,10 +142,9 @@ fn dimension_as_name(dim: &DimensionInfo) -> String {
     }
 }
 
-fn write_minimal_dimension_nbt(w: &mut Vec<u8>, _dim_name: &str) -> ProtocolResult<()> {
+fn write_minimal_dimension_nbt(w: &mut Vec<u8>) -> ProtocolResult<()> {
     w.push(0x0A);
     w.extend_from_slice(&0u16.to_be_bytes());
-
     w.push(0x00);
     Ok(())
 }

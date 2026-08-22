@@ -19,7 +19,7 @@ use infrarust_protocol::packets::play::respawn::CRespawn;
 use infrarust_protocol::packets::play::respawn_switch;
 use infrarust_protocol::packets::play::spawn_position::CSetDefaultSpawnPosition;
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
 use crate::player::packets::encode_packet;
@@ -195,7 +195,7 @@ async fn send_limbo_respawn(
 ) -> Result<(), CoreError> {
     let respawn = respawn_switch::for_switch(dimension, version);
     let packet_id = registry
-        .get_packet_id::<CRespawn>(ConnectionState::Play, Direction::Clientbound, version)
+        .get_packet_id::<CRespawn>(version)
         .ok_or_else(|| CoreError::Other("no Respawn packet ID".to_string()))?;
 
     let mut payload = Vec::new();

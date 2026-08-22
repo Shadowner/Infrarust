@@ -1,6 +1,6 @@
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 pub const START_WAITING_CHUNKS: u8 = 13;
@@ -14,13 +14,26 @@ pub struct CGameEvent {
 impl Packet for CGameEvent {
     const NAME: &'static str = "CGameEvent";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_9    => 0x1B,
+        V1_13   => 0x1E,
+        V1_14   => 0x1D,
+        V1_15   => 0x1E,
+        V1_16   => 0x1D,
+        V1_16_2 => 0x1C,
+        V1_17   => 0x1D,
+        V1_19   => 0x1B,
+        V1_19_1 => 0x1D,
+        V1_19_3 => 0x1C,
+        V1_19_4 => 0x20,
+        V1_20_5 => 0x22,
+        V1_21_2 => 0x23,
+        V1_21_5 => 0x22,
+        V1_21_9 => 0x26,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let event = r.read_u8()?;

@@ -1,5 +1,5 @@
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 #[derive(Debug, Clone)]
@@ -8,13 +8,15 @@ pub struct SChatSessionUpdate;
 impl Packet for SChatSessionUpdate {
     const NAME: &'static str = "SChatSessionUpdate";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_21   => 0x07,
+        V1_21_2 => 0x08,
+        V1_21_6 => 0x09,
+        V26_1   => 0x0A,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         *r = &[];

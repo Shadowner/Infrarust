@@ -1,6 +1,6 @@
 use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 #[derive(Debug, Clone)]
@@ -23,13 +23,23 @@ impl CSetTitle {
 impl Packet for CSetTitle {
     const NAME: &'static str = "CSetTitle";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_17   => 0x59,
+        V1_18   => 0x5A,
+        V1_19_1 => 0x5D,
+        V1_19_3 => 0x5B,
+        V1_19_4 => 0x5F,
+        V1_20_2 => 0x61,
+        V1_20_3 => 0x63,
+        V1_20_5 => 0x65,
+        V1_21_2 => 0x6C,
+        V1_21_5 => 0x6B,
+        V1_21_9 => 0x70,
+        V26_1   => 0x72,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let text = if version.less_than(ProtocolVersion::V1_20_3) {
@@ -79,13 +89,23 @@ impl CSetSubtitle {
 impl Packet for CSetSubtitle {
     const NAME: &'static str = "CSetSubtitle";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_17   => 0x57,
+        V1_18   => 0x58,
+        V1_19_1 => 0x5B,
+        V1_19_3 => 0x59,
+        V1_19_4 => 0x5D,
+        V1_20_2 => 0x5F,
+        V1_20_3 => 0x61,
+        V1_20_5 => 0x63,
+        V1_21_2 => 0x6A,
+        V1_21_5 => 0x69,
+        V1_21_9 => 0x6E,
+        V26_1   => 0x70,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let text = if version.less_than(ProtocolVersion::V1_20_3) {
@@ -125,13 +145,23 @@ pub struct CSetTitleTimes {
 impl Packet for CSetTitleTimes {
     const NAME: &'static str = "CSetTitleTimes";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_17   => 0x5A,
+        V1_18   => 0x5B,
+        V1_19_1 => 0x5E,
+        V1_19_3 => 0x5C,
+        V1_19_4 => 0x60,
+        V1_20_2 => 0x62,
+        V1_20_3 => 0x64,
+        V1_20_5 => 0x66,
+        V1_21_2 => 0x6D,
+        V1_21_5 => 0x6C,
+        V1_21_9 => 0x71,
+        V26_1   => 0x73,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let fade_in = r.read_i32_be()?;
@@ -186,13 +216,18 @@ impl CTitleLegacy {
 impl Packet for CTitleLegacy {
     const NAME: &'static str = "CTitleLegacy";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_8  => 0x45,
+        V1_9  => 0x47,
+        V1_12 => 0x48,
+        V1_13 => 0x4B,
+        V1_14 => 0x4F,
+        V1_15 => 0x50,
+        V1_16 => 0x4F,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let action = r.read_var_int()?.0;

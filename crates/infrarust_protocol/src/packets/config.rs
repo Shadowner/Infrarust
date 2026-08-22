@@ -2,7 +2,7 @@ use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-use super::Packet;
+use super::{Packet, PacketMapping};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownPack {
@@ -17,13 +17,12 @@ pub struct CFinishConfig;
 impl Packet for CFinishConfig {
     const NAME: &'static str = "CFinishConfig";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Config;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_20_2 => 0x02,
+        V1_20_5 => 0x03,
+    ];
 
     fn decode(_r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         Ok(Self)
@@ -44,13 +43,12 @@ pub struct SAcknowledgeFinishConfig;
 impl Packet for SAcknowledgeFinishConfig {
     const NAME: &'static str = "SAcknowledgeFinishConfig";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Config;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_20_2 => 0x02,
+        V1_20_5 => 0x03,
+    ];
 
     fn decode(_r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         Ok(Self)
@@ -73,13 +71,12 @@ pub struct CRegistryData {
 impl Packet for CRegistryData {
     const NAME: &'static str = "CRegistryData";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Config;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_20_2 => 0x05,
+        V1_20_5 => 0x07,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let data = r.read_remaining()?;
@@ -100,6 +97,13 @@ define_twin_packets! {
     clientbound: CKnownPacks,
     serverbound: SKnownPacks,
     state: ConnectionState::Config,
+    clientbound_ids: ids![
+        V1_20_5 => 0x0E,
+    ],
+    serverbound_ids: ids![
+        V1_20_5 => 0x07,
+    ],
+    encode_only: false,
     fields: {
         pub packs: Vec<KnownPack>,
     },
@@ -136,6 +140,15 @@ define_twin_packets! {
     clientbound: CConfigPluginMessage,
     serverbound: SConfigPluginMessage,
     state: ConnectionState::Config,
+    clientbound_ids: ids![
+        V1_20_2 => 0x00,
+        V1_20_5 => 0x01,
+    ],
+    serverbound_ids: ids![
+        V1_20_2 => 0x01,
+        V1_20_5 => 0x02,
+    ],
+    encode_only: false,
     fields: {
         pub channel: String,
         pub data: Vec<u8>,
@@ -160,13 +173,12 @@ pub struct CConfigDisconnect {
 impl Packet for CConfigDisconnect {
     const NAME: &'static str = "CConfigDisconnect";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Config;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_20_2 => 0x01,
+        V1_20_5 => 0x02,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let reason = r.read_remaining()?;
@@ -307,33 +319,17 @@ mod tests {
 
         for version in [ProtocolVersion::V1_19, ProtocolVersion::V1_20] {
             assert!(
-                registry
-                    .get_packet_id::<CFinishConfig>(
-                        ConnectionState::Config,
-                        Direction::Clientbound,
-                        version,
-                    )
-                    .is_none(),
+                registry.get_packet_id::<CFinishConfig>(version).is_none(),
                 "CFinishConfig should NOT be registered for {version}"
             );
             assert!(
                 registry
-                    .get_packet_id::<SAcknowledgeFinishConfig>(
-                        ConnectionState::Config,
-                        Direction::Serverbound,
-                        version,
-                    )
+                    .get_packet_id::<SAcknowledgeFinishConfig>(version)
                     .is_none(),
                 "SAcknowledgeFinishConfig should NOT be registered for {version}"
             );
             assert!(
-                registry
-                    .get_packet_id::<CRegistryData>(
-                        ConnectionState::Config,
-                        Direction::Clientbound,
-                        version,
-                    )
-                    .is_none(),
+                registry.get_packet_id::<CRegistryData>(version).is_none(),
                 "CRegistryData should NOT be registered for {version}"
             );
         }

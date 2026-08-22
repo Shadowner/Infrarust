@@ -1,6 +1,6 @@
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 #[derive(Debug, Clone)]
@@ -27,13 +27,26 @@ impl CDisconnect {
 impl Packet for CDisconnect {
     const NAME: &'static str = "CDisconnect";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x40,
+        V1_9    => 0x1A,
+        V1_13   => 0x1B,
+        V1_14   => 0x1A,
+        V1_15   => 0x1B,
+        V1_16   => 0x1A,
+        V1_16_2 => 0x19,
+        V1_17   => 0x1A,
+        V1_19   => 0x17,
+        V1_19_1 => 0x19,
+        V1_19_3 => 0x17,
+        V1_19_4 => 0x1A,
+        V1_20_2 => 0x1B,
+        V1_20_5 => 0x1D,
+        V1_21_5 => 0x1C,
+        V1_21_9 => 0x20,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let reason = if version.less_than(ProtocolVersion::V1_20_3) {

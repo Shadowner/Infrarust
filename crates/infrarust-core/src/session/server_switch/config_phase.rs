@@ -10,7 +10,7 @@ use infrarust_protocol::packets::play::start_configuration::{
     CStartConfiguration, SAcknowledgeConfiguration,
 };
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::session::backend_bridge::BackendBridge;
@@ -44,11 +44,7 @@ pub async fn handle_config_phase_switch(
             .await?
             .ok_or(CoreError::ConnectionClosed)?;
 
-        let ack_id = registry.get_packet_id::<SAcknowledgeConfiguration>(
-            ConnectionState::Play,
-            Direction::Serverbound,
-            version,
-        );
+        let ack_id = registry.get_packet_id::<SAcknowledgeConfiguration>(version);
 
         if Some(frame.id) == ack_id {
             tracing::debug!("client acknowledged configuration");
@@ -66,17 +62,9 @@ pub async fn handle_config_phase_switch(
     backend.set_state(ConnectionState::Config);
 
     // 4. Forward config packets bidirectionally until FinishConfig
-    let finish_config_id = registry.get_packet_id::<CFinishConfig>(
-        ConnectionState::Config,
-        Direction::Clientbound,
-        version,
-    );
+    let finish_config_id = registry.get_packet_id::<CFinishConfig>(version);
 
-    let ack_finish_id = registry.get_packet_id::<SAcknowledgeFinishConfig>(
-        ConnectionState::Config,
-        Direction::Serverbound,
-        version,
-    );
+    let ack_finish_id = registry.get_packet_id::<SAcknowledgeFinishConfig>(version);
 
     // Forward backend config packets to client
     loop {

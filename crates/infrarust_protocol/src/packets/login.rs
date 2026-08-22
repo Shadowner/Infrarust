@@ -2,7 +2,7 @@ use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-use super::Packet;
+use super::{Packet, PacketMapping};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Property {
@@ -68,13 +68,11 @@ pub struct SLoginStart {
 impl Packet for SLoginStart {
     const NAME: &'static str = "SLoginStart";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Login
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Login;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x00,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let name = r.read_string_bounded(16)?;
@@ -163,13 +161,11 @@ pub struct CEncryptionRequest {
 impl Packet for CEncryptionRequest {
     const NAME: &'static str = "CEncryptionRequest";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Login
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Login;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x01,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let server_id = r.read_string_bounded(20)?;
@@ -231,13 +227,11 @@ pub struct SEncryptionResponse {
 impl Packet for SEncryptionResponse {
     const NAME: &'static str = "SEncryptionResponse";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Login
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Login;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x01,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let mut salt = None;
@@ -312,13 +306,11 @@ pub struct CSetCompression {
 impl Packet for CSetCompression {
     const NAME: &'static str = "CSetCompression";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Login
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Login;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_8 => 0x03,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let threshold = r.read_var_int()?;
@@ -347,13 +339,11 @@ pub struct CLoginSuccess {
 impl Packet for CLoginSuccess {
     const NAME: &'static str = "CLoginSuccess";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Login
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Login;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x02,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let uuid = if version.no_less_than(ProtocolVersion::V1_19) {
@@ -473,13 +463,11 @@ pub struct CLoginDisconnect {
 impl Packet for CLoginDisconnect {
     const NAME: &'static str = "CLoginDisconnect";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Login
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Login;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x00,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let reason = r.read_string()?;
@@ -506,13 +494,11 @@ pub struct CLoginPluginRequest {
 impl Packet for CLoginPluginRequest {
     const NAME: &'static str = "CLoginPluginRequest";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Login
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Login;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_13 => 0x04,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let message_id = r.read_var_int()?;
@@ -547,13 +533,11 @@ pub struct SLoginPluginResponse {
 impl Packet for SLoginPluginResponse {
     const NAME: &'static str = "SLoginPluginResponse";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Login
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Login;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_13 => 0x02,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let message_id = r.read_var_int()?;
@@ -584,13 +568,11 @@ pub struct SLoginAcknowledged;
 impl Packet for SLoginAcknowledged {
     const NAME: &'static str = "SLoginAcknowledged";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Login
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Login;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_20_2 => 0x03,
+    ];
 
     fn decode(_r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         Ok(Self)
@@ -859,22 +841,14 @@ mod tests {
 
         assert!(
             registry
-                .get_packet_id::<SLoginAcknowledged>(
-                    ConnectionState::Login,
-                    Direction::Serverbound,
-                    ProtocolVersion::V1_20,
-                )
+                .get_packet_id::<SLoginAcknowledged>(ProtocolVersion::V1_20)
                 .is_none(),
             "SLoginAcknowledged should not be registered for V1_20"
         );
 
         assert!(
             registry
-                .get_packet_id::<SLoginAcknowledged>(
-                    ConnectionState::Login,
-                    Direction::Serverbound,
-                    ProtocolVersion::V1_20_2,
-                )
+                .get_packet_id::<SLoginAcknowledged>(ProtocolVersion::V1_20_2)
                 .is_some(),
             "SLoginAcknowledged should be registered for V1_20_2"
         );

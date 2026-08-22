@@ -10,7 +10,7 @@ use std::time::Duration;
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfig, SKnownPacks};
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::limbo::registry_cache::RegistryCodecCache;
@@ -47,11 +47,7 @@ pub(crate) async fn complete_config_for_limbo(
         client.write_frame(&kp_frame).await?;
 
         // Wait for SKnownPacks from the client
-        let skp_id = registry.get_packet_id::<SKnownPacks>(
-            ConnectionState::Config,
-            Direction::Serverbound,
-            version,
-        );
+        let skp_id = registry.get_packet_id::<SKnownPacks>(version);
 
         absorb_until(
             client,
@@ -69,10 +65,13 @@ pub(crate) async fn complete_config_for_limbo(
 
     // 3. Send CFinishConfig
     let finish_id = registry
-        .get_packet_id::<CFinishConfig>(ConnectionState::Config, Direction::Clientbound, version)
+        .get_packet_id::<CFinishConfig>(version)
         .ok_or_else(|| {
             CoreError::Other(format!(
-                "no packet ID for CFinishConfig in Config/Clientbound/{version:?}"
+                "no packet ID for {} in {}/{}/{version:?}",
+                CFinishConfig::NAME,
+                CFinishConfig::STATE,
+                CFinishConfig::DIRECTION,
             ))
         })?;
     let mut finish_payload = Vec::new();
@@ -84,11 +83,7 @@ pub(crate) async fn complete_config_for_limbo(
     client.write_frame(&finish_frame).await?;
 
     // 4. Wait for SAcknowledgeFinishConfig, absorbing any other client packets
-    let ack_id = registry.get_packet_id::<SAcknowledgeFinishConfig>(
-        ConnectionState::Config,
-        Direction::Serverbound,
-        version,
-    );
+    let ack_id = registry.get_packet_id::<SAcknowledgeFinishConfig>(version);
 
     absorb_until(
         client,

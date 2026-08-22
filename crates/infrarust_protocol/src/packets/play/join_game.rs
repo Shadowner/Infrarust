@@ -1,6 +1,6 @@
 use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 #[derive(Debug, Clone)]
@@ -63,13 +63,28 @@ impl Default for CJoinGame {
 impl Packet for CJoinGame {
     const NAME: &'static str = "CJoinGame";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x01,
+        V1_9    => 0x23,
+        V1_13   => 0x25,
+        V1_15   => 0x26,
+        V1_16   => 0x25,
+        V1_16_2 => 0x24,
+        V1_17   => 0x26,
+        V1_19   => 0x23,
+        V1_19_1 => 0x25,
+        V1_19_3 => 0x24,
+        V1_19_4 => 0x28,
+        V1_20_2 => 0x29,
+        V1_20_5 => 0x2B,
+        V1_21_2 => 0x2C,
+        V1_21_5 => 0x2B,
+        V1_21_9 => 0x30,
+        V26_1   => 0x31,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let entity_id = r.read_i32_be()?;

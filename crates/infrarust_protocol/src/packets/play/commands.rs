@@ -4,7 +4,7 @@ use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-use super::super::Packet;
+use super::super::{Packet, PacketMapping};
 
 const NODE_TYPE_MASK: u8 = 0x03;
 const NODE_TYPE_ROOT: u8 = 0x00;
@@ -420,13 +420,20 @@ fn indexed_parser_to_name(id: i32) -> &'static str {
 impl Packet for CCommands {
     const NAME: &'static str = "CCommands";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_13   => 0x11,
+        V1_15   => 0x12,
+        V1_16   => 0x11,
+        V1_16_2 => 0x10,
+        V1_17   => 0x12,
+        V1_19   => 0x0F,
+        V1_19_3 => 0x0E,
+        V1_19_4 => 0x10,
+        V1_20_2 => 0x11,
+        V1_21_5 => 0x10,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let count = r.read_var_int()?.0;
