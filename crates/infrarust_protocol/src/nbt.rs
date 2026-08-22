@@ -26,7 +26,6 @@ pub fn skip_nbt_compound(r: &mut &[u8]) -> ProtocolResult<()> {
     }
 
     skip_nbt_string(r)?;
-
     skip_compound_payload(r, 0)
 }
 
@@ -42,7 +41,6 @@ fn skip_compound_payload(r: &mut &[u8], depth: u32) -> ProtocolResult<()> {
         }
 
         skip_nbt_string(r)?;
-
         skip_tag_payload(r, child_type, depth)?;
     }
 }

@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use uuid::Uuid;
 
 use crate::codec::varint::VarInt;
-use crate::codec::{Decode, Encode};
+use crate::codec::{Decode, Encode, McBufWriteExt};
 use crate::error::{ProtocolError, ProtocolResult};
 
 const MAX_STRING_CHARS: usize = 32767;
@@ -13,21 +13,23 @@ fn cautious_capacity(size_hint: usize) -> usize {
     size_hint.min(MAX_PREALLOC_BYTES)
 }
 
+pub(crate) fn bool_from_byte(byte: u8) -> ProtocolResult<bool> {
+    match byte {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(ProtocolError::invalid("bool value must be 0 or 1")),
+    }
+}
+
 impl Encode for bool {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
-        w.write_all(&[u8::from(*self)])?;
-        Ok(())
+        w.write_bool(*self)
     }
 }
 
 impl Decode<'_> for bool {
     fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
-        let byte = u8::decode(r)?;
-        match byte {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(ProtocolError::invalid("bool value must be 0 or 1")),
-        }
+        bool_from_byte(u8::decode(r)?)
     }
 }
 
@@ -147,7 +149,7 @@ pub(crate) fn decode_string(r: &mut &[u8], max_chars: usize) -> ProtocolResult<S
 
 impl Encode for Uuid {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
-        self.as_u128().encode(w)
+        w.write_uuid(self)
     }
 }
 
@@ -160,9 +162,7 @@ impl Decode<'_> for Uuid {
 
 impl Encode for Vec<u8> {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
-        VarInt(self.len() as i32).encode(w)?;
-        w.write_all(self)?;
-        Ok(())
+        w.write_byte_array(self)
     }
 }
 

@@ -283,10 +283,7 @@ fn read_parser_properties(r: &mut &[u8], id: i32) -> ProtocolResult<Vec<u8>> {
             let mode = r.read_var_int()?;
             mode.encode(&mut buf)?;
         }
-        6 => {
-            buf.push(r.read_u8()?);
-        }
-        31 => {
+        6 | 31 => {
             buf.push(r.read_u8()?);
         }
         43 => {
@@ -309,112 +306,72 @@ fn read_parser_properties_by_name(r: &mut &[u8], identifier: &str) -> ProtocolRe
     read_parser_properties(r, id)
 }
 
+const PARSERS: [&str; 48] = [
+    "brigadier:bool",
+    "brigadier:float",
+    "brigadier:double",
+    "brigadier:integer",
+    "brigadier:long",
+    "brigadier:string",
+    "minecraft:entity",
+    "minecraft:game_profile",
+    "minecraft:block_pos",
+    "minecraft:column_pos",
+    "minecraft:vec3",
+    "minecraft:vec2",
+    "minecraft:block_state",
+    "minecraft:block_predicate",
+    "minecraft:item_stack",
+    "minecraft:item_predicate",
+    "minecraft:color",
+    "minecraft:component",
+    "minecraft:message",
+    "minecraft:nbt_compound_tag",
+    "minecraft:nbt_tag",
+    "minecraft:nbt_path",
+    "minecraft:objective",
+    "minecraft:objective_criteria",
+    "minecraft:operation",
+    "minecraft:particle",
+    "minecraft:angle",
+    "minecraft:rotation",
+    "minecraft:scoreboard_slot",
+    "minecraft:score_holder",
+    "minecraft:swizzle",
+    "minecraft:team",
+    "minecraft:item_slot",
+    "minecraft:resource_location",
+    "minecraft:function",
+    "minecraft:entity_anchor",
+    "minecraft:int_range",
+    "minecraft:float_range",
+    "minecraft:dimension",
+    "minecraft:gamemode",
+    "minecraft:time",
+    "minecraft:resource_or_tag",
+    "minecraft:resource_or_tag_key",
+    "minecraft:resource",
+    "minecraft:resource_key",
+    "minecraft:template_mirror",
+    "minecraft:template_rotation",
+    "minecraft:heightmap",
+];
+
 fn named_parser_to_id(name: &str) -> i32 {
-    match name {
-        "brigadier:bool" => 0,
-        "brigadier:float" => 1,
-        "brigadier:double" => 2,
-        "brigadier:integer" => 3,
-        "brigadier:long" => 4,
-        "brigadier:string" => 5,
-        "minecraft:entity" => 6,
-        "minecraft:game_profile" => 7,
-        "minecraft:block_pos" => 8,
-        "minecraft:column_pos" => 9,
-        "minecraft:vec3" => 10,
-        "minecraft:vec2" => 11,
-        "minecraft:block_state" => 12,
-        "minecraft:block_predicate" => 13,
-        "minecraft:item_stack" => 14,
-        "minecraft:item_predicate" => 15,
-        "minecraft:color" => 16,
-        "minecraft:component" => 17,
-        "minecraft:message" => 18,
-        "minecraft:nbt_compound_tag" | "minecraft:nbt" => 19,
-        "minecraft:nbt_tag" => 20,
-        "minecraft:nbt_path" => 21,
-        "minecraft:objective" => 22,
-        "minecraft:objective_criteria" => 23,
-        "minecraft:operation" => 24,
-        "minecraft:particle" => 25,
-        "minecraft:angle" => 26,
-        "minecraft:rotation" => 27,
-        "minecraft:scoreboard_slot" => 28,
-        "minecraft:score_holder" => 29,
-        "minecraft:swizzle" => 30,
-        "minecraft:team" => 31,
-        "minecraft:item_slot" => 32,
-        "minecraft:resource_location" => 33,
-        "minecraft:function" => 34,
-        "minecraft:entity_anchor" => 35,
-        "minecraft:int_range" => 36,
-        "minecraft:float_range" => 37,
-        "minecraft:dimension" => 38,
-        "minecraft:gamemode" => 39,
-        "minecraft:time" => 40,
-        "minecraft:resource_or_tag" => 41,
-        "minecraft:resource_or_tag_key" => 42,
-        "minecraft:resource" => 43,
-        "minecraft:resource_key" => 44,
-        "minecraft:template_mirror" => 45,
-        "minecraft:template_rotation" => 46,
-        "minecraft:heightmap" => 47,
-        _ => -1,
+    if name == "minecraft:nbt" {
+        return 19;
     }
+    PARSERS
+        .iter()
+        .position(|&parser| parser == name)
+        .map_or(-1, |index| index as i32)
 }
 
 fn indexed_parser_to_name(id: i32) -> &'static str {
-    match id {
-        0 => "brigadier:bool",
-        1 => "brigadier:float",
-        2 => "brigadier:double",
-        3 => "brigadier:integer",
-        4 => "brigadier:long",
-        5 => "brigadier:string",
-        6 => "minecraft:entity",
-        7 => "minecraft:game_profile",
-        8 => "minecraft:block_pos",
-        9 => "minecraft:column_pos",
-        10 => "minecraft:vec3",
-        11 => "minecraft:vec2",
-        12 => "minecraft:block_state",
-        13 => "minecraft:block_predicate",
-        14 => "minecraft:item_stack",
-        15 => "minecraft:item_predicate",
-        16 => "minecraft:color",
-        17 => "minecraft:component",
-        18 => "minecraft:message",
-        19 => "minecraft:nbt_compound_tag",
-        20 => "minecraft:nbt_tag",
-        21 => "minecraft:nbt_path",
-        22 => "minecraft:objective",
-        23 => "minecraft:objective_criteria",
-        24 => "minecraft:operation",
-        25 => "minecraft:particle",
-        26 => "minecraft:angle",
-        27 => "minecraft:rotation",
-        28 => "minecraft:scoreboard_slot",
-        29 => "minecraft:score_holder",
-        30 => "minecraft:swizzle",
-        31 => "minecraft:team",
-        32 => "minecraft:item_slot",
-        33 => "minecraft:resource_location",
-        34 => "minecraft:function",
-        35 => "minecraft:entity_anchor",
-        36 => "minecraft:int_range",
-        37 => "minecraft:float_range",
-        38 => "minecraft:dimension",
-        39 => "minecraft:gamemode",
-        40 => "minecraft:time",
-        41 => "minecraft:resource_or_tag",
-        42 => "minecraft:resource_or_tag_key",
-        43 => "minecraft:resource",
-        44 => "minecraft:resource_key",
-        45 => "minecraft:template_mirror",
-        46 => "minecraft:template_rotation",
-        47 => "minecraft:heightmap",
-        _ => "brigadier:string",
-    }
+    usize::try_from(id)
+        .ok()
+        .and_then(|index| PARSERS.get(index).copied())
+        .unwrap_or("brigadier:string")
 }
 
 impl Packet for CCommands {
@@ -487,6 +444,26 @@ mod tests {
         let mut buf = Vec::new();
         pkt.encode(&mut buf, version).unwrap();
         CCommands::decode(&mut buf.as_slice(), version).unwrap()
+    }
+
+    #[test]
+    fn parser_table_lookups_are_inverses() {
+        for (index, name) in PARSERS.iter().enumerate() {
+            let id = index as i32;
+            assert_eq!(named_parser_to_id(name), id, "name -> id for {name}");
+            assert_eq!(indexed_parser_to_name(id), *name, "id -> name for {id}");
+        }
+
+        assert_eq!(named_parser_to_id("minecraft:nbt"), 19);
+        assert_eq!(named_parser_to_id("minecraft:nbt_compound_tag"), 19);
+        assert_eq!(indexed_parser_to_name(19), "minecraft:nbt_compound_tag");
+
+        assert_eq!(named_parser_to_id("nope:not_a_parser"), -1);
+        assert_eq!(indexed_parser_to_name(-1), "brigadier:string");
+        assert_eq!(
+            indexed_parser_to_name(PARSERS.len() as i32),
+            "brigadier:string"
+        );
     }
 
     #[test]

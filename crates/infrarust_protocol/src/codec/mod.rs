@@ -128,14 +128,7 @@ impl<R: Read> McBufReadExt for R {
     }
 
     fn read_bool(&mut self) -> ProtocolResult<bool> {
-        let byte = self.read_u8()?;
-        match byte {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(crate::error::ProtocolError::invalid(
-                "bool value must be 0 or 1",
-            )),
-        }
+        types::bool_from_byte(self.read_u8()?)
     }
 
     fn read_var_int(&mut self) -> ProtocolResult<VarInt> {
