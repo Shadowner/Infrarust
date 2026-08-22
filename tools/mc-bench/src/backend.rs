@@ -122,6 +122,7 @@ async fn handle_conn(
         username,
         properties: Vec::new(),
         strict_error_handling: false,
+        session_id: None,
     };
     let success_id = registry
         .get_packet_id::<CLoginSuccess>(ConnectionState::Login, Direction::Clientbound, version)
