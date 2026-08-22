@@ -1,17 +1,17 @@
 use std::any::TypeId;
 
 use crate::packets::{
-    CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CCommands, CConfigDisconnect,
-    CConfigPluginMessage, CDisconnect, CEncryptionRequest, CFinishConfig, CGameEvent, CJoinGame,
-    CKeepAlive, CKnownPacks, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CPingResponse,
-    CPluginMessage, CRegistryData, CRespawn, CSetCenterChunk, CSetCompression,
-    CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes, CStartConfiguration,
-    CStatusResponse, CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse,
-    CTitleLegacy, CTransfer, Packet, PacketMapping, SAcknowledgeConfiguration,
-    SAcknowledgeFinishConfig, SChatCommand, SChatMessage, SChatSessionUpdate, SConfigPluginMessage,
-    SEncryptionResponse, SHandshake, SKeepAlive, SKnownPacks, SLoginAcknowledged,
-    SLoginPluginResponse, SLoginStart, SPingRequest, SPluginMessage, SStatusRequest,
-    STabCompleteRequest,
+    CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CChunkData, CCommands,
+    CConfigDisconnect, CConfigPluginMessage, CDisconnect, CEncryptionRequest, CFinishConfig,
+    CGameEvent, CJoinGame, CKeepAlive, CKnownPacks, CLoginDisconnect, CLoginPluginRequest,
+    CLoginSuccess, CPingResponse, CPluginMessage, CRegistryData, CRespawn, CSetCenterChunk,
+    CSetCompression, CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes,
+    CStartConfiguration, CStatusResponse, CSynchronizePlayerPosition, CSystemChatMessage,
+    CTabCompleteResponse, CTitleLegacy, CTransfer, Packet, PacketMapping,
+    SAcknowledgeConfiguration, SAcknowledgeFinishConfig, SChatCommand, SChatMessage,
+    SChatSessionUpdate, SConfigPluginMessage, SEncryptionResponse, SHandshake, SKeepAlive,
+    SKnownPacks, SLoginAcknowledged, SLoginPluginResponse, SLoginStart, SPingRequest,
+    SPluginMessage, SStatusRequest, STabCompleteRequest,
 };
 use crate::registry::PacketRegistry;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
@@ -86,6 +86,7 @@ packet_table! {
     CSetCenterChunk,
     CChunkBatchStart,
     CChunkBatchFinished,
+    CChunkData,
     CSetDefaultSpawnPosition,
     CSynchronizePlayerPosition,
     STabCompleteRequest,
@@ -154,6 +155,6 @@ mod tests {
                 descriptor.name
             );
         }
-        assert_eq!(DEFAULT_PACKETS.len(), 50);
+        assert_eq!(DEFAULT_PACKETS.len(), 51);
     }
 }

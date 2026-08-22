@@ -11,6 +11,7 @@ use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::play::center_chunk::CSetCenterChunk;
 use infrarust_protocol::packets::play::chunk_batch::{CChunkBatchFinished, CChunkBatchStart};
+use infrarust_protocol::packets::play::chunk_data::CChunkData;
 use infrarust_protocol::packets::play::dimension::DimensionInfo;
 use infrarust_protocol::packets::play::game_event::{CGameEvent, START_WAITING_CHUNKS};
 use infrarust_protocol::packets::play::join_game::CJoinGame;
@@ -24,7 +25,6 @@ use infrarust_protocol::version::ProtocolVersion;
 use crate::error::CoreError;
 use crate::player::packets::encode_packet;
 use crate::session::client_bridge::ClientBridge;
-use infrarust_protocol::chunk::build_chunk_data_frame;
 
 const LIMBO_DIMENSION_NAME: &str = "minecraft:the_end";
 const LIMBO_DIMENSION_ID: i32 = 2;
@@ -181,9 +181,14 @@ async fn send_player_position(
 async fn send_chunk(
     client: &mut ClientBridge,
     version: ProtocolVersion,
-    _registry: &PacketRegistry,
+    registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let frame = build_chunk_data_frame(0, 0, LIMBO_NUM_SECTIONS, version)?;
+    let chunk = CChunkData {
+        chunk_x: 0,
+        chunk_z: 0,
+        num_sections: LIMBO_NUM_SECTIONS,
+    };
+    let frame = encode_packet(&chunk, version, registry)?;
     client.write_frame(&frame).await
 }
 
@@ -439,6 +444,13 @@ fn build_1_16_to_1_20_1_join_game_payload(version: ProtocolVersion) -> Result<Ve
 }
 
 /// Raw CSetContainerContent: window 0, 46 empty slots.
+///
+/// - **1.17+**: `window_id(u8)`, `state_id(VarInt)`, `count(VarInt)`, the slots,
+///   then the carried item as one more slot.
+/// - **Pre-1.17**: `window_id(u8)`, `count(i16 BE)`, then the slots.
+///
+/// An empty slot is a single `0x00` byte in every version covered here:
+/// `present = false` from 1.13 on, and `count = 0` from 1.20.5 on.
 async fn send_clear_inventory(
     client: &mut ClientBridge,
     version: ProtocolVersion,
@@ -448,18 +460,15 @@ async fn send_clear_inventory(
     let mut buf = Vec::with_capacity(96);
 
     if version.no_less_than(ProtocolVersion::V1_17) {
-        // 1.17.1+ format: window_id(u8) + state_id(VarInt) + count(VarInt) + slots + carried(Slot)
-        buf.push(0); // window_id (u8)
-        infrarust_protocol::chunk::write_varint(&mut buf, 0); // state_id
-        infrarust_protocol::chunk::write_varint(&mut buf, 46); // slot_count
-        // Empty slots: present=false (1.13+) or count=0 (1.20.5+) — both encode as 0x00
+        buf.write_u8(0)?;
+        buf.write_var_int(&VarInt(0))?;
+        buf.write_var_int(&VarInt(46))?;
         buf.extend(std::iter::repeat_n(0, 46));
-        buf.push(0); // carried_item: empty slot
+        buf.write_u8(0)?;
     } else {
-        // Pre-1.17.1 format: window_id(u8) + count(i16 BE) + slots
-        buf.push(0); // window_id (u8)
-        buf.extend_from_slice(&46_i16.to_be_bytes()); // count (i16)
-        buf.extend(std::iter::repeat_n(0, 46)); // empty slots: present=false
+        buf.write_u8(0)?;
+        buf.write_i16_be(46)?;
+        buf.extend(std::iter::repeat_n(0, 46));
     }
 
     let frame = PacketFrame::new(packet_id, Bytes::from(buf));

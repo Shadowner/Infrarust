@@ -22,8 +22,6 @@ default = []
 libdeflater = ["dep:libdeflater"]
 
 [dependencies]
-fastnbt = { workspace = true }
-serde = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 bytes = { workspace = true }

@@ -1,7 +1,6 @@
 pub mod config;
 pub mod handshake;
 pub mod login;
-pub mod opaque;
 pub mod play;
 pub mod status;
 
@@ -14,14 +13,13 @@ pub use login::{
     CEncryptionRequest, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression,
     Property, SEncryptionResponse, SLoginAcknowledged, SLoginPluginResponse, SLoginStart,
 };
-pub use opaque::OpaquePacket;
 pub use play::{
-    CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CCommands, CDisconnect, CGameEvent,
-    CJoinGame, CKeepAlive, CPluginMessage, CRespawn, CSetCenterChunk, CSetDefaultSpawnPosition,
-    CSetSubtitle, CSetTitle, CSetTitleTimes, CStartConfiguration, CSynchronizePlayerPosition,
-    CSystemChatMessage, CTabCompleteResponse, CTitleLegacy, CTransfer, DimensionInfo,
-    SAcknowledgeConfiguration, SChatCommand, SChatMessage, SChatSessionUpdate, SKeepAlive,
-    SPluginMessage, STabCompleteRequest,
+    CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CChunkData, CCommands, CDisconnect,
+    CGameEvent, CJoinGame, CKeepAlive, CPluginMessage, CRespawn, CSetCenterChunk,
+    CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes, CStartConfiguration,
+    CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse, CTitleLegacy, CTransfer,
+    DimensionInfo, SAcknowledgeConfiguration, SChatCommand, SChatMessage, SChatSessionUpdate,
+    SKeepAlive, SPluginMessage, STabCompleteRequest,
 };
 pub use status::{CPingResponse, CStatusResponse, SPingRequest, SStatusRequest};
 
@@ -62,8 +60,6 @@ pub trait ErasedPacket: Send + Sync + std::fmt::Debug {
     fn encode_payload(&self, w: &mut dyn Write, version: ProtocolVersion) -> ProtocolResult<()>;
 
     fn as_any(&self) -> &dyn Any;
-
-    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 impl<P: Packet + Any> ErasedPacket for P {
@@ -76,10 +72,6 @@ impl<P: Packet + Any> ErasedPacket for P {
     }
 
     fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }
