@@ -3,26 +3,13 @@ use crate::error::ProtocolResult;
 use crate::packets::Packet;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// System chat message packet (Clientbound, 1.19+).
-///
-/// Used for system messages, proxy announcements, etc.
-/// Replaces the older chat message packet for non-player messages.
-///
-/// Content format:
-/// - Pre-1.20.3: JSON text component (String)
-/// - 1.20.3+: NBT compound (binary)
-///
-/// Stored as opaque bytes. For pre-1.20.3, the bytes are UTF-8 JSON.
-/// For 1.20.3+, the bytes are raw NBT.
 #[derive(Debug, Clone)]
 pub struct CSystemChatMessage {
     pub content: Vec<u8>,
-    /// If true, displayed in the action bar instead of the chat box.
     pub overlay: bool,
 }
 
 impl CSystemChatMessage {
-    /// Creates a system chat message from a JSON text component string.
     pub fn from_json(json: &str, overlay: bool) -> Self {
         Self {
             content: json.as_bytes().to_vec(),
@@ -30,7 +17,6 @@ impl CSystemChatMessage {
         }
     }
 
-    /// Creates a system chat message from pre-encoded NBT bytes (1.20.3+).
     pub fn from_nbt(nbt: Vec<u8>, overlay: bool) -> Self {
         Self {
             content: nbt,
@@ -56,8 +42,6 @@ impl Packet for CSystemChatMessage {
             let overlay = r.read_bool()?;
             Ok(Self { content, overlay })
         } else {
-            // NBT content followed by overlay bool.
-            // Read all remaining, last byte is overlay.
             let remaining = r.read_remaining()?;
             if remaining.is_empty() {
                 return Err(crate::error::ProtocolError::invalid(
@@ -90,18 +74,9 @@ impl Packet for CSystemChatMessage {
     }
 }
 
-/// Before 1.19, chat and system messages used a single packet with a
-/// `position` byte to distinguish the display location.
-///
-/// Wire format varies:
-/// - 1.7: JSON String only
-/// - 1.8–1.15: JSON String + position(u8)
-/// - 1.16–1.18: JSON String + position(u8) + sender(UUID)
 #[derive(Debug, Clone)]
 pub struct CChatMessageLegacy {
-    /// JSON text component.
     pub content: String,
-    /// 0 = chat box, 1 = system message, 2 = game info (action bar).
     pub position: u8,
 }
 
@@ -145,19 +120,9 @@ impl Packet for CChatMessageLegacy {
     }
 }
 
-/// Serverbound chat message packet.
-///
-/// Sent by the client when typing a chat message. Pre-1.19, this is also
-/// used for slash commands (messages starting with `/`). From 1.19+,
-/// commands use the separate [`SChatCommand`] packet.
-///
-/// Only the message string is decoded; remaining bytes (timestamp, salt,
-/// signature in 1.19+) are preserved opaquely for forwarding.
 #[derive(Debug, Clone)]
 pub struct SChatMessage {
-    /// The chat message text.
     pub message: String,
-    /// Remaining bytes after the message (signatures, etc.).
     pub remaining: Vec<u8>,
 }
 
@@ -189,18 +154,9 @@ impl Packet for SChatMessage {
     }
 }
 
-/// Serverbound chat command packet (1.19+).
-///
-/// Sent by the client when typing a slash command. The command string
-/// does NOT include the leading `/`.
-///
-/// Only the command string is decoded; remaining bytes (timestamp, salt,
-/// argument signatures) are preserved opaquely for forwarding.
 #[derive(Debug, Clone)]
 pub struct SChatCommand {
-    /// The command text without the leading `/`.
     pub command: String,
-    /// Remaining bytes after the command (signatures, etc.).
     pub remaining: Vec<u8>,
 }
 

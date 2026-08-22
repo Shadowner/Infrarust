@@ -3,16 +3,8 @@ use crate::error::ProtocolResult;
 use crate::packets::Packet;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Respawn packet (Clientbound).
-///
-/// Sent when a player changes dimension (Overworld -> Nether, server switch).
-/// The proxy uses this for server switching: sending a fake Respawn makes
-/// the client think it changed dimension.
-///
-/// Strategy: full parse for >= 1.20.2, opaque for older versions.
 #[derive(Debug, Clone)]
 pub struct CRespawn {
-    /// Dimension ID (`VarInt`) for 1.20.5+.
     pub dimension: i32,
     pub level_name: String,
     pub hashed_seed: i64,
@@ -20,13 +12,11 @@ pub struct CRespawn {
     pub previous_gamemode: i8,
     pub is_debug: bool,
     pub is_flat: bool,
-    /// Bitmask of data to keep across respawn (1.16+).
     pub data_to_keep: u8,
     pub death_dimension: Option<String>,
     pub death_position: Option<i64>,
     pub portal_cooldown: i32,
     pub sea_level: i32,
-    /// Opaque payload for pre-1.20.2 versions.
     pub raw_payload: Option<Vec<u8>>,
 }
 
@@ -87,9 +77,7 @@ impl Packet for CRespawn {
     }
 }
 
-/// Decodes Respawn for 1.20.2+ (follows Velocity's `RespawnPacket` pattern).
 fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<CRespawn> {
-    // Dimension: VarInt for 1.20.5+, String for 1.20.2–1.20.3
     let dimension = if version.no_less_than(ProtocolVersion::V1_20_5) {
         r.read_var_int()?.0
     } else {
@@ -107,7 +95,6 @@ fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<C
     let (death_dimension, death_position) = super::common::decode_death_location(r)?;
     let (portal_cooldown, sea_level) = super::common::decode_world_info(r, version)?;
 
-    // data_to_keep: read at the END for 1.20.2+
     let data_to_keep = r.read_u8()?;
 
     Ok(CRespawn {
@@ -127,7 +114,6 @@ fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<C
     })
 }
 
-/// Encodes Respawn for 1.20.2+.
 fn encode_1_20_2_up(
     pkt: &CRespawn,
     mut w: &mut (impl std::io::Write + ?Sized),
@@ -149,7 +135,6 @@ fn encode_1_20_2_up(
     super::common::encode_death_location(w, pkt.death_dimension.as_deref(), pkt.death_position)?;
     super::common::encode_world_info(w, pkt.portal_cooldown, pkt.sea_level, version)?;
 
-    // data_to_keep at END for 1.20.2+
     w.write_u8(pkt.data_to_keep)?;
 
     Ok(())

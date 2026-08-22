@@ -1,12 +1,9 @@
-//! Shared helpers for play packets (`CJoinGame`, `CRespawn`).
-
 use std::io::Write;
 
 use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
 use crate::version::ProtocolVersion;
 
-/// Decodes an optional death location (dimension identifier + packed position).
 pub fn decode_death_location(r: &mut &[u8]) -> ProtocolResult<(Option<String>, Option<i64>)> {
     if r.read_bool()? {
         let dim = r.read_string()?;
@@ -17,7 +14,6 @@ pub fn decode_death_location(r: &mut &[u8]) -> ProtocolResult<(Option<String>, O
     }
 }
 
-/// Encodes an optional death location (dimension identifier + packed position).
 pub fn encode_death_location(
     mut w: &mut (impl Write + ?Sized),
     death_dimension: Option<&str>,
@@ -33,7 +29,6 @@ pub fn encode_death_location(
     Ok(())
 }
 
-/// Decodes portal cooldown and sea level (version-dependent).
 pub fn decode_world_info(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<(i32, i32)> {
     let portal_cooldown = r.read_var_int()?.0;
     let sea_level = if version.no_less_than(ProtocolVersion::V1_21_2) {
@@ -44,7 +39,6 @@ pub fn decode_world_info(r: &mut &[u8], version: ProtocolVersion) -> ProtocolRes
     Ok((portal_cooldown, sea_level))
 }
 
-/// Encodes portal cooldown and sea level (version-dependent).
 pub fn encode_world_info(
     mut w: &mut (impl Write + ?Sized),
     portal_cooldown: i32,

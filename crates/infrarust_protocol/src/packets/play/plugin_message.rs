@@ -2,14 +2,12 @@ use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
 use crate::version::ConnectionState;
 
-/// Shared decode for plugin message packets.
 fn decode_plugin_message(r: &mut &[u8]) -> ProtocolResult<(String, Vec<u8>)> {
     let channel = r.read_string()?;
     let data = r.read_remaining()?;
     Ok((channel, data))
 }
 
-/// Shared encode for plugin message packets.
 fn encode_plugin_message(
     mut w: &mut (impl std::io::Write + ?Sized),
     channel: &str,
@@ -20,8 +18,6 @@ fn encode_plugin_message(
     Ok(())
 }
 
-// Plugin message packets carry custom channel data (e.g. `minecraft:brand`, `velocity:player_info`).
-// The `data` field contains all remaining bytes after the channel string.
 define_twin_packets! {
     clientbound: CPluginMessage,
     serverbound: SPluginMessage,
@@ -75,7 +71,6 @@ mod tests {
 
     #[test]
     fn test_plugin_message_remaining_bytes() {
-        // Verify that all bytes after the channel are captured as data
         let pkt = CPluginMessage {
             channel: "test:channel".to_string(),
             data: vec![0xFF; 256],

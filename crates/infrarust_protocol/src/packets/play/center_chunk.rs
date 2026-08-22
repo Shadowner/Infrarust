@@ -1,20 +1,12 @@
-//! Set Center Chunk packet (Clientbound, 1.14+).
-//!
-//! Tells the client which chunk is at the center of the view. Required
-//! before sending chunk data so the client knows which chunks to render.
-
 use crate::codec::varint::VarInt;
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
 use crate::packets::Packet;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Set Center Chunk packet (Clientbound).
 #[derive(Debug, Clone)]
 pub struct CSetCenterChunk {
-    /// Chunk X coordinate.
     pub chunk_x: i32,
-    /// Chunk Z coordinate.
     pub chunk_z: i32,
 }
 

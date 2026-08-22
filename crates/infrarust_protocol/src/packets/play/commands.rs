@@ -251,14 +251,11 @@ fn encode_parser(
     Ok(())
 }
 
-/// Read parser-specific properties by VarInt ID (1.19+).
-/// We read the exact number of bytes each parser type needs.
 fn read_parser_properties(r: &mut &[u8], id: i32) -> ProtocolResult<Vec<u8>> {
     let mut buf = Vec::new();
     match id {
-        0 => {} // bool — no properties
+        0 => {}
         1 | 2 => {
-            // float / double — flags byte, then optional min/max
             let flags = r.read_u8()?;
             buf.push(flags);
             if flags & 0x01 != 0 {
@@ -271,7 +268,6 @@ fn read_parser_properties(r: &mut &[u8], id: i32) -> ProtocolResult<Vec<u8>> {
             }
         }
         3 | 4 => {
-            // integer / long — flags byte, then optional min/max
             let flags = r.read_u8()?;
             buf.push(flags);
             if flags & 0x01 != 0 {
@@ -284,38 +280,30 @@ fn read_parser_properties(r: &mut &[u8], id: i32) -> ProtocolResult<Vec<u8>> {
             }
         }
         5 => {
-            // string — VarInt mode
             let mode = r.read_var_int()?;
             mode.encode(&mut buf)?;
         }
         6 => {
-            // entity — flags byte
             buf.push(r.read_u8()?);
         }
         31 => {
-            // score_holder — flags byte
             buf.push(r.read_u8()?);
         }
         43 => {
-            // time — i32 min
             let bytes = r.read_byte_array_bounded(4)?;
             buf.extend_from_slice(&bytes);
         }
         44..=47 => {
-            // resource_or_tag, resource_or_tag_key, resource, resource_key — string identifier
             let s = r.read_string()?;
             let mut tmp = Vec::new();
             tmp.write_string(&s)?;
             buf.extend_from_slice(&tmp);
         }
-        _ => {
-            // All other parsers have no properties (7-30, 32-42, 48+)
-        }
+        _ => {}
     }
     Ok(buf)
 }
 
-/// Read parser-specific properties by string identifier (pre-1.19).
 fn read_parser_properties_by_name(r: &mut &[u8], identifier: &str) -> ProtocolResult<Vec<u8>> {
     let id = named_parser_to_id(identifier);
     read_parser_properties(r, id)
@@ -467,8 +455,6 @@ impl Packet for CCommands {
     }
 }
 
-/// Creates a `brigadier:string` parser for the given mode.
-/// Mode: 0 = SINGLE_WORD, 1 = QUOTABLE_PHRASE, 2 = GREEDY_PHRASE.
 pub fn string_parser(mode: i32, version: ProtocolVersion) -> Parser {
     let mut props = Vec::new();
     VarInt(mode).encode(&mut props).expect("VarInt encode");
@@ -594,8 +580,8 @@ mod tests {
     #[test]
     fn unknown_node_type_errors() {
         let mut buf = Vec::new();
-        buf.write_u8(0x03).unwrap(); // type bits = 3 (unknown)
-        buf.write_var_int(&VarInt(0)).unwrap(); // child count
+        buf.write_u8(0x03).unwrap();
+        buf.write_var_int(&VarInt(0)).unwrap();
         let err = decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap_err();
         assert!(matches!(err, crate::error::ProtocolError::Invalid { .. }));
     }
@@ -613,7 +599,7 @@ mod tests {
     fn hostile_child_count_errors_without_allocating() {
         let mut buf = Vec::new();
         buf.write_u8(NODE_TYPE_LITERAL).unwrap();
-        buf.write_var_int(&VarInt(i32::MAX)).unwrap(); // claims 2^31-1 children, none present
+        buf.write_var_int(&VarInt(i32::MAX)).unwrap();
         assert!(decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).is_err());
     }
 
@@ -628,7 +614,7 @@ mod tests {
     #[test]
     fn hostile_node_count_errors_without_allocating() {
         let mut buf = Vec::new();
-        buf.write_var_int(&VarInt(i32::MAX)).unwrap(); // claims 2^31-1 nodes, none present
+        buf.write_var_int(&VarInt(i32::MAX)).unwrap();
         assert!(CCommands::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).is_err());
     }
 
@@ -636,10 +622,10 @@ mod tests {
     fn truncated_parser_properties_errors() {
         let mut buf = Vec::new();
         buf.write_u8(NODE_TYPE_ARGUMENT).unwrap();
-        buf.write_var_int(&VarInt(0)).unwrap(); // no children
+        buf.write_var_int(&VarInt(0)).unwrap();
         buf.write_string("arg").unwrap();
-        buf.write_var_int(&VarInt(1)).unwrap(); // float parser
-        buf.write_u8(0x03).unwrap(); // claims min+max follow, then truncated
+        buf.write_var_int(&VarInt(1)).unwrap();
+        buf.write_u8(0x03).unwrap();
         assert!(decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).is_err());
     }
 
@@ -647,9 +633,9 @@ mod tests {
     fn truncated_node_name_errors() {
         let mut buf = Vec::new();
         buf.write_u8(NODE_TYPE_LITERAL).unwrap();
-        buf.write_var_int(&VarInt(0)).unwrap(); // no children
-        buf.write_var_int(&VarInt(10)).unwrap(); // name claims 10 bytes
-        buf.extend_from_slice(b"ab"); // only 2 present
+        buf.write_var_int(&VarInt(0)).unwrap();
+        buf.write_var_int(&VarInt(10)).unwrap();
+        buf.extend_from_slice(b"ab");
         assert!(decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).is_err());
     }
 

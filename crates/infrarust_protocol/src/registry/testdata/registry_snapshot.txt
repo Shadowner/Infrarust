@@ -1,0 +1,2066 @@
+DEC config clientbound 764 0x00
+DEC config clientbound 764 0x01
+DEC config clientbound 764 0x02
+DEC config clientbound 764 0x05
+DEC config clientbound 765 0x00
+DEC config clientbound 765 0x01
+DEC config clientbound 765 0x02
+DEC config clientbound 765 0x05
+DEC config clientbound 766 0x01
+DEC config clientbound 766 0x02
+DEC config clientbound 766 0x03
+DEC config clientbound 766 0x07
+DEC config clientbound 766 0x0E
+DEC config clientbound 767 0x01
+DEC config clientbound 767 0x02
+DEC config clientbound 767 0x03
+DEC config clientbound 767 0x07
+DEC config clientbound 767 0x0E
+DEC config clientbound 768 0x01
+DEC config clientbound 768 0x02
+DEC config clientbound 768 0x03
+DEC config clientbound 768 0x07
+DEC config clientbound 768 0x0E
+DEC config clientbound 769 0x01
+DEC config clientbound 769 0x02
+DEC config clientbound 769 0x03
+DEC config clientbound 769 0x07
+DEC config clientbound 769 0x0E
+DEC config clientbound 770 0x01
+DEC config clientbound 770 0x02
+DEC config clientbound 770 0x03
+DEC config clientbound 770 0x07
+DEC config clientbound 770 0x0E
+DEC config clientbound 771 0x01
+DEC config clientbound 771 0x02
+DEC config clientbound 771 0x03
+DEC config clientbound 771 0x07
+DEC config clientbound 771 0x0E
+DEC config clientbound 772 0x01
+DEC config clientbound 772 0x02
+DEC config clientbound 772 0x03
+DEC config clientbound 772 0x07
+DEC config clientbound 772 0x0E
+DEC config clientbound 773 0x01
+DEC config clientbound 773 0x02
+DEC config clientbound 773 0x03
+DEC config clientbound 773 0x07
+DEC config clientbound 773 0x0E
+DEC config clientbound 774 0x01
+DEC config clientbound 774 0x02
+DEC config clientbound 774 0x03
+DEC config clientbound 774 0x07
+DEC config clientbound 774 0x0E
+DEC config clientbound 775 0x01
+DEC config clientbound 775 0x02
+DEC config clientbound 775 0x03
+DEC config clientbound 775 0x07
+DEC config clientbound 775 0x0E
+DEC config clientbound 776 0x01
+DEC config clientbound 776 0x02
+DEC config clientbound 776 0x03
+DEC config clientbound 776 0x07
+DEC config clientbound 776 0x0E
+DEC config serverbound 764 0x01
+DEC config serverbound 764 0x02
+DEC config serverbound 765 0x01
+DEC config serverbound 765 0x02
+DEC config serverbound 766 0x02
+DEC config serverbound 766 0x03
+DEC config serverbound 766 0x07
+DEC config serverbound 767 0x02
+DEC config serverbound 767 0x03
+DEC config serverbound 767 0x07
+DEC config serverbound 768 0x02
+DEC config serverbound 768 0x03
+DEC config serverbound 768 0x07
+DEC config serverbound 769 0x02
+DEC config serverbound 769 0x03
+DEC config serverbound 769 0x07
+DEC config serverbound 770 0x02
+DEC config serverbound 770 0x03
+DEC config serverbound 770 0x07
+DEC config serverbound 771 0x02
+DEC config serverbound 771 0x03
+DEC config serverbound 771 0x07
+DEC config serverbound 772 0x02
+DEC config serverbound 772 0x03
+DEC config serverbound 772 0x07
+DEC config serverbound 773 0x02
+DEC config serverbound 773 0x03
+DEC config serverbound 773 0x07
+DEC config serverbound 774 0x02
+DEC config serverbound 774 0x03
+DEC config serverbound 774 0x07
+DEC config serverbound 775 0x02
+DEC config serverbound 775 0x03
+DEC config serverbound 775 0x07
+DEC config serverbound 776 0x02
+DEC config serverbound 776 0x03
+DEC config serverbound 776 0x07
+DEC handshake serverbound   4 0x00
+DEC handshake serverbound   5 0x00
+DEC handshake serverbound  47 0x00
+DEC handshake serverbound 107 0x00
+DEC handshake serverbound 109 0x00
+DEC handshake serverbound 110 0x00
+DEC handshake serverbound 335 0x00
+DEC handshake serverbound 338 0x00
+DEC handshake serverbound 340 0x00
+DEC handshake serverbound 393 0x00
+DEC handshake serverbound 477 0x00
+DEC handshake serverbound 573 0x00
+DEC handshake serverbound 735 0x00
+DEC handshake serverbound 751 0x00
+DEC handshake serverbound 754 0x00
+DEC handshake serverbound 755 0x00
+DEC handshake serverbound 757 0x00
+DEC handshake serverbound 758 0x00
+DEC handshake serverbound 759 0x00
+DEC handshake serverbound 760 0x00
+DEC handshake serverbound 761 0x00
+DEC handshake serverbound 762 0x00
+DEC handshake serverbound 763 0x00
+DEC handshake serverbound 764 0x00
+DEC handshake serverbound 765 0x00
+DEC handshake serverbound 766 0x00
+DEC handshake serverbound 767 0x00
+DEC handshake serverbound 768 0x00
+DEC handshake serverbound 769 0x00
+DEC handshake serverbound 770 0x00
+DEC handshake serverbound 771 0x00
+DEC handshake serverbound 772 0x00
+DEC handshake serverbound 773 0x00
+DEC handshake serverbound 774 0x00
+DEC handshake serverbound 775 0x00
+DEC handshake serverbound 776 0x00
+DEC login clientbound   4 0x00
+DEC login clientbound   4 0x01
+DEC login clientbound   4 0x02
+DEC login clientbound   5 0x00
+DEC login clientbound   5 0x01
+DEC login clientbound   5 0x02
+DEC login clientbound  47 0x00
+DEC login clientbound  47 0x01
+DEC login clientbound  47 0x02
+DEC login clientbound  47 0x03
+DEC login clientbound 107 0x00
+DEC login clientbound 107 0x01
+DEC login clientbound 107 0x02
+DEC login clientbound 107 0x03
+DEC login clientbound 109 0x00
+DEC login clientbound 109 0x01
+DEC login clientbound 109 0x02
+DEC login clientbound 109 0x03
+DEC login clientbound 110 0x00
+DEC login clientbound 110 0x01
+DEC login clientbound 110 0x02
+DEC login clientbound 110 0x03
+DEC login clientbound 335 0x00
+DEC login clientbound 335 0x01
+DEC login clientbound 335 0x02
+DEC login clientbound 335 0x03
+DEC login clientbound 338 0x00
+DEC login clientbound 338 0x01
+DEC login clientbound 338 0x02
+DEC login clientbound 338 0x03
+DEC login clientbound 340 0x00
+DEC login clientbound 340 0x01
+DEC login clientbound 340 0x02
+DEC login clientbound 340 0x03
+DEC login clientbound 393 0x00
+DEC login clientbound 393 0x01
+DEC login clientbound 393 0x02
+DEC login clientbound 393 0x03
+DEC login clientbound 393 0x04
+DEC login clientbound 477 0x00
+DEC login clientbound 477 0x01
+DEC login clientbound 477 0x02
+DEC login clientbound 477 0x03
+DEC login clientbound 477 0x04
+DEC login clientbound 573 0x00
+DEC login clientbound 573 0x01
+DEC login clientbound 573 0x02
+DEC login clientbound 573 0x03
+DEC login clientbound 573 0x04
+DEC login clientbound 735 0x00
+DEC login clientbound 735 0x01
+DEC login clientbound 735 0x02
+DEC login clientbound 735 0x03
+DEC login clientbound 735 0x04
+DEC login clientbound 751 0x00
+DEC login clientbound 751 0x01
+DEC login clientbound 751 0x02
+DEC login clientbound 751 0x03
+DEC login clientbound 751 0x04
+DEC login clientbound 754 0x00
+DEC login clientbound 754 0x01
+DEC login clientbound 754 0x02
+DEC login clientbound 754 0x03
+DEC login clientbound 754 0x04
+DEC login clientbound 755 0x00
+DEC login clientbound 755 0x01
+DEC login clientbound 755 0x02
+DEC login clientbound 755 0x03
+DEC login clientbound 755 0x04
+DEC login clientbound 757 0x00
+DEC login clientbound 757 0x01
+DEC login clientbound 757 0x02
+DEC login clientbound 757 0x03
+DEC login clientbound 757 0x04
+DEC login clientbound 758 0x00
+DEC login clientbound 758 0x01
+DEC login clientbound 758 0x02
+DEC login clientbound 758 0x03
+DEC login clientbound 758 0x04
+DEC login clientbound 759 0x00
+DEC login clientbound 759 0x01
+DEC login clientbound 759 0x02
+DEC login clientbound 759 0x03
+DEC login clientbound 759 0x04
+DEC login clientbound 760 0x00
+DEC login clientbound 760 0x01
+DEC login clientbound 760 0x02
+DEC login clientbound 760 0x03
+DEC login clientbound 760 0x04
+DEC login clientbound 761 0x00
+DEC login clientbound 761 0x01
+DEC login clientbound 761 0x02
+DEC login clientbound 761 0x03
+DEC login clientbound 761 0x04
+DEC login clientbound 762 0x00
+DEC login clientbound 762 0x01
+DEC login clientbound 762 0x02
+DEC login clientbound 762 0x03
+DEC login clientbound 762 0x04
+DEC login clientbound 763 0x00
+DEC login clientbound 763 0x01
+DEC login clientbound 763 0x02
+DEC login clientbound 763 0x03
+DEC login clientbound 763 0x04
+DEC login clientbound 764 0x00
+DEC login clientbound 764 0x01
+DEC login clientbound 764 0x02
+DEC login clientbound 764 0x03
+DEC login clientbound 764 0x04
+DEC login clientbound 765 0x00
+DEC login clientbound 765 0x01
+DEC login clientbound 765 0x02
+DEC login clientbound 765 0x03
+DEC login clientbound 765 0x04
+DEC login clientbound 766 0x00
+DEC login clientbound 766 0x01
+DEC login clientbound 766 0x02
+DEC login clientbound 766 0x03
+DEC login clientbound 766 0x04
+DEC login clientbound 767 0x00
+DEC login clientbound 767 0x01
+DEC login clientbound 767 0x02
+DEC login clientbound 767 0x03
+DEC login clientbound 767 0x04
+DEC login clientbound 768 0x00
+DEC login clientbound 768 0x01
+DEC login clientbound 768 0x02
+DEC login clientbound 768 0x03
+DEC login clientbound 768 0x04
+DEC login clientbound 769 0x00
+DEC login clientbound 769 0x01
+DEC login clientbound 769 0x02
+DEC login clientbound 769 0x03
+DEC login clientbound 769 0x04
+DEC login clientbound 770 0x00
+DEC login clientbound 770 0x01
+DEC login clientbound 770 0x02
+DEC login clientbound 770 0x03
+DEC login clientbound 770 0x04
+DEC login clientbound 771 0x00
+DEC login clientbound 771 0x01
+DEC login clientbound 771 0x02
+DEC login clientbound 771 0x03
+DEC login clientbound 771 0x04
+DEC login clientbound 772 0x00
+DEC login clientbound 772 0x01
+DEC login clientbound 772 0x02
+DEC login clientbound 772 0x03
+DEC login clientbound 772 0x04
+DEC login clientbound 773 0x00
+DEC login clientbound 773 0x01
+DEC login clientbound 773 0x02
+DEC login clientbound 773 0x03
+DEC login clientbound 773 0x04
+DEC login clientbound 774 0x00
+DEC login clientbound 774 0x01
+DEC login clientbound 774 0x02
+DEC login clientbound 774 0x03
+DEC login clientbound 774 0x04
+DEC login clientbound 775 0x00
+DEC login clientbound 775 0x01
+DEC login clientbound 775 0x02
+DEC login clientbound 775 0x03
+DEC login clientbound 775 0x04
+DEC login clientbound 776 0x00
+DEC login clientbound 776 0x01
+DEC login clientbound 776 0x02
+DEC login clientbound 776 0x03
+DEC login clientbound 776 0x04
+DEC login serverbound   4 0x00
+DEC login serverbound   4 0x01
+DEC login serverbound   5 0x00
+DEC login serverbound   5 0x01
+DEC login serverbound  47 0x00
+DEC login serverbound  47 0x01
+DEC login serverbound 107 0x00
+DEC login serverbound 107 0x01
+DEC login serverbound 109 0x00
+DEC login serverbound 109 0x01
+DEC login serverbound 110 0x00
+DEC login serverbound 110 0x01
+DEC login serverbound 335 0x00
+DEC login serverbound 335 0x01
+DEC login serverbound 338 0x00
+DEC login serverbound 338 0x01
+DEC login serverbound 340 0x00
+DEC login serverbound 340 0x01
+DEC login serverbound 393 0x00
+DEC login serverbound 393 0x01
+DEC login serverbound 393 0x02
+DEC login serverbound 477 0x00
+DEC login serverbound 477 0x01
+DEC login serverbound 477 0x02
+DEC login serverbound 573 0x00
+DEC login serverbound 573 0x01
+DEC login serverbound 573 0x02
+DEC login serverbound 735 0x00
+DEC login serverbound 735 0x01
+DEC login serverbound 735 0x02
+DEC login serverbound 751 0x00
+DEC login serverbound 751 0x01
+DEC login serverbound 751 0x02
+DEC login serverbound 754 0x00
+DEC login serverbound 754 0x01
+DEC login serverbound 754 0x02
+DEC login serverbound 755 0x00
+DEC login serverbound 755 0x01
+DEC login serverbound 755 0x02
+DEC login serverbound 757 0x00
+DEC login serverbound 757 0x01
+DEC login serverbound 757 0x02
+DEC login serverbound 758 0x00
+DEC login serverbound 758 0x01
+DEC login serverbound 758 0x02
+DEC login serverbound 759 0x00
+DEC login serverbound 759 0x01
+DEC login serverbound 759 0x02
+DEC login serverbound 760 0x00
+DEC login serverbound 760 0x01
+DEC login serverbound 760 0x02
+DEC login serverbound 761 0x00
+DEC login serverbound 761 0x01
+DEC login serverbound 761 0x02
+DEC login serverbound 762 0x00
+DEC login serverbound 762 0x01
+DEC login serverbound 762 0x02
+DEC login serverbound 763 0x00
+DEC login serverbound 763 0x01
+DEC login serverbound 763 0x02
+DEC login serverbound 764 0x00
+DEC login serverbound 764 0x01
+DEC login serverbound 764 0x02
+DEC login serverbound 764 0x03
+DEC login serverbound 765 0x00
+DEC login serverbound 765 0x01
+DEC login serverbound 765 0x02
+DEC login serverbound 765 0x03
+DEC login serverbound 766 0x00
+DEC login serverbound 766 0x01
+DEC login serverbound 766 0x02
+DEC login serverbound 766 0x03
+DEC login serverbound 767 0x00
+DEC login serverbound 767 0x01
+DEC login serverbound 767 0x02
+DEC login serverbound 767 0x03
+DEC login serverbound 768 0x00
+DEC login serverbound 768 0x01
+DEC login serverbound 768 0x02
+DEC login serverbound 768 0x03
+DEC login serverbound 769 0x00
+DEC login serverbound 769 0x01
+DEC login serverbound 769 0x02
+DEC login serverbound 769 0x03
+DEC login serverbound 770 0x00
+DEC login serverbound 770 0x01
+DEC login serverbound 770 0x02
+DEC login serverbound 770 0x03
+DEC login serverbound 771 0x00
+DEC login serverbound 771 0x01
+DEC login serverbound 771 0x02
+DEC login serverbound 771 0x03
+DEC login serverbound 772 0x00
+DEC login serverbound 772 0x01
+DEC login serverbound 772 0x02
+DEC login serverbound 772 0x03
+DEC login serverbound 773 0x00
+DEC login serverbound 773 0x01
+DEC login serverbound 773 0x02
+DEC login serverbound 773 0x03
+DEC login serverbound 774 0x00
+DEC login serverbound 774 0x01
+DEC login serverbound 774 0x02
+DEC login serverbound 774 0x03
+DEC login serverbound 775 0x00
+DEC login serverbound 775 0x01
+DEC login serverbound 775 0x02
+DEC login serverbound 775 0x03
+DEC login serverbound 776 0x00
+DEC login serverbound 776 0x01
+DEC login serverbound 776 0x02
+DEC login serverbound 776 0x03
+DEC play clientbound   4 0x00
+DEC play clientbound   4 0x40
+DEC play clientbound   5 0x00
+DEC play clientbound   5 0x40
+DEC play clientbound  47 0x00
+DEC play clientbound  47 0x40
+DEC play clientbound 107 0x1A
+DEC play clientbound 107 0x1F
+DEC play clientbound 109 0x1A
+DEC play clientbound 109 0x1F
+DEC play clientbound 110 0x1A
+DEC play clientbound 110 0x1F
+DEC play clientbound 335 0x1A
+DEC play clientbound 335 0x1F
+DEC play clientbound 338 0x1A
+DEC play clientbound 338 0x1F
+DEC play clientbound 340 0x1A
+DEC play clientbound 340 0x1F
+DEC play clientbound 393 0x10
+DEC play clientbound 393 0x11
+DEC play clientbound 393 0x1B
+DEC play clientbound 393 0x21
+DEC play clientbound 477 0x10
+DEC play clientbound 477 0x11
+DEC play clientbound 477 0x1A
+DEC play clientbound 477 0x20
+DEC play clientbound 573 0x11
+DEC play clientbound 573 0x12
+DEC play clientbound 573 0x1B
+DEC play clientbound 573 0x21
+DEC play clientbound 735 0x10
+DEC play clientbound 735 0x11
+DEC play clientbound 735 0x1A
+DEC play clientbound 735 0x20
+DEC play clientbound 751 0x0F
+DEC play clientbound 751 0x10
+DEC play clientbound 751 0x19
+DEC play clientbound 751 0x1F
+DEC play clientbound 754 0x0F
+DEC play clientbound 754 0x10
+DEC play clientbound 754 0x19
+DEC play clientbound 754 0x1F
+DEC play clientbound 755 0x11
+DEC play clientbound 755 0x12
+DEC play clientbound 755 0x1A
+DEC play clientbound 755 0x21
+DEC play clientbound 757 0x11
+DEC play clientbound 757 0x12
+DEC play clientbound 757 0x1A
+DEC play clientbound 757 0x21
+DEC play clientbound 758 0x11
+DEC play clientbound 758 0x12
+DEC play clientbound 758 0x1A
+DEC play clientbound 758 0x21
+DEC play clientbound 759 0x0E
+DEC play clientbound 759 0x0F
+DEC play clientbound 759 0x17
+DEC play clientbound 759 0x1E
+DEC play clientbound 760 0x0E
+DEC play clientbound 760 0x0F
+DEC play clientbound 760 0x19
+DEC play clientbound 760 0x20
+DEC play clientbound 761 0x0D
+DEC play clientbound 761 0x0E
+DEC play clientbound 761 0x17
+DEC play clientbound 761 0x1F
+DEC play clientbound 762 0x0F
+DEC play clientbound 762 0x10
+DEC play clientbound 762 0x1A
+DEC play clientbound 762 0x23
+DEC play clientbound 763 0x0F
+DEC play clientbound 763 0x10
+DEC play clientbound 763 0x1A
+DEC play clientbound 763 0x23
+DEC play clientbound 764 0x10
+DEC play clientbound 764 0x11
+DEC play clientbound 764 0x1B
+DEC play clientbound 764 0x24
+DEC play clientbound 765 0x10
+DEC play clientbound 765 0x11
+DEC play clientbound 765 0x1B
+DEC play clientbound 765 0x24
+DEC play clientbound 766 0x10
+DEC play clientbound 766 0x11
+DEC play clientbound 766 0x1D
+DEC play clientbound 766 0x26
+DEC play clientbound 767 0x10
+DEC play clientbound 767 0x11
+DEC play clientbound 767 0x1D
+DEC play clientbound 767 0x26
+DEC play clientbound 768 0x10
+DEC play clientbound 768 0x11
+DEC play clientbound 768 0x1D
+DEC play clientbound 768 0x27
+DEC play clientbound 769 0x10
+DEC play clientbound 769 0x11
+DEC play clientbound 769 0x1D
+DEC play clientbound 769 0x27
+DEC play clientbound 770 0x0F
+DEC play clientbound 770 0x10
+DEC play clientbound 770 0x1C
+DEC play clientbound 770 0x26
+DEC play clientbound 771 0x0F
+DEC play clientbound 771 0x10
+DEC play clientbound 771 0x1C
+DEC play clientbound 771 0x26
+DEC play clientbound 772 0x0F
+DEC play clientbound 772 0x10
+DEC play clientbound 772 0x1C
+DEC play clientbound 772 0x26
+DEC play clientbound 773 0x0F
+DEC play clientbound 773 0x10
+DEC play clientbound 773 0x20
+DEC play clientbound 773 0x2B
+DEC play clientbound 774 0x0F
+DEC play clientbound 774 0x10
+DEC play clientbound 774 0x20
+DEC play clientbound 774 0x2B
+DEC play clientbound 775 0x0F
+DEC play clientbound 775 0x10
+DEC play clientbound 775 0x20
+DEC play clientbound 775 0x2C
+DEC play clientbound 776 0x0F
+DEC play clientbound 776 0x10
+DEC play clientbound 776 0x20
+DEC play clientbound 776 0x2C
+DEC play serverbound   4 0x00
+DEC play serverbound   5 0x00
+DEC play serverbound  47 0x00
+DEC play serverbound 107 0x0B
+DEC play serverbound 109 0x0B
+DEC play serverbound 110 0x0B
+DEC play serverbound 335 0x0C
+DEC play serverbound 338 0x0B
+DEC play serverbound 340 0x0B
+DEC play serverbound 393 0x05
+DEC play serverbound 393 0x0E
+DEC play serverbound 477 0x06
+DEC play serverbound 477 0x0F
+DEC play serverbound 573 0x06
+DEC play serverbound 573 0x0F
+DEC play serverbound 735 0x06
+DEC play serverbound 735 0x10
+DEC play serverbound 751 0x06
+DEC play serverbound 751 0x10
+DEC play serverbound 754 0x06
+DEC play serverbound 754 0x10
+DEC play serverbound 755 0x06
+DEC play serverbound 755 0x0F
+DEC play serverbound 757 0x06
+DEC play serverbound 757 0x0F
+DEC play serverbound 758 0x06
+DEC play serverbound 758 0x0F
+DEC play serverbound 759 0x08
+DEC play serverbound 759 0x11
+DEC play serverbound 760 0x09
+DEC play serverbound 760 0x12
+DEC play serverbound 761 0x08
+DEC play serverbound 761 0x11
+DEC play serverbound 762 0x09
+DEC play serverbound 762 0x12
+DEC play serverbound 763 0x09
+DEC play serverbound 763 0x12
+DEC play serverbound 764 0x0A
+DEC play serverbound 764 0x0B
+DEC play serverbound 764 0x14
+DEC play serverbound 765 0x0A
+DEC play serverbound 765 0x0B
+DEC play serverbound 765 0x15
+DEC play serverbound 766 0x0B
+DEC play serverbound 766 0x0C
+DEC play serverbound 766 0x18
+DEC play serverbound 767 0x0B
+DEC play serverbound 767 0x0C
+DEC play serverbound 767 0x18
+DEC play serverbound 768 0x0D
+DEC play serverbound 768 0x0E
+DEC play serverbound 768 0x1A
+DEC play serverbound 769 0x0D
+DEC play serverbound 769 0x0E
+DEC play serverbound 769 0x1A
+DEC play serverbound 770 0x0D
+DEC play serverbound 770 0x0E
+DEC play serverbound 770 0x1A
+DEC play serverbound 771 0x0E
+DEC play serverbound 771 0x0F
+DEC play serverbound 771 0x1B
+DEC play serverbound 772 0x0E
+DEC play serverbound 772 0x0F
+DEC play serverbound 772 0x1B
+DEC play serverbound 773 0x0E
+DEC play serverbound 773 0x0F
+DEC play serverbound 773 0x1B
+DEC play serverbound 774 0x0E
+DEC play serverbound 774 0x0F
+DEC play serverbound 774 0x1B
+DEC play serverbound 775 0x0F
+DEC play serverbound 775 0x10
+DEC play serverbound 775 0x1C
+DEC play serverbound 776 0x0F
+DEC play serverbound 776 0x10
+DEC play serverbound 776 0x1C
+DEC status clientbound   4 0x00
+DEC status clientbound   4 0x01
+DEC status clientbound   5 0x00
+DEC status clientbound   5 0x01
+DEC status clientbound  47 0x00
+DEC status clientbound  47 0x01
+DEC status clientbound 107 0x00
+DEC status clientbound 107 0x01
+DEC status clientbound 109 0x00
+DEC status clientbound 109 0x01
+DEC status clientbound 110 0x00
+DEC status clientbound 110 0x01
+DEC status clientbound 335 0x00
+DEC status clientbound 335 0x01
+DEC status clientbound 338 0x00
+DEC status clientbound 338 0x01
+DEC status clientbound 340 0x00
+DEC status clientbound 340 0x01
+DEC status clientbound 393 0x00
+DEC status clientbound 393 0x01
+DEC status clientbound 477 0x00
+DEC status clientbound 477 0x01
+DEC status clientbound 573 0x00
+DEC status clientbound 573 0x01
+DEC status clientbound 735 0x00
+DEC status clientbound 735 0x01
+DEC status clientbound 751 0x00
+DEC status clientbound 751 0x01
+DEC status clientbound 754 0x00
+DEC status clientbound 754 0x01
+DEC status clientbound 755 0x00
+DEC status clientbound 755 0x01
+DEC status clientbound 757 0x00
+DEC status clientbound 757 0x01
+DEC status clientbound 758 0x00
+DEC status clientbound 758 0x01
+DEC status clientbound 759 0x00
+DEC status clientbound 759 0x01
+DEC status clientbound 760 0x00
+DEC status clientbound 760 0x01
+DEC status clientbound 761 0x00
+DEC status clientbound 761 0x01
+DEC status clientbound 762 0x00
+DEC status clientbound 762 0x01
+DEC status clientbound 763 0x00
+DEC status clientbound 763 0x01
+DEC status clientbound 764 0x00
+DEC status clientbound 764 0x01
+DEC status clientbound 765 0x00
+DEC status clientbound 765 0x01
+DEC status clientbound 766 0x00
+DEC status clientbound 766 0x01
+DEC status clientbound 767 0x00
+DEC status clientbound 767 0x01
+DEC status clientbound 768 0x00
+DEC status clientbound 768 0x01
+DEC status clientbound 769 0x00
+DEC status clientbound 769 0x01
+DEC status clientbound 770 0x00
+DEC status clientbound 770 0x01
+DEC status clientbound 771 0x00
+DEC status clientbound 771 0x01
+DEC status clientbound 772 0x00
+DEC status clientbound 772 0x01
+DEC status clientbound 773 0x00
+DEC status clientbound 773 0x01
+DEC status clientbound 774 0x00
+DEC status clientbound 774 0x01
+DEC status clientbound 775 0x00
+DEC status clientbound 775 0x01
+DEC status clientbound 776 0x00
+DEC status clientbound 776 0x01
+DEC status serverbound   4 0x00
+DEC status serverbound   4 0x01
+DEC status serverbound   5 0x00
+DEC status serverbound   5 0x01
+DEC status serverbound  47 0x00
+DEC status serverbound  47 0x01
+DEC status serverbound 107 0x00
+DEC status serverbound 107 0x01
+DEC status serverbound 109 0x00
+DEC status serverbound 109 0x01
+DEC status serverbound 110 0x00
+DEC status serverbound 110 0x01
+DEC status serverbound 335 0x00
+DEC status serverbound 335 0x01
+DEC status serverbound 338 0x00
+DEC status serverbound 338 0x01
+DEC status serverbound 340 0x00
+DEC status serverbound 340 0x01
+DEC status serverbound 393 0x00
+DEC status serverbound 393 0x01
+DEC status serverbound 477 0x00
+DEC status serverbound 477 0x01
+DEC status serverbound 573 0x00
+DEC status serverbound 573 0x01
+DEC status serverbound 735 0x00
+DEC status serverbound 735 0x01
+DEC status serverbound 751 0x00
+DEC status serverbound 751 0x01
+DEC status serverbound 754 0x00
+DEC status serverbound 754 0x01
+DEC status serverbound 755 0x00
+DEC status serverbound 755 0x01
+DEC status serverbound 757 0x00
+DEC status serverbound 757 0x01
+DEC status serverbound 758 0x00
+DEC status serverbound 758 0x01
+DEC status serverbound 759 0x00
+DEC status serverbound 759 0x01
+DEC status serverbound 760 0x00
+DEC status serverbound 760 0x01
+DEC status serverbound 761 0x00
+DEC status serverbound 761 0x01
+DEC status serverbound 762 0x00
+DEC status serverbound 762 0x01
+DEC status serverbound 763 0x00
+DEC status serverbound 763 0x01
+DEC status serverbound 764 0x00
+DEC status serverbound 764 0x01
+DEC status serverbound 765 0x00
+DEC status serverbound 765 0x01
+DEC status serverbound 766 0x00
+DEC status serverbound 766 0x01
+DEC status serverbound 767 0x00
+DEC status serverbound 767 0x01
+DEC status serverbound 768 0x00
+DEC status serverbound 768 0x01
+DEC status serverbound 769 0x00
+DEC status serverbound 769 0x01
+DEC status serverbound 770 0x00
+DEC status serverbound 770 0x01
+DEC status serverbound 771 0x00
+DEC status serverbound 771 0x01
+DEC status serverbound 772 0x00
+DEC status serverbound 772 0x01
+DEC status serverbound 773 0x00
+DEC status serverbound 773 0x01
+DEC status serverbound 774 0x00
+DEC status serverbound 774 0x01
+DEC status serverbound 775 0x00
+DEC status serverbound 775 0x01
+DEC status serverbound 776 0x00
+DEC status serverbound 776 0x01
+ENC config clientbound 764 CConfigDisconnect 0x01
+ENC config clientbound 764 CConfigPluginMessage 0x00
+ENC config clientbound 764 CFinishConfig 0x02
+ENC config clientbound 764 CRegistryData 0x05
+ENC config clientbound 765 CConfigDisconnect 0x01
+ENC config clientbound 765 CConfigPluginMessage 0x00
+ENC config clientbound 765 CFinishConfig 0x02
+ENC config clientbound 765 CRegistryData 0x05
+ENC config clientbound 766 CConfigDisconnect 0x02
+ENC config clientbound 766 CConfigPluginMessage 0x01
+ENC config clientbound 766 CFinishConfig 0x03
+ENC config clientbound 766 CKnownPacks 0x0E
+ENC config clientbound 766 CRegistryData 0x07
+ENC config clientbound 767 CConfigDisconnect 0x02
+ENC config clientbound 767 CConfigPluginMessage 0x01
+ENC config clientbound 767 CFinishConfig 0x03
+ENC config clientbound 767 CKnownPacks 0x0E
+ENC config clientbound 767 CRegistryData 0x07
+ENC config clientbound 768 CConfigDisconnect 0x02
+ENC config clientbound 768 CConfigPluginMessage 0x01
+ENC config clientbound 768 CFinishConfig 0x03
+ENC config clientbound 768 CKnownPacks 0x0E
+ENC config clientbound 768 CRegistryData 0x07
+ENC config clientbound 769 CConfigDisconnect 0x02
+ENC config clientbound 769 CConfigPluginMessage 0x01
+ENC config clientbound 769 CFinishConfig 0x03
+ENC config clientbound 769 CKnownPacks 0x0E
+ENC config clientbound 769 CRegistryData 0x07
+ENC config clientbound 770 CConfigDisconnect 0x02
+ENC config clientbound 770 CConfigPluginMessage 0x01
+ENC config clientbound 770 CFinishConfig 0x03
+ENC config clientbound 770 CKnownPacks 0x0E
+ENC config clientbound 770 CRegistryData 0x07
+ENC config clientbound 771 CConfigDisconnect 0x02
+ENC config clientbound 771 CConfigPluginMessage 0x01
+ENC config clientbound 771 CFinishConfig 0x03
+ENC config clientbound 771 CKnownPacks 0x0E
+ENC config clientbound 771 CRegistryData 0x07
+ENC config clientbound 772 CConfigDisconnect 0x02
+ENC config clientbound 772 CConfigPluginMessage 0x01
+ENC config clientbound 772 CFinishConfig 0x03
+ENC config clientbound 772 CKnownPacks 0x0E
+ENC config clientbound 772 CRegistryData 0x07
+ENC config clientbound 773 CConfigDisconnect 0x02
+ENC config clientbound 773 CConfigPluginMessage 0x01
+ENC config clientbound 773 CFinishConfig 0x03
+ENC config clientbound 773 CKnownPacks 0x0E
+ENC config clientbound 773 CRegistryData 0x07
+ENC config clientbound 774 CConfigDisconnect 0x02
+ENC config clientbound 774 CConfigPluginMessage 0x01
+ENC config clientbound 774 CFinishConfig 0x03
+ENC config clientbound 774 CKnownPacks 0x0E
+ENC config clientbound 774 CRegistryData 0x07
+ENC config clientbound 775 CConfigDisconnect 0x02
+ENC config clientbound 775 CConfigPluginMessage 0x01
+ENC config clientbound 775 CFinishConfig 0x03
+ENC config clientbound 775 CKnownPacks 0x0E
+ENC config clientbound 775 CRegistryData 0x07
+ENC config clientbound 776 CConfigDisconnect 0x02
+ENC config clientbound 776 CConfigPluginMessage 0x01
+ENC config clientbound 776 CFinishConfig 0x03
+ENC config clientbound 776 CKnownPacks 0x0E
+ENC config clientbound 776 CRegistryData 0x07
+ENC config serverbound 764 SAcknowledgeFinishConfig 0x02
+ENC config serverbound 764 SConfigPluginMessage 0x01
+ENC config serverbound 765 SAcknowledgeFinishConfig 0x02
+ENC config serverbound 765 SConfigPluginMessage 0x01
+ENC config serverbound 766 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 766 SConfigPluginMessage 0x02
+ENC config serverbound 766 SKnownPacks 0x07
+ENC config serverbound 767 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 767 SConfigPluginMessage 0x02
+ENC config serverbound 767 SKnownPacks 0x07
+ENC config serverbound 768 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 768 SConfigPluginMessage 0x02
+ENC config serverbound 768 SKnownPacks 0x07
+ENC config serverbound 769 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 769 SConfigPluginMessage 0x02
+ENC config serverbound 769 SKnownPacks 0x07
+ENC config serverbound 770 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 770 SConfigPluginMessage 0x02
+ENC config serverbound 770 SKnownPacks 0x07
+ENC config serverbound 771 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 771 SConfigPluginMessage 0x02
+ENC config serverbound 771 SKnownPacks 0x07
+ENC config serverbound 772 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 772 SConfigPluginMessage 0x02
+ENC config serverbound 772 SKnownPacks 0x07
+ENC config serverbound 773 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 773 SConfigPluginMessage 0x02
+ENC config serverbound 773 SKnownPacks 0x07
+ENC config serverbound 774 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 774 SConfigPluginMessage 0x02
+ENC config serverbound 774 SKnownPacks 0x07
+ENC config serverbound 775 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 775 SConfigPluginMessage 0x02
+ENC config serverbound 775 SKnownPacks 0x07
+ENC config serverbound 776 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 776 SConfigPluginMessage 0x02
+ENC config serverbound 776 SKnownPacks 0x07
+ENC handshake serverbound   4 SHandshake 0x00
+ENC handshake serverbound   5 SHandshake 0x00
+ENC handshake serverbound  47 SHandshake 0x00
+ENC handshake serverbound 107 SHandshake 0x00
+ENC handshake serverbound 109 SHandshake 0x00
+ENC handshake serverbound 110 SHandshake 0x00
+ENC handshake serverbound 335 SHandshake 0x00
+ENC handshake serverbound 338 SHandshake 0x00
+ENC handshake serverbound 340 SHandshake 0x00
+ENC handshake serverbound 393 SHandshake 0x00
+ENC handshake serverbound 477 SHandshake 0x00
+ENC handshake serverbound 573 SHandshake 0x00
+ENC handshake serverbound 735 SHandshake 0x00
+ENC handshake serverbound 751 SHandshake 0x00
+ENC handshake serverbound 754 SHandshake 0x00
+ENC handshake serverbound 755 SHandshake 0x00
+ENC handshake serverbound 757 SHandshake 0x00
+ENC handshake serverbound 758 SHandshake 0x00
+ENC handshake serverbound 759 SHandshake 0x00
+ENC handshake serverbound 760 SHandshake 0x00
+ENC handshake serverbound 761 SHandshake 0x00
+ENC handshake serverbound 762 SHandshake 0x00
+ENC handshake serverbound 763 SHandshake 0x00
+ENC handshake serverbound 764 SHandshake 0x00
+ENC handshake serverbound 765 SHandshake 0x00
+ENC handshake serverbound 766 SHandshake 0x00
+ENC handshake serverbound 767 SHandshake 0x00
+ENC handshake serverbound 768 SHandshake 0x00
+ENC handshake serverbound 769 SHandshake 0x00
+ENC handshake serverbound 770 SHandshake 0x00
+ENC handshake serverbound 771 SHandshake 0x00
+ENC handshake serverbound 772 SHandshake 0x00
+ENC handshake serverbound 773 SHandshake 0x00
+ENC handshake serverbound 774 SHandshake 0x00
+ENC handshake serverbound 775 SHandshake 0x00
+ENC handshake serverbound 776 SHandshake 0x00
+ENC login clientbound   4 CEncryptionRequest 0x01
+ENC login clientbound   4 CLoginDisconnect 0x00
+ENC login clientbound   4 CLoginSuccess 0x02
+ENC login clientbound   5 CEncryptionRequest 0x01
+ENC login clientbound   5 CLoginDisconnect 0x00
+ENC login clientbound   5 CLoginSuccess 0x02
+ENC login clientbound  47 CEncryptionRequest 0x01
+ENC login clientbound  47 CLoginDisconnect 0x00
+ENC login clientbound  47 CLoginSuccess 0x02
+ENC login clientbound  47 CSetCompression 0x03
+ENC login clientbound 107 CEncryptionRequest 0x01
+ENC login clientbound 107 CLoginDisconnect 0x00
+ENC login clientbound 107 CLoginSuccess 0x02
+ENC login clientbound 107 CSetCompression 0x03
+ENC login clientbound 109 CEncryptionRequest 0x01
+ENC login clientbound 109 CLoginDisconnect 0x00
+ENC login clientbound 109 CLoginSuccess 0x02
+ENC login clientbound 109 CSetCompression 0x03
+ENC login clientbound 110 CEncryptionRequest 0x01
+ENC login clientbound 110 CLoginDisconnect 0x00
+ENC login clientbound 110 CLoginSuccess 0x02
+ENC login clientbound 110 CSetCompression 0x03
+ENC login clientbound 335 CEncryptionRequest 0x01
+ENC login clientbound 335 CLoginDisconnect 0x00
+ENC login clientbound 335 CLoginSuccess 0x02
+ENC login clientbound 335 CSetCompression 0x03
+ENC login clientbound 338 CEncryptionRequest 0x01
+ENC login clientbound 338 CLoginDisconnect 0x00
+ENC login clientbound 338 CLoginSuccess 0x02
+ENC login clientbound 338 CSetCompression 0x03
+ENC login clientbound 340 CEncryptionRequest 0x01
+ENC login clientbound 340 CLoginDisconnect 0x00
+ENC login clientbound 340 CLoginSuccess 0x02
+ENC login clientbound 340 CSetCompression 0x03
+ENC login clientbound 393 CEncryptionRequest 0x01
+ENC login clientbound 393 CLoginDisconnect 0x00
+ENC login clientbound 393 CLoginPluginRequest 0x04
+ENC login clientbound 393 CLoginSuccess 0x02
+ENC login clientbound 393 CSetCompression 0x03
+ENC login clientbound 477 CEncryptionRequest 0x01
+ENC login clientbound 477 CLoginDisconnect 0x00
+ENC login clientbound 477 CLoginPluginRequest 0x04
+ENC login clientbound 477 CLoginSuccess 0x02
+ENC login clientbound 477 CSetCompression 0x03
+ENC login clientbound 573 CEncryptionRequest 0x01
+ENC login clientbound 573 CLoginDisconnect 0x00
+ENC login clientbound 573 CLoginPluginRequest 0x04
+ENC login clientbound 573 CLoginSuccess 0x02
+ENC login clientbound 573 CSetCompression 0x03
+ENC login clientbound 735 CEncryptionRequest 0x01
+ENC login clientbound 735 CLoginDisconnect 0x00
+ENC login clientbound 735 CLoginPluginRequest 0x04
+ENC login clientbound 735 CLoginSuccess 0x02
+ENC login clientbound 735 CSetCompression 0x03
+ENC login clientbound 751 CEncryptionRequest 0x01
+ENC login clientbound 751 CLoginDisconnect 0x00
+ENC login clientbound 751 CLoginPluginRequest 0x04
+ENC login clientbound 751 CLoginSuccess 0x02
+ENC login clientbound 751 CSetCompression 0x03
+ENC login clientbound 754 CEncryptionRequest 0x01
+ENC login clientbound 754 CLoginDisconnect 0x00
+ENC login clientbound 754 CLoginPluginRequest 0x04
+ENC login clientbound 754 CLoginSuccess 0x02
+ENC login clientbound 754 CSetCompression 0x03
+ENC login clientbound 755 CEncryptionRequest 0x01
+ENC login clientbound 755 CLoginDisconnect 0x00
+ENC login clientbound 755 CLoginPluginRequest 0x04
+ENC login clientbound 755 CLoginSuccess 0x02
+ENC login clientbound 755 CSetCompression 0x03
+ENC login clientbound 757 CEncryptionRequest 0x01
+ENC login clientbound 757 CLoginDisconnect 0x00
+ENC login clientbound 757 CLoginPluginRequest 0x04
+ENC login clientbound 757 CLoginSuccess 0x02
+ENC login clientbound 757 CSetCompression 0x03
+ENC login clientbound 758 CEncryptionRequest 0x01
+ENC login clientbound 758 CLoginDisconnect 0x00
+ENC login clientbound 758 CLoginPluginRequest 0x04
+ENC login clientbound 758 CLoginSuccess 0x02
+ENC login clientbound 758 CSetCompression 0x03
+ENC login clientbound 759 CEncryptionRequest 0x01
+ENC login clientbound 759 CLoginDisconnect 0x00
+ENC login clientbound 759 CLoginPluginRequest 0x04
+ENC login clientbound 759 CLoginSuccess 0x02
+ENC login clientbound 759 CSetCompression 0x03
+ENC login clientbound 760 CEncryptionRequest 0x01
+ENC login clientbound 760 CLoginDisconnect 0x00
+ENC login clientbound 760 CLoginPluginRequest 0x04
+ENC login clientbound 760 CLoginSuccess 0x02
+ENC login clientbound 760 CSetCompression 0x03
+ENC login clientbound 761 CEncryptionRequest 0x01
+ENC login clientbound 761 CLoginDisconnect 0x00
+ENC login clientbound 761 CLoginPluginRequest 0x04
+ENC login clientbound 761 CLoginSuccess 0x02
+ENC login clientbound 761 CSetCompression 0x03
+ENC login clientbound 762 CEncryptionRequest 0x01
+ENC login clientbound 762 CLoginDisconnect 0x00
+ENC login clientbound 762 CLoginPluginRequest 0x04
+ENC login clientbound 762 CLoginSuccess 0x02
+ENC login clientbound 762 CSetCompression 0x03
+ENC login clientbound 763 CEncryptionRequest 0x01
+ENC login clientbound 763 CLoginDisconnect 0x00
+ENC login clientbound 763 CLoginPluginRequest 0x04
+ENC login clientbound 763 CLoginSuccess 0x02
+ENC login clientbound 763 CSetCompression 0x03
+ENC login clientbound 764 CEncryptionRequest 0x01
+ENC login clientbound 764 CLoginDisconnect 0x00
+ENC login clientbound 764 CLoginPluginRequest 0x04
+ENC login clientbound 764 CLoginSuccess 0x02
+ENC login clientbound 764 CSetCompression 0x03
+ENC login clientbound 765 CEncryptionRequest 0x01
+ENC login clientbound 765 CLoginDisconnect 0x00
+ENC login clientbound 765 CLoginPluginRequest 0x04
+ENC login clientbound 765 CLoginSuccess 0x02
+ENC login clientbound 765 CSetCompression 0x03
+ENC login clientbound 766 CEncryptionRequest 0x01
+ENC login clientbound 766 CLoginDisconnect 0x00
+ENC login clientbound 766 CLoginPluginRequest 0x04
+ENC login clientbound 766 CLoginSuccess 0x02
+ENC login clientbound 766 CSetCompression 0x03
+ENC login clientbound 767 CEncryptionRequest 0x01
+ENC login clientbound 767 CLoginDisconnect 0x00
+ENC login clientbound 767 CLoginPluginRequest 0x04
+ENC login clientbound 767 CLoginSuccess 0x02
+ENC login clientbound 767 CSetCompression 0x03
+ENC login clientbound 768 CEncryptionRequest 0x01
+ENC login clientbound 768 CLoginDisconnect 0x00
+ENC login clientbound 768 CLoginPluginRequest 0x04
+ENC login clientbound 768 CLoginSuccess 0x02
+ENC login clientbound 768 CSetCompression 0x03
+ENC login clientbound 769 CEncryptionRequest 0x01
+ENC login clientbound 769 CLoginDisconnect 0x00
+ENC login clientbound 769 CLoginPluginRequest 0x04
+ENC login clientbound 769 CLoginSuccess 0x02
+ENC login clientbound 769 CSetCompression 0x03
+ENC login clientbound 770 CEncryptionRequest 0x01
+ENC login clientbound 770 CLoginDisconnect 0x00
+ENC login clientbound 770 CLoginPluginRequest 0x04
+ENC login clientbound 770 CLoginSuccess 0x02
+ENC login clientbound 770 CSetCompression 0x03
+ENC login clientbound 771 CEncryptionRequest 0x01
+ENC login clientbound 771 CLoginDisconnect 0x00
+ENC login clientbound 771 CLoginPluginRequest 0x04
+ENC login clientbound 771 CLoginSuccess 0x02
+ENC login clientbound 771 CSetCompression 0x03
+ENC login clientbound 772 CEncryptionRequest 0x01
+ENC login clientbound 772 CLoginDisconnect 0x00
+ENC login clientbound 772 CLoginPluginRequest 0x04
+ENC login clientbound 772 CLoginSuccess 0x02
+ENC login clientbound 772 CSetCompression 0x03
+ENC login clientbound 773 CEncryptionRequest 0x01
+ENC login clientbound 773 CLoginDisconnect 0x00
+ENC login clientbound 773 CLoginPluginRequest 0x04
+ENC login clientbound 773 CLoginSuccess 0x02
+ENC login clientbound 773 CSetCompression 0x03
+ENC login clientbound 774 CEncryptionRequest 0x01
+ENC login clientbound 774 CLoginDisconnect 0x00
+ENC login clientbound 774 CLoginPluginRequest 0x04
+ENC login clientbound 774 CLoginSuccess 0x02
+ENC login clientbound 774 CSetCompression 0x03
+ENC login clientbound 775 CEncryptionRequest 0x01
+ENC login clientbound 775 CLoginDisconnect 0x00
+ENC login clientbound 775 CLoginPluginRequest 0x04
+ENC login clientbound 775 CLoginSuccess 0x02
+ENC login clientbound 775 CSetCompression 0x03
+ENC login clientbound 776 CEncryptionRequest 0x01
+ENC login clientbound 776 CLoginDisconnect 0x00
+ENC login clientbound 776 CLoginPluginRequest 0x04
+ENC login clientbound 776 CLoginSuccess 0x02
+ENC login clientbound 776 CSetCompression 0x03
+ENC login serverbound   4 SEncryptionResponse 0x01
+ENC login serverbound   4 SLoginStart 0x00
+ENC login serverbound   5 SEncryptionResponse 0x01
+ENC login serverbound   5 SLoginStart 0x00
+ENC login serverbound  47 SEncryptionResponse 0x01
+ENC login serverbound  47 SLoginStart 0x00
+ENC login serverbound 107 SEncryptionResponse 0x01
+ENC login serverbound 107 SLoginStart 0x00
+ENC login serverbound 109 SEncryptionResponse 0x01
+ENC login serverbound 109 SLoginStart 0x00
+ENC login serverbound 110 SEncryptionResponse 0x01
+ENC login serverbound 110 SLoginStart 0x00
+ENC login serverbound 335 SEncryptionResponse 0x01
+ENC login serverbound 335 SLoginStart 0x00
+ENC login serverbound 338 SEncryptionResponse 0x01
+ENC login serverbound 338 SLoginStart 0x00
+ENC login serverbound 340 SEncryptionResponse 0x01
+ENC login serverbound 340 SLoginStart 0x00
+ENC login serverbound 393 SEncryptionResponse 0x01
+ENC login serverbound 393 SLoginPluginResponse 0x02
+ENC login serverbound 393 SLoginStart 0x00
+ENC login serverbound 477 SEncryptionResponse 0x01
+ENC login serverbound 477 SLoginPluginResponse 0x02
+ENC login serverbound 477 SLoginStart 0x00
+ENC login serverbound 573 SEncryptionResponse 0x01
+ENC login serverbound 573 SLoginPluginResponse 0x02
+ENC login serverbound 573 SLoginStart 0x00
+ENC login serverbound 735 SEncryptionResponse 0x01
+ENC login serverbound 735 SLoginPluginResponse 0x02
+ENC login serverbound 735 SLoginStart 0x00
+ENC login serverbound 751 SEncryptionResponse 0x01
+ENC login serverbound 751 SLoginPluginResponse 0x02
+ENC login serverbound 751 SLoginStart 0x00
+ENC login serverbound 754 SEncryptionResponse 0x01
+ENC login serverbound 754 SLoginPluginResponse 0x02
+ENC login serverbound 754 SLoginStart 0x00
+ENC login serverbound 755 SEncryptionResponse 0x01
+ENC login serverbound 755 SLoginPluginResponse 0x02
+ENC login serverbound 755 SLoginStart 0x00
+ENC login serverbound 757 SEncryptionResponse 0x01
+ENC login serverbound 757 SLoginPluginResponse 0x02
+ENC login serverbound 757 SLoginStart 0x00
+ENC login serverbound 758 SEncryptionResponse 0x01
+ENC login serverbound 758 SLoginPluginResponse 0x02
+ENC login serverbound 758 SLoginStart 0x00
+ENC login serverbound 759 SEncryptionResponse 0x01
+ENC login serverbound 759 SLoginPluginResponse 0x02
+ENC login serverbound 759 SLoginStart 0x00
+ENC login serverbound 760 SEncryptionResponse 0x01
+ENC login serverbound 760 SLoginPluginResponse 0x02
+ENC login serverbound 760 SLoginStart 0x00
+ENC login serverbound 761 SEncryptionResponse 0x01
+ENC login serverbound 761 SLoginPluginResponse 0x02
+ENC login serverbound 761 SLoginStart 0x00
+ENC login serverbound 762 SEncryptionResponse 0x01
+ENC login serverbound 762 SLoginPluginResponse 0x02
+ENC login serverbound 762 SLoginStart 0x00
+ENC login serverbound 763 SEncryptionResponse 0x01
+ENC login serverbound 763 SLoginPluginResponse 0x02
+ENC login serverbound 763 SLoginStart 0x00
+ENC login serverbound 764 SEncryptionResponse 0x01
+ENC login serverbound 764 SLoginAcknowledged 0x03
+ENC login serverbound 764 SLoginPluginResponse 0x02
+ENC login serverbound 764 SLoginStart 0x00
+ENC login serverbound 765 SEncryptionResponse 0x01
+ENC login serverbound 765 SLoginAcknowledged 0x03
+ENC login serverbound 765 SLoginPluginResponse 0x02
+ENC login serverbound 765 SLoginStart 0x00
+ENC login serverbound 766 SEncryptionResponse 0x01
+ENC login serverbound 766 SLoginAcknowledged 0x03
+ENC login serverbound 766 SLoginPluginResponse 0x02
+ENC login serverbound 766 SLoginStart 0x00
+ENC login serverbound 767 SEncryptionResponse 0x01
+ENC login serverbound 767 SLoginAcknowledged 0x03
+ENC login serverbound 767 SLoginPluginResponse 0x02
+ENC login serverbound 767 SLoginStart 0x00
+ENC login serverbound 768 SEncryptionResponse 0x01
+ENC login serverbound 768 SLoginAcknowledged 0x03
+ENC login serverbound 768 SLoginPluginResponse 0x02
+ENC login serverbound 768 SLoginStart 0x00
+ENC login serverbound 769 SEncryptionResponse 0x01
+ENC login serverbound 769 SLoginAcknowledged 0x03
+ENC login serverbound 769 SLoginPluginResponse 0x02
+ENC login serverbound 769 SLoginStart 0x00
+ENC login serverbound 770 SEncryptionResponse 0x01
+ENC login serverbound 770 SLoginAcknowledged 0x03
+ENC login serverbound 770 SLoginPluginResponse 0x02
+ENC login serverbound 770 SLoginStart 0x00
+ENC login serverbound 771 SEncryptionResponse 0x01
+ENC login serverbound 771 SLoginAcknowledged 0x03
+ENC login serverbound 771 SLoginPluginResponse 0x02
+ENC login serverbound 771 SLoginStart 0x00
+ENC login serverbound 772 SEncryptionResponse 0x01
+ENC login serverbound 772 SLoginAcknowledged 0x03
+ENC login serverbound 772 SLoginPluginResponse 0x02
+ENC login serverbound 772 SLoginStart 0x00
+ENC login serverbound 773 SEncryptionResponse 0x01
+ENC login serverbound 773 SLoginAcknowledged 0x03
+ENC login serverbound 773 SLoginPluginResponse 0x02
+ENC login serverbound 773 SLoginStart 0x00
+ENC login serverbound 774 SEncryptionResponse 0x01
+ENC login serverbound 774 SLoginAcknowledged 0x03
+ENC login serverbound 774 SLoginPluginResponse 0x02
+ENC login serverbound 774 SLoginStart 0x00
+ENC login serverbound 775 SEncryptionResponse 0x01
+ENC login serverbound 775 SLoginAcknowledged 0x03
+ENC login serverbound 775 SLoginPluginResponse 0x02
+ENC login serverbound 775 SLoginStart 0x00
+ENC login serverbound 776 SEncryptionResponse 0x01
+ENC login serverbound 776 SLoginAcknowledged 0x03
+ENC login serverbound 776 SLoginPluginResponse 0x02
+ENC login serverbound 776 SLoginStart 0x00
+ENC play clientbound   4 CChatMessageLegacy 0x02
+ENC play clientbound   4 CDisconnect 0x40
+ENC play clientbound   4 CJoinGame 0x01
+ENC play clientbound   4 CKeepAlive 0x00
+ENC play clientbound   4 CPluginMessage 0x3F
+ENC play clientbound   4 CRespawn 0x07
+ENC play clientbound   4 CSetDefaultSpawnPosition 0x05
+ENC play clientbound   4 CSynchronizePlayerPosition 0x08
+ENC play clientbound   5 CChatMessageLegacy 0x02
+ENC play clientbound   5 CDisconnect 0x40
+ENC play clientbound   5 CJoinGame 0x01
+ENC play clientbound   5 CKeepAlive 0x00
+ENC play clientbound   5 CPluginMessage 0x3F
+ENC play clientbound   5 CRespawn 0x07
+ENC play clientbound   5 CSetDefaultSpawnPosition 0x05
+ENC play clientbound   5 CSynchronizePlayerPosition 0x08
+ENC play clientbound  47 CChatMessageLegacy 0x02
+ENC play clientbound  47 CDisconnect 0x40
+ENC play clientbound  47 CJoinGame 0x01
+ENC play clientbound  47 CKeepAlive 0x00
+ENC play clientbound  47 CPluginMessage 0x3F
+ENC play clientbound  47 CRespawn 0x07
+ENC play clientbound  47 CSetDefaultSpawnPosition 0x05
+ENC play clientbound  47 CSynchronizePlayerPosition 0x08
+ENC play clientbound  47 CTitleLegacy 0x45
+ENC play clientbound 107 CChatMessageLegacy 0x0F
+ENC play clientbound 107 CDisconnect 0x1A
+ENC play clientbound 107 CGameEvent 0x1B
+ENC play clientbound 107 CJoinGame 0x23
+ENC play clientbound 107 CKeepAlive 0x1F
+ENC play clientbound 107 CPluginMessage 0x18
+ENC play clientbound 107 CRespawn 0x33
+ENC play clientbound 107 CSetDefaultSpawnPosition 0x43
+ENC play clientbound 107 CSynchronizePlayerPosition 0x2E
+ENC play clientbound 107 CTitleLegacy 0x47
+ENC play clientbound 109 CChatMessageLegacy 0x0F
+ENC play clientbound 109 CDisconnect 0x1A
+ENC play clientbound 109 CGameEvent 0x1B
+ENC play clientbound 109 CJoinGame 0x23
+ENC play clientbound 109 CKeepAlive 0x1F
+ENC play clientbound 109 CPluginMessage 0x18
+ENC play clientbound 109 CRespawn 0x33
+ENC play clientbound 109 CSetDefaultSpawnPosition 0x43
+ENC play clientbound 109 CSynchronizePlayerPosition 0x2E
+ENC play clientbound 109 CTitleLegacy 0x47
+ENC play clientbound 110 CChatMessageLegacy 0x0F
+ENC play clientbound 110 CDisconnect 0x1A
+ENC play clientbound 110 CGameEvent 0x1B
+ENC play clientbound 110 CJoinGame 0x23
+ENC play clientbound 110 CKeepAlive 0x1F
+ENC play clientbound 110 CPluginMessage 0x18
+ENC play clientbound 110 CRespawn 0x33
+ENC play clientbound 110 CSetDefaultSpawnPosition 0x43
+ENC play clientbound 110 CSynchronizePlayerPosition 0x2E
+ENC play clientbound 110 CTitleLegacy 0x47
+ENC play clientbound 335 CChatMessageLegacy 0x0F
+ENC play clientbound 335 CDisconnect 0x1A
+ENC play clientbound 335 CGameEvent 0x1B
+ENC play clientbound 335 CJoinGame 0x23
+ENC play clientbound 335 CKeepAlive 0x1F
+ENC play clientbound 335 CPluginMessage 0x18
+ENC play clientbound 335 CRespawn 0x34
+ENC play clientbound 335 CSetDefaultSpawnPosition 0x46
+ENC play clientbound 335 CSynchronizePlayerPosition 0x2E
+ENC play clientbound 335 CTitleLegacy 0x48
+ENC play clientbound 338 CChatMessageLegacy 0x0F
+ENC play clientbound 338 CDisconnect 0x1A
+ENC play clientbound 338 CGameEvent 0x1B
+ENC play clientbound 338 CJoinGame 0x23
+ENC play clientbound 338 CKeepAlive 0x1F
+ENC play clientbound 338 CPluginMessage 0x18
+ENC play clientbound 338 CRespawn 0x35
+ENC play clientbound 338 CSetDefaultSpawnPosition 0x46
+ENC play clientbound 338 CSynchronizePlayerPosition 0x2F
+ENC play clientbound 338 CTitleLegacy 0x48
+ENC play clientbound 340 CChatMessageLegacy 0x0F
+ENC play clientbound 340 CDisconnect 0x1A
+ENC play clientbound 340 CGameEvent 0x1B
+ENC play clientbound 340 CJoinGame 0x23
+ENC play clientbound 340 CKeepAlive 0x1F
+ENC play clientbound 340 CPluginMessage 0x18
+ENC play clientbound 340 CRespawn 0x35
+ENC play clientbound 340 CSetDefaultSpawnPosition 0x46
+ENC play clientbound 340 CSynchronizePlayerPosition 0x2F
+ENC play clientbound 340 CTitleLegacy 0x48
+ENC play clientbound 393 CChatMessageLegacy 0x0E
+ENC play clientbound 393 CCommands 0x11
+ENC play clientbound 393 CDisconnect 0x1B
+ENC play clientbound 393 CGameEvent 0x1E
+ENC play clientbound 393 CJoinGame 0x25
+ENC play clientbound 393 CKeepAlive 0x21
+ENC play clientbound 393 CPluginMessage 0x19
+ENC play clientbound 393 CRespawn 0x38
+ENC play clientbound 393 CSetDefaultSpawnPosition 0x49
+ENC play clientbound 393 CSynchronizePlayerPosition 0x32
+ENC play clientbound 393 CTabCompleteResponse 0x10
+ENC play clientbound 393 CTitleLegacy 0x4B
+ENC play clientbound 477 CChatMessageLegacy 0x0E
+ENC play clientbound 477 CCommands 0x11
+ENC play clientbound 477 CDisconnect 0x1A
+ENC play clientbound 477 CGameEvent 0x1D
+ENC play clientbound 477 CJoinGame 0x25
+ENC play clientbound 477 CKeepAlive 0x20
+ENC play clientbound 477 CPluginMessage 0x18
+ENC play clientbound 477 CRespawn 0x3A
+ENC play clientbound 477 CSetCenterChunk 0x40
+ENC play clientbound 477 CSetDefaultSpawnPosition 0x4D
+ENC play clientbound 477 CSynchronizePlayerPosition 0x35
+ENC play clientbound 477 CTabCompleteResponse 0x10
+ENC play clientbound 477 CTitleLegacy 0x4F
+ENC play clientbound 573 CChatMessageLegacy 0x0F
+ENC play clientbound 573 CCommands 0x12
+ENC play clientbound 573 CDisconnect 0x1B
+ENC play clientbound 573 CGameEvent 0x1E
+ENC play clientbound 573 CJoinGame 0x26
+ENC play clientbound 573 CKeepAlive 0x21
+ENC play clientbound 573 CPluginMessage 0x19
+ENC play clientbound 573 CRespawn 0x3B
+ENC play clientbound 573 CSetCenterChunk 0x41
+ENC play clientbound 573 CSetDefaultSpawnPosition 0x4E
+ENC play clientbound 573 CSynchronizePlayerPosition 0x36
+ENC play clientbound 573 CTabCompleteResponse 0x11
+ENC play clientbound 573 CTitleLegacy 0x50
+ENC play clientbound 735 CChatMessageLegacy 0x0E
+ENC play clientbound 735 CCommands 0x11
+ENC play clientbound 735 CDisconnect 0x1A
+ENC play clientbound 735 CGameEvent 0x1D
+ENC play clientbound 735 CJoinGame 0x25
+ENC play clientbound 735 CKeepAlive 0x20
+ENC play clientbound 735 CPluginMessage 0x18
+ENC play clientbound 735 CRespawn 0x3A
+ENC play clientbound 735 CSetCenterChunk 0x40
+ENC play clientbound 735 CSetDefaultSpawnPosition 0x42
+ENC play clientbound 735 CSynchronizePlayerPosition 0x35
+ENC play clientbound 735 CTabCompleteResponse 0x10
+ENC play clientbound 735 CTitleLegacy 0x4F
+ENC play clientbound 751 CChatMessageLegacy 0x0E
+ENC play clientbound 751 CCommands 0x10
+ENC play clientbound 751 CDisconnect 0x19
+ENC play clientbound 751 CGameEvent 0x1C
+ENC play clientbound 751 CJoinGame 0x24
+ENC play clientbound 751 CKeepAlive 0x1F
+ENC play clientbound 751 CPluginMessage 0x17
+ENC play clientbound 751 CRespawn 0x39
+ENC play clientbound 751 CSetCenterChunk 0x40
+ENC play clientbound 751 CSetDefaultSpawnPosition 0x42
+ENC play clientbound 751 CSynchronizePlayerPosition 0x34
+ENC play clientbound 751 CTabCompleteResponse 0x0F
+ENC play clientbound 751 CTitleLegacy 0x4F
+ENC play clientbound 754 CChatMessageLegacy 0x0E
+ENC play clientbound 754 CCommands 0x10
+ENC play clientbound 754 CDisconnect 0x19
+ENC play clientbound 754 CGameEvent 0x1C
+ENC play clientbound 754 CJoinGame 0x24
+ENC play clientbound 754 CKeepAlive 0x1F
+ENC play clientbound 754 CPluginMessage 0x17
+ENC play clientbound 754 CRespawn 0x39
+ENC play clientbound 754 CSetCenterChunk 0x40
+ENC play clientbound 754 CSetDefaultSpawnPosition 0x42
+ENC play clientbound 754 CSynchronizePlayerPosition 0x34
+ENC play clientbound 754 CTabCompleteResponse 0x0F
+ENC play clientbound 754 CTitleLegacy 0x4F
+ENC play clientbound 755 CChatMessageLegacy 0x0F
+ENC play clientbound 755 CCommands 0x12
+ENC play clientbound 755 CDisconnect 0x1A
+ENC play clientbound 755 CGameEvent 0x1D
+ENC play clientbound 755 CJoinGame 0x26
+ENC play clientbound 755 CKeepAlive 0x21
+ENC play clientbound 755 CPluginMessage 0x18
+ENC play clientbound 755 CRespawn 0x3D
+ENC play clientbound 755 CSetCenterChunk 0x49
+ENC play clientbound 755 CSetDefaultSpawnPosition 0x4B
+ENC play clientbound 755 CSetSubtitle 0x57
+ENC play clientbound 755 CSetTitle 0x59
+ENC play clientbound 755 CSetTitleTimes 0x5A
+ENC play clientbound 755 CSynchronizePlayerPosition 0x38
+ENC play clientbound 755 CTabCompleteResponse 0x11
+ENC play clientbound 755 CTitleLegacy 0x4F
+ENC play clientbound 757 CChatMessageLegacy 0x0F
+ENC play clientbound 757 CCommands 0x12
+ENC play clientbound 757 CDisconnect 0x1A
+ENC play clientbound 757 CGameEvent 0x1D
+ENC play clientbound 757 CJoinGame 0x26
+ENC play clientbound 757 CKeepAlive 0x21
+ENC play clientbound 757 CPluginMessage 0x18
+ENC play clientbound 757 CRespawn 0x3D
+ENC play clientbound 757 CSetCenterChunk 0x4A
+ENC play clientbound 757 CSetDefaultSpawnPosition 0x4C
+ENC play clientbound 757 CSetSubtitle 0x58
+ENC play clientbound 757 CSetTitle 0x5A
+ENC play clientbound 757 CSetTitleTimes 0x5B
+ENC play clientbound 757 CSynchronizePlayerPosition 0x39
+ENC play clientbound 757 CTabCompleteResponse 0x11
+ENC play clientbound 757 CTitleLegacy 0x4F
+ENC play clientbound 758 CChatMessageLegacy 0x0F
+ENC play clientbound 758 CCommands 0x12
+ENC play clientbound 758 CDisconnect 0x1A
+ENC play clientbound 758 CGameEvent 0x1D
+ENC play clientbound 758 CJoinGame 0x26
+ENC play clientbound 758 CKeepAlive 0x21
+ENC play clientbound 758 CPluginMessage 0x18
+ENC play clientbound 758 CRespawn 0x3D
+ENC play clientbound 758 CSetCenterChunk 0x4A
+ENC play clientbound 758 CSetDefaultSpawnPosition 0x4C
+ENC play clientbound 758 CSetSubtitle 0x58
+ENC play clientbound 758 CSetTitle 0x5A
+ENC play clientbound 758 CSetTitleTimes 0x5B
+ENC play clientbound 758 CSynchronizePlayerPosition 0x39
+ENC play clientbound 758 CTabCompleteResponse 0x11
+ENC play clientbound 758 CTitleLegacy 0x4F
+ENC play clientbound 759 CChatMessageLegacy 0x0F
+ENC play clientbound 759 CCommands 0x0F
+ENC play clientbound 759 CDisconnect 0x17
+ENC play clientbound 759 CGameEvent 0x1B
+ENC play clientbound 759 CJoinGame 0x23
+ENC play clientbound 759 CKeepAlive 0x1E
+ENC play clientbound 759 CPluginMessage 0x15
+ENC play clientbound 759 CRespawn 0x3B
+ENC play clientbound 759 CSetCenterChunk 0x48
+ENC play clientbound 759 CSetDefaultSpawnPosition 0x4A
+ENC play clientbound 759 CSetSubtitle 0x58
+ENC play clientbound 759 CSetTitle 0x5A
+ENC play clientbound 759 CSetTitleTimes 0x5B
+ENC play clientbound 759 CSynchronizePlayerPosition 0x36
+ENC play clientbound 759 CSystemChatMessage 0x5F
+ENC play clientbound 759 CTabCompleteResponse 0x0E
+ENC play clientbound 759 CTitleLegacy 0x4F
+ENC play clientbound 760 CChatMessageLegacy 0x0F
+ENC play clientbound 760 CCommands 0x0F
+ENC play clientbound 760 CDisconnect 0x19
+ENC play clientbound 760 CGameEvent 0x1D
+ENC play clientbound 760 CJoinGame 0x25
+ENC play clientbound 760 CKeepAlive 0x20
+ENC play clientbound 760 CPluginMessage 0x16
+ENC play clientbound 760 CRespawn 0x3E
+ENC play clientbound 760 CSetCenterChunk 0x4B
+ENC play clientbound 760 CSetDefaultSpawnPosition 0x4D
+ENC play clientbound 760 CSetSubtitle 0x5B
+ENC play clientbound 760 CSetTitle 0x5D
+ENC play clientbound 760 CSetTitleTimes 0x5E
+ENC play clientbound 760 CSynchronizePlayerPosition 0x39
+ENC play clientbound 760 CSystemChatMessage 0x62
+ENC play clientbound 760 CTabCompleteResponse 0x0E
+ENC play clientbound 760 CTitleLegacy 0x4F
+ENC play clientbound 761 CChatMessageLegacy 0x0F
+ENC play clientbound 761 CCommands 0x0E
+ENC play clientbound 761 CDisconnect 0x17
+ENC play clientbound 761 CGameEvent 0x1C
+ENC play clientbound 761 CJoinGame 0x24
+ENC play clientbound 761 CKeepAlive 0x1F
+ENC play clientbound 761 CPluginMessage 0x15
+ENC play clientbound 761 CRespawn 0x3D
+ENC play clientbound 761 CSetCenterChunk 0x4A
+ENC play clientbound 761 CSetDefaultSpawnPosition 0x4C
+ENC play clientbound 761 CSetSubtitle 0x59
+ENC play clientbound 761 CSetTitle 0x5B
+ENC play clientbound 761 CSetTitleTimes 0x5C
+ENC play clientbound 761 CSynchronizePlayerPosition 0x38
+ENC play clientbound 761 CSystemChatMessage 0x60
+ENC play clientbound 761 CTabCompleteResponse 0x0D
+ENC play clientbound 761 CTitleLegacy 0x4F
+ENC play clientbound 762 CChatMessageLegacy 0x0F
+ENC play clientbound 762 CCommands 0x10
+ENC play clientbound 762 CDisconnect 0x1A
+ENC play clientbound 762 CGameEvent 0x20
+ENC play clientbound 762 CJoinGame 0x28
+ENC play clientbound 762 CKeepAlive 0x23
+ENC play clientbound 762 CPluginMessage 0x17
+ENC play clientbound 762 CRespawn 0x41
+ENC play clientbound 762 CSetCenterChunk 0x4E
+ENC play clientbound 762 CSetDefaultSpawnPosition 0x50
+ENC play clientbound 762 CSetSubtitle 0x5D
+ENC play clientbound 762 CSetTitle 0x5F
+ENC play clientbound 762 CSetTitleTimes 0x60
+ENC play clientbound 762 CSynchronizePlayerPosition 0x3C
+ENC play clientbound 762 CSystemChatMessage 0x64
+ENC play clientbound 762 CTabCompleteResponse 0x0F
+ENC play clientbound 762 CTitleLegacy 0x4F
+ENC play clientbound 763 CChatMessageLegacy 0x0F
+ENC play clientbound 763 CCommands 0x10
+ENC play clientbound 763 CDisconnect 0x1A
+ENC play clientbound 763 CGameEvent 0x20
+ENC play clientbound 763 CJoinGame 0x28
+ENC play clientbound 763 CKeepAlive 0x23
+ENC play clientbound 763 CPluginMessage 0x17
+ENC play clientbound 763 CRespawn 0x41
+ENC play clientbound 763 CSetCenterChunk 0x4E
+ENC play clientbound 763 CSetDefaultSpawnPosition 0x50
+ENC play clientbound 763 CSetSubtitle 0x5D
+ENC play clientbound 763 CSetTitle 0x5F
+ENC play clientbound 763 CSetTitleTimes 0x60
+ENC play clientbound 763 CSynchronizePlayerPosition 0x3C
+ENC play clientbound 763 CSystemChatMessage 0x64
+ENC play clientbound 763 CTabCompleteResponse 0x0F
+ENC play clientbound 763 CTitleLegacy 0x4F
+ENC play clientbound 764 CChatMessageLegacy 0x0F
+ENC play clientbound 764 CChunkBatchFinished 0x0C
+ENC play clientbound 764 CChunkBatchStart 0x0D
+ENC play clientbound 764 CCommands 0x11
+ENC play clientbound 764 CDisconnect 0x1B
+ENC play clientbound 764 CGameEvent 0x20
+ENC play clientbound 764 CJoinGame 0x29
+ENC play clientbound 764 CKeepAlive 0x24
+ENC play clientbound 764 CPluginMessage 0x18
+ENC play clientbound 764 CRespawn 0x43
+ENC play clientbound 764 CSetCenterChunk 0x50
+ENC play clientbound 764 CSetDefaultSpawnPosition 0x52
+ENC play clientbound 764 CSetSubtitle 0x5F
+ENC play clientbound 764 CSetTitle 0x61
+ENC play clientbound 764 CSetTitleTimes 0x62
+ENC play clientbound 764 CStartConfiguration 0x65
+ENC play clientbound 764 CSynchronizePlayerPosition 0x3E
+ENC play clientbound 764 CSystemChatMessage 0x67
+ENC play clientbound 764 CTabCompleteResponse 0x10
+ENC play clientbound 764 CTitleLegacy 0x4F
+ENC play clientbound 765 CChatMessageLegacy 0x0F
+ENC play clientbound 765 CChunkBatchFinished 0x0C
+ENC play clientbound 765 CChunkBatchStart 0x0D
+ENC play clientbound 765 CCommands 0x11
+ENC play clientbound 765 CDisconnect 0x1B
+ENC play clientbound 765 CGameEvent 0x20
+ENC play clientbound 765 CJoinGame 0x29
+ENC play clientbound 765 CKeepAlive 0x24
+ENC play clientbound 765 CPluginMessage 0x18
+ENC play clientbound 765 CRespawn 0x45
+ENC play clientbound 765 CSetCenterChunk 0x52
+ENC play clientbound 765 CSetDefaultSpawnPosition 0x54
+ENC play clientbound 765 CSetSubtitle 0x61
+ENC play clientbound 765 CSetTitle 0x63
+ENC play clientbound 765 CSetTitleTimes 0x64
+ENC play clientbound 765 CStartConfiguration 0x67
+ENC play clientbound 765 CSynchronizePlayerPosition 0x40
+ENC play clientbound 765 CSystemChatMessage 0x69
+ENC play clientbound 765 CTabCompleteResponse 0x10
+ENC play clientbound 765 CTitleLegacy 0x4F
+ENC play clientbound 766 CChatMessageLegacy 0x0F
+ENC play clientbound 766 CChunkBatchFinished 0x0C
+ENC play clientbound 766 CChunkBatchStart 0x0D
+ENC play clientbound 766 CCommands 0x11
+ENC play clientbound 766 CDisconnect 0x1D
+ENC play clientbound 766 CGameEvent 0x22
+ENC play clientbound 766 CJoinGame 0x2B
+ENC play clientbound 766 CKeepAlive 0x26
+ENC play clientbound 766 CPluginMessage 0x19
+ENC play clientbound 766 CRespawn 0x47
+ENC play clientbound 766 CSetCenterChunk 0x54
+ENC play clientbound 766 CSetDefaultSpawnPosition 0x56
+ENC play clientbound 766 CSetSubtitle 0x63
+ENC play clientbound 766 CSetTitle 0x65
+ENC play clientbound 766 CSetTitleTimes 0x66
+ENC play clientbound 766 CStartConfiguration 0x69
+ENC play clientbound 766 CSynchronizePlayerPosition 0x42
+ENC play clientbound 766 CSystemChatMessage 0x6C
+ENC play clientbound 766 CTabCompleteResponse 0x10
+ENC play clientbound 766 CTitleLegacy 0x4F
+ENC play clientbound 766 CTransfer 0x73
+ENC play clientbound 767 CChatMessageLegacy 0x0F
+ENC play clientbound 767 CChunkBatchFinished 0x0C
+ENC play clientbound 767 CChunkBatchStart 0x0D
+ENC play clientbound 767 CCommands 0x11
+ENC play clientbound 767 CDisconnect 0x1D
+ENC play clientbound 767 CGameEvent 0x22
+ENC play clientbound 767 CJoinGame 0x2B
+ENC play clientbound 767 CKeepAlive 0x26
+ENC play clientbound 767 CPluginMessage 0x19
+ENC play clientbound 767 CRespawn 0x47
+ENC play clientbound 767 CSetCenterChunk 0x54
+ENC play clientbound 767 CSetDefaultSpawnPosition 0x56
+ENC play clientbound 767 CSetSubtitle 0x63
+ENC play clientbound 767 CSetTitle 0x65
+ENC play clientbound 767 CSetTitleTimes 0x66
+ENC play clientbound 767 CStartConfiguration 0x69
+ENC play clientbound 767 CSynchronizePlayerPosition 0x42
+ENC play clientbound 767 CSystemChatMessage 0x6C
+ENC play clientbound 767 CTabCompleteResponse 0x10
+ENC play clientbound 767 CTitleLegacy 0x4F
+ENC play clientbound 767 CTransfer 0x73
+ENC play clientbound 768 CChatMessageLegacy 0x0F
+ENC play clientbound 768 CChunkBatchFinished 0x0C
+ENC play clientbound 768 CChunkBatchStart 0x0D
+ENC play clientbound 768 CCommands 0x11
+ENC play clientbound 768 CDisconnect 0x1D
+ENC play clientbound 768 CGameEvent 0x23
+ENC play clientbound 768 CJoinGame 0x2C
+ENC play clientbound 768 CKeepAlive 0x27
+ENC play clientbound 768 CPluginMessage 0x19
+ENC play clientbound 768 CRespawn 0x4C
+ENC play clientbound 768 CSetCenterChunk 0x58
+ENC play clientbound 768 CSetDefaultSpawnPosition 0x5B
+ENC play clientbound 768 CSetSubtitle 0x6A
+ENC play clientbound 768 CSetTitle 0x6C
+ENC play clientbound 768 CSetTitleTimes 0x6D
+ENC play clientbound 768 CStartConfiguration 0x70
+ENC play clientbound 768 CSynchronizePlayerPosition 0x42
+ENC play clientbound 768 CSystemChatMessage 0x73
+ENC play clientbound 768 CTabCompleteResponse 0x10
+ENC play clientbound 768 CTitleLegacy 0x4F
+ENC play clientbound 768 CTransfer 0x7A
+ENC play clientbound 769 CChatMessageLegacy 0x0F
+ENC play clientbound 769 CChunkBatchFinished 0x0C
+ENC play clientbound 769 CChunkBatchStart 0x0D
+ENC play clientbound 769 CCommands 0x11
+ENC play clientbound 769 CDisconnect 0x1D
+ENC play clientbound 769 CGameEvent 0x23
+ENC play clientbound 769 CJoinGame 0x2C
+ENC play clientbound 769 CKeepAlive 0x27
+ENC play clientbound 769 CPluginMessage 0x19
+ENC play clientbound 769 CRespawn 0x4C
+ENC play clientbound 769 CSetCenterChunk 0x58
+ENC play clientbound 769 CSetDefaultSpawnPosition 0x5B
+ENC play clientbound 769 CSetSubtitle 0x6A
+ENC play clientbound 769 CSetTitle 0x6C
+ENC play clientbound 769 CSetTitleTimes 0x6D
+ENC play clientbound 769 CStartConfiguration 0x70
+ENC play clientbound 769 CSynchronizePlayerPosition 0x42
+ENC play clientbound 769 CSystemChatMessage 0x73
+ENC play clientbound 769 CTabCompleteResponse 0x10
+ENC play clientbound 769 CTitleLegacy 0x4F
+ENC play clientbound 769 CTransfer 0x7A
+ENC play clientbound 770 CChatMessageLegacy 0x0F
+ENC play clientbound 770 CChunkBatchFinished 0x0B
+ENC play clientbound 770 CChunkBatchStart 0x0C
+ENC play clientbound 770 CCommands 0x10
+ENC play clientbound 770 CDisconnect 0x1C
+ENC play clientbound 770 CGameEvent 0x22
+ENC play clientbound 770 CJoinGame 0x2B
+ENC play clientbound 770 CKeepAlive 0x26
+ENC play clientbound 770 CPluginMessage 0x18
+ENC play clientbound 770 CRespawn 0x4B
+ENC play clientbound 770 CSetCenterChunk 0x57
+ENC play clientbound 770 CSetDefaultSpawnPosition 0x5A
+ENC play clientbound 770 CSetSubtitle 0x69
+ENC play clientbound 770 CSetTitle 0x6B
+ENC play clientbound 770 CSetTitleTimes 0x6C
+ENC play clientbound 770 CStartConfiguration 0x6F
+ENC play clientbound 770 CSynchronizePlayerPosition 0x41
+ENC play clientbound 770 CSystemChatMessage 0x72
+ENC play clientbound 770 CTabCompleteResponse 0x0F
+ENC play clientbound 770 CTitleLegacy 0x4F
+ENC play clientbound 770 CTransfer 0x7A
+ENC play clientbound 771 CChatMessageLegacy 0x0F
+ENC play clientbound 771 CChunkBatchFinished 0x0B
+ENC play clientbound 771 CChunkBatchStart 0x0C
+ENC play clientbound 771 CCommands 0x10
+ENC play clientbound 771 CDisconnect 0x1C
+ENC play clientbound 771 CGameEvent 0x22
+ENC play clientbound 771 CJoinGame 0x2B
+ENC play clientbound 771 CKeepAlive 0x26
+ENC play clientbound 771 CPluginMessage 0x18
+ENC play clientbound 771 CRespawn 0x4B
+ENC play clientbound 771 CSetCenterChunk 0x57
+ENC play clientbound 771 CSetDefaultSpawnPosition 0x5A
+ENC play clientbound 771 CSetSubtitle 0x69
+ENC play clientbound 771 CSetTitle 0x6B
+ENC play clientbound 771 CSetTitleTimes 0x6C
+ENC play clientbound 771 CStartConfiguration 0x6F
+ENC play clientbound 771 CSynchronizePlayerPosition 0x41
+ENC play clientbound 771 CSystemChatMessage 0x72
+ENC play clientbound 771 CTabCompleteResponse 0x0F
+ENC play clientbound 771 CTitleLegacy 0x4F
+ENC play clientbound 771 CTransfer 0x7A
+ENC play clientbound 772 CChatMessageLegacy 0x0F
+ENC play clientbound 772 CChunkBatchFinished 0x0B
+ENC play clientbound 772 CChunkBatchStart 0x0C
+ENC play clientbound 772 CCommands 0x10
+ENC play clientbound 772 CDisconnect 0x1C
+ENC play clientbound 772 CGameEvent 0x22
+ENC play clientbound 772 CJoinGame 0x2B
+ENC play clientbound 772 CKeepAlive 0x26
+ENC play clientbound 772 CPluginMessage 0x18
+ENC play clientbound 772 CRespawn 0x4B
+ENC play clientbound 772 CSetCenterChunk 0x57
+ENC play clientbound 772 CSetDefaultSpawnPosition 0x5A
+ENC play clientbound 772 CSetSubtitle 0x69
+ENC play clientbound 772 CSetTitle 0x6B
+ENC play clientbound 772 CSetTitleTimes 0x6C
+ENC play clientbound 772 CStartConfiguration 0x6F
+ENC play clientbound 772 CSynchronizePlayerPosition 0x41
+ENC play clientbound 772 CSystemChatMessage 0x72
+ENC play clientbound 772 CTabCompleteResponse 0x0F
+ENC play clientbound 772 CTitleLegacy 0x4F
+ENC play clientbound 772 CTransfer 0x7A
+ENC play clientbound 773 CChatMessageLegacy 0x0F
+ENC play clientbound 773 CChunkBatchFinished 0x0B
+ENC play clientbound 773 CChunkBatchStart 0x0C
+ENC play clientbound 773 CCommands 0x10
+ENC play clientbound 773 CDisconnect 0x20
+ENC play clientbound 773 CGameEvent 0x26
+ENC play clientbound 773 CJoinGame 0x30
+ENC play clientbound 773 CKeepAlive 0x2B
+ENC play clientbound 773 CPluginMessage 0x18
+ENC play clientbound 773 CRespawn 0x50
+ENC play clientbound 773 CSetCenterChunk 0x5C
+ENC play clientbound 773 CSetDefaultSpawnPosition 0x5F
+ENC play clientbound 773 CSetSubtitle 0x6E
+ENC play clientbound 773 CSetTitle 0x70
+ENC play clientbound 773 CSetTitleTimes 0x71
+ENC play clientbound 773 CStartConfiguration 0x74
+ENC play clientbound 773 CSynchronizePlayerPosition 0x46
+ENC play clientbound 773 CSystemChatMessage 0x77
+ENC play clientbound 773 CTabCompleteResponse 0x0F
+ENC play clientbound 773 CTitleLegacy 0x4F
+ENC play clientbound 773 CTransfer 0x7F
+ENC play clientbound 774 CChatMessageLegacy 0x0F
+ENC play clientbound 774 CChunkBatchFinished 0x0B
+ENC play clientbound 774 CChunkBatchStart 0x0C
+ENC play clientbound 774 CCommands 0x10
+ENC play clientbound 774 CDisconnect 0x20
+ENC play clientbound 774 CGameEvent 0x26
+ENC play clientbound 774 CJoinGame 0x30
+ENC play clientbound 774 CKeepAlive 0x2B
+ENC play clientbound 774 CPluginMessage 0x18
+ENC play clientbound 774 CRespawn 0x50
+ENC play clientbound 774 CSetCenterChunk 0x5C
+ENC play clientbound 774 CSetDefaultSpawnPosition 0x5F
+ENC play clientbound 774 CSetSubtitle 0x6E
+ENC play clientbound 774 CSetTitle 0x70
+ENC play clientbound 774 CSetTitleTimes 0x71
+ENC play clientbound 774 CStartConfiguration 0x74
+ENC play clientbound 774 CSynchronizePlayerPosition 0x46
+ENC play clientbound 774 CSystemChatMessage 0x77
+ENC play clientbound 774 CTabCompleteResponse 0x0F
+ENC play clientbound 774 CTitleLegacy 0x4F
+ENC play clientbound 774 CTransfer 0x7F
+ENC play clientbound 775 CChatMessageLegacy 0x0F
+ENC play clientbound 775 CChunkBatchFinished 0x0B
+ENC play clientbound 775 CChunkBatchStart 0x0C
+ENC play clientbound 775 CCommands 0x10
+ENC play clientbound 775 CDisconnect 0x20
+ENC play clientbound 775 CGameEvent 0x26
+ENC play clientbound 775 CJoinGame 0x31
+ENC play clientbound 775 CKeepAlive 0x2C
+ENC play clientbound 775 CPluginMessage 0x18
+ENC play clientbound 775 CRespawn 0x52
+ENC play clientbound 775 CSetCenterChunk 0x5C
+ENC play clientbound 775 CSetDefaultSpawnPosition 0x5F
+ENC play clientbound 775 CSetSubtitle 0x70
+ENC play clientbound 775 CSetTitle 0x72
+ENC play clientbound 775 CSetTitleTimes 0x73
+ENC play clientbound 775 CStartConfiguration 0x76
+ENC play clientbound 775 CSynchronizePlayerPosition 0x46
+ENC play clientbound 775 CSystemChatMessage 0x79
+ENC play clientbound 775 CTabCompleteResponse 0x0F
+ENC play clientbound 775 CTitleLegacy 0x4F
+ENC play clientbound 775 CTransfer 0x81
+ENC play clientbound 776 CChatMessageLegacy 0x0F
+ENC play clientbound 776 CChunkBatchFinished 0x0B
+ENC play clientbound 776 CChunkBatchStart 0x0C
+ENC play clientbound 776 CCommands 0x10
+ENC play clientbound 776 CDisconnect 0x20
+ENC play clientbound 776 CGameEvent 0x26
+ENC play clientbound 776 CJoinGame 0x31
+ENC play clientbound 776 CKeepAlive 0x2C
+ENC play clientbound 776 CPluginMessage 0x18
+ENC play clientbound 776 CRespawn 0x52
+ENC play clientbound 776 CSetCenterChunk 0x5C
+ENC play clientbound 776 CSetDefaultSpawnPosition 0x5F
+ENC play clientbound 776 CSetSubtitle 0x70
+ENC play clientbound 776 CSetTitle 0x72
+ENC play clientbound 776 CSetTitleTimes 0x73
+ENC play clientbound 776 CStartConfiguration 0x76
+ENC play clientbound 776 CSynchronizePlayerPosition 0x46
+ENC play clientbound 776 CSystemChatMessage 0x79
+ENC play clientbound 776 CTabCompleteResponse 0x0F
+ENC play clientbound 776 CTitleLegacy 0x4F
+ENC play clientbound 776 CTransfer 0x81
+ENC play serverbound   4 SChatMessage 0x01
+ENC play serverbound   4 SKeepAlive 0x00
+ENC play serverbound   4 SPluginMessage 0x17
+ENC play serverbound   5 SChatMessage 0x01
+ENC play serverbound   5 SKeepAlive 0x00
+ENC play serverbound   5 SPluginMessage 0x17
+ENC play serverbound  47 SChatMessage 0x01
+ENC play serverbound  47 SKeepAlive 0x00
+ENC play serverbound  47 SPluginMessage 0x17
+ENC play serverbound 107 SChatMessage 0x02
+ENC play serverbound 107 SKeepAlive 0x0B
+ENC play serverbound 107 SPluginMessage 0x09
+ENC play serverbound 109 SChatMessage 0x02
+ENC play serverbound 109 SKeepAlive 0x0B
+ENC play serverbound 109 SPluginMessage 0x09
+ENC play serverbound 110 SChatMessage 0x02
+ENC play serverbound 110 SKeepAlive 0x0B
+ENC play serverbound 110 SPluginMessage 0x09
+ENC play serverbound 335 SChatMessage 0x03
+ENC play serverbound 335 SKeepAlive 0x0C
+ENC play serverbound 335 SPluginMessage 0x0A
+ENC play serverbound 338 SChatMessage 0x02
+ENC play serverbound 338 SKeepAlive 0x0B
+ENC play serverbound 338 SPluginMessage 0x09
+ENC play serverbound 340 SChatMessage 0x02
+ENC play serverbound 340 SKeepAlive 0x0B
+ENC play serverbound 340 SPluginMessage 0x09
+ENC play serverbound 393 SChatMessage 0x02
+ENC play serverbound 393 SKeepAlive 0x0E
+ENC play serverbound 393 SPluginMessage 0x0A
+ENC play serverbound 393 STabCompleteRequest 0x05
+ENC play serverbound 477 SChatMessage 0x03
+ENC play serverbound 477 SKeepAlive 0x0F
+ENC play serverbound 477 SPluginMessage 0x0B
+ENC play serverbound 477 STabCompleteRequest 0x06
+ENC play serverbound 573 SChatMessage 0x03
+ENC play serverbound 573 SKeepAlive 0x0F
+ENC play serverbound 573 SPluginMessage 0x0B
+ENC play serverbound 573 STabCompleteRequest 0x06
+ENC play serverbound 735 SChatMessage 0x03
+ENC play serverbound 735 SKeepAlive 0x10
+ENC play serverbound 735 SPluginMessage 0x0B
+ENC play serverbound 735 STabCompleteRequest 0x06
+ENC play serverbound 751 SChatMessage 0x03
+ENC play serverbound 751 SKeepAlive 0x10
+ENC play serverbound 751 SPluginMessage 0x0B
+ENC play serverbound 751 STabCompleteRequest 0x06
+ENC play serverbound 754 SChatMessage 0x03
+ENC play serverbound 754 SKeepAlive 0x10
+ENC play serverbound 754 SPluginMessage 0x0B
+ENC play serverbound 754 STabCompleteRequest 0x06
+ENC play serverbound 755 SChatMessage 0x03
+ENC play serverbound 755 SKeepAlive 0x0F
+ENC play serverbound 755 SPluginMessage 0x0A
+ENC play serverbound 755 STabCompleteRequest 0x06
+ENC play serverbound 757 SChatMessage 0x03
+ENC play serverbound 757 SKeepAlive 0x0F
+ENC play serverbound 757 SPluginMessage 0x0A
+ENC play serverbound 757 STabCompleteRequest 0x06
+ENC play serverbound 758 SChatMessage 0x03
+ENC play serverbound 758 SKeepAlive 0x0F
+ENC play serverbound 758 SPluginMessage 0x0A
+ENC play serverbound 758 STabCompleteRequest 0x06
+ENC play serverbound 759 SChatCommand 0x04
+ENC play serverbound 759 SChatMessage 0x05
+ENC play serverbound 759 SKeepAlive 0x11
+ENC play serverbound 759 SPluginMessage 0x0C
+ENC play serverbound 759 STabCompleteRequest 0x08
+ENC play serverbound 760 SChatCommand 0x04
+ENC play serverbound 760 SChatMessage 0x05
+ENC play serverbound 760 SKeepAlive 0x12
+ENC play serverbound 760 SPluginMessage 0x0D
+ENC play serverbound 760 STabCompleteRequest 0x09
+ENC play serverbound 761 SChatCommand 0x04
+ENC play serverbound 761 SChatMessage 0x05
+ENC play serverbound 761 SKeepAlive 0x11
+ENC play serverbound 761 SPluginMessage 0x0C
+ENC play serverbound 761 STabCompleteRequest 0x08
+ENC play serverbound 762 SChatCommand 0x04
+ENC play serverbound 762 SChatMessage 0x05
+ENC play serverbound 762 SKeepAlive 0x12
+ENC play serverbound 762 SPluginMessage 0x0D
+ENC play serverbound 762 STabCompleteRequest 0x09
+ENC play serverbound 763 SChatCommand 0x04
+ENC play serverbound 763 SChatMessage 0x05
+ENC play serverbound 763 SKeepAlive 0x12
+ENC play serverbound 763 SPluginMessage 0x0D
+ENC play serverbound 763 STabCompleteRequest 0x09
+ENC play serverbound 764 SAcknowledgeConfiguration 0x0B
+ENC play serverbound 764 SChatCommand 0x04
+ENC play serverbound 764 SChatMessage 0x06
+ENC play serverbound 764 SKeepAlive 0x14
+ENC play serverbound 764 SPluginMessage 0x0F
+ENC play serverbound 764 STabCompleteRequest 0x0A
+ENC play serverbound 765 SAcknowledgeConfiguration 0x0B
+ENC play serverbound 765 SChatCommand 0x04
+ENC play serverbound 765 SChatMessage 0x06
+ENC play serverbound 765 SKeepAlive 0x15
+ENC play serverbound 765 SPluginMessage 0x10
+ENC play serverbound 765 STabCompleteRequest 0x0A
+ENC play serverbound 766 SAcknowledgeConfiguration 0x0C
+ENC play serverbound 766 SChatCommand 0x04
+ENC play serverbound 766 SChatMessage 0x06
+ENC play serverbound 766 SKeepAlive 0x18
+ENC play serverbound 766 SPluginMessage 0x12
+ENC play serverbound 766 STabCompleteRequest 0x0B
+ENC play serverbound 767 SAcknowledgeConfiguration 0x0C
+ENC play serverbound 767 SChatCommand 0x04
+ENC play serverbound 767 SChatMessage 0x06
+ENC play serverbound 767 SChatSessionUpdate 0x07
+ENC play serverbound 767 SKeepAlive 0x18
+ENC play serverbound 767 SPluginMessage 0x12
+ENC play serverbound 767 STabCompleteRequest 0x0B
+ENC play serverbound 768 SAcknowledgeConfiguration 0x0E
+ENC play serverbound 768 SChatCommand 0x05
+ENC play serverbound 768 SChatMessage 0x07
+ENC play serverbound 768 SChatSessionUpdate 0x08
+ENC play serverbound 768 SKeepAlive 0x1A
+ENC play serverbound 768 SPluginMessage 0x14
+ENC play serverbound 768 STabCompleteRequest 0x0D
+ENC play serverbound 769 SAcknowledgeConfiguration 0x0E
+ENC play serverbound 769 SChatCommand 0x05
+ENC play serverbound 769 SChatMessage 0x07
+ENC play serverbound 769 SChatSessionUpdate 0x08
+ENC play serverbound 769 SKeepAlive 0x1A
+ENC play serverbound 769 SPluginMessage 0x14
+ENC play serverbound 769 STabCompleteRequest 0x0D
+ENC play serverbound 770 SAcknowledgeConfiguration 0x0E
+ENC play serverbound 770 SChatCommand 0x05
+ENC play serverbound 770 SChatMessage 0x07
+ENC play serverbound 770 SChatSessionUpdate 0x08
+ENC play serverbound 770 SKeepAlive 0x1A
+ENC play serverbound 770 SPluginMessage 0x14
+ENC play serverbound 770 STabCompleteRequest 0x0D
+ENC play serverbound 771 SAcknowledgeConfiguration 0x0F
+ENC play serverbound 771 SChatCommand 0x06
+ENC play serverbound 771 SChatMessage 0x08
+ENC play serverbound 771 SChatSessionUpdate 0x09
+ENC play serverbound 771 SKeepAlive 0x1B
+ENC play serverbound 771 SPluginMessage 0x15
+ENC play serverbound 771 STabCompleteRequest 0x0E
+ENC play serverbound 772 SAcknowledgeConfiguration 0x0F
+ENC play serverbound 772 SChatCommand 0x06
+ENC play serverbound 772 SChatMessage 0x08
+ENC play serverbound 772 SChatSessionUpdate 0x09
+ENC play serverbound 772 SKeepAlive 0x1B
+ENC play serverbound 772 SPluginMessage 0x15
+ENC play serverbound 772 STabCompleteRequest 0x0E
+ENC play serverbound 773 SAcknowledgeConfiguration 0x0F
+ENC play serverbound 773 SChatCommand 0x06
+ENC play serverbound 773 SChatMessage 0x08
+ENC play serverbound 773 SChatSessionUpdate 0x09
+ENC play serverbound 773 SKeepAlive 0x1B
+ENC play serverbound 773 SPluginMessage 0x15
+ENC play serverbound 773 STabCompleteRequest 0x0E
+ENC play serverbound 774 SAcknowledgeConfiguration 0x0F
+ENC play serverbound 774 SChatCommand 0x06
+ENC play serverbound 774 SChatMessage 0x08
+ENC play serverbound 774 SChatSessionUpdate 0x09
+ENC play serverbound 774 SKeepAlive 0x1B
+ENC play serverbound 774 SPluginMessage 0x15
+ENC play serverbound 774 STabCompleteRequest 0x0E
+ENC play serverbound 775 SAcknowledgeConfiguration 0x10
+ENC play serverbound 775 SChatCommand 0x07
+ENC play serverbound 775 SChatMessage 0x09
+ENC play serverbound 775 SChatSessionUpdate 0x0A
+ENC play serverbound 775 SKeepAlive 0x1C
+ENC play serverbound 775 SPluginMessage 0x16
+ENC play serverbound 775 STabCompleteRequest 0x0F
+ENC play serverbound 776 SAcknowledgeConfiguration 0x10
+ENC play serverbound 776 SChatCommand 0x07
+ENC play serverbound 776 SChatMessage 0x09
+ENC play serverbound 776 SChatSessionUpdate 0x0A
+ENC play serverbound 776 SKeepAlive 0x1C
+ENC play serverbound 776 SPluginMessage 0x16
+ENC play serverbound 776 STabCompleteRequest 0x0F
+ENC status clientbound   4 CPingResponse 0x01
+ENC status clientbound   4 CStatusResponse 0x00
+ENC status clientbound   5 CPingResponse 0x01
+ENC status clientbound   5 CStatusResponse 0x00
+ENC status clientbound  47 CPingResponse 0x01
+ENC status clientbound  47 CStatusResponse 0x00
+ENC status clientbound 107 CPingResponse 0x01
+ENC status clientbound 107 CStatusResponse 0x00
+ENC status clientbound 109 CPingResponse 0x01
+ENC status clientbound 109 CStatusResponse 0x00
+ENC status clientbound 110 CPingResponse 0x01
+ENC status clientbound 110 CStatusResponse 0x00
+ENC status clientbound 335 CPingResponse 0x01
+ENC status clientbound 335 CStatusResponse 0x00
+ENC status clientbound 338 CPingResponse 0x01
+ENC status clientbound 338 CStatusResponse 0x00
+ENC status clientbound 340 CPingResponse 0x01
+ENC status clientbound 340 CStatusResponse 0x00
+ENC status clientbound 393 CPingResponse 0x01
+ENC status clientbound 393 CStatusResponse 0x00
+ENC status clientbound 477 CPingResponse 0x01
+ENC status clientbound 477 CStatusResponse 0x00
+ENC status clientbound 573 CPingResponse 0x01
+ENC status clientbound 573 CStatusResponse 0x00
+ENC status clientbound 735 CPingResponse 0x01
+ENC status clientbound 735 CStatusResponse 0x00
+ENC status clientbound 751 CPingResponse 0x01
+ENC status clientbound 751 CStatusResponse 0x00
+ENC status clientbound 754 CPingResponse 0x01
+ENC status clientbound 754 CStatusResponse 0x00
+ENC status clientbound 755 CPingResponse 0x01
+ENC status clientbound 755 CStatusResponse 0x00
+ENC status clientbound 757 CPingResponse 0x01
+ENC status clientbound 757 CStatusResponse 0x00
+ENC status clientbound 758 CPingResponse 0x01
+ENC status clientbound 758 CStatusResponse 0x00
+ENC status clientbound 759 CPingResponse 0x01
+ENC status clientbound 759 CStatusResponse 0x00
+ENC status clientbound 760 CPingResponse 0x01
+ENC status clientbound 760 CStatusResponse 0x00
+ENC status clientbound 761 CPingResponse 0x01
+ENC status clientbound 761 CStatusResponse 0x00
+ENC status clientbound 762 CPingResponse 0x01
+ENC status clientbound 762 CStatusResponse 0x00
+ENC status clientbound 763 CPingResponse 0x01
+ENC status clientbound 763 CStatusResponse 0x00
+ENC status clientbound 764 CPingResponse 0x01
+ENC status clientbound 764 CStatusResponse 0x00
+ENC status clientbound 765 CPingResponse 0x01
+ENC status clientbound 765 CStatusResponse 0x00
+ENC status clientbound 766 CPingResponse 0x01
+ENC status clientbound 766 CStatusResponse 0x00
+ENC status clientbound 767 CPingResponse 0x01
+ENC status clientbound 767 CStatusResponse 0x00
+ENC status clientbound 768 CPingResponse 0x01
+ENC status clientbound 768 CStatusResponse 0x00
+ENC status clientbound 769 CPingResponse 0x01
+ENC status clientbound 769 CStatusResponse 0x00
+ENC status clientbound 770 CPingResponse 0x01
+ENC status clientbound 770 CStatusResponse 0x00
+ENC status clientbound 771 CPingResponse 0x01
+ENC status clientbound 771 CStatusResponse 0x00
+ENC status clientbound 772 CPingResponse 0x01
+ENC status clientbound 772 CStatusResponse 0x00
+ENC status clientbound 773 CPingResponse 0x01
+ENC status clientbound 773 CStatusResponse 0x00
+ENC status clientbound 774 CPingResponse 0x01
+ENC status clientbound 774 CStatusResponse 0x00
+ENC status clientbound 775 CPingResponse 0x01
+ENC status clientbound 775 CStatusResponse 0x00
+ENC status clientbound 776 CPingResponse 0x01
+ENC status clientbound 776 CStatusResponse 0x00
+ENC status serverbound   4 SPingRequest 0x01
+ENC status serverbound   4 SStatusRequest 0x00
+ENC status serverbound   5 SPingRequest 0x01
+ENC status serverbound   5 SStatusRequest 0x00
+ENC status serverbound  47 SPingRequest 0x01
+ENC status serverbound  47 SStatusRequest 0x00
+ENC status serverbound 107 SPingRequest 0x01
+ENC status serverbound 107 SStatusRequest 0x00
+ENC status serverbound 109 SPingRequest 0x01
+ENC status serverbound 109 SStatusRequest 0x00
+ENC status serverbound 110 SPingRequest 0x01
+ENC status serverbound 110 SStatusRequest 0x00
+ENC status serverbound 335 SPingRequest 0x01
+ENC status serverbound 335 SStatusRequest 0x00
+ENC status serverbound 338 SPingRequest 0x01
+ENC status serverbound 338 SStatusRequest 0x00
+ENC status serverbound 340 SPingRequest 0x01
+ENC status serverbound 340 SStatusRequest 0x00
+ENC status serverbound 393 SPingRequest 0x01
+ENC status serverbound 393 SStatusRequest 0x00
+ENC status serverbound 477 SPingRequest 0x01
+ENC status serverbound 477 SStatusRequest 0x00
+ENC status serverbound 573 SPingRequest 0x01
+ENC status serverbound 573 SStatusRequest 0x00
+ENC status serverbound 735 SPingRequest 0x01
+ENC status serverbound 735 SStatusRequest 0x00
+ENC status serverbound 751 SPingRequest 0x01
+ENC status serverbound 751 SStatusRequest 0x00
+ENC status serverbound 754 SPingRequest 0x01
+ENC status serverbound 754 SStatusRequest 0x00
+ENC status serverbound 755 SPingRequest 0x01
+ENC status serverbound 755 SStatusRequest 0x00
+ENC status serverbound 757 SPingRequest 0x01
+ENC status serverbound 757 SStatusRequest 0x00
+ENC status serverbound 758 SPingRequest 0x01
+ENC status serverbound 758 SStatusRequest 0x00
+ENC status serverbound 759 SPingRequest 0x01
+ENC status serverbound 759 SStatusRequest 0x00
+ENC status serverbound 760 SPingRequest 0x01
+ENC status serverbound 760 SStatusRequest 0x00
+ENC status serverbound 761 SPingRequest 0x01
+ENC status serverbound 761 SStatusRequest 0x00
+ENC status serverbound 762 SPingRequest 0x01
+ENC status serverbound 762 SStatusRequest 0x00
+ENC status serverbound 763 SPingRequest 0x01
+ENC status serverbound 763 SStatusRequest 0x00
+ENC status serverbound 764 SPingRequest 0x01
+ENC status serverbound 764 SStatusRequest 0x00
+ENC status serverbound 765 SPingRequest 0x01
+ENC status serverbound 765 SStatusRequest 0x00
+ENC status serverbound 766 SPingRequest 0x01
+ENC status serverbound 766 SStatusRequest 0x00
+ENC status serverbound 767 SPingRequest 0x01
+ENC status serverbound 767 SStatusRequest 0x00
+ENC status serverbound 768 SPingRequest 0x01
+ENC status serverbound 768 SStatusRequest 0x00
+ENC status serverbound 769 SPingRequest 0x01
+ENC status serverbound 769 SStatusRequest 0x00
+ENC status serverbound 770 SPingRequest 0x01
+ENC status serverbound 770 SStatusRequest 0x00
+ENC status serverbound 771 SPingRequest 0x01
+ENC status serverbound 771 SStatusRequest 0x00
+ENC status serverbound 772 SPingRequest 0x01
+ENC status serverbound 772 SStatusRequest 0x00
+ENC status serverbound 773 SPingRequest 0x01
+ENC status serverbound 773 SStatusRequest 0x00
+ENC status serverbound 774 SPingRequest 0x01
+ENC status serverbound 774 SStatusRequest 0x00
+ENC status serverbound 775 SPingRequest 0x01
+ENC status serverbound 775 SStatusRequest 0x00
+ENC status serverbound 776 SPingRequest 0x01
+ENC status serverbound 776 SStatusRequest 0x00

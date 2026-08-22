@@ -1,37 +1,20 @@
-//! Synchronize Player Position packet (Clientbound, 1.9+).
-//!
-//! Teleports the player to a position. The client must respond with
-//! Confirm Teleportation containing the matching `teleport_id`.
-
 use crate::codec::varint::VarInt;
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
 use crate::packets::Packet;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Synchronize Player Position packet (Clientbound).
-///
-/// Also known as "Player Position And Look" in older protocol versions.
-///
-/// Format changes:
-/// - Pre-1.9: x/y/z/yaw/pitch/flags (no teleport_id)
-/// - 1.9–1.21.1: x/y/z/yaw/pitch/flags(u8)/teleport_id(VarInt)
-/// - 1.21.2+: teleport_id(VarInt)/x/y/z/delta_x/delta_y/delta_z/yaw/pitch/flags(i32)
 #[derive(Debug, Clone)]
 pub struct CSynchronizePlayerPosition {
     pub x: f64,
     pub y: f64,
     pub z: f64,
-    /// Velocity / delta (1.21.2+). Zero for static teleport.
     pub delta_x: f64,
     pub delta_y: f64,
     pub delta_z: f64,
     pub yaw: f32,
     pub pitch: f32,
-    /// Relativity flags. For absolute positioning use 0.
-    /// Stored as i32 for 1.21.2+ (u8 for older, widened on decode).
     pub flags: i32,
-    /// Teleport ID — client echoes back in Confirm Teleportation (1.9+).
     pub teleport_id: i32,
 }
 
@@ -48,7 +31,6 @@ impl Packet for CSynchronizePlayerPosition {
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         if version.no_less_than(ProtocolVersion::V1_21_2) {
-            // 1.21.2+: teleport_id first, then position, delta, angles, flags(i32)
             let teleport_id = r.read_var_int()?.0;
             let x = r.read_f64_be()?;
             let y = r.read_f64_be()?;
@@ -72,7 +54,6 @@ impl Packet for CSynchronizePlayerPosition {
                 teleport_id,
             })
         } else {
-            // Pre-1.21.2: position, angles, flags(u8), teleport_id
             let x = r.read_f64_be()?;
             let y = r.read_f64_be()?;
             let z = r.read_f64_be()?;
@@ -105,7 +86,6 @@ impl Packet for CSynchronizePlayerPosition {
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         if version.no_less_than(ProtocolVersion::V1_21_2) {
-            // 1.21.2+: teleport_id first
             w.write_var_int(&VarInt(self.teleport_id))?;
             w.write_f64_be(self.x)?;
             w.write_f64_be(self.y)?;

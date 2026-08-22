@@ -1,24 +1,13 @@
-//! Game Event packet (Clientbound).
-//!
-//! Notifies the client of game state changes. Event 13 (`START_WAITING_CHUNKS`)
-//! is critical for 1.20.2+ — without it the client stays on "Loading Terrain".
-
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
 use crate::packets::Packet;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Game event IDs used by the Limbo engine.
 pub const START_WAITING_CHUNKS: u8 = 13;
 
-/// Game Event packet (Clientbound).
-///
-/// Used to signal game state changes to the client.
 #[derive(Debug, Clone)]
 pub struct CGameEvent {
-    /// The event type ID.
     pub event: u8,
-    /// Event-specific floating-point value.
     pub value: f32,
 }
 

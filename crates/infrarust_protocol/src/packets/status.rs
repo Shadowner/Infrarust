@@ -4,9 +4,6 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 use super::Packet;
 
-/// Status request packet (Serverbound, 0x00).
-///
-/// Empty packet sent by the client to request the server's status JSON.
 #[derive(Debug, Clone)]
 pub struct SStatusRequest;
 
@@ -34,11 +31,6 @@ impl Packet for SStatusRequest {
     }
 }
 
-/// Status response packet (Clientbound, 0x00).
-///
-/// Contains the server's status as a JSON string. The JSON includes version info,
-/// player count, description (MOTD), and optional favicon. The proxy treats
-/// it as an opaque string — parsing is the responsibility of the layer above.
 #[derive(Debug, Clone)]
 pub struct CStatusResponse {
     pub json_response: String,
@@ -70,9 +62,6 @@ impl Packet for CStatusResponse {
     }
 }
 
-/// Ping request packet (Serverbound, 0x01).
-///
-/// The client sends a payload (typically a timestamp); the server echoes it back.
 #[derive(Debug, Clone)]
 pub struct SPingRequest {
     pub payload: i64,
@@ -104,9 +93,6 @@ impl Packet for SPingRequest {
     }
 }
 
-/// Ping response packet (Clientbound, 0x01).
-///
-/// Echoes back the client's ping payload.
 #[derive(Debug, Clone)]
 pub struct CPingResponse {
     pub payload: i64,
@@ -202,7 +188,6 @@ mod tests {
     fn test_status_packets_in_registry() {
         let registry = build_default_registry();
 
-        // All status packets should be registered for V1_7_2+
         for version in [
             ProtocolVersion::V1_7_2,
             ProtocolVersion::V1_8,

@@ -1,8 +1,3 @@
-//! Version-aware packet registry that maps packet IDs to decode functions.
-//!
-//! Supports multiple protocol versions and connection states, providing O(1) lookup
-//! for both decoding (packet ID to decoder) and encoding (type to packet ID).
-
 pub mod builder;
 
 pub use builder::{PacketMapping, PacketRegistration, build_default_registry};
@@ -15,117 +10,37 @@ use bytes::Bytes;
 use std::any::TypeId;
 use std::collections::HashMap;
 
-/// Type-erased decoder function stored in the registry.
-///
-/// Takes a byte slice (payload after the `packet_id`) and the version,
-/// returns a boxed packet.
 type DecoderFn = fn(&mut &[u8], ProtocolVersion) -> ProtocolResult<Box<dyn ErasedPacket>>;
 
-/// Result of decoding a [`PacketFrame`] through the registry.
-///
-/// The proxy inspects this result to decide what to do:
-/// - `Typed` — the packet is known, can be inspected/modified
-/// - `Opaque` — unknown packet, forward the bytes as-is (zero-copy)
 #[derive(Debug)]
 pub enum DecodedPacket {
-    /// Known packet, deserialized into a typed struct.
     Typed {
-        /// The packet ID.
         id: i32,
-        /// The decoded packet, downcastable via `as_any()`.
         packet: Box<dyn ErasedPacket>,
     },
-    /// Unknown packet or no registered parser. Forward as-is.
-    Opaque { id: i32, payload: Bytes },
+    Opaque {
+        id: i32,
+        payload: Bytes,
+    },
 }
 
-/// Registry for a specific (state, direction, version) combination.
-/// Contains two O(1) lookups:
-/// - decode: `packet_id` → `DecoderFn`
-/// - encode: `TypeId` (of the Packet struct) → `packet_id`
 #[derive(Default)]
 struct VersionRegistry {
     id_to_decoder: HashMap<i32, DecoderFn>,
     type_to_id: HashMap<TypeId, i32>,
 }
 
-/// Complete packet registry, immutable after construction.
-///
-/// Contains a [`VersionRegistry`] per (state, direction, version) combination.
-/// Lookup is O(1): two nested `HashMaps`.
-///
-/// Built via [`PacketRegistration`] builders then frozen behind an `Arc`.
-///
-/// Pattern transposed from Velocity's `StateRegistry` (Java).
 pub struct PacketRegistry {
     registries: HashMap<(ConnectionState, Direction, ProtocolVersion), VersionRegistry>,
 }
 
 impl PacketRegistry {
-    /// Creates an empty registry.
     pub fn new() -> Self {
         Self {
             registries: HashMap::new(),
         }
     }
 
-    /// Attempts to decode a [`PacketFrame`] using the registry.
-    ///
-    /// 1. Looks up the decoder for (state, direction, version, frame.id)
-    /// 2. If found → decodes the payload → [`DecodedPacket::Typed`]
-    /// 3. If not found → [`DecodedPacket::Opaque`] (zero-copy, no error)
-    ///
-    /// Returns an error only if a decoder is found but fails
-    /// (corrupted data). Missing decoder is NOT an error.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use infrarust_protocol::{
-    ///     build_default_registry, DecodedPacket, PacketFrame, Packet,
-    ///     SHandshake, VarInt,
-    /// };
-    /// use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
-    /// use bytes::Bytes;
-    ///
-    /// let registry = build_default_registry();
-    ///
-    /// // Encode a handshake payload
-    /// let handshake = SHandshake {
-    ///     protocol_version: VarInt(769),
-    ///     server_address: "localhost".to_string(),
-    ///     server_port: 25565,
-    ///     next_state: ConnectionState::Login,
-    /// };
-    /// let mut payload = Vec::new();
-    /// handshake.encode(&mut payload, ProtocolVersion::V1_21).unwrap();
-    ///
-    /// // Wrap in a frame (packet id 0x00 for handshake)
-    /// let frame = PacketFrame::new(0x00, Bytes::from(payload));
-    ///
-    /// // Decode via the registry → Typed
-    /// let decoded = registry.decode_frame(
-    ///     &frame,
-    ///     ConnectionState::Handshake,
-    ///     Direction::Serverbound,
-    ///     ProtocolVersion::V1_21,
-    /// ).unwrap();
-    /// assert!(matches!(decoded, DecodedPacket::Typed { .. }));
-    ///
-    /// // Unknown packet id → Opaque
-    /// let unknown = PacketFrame::new(0xFF, Bytes::new());
-    /// let decoded = registry.decode_frame(
-    ///     &unknown,
-    ///     ConnectionState::Handshake,
-    ///     Direction::Serverbound,
-    ///     ProtocolVersion::V1_21,
-    /// ).unwrap();
-    /// assert!(matches!(decoded, DecodedPacket::Opaque { .. }));
-    /// ```
-    ///
-    /// # Errors
-    /// Returns an error only if a registered decoder fails (corrupted data).
-    /// Missing decoder is not an error and returns `DecodedPacket::Opaque`.
     pub fn decode_frame(
         &self,
         frame: &PacketFrame,
@@ -152,10 +67,6 @@ impl PacketRegistry {
         })
     }
 
-    /// Gets the `packet_id` for encoding a given typed packet.
-    ///
-    /// Returns `None` if the packet is not registered for this
-    /// (state, direction, version) combination.
     pub fn get_packet_id<P: Packet + 'static>(
         &self,
         state: ConnectionState,
@@ -168,9 +79,6 @@ impl PacketRegistry {
             .and_then(|ver_reg| ver_reg.type_to_id.get(&TypeId::of::<P>()).copied())
     }
 
-    /// Checks if a decoder exists for a given `packet_id`.
-    ///
-    /// Useful for debug and tests.
     pub fn has_decoder(
         &self,
         state: ConnectionState,
@@ -184,8 +92,6 @@ impl PacketRegistry {
             .is_some_and(|ver_reg| ver_reg.id_to_decoder.contains_key(&packet_id))
     }
 
-    /// Inserts a type-to-id mapping for encoding.
-    /// Used internally by the builder.
     pub(crate) fn insert_type_mapping(
         &mut self,
         key: (ConnectionState, Direction, ProtocolVersion),
@@ -196,10 +102,6 @@ impl PacketRegistry {
         ver_reg.type_to_id.insert(type_id, packet_id);
     }
 
-    /// Inserts a decoder function for a `packet_id`.
-    ///
-    /// Used by the builder and extensible for plugins that register
-    /// custom packet decoders via `PacketRegistryExt` (future).
     pub fn insert_decoder(
         &mut self,
         key: (ConnectionState, Direction, ProtocolVersion),
@@ -296,7 +198,6 @@ mod tests {
 
     #[test]
     fn test_decode_unknown_version_returns_opaque() {
-        // Register only for V1_9+, then try V1_8-style lookup on a fresh registry
         let mut registry = PacketRegistry::new();
         PacketRegistration::<SHandshake>::new(ConnectionState::Handshake, Direction::Serverbound)
             .map(0x00, ProtocolVersion::V1_9, false)
@@ -305,7 +206,6 @@ mod tests {
         let payload = make_handshake_payload(47, "mc.example.com", 25565, 2);
         let frame = PacketFrame::new(0x00, Bytes::from(payload));
 
-        // V1_8 is not in the registry (only V1_9+)
         let decoded = registry
             .decode_frame(
                 &frame,
@@ -326,7 +226,6 @@ mod tests {
             .map(0x01, ProtocolVersion::V1_9, false)
             .register(&mut registry);
 
-        // V1_8 should have id 0x14
         assert_eq!(
             registry.get_packet_id::<SHandshake>(
                 ConnectionState::Handshake,
@@ -336,7 +235,6 @@ mod tests {
             Some(0x14)
         );
 
-        // V1_9 should have id 0x01
         assert_eq!(
             registry.get_packet_id::<SHandshake>(
                 ConnectionState::Handshake,
@@ -401,7 +299,6 @@ mod tests {
             .map(0x00, ProtocolVersion::V1_7_2, false)
             .register(&mut registry);
 
-        // Should be found for all supported versions
         for version in [
             ProtocolVersion::V1_7_2,
             ProtocolVersion::V1_8,
@@ -429,7 +326,6 @@ mod tests {
             .map(0x01, ProtocolVersion::V1_9, false)
             .register(&mut registry);
 
-        // V1_8 should have 0x14 (first mapping)
         assert_eq!(
             registry.get_packet_id::<SHandshake>(
                 ConnectionState::Handshake,
@@ -439,7 +335,6 @@ mod tests {
             Some(0x14)
         );
 
-        // V1_9 should have 0x01 (second mapping)
         assert_eq!(
             registry.get_packet_id::<SHandshake>(
                 ConnectionState::Handshake,
@@ -449,7 +344,6 @@ mod tests {
             Some(0x01)
         );
 
-        // V1_8 must NOT have decoder for 0x01
         assert!(!registry.has_decoder(
             ConnectionState::Handshake,
             Direction::Serverbound,
@@ -470,7 +364,6 @@ mod tests {
             )
             .register(&mut registry);
 
-        // V1_17 → found
         assert_eq!(
             registry.get_packet_id::<SHandshake>(
                 ConnectionState::Handshake,
@@ -480,7 +373,6 @@ mod tests {
             Some(0x0F)
         );
 
-        // V1_18_2 → found (inclusive)
         assert_eq!(
             registry.get_packet_id::<SHandshake>(
                 ConnectionState::Handshake,
@@ -490,7 +382,6 @@ mod tests {
             Some(0x0F)
         );
 
-        // V1_19 → not found
         assert_eq!(
             registry.get_packet_id::<SHandshake>(
                 ConnectionState::Handshake,
@@ -508,7 +399,6 @@ mod tests {
             .map(0x10, ProtocolVersion::V1_7_2, true)
             .register(&mut registry);
 
-        // has_decoder should be false (encode_only)
         assert!(!registry.has_decoder(
             ConnectionState::Handshake,
             Direction::Serverbound,
@@ -516,7 +406,6 @@ mod tests {
             0x10,
         ));
 
-        // but get_packet_id should return Some
         assert_eq!(
             registry.get_packet_id::<SHandshake>(
                 ConnectionState::Handshake,
@@ -563,7 +452,6 @@ mod tests {
     #[test]
     fn test_decode_frame_with_corrupted_payload_returns_error() {
         let registry = build_default_registry();
-        // Truncated payload — VarInt starts but string is missing
         let frame = PacketFrame::new(0x00, Bytes::from_static(&[0xFF, 0x05]));
 
         let result = registry.decode_frame(
@@ -581,7 +469,6 @@ mod tests {
         let registry = Arc::new(build_default_registry());
         let clone = Arc::clone(&registry);
 
-        // Verify it works from the clone
         assert!(clone.has_decoder(
             ConnectionState::Handshake,
             Direction::Serverbound,
@@ -600,7 +487,6 @@ mod tests {
         let registry = build_default_registry();
         let v = ProtocolVersion::V1_21;
 
-        // Clientbound
         assert!(
             registry
                 .get_packet_id::<CKeepAlive>(ConnectionState::Play, Direction::Clientbound, v)
@@ -641,7 +527,6 @@ mod tests {
                 .is_some()
         );
 
-        // Serverbound
         assert!(
             registry
                 .get_packet_id::<SKeepAlive>(ConnectionState::Play, Direction::Serverbound, v)
@@ -710,7 +595,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::similar_names)] // decoder/decoded are semantically distinct
+    #[allow(clippy::similar_names)]
     fn test_end_to_end_play_packet() {
         use crate::io::{PacketDecoder, PacketEncoder};
         use crate::packets::CKeepAlive;
@@ -720,24 +605,20 @@ mod tests {
         let state = ConnectionState::Play;
         let direction = Direction::Clientbound;
 
-        // Get the packet ID from registry
         let packet_id = registry
             .get_packet_id::<CKeepAlive>(state, direction, version)
             .expect("CKeepAlive should be registered");
 
-        // Encode the packet payload
         let pkt = CKeepAlive {
             id: 0xDEAD_BEEF_CAFE,
         };
         let mut payload = Vec::new();
         pkt.encode(&mut payload, version).unwrap();
 
-        // Frame it with PacketEncoder
         let mut encoder = PacketEncoder::new();
         encoder.append_raw(packet_id, &payload).unwrap();
         let wire_bytes = encoder.take();
 
-        // Decode with PacketDecoder
         let mut decoder = PacketDecoder::new();
         decoder.queue_bytes(&wire_bytes);
         let frame = decoder
@@ -746,7 +627,6 @@ mod tests {
             .expect("should decode a frame");
         assert_eq!(frame.id, packet_id);
 
-        // Decode via registry
         let decoded = registry
             .decode_frame(&frame, state, direction, version)
             .unwrap();
@@ -762,5 +642,149 @@ mod tests {
             }
             DecodedPacket::Opaque { .. } => panic!("expected Typed, got Opaque"),
         }
+    }
+
+    const ALL_STATES: [ConnectionState; 5] = [
+        ConnectionState::Handshake,
+        ConnectionState::Status,
+        ConnectionState::Login,
+        ConnectionState::Config,
+        ConnectionState::Play,
+    ];
+
+    const ALL_DIRECTIONS: [Direction; 2] = [Direction::Serverbound, Direction::Clientbound];
+
+    macro_rules! dump_encode_side {
+        ($reg:expr, $out:expr, [ $( $p:ty ),* $(,)? ]) => {$(
+            for state in ALL_STATES {
+                for direction in ALL_DIRECTIONS {
+                    for &version in ProtocolVersion::SUPPORTED {
+                        if let Some(id) = $reg.get_packet_id::<$p>(state, direction, version) {
+                            $out.push(format!(
+                                "ENC {state} {direction} {:>3} {} 0x{id:02X}",
+                                version.0,
+                                <$p as Packet>::NAME
+                            ));
+                        }
+                    }
+                }
+            }
+        )*};
+    }
+
+    fn dump_decode_side(reg: &PacketRegistry, out: &mut Vec<String>) {
+        for state in ALL_STATES {
+            for direction in ALL_DIRECTIONS {
+                for &version in ProtocolVersion::SUPPORTED {
+                    for id in 0..=0xFF_i32 {
+                        if reg.has_decoder(state, direction, version, id) {
+                            out.push(format!(
+                                "DEC {state} {direction} {:>3} 0x{id:02X}",
+                                version.0
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn snapshot(reg: &PacketRegistry) -> String {
+        use crate::packets::{
+            CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CCommands,
+            CConfigDisconnect, CConfigPluginMessage, CDisconnect, CEncryptionRequest,
+            CFinishConfig, CGameEvent, CJoinGame, CKeepAlive, CKnownPacks, CLoginDisconnect,
+            CLoginPluginRequest, CLoginSuccess, CPingResponse, CPluginMessage, CRegistryData,
+            CRespawn, CSetCenterChunk, CSetCompression, CSetDefaultSpawnPosition, CSetSubtitle,
+            CSetTitle, CSetTitleTimes, CStartConfiguration, CStatusResponse,
+            CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse, CTitleLegacy,
+            CTransfer, SAcknowledgeConfiguration, SAcknowledgeFinishConfig, SChatCommand,
+            SChatMessage, SChatSessionUpdate, SConfigPluginMessage, SEncryptionResponse,
+            SHandshake, SKeepAlive, SKnownPacks, SLoginAcknowledged, SLoginPluginResponse,
+            SLoginStart, SPingRequest, SPluginMessage, SStatusRequest, STabCompleteRequest,
+        };
+
+        let mut out = Vec::new();
+        dump_encode_side!(
+            reg,
+            out,
+            [
+                SHandshake,
+                SStatusRequest,
+                SPingRequest,
+                CStatusResponse,
+                CPingResponse,
+                SLoginStart,
+                SEncryptionResponse,
+                SLoginPluginResponse,
+                SLoginAcknowledged,
+                CLoginDisconnect,
+                CEncryptionRequest,
+                CLoginSuccess,
+                CSetCompression,
+                CLoginPluginRequest,
+                SConfigPluginMessage,
+                SAcknowledgeFinishConfig,
+                SKnownPacks,
+                CConfigPluginMessage,
+                CConfigDisconnect,
+                CFinishConfig,
+                CRegistryData,
+                CKnownPacks,
+                CCommands,
+                CTabCompleteResponse,
+                CKeepAlive,
+                CDisconnect,
+                CJoinGame,
+                CRespawn,
+                CPluginMessage,
+                CChatMessageLegacy,
+                CSystemChatMessage,
+                CTitleLegacy,
+                CSetTitle,
+                CSetSubtitle,
+                CSetTitleTimes,
+                CTransfer,
+                CStartConfiguration,
+                CGameEvent,
+                CSetCenterChunk,
+                CChunkBatchStart,
+                CChunkBatchFinished,
+                CSetDefaultSpawnPosition,
+                CSynchronizePlayerPosition,
+                STabCompleteRequest,
+                SAcknowledgeConfiguration,
+                SKeepAlive,
+                SChatMessage,
+                SChatCommand,
+                SChatSessionUpdate,
+                SPluginMessage,
+            ]
+        );
+        dump_decode_side(reg, &mut out);
+        out.sort();
+        out.join("\n")
+    }
+
+    const SNAPSHOT_PATH: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/registry/testdata/registry_snapshot.txt"
+    );
+
+    #[test]
+    #[ignore = "bless: rewrites the registry snapshot fixture"]
+    fn bless_registry_snapshot() {
+        std::fs::write(SNAPSHOT_PATH, snapshot(&build_default_registry())).unwrap();
+    }
+
+    #[test]
+    fn default_registry_matches_snapshot() {
+        let expected = include_str!("testdata/registry_snapshot.txt");
+        assert_eq!(
+            snapshot(&build_default_registry()),
+            expected,
+            "registry content changed; re-bless with `cargo test -p infrarust_protocol \
+             bless_registry_snapshot -- --ignored` and review the fixture diff"
+        );
     }
 }

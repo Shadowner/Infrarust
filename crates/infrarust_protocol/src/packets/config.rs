@@ -4,7 +4,6 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 use super::Packet;
 
-/// A known data pack entry used in `CKnownPacks` / `SKnownPacks`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownPack {
     pub namespace: String,
@@ -12,9 +11,6 @@ pub struct KnownPack {
     pub version: String,
 }
 
-/// Finish configuration packet (Clientbound).
-///
-/// Empty signal sent by the server to indicate the end of configuration phase.
 #[derive(Debug, Clone)]
 pub struct CFinishConfig;
 
@@ -42,9 +38,6 @@ impl Packet for CFinishConfig {
     }
 }
 
-/// Acknowledge finish configuration packet (Serverbound).
-///
-/// Empty confirmation from the client that it's ready to transition to Play.
 #[derive(Debug, Clone)]
 pub struct SAcknowledgeFinishConfig;
 
@@ -72,10 +65,6 @@ impl Packet for SAcknowledgeFinishConfig {
     }
 }
 
-/// Registry data packet (Clientbound).
-///
-/// Contains registry synchronization data (NBT). The proxy stores this as
-/// opaque bytes and forwards it without parsing.
 #[derive(Debug, Clone)]
 pub struct CRegistryData {
     pub data: Vec<u8>,
@@ -163,13 +152,6 @@ define_twin_packets! {
     },
 }
 
-/// Disconnect packet in config state (Clientbound).
-///
-/// The reason is stored as opaque bytes because its format varies:
-/// - 1.20.2: JSON string
-/// - 1.20.3+: NBT compound
-///
-/// The proxy forwards it without parsing.
 #[derive(Debug, Clone)]
 pub struct CConfigDisconnect {
     pub reason: Vec<u8>,
@@ -233,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_registry_data_opaque_payload() {
-        let data = vec![0x0A, 0x00, 0x00, 0xFF, 0xAB, 0xCD]; // arbitrary bytes
+        let data = vec![0x0A, 0x00, 0x00, 0xFF, 0xAB, 0xCD];
         let pkt = CRegistryData { data: data.clone() };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_20_2);
         assert_eq!(decoded.data, data);
@@ -283,10 +265,8 @@ mod tests {
         let mut s_buf = Vec::new();
         s_pkt.encode(&mut s_buf, ProtocolVersion::V1_20_5).unwrap();
 
-        // Same wire format
         assert_eq!(c_buf, s_buf);
 
-        // Cross-decode
         let decoded_s =
             SKnownPacks::decode(&mut c_buf.as_slice(), ProtocolVersion::V1_20_5).unwrap();
         assert_eq!(decoded_s.packs, packs);
@@ -326,7 +306,6 @@ mod tests {
         let registry = build_default_registry();
 
         for version in [ProtocolVersion::V1_19, ProtocolVersion::V1_20] {
-            // No config packets should exist for pre-1.20.2 versions
             assert!(
                 registry
                     .get_packet_id::<CFinishConfig>(

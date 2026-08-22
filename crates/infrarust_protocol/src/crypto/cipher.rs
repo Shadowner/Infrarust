@@ -1,40 +1,17 @@
-//! AES-128-CFB8 encryption and decryption for Minecraft protocol.
-//!
-//! Minecraft uses AES-128 in CFB8 mode with the shared secret as both
-//! key and IV. The ciphers are stateful stream ciphers — each call
-//! continues where the previous one left off.
-
 use aes::Aes128;
 use cfb8::Encryptor as Cfb8Encryptor;
 use cipher::{Block, BlockCipherEncrypt, KeyInit, KeyIvInit};
 
-/// Encrypts a byte stream using AES-128-CFB8.
-///
-/// Stateful: each call to [`encrypt`](Self::encrypt) continues where the
-/// previous one left off. Bytes must be encrypted in the exact order they
-/// will be sent on the socket.
 pub struct EncryptCipher {
     inner: Cfb8Encryptor<Aes128>,
 }
 
-/// Decrypts a byte stream using AES-128-CFB8.
-///
-/// Stateful: each call to [`decrypt`](Self::decrypt) continues where the
-/// previous one left off. Bytes must be decrypted in the exact order they
-/// were received from the socket.
 pub struct DecryptCipher {
     cipher: Aes128,
-    /// The last 16 ciphertext bytes seen (initially the IV).
     window: [u8; 16],
 }
 
 impl EncryptCipher {
-    /// Creates an encryption cipher from a 16-byte shared secret.
-    ///
-    /// The IV is set equal to the key, as per the Minecraft protocol.
-    ///
-    /// # Panics
-    /// Cannot panic: the key and IV are always exactly 16 bytes.
     #[allow(clippy::expect_used)]
     pub fn new(key: &[u8; 16]) -> Self {
         Self {
@@ -43,21 +20,12 @@ impl EncryptCipher {
         }
     }
 
-    /// Encrypts data in-place.
-    ///
-    /// The cipher state advances by `data.len()` bytes.
     pub fn encrypt(&mut self, data: &mut [u8]) {
         self.inner.encrypt(data);
     }
 }
 
 impl DecryptCipher {
-    /// Creates a decryption cipher from a 16-byte shared secret.
-    ///
-    /// The IV is set equal to the key, as per the Minecraft protocol.
-    ///
-    /// # Panics
-    /// Cannot panic: the key and IV are always exactly 16 bytes.
     #[allow(clippy::expect_used)]
     pub fn new(key: &[u8; 16]) -> Self {
         Self {
@@ -66,12 +34,6 @@ impl DecryptCipher {
         }
     }
 
-    /// Decrypts data in-place.
-    ///
-    /// The cipher state advances by `data.len()` bytes.
-    ///
-    /// Plaintext byte `i` is `ct[i] ^ AES(K, w_i)[0]` where `w_i` is the 16
-    /// ciphertext bytes preceding `i` (seeded by the IV).
     pub fn decrypt(&mut self, data: &mut [u8]) {
         const BATCH: usize = 64;
         let mut keystream = [Block::<Aes128>::default(); BATCH];
@@ -91,7 +53,6 @@ impl DecryptCipher {
                 }
             }
 
-            // Slide the window over the ciphertext before it is overwritten.
             if n >= 16 {
                 self.window.copy_from_slice(&batch[n - 16..]);
             } else {
@@ -147,14 +108,12 @@ mod tests {
         let data_a = b"first chunk";
         let data_b = b"second chunk";
 
-        // Encrypt in two separate calls
         let mut enc1 = EncryptCipher::new(&key);
         let mut a = data_a.to_vec();
         let mut b = data_b.to_vec();
         enc1.encrypt(&mut a);
         enc1.encrypt(&mut b);
 
-        // Encrypt as one concatenated call
         let mut enc2 = EncryptCipher::new(&key);
         let mut combined = [data_a.as_slice(), data_b.as_slice()].concat();
         enc2.encrypt(&mut combined);
@@ -229,9 +188,6 @@ mod tests {
         assert_ne!(&data[..], &original[..]);
     }
 
-    /// Differential test against the cfb8 crate's reference decryptor,
-    /// split across irregular chunk sizes to cross every batch boundary
-    /// and exercise the sliding-window state between calls.
     #[test]
     fn test_decrypt_matches_reference_cfb8() {
         use cipher::BlockModeDecrypt;

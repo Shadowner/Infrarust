@@ -1,37 +1,20 @@
-//! Title-related packets (Clientbound).
-//!
-//! Since 1.17, titles are split into three separate packets:
-//! - [`CSetTitle`] — main title text
-//! - [`CSetSubtitle`] — subtitle text
-//! - [`CSetTitleTimes`] — fade-in, stay, fade-out timings
-//!
-//! Before 1.17, all title operations used a single [`CTitleLegacy`] packet
-//! with an action discriminator.
-
 use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
 use crate::packets::Packet;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Sets the main title text displayed on the player's screen.
-///
-/// Content format varies by version:
-/// - Pre-1.20.3: JSON text component (String)
-/// - 1.20.3+: NBT compound (binary)
 #[derive(Debug, Clone)]
 pub struct CSetTitle {
     pub text: Vec<u8>,
 }
 
 impl CSetTitle {
-    /// Creates a title packet from a JSON text component string.
     pub fn from_json(json: &str) -> Self {
         Self {
             text: json.as_bytes().to_vec(),
         }
     }
 
-    /// Creates a title packet from pre-encoded NBT bytes (1.20.3+).
     pub fn from_nbt(nbt: Vec<u8>) -> Self {
         Self { text: nbt }
     }
@@ -76,23 +59,18 @@ impl Packet for CSetTitle {
     }
 }
 
-/// Sets the subtitle text displayed below the title.
-///
-/// Same encoding rules as [`CSetTitle`].
 #[derive(Debug, Clone)]
 pub struct CSetSubtitle {
     pub text: Vec<u8>,
 }
 
 impl CSetSubtitle {
-    /// Creates a subtitle packet from a JSON text component string.
     pub fn from_json(json: &str) -> Self {
         Self {
             text: json.as_bytes().to_vec(),
         }
     }
 
-    /// Creates a subtitle packet from pre-encoded NBT bytes (1.20.3+).
     pub fn from_nbt(nbt: Vec<u8>) -> Self {
         Self { text: nbt }
     }
@@ -137,7 +115,6 @@ impl Packet for CSetSubtitle {
     }
 }
 
-/// Sets the title display timings (fade-in, stay, fade-out) in ticks.
 #[derive(Debug, Clone)]
 pub struct CSetTitleTimes {
     pub fade_in: i32,
@@ -196,8 +173,6 @@ impl CTitleLegacy {
             Self::SetTitle(_) => 0,
             Self::SetSubtitle(_) => 1,
             Self::SetTimes { .. } => {
-                // Pre-1.11 (< V1_12): action 2 = times
-                // 1.11+ (>= V1_12): action 3 = times
                 if version.less_than(ProtocolVersion::V1_12) {
                     2
                 } else {

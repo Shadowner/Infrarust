@@ -1,34 +1,21 @@
-//! `VarInt` encoding and decoding for the Minecraft protocol.
-
 use std::fmt;
 use std::io::Write;
 
 use crate::codec::{Decode, Encode};
 use crate::error::{ProtocolError, ProtocolResult};
 
-/// `VarInt` Minecraft — a signed 32-bit integer encoded in 1–5 bytes.
-///
-/// Each byte uses 7 bits for the value and 1 bit (MSB) as a continuation flag.
-/// Used throughout the protocol: packet IDs, string lengths, array lengths, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VarInt(pub i32);
 
-/// Result of a partial `VarInt` decode attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VarIntDecodeStatus {
-    /// Not enough bytes to complete the `VarInt`.
     Incomplete,
-    /// `VarInt` exceeds maximum size (5 bytes for `VarInt`, 10 for `VarLong`).
     TooLarge,
 }
 
 impl VarInt {
-    /// Maximum number of bytes a `VarInt` can occupy on the wire.
     pub const MAX_SIZE: usize = 5;
 
-    /// Returns the number of bytes this `VarInt` will occupy when encoded.
-    ///
-    /// Computed in O(1) without loops.
     pub const fn written_size(self) -> usize {
         match self.0 {
             0 => 1,
@@ -36,14 +23,6 @@ impl VarInt {
         }
     }
 
-    /// Encodes this `VarInt` using a branchless algorithm (adapted from Valence).
-    ///
-    /// The algorithm spreads 7-bit groups into a u64 with gaps, computes the
-    /// byte count via `leading_zeros`, inserts continuation bits in one OR, then
-    /// writes the necessary bytes in little-endian order.
-    ///
-    /// # Errors
-    /// Returns an error if writing to `w` fails.
     pub fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         let x = self.0 as u64;
         let stage1 = (x & 0x7f)
@@ -66,13 +45,6 @@ impl VarInt {
         Ok(())
     }
 
-    /// Decodes a `VarInt` from a byte slice, advancing the cursor.
-    ///
-    /// Returns `ProtocolError::Incomplete` if the buffer is too short,
-    /// or `ProtocolError::Invalid` if the `VarInt` exceeds 5 bytes.
-    ///
-    /// # Errors
-    /// Returns an error if the buffer is incomplete or the `VarInt` exceeds 5 bytes.
     pub fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
         let mut val = 0i32;
         for i in 0..Self::MAX_SIZE {
@@ -89,16 +61,6 @@ impl VarInt {
         Err(ProtocolError::invalid("VarInt too large (> 5 bytes)"))
     }
 
-    /// Attempts to decode a `VarInt` without consuming the buffer.
-    ///
-    /// Used by the packet decoder for framing — we need to try reading the
-    /// length `VarInt` without advancing the cursor if it's incomplete.
-    ///
-    /// Returns `(value, bytes_consumed)` on success.
-    ///
-    /// # Errors
-    /// Returns `VarIntDecodeStatus::Incomplete` if the buffer is too short,
-    /// or `VarIntDecodeStatus::TooLarge` if the `VarInt` exceeds 5 bytes.
     pub fn decode_partial(buf: &[u8]) -> Result<(Self, usize), VarIntDecodeStatus> {
         let mut val = 0i32;
         for i in 0..Self::MAX_SIZE {

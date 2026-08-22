@@ -1,9 +1,3 @@
-//! Server switch Respawn construction.
-//!
-//! Builds a `CRespawn` packet for the server switch trick. The format changes
-//! significantly across protocol versions, so the encoding is version-branched.
-//! The constructed packet uses safe defaults appropriate for a server switch.
-
 use crate::codec::{McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
 use crate::version::ProtocolVersion;
@@ -11,21 +5,8 @@ use crate::version::ProtocolVersion;
 use super::dimension::DimensionInfo;
 use super::respawn::CRespawn;
 
-/// Creates a `CRespawn` packet for the server switch trick.
-///
-/// For pre-1.20.2: builds the version-specific wire format into `raw_payload`.
-/// For 1.20.2+: constructs using struct fields (existing encode path).
-///
-/// Default values are safe for server switching:
-/// - `gamemode`: 0 (survival) — the backend's JoinGame sets the real gamemode
-/// - `hashed_seed`: 0 — client doesn't verify
-/// - `is_debug` / `is_flat`: false
-/// - `previous_gamemode`: -1 (none)
-/// - `data_to_keep` / `copy_metadata`: keep all data
-/// - `difficulty`: 2 (normal) for pre-1.14
 pub fn for_switch(dimension: &DimensionInfo, version: ProtocolVersion) -> CRespawn {
     if version.no_less_than(ProtocolVersion::V1_20_2) {
-        // 1.20.2+: use struct fields, existing encode path handles it
         let (dim_id, level_name) = match dimension {
             DimensionInfo::Legacy(id) => (*id, "minecraft:overworld".to_string()),
             DimensionInfo::Named(name) => (0, name.clone()),
@@ -47,7 +28,6 @@ pub fn for_switch(dimension: &DimensionInfo, version: ProtocolVersion) -> CRespa
         };
     }
 
-    // Pre-1.20.2: build raw payload bytes
     let mut raw = Vec::with_capacity(64);
     encode_switch_respawn(&mut raw, dimension, version)
         .expect("respawn switch encoding should not fail with valid DimensionInfo");
@@ -57,7 +37,6 @@ pub fn for_switch(dimension: &DimensionInfo, version: ProtocolVersion) -> CRespa
     }
 }
 
-/// Encodes the version-specific Respawn payload for server switch.
 fn encode_switch_respawn(
     w: &mut Vec<u8>,
     dimension: &DimensionInfo,
@@ -66,56 +45,45 @@ fn encode_switch_respawn(
     let pvn = version.0;
 
     if pvn < 477 {
-        // Pre-1.14: dimension(i32) + difficulty(u8) + gamemode(u8) + level_type(String)
         let dim_id = dimension_as_i32(dimension);
         w.write_i32_be(dim_id)?;
-        w.write_u8(2)?; // difficulty: normal
-        w.write_u8(0)?; // gamemode: survival
-        w.write_string("default")?; // level_type
+        w.write_u8(2)?;
+        w.write_u8(0)?;
+        w.write_string("default")?;
     } else if pvn < 573 {
-        // 1.14-1.14.4: dimension(i32) + gamemode(u8) + level_type(String)
         let dim_id = dimension_as_i32(dimension);
         w.write_i32_be(dim_id)?;
-        w.write_u8(0)?; // gamemode
+        w.write_u8(0)?;
         w.write_string("default")?;
     } else if pvn < 735 {
-        // 1.15-1.15.2: dimension(i32) + hashed_seed(i64) + gamemode(u8) + level_type(String)
         let dim_id = dimension_as_i32(dimension);
         w.write_i32_be(dim_id)?;
-        w.write_i64_be(0)?; // hashed_seed
-        w.write_u8(0)?; // gamemode
+        w.write_i64_be(0)?;
+        w.write_u8(0)?;
         w.write_string("default")?;
     } else if pvn < 751 {
-        // 1.16-1.16.1: dimension_type(NBT Compound) + dimension_name(Identifier)
-        //   + hashed_seed(i64) + gamemode(u8) + prev_gamemode(i8)
-        //   + is_debug(bool) + is_flat(bool) + copy_metadata(bool)
         let dim_name = dimension_as_name(dimension);
 
-        // Write a minimal NBT Compound for dimension_type
         write_minimal_dimension_nbt(w, &dim_name)?;
 
-        w.write_string(&dim_name)?; // dimension_name
-        w.write_i64_be(0)?; // hashed_seed
-        w.write_u8(0)?; // gamemode
-        w.write_i8(-1)?; // previous_gamemode
-        w.write_bool(false)?; // is_debug
-        w.write_bool(false)?; // is_flat
-        w.write_bool(true)?; // copy_metadata
+        w.write_string(&dim_name)?;
+        w.write_i64_be(0)?;
+        w.write_u8(0)?;
+        w.write_i8(-1)?;
+        w.write_bool(false)?;
+        w.write_bool(false)?;
+        w.write_bool(true)?;
     } else if pvn < 759 {
-        // 1.16.2-1.18.2: dimension_type(Identifier) + dimension_name(Identifier)
-        //   + hashed_seed(i64) + gamemode(u8) + prev_gamemode(i8)
-        //   + is_debug(bool) + is_flat(bool) + copy_metadata(bool)
         let dim_name = dimension_as_name(dimension);
-        w.write_string(&dim_name)?; // dimension_type (Identifier)
-        w.write_string(&dim_name)?; // dimension_name
-        w.write_i64_be(0)?; // hashed_seed
-        w.write_u8(0)?; // gamemode
-        w.write_i8(-1)?; // previous_gamemode
-        w.write_bool(false)?; // is_debug
-        w.write_bool(false)?; // is_flat
-        w.write_bool(true)?; // copy_metadata
+        w.write_string(&dim_name)?;
+        w.write_string(&dim_name)?;
+        w.write_i64_be(0)?;
+        w.write_u8(0)?;
+        w.write_i8(-1)?;
+        w.write_bool(false)?;
+        w.write_bool(false)?;
+        w.write_bool(true)?;
     } else if pvn < 761 {
-        // 1.19-1.19.2: + last_death_location(Optional)
         let dim_name = dimension_as_name(dimension);
         w.write_string(&dim_name)?;
         w.write_string(&dim_name)?;
@@ -124,10 +92,9 @@ fn encode_switch_respawn(
         w.write_i8(-1)?;
         w.write_bool(false)?;
         w.write_bool(false)?;
-        w.write_bool(true)?; // copy_metadata
-        w.write_bool(false)?; // has_death_location = false
+        w.write_bool(true)?;
+        w.write_bool(false)?;
     } else if pvn < 762 {
-        // 1.19.3: data_kept(u8) replaces copy_metadata(bool)
         let dim_name = dimension_as_name(dimension);
         w.write_string(&dim_name)?;
         w.write_string(&dim_name)?;
@@ -136,10 +103,9 @@ fn encode_switch_respawn(
         w.write_i8(-1)?;
         w.write_bool(false)?;
         w.write_bool(false)?;
-        w.write_u8(0x01)?; // data_kept: keep all
-        w.write_bool(false)?; // has_death_location = false
+        w.write_u8(0x01)?;
+        w.write_bool(false)?;
     } else {
-        // 1.19.4-1.20.1: + portal_cooldown(VarInt)
         let dim_name = dimension_as_name(dimension);
         w.write_string(&dim_name)?;
         w.write_string(&dim_name)?;
@@ -148,27 +114,25 @@ fn encode_switch_respawn(
         w.write_i8(-1)?;
         w.write_bool(false)?;
         w.write_bool(false)?;
-        w.write_u8(0x01)?; // data_kept
-        w.write_bool(false)?; // has_death_location = false
-        w.write_var_int(&VarInt(0))?; // portal_cooldown
+        w.write_u8(0x01)?;
+        w.write_bool(false)?;
+        w.write_var_int(&VarInt(0))?;
     }
 
     Ok(())
 }
 
-/// Converts a `DimensionInfo` to an i32 dimension ID for pre-1.16.
 fn dimension_as_i32(dim: &DimensionInfo) -> i32 {
     match dim {
         DimensionInfo::Legacy(id) => *id,
         DimensionInfo::Named(name) => match name.as_str() {
             "minecraft:the_nether" => -1,
             "minecraft:the_end" => 1,
-            _ => 0, // overworld / unknown
+            _ => 0,
         },
     }
 }
 
-/// Converts a `DimensionInfo` to a namespaced string for 1.16+.
 fn dimension_as_name(dim: &DimensionInfo) -> String {
     match dim {
         DimensionInfo::Named(name) => name.clone(),
@@ -180,16 +144,10 @@ fn dimension_as_name(dim: &DimensionInfo) -> String {
     }
 }
 
-/// Writes a minimal NBT Compound for dimension_type (1.16-1.16.1 Respawn).
-///
-/// The client uses the JoinGame's dimension info, not the Respawn's, so this
-/// can be a bare-minimum valid compound.
 fn write_minimal_dimension_nbt(w: &mut Vec<u8>, _dim_name: &str) -> ProtocolResult<()> {
-    // TAG_Compound root with empty name
-    w.push(0x0A); // TAG_Compound
-    w.extend_from_slice(&0u16.to_be_bytes()); // empty root name
+    w.push(0x0A);
+    w.extend_from_slice(&0u16.to_be_bytes());
 
-    // TAG_End — empty compound is valid
     w.push(0x00);
     Ok(())
 }
@@ -204,10 +162,9 @@ mod tests {
         let dim = DimensionInfo::Legacy(0);
         let respawn = for_switch(&dim, ProtocolVersion::V1_8);
         let raw = respawn.raw_payload.expect("should have raw_payload");
-        // dimension(i32=0) + difficulty(u8=2) + gamemode(u8=0) + level_type(String="default")
-        assert_eq!(&raw[0..4], &0i32.to_be_bytes()); // dimension
-        assert_eq!(raw[4], 2); // difficulty
-        assert_eq!(raw[5], 0); // gamemode
+        assert_eq!(&raw[0..4], &0i32.to_be_bytes());
+        assert_eq!(raw[4], 2);
+        assert_eq!(raw[5], 0);
     }
 
     #[test]
@@ -223,9 +180,8 @@ mod tests {
         let dim = DimensionInfo::Legacy(0);
         let respawn = for_switch(&dim, ProtocolVersion::V1_14);
         let raw = respawn.raw_payload.expect("should have raw_payload");
-        // dimension(i32=0) + gamemode(u8=0) + level_type(String="default") — no difficulty
         assert_eq!(&raw[0..4], &0i32.to_be_bytes());
-        assert_eq!(raw[4], 0); // gamemode (no difficulty byte)
+        assert_eq!(raw[4], 0);
     }
 
     #[test]
@@ -233,10 +189,9 @@ mod tests {
         let dim = DimensionInfo::Legacy(1);
         let respawn = for_switch(&dim, ProtocolVersion::V1_15);
         let raw = respawn.raw_payload.expect("should have raw_payload");
-        // dimension(i32=1) + hashed_seed(i64=0) + gamemode(u8=0) + level_type(String)
         assert_eq!(&raw[0..4], &1i32.to_be_bytes());
-        assert_eq!(&raw[4..12], &0i64.to_be_bytes()); // hashed_seed
-        assert_eq!(raw[12], 0); // gamemode
+        assert_eq!(&raw[4..12], &0i64.to_be_bytes());
+        assert_eq!(raw[12], 0);
     }
 
     #[test]
@@ -244,8 +199,6 @@ mod tests {
         let dim = DimensionInfo::Named("minecraft:the_nether".to_string());
         let respawn = for_switch(&dim, ProtocolVersion::V1_16_2);
         let raw = respawn.raw_payload.expect("should have raw_payload");
-        // Should start with dimension_type as Identifier (String)
-        // VarInt length + "minecraft:the_nether"
         assert!(!raw.is_empty());
     }
 
@@ -277,7 +230,6 @@ mod tests {
     fn test_for_switch_1_20_2() {
         let dim = DimensionInfo::Named("minecraft:overworld".to_string());
         let respawn = for_switch(&dim, ProtocolVersion::V1_20_2);
-        // 1.20.2+ uses struct fields, not raw_payload
         assert!(respawn.raw_payload.is_none());
         assert_eq!(respawn.level_name, "minecraft:overworld");
         assert_eq!(respawn.data_to_keep, 0x01);

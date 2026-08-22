@@ -1,75 +1,50 @@
-//! Empty chunk data encoder for Minecraft virtual worlds.
-//!
-//! Builds an all-air ChunkData packet as raw bytes in a [`PacketFrame`].
-//! The ChunkData packet is never decoded by the proxy — we hardcode
-//! the packet IDs per version instead.
-
 use crate::io::PacketFrame;
 use crate::version::ProtocolVersion;
 use bytes::Bytes;
 
 fn chunk_data_packet_id(version: ProtocolVersion) -> i32 {
     match version {
-        // 1.14 (477) .. 1.14.4 (498)
         v if v.no_less_than(ProtocolVersion::V1_14) && v.less_than(ProtocolVersion::V1_15) => 0x21,
-        // 1.15 (573) .. 1.15.2 (578)
         v if v.no_less_than(ProtocolVersion::V1_15) && v.less_than(ProtocolVersion::V1_16) => 0x22,
-        // 1.16 (735) .. 1.16.1 (736)
         v if v.no_less_than(ProtocolVersion::V1_16) && v.less_than(ProtocolVersion::V1_16_2) => {
             0x21
         }
-        // 1.16.2 (751) .. 1.16.4 (754)
         v if v.no_less_than(ProtocolVersion::V1_16_2) && v.less_than(ProtocolVersion::V1_17) => {
             0x20
         }
-        // 1.17 (755) .. 1.17.1 (756)
         v if v.no_less_than(ProtocolVersion::V1_17) && v.less_than(ProtocolVersion::V1_18) => 0x22,
-        // 1.18 (757) .. 1.18.2 (758)
         v if v.no_less_than(ProtocolVersion::V1_18) && v.less_than(ProtocolVersion::V1_19) => 0x22,
-        // 1.19 (759)
         v if v.no_less_than(ProtocolVersion::V1_19) && v.less_than(ProtocolVersion::V1_19_1) => {
             0x1F
         }
-        // 1.19.1 (760) .. 1.19.2
         v if v.no_less_than(ProtocolVersion::V1_19_1) && v.less_than(ProtocolVersion::V1_19_3) => {
             0x21
         }
-        // 1.19.3 (761)
         v if v.no_less_than(ProtocolVersion::V1_19_3) && v.less_than(ProtocolVersion::V1_19_4) => {
             0x20
         }
-        // 1.19.4 (762) .. 1.20.1 (763)
         v if v.no_less_than(ProtocolVersion::V1_19_4) && v.less_than(ProtocolVersion::V1_20_2) => {
             0x24
         }
-        // 1.20.2 (764) .. 1.20.4 (765)
         v if v.no_less_than(ProtocolVersion::V1_20_2) && v.less_than(ProtocolVersion::V1_20_5) => {
             0x25
         }
-        // 1.20.5 (766) .. 1.21.1 (767)
         v if v.no_less_than(ProtocolVersion::V1_20_5) && v.less_than(ProtocolVersion::V1_21_2) => {
             0x27
         }
-        // 1.21.2 (768) .. 1.21.4 (769)
         v if v.no_less_than(ProtocolVersion::V1_21_2) && v.less_than(ProtocolVersion::V1_21_5) => {
             0x28
         }
-        // 1.21.5 (770) .. 1.21.7 (772)
         v if v.no_less_than(ProtocolVersion::V1_21_5) && v.less_than(ProtocolVersion::V1_21_9) => {
             0x27
         }
-        // 1.21.9 (773)+
         v if v.no_less_than(ProtocolVersion::V1_21_9) => 0x2C,
-        // 1.13 (393) .. 1.13.2 (404)
         v if v.no_less_than(ProtocolVersion::V1_13) => 0x22,
-        // 1.9 (107) .. 1.12.2 (340)
         v if v.no_less_than(ProtocolVersion::V1_9) => 0x20,
-        // 1.7 (4) .. 1.8 (47)
         _ => 0x21,
     }
 }
 
-/// Builds a complete ChunkData packet for an all-air chunk.
 pub fn build_chunk_data_frame(
     chunk_x: i32,
     chunk_z: i32,
@@ -81,8 +56,6 @@ pub fn build_chunk_data_frame(
     Ok(PacketFrame::new(id, Bytes::from(payload)))
 }
 
-/// Wire layout varies by version. 1.14+: heightmaps, sections, block entities.
-/// Pre-1.14: ground_up_continuous, bit mask, biome data only (empty chunk).
 fn build_chunk_data_payload(
     chunk_x: i32,
     chunk_z: i32,
@@ -103,7 +76,7 @@ fn build_chunk_data_payload(
     encode_empty_heightmaps(&mut buf, version);
     write_varint(&mut buf, sections.len() as i32);
     buf.extend_from_slice(&sections);
-    write_varint(&mut buf, 0); // block_entities_count
+    write_varint(&mut buf, 0);
 
     if version.no_less_than(ProtocolVersion::V1_18) {
         encode_light_data(&mut buf, num_sections, version);
@@ -116,25 +89,22 @@ fn build_pre_1_14_empty_chunk(buf: &mut Vec<u8>, version: ProtocolVersion) {
     buf.push(1);
 
     if version.less_than(ProtocolVersion::V1_8) {
-        // 1.7: u16 primary_bit_mask + u16 add_bit_mask + zlib-compressed data
-        buf.extend_from_slice(&0_u16.to_be_bytes()); // primary_bit_mask
-        buf.extend_from_slice(&0_u16.to_be_bytes()); // add_bit_mask
+        buf.extend_from_slice(&0_u16.to_be_bytes());
+        buf.extend_from_slice(&0_u16.to_be_bytes());
         let biome_data = [0u8; 256];
         let compressed = zlib_compress(&biome_data);
         #[allow(clippy::cast_possible_truncation)]
         buf.extend_from_slice(&(compressed.len() as i32).to_be_bytes());
         buf.extend_from_slice(&compressed);
     } else if version.less_than(ProtocolVersion::V1_9) {
-        // 1.8: u16 primary_bit_mask + VarInt size + raw data
-        buf.extend_from_slice(&0_u16.to_be_bytes()); // primary_bit_mask
-        write_varint(buf, 256); // size
-        buf.extend_from_slice(&[0u8; 256]); // biome data
+        buf.extend_from_slice(&0_u16.to_be_bytes());
+        write_varint(buf, 256);
+        buf.extend_from_slice(&[0u8; 256]);
     } else {
-        // 1.9–1.13: VarInt primary_bit_mask + VarInt size + raw data + VarInt block_entities_count
-        write_varint(buf, 0); // primary_bit_mask
-        write_varint(buf, 256); // size
-        buf.extend_from_slice(&[0u8; 256]); // biome data
-        write_varint(buf, 0); // number_of_block_entities
+        write_varint(buf, 0);
+        write_varint(buf, 256);
+        buf.extend_from_slice(&[0u8; 256]);
+        write_varint(buf, 0);
     }
 }
 
@@ -157,11 +127,9 @@ fn encode_empty_chunk_sections(num_sections: usize, version: ProtocolVersion) ->
     buf
 }
 
-/// Pre-1.21.5: section has `VarInt(data_array_length)` after palette. 1.21.5+ omits it.
 fn encode_empty_section(buf: &mut Vec<u8>, version: ProtocolVersion) {
     let needs_data_length = version.less_than(ProtocolVersion::V1_21_5);
 
-    // Block states: count=0, bpe=0 (single-value), palette=air
     buf.extend_from_slice(&0_i16.to_be_bytes());
     buf.push(0);
     write_varint(buf, 0);
@@ -169,7 +137,6 @@ fn encode_empty_section(buf: &mut Vec<u8>, version: ProtocolVersion) {
         write_varint(buf, 0);
     }
 
-    // Biomes: bpe=0 (single-value), palette=plains
     buf.push(0);
     write_varint(buf, 0);
     if needs_data_length {
@@ -177,7 +144,6 @@ fn encode_empty_section(buf: &mut Vec<u8>, version: ProtocolVersion) {
     }
 }
 
-/// Pre-1.21.5: NBT compound. 1.21.5+: map format.
 fn encode_empty_heightmaps(buf: &mut Vec<u8>, version: ProtocolVersion) {
     if version.less_than(ProtocolVersion::V1_21_5) {
         encode_empty_heightmaps_nbt(buf, version);
@@ -187,21 +153,20 @@ fn encode_empty_heightmaps(buf: &mut Vec<u8>, version: ProtocolVersion) {
 }
 
 fn encode_empty_heightmaps_nbt(buf: &mut Vec<u8>, version: ProtocolVersion) {
-    buf.push(0x0A); // TAG_Compound
+    buf.push(0x0A);
     if version.less_than(ProtocolVersion::V1_20_2) {
-        buf.extend_from_slice(&0_u16.to_be_bytes()); // named root 
+        buf.extend_from_slice(&0_u16.to_be_bytes());
     }
     encode_nbt_long_array(buf, "MOTION_BLOCKING", 37);
     encode_nbt_long_array(buf, "WORLD_SURFACE", 37);
-    buf.push(0x00); // TAG_End
+    buf.push(0x00);
 }
 
-/// Indices: 1=WORLD_SURFACE, 4=MOTION_BLOCKING, 5=MOTION_BLOCKING_NO_LEAVES.
 fn encode_empty_heightmaps_map(buf: &mut Vec<u8>) {
     write_varint(buf, 3);
     for index in [1, 4, 5] {
         write_varint(buf, index);
-        write_varint(buf, 37); // 37 longs per heightmap
+        write_varint(buf, 37);
         for _ in 0..37 {
             buf.extend_from_slice(&0_i64.to_be_bytes());
         }
@@ -209,7 +174,7 @@ fn encode_empty_heightmaps_map(buf: &mut Vec<u8>) {
 }
 
 fn encode_nbt_long_array(buf: &mut Vec<u8>, name: &str, count: i32) {
-    buf.push(0x0C); // TAG_Long_Array
+    buf.push(0x0C);
     let name_bytes = name.as_bytes();
     buf.extend_from_slice(&(name_bytes.len() as u16).to_be_bytes());
     buf.extend_from_slice(name_bytes);
@@ -219,9 +184,8 @@ fn encode_nbt_long_array(buf: &mut Vec<u8>, name: &str, count: i32) {
     }
 }
 
-/// All sections marked as empty light (no arrays). Both masks set, both array counts = 0.
 fn encode_light_data(buf: &mut Vec<u8>, num_sections: usize, _version: ProtocolVersion) {
-    let total_bits = num_sections + 2; // +2 for edge sections
+    let total_bits = num_sections + 2;
     let num_longs: usize = total_bits.div_ceil(64);
     let all_set: u64 = if total_bits >= 64 {
         u64::MAX
@@ -229,7 +193,6 @@ fn encode_light_data(buf: &mut Vec<u8>, num_sections: usize, _version: ProtocolV
         (1_u64 << total_bits) - 1
     };
 
-    // sky_light_mask / block_light_mask: empty
     for _ in 0..2 {
         write_varint(buf, num_longs as i32);
         for _ in 0..num_longs {
@@ -237,7 +200,6 @@ fn encode_light_data(buf: &mut Vec<u8>, num_sections: usize, _version: ProtocolV
         }
     }
 
-    // empty_sky_light_mask / empty_block_light_mask: all set
     for _ in 0..2 {
         write_varint(buf, num_longs as i32);
         buf.extend_from_slice(&all_set.to_be_bytes());
@@ -246,11 +208,10 @@ fn encode_light_data(buf: &mut Vec<u8>, num_sections: usize, _version: ProtocolV
         }
     }
 
-    write_varint(buf, 0); // sky_light_arrays
-    write_varint(buf, 0); // block_light_arrays
+    write_varint(buf, 0);
+    write_varint(buf, 0);
 }
 
-/// Encodes a VarInt directly into a `Vec<u8>`.
 pub fn write_varint(buf: &mut Vec<u8>, value: i32) {
     let mut val = value as u32;
     loop {
@@ -361,10 +322,10 @@ mod tests {
         let frame = build_chunk_data_frame(0, 0, 16, ProtocolVersion::V1_7_2).unwrap();
         assert_eq!(frame.id, 0x21);
         let payload = frame.payload.as_ref();
-        assert_eq!(&payload[0..4], &0_i32.to_be_bytes()); // chunk_x
-        assert_eq!(&payload[4..8], &0_i32.to_be_bytes()); // chunk_z
-        assert_eq!(payload[8], 1); // ground_up_continuous
-        assert!(payload.len() > 17); // header + compressed data
+        assert_eq!(&payload[0..4], &0_i32.to_be_bytes());
+        assert_eq!(&payload[4..8], &0_i32.to_be_bytes());
+        assert_eq!(payload[8], 1);
+        assert!(payload.len() > 17);
     }
 
     #[test]

@@ -1,15 +1,9 @@
-//! Chunk Batch packets (Clientbound, 1.20.2+).
-//!
-//! Wrap chunk data transmissions for flow control. The client responds
-//! to `ChunkBatchFinished` with `ChunkBatchReceived` to acknowledge.
-
 use crate::codec::varint::VarInt;
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
 use crate::packets::Packet;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Chunk Batch Start packet — empty marker (Clientbound, 1.20.2+).
 #[derive(Debug, Clone)]
 pub struct CChunkBatchStart;
 
@@ -37,13 +31,8 @@ impl Packet for CChunkBatchStart {
     }
 }
 
-/// Chunk Batch Finished packet (Clientbound, 1.20.2+).
-///
-/// Signals the end of a chunk batch. The client responds with
-/// `ChunkBatchReceived`.
 #[derive(Debug, Clone)]
 pub struct CChunkBatchFinished {
-    /// Number of chunks in the batch.
     pub batch_size: i32,
 }
 

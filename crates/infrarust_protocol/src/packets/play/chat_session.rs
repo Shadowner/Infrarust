@@ -1,19 +1,7 @@
-//! Chat Session Update packet (Serverbound, Play).
-//!
-//! Contains the player's signed chat session key (Mojang signature).
-//! Dropped by the proxy in intercepted modes because offline backends
-//! can't validate the signature (UUID mismatch).
-
 use crate::error::ProtocolResult;
 use crate::packets::Packet;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Chat Session Update — sent by the client to inform the server of
-/// its signed chat session key.
-///
-/// The proxy never inspects this packet's contents. It only needs the
-/// packet ID (via the registry) to identify and drop it before it
-/// reaches an offline backend, so `decode` discards the body.
 #[derive(Debug, Clone)]
 pub struct SChatSessionUpdate;
 

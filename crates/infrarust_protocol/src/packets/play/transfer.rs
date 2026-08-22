@@ -3,9 +3,6 @@ use crate::error::ProtocolResult;
 use crate::packets::Packet;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Transfer packet (Clientbound, 1.20.5+).
-///
-/// Transfers a player to another server without disconnection.
 #[derive(Debug, Clone)]
 pub struct CTransfer {
     pub host: String,
