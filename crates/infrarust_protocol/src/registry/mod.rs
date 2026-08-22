@@ -222,7 +222,10 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use crate::codec::{McBufWriteExt, VarInt};
-    use crate::packets::SHandshake;
+    use crate::packets::{
+        CEncryptionRequest, CLoginPluginRequest, CLoginSuccess, SHandshake, SLoginAcknowledged,
+        SLoginPluginResponse,
+    };
     use std::sync::Arc;
 
     fn make_handshake_payload(
@@ -341,6 +344,53 @@ mod tests {
                 ProtocolVersion::V1_9,
             ),
             Some(0x01)
+        );
+    }
+
+    #[test]
+    fn test_protocol_26_2_login_mappings() {
+        let registry = build_default_registry();
+        let version = ProtocolVersion::V26_2;
+
+        assert_eq!(
+            registry.get_packet_id::<CEncryptionRequest>(
+                ConnectionState::Login,
+                Direction::Clientbound,
+                version,
+            ),
+            Some(0x01)
+        );
+        assert_eq!(
+            registry.get_packet_id::<CLoginSuccess>(
+                ConnectionState::Login,
+                Direction::Clientbound,
+                version,
+            ),
+            Some(0x02)
+        );
+        assert_eq!(
+            registry.get_packet_id::<CLoginPluginRequest>(
+                ConnectionState::Login,
+                Direction::Clientbound,
+                version,
+            ),
+            Some(0x04)
+        );
+        assert_eq!(
+            registry.get_packet_id::<SLoginPluginResponse>(
+                ConnectionState::Login,
+                Direction::Serverbound,
+                version,
+            ),
+            Some(0x02)
+        );
+        assert_eq!(
+            registry.get_packet_id::<SLoginAcknowledged>(
+                ConnectionState::Login,
+                Direction::Serverbound,
+                version,
+            ),
+            Some(0x03)
         );
     }
 

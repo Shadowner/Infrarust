@@ -382,12 +382,14 @@ impl Packet for CSetCompression {
 ///
 /// Properties (skin/texture data) are only sent in 1.19+.
 /// `strict_error_handling` is only sent in 1.20.5 and 1.21.
+/// `session_id` is sent in 26.2+.
 #[derive(Debug, Clone)]
 pub struct CLoginSuccess {
     pub uuid: uuid::Uuid,
     pub username: String,
     pub properties: Vec<Property>,
     pub strict_error_handling: bool,
+    pub session_id: Option<uuid::Uuid>,
 }
 
 impl Packet for CLoginSuccess {
@@ -453,11 +455,18 @@ impl Packet for CLoginSuccess {
                 false
             };
 
+        let session_id = if version.no_less_than(ProtocolVersion::V26_2) {
+            Some(r.read_uuid()?)
+        } else {
+            None
+        };
+
         Ok(Self {
             uuid,
             username,
             properties,
             strict_error_handling,
+            session_id,
         })
     }
 
@@ -498,6 +507,13 @@ impl Packet for CLoginSuccess {
         // strict_error_handling: only 1.20.5 and 1.21
         if version == ProtocolVersion::V1_20_5 || version == ProtocolVersion::V1_21 {
             w.write_bool(self.strict_error_handling)?;
+        }
+
+        if version.no_less_than(ProtocolVersion::V26_2) {
+            let session_id = self.session_id.ok_or_else(|| {
+                ProtocolError::invalid("login success session ID is required for 26.2+")
+            })?;
+            w.write_uuid(&session_id)?;
         }
 
         Ok(())
@@ -702,6 +718,7 @@ mod tests {
             username: "Notch".to_string(),
             properties: Vec::new(),
             strict_error_handling: false,
+            session_id: None,
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_8);
         assert_eq!(decoded.uuid, uuid);
@@ -728,6 +745,7 @@ mod tests {
                 },
             ],
             strict_error_handling: false,
+            session_id: None,
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_19);
         assert_eq!(decoded.uuid, uuid);
@@ -765,6 +783,7 @@ mod tests {
             username: "Notch".to_string(),
             properties: Vec::new(),
             strict_error_handling: true,
+            session_id: None,
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_20_5);
         assert!(decoded.strict_error_handling);
@@ -775,6 +794,22 @@ mod tests {
     }
 
     #[test]
+    fn test_login_success_v26_2_session_id() {
+        let uuid = uuid::Uuid::parse_str("069a79f4-44e9-4726-a5be-fca90e38aaf5").unwrap();
+        let session_id = uuid::Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+        let pkt = CLoginSuccess {
+            uuid,
+            username: "Notch".to_string(),
+            properties: Vec::new(),
+            strict_error_handling: false,
+            session_id: Some(session_id),
+        };
+
+        let decoded = round_trip(&pkt, ProtocolVersion::V26_2);
+        assert_eq!(decoded.session_id, Some(session_id));
+    }
+
+    #[test]
     fn test_login_success_v1_16_uuid_int_array() {
         let uuid = uuid::Uuid::parse_str("069a79f4-44e9-4726-a5be-fca90e38aaf5").unwrap();
         let pkt = CLoginSuccess {
@@ -782,6 +817,7 @@ mod tests {
             username: "Notch".to_string(),
             properties: Vec::new(),
             strict_error_handling: false,
+            session_id: None,
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_16);
         assert_eq!(decoded.uuid, uuid);

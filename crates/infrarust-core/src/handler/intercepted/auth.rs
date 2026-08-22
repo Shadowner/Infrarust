@@ -1,6 +1,6 @@
 //! Authentication strategy for intercepted proxy modes.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::lifecycle::PreLoginResult;
@@ -338,12 +338,17 @@ pub(super) async fn send_login_success(
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
+    static SESSION_ID: OnceLock<uuid::Uuid> = OnceLock::new();
+
     let login_success = CLoginSuccess {
         uuid,
         username: username.to_string(),
         properties: properties.to_vec(),
         strict_error_handling: version.no_less_than(ProtocolVersion::V1_20_5)
             && version.no_greater_than(ProtocolVersion::V1_21),
+        session_id: version
+            .no_less_than(ProtocolVersion::V26_2)
+            .then(|| *SESSION_ID.get_or_init(uuid::Uuid::new_v4)),
     };
 
     client.send_packet(&login_success, registry).await?;

@@ -50,7 +50,9 @@ pub(crate) fn decode_utf16be(data: &[u8]) -> ProtocolResult<String> {
         return Err(ProtocolError::invalid("UTF-16BE data has odd length"));
     }
     let code_units: Vec<u16> = data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_be_bytes([c[0], c[1]]))
         .collect();
     String::from_utf16(&code_units).map_err(|_| ProtocolError::invalid("invalid UTF-16BE string"))

@@ -354,6 +354,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x0B, ProtocolVersion::V1_20_5, false)
     .map(0x0D, ProtocolVersion::V1_21_2, false)
     .map(0x0E, ProtocolVersion::V1_21_6, false)
+    .map(0x0F, ProtocolVersion::V26_1, false)
     .register(&mut registry);
 
     PacketRegistration::<crate::packets::CTabCompleteResponse>::new(
@@ -394,6 +395,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x27, ProtocolVersion::V1_21_2, false)
     .map(0x26, ProtocolVersion::V1_21_5, false)
     .map(0x2B, ProtocolVersion::V1_21_9, false)
+    .map(0x2C, ProtocolVersion::V26_1, false)
     .register(&mut registry);
 
     // Disconnect Clientbound (Play)
@@ -441,6 +443,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x2C, ProtocolVersion::V1_21_2, true)
     .map(0x2B, ProtocolVersion::V1_21_5, true)
     .map(0x30, ProtocolVersion::V1_21_9, true)
+    .map(0x31, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     // Respawn Clientbound (encode-only: proxy doesn't intercept)
@@ -468,6 +471,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x4C, ProtocolVersion::V1_21_2, true)
     .map(0x4B, ProtocolVersion::V1_21_5, true)
     .map(0x50, ProtocolVersion::V1_21_9, true)
+    .map(0x52, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     // PluginMessage Clientbound (encode-only: proxy doesn't intercept)
@@ -520,6 +524,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x73, ProtocolVersion::V1_21_2, true)
     .map(0x72, ProtocolVersion::V1_21_5, true)
     .map(0x77, ProtocolVersion::V1_21_9, true)
+    .map(0x79, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     // Legacy Title Clientbound (pre-1.17, 1.8+, encode-only)
@@ -552,6 +557,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x6C, ProtocolVersion::V1_21_2, true)
     .map(0x6B, ProtocolVersion::V1_21_5, true)
     .map(0x70, ProtocolVersion::V1_21_9, true)
+    .map(0x72, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     // SetSubtitle Clientbound (encode-only: injected by plugin system)
@@ -570,6 +576,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x6A, ProtocolVersion::V1_21_2, true)
     .map(0x69, ProtocolVersion::V1_21_5, true)
     .map(0x6E, ProtocolVersion::V1_21_9, true)
+    .map(0x70, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     // SetTitleTimes Clientbound (encode-only: injected by plugin system)
@@ -588,6 +595,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x6D, ProtocolVersion::V1_21_2, true)
     .map(0x6C, ProtocolVersion::V1_21_5, true)
     .map(0x71, ProtocolVersion::V1_21_9, true)
+    .map(0x73, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     // Transfer Clientbound (encode-only: proxy doesn't intercept)
@@ -598,6 +606,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x73, ProtocolVersion::V1_20_5, true)
     .map(0x7A, ProtocolVersion::V1_21_2, true)
     .map(0x7F, ProtocolVersion::V1_21_9, true)
+    .map(0x81, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     // StartConfiguration Clientbound (encode-only: proxy sends during server switch)
@@ -611,6 +620,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x70, ProtocolVersion::V1_21_2, true)
     .map(0x6F, ProtocolVersion::V1_21_5, true)
     .map(0x74, ProtocolVersion::V1_21_9, true)
+    .map(0x76, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     // GameEvent Clientbound (encode-only: used by Limbo engine)
@@ -742,6 +752,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x0C, ProtocolVersion::V1_20_5, false)
     .map(0x0E, ProtocolVersion::V1_21_2, false)
     .map(0x0F, ProtocolVersion::V1_21_6, false)
+    .map(0x10, ProtocolVersion::V26_1, false)
     .register(&mut registry);
 
     // KeepAlive Serverbound
@@ -766,6 +777,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x18, ProtocolVersion::V1_20_5, false)
     .map(0x1A, ProtocolVersion::V1_21_2, false)
     .map(0x1B, ProtocolVersion::V1_21_6, false)
+    .map(0x1C, ProtocolVersion::V26_1, false)
     .register(&mut registry);
 
     // ChatMessage Serverbound — registered as encode_only because the proxy
@@ -792,6 +804,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x06, ProtocolVersion::V1_20_5, true)
     .map(0x07, ProtocolVersion::V1_21_2, true)
     .map(0x08, ProtocolVersion::V1_21_6, true)
+    .map(0x09, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     // ChatCommand Serverbound (1.19+) — registered as encode_only because
@@ -808,6 +821,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x04, ProtocolVersion::V1_20_5, true)
     .map(0x05, ProtocolVersion::V1_21_2, true)
     .map(0x06, ProtocolVersion::V1_21_6, true)
+    .map(0x07, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     // Chat Session Update Serverbound (encode-only: proxy uses ID for filtering)
@@ -818,6 +832,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x07, ProtocolVersion::V1_21, true)
     .map(0x08, ProtocolVersion::V1_21_2, true)
     .map(0x09, ProtocolVersion::V1_21_6, true)
+    .map(0x0A, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     // PluginMessage Serverbound (encode-only: proxy doesn't intercept)
@@ -841,6 +856,7 @@ pub fn build_default_registry() -> PacketRegistry {
     .map(0x12, ProtocolVersion::V1_20_5, true)
     .map(0x14, ProtocolVersion::V1_21_2, true)
     .map(0x15, ProtocolVersion::V1_21_6, true)
+    .map(0x16, ProtocolVersion::V26_1, true)
     .register(&mut registry);
 
     registry

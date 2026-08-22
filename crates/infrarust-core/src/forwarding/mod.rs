@@ -56,6 +56,11 @@ pub enum ForwardingHandler {
 }
 
 impl ForwardingHandler {
+    /// Returns whether this handler uses Velocity modern forwarding.
+    pub const fn is_velocity(&self) -> bool {
+        matches!(self, Self::Velocity(_))
+    }
+
     pub const fn modifies_handshake(&self) -> bool {
         matches!(self, Self::Legacy(_) | Self::BungeeGuard(_))
     }
