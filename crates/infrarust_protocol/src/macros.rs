@@ -14,6 +14,32 @@ macro_rules! ids {
 
 macro_rules! define_twin_packets {
     (
+        packets: {
+            $(
+                $( #[$pmeta:meta] )*
+                $name:ident : $direction:ident = $ids:expr
+            ),+ $(,)?
+        },
+        state: $state:expr,
+        encode_only: $encode_only:expr,
+        fields: $fields:tt,
+        shared_impl: $shared_impl:tt,
+        decode($r:ident, $decode_ver:ident): $decode_body:expr,
+        encode($self_:ident, $w:ident, $encode_ver:ident): $encode_body:expr $(,)?
+    ) => {
+        $(
+            define_twin_packets!(@one
+                $( #[$pmeta] )*
+                $name, $state, $crate::version::Direction::$direction, $ids, $encode_only,
+                $fields,
+                decode($r, $decode_ver): $decode_body,
+                encode($self_, $w, $encode_ver): $encode_body
+            );
+
+            impl $name $shared_impl
+        )+
+    };
+    (
         clientbound: $c_name:ident,
         serverbound: $s_name:ident,
         state: $state:expr,
@@ -38,11 +64,13 @@ macro_rules! define_twin_packets {
         );
     };
     (@one
+        $( #[$pmeta:meta] )*
         $name:ident, $state:expr, $direction:expr, $ids:expr, $encode_only:expr,
         { $( pub $field:ident : $ty:ty ),* $(,)? },
         decode($r:ident, $decode_ver:ident): $decode_body:expr,
         encode($self_:ident, $w:ident, $encode_ver:ident): $encode_body:expr
     ) => {
+        $( #[$pmeta] )*
         #[derive(Debug, Clone)]
         pub struct $name {
             $( pub $field : $ty, )*

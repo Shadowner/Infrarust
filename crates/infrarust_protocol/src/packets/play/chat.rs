@@ -1,5 +1,6 @@
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
+use crate::packets::play::common::{read_text_component, write_text_component};
 use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
@@ -46,21 +47,9 @@ impl Packet for CSystemChatMessage {
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
-        if version.less_than(ProtocolVersion::V1_20_3) {
-            let content = r.read_string()?.into_bytes();
-            let overlay = r.read_bool()?;
-            Ok(Self { content, overlay })
-        } else {
-            let remaining = r.read_remaining()?;
-            if remaining.is_empty() {
-                return Err(crate::error::ProtocolError::invalid(
-                    "CSystemChatMessage: empty payload",
-                ));
-            }
-            let overlay = remaining[remaining.len() - 1] != 0;
-            let content = remaining[..remaining.len() - 1].to_vec();
-            Ok(Self { content, overlay })
-        }
+        let content = read_text_component(r, version, 1, Self::NAME)?;
+        let overlay = r.read_bool()?;
+        Ok(Self { content, overlay })
     }
 
     fn encode(
@@ -68,16 +57,7 @@ impl Packet for CSystemChatMessage {
         mut w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
-        if version.less_than(ProtocolVersion::V1_20_3) {
-            let json = std::str::from_utf8(&self.content).map_err(|_| {
-                crate::error::ProtocolError::invalid(
-                    "CSystemChatMessage content is not valid UTF-8 for JSON version",
-                )
-            })?;
-            w.write_string(json)?;
-        } else {
-            w.write_all(&self.content)?;
-        }
+        write_text_component(w, &self.content, version, Self::NAME, "content")?;
         w.write_bool(self.overlay)?;
         Ok(())
     }
@@ -215,12 +195,7 @@ impl Packet for SChatCommand {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-
-    fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        P::decode(&mut buf.as_slice(), version).unwrap()
-    }
+    use crate::packets::round_trip;
 
     #[test]
     fn test_system_chat_round_trip_json() {
@@ -250,6 +225,24 @@ mod tests {
         let pkt = CSystemChatMessage::from_json(r#"{"text":"Action bar"}"#, true);
         let decoded = round_trip(&pkt, ProtocolVersion::V1_19_4);
         assert!(decoded.overlay);
+    }
+
+    #[test]
+    fn test_system_chat_nbt_content_stops_before_overlay() {
+        let pkt = CSystemChatMessage::from_nbt(vec![0x0A, 0x00, 0x00, 0x01], false);
+        let mut buf = Vec::new();
+        pkt.encode(&mut buf, ProtocolVersion::V1_20_3).unwrap();
+        assert_eq!(buf, vec![0x0A, 0x00, 0x00, 0x01, 0x00]);
+
+        let decoded =
+            CSystemChatMessage::decode(&mut buf.as_slice(), ProtocolVersion::V1_20_3).unwrap();
+        assert_eq!(decoded.content, vec![0x0A, 0x00, 0x00, 0x01]);
+        assert!(!decoded.overlay);
+    }
+
+    #[test]
+    fn test_system_chat_nbt_empty_payload_is_rejected() {
+        assert!(CSystemChatMessage::decode(&mut [].as_slice(), ProtocolVersion::V1_20_3).is_err());
     }
 
     #[test]

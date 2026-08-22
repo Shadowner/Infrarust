@@ -120,13 +120,8 @@ impl Packet for CPingResponse {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::packets::round_trip;
     use crate::registry::build_default_registry;
-
-    fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        P::decode(&mut buf.as_slice(), version).unwrap()
-    }
 
     #[test]
     fn test_status_request_round_trip() {

@@ -1,5 +1,5 @@
-use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
+use crate::packets::play::common::{read_text_component, write_text_component};
 use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
@@ -49,30 +49,16 @@ impl Packet for CDisconnect {
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
-        let reason = if version.less_than(ProtocolVersion::V1_20_3) {
-            r.read_string()?.into_bytes()
-        } else {
-            r.read_remaining()?
-        };
+        let reason = read_text_component(r, version, 0, Self::NAME)?;
         Ok(Self { reason })
     }
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
-        if version.less_than(ProtocolVersion::V1_20_3) {
-            let json = std::str::from_utf8(&self.reason).map_err(|_| {
-                crate::error::ProtocolError::invalid(
-                    "CDisconnect reason is not valid UTF-8 for JSON version",
-                )
-            })?;
-            w.write_string(json)?;
-        } else {
-            w.write_all(&self.reason)?;
-        }
-        Ok(())
+        write_text_component(w, &self.reason, version, Self::NAME, "reason")
     }
 }
 
@@ -80,12 +66,7 @@ impl Packet for CDisconnect {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-
-    fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        P::decode(&mut buf.as_slice(), version).unwrap()
-    }
+    use crate::packets::round_trip;
 
     #[test]
     fn test_disconnect_round_trip_json() {

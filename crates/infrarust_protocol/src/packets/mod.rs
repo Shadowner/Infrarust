@@ -28,6 +28,14 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 use std::any::Any;
 use std::io::Write;
 
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+pub(crate) fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
+    let mut buf = Vec::new();
+    packet.encode(&mut buf, version).unwrap();
+    P::decode(&mut buf.as_slice(), version).unwrap()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketMapping {
     pub id: i32,

@@ -591,13 +591,8 @@ impl Packet for SLoginAcknowledged {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::packets::round_trip;
     use crate::registry::build_default_registry;
-
-    fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        P::decode(&mut buf.as_slice(), version).unwrap()
-    }
 
     #[test]
     fn test_login_start_v1_8_name_only() {
