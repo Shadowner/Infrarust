@@ -15,12 +15,21 @@ export async function fetchAuthlibInjector(paths) {
   return jar;
 }
 
+const DEAD_API = 'http://127.0.0.1:1';
+const MOJANG_HOSTS_OFF = [
+  `-Dminecraft.api.auth.host=${DEAD_API}`,
+  `-Dminecraft.api.account.host=${DEAD_API}`,
+  `-Dminecraft.api.session.host=${DEAD_API}`,
+  `-Dminecraft.api.services.host=${DEAD_API}`,
+];
+
 export function offlineSession(username) {
   return {
     username,
     uuid: offlineUuid(username),
     accessToken: '0',
     userType: 'msa',
+    jvmExtra: MOJANG_HOSTS_OFF,
   };
 }
 
