@@ -195,21 +195,27 @@ async function main() {
       });
       results.push(row);
       printRow(row, scenarios);
+      writeOut(outDir, versions, results, scenarios);
       if (row.cells.some((c) => c.status === 'fail') && !opts.keepGoing) break;
     }
   } finally {
     await shutdown();
   }
 
-  const report = renderReport(results, scenarios);
-  writeFileSync(join(outDir, 'real-client.md'), report.markdown);
-  writeFileSync(join(outDir, 'real-client.json'), JSON.stringify({ versions, results }, null, 2));
+  const report = writeOut(outDir, versions, results, scenarios);
 
   console.log(`\n${report.summary}`);
   console.log(`report: ${join(outDir, 'real-client.md')}`);
 
   if (results.some((r) => r.cells.some((c) => c.status === 'fail'))) exitCode = 1;
   process.exit(exitCode);
+}
+
+function writeOut(outDir, versions, results, scenarios) {
+  const report = renderReport(results, scenarios);
+  writeFileSync(join(outDir, 'real-client.md'), report.markdown);
+  writeFileSync(join(outDir, 'real-client.json'), JSON.stringify({ versions, results }, null, 2));
+  return report;
 }
 
 async function runVersion(ctx) {
