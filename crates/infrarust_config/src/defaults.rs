@@ -137,3 +137,7 @@ pub const fn docker_reconnect_delay() -> Duration {
 pub const fn announce_proxy_commands() -> bool {
     true
 }
+
+pub fn session_url() -> String {
+    "https://sessionserver.mojang.com/session/minecraft/hasJoined".to_string()
+}

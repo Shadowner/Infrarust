@@ -1,0 +1,142 @@
+x-mc: &mc
+  tty: true
+  stdin_open: true
+  restart: "no"
+  environment: &mc-env
+    EULA: "TRUE"
+    ONLINE_MODE: "FALSE"
+    GUI: "FALSE"
+    MEMORY: "1G"
+    LEVEL_TYPE: "FLAT"
+    VIEW_DISTANCE: "4"
+    SIMULATION_DISTANCE: "4"
+    SPAWN_PROTECTION: "0"
+    SPAWN_ANIMALS: "FALSE"
+    SPAWN_MONSTERS: "FALSE"
+    SPAWN_NPCS: "FALSE"
+    SYNC_CHUNK_WRITES: "FALSE"
+    MAX_PLAYERS: "20"
+  healthcheck:
+    test: ["CMD", "mc-health"]
+    start_period: 20s
+    interval: 5s
+    retries: 40
+
+x-velocity-modern: &velocity-modern
+  <<: *mc-env
+  TYPE: "PAPER"
+  CFG_VELOCITY_SECRET: "e2eSecretForVelocityForwarding01"
+
+services:
+  drasl:
+    profiles: ["auth"]
+    image: docker.io/unmojang/drasl:3.4.4
+    container_name: e2e-drasl
+    ports: ["25585:25585"]
+    volumes:
+      - ./fixtures/drasl:/etc/drasl:z
+      - ./.drasl-data:/var/lib/drasl:z
+    restart: "no"
+
+  plain-1_21_4:
+    <<: *mc
+    profiles: ["v1_21_4"]
+    image: docker.io/itzg/minecraft-server:java21
+    container_name: e2e-plain-1-21-4
+    environment: { <<: *mc-env, TYPE: "PAPER", VERSION: "1.21.4" }
+    ports: ["25700:25565"]
+
+  velocity-1_21_4:
+    <<: *mc
+    profiles: ["v1_21_4"]
+    image: docker.io/itzg/minecraft-server:java21
+    container_name: e2e-velocity-1-21-4
+    environment: { <<: *velocity-modern, VERSION: "1.21.4" }
+    volumes: ["./.paper/config:/data/config:z"]
+    ports: ["25701:25565"]
+
+  bungee-1_21_4:
+    <<: *mc
+    profiles: ["v1_21_4"]
+    image: docker.io/itzg/minecraft-server:java21
+    container_name: e2e-bungee-1-21-4
+    environment: { <<: *mc-env, TYPE: "PAPER", VERSION: "1.21.4" }
+    volumes: ["./.paper/spigot.yml:/data/spigot.yml:z"]
+    ports: ["25702:25565"]
+
+  plain-1_20_1:
+    <<: *mc
+    profiles: ["v1_20_1"]
+    image: docker.io/itzg/minecraft-server:java17
+    container_name: e2e-plain-1-20-1
+    environment: { <<: *mc-env, TYPE: "PAPER", VERSION: "1.20.1" }
+    ports: ["25700:25565"]
+
+  velocity-1_20_1:
+    <<: *mc
+    profiles: ["v1_20_1"]
+    image: docker.io/itzg/minecraft-server:java17
+    container_name: e2e-velocity-1-20-1
+    environment: { <<: *velocity-modern, VERSION: "1.20.1" }
+    volumes: ["./.paper/config:/data/config:z"]
+    ports: ["25701:25565"]
+
+  bungee-1_20_1:
+    <<: *mc
+    profiles: ["v1_20_1"]
+    image: docker.io/itzg/minecraft-server:java17
+    container_name: e2e-bungee-1-20-1
+    environment: { <<: *mc-env, TYPE: "PAPER", VERSION: "1.20.1" }
+    volumes: ["./.paper/spigot.yml:/data/spigot.yml:z"]
+    ports: ["25702:25565"]
+
+  plain-1_16_5:
+    <<: *mc
+    profiles: ["v1_16_5"]
+    image: docker.io/itzg/minecraft-server:java8
+    container_name: e2e-plain-1-16-5
+    environment: { <<: *mc-env, TYPE: "PAPER", VERSION: "1.16.5" }
+    ports: ["25700:25565"]
+
+  velocity-1_16_5:
+    <<: *mc
+    profiles: ["v1_16_5"]
+    image: docker.io/itzg/minecraft-server:java8
+    container_name: e2e-velocity-1-16-5
+    environment: { <<: *velocity-modern, VERSION: "1.16.5" }
+    volumes: ["./.paper/legacy/paper.yml:/data/paper.yml:z"]
+    ports: ["25701:25565"]
+
+  bungee-1_16_5:
+    <<: *mc
+    profiles: ["v1_16_5"]
+    image: docker.io/itzg/minecraft-server:java8
+    container_name: e2e-bungee-1-16-5
+    environment: { <<: *mc-env, TYPE: "PAPER", VERSION: "1.16.5" }
+    volumes: ["./.paper/spigot.yml:/data/spigot.yml:z"]
+    ports: ["25702:25565"]
+
+  plain-1_12_2:
+    <<: *mc
+    profiles: ["v1_12_2"]
+    image: docker.io/itzg/minecraft-server:java8
+    container_name: e2e-plain-1-12-2
+    environment: { <<: *mc-env, TYPE: "PAPER", VERSION: "1.12.2" }
+    ports: ["25700:25565"]
+
+  bungee-1_12_2:
+    <<: *mc
+    profiles: ["v1_12_2"]
+    image: docker.io/itzg/minecraft-server:java8
+    container_name: e2e-bungee-1-12-2
+    environment: { <<: *mc-env, TYPE: "PAPER", VERSION: "1.12.2" }
+    volumes: ["./.paper/spigot.yml:/data/spigot.yml:z"]
+    ports: ["25702:25565"]
+
+  plain-1_7_10:
+    <<: *mc
+    profiles: ["v1_7_10"]
+    image: docker.io/itzg/minecraft-server:java8
+    container_name: e2e-plain-1-7-10
+    environment: { <<: *mc-env, TYPE: "VANILLA", VERSION: "1.7.10" }
+    ports: ["25700:25565"]

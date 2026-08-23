@@ -753,6 +753,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         unknown_domain_behavior: Default::default(),
         announce_proxy_commands: crate::defaults::announce_proxy_commands(),
         forwarding: None,
+        auth: Default::default(),
         ip_filter: None,
         web: None,
         permissions: Default::default(),

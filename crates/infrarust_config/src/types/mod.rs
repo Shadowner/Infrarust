@@ -1,6 +1,7 @@
 //! Fundamental types: enums, value objects, and shared configuration structs.
 
 mod address;
+mod auth;
 pub(crate) mod balance;
 mod ban;
 mod docker;
@@ -17,6 +18,7 @@ mod telemetry;
 mod web;
 
 pub use address::{DomainRewrite, ServerAddress};
+pub use auth::AuthConfig;
 pub use balance::{BalanceConfig, BalanceStrategy, WeightedAddress};
 pub use ban::BanConfig;
 pub use docker::DockerProviderConfig;

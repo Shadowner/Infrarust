@@ -1,0 +1,5 @@
+proxies:
+  velocity:
+    enabled: true
+    online-mode: true
+    secret: '${CFG_VELOCITY_SECRET}'
