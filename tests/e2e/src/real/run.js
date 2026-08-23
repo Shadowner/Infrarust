@@ -302,6 +302,18 @@ async function runVersion(ctx) {
       });
       row.cells.push(cell);
 
+      if (scenario.id === 'direct' && cell.status === 'fail' && !cell.observations?.connected) {
+        for (const rest of scenarios.slice(scenarioIndex + 1)) {
+          row.cells.push({
+            scenario: rest.id,
+            status: 'untrusted',
+            detail: 'not run: this release cannot start a client here, so nothing it did could be attributed to the proxy',
+          });
+        }
+        row.notes.push('the client never opened a socket; the rest of the row was not run');
+        break;
+      }
+
       if (scenario.gatesVelocity) {
         const obs = cell.observations;
         if (!obs || obs.stalledOut || obs.clientCrashed || obs.clientReason === 'spawn-failed') {
@@ -456,6 +468,7 @@ async function runCase(ctx) {
     proxyError: probe.proxyError,
     chatSaid: probe.chatSaid,
     chatRelayed: run.lines.some((l) => l.includes(chatToken)),
+    connected: connect.at !== null,
     clientCrashed: run.lines.some((l) =>
       /Reported exception thrown!|A fatal error has been detected|Minecraft has crashed/.test(l),
     ),
