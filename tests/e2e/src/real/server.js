@@ -118,7 +118,8 @@ export class Server {
   }
 
   async waitForJoin(username, { since = 0, timeoutMs = 90000, otherPlayers = /\bE\d\ds\d\d\b/ } = {}) {
-    const needle = `${username} joined the game`;
+    const joinedLine = `${username} joined the game`;
+    const loggedIn = new RegExp(`\\b${username}\\b\\[[^\\]]*\\] logged in with entity id`);
     const deadline = Date.now() + timeoutMs;
     const mine = (line) => {
       const named = line.match(otherPlayers);
@@ -126,7 +127,7 @@ export class Server {
     };
     for (;;) {
       const window = this.lines.slice(since);
-      const joined = window.find((l) => l.includes(needle));
+      const joined = window.find((l) => l.includes(joinedLine)) ?? window.find((l) => loggedIn.test(l));
       if (joined) return { joined: true, line: joined, window };
       const refused = window
         .filter(mine)

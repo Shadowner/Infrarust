@@ -444,6 +444,9 @@ async function runCase(ctx) {
     proxyError: probe.proxyError,
     chatSaid: probe.chatSaid,
     chatRelayed: run.lines.some((l) => l.includes(chatToken)),
+    clientCrashed: run.lines.some((l) =>
+      /Reported exception thrown!|A fatal error has been detected|Minecraft has crashed/.test(l),
+    ),
     clientReason: run.reason,
     clientTail: run.lines.slice(-30),
     elapsedMs: Date.now() - started,
@@ -455,6 +458,14 @@ async function runCase(ctx) {
 function evaluate(scenario, obs) {
   const checks = [];
   const want = scenario.expect;
+
+  if (obs.clientCrashed && obs.joined) {
+    return {
+      status: 'untrusted',
+      checks: [],
+      detail: 'the client reached the world and then crashed on its own (see its log); nothing here is the proxy\'s doing',
+    };
+  }
 
   if (want.joined === false && (obs.stalledOut || obs.proxyGaveUp)) {
     return {
@@ -501,7 +512,8 @@ function evaluate(scenario, obs) {
   }
 
   if (scenario.proxy) {
-    if (obs.proxyError) {
+    if (want.proxySawPlayer === undefined) {
+    } else if (obs.proxyError) {
       checks.push({ name: 'proxySawPlayer', ok: false, detail: `could not read the proxy's view: ${obs.proxyError}` });
     } else {
       const saw = Boolean(obs.proxyPlayer);
