@@ -258,6 +258,16 @@ mod tests {
         ) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
             unimplemented!("mock")
         }
+        fn load_balancer_service(
+            &self,
+        ) -> &dyn infrarust_api::services::load_balancer::LoadBalancerService {
+            unimplemented!("mock")
+        }
+        fn load_balancer_service_handle(
+            &self,
+        ) -> Arc<dyn infrarust_api::services::load_balancer::LoadBalancerService> {
+            unimplemented!("mock")
+        }
         fn event_bus_handle(&self) -> Arc<dyn infrarust_api::event::bus::EventBus> {
             unimplemented!("mock")
         }

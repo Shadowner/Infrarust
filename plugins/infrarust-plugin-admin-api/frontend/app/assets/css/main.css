@@ -503,6 +503,16 @@ pre,
   animation: ssePing 0.3s ease-out;
 }
 
+/* ── Backend Probe Ring ── */
+@keyframes backendProbe {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.25); opacity: 0.55; }
+}
+
+.backend-probe-pulse {
+  animation: backendProbe 1.4s ease-in-out infinite;
+}
+
 /* ── New Log Entry Flash ── */
 @keyframes logFlash {
   from { background: rgba(232, 131, 42, 0.1); }
@@ -522,5 +532,10 @@ pre,
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  .backend-probe-pulse {
+    animation: none !important;
+    transform: none !important;
   }
 }

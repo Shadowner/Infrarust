@@ -1,27 +1,27 @@
 <script setup lang="ts">
 import { ArrowLeftIcon } from '@heroicons/vue/24/outline';
-import type { CreateServerRequest, ApiEnvelope, MutationResult } from '~/types/api';
+import type { ApiEnvelope, MutationResult, ServerConfig } from '~/types/api';
 
 const { request } = useApi();
 const { push } = useToast();
 const submitting = ref(false);
 
-async function handleCreate(payload: { id?: string; domains: string[]; addresses: string[]; mode: string; handlers: string[] }) {
+async function handleSubmit(payload: { kind: 'config'; config: ServerConfig } | { kind: 'raw'; toml: string }) {
+  if (payload.kind === 'raw') {
+    push({ type: 'error', title: 'Raw TOML is only available on an existing server' });
+    return;
+  }
+
   submitting.value = true;
   try {
-    const body: CreateServerRequest = {
-      id: payload.id!,
-      domains: payload.domains,
-      addresses: payload.addresses,
-      proxy_mode: payload.mode,
-      limbo_handlers: payload.handlers.length > 0 ? payload.handlers : undefined,
-    };
     await request<ApiEnvelope<MutationResult>>('/servers', {
       method: 'POST',
-      body: body as unknown as Record<string, unknown>,
+      body: payload.config as unknown as Record<string, unknown>,
     });
-    push({ type: 'success', title: `Server '${payload.id}' created` });
-    navigateTo(`/servers/${payload.id}`);
+    // The proxy files the server under `name ?? id`, so a Display name becomes its identity.
+    const createdId = payload.config.name ?? payload.config.id;
+    push({ type: 'success', title: `Server '${createdId}' created` });
+    navigateTo(`/servers/${createdId}`);
   } catch (e: unknown) {
     const msg = (e as { data?: { error?: { message?: string } } })?.data?.error?.message ?? 'Failed to create server';
     push({ type: 'error', title: msg });
@@ -40,7 +40,7 @@ async function handleCreate(payload: { id?: string; domains: string[]; addresses
 
     <div>
       <div class="flex items-center gap-2">
-        <h2 class="text-xl font-bold tracking-tight">Create Server</h2>
+        <h2 class="text-xl font-bold tracking-tight">Create server</h2>
         <span class="rounded bg-[var(--ir-accent-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[var(--ir-accent)]">API</span>
       </div>
       <p class="mt-1 text-sm text-[var(--ir-text-muted)]">Add a new API-managed server to the proxy.</p>
@@ -48,7 +48,8 @@ async function handleCreate(payload: { id?: string; domains: string[]; addresses
 
     <ServerForm
       :is-edit="false"
-      @submit="handleCreate"
+      :submitting="submitting"
+      @submit="handleSubmit"
       @cancel="navigateTo('/servers')"
     />
   </div>

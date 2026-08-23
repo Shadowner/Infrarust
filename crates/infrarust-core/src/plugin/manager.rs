@@ -9,9 +9,9 @@ use infrarust_api::error::PluginError;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::{
-    ban_service::BanService, config_service::ConfigService, player_registry::PlayerRegistry,
-    plugin_registry::PluginRegistry, proxy_info::ProxyInfo, scheduler::Scheduler,
-    server_manager::ServerManager,
+    ban_service::BanService, config_service::ConfigService, load_balancer::LoadBalancerService,
+    player_registry::PlayerRegistry, plugin_registry::PluginRegistry, proxy_info::ProxyInfo,
+    scheduler::Scheduler, server_manager::ServerManager,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -33,6 +33,7 @@ pub struct PluginServices {
     pub command_manager: Arc<dyn CommandManager>,
     pub scheduler: Arc<dyn Scheduler>,
     pub config_service: Arc<dyn ConfigService>,
+    pub load_balancer_service: Arc<dyn LoadBalancerService>,
     pub plugin_registry: Arc<dyn PluginRegistry>,
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
@@ -49,6 +50,7 @@ pub struct PluginManager {
     load_order: Vec<String>,
     loader_mapping: HashMap<String, String>, // plugin_id -> loader_name
     loaded_loaders: Vec<String>,             // loaders whose on_load() succeeded
+    disabled: HashSet<String>,               // plugin ids disabled via config
 }
 
 struct LoadedPlugin {
@@ -67,7 +69,12 @@ impl PluginManager {
             load_order: Vec::new(),
             loader_mapping: HashMap::new(),
             loaded_loaders: Vec::new(),
+            disabled: HashSet::new(),
         }
+    }
+
+    pub fn set_disabled_plugins(&mut self, ids: HashSet<String>) {
+        self.disabled = ids;
     }
 
     /// Discovers all plugins via loaders, detects duplicate IDs,
@@ -131,6 +138,11 @@ impl PluginManager {
         self.loaded_loaders = ok_loaders;
 
         for plugin_id in &load_order {
+            if self.disabled.contains(plugin_id) {
+                tracing::info!(plugin = %plugin_id, "Plugin disabled via config, skipping");
+                self.states.insert(plugin_id.clone(), PluginState::Disabled);
+                continue;
+            }
             let loader_name = match self.loader_mapping.get(plugin_id) {
                 Some(name) => name.clone(),
                 None => {
@@ -372,37 +384,35 @@ mod tests {
             self
         }
 
-        fn event_bus(&self) -> &dyn infrarust_api::event::bus::EventBus {
+        fn event_bus(&self) -> &dyn EventBus {
             unimplemented!("mock")
         }
 
-        fn player_registry(&self) -> &dyn infrarust_api::services::player_registry::PlayerRegistry {
+        fn player_registry(&self) -> &dyn PlayerRegistry {
             unimplemented!("mock")
         }
 
-        fn player_registry_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::player_registry::PlayerRegistry> {
+        fn player_registry_handle(&self) -> Arc<dyn PlayerRegistry> {
             unimplemented!("mock")
         }
 
-        fn server_manager(&self) -> &dyn infrarust_api::services::server_manager::ServerManager {
+        fn server_manager(&self) -> &dyn ServerManager {
             unimplemented!("mock")
         }
 
-        fn ban_service(&self) -> &dyn infrarust_api::services::ban_service::BanService {
+        fn ban_service(&self) -> &dyn BanService {
             unimplemented!("mock")
         }
 
-        fn config_service(&self) -> &dyn infrarust_api::services::config_service::ConfigService {
+        fn config_service(&self) -> &dyn ConfigService {
             unimplemented!("mock")
         }
 
-        fn command_manager(&self) -> &dyn infrarust_api::command::CommandManager {
+        fn command_manager(&self) -> &dyn CommandManager {
             unimplemented!("mock")
         }
 
-        fn scheduler(&self) -> &dyn infrarust_api::services::scheduler::Scheduler {
+        fn scheduler(&self) -> &dyn Scheduler {
             unimplemented!("mock")
         }
 
@@ -432,37 +442,37 @@ mod tests {
         fn plugin_id(&self) -> &str {
             &self.plugin_id
         }
-        fn data_dir(&self) -> std::path::PathBuf {
-            std::path::PathBuf::from("plugins").join(&self.plugin_id)
+        fn data_dir(&self) -> PathBuf {
+            PathBuf::from("plugins").join(&self.plugin_id)
         }
-        fn plugin_registry(&self) -> &dyn infrarust_api::services::plugin_registry::PluginRegistry {
+        fn plugin_registry(&self) -> &dyn PluginRegistry {
             unimplemented!("mock")
         }
-        fn plugin_registry_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry> {
+        fn plugin_registry_handle(&self) -> Arc<dyn PluginRegistry> {
             unimplemented!("mock")
         }
-        fn server_manager_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
+        fn server_manager_handle(&self) -> Arc<dyn ServerManager> {
             unimplemented!("mock")
         }
-        fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
+        fn ban_service_handle(&self) -> Arc<dyn BanService> {
             unimplemented!("mock")
         }
-        fn config_service_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
+        fn config_service_handle(&self) -> Arc<dyn ConfigService> {
             unimplemented!("mock")
         }
-        fn event_bus_handle(&self) -> Arc<dyn infrarust_api::event::bus::EventBus> {
+        fn load_balancer_service(&self) -> &dyn LoadBalancerService {
             unimplemented!("mock")
         }
-        fn proxy_shutdown(&self) -> tokio_util::sync::CancellationToken {
-            tokio_util::sync::CancellationToken::new()
+        fn load_balancer_service_handle(&self) -> Arc<dyn LoadBalancerService> {
+            unimplemented!("mock")
         }
-        fn proxy_info(&self) -> &infrarust_api::services::proxy_info::ProxyInfo {
+        fn event_bus_handle(&self) -> Arc<dyn EventBus> {
+            unimplemented!("mock")
+        }
+        fn proxy_shutdown(&self) -> CancellationToken {
+            CancellationToken::new()
+        }
+        fn proxy_info(&self) -> &ProxyInfo {
             unimplemented!("mock")
         }
         fn capabilities(&self) -> &infrarust_api::permissions::CapabilitySet {

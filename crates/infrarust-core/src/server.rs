@@ -25,6 +25,7 @@ use crate::error::CoreError;
 use crate::handler::InterceptedHandler;
 use crate::handler::legacy::LegacyHandler;
 use crate::handler::passthrough::PassthroughHandler;
+use crate::middleware::backend_selection::BackendSelectionMiddleware;
 use crate::middleware::ban_check::BanCheckMiddleware;
 use crate::middleware::ban_ip_check::BanIpCheckMiddleware;
 use crate::middleware::domain_router::DomainRouterMiddleware;
@@ -59,6 +60,7 @@ pub struct ProxyServer {
     offline_handler: InterceptedHandler,
     client_only_handler: InterceptedHandler,
     services: ProxyServices,
+    backend_health: Arc<crate::loadbalancer::PassiveBackendHealth>,
     unknown_domain_behavior: UnknownDomainBehavior,
     shutdown: CancellationToken,
 }
@@ -70,7 +72,11 @@ impl ProxyServer {
     /// Returns `CoreError` on favicon loading, provider initialization,
     /// or Mojang auth key generation failures.
     #[allow(clippy::too_many_lines)]
-    pub async fn new(config: ProxyConfig, shutdown: CancellationToken) -> Result<Self, CoreError> {
+    pub async fn new(
+        config: ProxyConfig,
+        config_path: std::path::PathBuf,
+        shutdown: CancellationToken,
+    ) -> Result<Self, CoreError> {
         // Create domain router (initially empty — providers populate it)
         let domain_router = Arc::new(DomainRouter::new());
 
@@ -80,11 +86,39 @@ impl ProxyServer {
         // Create the event bus
         let event_bus = Arc::new(EventBusImpl::new());
 
-        let backend_connector = Arc::new(BackendConnector::new(
-            config.connect_timeout,
-            config.keepalive.clone(),
+        #[cfg(feature = "telemetry")]
+        let proxy_metrics = Arc::new(crate::telemetry::ProxyMetrics::new());
+
+        let backend_health = crate::loadbalancer::PassiveBackendHealth::new();
+        #[cfg(feature = "telemetry")]
+        let backend_health = backend_health.with_listener(Arc::new(
+            crate::loadbalancer::HealthTransitionMetrics(Arc::clone(&proxy_metrics)),
         ));
+        let backend_health = Arc::new(backend_health);
+        backend_health.add_listener(Arc::new(crate::loadbalancer::HealthTransitionEvents::new(
+            Arc::clone(&domain_router),
+            Arc::clone(&event_bus),
+        )));
+
+        let backend_observer = Arc::new(crate::loadbalancer::BackendAttemptObserver::new(
+            Arc::clone(&backend_health),
+            #[cfg(feature = "telemetry")]
+            Arc::clone(&proxy_metrics),
+        ));
+        let backend_connector = Arc::new(
+            BackendConnector::new(config.connect_timeout, config.keepalive.clone())
+                .with_max_attempts(config.connect_max_attempts)
+                .with_observer(backend_observer as _),
+        );
         let registry = Arc::new(ConnectionRegistry::new());
+        let backend_load = Arc::new(crate::loadbalancer::BackendLoad::new());
+        let pending_backends = Arc::new(crate::loadbalancer::PendingRegistry::new(
+            Arc::clone(&backend_load) as _,
+            crate::loadbalancer::reservation_ttl(
+                config.connect_timeout,
+                config.connect_max_attempts,
+            ),
+        ));
 
         // Build status subsystem
         let status_cache = Arc::new(StatusCache::new(config.status_cache.ttl));
@@ -123,7 +157,18 @@ impl ProxyServer {
         }
 
         // Start all providers (loads initial configs + starts watchers)
-        let (_provider_handle, provider_event_sender) = provider_registry.start().await?;
+        let (provider_handle, provider_event_sender) = provider_registry.start().await?;
+        // A panic unwinds past the event loop's own exit logging.
+        tokio::spawn(async move {
+            if let Err(e) = provider_handle.await
+                && e.is_panic()
+            {
+                tracing::error!(
+                    error = %e,
+                    "provider event loop panicked, configuration hot-reload is no longer active"
+                );
+            }
+        });
 
         // Build server manager from configs that have a server_manager
         let managed_configs: Vec<(String, infrarust_config::ServerManagerConfig)> = domain_router
@@ -185,7 +230,12 @@ impl ProxyServer {
             Arc::clone(&packet_registry),
             config.default_motd.clone(),
             Arc::clone(&event_bus),
+            Arc::clone(&backend_load) as _,
+            Arc::clone(&backend_health) as _,
         );
+
+        #[cfg(feature = "telemetry")]
+        let status_handler = status_handler.with_metrics(Arc::clone(&proxy_metrics));
 
         let legacy_handler = LegacyHandler::new(
             Arc::clone(&domain_router),
@@ -193,6 +243,8 @@ impl ProxyServer {
             server_manager.as_ref().map(Arc::clone),
             Arc::clone(&registry),
             Arc::clone(&backend_connector),
+            Arc::clone(&backend_load),
+            Arc::clone(&backend_health) as _,
             shutdown.clone(),
         );
 
@@ -221,11 +273,22 @@ impl ProxyServer {
             player_registry,
             command_manager,
             connection_registry: Arc::clone(&registry),
+            backend_load: Arc::clone(&backend_load),
+            pending_backends: Arc::clone(&pending_backends),
             packet_registry: Arc::clone(&packet_registry),
             server_manager: server_manager.clone(),
             ban_manager: Arc::clone(&ban_manager),
             config: Arc::new(config.clone()),
+            config_path,
             domain_router: Arc::clone(&domain_router),
+            backend_health: Arc::clone(&backend_health) as _,
+            load_balancer_service: Arc::new(
+                crate::services::load_balancer_service::LoadBalancerServiceImpl::new(
+                    Arc::clone(&domain_router),
+                    Arc::clone(&backend_health),
+                    Arc::clone(&backend_load) as _,
+                ),
+            ),
             codec_filter_registry: Arc::clone(&codec_filter_registry),
             transport_filter_chain: crate::filter::transport_chain::TransportFilterChain::empty(),
             limbo_handler_registry,
@@ -250,18 +313,25 @@ impl ProxyServer {
             &domain_router,
         ))));
 
-        // Build login pipeline: LoginStartParser → BanCheck → Telemetry → ServerManager
+        // Build login pipeline:
+        // LoginStartParser → BanCheck → Telemetry → ServerManager → BackendSelection
         let mut login_pipeline = Pipeline::new();
         login_pipeline.add(Box::new(LoginStartParserMiddleware::new()));
         login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
         login_pipeline.add(Box::new(TelemetryMiddleware));
         if let Some(ref sm) = server_manager {
-            login_pipeline.add(Box::new(ServerManagerMiddleware::new(Arc::clone(sm))));
+            login_pipeline.add(Box::new(
+                ServerManagerMiddleware::new(Arc::clone(sm))
+                    .with_backend_health(Arc::clone(&backend_health)),
+            ));
         }
-
-        // Build ProxyMetrics (telemetry feature only)
-        #[cfg(feature = "telemetry")]
-        let proxy_metrics = Arc::new(crate::telemetry::ProxyMetrics::new());
+        login_pipeline.add(Box::new(
+            BackendSelectionMiddleware::new(
+                Arc::clone(&backend_load) as _,
+                Arc::clone(&backend_health) as _,
+            )
+            .with_pending(Arc::clone(&pending_backends)),
+        ));
 
         let passthrough_handler =
             PassthroughHandler::new(Arc::clone(&backend_connector), services.clone());
@@ -292,6 +362,7 @@ impl ProxyServer {
             offline_handler,
             client_only_handler,
             services,
+            backend_health,
             unknown_domain_behavior: config.unknown_domain_behavior,
             shutdown,
         })
@@ -330,6 +401,16 @@ impl ProxyServer {
             .services
             .ban_manager
             .start_purge_task(config.ban.purge_interval, self.shutdown.clone());
+
+        // Always spawned: whether an address is probed is resolved per server,
+        // so a server can opt in while the proxy-wide block opts out.
+        let _prober_handle = Arc::new(crate::loadbalancer::ActiveHealthProber::new(
+            Arc::clone(&self.services.domain_router),
+            Arc::clone(&self.backend_health),
+            Arc::clone(&self.services.packet_registry),
+            config,
+        ))
+        .spawn(self.shutdown.clone());
 
         // Config hot-reload is handled by the ProviderRegistry (started in new())
 
@@ -388,10 +469,6 @@ impl ProxyServer {
                     continue;
                 }
             }
-
-            // TODO: on_client_data/on_server_data wrapping
-            // These require wrapping the TCP stream to intercept raw bytes.
-            // Will be implemented when a real use case demands it.
 
             let server = Arc::clone(&self);
             tokio::spawn(async move {

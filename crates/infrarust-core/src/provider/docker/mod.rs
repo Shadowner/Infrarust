@@ -87,7 +87,7 @@ impl DockerProvider {
                 .as_ref()
                 .and_then(|names| names.first())
                 .map(|n| n.trim_start_matches('/').to_string())
-                .unwrap_or_else(|| container_id[..12].to_string());
+                .unwrap_or_else(|| container_id[..12.min(container_id.len())].to_string());
 
             match self
                 .inspect_and_build(docker, container_id, &container_name)
@@ -379,9 +379,7 @@ impl ConfigProvider for DockerProvider {
 
     fn load_initial(
         &self,
-    ) -> Pin<
-        Box<dyn std::future::Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>,
-    > {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>> {
         Box::pin(async move {
             let docker = self.connect()?;
             let configs = self.scan_containers(&docker).await?;
@@ -404,7 +402,7 @@ impl ConfigProvider for DockerProvider {
         &self,
         sender: mpsc::Sender<ProviderEvent>,
         shutdown: CancellationToken,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), CoreError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
         Box::pin(async move { self.watch_with_reconnect(&sender, &shutdown).await })
     }
 }

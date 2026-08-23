@@ -12,6 +12,7 @@ use wildmatch::WildMatch;
 
 use infrarust_config::ServerConfig;
 
+use crate::loadbalancer::{LoadBalancer, build_load_balancer};
 use crate::provider::ProviderId;
 
 /// Entry stored per provider in the router.
@@ -19,6 +20,9 @@ struct RouterEntry {
     config: Arc<ServerConfig>,
     /// Normalized domains registered by this config (for cleanup on remove).
     domains: Vec<String>,
+    /// One LB instance per config (RR/SWRR state is per-server). Rebuilt
+    /// on add/update, so a config change resets the rotation state.
+    load_balancer: Arc<dyn LoadBalancer>,
 }
 
 /// Pre-compiled wildcard pattern entry.
@@ -69,6 +73,15 @@ impl DomainRouter {
     /// registered by another provider, the new registration wins
     /// (last-write-wins) and a warning is logged.
     pub fn add(&self, id: ProviderId, config: ServerConfig) {
+        self.insert(id, config, None);
+    }
+
+    fn insert(
+        &self,
+        id: ProviderId,
+        config: ServerConfig,
+        load_balancer: Option<Arc<dyn LoadBalancer>>,
+    ) {
         let mut registered_domains = Vec::new();
         let mut has_wildcards = false;
 
@@ -92,11 +105,14 @@ impl DomainRouter {
             registered_domains.push(normalized);
         }
 
+        let load_balancer =
+            load_balancer.unwrap_or_else(|| build_load_balancer(&config.balance_config()));
         self.configs.insert(
             id,
             RouterEntry {
                 config: Arc::new(config),
                 domains: registered_domains,
+                load_balancer,
             },
         );
 
@@ -107,10 +123,36 @@ impl DomainRouter {
 
     /// Updates an existing configuration.
     ///
-    /// Removes old domain entries and re-registers with the new config.
+    /// Re-registers with the new config, then retires the domain entries it
+    /// dropped, so the config never leaves the router mid-update.
+    ///
+    /// The load balancer instance survives when nothing it depends on
+    /// changed, so an unrelated edit does not reset the rotation state.
     pub fn update(&self, id: ProviderId, config: ServerConfig) {
-        self.remove(&id);
-        self.add(id, config);
+        let previous = self.configs.get(&id).map(|entry| {
+            let reusable = (entry.config.balance_config() == config.balance_config()
+                && entry.config.addresses == config.addresses)
+                .then(|| Arc::clone(&entry.load_balancer));
+            (entry.domains.clone(), reusable)
+        });
+        let (stale_domains, reusable) = previous.unwrap_or_default();
+
+        let fresh_domains: Vec<String> = config.domains.iter().map(|d| d.to_lowercase()).collect();
+        self.insert(id.clone(), config, reusable);
+
+        let mut dropped_wildcard = false;
+        for domain in stale_domains.iter().filter(|d| !fresh_domains.contains(d)) {
+            if is_wildcard(domain) {
+                dropped_wildcard = true;
+            } else {
+                self.exact_domains
+                    .remove_if(domain, |_, owner| owner == &id);
+            }
+        }
+
+        if dropped_wildcard {
+            self.rebuild_wildcards();
+        }
     }
 
     /// Removes a configuration and all its domain entries.
@@ -155,6 +197,13 @@ impl DomainRouter {
     /// Exact matches take priority over wildcard matches.
     /// FML markers and trailing dots are stripped before resolution.
     pub fn resolve(&self, domain: &str) -> Option<(ProviderId, Arc<ServerConfig>)> {
+        self.resolve_route(domain).map(|(id, cfg, _lb)| (id, cfg))
+    }
+
+    pub fn resolve_route(
+        &self,
+        domain: &str,
+    ) -> Option<(ProviderId, Arc<ServerConfig>, Arc<dyn LoadBalancer>)> {
         let stripped = normalize_handshake(domain);
         let normalized = stripped.to_lowercase();
 
@@ -162,7 +211,11 @@ impl DomainRouter {
         if let Some(provider_id) = self.exact_domains.get(&normalized)
             && let Some(entry) = self.configs.get(provider_id.value())
         {
-            return Some((provider_id.value().clone(), Arc::clone(&entry.config)));
+            return Some((
+                provider_id.value().clone(),
+                Arc::clone(&entry.config),
+                Arc::clone(&entry.load_balancer),
+            ));
         }
 
         // 2. Wildcard match (sequential scan)
@@ -175,7 +228,11 @@ impl DomainRouter {
                 if wc.matcher.matches(&normalized)
                     && let Some(entry) = self.configs.get(&wc.provider_id)
                 {
-                    return Some((wc.provider_id.clone(), Arc::clone(&entry.config)));
+                    return Some((
+                        wc.provider_id.clone(),
+                        Arc::clone(&entry.config),
+                        Arc::clone(&entry.load_balancer),
+                    ));
                 }
             }
         }
@@ -189,10 +246,23 @@ impl DomainRouter {
     }
 
     pub fn find_by_server_id(&self, server_id: &str) -> Option<Arc<ServerConfig>> {
+        self.find_route_by_server_id(server_id)
+            .map(|(cfg, _lb)| cfg)
+    }
+
+    pub fn find_route_by_server_id(
+        &self,
+        server_id: &str,
+    ) -> Option<(Arc<ServerConfig>, Arc<dyn LoadBalancer>)> {
         self.configs
             .iter()
             .find(|entry| entry.value().config.effective_id() == server_id)
-            .map(|entry| Arc::clone(&entry.value().config))
+            .map(|entry| {
+                (
+                    Arc::clone(&entry.value().config),
+                    Arc::clone(&entry.value().load_balancer),
+                )
+            })
     }
 
     pub fn list_all(&self) -> Vec<(ProviderId, Arc<ServerConfig>)> {

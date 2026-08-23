@@ -27,7 +27,9 @@ use infrarust_core::services::server_manager_bridge::NoopServerManager;
 use infrarust_loader_wasm::{WasmPluginLoader, build_engine};
 
 mod mock_services;
-use mock_services::{MockBanService, MockConfigService, MockPlayerRegistry};
+use mock_services::{
+    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
+};
 
 const FIXTURE_DIR: &str = env!("INFRARUST_WASM_FIXTURE_DIR");
 
@@ -65,6 +67,7 @@ fn codec_env(
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        load_balancer_service: Arc::new(MockLoadBalancerService),
         plugin_registry: Arc::new(PluginRegistryImpl::new()),
         codec_filter_registry: Arc::clone(&codec_registry),
         transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),

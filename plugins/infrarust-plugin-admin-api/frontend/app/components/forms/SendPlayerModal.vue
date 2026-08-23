@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { PaperAirplaneIcon } from '@heroicons/vue/24/outline';
 import type { ServerDto, ApiEnvelope, MutationResult } from '~/types/api';
+import { resolveServerStatus } from '~/utils/serverStatus';
 
 const modelValue = defineModel<boolean>({ default: false });
 const props = defineProps<{ username: string }>();
@@ -87,13 +88,12 @@ async function submit() {
                 @click="target = srv.id"
               >
                 <div class="flex items-center gap-2">
-                  <span
-                    class="h-2 w-2 rounded-full"
-                    :class="srv.state === 'online' ? 'bg-[var(--ir-success)]' : 'bg-slate-500'"
-                  />
+                  <ServerStateDot :status="resolveServerStatus(srv)" />
                   <span class="font-medium">{{ srv.id }}</span>
                 </div>
-                <span class="text-[10px] text-[var(--ir-text-muted)]">{{ srv.proxy_mode }}</span>
+                <span class="text-[10px] text-[var(--ir-text-muted)]">
+                  {{ resolveServerStatus(srv) }} · {{ srv.proxy_mode }}
+                </span>
               </button>
             </div>
 

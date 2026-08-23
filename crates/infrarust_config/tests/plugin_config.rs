@@ -20,12 +20,12 @@ fn test_parse_plugins_section() {
     let my_plugin = &config.plugins["my_plugin"];
     assert_eq!(my_plugin.path.as_deref(), Some("/opt/plugins/my_plugin.so"));
     assert_eq!(my_plugin.permissions, vec!["admin.kick", "admin.ban"]);
-    assert_eq!(my_plugin.enabled, Some(true));
+    assert!(my_plugin.enabled);
 
     let analytics = &config.plugins["analytics"];
     assert!(analytics.path.is_none());
     assert!(analytics.permissions.is_empty());
-    assert_eq!(analytics.enabled, Some(false));
+    assert!(!analytics.enabled);
 }
 
 #[test]

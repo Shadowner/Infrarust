@@ -56,6 +56,11 @@ pub enum ForwardingHandler {
 }
 
 impl ForwardingHandler {
+    /// Returns whether this handler uses Velocity modern forwarding.
+    pub const fn is_velocity(&self) -> bool {
+        matches!(self, Self::Velocity(_))
+    }
+
     pub const fn modifies_handshake(&self) -> bool {
         matches!(self, Self::Legacy(_) | Self::BungeeGuard(_))
     }
@@ -89,7 +94,7 @@ pub fn build_handshake_for_backend(
         DomainRewrite::FromBackend => server_config
             .addresses
             .first()
-            .map(|a| a.host.clone())
+            .map(|a| a.address.host.clone())
             .unwrap_or_else(|| handshake_data.domain.clone()),
         _ => handshake_data.domain.clone(),
     };

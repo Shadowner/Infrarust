@@ -83,7 +83,7 @@ The effective server ID is resolved as: `name` > `id` > `"unknown"`. Duplicate I
 | `domains` | list of strings | `[]` | Domains that route players to this server. Supports wildcards like `*.mc.example.com`. |
 | `addresses` | list of strings | *required* | Backend server addresses in `host:port` format. If you omit the port, it defaults to `25565`. |
 
-`addresses` is the only required field. You must provide at least one address. When you list several, Infrarust tries them in order and uses the first one that accepts the connection (sequential failover). Per-backend load balancing such as round-robin is planned, not yet available.
+`addresses` is the only required field. You must provide at least one address. When you list several, the `balance` strategy decides the order, and each entry can carry a weight. See [Load balancing](./load-balancing).
 
 Wildcard domains match any subdomain at that level. `*.mc.example.com` matches `survival.mc.example.com` and `creative.mc.example.com`, but not `mc.example.com` itself. Exact matches always take priority over wildcards.
 

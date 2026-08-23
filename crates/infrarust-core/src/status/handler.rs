@@ -32,6 +32,7 @@ use crate::event_bus::EventBusImpl;
 use crate::event_bus::conversion::{
     component_to_json_value, core_to_api_ping_response, merge_ping_event,
 };
+use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, peek_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::registry::ConnectionRegistry;
@@ -45,6 +46,10 @@ pub struct StatusHandler {
     registry: Arc<PacketRegistry>,
     default_motd: Option<MotdConfig>,
     event_bus: Arc<EventBusImpl>,
+    counts: Arc<dyn AddressConnectionCount>,
+    health: Arc<dyn BackendHealthView>,
+    #[cfg(feature = "telemetry")]
+    metrics: Option<Arc<crate::telemetry::ProxyMetrics>>,
     /// Only one relay runs at a time per server; concurrent requests wait.
     inflight_locks: DashMap<String, Arc<TokioMutex<()>>>,
 }
@@ -59,6 +64,8 @@ impl StatusHandler {
         registry: Arc<PacketRegistry>,
         default_motd: Option<MotdConfig>,
         event_bus: Arc<EventBusImpl>,
+        counts: Arc<dyn AddressConnectionCount>,
+        health: Arc<dyn BackendHealthView>,
     ) -> Self {
         Self {
             relay_client,
@@ -68,8 +75,19 @@ impl StatusHandler {
             registry,
             default_motd,
             event_bus,
+            counts,
+            health,
+            #[cfg(feature = "telemetry")]
+            metrics: None,
             inflight_locks: DashMap::new(),
         }
+    }
+
+    #[cfg(feature = "telemetry")]
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: Arc<crate::telemetry::ProxyMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Returns a reference to the status cache (for hot-reload invalidation).
@@ -157,7 +175,7 @@ impl StatusHandler {
         }
 
         let mut response = self
-            .relay_or_cache(ctx, config, config_id, handshake, connection_registry)
+            .relay_or_cache(ctx, routing, handshake, connection_registry)
             .await;
 
         if let Some(ref online) = config.motd.online {
@@ -180,11 +198,12 @@ impl StatusHandler {
     async fn relay_or_cache(
         &self,
         ctx: &ConnectionContext,
-        config: &ServerConfig,
-        config_id: &str,
+        routing: &RoutingData,
         handshake: Option<&HandshakeData>,
         connection_registry: &ConnectionRegistry,
     ) -> ServerPingResponse {
+        let config = &routing.server_config;
+        let config_id = routing.config_id.as_str();
         if let Some((response, _latency)) = self.cache.get_fresh(config_id) {
             return response;
         }
@@ -207,10 +226,30 @@ impl StatusHandler {
 
         match self
             .relay_client
-            .relay(config_id, config, domain, protocol_version, &client_info)
+            .relay(
+                config_id,
+                config,
+                &peek_backend_addresses(
+                    config,
+                    routing.load_balancer.as_ref(),
+                    self.counts.as_ref(),
+                    self.health.as_ref(),
+                ),
+                domain,
+                protocol_version,
+                &client_info,
+            )
             .await
         {
             Ok(result) => {
+                #[cfg(feature = "telemetry")]
+                if let Some(ref metrics) = self.metrics {
+                    metrics.record_backend_status_latency(
+                        result.latency.as_secs_f64(),
+                        config_id,
+                        &result.address.to_string(),
+                    );
+                }
                 self.cache
                     .put(config_id, result.response.clone(), result.latency, None);
                 return result.response;
@@ -394,10 +433,7 @@ impl StatusHandler {
         packet: &P,
         version: ProtocolVersion,
     ) -> Result<(), CoreError> {
-        let packet_id = self
-            .registry
-            .get_packet_id::<P>(P::state(), P::direction(), version)
-            .unwrap_or(0);
+        let packet_id = self.registry.get_packet_id::<P>(version).unwrap_or(0);
 
         let mut payload = Vec::new();
         packet.encode(&mut payload, version)?;

@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use infrarust_api::services::ban_service::BanService;
 use infrarust_api::services::config_service::ConfigService;
+use infrarust_api::services::load_balancer::LoadBalancerService;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
 use infrarust_api::services::server_manager::ServerManager;
@@ -11,20 +12,20 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
-use infrarust_api::provider::PluginProviderSender;
-
 use crate::config::ApiConfig;
+use crate::drain_store::DrainStore;
 use crate::health_cache::HealthCache;
 use crate::health_checker::HealthChecker;
 use crate::log_layer::LogEntry;
 use crate::rate_limit::RateLimiter;
-use crate::server_store::ApiServerStore;
+use crate::server_dir::{ProviderSenderSlot, ServerDir};
 
 pub struct ApiState {
     pub player_registry: Arc<dyn PlayerRegistry>,
     pub ban_service: Arc<dyn BanService>,
     pub server_manager: Arc<dyn ServerManager>,
     pub config_service: Arc<dyn ConfigService>,
+    pub load_balancer: Arc<dyn LoadBalancerService>,
     pub plugin_registry: Arc<dyn PluginRegistry>,
     pub config: ApiConfig,
     pub start_time: Instant,
@@ -37,16 +38,18 @@ pub struct ApiState {
     pub log_tx: Option<broadcast::Sender<LogEntry>>,
     /// Ring buffer of recent log entries. `None` if `BroadcastLogLayer` is not installed.
     pub log_history: Option<Arc<Mutex<VecDeque<LogEntry>>>>,
-    /// In-memory store for API-created servers.
-    pub server_store: Arc<ApiServerStore>,
+    /// TOML documents for API-managed servers, under `<data_dir>/servers/`.
+    pub server_dir: Arc<ServerDir>,
     /// Sender for emitting config provider events (Added/Updated/Removed).
-    pub provider_sender: Arc<tokio::sync::Mutex<Option<Box<dyn PluginProviderSender>>>>,
+    pub provider_sender: Arc<ProviderSenderSlot>,
     /// Cache of last health check result per server.
     pub health_cache: Arc<HealthCache>,
     /// Health checker for pinging Minecraft backends.
     pub health_checker: Arc<HealthChecker>,
     /// Ring buffer of recent activity events (last 100).
     pub recent_events: Arc<Mutex<VecDeque<RecentEvent>>>,
+    /// Persisted drain intent, replayed after a restart.
+    pub drain_store: Arc<DrainStore>,
 }
 
 /// A summarized event for the activity feed.
@@ -103,6 +106,12 @@ pub enum ApiEvent {
         target_value: String,
         timestamp: String,
     },
+    BackendHealthChange {
+        address: String,
+        server_ids: Vec<String>,
+        state: String,
+        timestamp: String,
+    },
     StatsTick {
         players_online: usize,
         servers_online: usize,
@@ -125,6 +134,7 @@ impl ApiEvent {
             ApiEvent::ConfigReload { .. } => "config.reload",
             ApiEvent::BanCreated { .. } => "ban.created",
             ApiEvent::BanRemoved { .. } => "ban.removed",
+            ApiEvent::BackendHealthChange { .. } => "backend.health_change",
             ApiEvent::StatsTick { .. } => "stats.tick",
         }
     }
@@ -201,6 +211,16 @@ impl ApiEvent {
             } => (
                 "ban.removed",
                 format!("Unbanned {target_value}"),
+                timestamp.clone(),
+            ),
+            ApiEvent::BackendHealthChange {
+                address,
+                state,
+                timestamp,
+                ..
+            } => (
+                "backend.health_change",
+                format!("Backend {address} is {state}"),
                 timestamp.clone(),
             ),
             ApiEvent::StatsTick { .. } => return None, // Too noisy for activity feed

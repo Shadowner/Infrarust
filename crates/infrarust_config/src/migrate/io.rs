@@ -132,6 +132,17 @@ pub fn migrate_directory(
         converted += 1;
     }
 
+    if converted == 0 && skipped > 0 {
+        let details: Vec<String> = all_warnings
+            .iter()
+            .map(|w| format!("{}: {}", w.file, w.message))
+            .collect();
+        return Err(ConfigError::Validation(format!(
+            "migration produced no output: all {skipped} candidate file(s) were skipped — {}",
+            details.join("; ")
+        )));
+    }
+
     all_warnings.push(MigrationWarning {
         severity: MigrationSeverity::Info,
         file: "summary".to_string(),
@@ -233,5 +244,29 @@ motds:
     fn test_migrate_invalid_dir() {
         let result = migrate_directory(Path::new("/nonexistent"), Path::new("/tmp/out"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_migrate_total_failure_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let input = tmp.path().join("v1");
+        let output = tmp.path().join("v2");
+        fs::create_dir_all(&input).unwrap();
+        fs::write(input.join("broken.yaml"), ": not [ valid yaml").unwrap();
+
+        let err = migrate_directory(&input, &output).unwrap_err();
+        assert!(err.to_string().contains("broken.yaml"));
+    }
+
+    #[test]
+    fn test_migrate_empty_dir_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let input = tmp.path().join("v1");
+        let output = tmp.path().join("v2");
+        fs::create_dir_all(&input).unwrap();
+
+        let warnings = migrate_directory(&input, &output).unwrap();
+        let summary = warnings.iter().find(|w| w.file == "summary").unwrap();
+        assert!(summary.message.contains("0 file(s) converted"));
     }
 }

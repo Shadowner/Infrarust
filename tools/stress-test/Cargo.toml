@@ -1,13 +1,16 @@
 [package]
 name = "infrarust-stress-test"
+description = "Connection-flood stress tester for Infrarust development"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
+publish = false
 
 [lints]
 workspace = true
 
 [dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 clap = { workspace = true }

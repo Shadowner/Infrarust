@@ -21,6 +21,8 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 
+const READ_CHUNK: usize = 16 * 1024;
+
 /// The client side of a proxied connection.
 ///
 /// Handles reading/writing Minecraft packet frames from/to the client,
@@ -34,7 +36,6 @@ pub struct ClientBridge {
     /// The client's protocol version.
     pub protocol_version: ProtocolVersion,
     state: ConnectionState,
-    read_buf: BytesMut,
 }
 
 impl ClientBridge {
@@ -59,7 +60,6 @@ impl ClientBridge {
             decrypt_cipher: None,
             protocol_version,
             state: ConnectionState::Login,
-            read_buf: BytesMut::with_capacity(4096),
         }
     }
 
@@ -76,33 +76,64 @@ impl ClientBridge {
                 return Ok(Some(frame));
             }
 
-            self.read_buf.resize(4096, 0);
-            let n = self.stream.read(&mut self.read_buf).await?;
+            let buf = self.decoder.read_buf_mut();
+            buf.reserve(READ_CHUNK);
+            let old_len = buf.len();
+            let n = self.stream.read_buf(buf).await?;
             if n == 0 {
                 return Ok(None);
             }
 
             if let Some(cipher) = &mut self.decrypt_cipher {
-                cipher.decrypt(&mut self.read_buf[..n]);
+                cipher.decrypt(&mut self.decoder.read_buf_mut()[old_len..]);
             }
-            self.decoder.queue_bytes(&self.read_buf[..n]);
         }
     }
 
-    /// Writes an encoded packet frame to the client.
-    ///
-    /// Handles encryption if active.
+    /// Extracts the next frame already buffered in the decoder, without
+    /// reading from the socket. Used to drain a read that carried several
+    /// frames before flushing them as one write.
     ///
     /// # Errors
-    /// Returns `CoreError` on I/O or encoding errors.
-    pub async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
-        self.encoder.append_frame(frame)?;
+    /// Returns `CoreError` on protocol decode errors.
+    pub fn try_next_frame(&mut self) -> Result<Option<PacketFrame>, CoreError> {
+        Ok(self.decoder.try_next_frame()?)
+    }
+
+    /// Encodes a frame into the send buffer without writing to the socket.
+    /// Queued bytes go out on the next [`flush`](Self::flush) or
+    /// [`write_frame`](Self::write_frame).
+    ///
+    /// # Errors
+    /// Returns `CoreError` on encoding errors.
+    pub fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
+        Ok(self.encoder.append_frame(frame)?)
+    }
+
+    /// Writes all queued bytes to the socket, encrypting once over the
+    /// whole batch. No-op when nothing is queued.
+    ///
+    /// # Errors
+    /// Returns `CoreError` on I/O errors.
+    pub async fn flush(&mut self) -> Result<(), CoreError> {
         let mut data = self.encoder.take();
+        if data.is_empty() {
+            return Ok(());
+        }
         if let Some(cipher) = &mut self.encrypt_cipher {
             cipher.encrypt(&mut data);
         }
         self.stream.write_all(&data).await?;
         Ok(())
+    }
+
+    /// Writes an encoded packet frame to the client (with any queued bytes).
+    ///
+    /// # Errors
+    /// Returns `CoreError` on I/O or encoding errors.
+    pub async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
+        self.queue_frame(frame)?;
+        self.flush().await
     }
 
     /// Enables AES-128-CFB8 encryption with the given shared secret.
@@ -114,10 +145,15 @@ impl ClientBridge {
         self.decrypt_cipher = Some(DecryptCipher::new(key));
     }
 
-    /// Activates packet compression with the given threshold.
+    /// Activates packet compression with the given threshold, or leaves it
+    /// disabled if `threshold` is negative.
     pub const fn set_compression(&mut self, threshold: i32) {
         self.decoder.set_compression(threshold);
         self.encoder.set_compression(threshold);
+    }
+
+    pub const fn compression_threshold(&self) -> Option<i32> {
+        self.encoder.compression_threshold()
     }
 
     /// Changes the protocol state (Login → Config → Play).
@@ -138,13 +174,22 @@ impl ClientBridge {
         packet: &P,
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
+        if self.state != P::STATE {
+            return Err(CoreError::Auth(format!(
+                "cannot send {} ({}) while the bridge is in {}",
+                P::NAME,
+                P::STATE,
+                self.state
+            )));
+        }
+
         let packet_id = registry
-            .get_packet_id::<P>(self.state, P::direction(), self.protocol_version)
+            .get_packet_id::<P>(self.protocol_version)
             .ok_or_else(|| {
                 CoreError::Auth(format!(
-                    "no packet ID for {} in {:?}/{:?}",
+                    "no packet ID for {} in {}/{:?}",
                     P::NAME,
-                    self.state,
+                    P::STATE,
                     self.protocol_version
                 ))
             })?;

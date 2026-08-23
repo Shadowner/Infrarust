@@ -1,143 +1,65 @@
-//! Title-related packets (Clientbound).
-//!
-//! Since 1.17, titles are split into three separate packets:
-//! - [`CSetTitle`] — main title text
-//! - [`CSetSubtitle`] — subtitle text
-//! - [`CSetTitleTimes`] — fade-in, stay, fade-out timings
-//!
-//! Before 1.17, all title operations used a single [`CTitleLegacy`] packet
-//! with an action discriminator.
-
 use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::play::common::{read_text_component, write_text_component};
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Sets the main title text displayed on the player's screen.
-///
-/// Content format varies by version:
-/// - Pre-1.20.3: JSON text component (String)
-/// - 1.20.3+: NBT compound (binary)
-#[derive(Debug, Clone)]
-pub struct CSetTitle {
-    pub text: Vec<u8>,
-}
-
-impl CSetTitle {
-    /// Creates a title packet from a JSON text component string.
-    pub fn from_json(json: &str) -> Self {
-        Self {
-            text: json.as_bytes().to_vec(),
+define_twin_packets! {
+    packets: {
+        CSetTitle: Clientbound = ids![
+            V1_17   => 0x59,
+            V1_18   => 0x5A,
+            V1_19_1 => 0x5D,
+            V1_19_3 => 0x5B,
+            V1_19_4 => 0x5F,
+            V1_20_2 => 0x61,
+            V1_20_3 => 0x63,
+            V1_20_5 => 0x65,
+            V1_21_2 => 0x6C,
+            V1_21_5 => 0x6B,
+            V1_21_9 => 0x70,
+            V26_1   => 0x72,
+        ],
+        CSetSubtitle: Clientbound = ids![
+            V1_17   => 0x57,
+            V1_18   => 0x58,
+            V1_19_1 => 0x5B,
+            V1_19_3 => 0x59,
+            V1_19_4 => 0x5D,
+            V1_20_2 => 0x5F,
+            V1_20_3 => 0x61,
+            V1_20_5 => 0x63,
+            V1_21_2 => 0x6A,
+            V1_21_5 => 0x69,
+            V1_21_9 => 0x6E,
+            V26_1   => 0x70,
+        ],
+    },
+    state: ConnectionState::Play,
+    encode_only: true,
+    fields: {
+        pub text: Vec<u8>,
+    },
+    shared_impl: {
+        pub fn from_json(json: &str) -> Self {
+            Self {
+                text: json.as_bytes().to_vec(),
+            }
         }
-    }
 
-    /// Creates a title packet from pre-encoded NBT bytes (1.20.3+).
-    pub fn from_nbt(nbt: Vec<u8>) -> Self {
-        Self { text: nbt }
-    }
-}
-
-impl Packet for CSetTitle {
-    const NAME: &'static str = "CSetTitle";
-
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
-
-    fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
-        let text = if version.less_than(ProtocolVersion::V1_20_3) {
-            r.read_string()?.into_bytes()
-        } else {
-            r.read_remaining()?
-        };
+        pub fn from_nbt(nbt: Vec<u8>) -> Self {
+            Self { text: nbt }
+        }
+    },
+    decode(r, version): {
+        let text = read_text_component(r, version, 0, Self::NAME)?;
         Ok(Self { text })
-    }
-
-    fn encode(
-        &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
-        version: ProtocolVersion,
-    ) -> ProtocolResult<()> {
-        if version.less_than(ProtocolVersion::V1_20_3) {
-            let json = std::str::from_utf8(&self.text).map_err(|_| {
-                crate::error::ProtocolError::invalid(
-                    "CSetTitle text is not valid UTF-8 for JSON version",
-                )
-            })?;
-            w.write_string(json)?;
-        } else {
-            w.write_all(&self.text)?;
-        }
-        Ok(())
-    }
+    },
+    encode(self, w, version): {
+        write_text_component(w, &self.text, version, Self::NAME, "text")
+    },
 }
 
-/// Sets the subtitle text displayed below the title.
-///
-/// Same encoding rules as [`CSetTitle`].
-#[derive(Debug, Clone)]
-pub struct CSetSubtitle {
-    pub text: Vec<u8>,
-}
-
-impl CSetSubtitle {
-    /// Creates a subtitle packet from a JSON text component string.
-    pub fn from_json(json: &str) -> Self {
-        Self {
-            text: json.as_bytes().to_vec(),
-        }
-    }
-
-    /// Creates a subtitle packet from pre-encoded NBT bytes (1.20.3+).
-    pub fn from_nbt(nbt: Vec<u8>) -> Self {
-        Self { text: nbt }
-    }
-}
-
-impl Packet for CSetSubtitle {
-    const NAME: &'static str = "CSetSubtitle";
-
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
-
-    fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
-        let text = if version.less_than(ProtocolVersion::V1_20_3) {
-            r.read_string()?.into_bytes()
-        } else {
-            r.read_remaining()?
-        };
-        Ok(Self { text })
-    }
-
-    fn encode(
-        &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
-        version: ProtocolVersion,
-    ) -> ProtocolResult<()> {
-        if version.less_than(ProtocolVersion::V1_20_3) {
-            let json = std::str::from_utf8(&self.text).map_err(|_| {
-                crate::error::ProtocolError::invalid(
-                    "CSetSubtitle text is not valid UTF-8 for JSON version",
-                )
-            })?;
-            w.write_string(json)?;
-        } else {
-            w.write_all(&self.text)?;
-        }
-        Ok(())
-    }
-}
-
-/// Sets the title display timings (fade-in, stay, fade-out) in ticks.
 #[derive(Debug, Clone)]
 pub struct CSetTitleTimes {
     pub fade_in: i32,
@@ -148,13 +70,23 @@ pub struct CSetTitleTimes {
 impl Packet for CSetTitleTimes {
     const NAME: &'static str = "CSetTitleTimes";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_17   => 0x5A,
+        V1_18   => 0x5B,
+        V1_19_1 => 0x5E,
+        V1_19_3 => 0x5C,
+        V1_19_4 => 0x60,
+        V1_20_2 => 0x62,
+        V1_20_3 => 0x64,
+        V1_20_5 => 0x66,
+        V1_21_2 => 0x6D,
+        V1_21_5 => 0x6C,
+        V1_21_9 => 0x71,
+        V26_1   => 0x73,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let fade_in = r.read_i32_be()?;
@@ -196,8 +128,6 @@ impl CTitleLegacy {
             Self::SetTitle(_) => 0,
             Self::SetSubtitle(_) => 1,
             Self::SetTimes { .. } => {
-                // Pre-1.11 (< V1_12): action 2 = times
-                // 1.11+ (>= V1_12): action 3 = times
                 if version.less_than(ProtocolVersion::V1_12) {
                     2
                 } else {
@@ -211,13 +141,18 @@ impl CTitleLegacy {
 impl Packet for CTitleLegacy {
     const NAME: &'static str = "CTitleLegacy";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_8  => 0x45,
+        V1_9  => 0x47,
+        V1_12 => 0x48,
+        V1_13 => 0x4B,
+        V1_14 => 0x4F,
+        V1_15 => 0x50,
+        V1_16 => 0x4F,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let action = r.read_var_int()?.0;
@@ -275,12 +210,7 @@ impl Packet for CTitleLegacy {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-
-    fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        P::decode(&mut buf.as_slice(), version).unwrap()
-    }
+    use crate::packets::round_trip;
 
     #[test]
     fn test_title_round_trip_json() {

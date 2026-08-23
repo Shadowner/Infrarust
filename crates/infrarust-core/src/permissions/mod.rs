@@ -155,7 +155,7 @@ impl PermissionChecker for ConfigPermissionChecker {
         match permission {
             PERM_ADMIN => is_admin,
             p => match p.strip_prefix(PERM_COMMAND_PREFIX) {
-                Some(cmd) => is_admin || self.player_commands.contains(cmd),
+                Some(cmd) => is_admin || self.player_commands.contains(cmd.to_lowercase().as_str()),
                 None => is_admin,
             },
         }
@@ -291,6 +291,19 @@ mod tests {
         assert!(checker.has_permission("infrarust.command.list"));
         assert!(checker.has_permission("infrarust.command.help"));
         assert!(!checker.has_permission("infrarust.command.server"));
+    }
+
+    #[test]
+    fn config_checker_command_lookup_is_case_insensitive() {
+        let checker = ConfigPermissionChecker {
+            admin_uuids: Arc::new(DashSet::new()),
+            player_uuid: Uuid::new_v4(),
+            player_commands: Arc::new(HashSet::from(["list".into()])),
+        };
+
+        assert!(checker.has_permission("infrarust.command.LIST"));
+        assert!(checker.has_permission("infrarust.command.List"));
+        assert!(!checker.has_permission("infrarust.command.KICK"));
     }
 
     fn test_service(player_commands: &[&str]) -> PermissionService {

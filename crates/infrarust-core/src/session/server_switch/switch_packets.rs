@@ -12,7 +12,7 @@ use infrarust_protocol::packets::play::dimension::{
 use infrarust_protocol::packets::play::respawn::CRespawn;
 use infrarust_protocol::packets::play::respawn_switch;
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
 use crate::session::client_bridge::ClientBridge;
@@ -76,16 +76,13 @@ async fn send_respawn(
 ) -> Result<(), CoreError> {
     let respawn = respawn_switch::for_switch(dimension, version);
     let packet_id = registry
-        .get_packet_id::<CRespawn>(ConnectionState::Play, Direction::Clientbound, version)
+        .get_packet_id::<CRespawn>(version)
         .ok_or_else(|| CoreError::Protocol(ProtocolError::invalid("no Respawn packet ID")))?;
 
     let mut payload = Vec::new();
     respawn.encode(&mut payload, version)?;
 
-    let frame = PacketFrame {
-        id: packet_id,
-        payload: payload.into(),
-    };
+    let frame = PacketFrame::new(packet_id, payload.into());
     client.write_frame(&frame).await?;
     Ok(())
 }

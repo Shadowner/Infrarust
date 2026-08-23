@@ -60,10 +60,7 @@ impl RegistryDataProvider for EmbeddedRegistryDataProvider {
         Ok(data
             .registry_frames
             .iter()
-            .map(|f| PacketFrame {
-                id: f.packet_id,
-                payload: Bytes::from(f.payload.clone()),
-            })
+            .map(|f| PacketFrame::new(f.packet_id, Bytes::from(f.payload.clone())))
             .collect())
     }
 
@@ -81,10 +78,10 @@ impl RegistryDataProvider for EmbeddedRegistryDataProvider {
             ))
         })?;
 
-        Ok(data.known_packs_frame.as_ref().map(|f| PacketFrame {
-            id: f.packet_id,
-            payload: Bytes::from(f.payload.clone()),
-        }))
+        Ok(data
+            .known_packs_frame
+            .as_ref()
+            .map(|f| PacketFrame::new(f.packet_id, Bytes::from(f.payload.clone()))))
     }
 
     fn supports_version(&self, version: ProtocolVersion) -> bool {

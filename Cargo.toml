@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/infrarust_protocol",
     "crates/infrarust-api",
@@ -18,7 +18,6 @@ members = [
     "plugins/infrarust-plugin-admin-api",
     "plugins/infrarust-plugin-stats",
     "plugins/infrarust-plugin-stats/native",
-    "tools/infrarust-motd",
     "tools/registry-extractor",
     "tools/stress-test",
     "tools/mc-bench",
@@ -30,8 +29,7 @@ exclude = [
 ]
 
 [workspace.dependencies]
-# Async runtime
-tokio = { version = "1.51.0", features = ["net", "io-util", "io-std", "sync", "time", "macros", "rt", "rt-multi-thread", "signal", "process", "fs"] }
+tokio = { version = "1.51.0", features = ["net", "io-util", "sync", "time", "macros", "rt"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 tokio-stream = "0.1.18"
 
@@ -40,6 +38,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 serde_yml = "0.0.13"
 toml = "0.9.8"
+toml_edit = "0.25.13"
 fastnbt = "2.6.1"
 
 # Data types
@@ -77,10 +76,9 @@ socket2 = { version = "0.6.4", features = ["all"] }
 ppp = "2.3.0"
 
 # Concurrency / State
-arc-swap = "1.9.1"
+smallvec = "1.15.1"
 dashmap = "6.2.1"
 governor = "0.10.4"
-nonzero_ext = "0.3.0"
 notify = "8.2.0"
 futures-util = "0.3.32"
 async-stream = "0.3.6"
@@ -133,7 +131,7 @@ tempfile = "3.27.0"
 
 # Benchmarking / load testing
 divan = "0.1"
-hdrhistogram = "7"
+hdrhistogram = { version = "7", default-features = false }
 quanta = "0.12"
 
 # WASM plugin loader (host). Pinned >= 43.0.1 (post-RUSTSEC-2026-0096).
@@ -155,7 +153,6 @@ infrarust-core = { path = "crates/infrarust-core", version = "2.0.0-beta.1" }
 infrarust_server_manager = { path = "crates/infrarust_server_manager", version = "2.0.0-beta.1" }
 infrarust-plugin-wit = { path = "crates/infrarust-plugin-wit", version = "2.0.0-beta.1" }
 infrarust-loader-wasm = { path = "crates/infrarust-loader-wasm", version = "2.0.0-beta.1" }
-infrarust-plugin-sdk = { path = "crates/infrarust-plugin-sdk", version = "2.0.0-beta.1" }
 infrarust-plugin-macros = { path = "crates/infrarust-plugin-macros", version = "2.0.0-beta.1" }
 
 # Internal plugins
@@ -167,10 +164,14 @@ infrarust-plugin-stats = { path = "plugins/infrarust-plugin-stats", version = "2
 infrarust-plugin-stats-native = { path = "plugins/infrarust-plugin-stats/native", version = "2.0.0-beta.1" }
 
 [workspace.lints.clippy]
-all = "warn"
+all = { level = "warn", priority = -1 }
+await_holding_lock = "warn"
+dbg_macro = "warn"
+todo = "warn"
 
 [workspace.lints.rust]
 unsafe_code = "warn"
+unused_qualifications = "warn"
 
 [workspace.package]
 version = "2.0.0-beta.1"
@@ -180,8 +181,15 @@ license-file = "LICENSE"
 repository = "https://github.com/Shadowner/Infrarust"
 
 [profile.release]
-opt-level = 3
 lto = "fat"
 codegen-units = 1
-strip = "symbols"
-panic = "unwind"
+strip = "debuginfo"
+
+[profile.dev.package]
+flate2 = { opt-level = 2 }
+libdeflater = { opt-level = 2 }
+aes = { opt-level = 2 }
+cfb8 = { opt-level = 2 }
+rsa = { opt-level = 2 }
+sha1 = { opt-level = 2 }
+sha2 = { opt-level = 2 }

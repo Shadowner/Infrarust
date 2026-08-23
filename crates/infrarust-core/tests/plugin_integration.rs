@@ -21,7 +21,9 @@ use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::NoopServerManager;
 
 mod mock_services;
-use mock_services::{MockBanService, MockConfigService, MockPlayerRegistry};
+use mock_services::{
+    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
+};
 
 /// A test plugin that sets a flag when a PostLoginEvent is received.
 struct TestPlugin {
@@ -62,6 +64,7 @@ async fn test_plugin_receives_events_end_to_end() {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        load_balancer_service: Arc::new(MockLoadBalancerService),
         plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
@@ -151,6 +154,7 @@ async fn test_dependency_order_end_to_end() {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        load_balancer_service: Arc::new(MockLoadBalancerService),
         plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),

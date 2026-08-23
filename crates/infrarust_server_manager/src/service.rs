@@ -41,6 +41,9 @@ pub struct ServerManagerService {
 pub(crate) struct ServerEntry {
     /// Current state.
     pub(crate) state: ServerState,
+    /// Transition counter: bumped on every state write so an in-flight monitor
+    /// poll can detect that a transition intervened and drop its stale result.
+    pub(crate) generation: u64,
     /// The provider controlling this server.
     pub(crate) provider: Arc<dyn ServerProvider>,
     /// Duration of inactivity before auto-shutdown (None = disabled).
@@ -53,6 +56,14 @@ pub(crate) struct ServerEntry {
     pub(crate) last_player_seen: Option<Instant>,
     /// Waiters: connections waiting for the server to become Online.
     pub(crate) waiters: Vec<oneshot::Sender<Result<(), ServerManagerError>>>,
+}
+
+impl ServerEntry {
+    /// Sole mutation point for `state`: keeps the generation in sync.
+    pub(crate) fn set_state(&mut self, new_state: ServerState) {
+        self.generation += 1;
+        self.state = new_state;
+    }
 }
 
 impl ServerManagerService {
@@ -98,6 +109,7 @@ impl ServerManagerService {
                 server_id.clone(),
                 ServerEntry {
                     state: ServerState::Sleeping,
+                    generation: 0,
                     provider,
                     shutdown_after,
                     start_timeout,
@@ -130,6 +142,7 @@ impl ServerManagerService {
             server_id,
             ServerEntry {
                 state: ServerState::Sleeping,
+                generation: 0,
                 provider,
                 shutdown_after,
                 start_timeout,
@@ -209,7 +222,7 @@ impl ServerManagerService {
                             continue;
                         };
                         let old = entry.state;
-                        entry.state = new_state;
+                        entry.set_state(new_state);
                         old
                     };
                     if old_state != new_state {
@@ -266,7 +279,7 @@ impl ServerManagerService {
                     // Need to start the server
                     let provider = Arc::clone(&entry.provider);
                     let old_state = entry.state;
-                    entry.state = ServerState::Starting;
+                    entry.set_state(ServerState::Starting);
 
                     // Drop the lock before calling provider.start()
                     let start_timeout = entry.start_timeout;
@@ -281,7 +294,7 @@ impl ServerManagerService {
                         tracing::error!(server = %server_id, "provider start failed: {e}");
                         // Reset state
                         if let Some(mut entry) = self.entries.get_mut(server_id) {
-                            entry.state = ServerState::Crashed;
+                            entry.set_state(ServerState::Crashed);
                             // Notify waiters of failure
                             let waiters = std::mem::take(&mut entry.waiters);
                             drop(entry);
@@ -313,7 +326,7 @@ impl ServerManagerService {
                     // Unknown — try to start
                     let provider = Arc::clone(&entry.provider);
                     let old_state = entry.state;
-                    entry.state = ServerState::Starting;
+                    entry.set_state(ServerState::Starting);
                     let start_timeout = entry.start_timeout;
                     let (tx, rx) = oneshot::channel();
                     entry.waiters.push(tx);
@@ -323,7 +336,7 @@ impl ServerManagerService {
                     if let Err(e) = provider.start().await {
                         tracing::error!(server = %server_id, "provider start failed: {e}");
                         if let Some(mut entry) = self.entries.get_mut(server_id) {
-                            entry.state = ServerState::Crashed;
+                            entry.set_state(ServerState::Crashed);
                             let waiters = std::mem::take(&mut entry.waiters);
                             drop(entry);
                             self.fire_state_change(
@@ -386,7 +399,7 @@ impl ServerManagerService {
             }
 
             let old = entry.state;
-            entry.state = ServerState::Starting;
+            entry.set_state(ServerState::Starting);
             (Arc::clone(&entry.provider), old)
         };
 
@@ -409,7 +422,7 @@ impl ServerManagerService {
             })?;
 
             let old = entry.state;
-            entry.state = ServerState::Stopping;
+            entry.set_state(ServerState::Stopping);
             (Arc::clone(&entry.provider), old)
         };
 
@@ -417,14 +430,14 @@ impl ServerManagerService {
 
         if let Err(e) = provider.stop().await {
             if let Some(mut entry) = self.entries.get_mut(server_id) {
-                entry.state = old_state;
+                entry.set_state(old_state);
             }
             self.fire_state_change(server_id, ServerState::Stopping, old_state);
             return Err(e);
         }
 
         if let Some(mut entry) = self.entries.get_mut(server_id) {
-            entry.state = ServerState::Sleeping;
+            entry.set_state(ServerState::Sleeping);
             entry.last_player_seen = None;
         }
 
@@ -478,14 +491,29 @@ impl ServerManagerService {
         provider.check_status().await
     }
 
-    /// Updates server state and returns the previous state if changed.
+    /// Applies a polled status and returns the previous state if changed.
+    ///
+    /// `observed_generation` must be captured **before** the poll; if a
+    /// transition bumped the generation while the poll was in flight, the
+    /// stale result is dropped so manual operations always win.
     pub(crate) fn update_state(
         &self,
         server_id: &str,
         new_status: ProviderStatus,
+        observed_generation: u64,
     ) -> Option<(ServerState, ServerState)> {
         let (old_state, new_state) = {
             let mut entry = self.entries.get_mut(server_id)?;
+
+            if entry.generation != observed_generation {
+                tracing::debug!(
+                    server = %server_id,
+                    status = ?new_status,
+                    "dropping stale poll result: a transition intervened during the poll"
+                );
+                return None;
+            }
+
             let new_state = ServerState::from(new_status);
             let old_state = entry.state;
 
@@ -500,7 +528,7 @@ impl ServerManagerService {
                 "state transition"
             );
 
-            entry.state = new_state;
+            entry.set_state(new_state);
             drop(entry);
             (old_state, new_state)
         };
@@ -533,10 +561,96 @@ impl ServerManagerService {
         }
     }
 
+    /// Returns the current transition generation for a server.
+    pub(crate) fn generation(&self, server_id: &str) -> Option<u64> {
+        self.entries.get(server_id).map(|e| e.generation)
+    }
+
     /// Returns the poll interval for a server.
     pub(crate) fn get_poll_interval(&self, server_id: &str) -> Duration {
         self.entries
             .get(server_id)
             .map_or(Duration::from_secs(5), |e| e.poll_interval)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+
+    use super::*;
+
+    struct NoopProvider;
+
+    impl ServerProvider for NoopProvider {
+        fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn check_status(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send>>
+        {
+            Box::pin(async { Ok(ProviderStatus::Running) })
+        }
+
+        fn provider_type(&self) -> &'static str {
+            "noop"
+        }
+    }
+
+    fn service_with_online_server(server_id: &str) -> ServerManagerService {
+        let service = ServerManagerService::new(&[], reqwest::Client::new());
+        service.register_server(
+            server_id.to_string(),
+            Arc::new(NoopProvider),
+            None,
+            Duration::from_secs(5),
+            Duration::from_secs(1),
+        );
+        let generation = service.generation(server_id).unwrap();
+        service.update_state(server_id, ProviderStatus::Running, generation);
+        assert_eq!(service.get_state(server_id), Some(ServerState::Online));
+        service
+    }
+
+    /// A poll captured before `stop_server` must not resurrect the server,
+    /// even when the manual op fully completes (Stopping → Sleeping) before
+    /// the stale result lands.
+    #[tokio::test]
+    async fn stale_poll_does_not_resurrect_manually_stopped_server() {
+        let service = service_with_online_server("s");
+
+        let observed = service.generation("s").unwrap();
+        service.stop_server("s").await.unwrap();
+        assert_eq!(service.get_state("s"), Some(ServerState::Sleeping));
+
+        let applied = service.update_state("s", ProviderStatus::Running, observed);
+        assert_eq!(applied, None);
+        assert_eq!(service.get_state("s"), Some(ServerState::Sleeping));
+    }
+
+    #[tokio::test]
+    async fn online_to_sleeping_on_clean_stop_poll() {
+        let service = service_with_online_server("s");
+
+        let generation = service.generation("s").unwrap();
+        let applied = service.update_state("s", ProviderStatus::Stopped, generation);
+        assert_eq!(applied, Some((ServerState::Online, ServerState::Sleeping)));
+    }
+
+    #[tokio::test]
+    async fn online_to_crashed_on_unexpected_exit_poll() {
+        let service = service_with_online_server("s");
+
+        let generation = service.generation("s").unwrap();
+        let applied = service.update_state("s", ProviderStatus::Crashed, generation);
+        assert_eq!(applied, Some((ServerState::Online, ServerState::Crashed)));
     }
 }

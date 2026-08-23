@@ -35,7 +35,8 @@ async function fetchHistory() {
     const res = await request<ApiEnvelope<LogEntryDto[]>>('/logs/history', {
       query: { n: 500, level: level.value, target: targetFilter.value || undefined },
     });
-    logs.value = res.data;
+    // The endpoint answers newest-first; the console reads top-down and appends live entries.
+    logs.value = [...res.data].reverse();
   } catch {
     // Log history may not be available
   }

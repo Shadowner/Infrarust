@@ -70,6 +70,7 @@ impl PluginContextFactory for PluginContextFactoryImpl {
             Arc::clone(&self.services.server_manager),
             Arc::clone(&self.services.ban_service),
             Arc::clone(&self.services.config_service),
+            Arc::clone(&self.services.load_balancer_service),
             Arc::clone(&self.services.plugin_registry),
             Arc::clone(&self.services.command_manager),
             Arc::clone(&self.services.scheduler),

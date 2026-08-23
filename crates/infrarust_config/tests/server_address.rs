@@ -29,6 +29,27 @@ fn test_parse_empty_fails() {
 }
 
 #[test]
+fn test_parse_whitespace_only_fails() {
+    let result: Result<ServerAddress, _> = "   ".parse();
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_empty_host_with_port_fails() {
+    for raw in [":25565", "  :25565"] {
+        let result: Result<ServerAddress, _> = raw.parse();
+        assert!(result.is_err(), "{raw:?} should be rejected");
+    }
+}
+
+#[test]
+fn test_parse_trims_surrounding_whitespace() {
+    let addr: ServerAddress = " mc.example.com:25565 ".parse().unwrap();
+    assert_eq!(addr.host, "mc.example.com");
+    assert_eq!(addr.port, 25565);
+}
+
+#[test]
 fn test_display() {
     let addr = ServerAddress {
         host: "mc.example.com".to_string(),

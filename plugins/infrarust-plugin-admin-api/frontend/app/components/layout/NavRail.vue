@@ -7,6 +7,7 @@ import {
   PuzzlePieceIcon,
   DocumentTextIcon,
   Cog6ToothIcon,
+  AdjustmentsHorizontalIcon,
   ArrowRightStartOnRectangleIcon,
   EllipsisHorizontalIcon,
 } from '@heroicons/vue/24/outline';
@@ -27,14 +28,21 @@ const navItems = [
   { to: '/plugins', label: 'Plugins', icon: PuzzlePieceIcon },
   { to: '/logs', label: 'Logs', icon: DocumentTextIcon },
   { to: '/config', label: 'Config', icon: Cog6ToothIcon },
+  { to: '/config/proxy', label: 'Proxy Config', icon: AdjustmentsHorizontalIcon },
 ];
 
 const mobileMainNav = navItems.slice(0, 4);
 const mobileOverflowNav = navItems.slice(4);
 
-const isActive = (to: string) => route.path === to || route.path.startsWith(to + '/');
+// Longest match wins so /config/proxy does not also light up /config.
+const activeTo = computed(() => {
+  const matches = navItems.filter((item) => route.path === item.to || route.path.startsWith(item.to + '/'));
+  return matches.sort((a, b) => b.to.length - a.to.length)[0]?.to ?? '';
+});
 
-const activeIndex = computed(() => navItems.findIndex((item) => isActive(item.to)));
+const isActive = (to: string) => activeTo.value === to;
+
+const activeIndex = computed(() => navItems.findIndex((item) => item.to === activeTo.value));
 
 async function handleLogout() {
   const confirmed = await ask('Switch API Key', 'Disconnect and return to login?');

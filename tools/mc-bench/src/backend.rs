@@ -101,11 +101,7 @@ async fn handle_conn(
     // 3. Optional CSetCompression, then CLoginSuccess.
     if let Some(threshold) = compression {
         let id = registry
-            .get_packet_id::<CSetCompression>(
-                ConnectionState::Login,
-                Direction::Clientbound,
-                version,
-            )
+            .get_packet_id::<CSetCompression>(version)
             .unwrap_or(0x03);
         let mut payload = Vec::new();
         CSetCompression {
@@ -122,9 +118,10 @@ async fn handle_conn(
         username,
         properties: Vec::new(),
         strict_error_handling: false,
+        session_id: None,
     };
     let success_id = registry
-        .get_packet_id::<CLoginSuccess>(ConnectionState::Login, Direction::Clientbound, version)
+        .get_packet_id::<CLoginSuccess>(version)
         .unwrap_or(0x02);
     let mut payload = Vec::new();
     success
@@ -139,7 +136,10 @@ async fn handle_conn(
             None => return Ok(()),
         };
         if frame.id == PING_SERVERBOUND_ID && frame.payload.len() >= 8 {
-            conn.write_frame(PING_CLIENTBOUND_ID, &frame.payload[..8])
+            // Echo the full payload so the clientbound direction carries the
+            // same size (and crosses the compression threshold when the
+            // serverbound ping does).
+            conn.write_frame(PING_CLIENTBOUND_ID, &frame.payload)
                 .await?;
         }
     }

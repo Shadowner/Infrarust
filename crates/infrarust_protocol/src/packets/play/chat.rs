@@ -1,28 +1,16 @@
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::play::common::{read_text_component, write_text_component};
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// System chat message packet (Clientbound, 1.19+).
-///
-/// Used for system messages, proxy announcements, etc.
-/// Replaces the older chat message packet for non-player messages.
-///
-/// Content format:
-/// - Pre-1.20.3: JSON text component (String)
-/// - 1.20.3+: NBT compound (binary)
-///
-/// Stored as opaque bytes. For pre-1.20.3, the bytes are UTF-8 JSON.
-/// For 1.20.3+, the bytes are raw NBT.
 #[derive(Debug, Clone)]
 pub struct CSystemChatMessage {
     pub content: Vec<u8>,
-    /// If true, displayed in the action bar instead of the chat box.
     pub overlay: bool,
 }
 
 impl CSystemChatMessage {
-    /// Creates a system chat message from a JSON text component string.
     pub fn from_json(json: &str, overlay: bool) -> Self {
         Self {
             content: json.as_bytes().to_vec(),
@@ -30,7 +18,6 @@ impl CSystemChatMessage {
         }
     }
 
-    /// Creates a system chat message from pre-encoded NBT bytes (1.20.3+).
     pub fn from_nbt(nbt: Vec<u8>, overlay: bool) -> Self {
         Self {
             content: nbt,
@@ -42,32 +29,27 @@ impl CSystemChatMessage {
 impl Packet for CSystemChatMessage {
     const NAME: &'static str = "CSystemChatMessage";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_19   => 0x5F,
+        V1_19_1 => 0x62,
+        V1_19_3 => 0x60,
+        V1_19_4 => 0x64,
+        V1_20_2 => 0x67,
+        V1_20_3 => 0x69,
+        V1_20_5 => 0x6C,
+        V1_21_2 => 0x73,
+        V1_21_5 => 0x72,
+        V1_21_9 => 0x77,
+        V26_1   => 0x79,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
-        if version.less_than(ProtocolVersion::V1_20_3) {
-            let content = r.read_string()?.into_bytes();
-            let overlay = r.read_bool()?;
-            Ok(Self { content, overlay })
-        } else {
-            // NBT content followed by overlay bool.
-            // Read all remaining, last byte is overlay.
-            let remaining = r.read_remaining()?;
-            if remaining.is_empty() {
-                return Err(crate::error::ProtocolError::invalid(
-                    "CSystemChatMessage: empty payload",
-                ));
-            }
-            let overlay = remaining[remaining.len() - 1] != 0;
-            let content = remaining[..remaining.len() - 1].to_vec();
-            Ok(Self { content, overlay })
-        }
+        let content = read_text_component(r, version, 1, Self::NAME)?;
+        let overlay = r.read_bool()?;
+        Ok(Self { content, overlay })
     }
 
     fn encode(
@@ -75,46 +57,32 @@ impl Packet for CSystemChatMessage {
         mut w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
-        if version.less_than(ProtocolVersion::V1_20_3) {
-            let json = std::str::from_utf8(&self.content).map_err(|_| {
-                crate::error::ProtocolError::invalid(
-                    "CSystemChatMessage content is not valid UTF-8 for JSON version",
-                )
-            })?;
-            w.write_string(json)?;
-        } else {
-            w.write_all(&self.content)?;
-        }
+        write_text_component(w, &self.content, version, Self::NAME, "content")?;
         w.write_bool(self.overlay)?;
         Ok(())
     }
 }
 
-/// Before 1.19, chat and system messages used a single packet with a
-/// `position` byte to distinguish the display location.
-///
-/// Wire format varies:
-/// - 1.7: JSON String only
-/// - 1.8–1.15: JSON String + position(u8)
-/// - 1.16–1.18: JSON String + position(u8) + sender(UUID)
 #[derive(Debug, Clone)]
 pub struct CChatMessageLegacy {
-    /// JSON text component.
     pub content: String,
-    /// 0 = chat box, 1 = system message, 2 = game info (action bar).
     pub position: u8,
 }
 
 impl Packet for CChatMessageLegacy {
     const NAME: &'static str = "CChatMessageLegacy";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x02,
+        V1_9   => 0x0F,
+        V1_13  => 0x0E,
+        V1_15  => 0x0F,
+        V1_16  => 0x0E,
+        V1_17  => 0x0F,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let content = r.read_string()?;
@@ -145,32 +113,30 @@ impl Packet for CChatMessageLegacy {
     }
 }
 
-/// Serverbound chat message packet.
-///
-/// Sent by the client when typing a chat message. Pre-1.19, this is also
-/// used for slash commands (messages starting with `/`). From 1.19+,
-/// commands use the separate [`SChatCommand`] packet.
-///
-/// Only the message string is decoded; remaining bytes (timestamp, salt,
-/// signature in 1.19+) are preserved opaquely for forwarding.
 #[derive(Debug, Clone)]
 pub struct SChatMessage {
-    /// The chat message text.
     pub message: String,
-    /// Remaining bytes after the message (signatures, etc.).
     pub remaining: Vec<u8>,
 }
 
 impl Packet for SChatMessage {
     const NAME: &'static str = "SChatMessage";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x01,
+        V1_9    => 0x02,
+        V1_12   => 0x03,
+        V1_12_1 => 0x02,
+        V1_14   => 0x03,
+        V1_19   => 0x05,
+        V1_20_2 => 0x06,
+        V1_21_2 => 0x07,
+        V1_21_6 => 0x08,
+        V26_1   => 0x09,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let message = r.read_string()?;
@@ -189,31 +155,24 @@ impl Packet for SChatMessage {
     }
 }
 
-/// Serverbound chat command packet (1.19+).
-///
-/// Sent by the client when typing a slash command. The command string
-/// does NOT include the leading `/`.
-///
-/// Only the command string is decoded; remaining bytes (timestamp, salt,
-/// argument signatures) are preserved opaquely for forwarding.
 #[derive(Debug, Clone)]
 pub struct SChatCommand {
-    /// The command text without the leading `/`.
     pub command: String,
-    /// Remaining bytes after the command (signatures, etc.).
     pub remaining: Vec<u8>,
 }
 
 impl Packet for SChatCommand {
     const NAME: &'static str = "SChatCommand";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_19   => 0x04,
+        V1_21_2 => 0x05,
+        V1_21_6 => 0x06,
+        V26_1   => 0x07,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let command = r.read_string()?;
@@ -236,12 +195,7 @@ impl Packet for SChatCommand {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-
-    fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        P::decode(&mut buf.as_slice(), version).unwrap()
-    }
+    use crate::packets::round_trip;
 
     #[test]
     fn test_system_chat_round_trip_json() {
@@ -271,6 +225,24 @@ mod tests {
         let pkt = CSystemChatMessage::from_json(r#"{"text":"Action bar"}"#, true);
         let decoded = round_trip(&pkt, ProtocolVersion::V1_19_4);
         assert!(decoded.overlay);
+    }
+
+    #[test]
+    fn test_system_chat_nbt_content_stops_before_overlay() {
+        let pkt = CSystemChatMessage::from_nbt(vec![0x0A, 0x00, 0x00, 0x01], false);
+        let mut buf = Vec::new();
+        pkt.encode(&mut buf, ProtocolVersion::V1_20_3).unwrap();
+        assert_eq!(buf, vec![0x0A, 0x00, 0x00, 0x01, 0x00]);
+
+        let decoded =
+            CSystemChatMessage::decode(&mut buf.as_slice(), ProtocolVersion::V1_20_3).unwrap();
+        assert_eq!(decoded.content, vec![0x0A, 0x00, 0x00, 0x01]);
+        assert!(!decoded.overlay);
+    }
+
+    #[test]
+    fn test_system_chat_nbt_empty_payload_is_rejected() {
+        assert!(CSystemChatMessage::decode(&mut [].as_slice(), ProtocolVersion::V1_20_3).is_err());
     }
 
     #[test]

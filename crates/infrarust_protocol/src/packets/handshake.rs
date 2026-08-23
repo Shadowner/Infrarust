@@ -2,44 +2,24 @@ use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-use super::Packet;
+use super::{Packet, PacketMapping};
 
-/// Handshake packet (Serverbound, 0x00).
-///
-/// Always the first packet sent by the client. Indicates:
-/// - The client's protocol version
-/// - The target server address (used by the proxy for domain-based routing)
-/// - The server port
-/// - The intent: Status (ping) or Login (connection)
-///
-/// Format stable since Minecraft 1.7, no versioning necessary.
-///
-/// The server address may contain Forge/FML markers:
-/// `"play.example.com\0FML\0"` or `"play.example.com\0FML2\0"`.
-/// The proxy must preserve them during forwarding.
 #[derive(Debug, Clone)]
 pub struct SHandshake {
-    /// Client's protocol version (e.g., 767 for MC 1.21).
     pub protocol_version: VarInt,
-    /// Server address as entered by the player.
-    /// May contain FML markers. Max 255 chars.
     pub server_address: String,
-    /// Server port (rarely used by proxies, but present in the protocol).
     pub server_port: u16,
-    /// Client's intent: Status (1) or Login (2) or Transfer (3, since 1.20.5).
     pub next_state: ConnectionState,
 }
 
 impl Packet for SHandshake {
     const NAME: &'static str = "SHandshake";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Handshake
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Handshake;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x00,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let protocol_version = r.read_var_int()?;
@@ -140,13 +120,11 @@ mod tests {
 
     #[test]
     fn test_handshake_transfer_intent() {
-        // Transfer (intent 3) maps to Login in from_handshake_id
-        // We need to manually encode intent 3 to test decoding
         let mut buf = Vec::new();
         buf.write_var_int(&VarInt(767)).unwrap();
         buf.write_string("mc.server.com").unwrap();
         buf.write_u16_be(25565).unwrap();
-        buf.write_var_int(&VarInt(3)).unwrap(); // Transfer intent
+        buf.write_var_int(&VarInt(3)).unwrap();
 
         let decoded = SHandshake::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
         assert_eq!(decoded.next_state, ConnectionState::Login);
@@ -158,7 +136,7 @@ mod tests {
         buf.write_var_int(&VarInt(767)).unwrap();
         buf.write_string("mc.server.com").unwrap();
         buf.write_u16_be(25565).unwrap();
-        buf.write_var_int(&VarInt(99)).unwrap(); // Invalid intent
+        buf.write_var_int(&VarInt(99)).unwrap();
 
         let result = SHandshake::decode(&mut buf.as_slice(), ProtocolVersion::V1_21);
         assert!(result.is_err());

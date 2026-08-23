@@ -4,6 +4,7 @@
 //! helper and splits commands into name + arguments for handler dispatch.
 
 use infrarust_protocol::io::PacketFrame;
+use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
@@ -26,7 +27,9 @@ pub(crate) fn parse_client_message(
     registry: &PacketRegistry,
     version: ProtocolVersion,
 ) -> Option<ClientMessage> {
-    let action = detect_chat_or_command(frame, registry, version)?;
+    let chat_cmd_id = registry.get_packet_id::<SChatCommand>(version);
+    let chat_msg_id = registry.get_packet_id::<SChatMessage>(version);
+    let action = detect_chat_or_command(frame, chat_cmd_id, chat_msg_id, version)?;
 
     match action {
         ChatAction::Command(input) => {
@@ -119,10 +122,7 @@ mod tests {
         let registry = test_registry();
         let version = ProtocolVersion::V1_21;
 
-        let frame = PacketFrame {
-            id: 9999,
-            payload: Bytes::new(),
-        };
+        let frame = PacketFrame::new(9999, Bytes::new());
 
         assert!(parse_client_message(&frame, &registry, version).is_none());
     }

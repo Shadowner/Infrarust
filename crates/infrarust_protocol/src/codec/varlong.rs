@@ -1,25 +1,15 @@
-//! `VarLong` encoding and decoding for the Minecraft protocol.
-
 use std::fmt;
 use std::io::Write;
 
 use crate::codec::{Decode, Encode};
 use crate::error::{ProtocolError, ProtocolResult};
 
-/// `VarLong` Minecraft — a signed 64-bit integer encoded in 1–10 bytes.
-///
-/// Same encoding scheme as [`super::VarInt`] but for `i64` values.
-/// Rarely a performance bottleneck, so uses a simple loop-based encoder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VarLong(pub i64);
 
 impl VarLong {
-    /// Maximum number of bytes a `VarLong` can occupy on the wire.
     pub const MAX_SIZE: usize = 10;
 
-    /// Returns the number of bytes this `VarLong` will occupy when encoded.
-    ///
-    /// Computed in O(1) without loops.
     pub const fn written_size(self) -> usize {
         match self.0 {
             0 => 1,
@@ -27,10 +17,6 @@ impl VarLong {
         }
     }
 
-    /// Encodes this `VarLong` using a classic byte-by-byte loop.
-    ///
-    /// # Errors
-    /// Returns an error if writing to `w` fails.
     pub fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
         let mut val = self.0 as u64;
         loop {
@@ -44,10 +30,6 @@ impl VarLong {
         }
     }
 
-    /// Decodes a `VarLong` from a byte slice, advancing the cursor.
-    ///
-    /// # Errors
-    /// Returns an error if the buffer is incomplete or the `VarLong` exceeds 10 bytes.
     pub fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
         let mut val = 0i64;
         for i in 0..Self::MAX_SIZE {
@@ -138,12 +120,11 @@ mod tests {
     fn test_i64_max_is_10_bytes() {
         let mut buf = Vec::new();
         VarLong(i64::MAX).encode(&mut buf).unwrap();
-        assert_eq!(buf.len(), 9); // i64::MAX uses 9 bytes (63 bits / 7 = 9)
+        assert_eq!(buf.len(), 9);
     }
 
     #[test]
     fn test_varlong_decode_incomplete() {
-        // A VarLong with continuation bit set but no more bytes
         let mut buf: &[u8] = &[0x80, 0x80];
         let err = VarLong::decode(&mut buf).unwrap_err();
         assert!(err.is_incomplete());
@@ -161,7 +142,6 @@ mod tests {
 
     #[test]
     fn test_varlong_max_is_not_11_bytes() {
-        // VarLong(i64::MIN) should use exactly 10 bytes (maximum)
         let mut buf = Vec::new();
         VarLong(i64::MIN).encode(&mut buf).unwrap();
         assert_eq!(buf.len(), 10);

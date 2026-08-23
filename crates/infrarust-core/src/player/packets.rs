@@ -14,7 +14,7 @@ use infrarust_protocol::packets::play::title::{
     CSetSubtitle, CSetTitle, CSetTitleTimes, CTitleLegacy,
 };
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
 
@@ -155,27 +155,24 @@ pub fn build_title_packets(
 }
 
 /// Encodes a typed packet into a `PacketFrame`.
-pub(crate) fn encode_packet<P: Packet + 'static>(
+pub(crate) fn encode_packet<P: Packet>(
     packet: &P,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<PacketFrame, CoreError> {
-    let packet_id = registry
-        .get_packet_id::<P>(ConnectionState::Play, Direction::Clientbound, version)
-        .ok_or_else(|| {
-            CoreError::Other(format!(
-                "no packet ID for {} in Play/Clientbound/{version:?}",
-                P::NAME,
-            ))
-        })?;
+    let packet_id = registry.get_packet_id::<P>(version).ok_or_else(|| {
+        CoreError::Other(format!(
+            "no packet ID for {} in {}/{}/{version:?}",
+            P::NAME,
+            P::STATE,
+            P::DIRECTION,
+        ))
+    })?;
 
     let mut payload = Vec::new();
     packet
         .encode(&mut payload, version)
         .map_err(|e| CoreError::Other(e.to_string()))?;
 
-    Ok(PacketFrame {
-        id: packet_id,
-        payload: Bytes::from(payload),
-    })
+    Ok(PacketFrame::new(packet_id, Bytes::from(payload)))
 }

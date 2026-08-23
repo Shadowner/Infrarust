@@ -1,6 +1,7 @@
 //! Mojang API client for premium username lookups.
 
 use std::num::NonZeroU32;
+use std::time::Duration;
 
 use governor::clock::DefaultClock;
 use governor::state::InMemoryState;
@@ -8,6 +9,8 @@ use governor::{Quota, RateLimiter};
 use uuid::Uuid;
 
 const MOJANG_API_URL: &str = "https://api.mojang.com/users/profiles/minecraft";
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const USER_AGENT: &str = concat!("infrarust/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug)]
 pub enum LookupError {
@@ -51,8 +54,14 @@ impl MojangApiLookup {
         let quota = Quota::per_second(max);
         let rate_limiter = RateLimiter::direct(quota);
 
+        let http_client = reqwest::Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .user_agent(USER_AGENT)
+            .build()
+            .expect("failed to build Mojang API HTTP client");
+
         Self {
-            http_client: reqwest::Client::new(),
+            http_client,
             rate_limiter,
         }
     }

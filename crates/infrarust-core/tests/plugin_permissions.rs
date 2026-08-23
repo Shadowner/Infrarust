@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
 use infrarust_api::event::BoxFuture;
@@ -17,7 +17,9 @@ use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::NoopServerManager;
 
 mod mock_services;
-use mock_services::{MockBanService, MockConfigService, MockPlayerRegistry};
+use mock_services::{
+    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
+};
 
 struct DummyLimbo;
 
@@ -34,7 +36,7 @@ impl LimboHandler for DummyLimbo {
     }
 }
 
-fn build_services() -> PluginServices {
+fn build_services(plugins_dir: &Path) -> PluginServices {
     PluginServices {
         event_bus: Arc::new(EventBusImpl::new()) as Arc<dyn infrarust_api::event::bus::EventBus>,
         player_registry: Arc::new(MockPlayerRegistry),
@@ -43,6 +45,7 @@ fn build_services() -> PluginServices {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        load_balancer_service: Arc::new(MockLoadBalancerService),
         plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
@@ -53,16 +56,23 @@ fn build_services() -> PluginServices {
         domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
         proxy_shutdown: tokio_util::sync::CancellationToken::new(),
         proxy_info: infrarust_api::services::proxy_info::ProxyInfo::default(),
-        plugins_dir: PathBuf::from("plugins"),
+        plugins_dir: plugins_dir.to_path_buf(),
     }
 }
 
-fn factory(entries: Vec<(&str, PluginPermissions)>) -> PluginContextFactoryImpl {
+fn factory_in(
+    plugins_dir: &Path,
+    entries: Vec<(&str, PluginPermissions)>,
+) -> PluginContextFactoryImpl {
     let map: HashMap<String, PluginPermissions> = entries
         .into_iter()
         .map(|(id, p)| (id.to_string(), p))
         .collect();
-    PluginContextFactoryImpl::new(build_services(), map)
+    PluginContextFactoryImpl::new(build_services(plugins_dir), map)
+}
+
+fn factory(entries: Vec<(&str, PluginPermissions)>) -> PluginContextFactoryImpl {
+    factory_in(Path::new("plugins"), entries)
 }
 
 fn perms(strings: &[&str], trusted: bool) -> PluginPermissions {
@@ -155,4 +165,43 @@ fn trusted_wins_over_conflicting_config_so_native_keeps_limbo() {
     let ctx = f.create_context("auth");
     assert!(ctx.capabilities().has(Capability::Limbo));
     assert_eq!(limbo_handlers_after_register(&ctx), 1);
+}
+
+#[test]
+fn data_dir_is_created_on_demand() {
+    let tmp = tempfile::tempdir().unwrap();
+    let f = factory_in(tmp.path(), vec![("p", perms(&[], false))]);
+
+    let dir = f.create_context("p").data_dir();
+
+    assert_eq!(dir, tmp.path().join("p"));
+    assert!(
+        dir.is_dir(),
+        "data_dir() must create the directory it returns"
+    );
+}
+
+#[test]
+fn data_dir_creates_missing_plugins_dir_too() {
+    let tmp = tempfile::tempdir().unwrap();
+    let plugins_dir = tmp.path().join("absent").join("plugins");
+    let f = factory_in(&plugins_dir, vec![("admin_api", perms(&[], true))]);
+
+    assert!(f.create_context("admin_api").data_dir().is_dir());
+}
+
+#[test]
+fn data_dir_is_idempotent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let f = factory_in(tmp.path(), vec![("p", perms(&[], false))]);
+    let ctx = f.create_context("p");
+
+    let dir = ctx.data_dir();
+    std::fs::write(dir.join("state.json"), b"{}").unwrap();
+
+    assert_eq!(ctx.data_dir(), dir);
+    assert!(
+        dir.join("state.json").exists(),
+        "a second call must not disturb what the plugin already wrote"
+    );
 }

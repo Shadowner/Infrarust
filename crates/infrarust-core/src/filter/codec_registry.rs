@@ -38,9 +38,9 @@ impl CodecFilterRegistryImpl {
         init: &infrarust_api::filter::CodecSessionInit,
     ) -> Vec<Box<dyn infrarust_api::filter::CodecFilterInstance>> {
         self.base.with_ordered(|factories, ordered| {
-            let factory_map: HashMap<String, &dyn CodecFilterFactory> = factories
+            let factory_map: HashMap<&str, &dyn CodecFilterFactory> = factories
                 .iter()
-                .map(|f| (CodecFilterFactory::metadata(f.as_ref()).id, f.as_ref()))
+                .map(|(m, f)| (m.id.as_str(), f.as_ref()))
                 .collect();
 
             ordered
@@ -63,9 +63,9 @@ impl CodecFilterRegistryImpl {
         Vec<std::sync::Arc<str>>,
     ) {
         self.base.with_ordered(|factories, ordered| {
-            let factory_map: HashMap<String, &dyn CodecFilterFactory> = factories
+            let factory_map: HashMap<&str, &dyn CodecFilterFactory> = factories
                 .iter()
-                .map(|f| (CodecFilterFactory::metadata(f.as_ref()).id, f.as_ref()))
+                .map(|(m, f)| (m.id.as_str(), f.as_ref()))
                 .collect();
 
             let mut instances = Vec::with_capacity(ordered.len());
@@ -151,7 +151,7 @@ mod tests {
             connection_id: 1,
             remote_addr: "127.0.0.1:12345".parse().unwrap(),
             real_ip: None,
-            side: infrarust_api::filter::ConnectionSide::ClientSide,
+            side: ConnectionSide::ClientSide,
         }
     }
 

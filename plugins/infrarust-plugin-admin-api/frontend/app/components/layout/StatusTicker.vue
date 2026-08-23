@@ -9,6 +9,7 @@ import {
   Cog6ToothIcon,
   KeyIcon,
   HeartIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/vue/24/outline';
 import type { ProxyStatus } from '~/types/api';
 
@@ -17,6 +18,7 @@ const auth = useAuth();
 const { request } = useApi();
 const { status: sseStatus, onEvent } = useEventBus();
 const { now } = useTick();
+const { pending: restartPending } = useRestartRequired();
 
 const proxyStatus = ref<ProxyStatus | null>(null);
 const pinging = ref(false);
@@ -30,6 +32,7 @@ const pageMap: Record<string, { label: string; icon: any }> = {
   '/servers': { label: 'Servers', icon: ServerStackIcon },
   '/plugins': { label: 'Plugins', icon: PuzzlePieceIcon },
   '/logs': { label: 'Logs', icon: DocumentTextIcon },
+  '/config/proxy': { label: 'Proxy Config', icon: Cog6ToothIcon },
   '/config': { label: 'Config', icon: Cog6ToothIcon },
 };
 
@@ -63,7 +66,6 @@ onEvent('stats.tick', (data) => {
   const d = data as Record<string, unknown>;
   if (proxyStatus.value) {
     if (typeof d.players_online === 'number') proxyStatus.value.players_online = d.players_online;
-    if (typeof d.servers_online === 'number') proxyStatus.value.servers_count = d.servers_online;
     if (typeof d.uptime_seconds === 'number') {
       uptimeBaseSeconds.value = d.uptime_seconds;
       uptimeBaseTime.value = Date.now();
@@ -109,19 +111,30 @@ function handleSwitchKey() {
         <span class="font-mono text-[var(--ir-text)]">{{ liveUptime }}</span>
       </div>
       <span class="h-3 w-px bg-[var(--ir-border)]" />
-      <div class="flex items-center gap-1.5 text-xs text-[var(--ir-text-muted)]">
+      <div class="flex items-center gap-1.5 text-xs text-[var(--ir-text-muted)]" title="Players online">
         <UsersIcon class="h-3.5 w-3.5" />
         <span class="font-mono text-[var(--ir-text)]">{{ proxyStatus?.players_online ?? 0 }}</span>
+        <span class="sr-only">players online</span>
       </div>
       <span class="h-3 w-px bg-[var(--ir-border)]" />
-      <div class="flex items-center gap-1.5 text-xs text-[var(--ir-text-muted)]">
+      <div class="flex items-center gap-1.5 text-xs text-[var(--ir-text-muted)]" title="Configured servers">
         <ServerStackIcon class="h-3.5 w-3.5" />
         <span class="font-mono text-[var(--ir-text)]">{{ proxyStatus?.servers_count ?? 0 }}</span>
+        <span class="sr-only">configured servers</span>
       </div>
     </div>
 
     <!-- Right: SSE indicator + actions -->
     <div class="flex items-center gap-3">
+      <NuxtLink
+        v-if="restartPending"
+        to="/config/proxy"
+        class="flex items-center gap-1.5 rounded-full border border-[rgba(233,160,71,0.35)] bg-[rgba(233,160,71,0.14)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#ffd8ad]"
+      >
+        <ExclamationTriangleIcon class="h-3 w-3" />
+        Restart required
+      </NuxtLink>
+
       <div class="flex items-center gap-2">
         <span
           class="h-2 w-2 rounded-full transition-transform duration-150"
@@ -177,6 +190,9 @@ function handleSwitchKey() {
     </div>
 
     <div class="flex items-center gap-2">
+      <NuxtLink v-if="restartPending" to="/config/proxy" aria-label="Restart required" class="text-[var(--ir-warn)]">
+        <ExclamationTriangleIcon class="h-4 w-4" />
+      </NuxtLink>
       <span
         class="h-2 w-2 rounded-full"
         :class="[

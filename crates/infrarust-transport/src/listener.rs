@@ -213,3 +213,35 @@ fn is_transient_error(e: &std::io::Error) -> bool {
     ) || matches!(e.raw_os_error(), Some(24 | 23 | 12 | 105))
     // 24=EMFILE, 23=ENFILE, 12=ENOMEM, 105=ENOBUFS (Linux values)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transient_errors_are_retried() {
+        // EMFILE, ENFILE, ENOMEM, ENOBUFS (Linux values)
+        for errno in [24, 23, 12, 105] {
+            assert!(
+                is_transient_error(&std::io::Error::from_raw_os_error(errno)),
+                "errno {errno} should be transient"
+            );
+        }
+        for kind in [
+            std::io::ErrorKind::ConnectionAborted,
+            std::io::ErrorKind::ConnectionReset,
+        ] {
+            assert!(is_transient_error(&std::io::Error::from(kind)));
+        }
+    }
+
+    #[test]
+    fn fatal_errors_are_not_retried() {
+        for kind in [
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::InvalidInput,
+        ] {
+            assert!(!is_transient_error(&std::io::Error::from(kind)));
+        }
+    }
+}

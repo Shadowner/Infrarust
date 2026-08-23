@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use infrarust_config::{DomainRewrite, ServerConfig};
+use infrarust_config::{DomainRewrite, ServerAddress, ServerConfig};
 use infrarust_protocol::Packet;
 use infrarust_protocol::codec::VarInt;
 use infrarust_protocol::io::{PacketDecoder, PacketEncoder};
@@ -33,6 +33,8 @@ pub struct RelayResult {
     pub response: ServerPingResponse,
     /// Round-trip latency of the ping/pong exchange.
     pub latency: Duration,
+    /// Address the relay actually reached, which failover may have changed.
+    pub address: ServerAddress,
 }
 
 /// Lightweight client for relaying status pings to backends.
@@ -59,10 +61,12 @@ impl StatusRelayClient {
     ///
     /// # Errors
     /// Returns `CoreError` on connection failure, protocol error, or timeout.
+    #[allow(clippy::too_many_arguments)]
     pub async fn relay(
         &self,
         server_id: &str,
         server_config: &ServerConfig,
+        addresses: &[ServerAddress],
         handshake_domain: &str,
         protocol_version: ProtocolVersion,
         client_info: &ConnectionInfo,
@@ -72,6 +76,7 @@ impl StatusRelayClient {
             self.relay_inner(
                 server_id,
                 server_config,
+                addresses,
                 handshake_domain,
                 protocol_version,
                 client_info,
@@ -90,125 +95,137 @@ impl StatusRelayClient {
         &self,
         server_id: &str,
         server_config: &ServerConfig,
+        addresses: &[ServerAddress],
         handshake_domain: &str,
         protocol_version: ProtocolVersion,
         client_info: &ConnectionInfo,
     ) -> Result<RelayResult, CoreError> {
-        let addresses = &server_config.addresses;
-        let send_proxy_protocol = server_config.send_proxy_protocol;
-
-        // 1. Connect to backend
         let conn = self
             .backend_connector
-            .connect(server_id, addresses, None, send_proxy_protocol, client_info)
+            .connect(
+                server_id,
+                addresses,
+                None,
+                server_config.send_proxy_protocol,
+                client_info,
+            )
             .await?;
+
+        let connected = conn.server_address().clone();
         let mut stream = conn.into_stream();
+        let relay_domain = resolve_relay_domain(handshake_domain, server_config, &connected);
 
-        // 2. Resolve domain for the handshake
-        let relay_domain = resolve_relay_domain(handshake_domain, server_config);
-        let backend_port = addresses.first().map_or(25565, |a| a.port);
-
-        // 3. Send SHandshake (intent = Status)
-        let handshake = SHandshake {
-            protocol_version: VarInt(protocol_version.0),
-            server_address: relay_domain,
-            server_port: backend_port,
-            next_state: ConnectionState::Status,
-        };
-        send_packet(&self.registry, &mut stream, &handshake, protocol_version).await?;
-
-        // 4. Send SStatusRequest (empty)
-        send_packet(
+        status_exchange(
             &self.registry,
             &mut stream,
-            &SStatusRequest,
-            STATUS_PROTOCOL_VERSION,
+            server_id,
+            relay_domain,
+            connected.clone(),
+            protocol_version,
         )
-        .await?;
-
-        // Use a single persistent decoder for the entire exchange to avoid
-        // losing data when TCP delivers multiple packets in one read.
-        let mut decoder = PacketDecoder::new();
-
-        // 5. Read CStatusResponse
-        let status_frame = read_next_frame(&mut stream, &mut decoder).await?;
-        let status_decoded = self.registry.decode_frame(
-            &status_frame,
-            ConnectionState::Status,
-            Direction::Clientbound,
-            STATUS_PROTOCOL_VERSION,
-        )?;
-
-        let json_response = match status_decoded {
-            DecodedPacket::Typed { packet, .. } => packet
-                .as_any()
-                .downcast_ref::<CStatusResponse>()
-                .map(|p| p.json_response.clone())
-                .ok_or_else(|| {
-                    CoreError::Other("unexpected packet type for status response".into())
-                })?,
-            DecodedPacket::Opaque { .. } => {
-                return Err(CoreError::Other("received opaque status response".into()));
-            }
-        };
-
-        // 6. Parse JSON
-        let response: ServerPingResponse = serde_json::from_str(&json_response).map_err(|e| {
-            CoreError::Other(format!("invalid status JSON from '{server_id}': {e}"))
-        })?;
-
-        // 7. Ping/Pong for latency measurement
-        let ping_payload = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
-
-        let ping_start = tokio::time::Instant::now();
-        send_packet(
-            &self.registry,
-            &mut stream,
-            &SPingRequest {
-                payload: ping_payload,
-            },
-            STATUS_PROTOCOL_VERSION,
-        )
-        .await?;
-
-        // 8. Read CPingResponse
-        let pong_frame = read_next_frame(&mut stream, &mut decoder).await?;
-        let latency = ping_start.elapsed();
-
-        let pong_decoded = self.registry.decode_frame(
-            &pong_frame,
-            ConnectionState::Status,
-            Direction::Clientbound,
-            STATUS_PROTOCOL_VERSION,
-        )?;
-
-        if let DecodedPacket::Typed { packet, .. } = pong_decoded
-            && let Some(pong) = packet.as_any().downcast_ref::<CPingResponse>()
-            && pong.payload != ping_payload
-        {
-            tracing::debug!(
-                expected = ping_payload,
-                got = pong.payload,
-                "ping/pong payload mismatch (non-fatal)"
-            );
-        }
-
-        // 9. Connection is dropped (closed) here
-        Ok(RelayResult { response, latency })
+        .await
     }
 }
 
+/// Runs the status half of the protocol on an already-connected stream:
+/// Handshake → `StatusRequest` → `StatusResponse` → Ping → Pong.
+pub(crate) async fn status_exchange(
+    registry: &PacketRegistry,
+    stream: &mut tokio::net::TcpStream,
+    server_id: &str,
+    relay_domain: String,
+    address: ServerAddress,
+    protocol_version: ProtocolVersion,
+) -> Result<RelayResult, CoreError> {
+    let handshake = SHandshake {
+        protocol_version: VarInt(protocol_version.0),
+        server_address: relay_domain,
+        server_port: address.port,
+        next_state: ConnectionState::Status,
+    };
+    send_packet(registry, stream, &handshake, protocol_version).await?;
+
+    send_packet(registry, stream, &SStatusRequest, STATUS_PROTOCOL_VERSION).await?;
+
+    // Use a single persistent decoder for the entire exchange to avoid
+    // losing data when TCP delivers multiple packets in one read.
+    let mut decoder = PacketDecoder::new();
+
+    let status_frame = read_next_frame(stream, &mut decoder).await?;
+    let status_decoded = registry.decode_frame(
+        &status_frame,
+        ConnectionState::Status,
+        Direction::Clientbound,
+        STATUS_PROTOCOL_VERSION,
+    )?;
+
+    let json_response = match status_decoded {
+        DecodedPacket::Typed { packet, .. } => packet
+            .as_any()
+            .downcast_ref::<CStatusResponse>()
+            .map(|p| p.json_response.clone())
+            .ok_or_else(|| CoreError::Other("unexpected packet type for status response".into()))?,
+        DecodedPacket::Opaque { .. } => {
+            return Err(CoreError::Other("received opaque status response".into()));
+        }
+    };
+
+    let response: ServerPingResponse = serde_json::from_str(&json_response)
+        .map_err(|e| CoreError::Other(format!("invalid status JSON from '{server_id}': {e}")))?;
+
+    let ping_payload = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    let ping_start = tokio::time::Instant::now();
+    send_packet(
+        registry,
+        stream,
+        &SPingRequest {
+            payload: ping_payload,
+        },
+        STATUS_PROTOCOL_VERSION,
+    )
+    .await?;
+
+    let pong_frame = read_next_frame(stream, &mut decoder).await?;
+    let latency = ping_start.elapsed();
+
+    let pong_decoded = registry.decode_frame(
+        &pong_frame,
+        ConnectionState::Status,
+        Direction::Clientbound,
+        STATUS_PROTOCOL_VERSION,
+    )?;
+
+    if let DecodedPacket::Typed { packet, .. } = pong_decoded
+        && let Some(pong) = packet.as_any().downcast_ref::<CPingResponse>()
+        && pong.payload != ping_payload
+    {
+        tracing::debug!(
+            expected = ping_payload,
+            got = pong.payload,
+            "ping/pong payload mismatch (non-fatal)"
+        );
+    }
+
+    Ok(RelayResult {
+        response,
+        latency,
+        address,
+    })
+}
+
 /// Applies domain rewrite for the relay handshake.
-fn resolve_relay_domain(handshake_domain: &str, server_config: &ServerConfig) -> String {
+fn resolve_relay_domain(
+    handshake_domain: &str,
+    server_config: &ServerConfig,
+    connected: &ServerAddress,
+) -> String {
     match &server_config.domain_rewrite {
         DomainRewrite::Explicit(domain) => domain.clone(),
-        DomainRewrite::FromBackend => server_config
-            .addresses
-            .first()
-            .map_or_else(|| handshake_domain.to_string(), |a| a.host.clone()),
+        DomainRewrite::FromBackend => connected.host.clone(),
         _ => handshake_domain.to_string(),
     }
 }
@@ -220,9 +237,7 @@ async fn send_packet<P: Packet>(
     packet: &P,
     version: ProtocolVersion,
 ) -> Result<(), CoreError> {
-    let packet_id = registry
-        .get_packet_id::<P>(P::state(), P::direction(), version)
-        .unwrap_or(0);
+    let packet_id = registry.get_packet_id::<P>(version).unwrap_or(0);
 
     let mut payload = Vec::new();
     packet.encode(&mut payload, version)?;
@@ -345,7 +360,11 @@ mod tests {
             name: None,
             network: None,
             domains: vec!["test.mc".to_string()],
-            addresses,
+            addresses: addresses.into_iter().map(Into::into).collect(),
+            balance: Default::default(),
+            slow_start: None,
+            slow_start_aggression: 1.0,
+            active_health: None,
             proxy_mode: Default::default(),
             forwarding_mode: None,
             send_proxy_protocol: false,
@@ -386,6 +405,7 @@ mod tests {
             .relay(
                 "test",
                 &server_config,
+                &server_config.address_list(),
                 "test.mc",
                 ProtocolVersion::V1_21,
                 &make_client_info(),
@@ -397,6 +417,42 @@ mod tests {
         assert_eq!(result.response.players.max, 100);
         assert!(result.latency < Duration::from_secs(1));
 
+        shutdown.cancel();
+    }
+
+    /// Failover must reach the live replica, and the handshake must carry the
+    /// port of the address actually connected to.
+    #[tokio::test]
+    async fn test_relay_fails_over_to_the_live_address() {
+        let (addrs, shutdown) = spawn_mock_mc_status(TEST_JSON).await;
+        let live = addrs[0].clone();
+        let dead: ServerAddress = "127.0.0.1:1".parse().unwrap();
+        let mut server_config = make_server_config(vec![dead.clone(), live.clone()]);
+        server_config.domain_rewrite = DomainRewrite::FromBackend;
+
+        let connector = Arc::new(BackendConnector::new(
+            Duration::from_secs(2),
+            KeepaliveConfig::default(),
+        ));
+        let client = StatusRelayClient::new(
+            connector,
+            Arc::new(build_default_registry()),
+            Duration::from_secs(5),
+        );
+
+        let result = client
+            .relay(
+                "test",
+                &server_config,
+                &[dead, live],
+                "test.mc",
+                ProtocolVersion::V1_21,
+                &make_client_info(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.response.players.online, 42);
         shutdown.cancel();
     }
 
@@ -426,6 +482,7 @@ mod tests {
             .relay(
                 "test",
                 &server_config,
+                &server_config.address_list(),
                 "test.mc",
                 ProtocolVersion::V1_21,
                 &make_client_info(),
@@ -457,6 +514,7 @@ mod tests {
             .relay(
                 "test",
                 &server_config,
+                &server_config.address_list(),
                 "test.mc",
                 ProtocolVersion::V1_21,
                 &make_client_info(),
@@ -482,6 +540,7 @@ mod tests {
             .relay(
                 "test",
                 &server_config,
+                &server_config.address_list(),
                 "test.mc",
                 ProtocolVersion::V1_21,
                 &make_client_info(),
@@ -498,21 +557,36 @@ mod tests {
     #[test]
     fn test_resolve_relay_domain_none() {
         let cfg = make_server_config(vec!["backend:25565".parse().unwrap()]);
-        assert_eq!(resolve_relay_domain("play.mc", &cfg), "play.mc");
+        assert_eq!(
+            resolve_relay_domain("play.mc", &cfg, &connected()),
+            "play.mc"
+        );
     }
 
     #[test]
     fn test_resolve_relay_domain_explicit() {
         let mut cfg = make_server_config(vec!["backend:25565".parse().unwrap()]);
         cfg.domain_rewrite = DomainRewrite::Explicit("custom.host".to_string());
-        assert_eq!(resolve_relay_domain("play.mc", &cfg), "custom.host");
+        assert_eq!(
+            resolve_relay_domain("play.mc", &cfg, &connected()),
+            "custom.host"
+        );
     }
 
     #[test]
     fn test_resolve_relay_domain_from_backend() {
         let mut cfg = make_server_config(vec!["backend.local:25565".parse().unwrap()]);
         cfg.domain_rewrite = DomainRewrite::FromBackend;
-        assert_eq!(resolve_relay_domain("play.mc", &cfg), "backend.local");
+        let failed_over: ServerAddress = "replica-2.local:25565".parse().unwrap();
+        assert_eq!(
+            resolve_relay_domain("play.mc", &cfg, &failed_over),
+            "replica-2.local",
+            "the handshake must name the address actually connected to"
+        );
+    }
+
+    fn connected() -> ServerAddress {
+        "backend.local:25565".parse().unwrap()
     }
 
     #[tokio::test]
@@ -532,6 +606,7 @@ mod tests {
             .relay(
                 "test",
                 &server_config,
+                &server_config.address_list(),
                 "test.mc",
                 future_version,
                 &make_client_info(),

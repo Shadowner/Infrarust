@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::defaults;
 use crate::types::{
-    BanConfig, DockerProviderConfig, ForwardingConfig, IpFilterConfig, KeepaliveConfig, MotdConfig,
-    PermissionsConfig, RateLimitConfig, StatusCacheConfig, TelemetryConfig, WebConfig,
+    ActiveHealthConfig, BanConfig, DockerProviderConfig, ForwardingConfig, IpFilterConfig,
+    KeepaliveConfig, MotdConfig, PermissionsConfig, RateLimitConfig, StatusCacheConfig,
+    TelemetryConfig, WebConfig,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +38,11 @@ pub struct ProxyConfig {
     #[serde(default = "defaults::connect_timeout")]
     #[serde(with = "humantime_serde")]
     pub connect_timeout: Duration,
+
+    /// Maximum backend addresses tried before giving up on a connection.
+    /// Bounds worst-case login latency to `attempts × connect_timeout`.
+    #[serde(default = "defaults::connect_max_attempts")]
+    pub connect_max_attempts: usize,
 
     /// Enables receiving proxy protocol (`HAProxy` v1/v2)
     #[serde(default)]
@@ -105,6 +111,10 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub permissions: PermissionsConfig,
 
+    /// Background probing that brings ejected backend addresses back.
+    #[serde(default)]
+    pub active_health: ActiveHealthConfig,
+
     /// Plugin configurations keyed by plugin ID.
     #[serde(default)]
     pub plugins: HashMap<String, PluginConfig>,
@@ -122,6 +132,10 @@ pub struct PluginConfig {
     pub permissions: Vec<String>,
 
     /// Whether the plugin is enabled (default: true).
-    #[serde(default)]
-    pub enabled: Option<bool>,
+    #[serde(default = "default_plugin_enabled")]
+    pub enabled: bool,
+}
+
+fn default_plugin_enabled() -> bool {
+    true
 }

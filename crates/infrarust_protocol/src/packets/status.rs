@@ -2,24 +2,19 @@ use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-use super::Packet;
+use super::{Packet, PacketMapping};
 
-/// Status request packet (Serverbound, 0x00).
-///
-/// Empty packet sent by the client to request the server's status JSON.
 #[derive(Debug, Clone)]
 pub struct SStatusRequest;
 
 impl Packet for SStatusRequest {
     const NAME: &'static str = "SStatusRequest";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Status
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Status;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x00,
+    ];
 
     fn decode(_r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         Ok(Self)
@@ -34,11 +29,6 @@ impl Packet for SStatusRequest {
     }
 }
 
-/// Status response packet (Clientbound, 0x00).
-///
-/// Contains the server's status as a JSON string. The JSON includes version info,
-/// player count, description (MOTD), and optional favicon. The proxy treats
-/// it as an opaque string — parsing is the responsibility of the layer above.
 #[derive(Debug, Clone)]
 pub struct CStatusResponse {
     pub json_response: String,
@@ -47,13 +37,11 @@ pub struct CStatusResponse {
 impl Packet for CStatusResponse {
     const NAME: &'static str = "CStatusResponse";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Status
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Status;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x00,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let json_response = r.read_string()?;
@@ -70,9 +58,6 @@ impl Packet for CStatusResponse {
     }
 }
 
-/// Ping request packet (Serverbound, 0x01).
-///
-/// The client sends a payload (typically a timestamp); the server echoes it back.
 #[derive(Debug, Clone)]
 pub struct SPingRequest {
     pub payload: i64,
@@ -81,13 +66,11 @@ pub struct SPingRequest {
 impl Packet for SPingRequest {
     const NAME: &'static str = "SPingRequest";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Status
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Status;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x01,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let payload = r.read_i64_be()?;
@@ -104,9 +87,6 @@ impl Packet for SPingRequest {
     }
 }
 
-/// Ping response packet (Clientbound, 0x01).
-///
-/// Echoes back the client's ping payload.
 #[derive(Debug, Clone)]
 pub struct CPingResponse {
     pub payload: i64,
@@ -115,13 +95,11 @@ pub struct CPingResponse {
 impl Packet for CPingResponse {
     const NAME: &'static str = "CPingResponse";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Status
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Status;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2 => 0x01,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let payload = r.read_i64_be()?;
@@ -142,13 +120,8 @@ impl Packet for CPingResponse {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::packets::round_trip;
     use crate::registry::build_default_registry;
-
-    fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        P::decode(&mut buf.as_slice(), version).unwrap()
-    }
 
     #[test]
     fn test_status_request_round_trip() {
@@ -157,10 +130,7 @@ mod tests {
         pkt.encode(&mut buf, ProtocolVersion::V1_21).unwrap();
         assert!(buf.is_empty());
         let decoded = SStatusRequest::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
-        assert_eq!(
-            std::mem::size_of_val(&decoded),
-            std::mem::size_of::<SStatusRequest>()
-        );
+        assert_eq!(size_of_val(&decoded), size_of::<SStatusRequest>());
     }
 
     #[test]
@@ -205,7 +175,6 @@ mod tests {
     fn test_status_packets_in_registry() {
         let registry = build_default_registry();
 
-        // All status packets should be registered for V1_7_2+
         for version in [
             ProtocolVersion::V1_7_2,
             ProtocolVersion::V1_8,

@@ -3,25 +3,28 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
+use syn::parse::Parser;
 use syn::punctuated::Punctuated;
-use syn::{Expr, ImplItem, ItemImpl, Lit, MetaNameValue, Token, parse_macro_input};
+use syn::{Expr, ImplItem, ItemImpl, Lit, MetaNameValue, Token};
 
 /// Turn an `impl Plugin for MyPlugin` block into a loadable WASM component.
 ///
 /// Generates the WIT `Guest` glue and the component `export!`. `metadata()` is
 /// derived from `Cargo.toml` (`CARGO_PKG_*`) unless the impl defines its own,
-/// and individual fields can be overridden: `#[plugin(id = "...", name = "...")]`.
+/// and individual fields can be overridden: `#[plugin(id = "...", name = "...")]`
+/// (overrides cannot be combined with a user-defined `metadata()`).
 /// The plugin type must implement `Default`.
 #[proc_macro_attribute]
 pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args =
-        parse_macro_input!(attr with Punctuated::<MetaNameValue, Token![,]>::parse_terminated);
-    let mut item_impl = parse_macro_input!(item as ItemImpl);
+    expand(attr.into(), item.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
-    let overrides = match Overrides::from_args(&args) {
-        Ok(o) => o,
-        Err(e) => return e.to_compile_error().into(),
-    };
+fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
+    let args = Punctuated::<MetaNameValue, Token![,]>::parse_terminated.parse2(attr)?;
+    let mut item_impl: ItemImpl = syn::parse2(item)?;
+    validate_impl(&item_impl)?;
 
     let ty = item_impl.self_ty.clone();
 
@@ -29,18 +32,44 @@ pub fn plugin(attr: TokenStream, item: TokenStream) -> TokenStream {
         .items
         .iter()
         .any(|i| matches!(i, ImplItem::Fn(f) if f.sig.ident == "metadata"));
-    if !has_metadata {
-        let metadata_fn = generate_metadata_fn(&overrides);
+    if has_metadata {
+        if !args.is_empty() {
+            return Err(syn::Error::new_spanned(
+                &args,
+                "#[plugin] metadata overrides are ignored because this impl defines its own \
+                 `metadata()`; remove the attribute arguments or the method",
+            ));
+        }
+    } else {
+        let metadata_fn = generate_metadata_fn(&Overrides::from_args(&args)?);
         item_impl.items.push(syn::parse_quote!(#metadata_fn));
     }
 
     let glue = generate_guest_glue(&ty);
 
-    quote! {
+    Ok(quote! {
         #item_impl
         #glue
+    })
+}
+
+fn validate_impl(item_impl: &ItemImpl) -> syn::Result<()> {
+    let is_plugin_trait = item_impl.trait_.as_ref().is_some_and(|(bang, path, _)| {
+        bang.is_none() && path.segments.last().is_some_and(|s| s.ident == "Plugin")
+    });
+    if !is_plugin_trait {
+        return Err(syn::Error::new_spanned(
+            &item_impl.self_ty,
+            "#[plugin] must be applied to an `impl Plugin for MyPlugin` block",
+        ));
     }
-    .into()
+    if !item_impl.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &item_impl.generics,
+            "#[plugin] requires a concrete plugin type; generic impls are not supported",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -62,18 +91,24 @@ impl Overrides {
                 .ok_or_else(|| syn::Error::new_spanned(&arg.path, "expected an identifier"))?
                 .to_string();
             let value = string_lit(&arg.value)?;
-            match key.as_str() {
-                "id" => out.id = Some(value),
-                "name" => out.name = Some(value),
-                "version" => out.version = Some(value),
-                "description" => out.description = Some(value),
-                "authors" => out.authors = Some(value),
+            let slot = match key.as_str() {
+                "id" => &mut out.id,
+                "name" => &mut out.name,
+                "version" => &mut out.version,
+                "description" => &mut out.description,
+                "authors" => &mut out.authors,
                 _ => {
                     return Err(syn::Error::new_spanned(
                         &arg.path,
                         "unknown key (expected id, name, version, description, authors)",
                     ));
                 }
+            };
+            if slot.replace(value).is_some() {
+                return Err(syn::Error::new_spanned(
+                    arg,
+                    format!("duplicate key `{key}`"),
+                ));
             }
         }
         Ok(out)
@@ -228,5 +263,68 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
         }
 
         ::infrarust_plugin_sdk::export!(__InfrarustPluginComponent);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expand_err(attr: TokenStream2, item: TokenStream2) -> String {
+        expand(attr, item)
+            .expect_err("expansion must fail")
+            .to_string()
+    }
+
+    #[test]
+    fn plugin_impl_accepted() {
+        assert!(expand(quote!(), quote!(impl Plugin for Foo {})).is_ok());
+        assert!(
+            expand(
+                quote!(),
+                quote!(impl infrarust_plugin_sdk::Plugin for Foo {})
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn overrides_with_user_metadata_rejected() {
+        let err = expand_err(
+            quote!(id = "x"),
+            quote! {
+                impl Plugin for Foo {
+                    fn metadata(&self) -> PluginMetadata {
+                        unimplemented!()
+                    }
+                }
+            },
+        );
+        assert!(err.contains("metadata()"), "{err}");
+    }
+
+    #[test]
+    fn inherent_and_foreign_trait_impls_rejected() {
+        let err = expand_err(quote!(), quote!(impl Foo {}));
+        assert!(err.contains("impl Plugin for"), "{err}");
+        let err = expand_err(quote!(), quote!(impl Display for Foo {}));
+        assert!(err.contains("impl Plugin for"), "{err}");
+    }
+
+    #[test]
+    fn generic_impl_rejected() {
+        let err = expand_err(
+            quote!(),
+            quote!(
+                impl<T> Plugin for Foo<T> {}
+            ),
+        );
+        assert!(err.contains("generic"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_key_rejected() {
+        let err = expand_err(quote!(id = "a", id = "b"), quote!(impl Plugin for Foo {}));
+        assert!(err.contains("duplicate key `id`"), "{err}");
     }
 }

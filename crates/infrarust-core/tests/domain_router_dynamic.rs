@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use infrarust_config::ServerConfig;
 use infrarust_core::provider::ProviderId;
@@ -273,4 +274,38 @@ fn test_server_with_domain_findable_by_both() {
     let config = router.find_by_server_id("lobby");
     assert!(config.is_some());
     assert_eq!(config.unwrap().effective_id(), "lobby");
+}
+
+#[test]
+fn test_update_preserves_load_balancer_when_balancing_is_unchanged() {
+    let router = DomainRouter::new();
+    let id = ProviderId::file("balanced.toml");
+    let config = |motd: &str| -> ServerConfig {
+        toml::from_str(&format!(
+            "domains = [\"play.mc\"]\nbalance = \"round_robin\"\n\
+             addresses = [\"10.0.0.1:25565\", \"10.0.0.2:25565\"]\n\
+             [motd.online]\ntext = \"{motd}\"\n"
+        ))
+        .unwrap()
+    };
+
+    router.add(id.clone(), config("before"));
+    let (_, _, first) = router.resolve_route("play.mc").unwrap();
+
+    router.update(id.clone(), config("after"));
+    let (_, _, reused) = router.resolve_route("play.mc").unwrap();
+    assert!(
+        Arc::ptr_eq(&first, &reused),
+        "an unrelated edit must keep the rotation state"
+    );
+
+    let rebalanced: ServerConfig = toml::from_str(
+        "domains = [\"play.mc\"]\nbalance = \"least_conn\"\n\
+         addresses = [\"10.0.0.1:25565\", \"10.0.0.2:25565\"]\n",
+    )
+    .unwrap();
+    router.update(id, rebalanced);
+    let (_, _, rebuilt) = router.resolve_route("play.mc").unwrap();
+    assert!(!Arc::ptr_eq(&first, &rebuilt));
+    assert_eq!(rebuilt.name(), "least_conn");
 }

@@ -1,47 +1,15 @@
-//! Packet encoder — converts packets into framed bytes for the TCP socket.
-
 use bytes::{BufMut, BytesMut};
 
 use crate::MAX_PACKET_SIZE;
 use crate::codec::VarInt;
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::io::compression::{self, ZlibCompressor};
-use crate::io::frame::PacketFrame;
+use crate::io::frame::{PacketFrame, should_compress};
 
-/// Writes a `VarInt` into a `BytesMut` buffer.
 fn write_varint(buf: &mut BytesMut, varint: VarInt) -> ProtocolResult<()> {
     varint.encode(&mut buf.writer())
 }
 
-/// Encodes packets into framed bytes ready for sending on a TCP socket.
-///
-/// Accumulates encoded bytes in an internal buffer. The caller retrieves
-/// bytes via [`take`](Self::take) and writes them to the socket.
-///
-/// Encryption is **not** handled here — it is applied downstream by the
-/// transport layer after `take()`.
-///
-/// # Example
-///
-/// ```
-/// use infrarust_protocol::{PacketEncoder, PacketDecoder, PacketFrame};
-/// use bytes::Bytes;
-///
-/// let mut encoder = PacketEncoder::new();
-/// let mut decoder = PacketDecoder::new();
-///
-/// // Encode a frame
-/// let frame = PacketFrame { id: 0x42, payload: Bytes::from_static(b"hello") };
-/// encoder.append_frame(&frame).unwrap();
-///
-/// // Feed encoded bytes into the decoder
-/// decoder.queue_bytes(&encoder.take());
-///
-/// // Decode back
-/// let decoded = decoder.try_next_frame().unwrap().unwrap();
-/// assert_eq!(decoded.id, 0x42);
-/// assert_eq!(&decoded.payload[..], b"hello");
-/// ```
 pub struct PacketEncoder {
     buf: BytesMut,
     compression_threshold: Option<i32>,
@@ -61,20 +29,12 @@ impl PacketEncoder {
         }
     }
 
-    /// Encodes an opaque packet (`packet_id` + raw payload) into the buffer.
-    ///
-    /// This is the most common path for a proxy: the packet was received as a
-    /// `PacketFrame` and is forwarded as-is.
-    ///
-    /// # Errors
-    /// Returns an error if the packet exceeds size limits or compression fails.
     pub fn append_raw(&mut self, packet_id: i32, payload: &[u8]) -> ProtocolResult<()> {
         let packet_id_varint = VarInt(packet_id);
         let packet_id_size = packet_id_varint.written_size();
 
         match self.compression_threshold {
             None => {
-                // [VarInt(packet_id_size + payload_len)] [VarInt(packet_id)] [payload]
                 let data_len = packet_id_size + payload.len();
                 if data_len > MAX_PACKET_SIZE {
                     return Err(ProtocolError::too_large(MAX_PACKET_SIZE, data_len));
@@ -89,16 +49,12 @@ impl PacketEncoder {
             Some(threshold) => {
                 let uncompressed_len = packet_id_size + payload.len();
 
-                if (uncompressed_len as i32) >= threshold {
-                    // Compress: [VarInt(packet_len)] [VarInt(uncompressed_len)] [compressed(VarInt(packet_id) + payload)]
-
-                    // Build uncompressed data in the reusable scratch buffer.
+                if should_compress(uncompressed_len, threshold) {
                     self.scratch_buf.clear();
                     self.scratch_buf.reserve(packet_id_size + payload.len());
                     packet_id_varint.encode(&mut self.scratch_buf)?;
                     self.scratch_buf.extend_from_slice(payload);
 
-                    // Compress via the abstraction
                     self.compressor
                         .compress(&self.scratch_buf, &mut self.compress_buf)?;
 
@@ -116,7 +72,6 @@ impl PacketEncoder {
                     write_varint(&mut self.buf, data_len_varint)?;
                     self.buf.extend_from_slice(&self.compress_buf);
                 } else {
-                    // Below threshold: [VarInt(packet_len)] [VarInt(0)] [VarInt(packet_id)] [payload]
                     let data_len_varint = VarInt(0);
                     let packet_len =
                         data_len_varint.written_size() + packet_id_size + payload.len();
@@ -138,30 +93,20 @@ impl PacketEncoder {
         Ok(())
     }
 
-    /// Encodes a [`PacketFrame`] directly (shortcut for [`append_raw`](Self::append_raw)).
-    ///
-    /// # Errors
-    /// Returns an error if the packet exceeds size limits or compression fails.
     pub fn append_frame(&mut self, frame: &PacketFrame) -> ProtocolResult<()> {
+        if let Some(wire) = frame.raw_wire(self.compression_threshold) {
+            self.buf.extend_from_slice(wire);
+            return Ok(());
+        }
         self.append_raw(frame.id, &frame.payload)
     }
 
-    /// Takes all accumulated encoded bytes.
-    ///
-    /// Returns the buffer and replaces it with an empty one.
-    /// The returned bytes are ready to be sent on the socket
-    /// (after encryption if needed).
     pub fn take(&mut self) -> BytesMut {
         self.buf.split()
     }
 
-    /// Enables compression with the given threshold.
-    ///
-    /// Called when the proxy receives/sends a `SetCompression` packet.
-    /// `threshold` is the minimum uncompressed size (in bytes) above which
-    /// packets are compressed. Typically 256.
     pub const fn set_compression(&mut self, threshold: i32) {
-        self.compression_threshold = Some(threshold);
+        self.compression_threshold = if threshold < 0 { None } else { Some(threshold) };
     }
 
     pub const fn compression_threshold(&self) -> Option<i32> {
@@ -196,10 +141,7 @@ mod tests {
 
     #[test]
     fn test_encode_frame_shortcut() {
-        let frame = PacketFrame {
-            id: 0x0F,
-            payload: bytes::Bytes::from_static(b"test"),
-        };
+        let frame = PacketFrame::new(0x0F, bytes::Bytes::from_static(b"test"));
 
         let mut enc1 = PacketEncoder::new();
         enc1.append_frame(&frame).unwrap();
@@ -314,9 +256,7 @@ mod tests {
         encoder.set_compression(64);
         decoder.set_compression(64);
 
-        // Small packet (below threshold)
         encoder.append_raw(0x00, b"tiny").unwrap();
-        // Large packet (above threshold)
         let big = vec![0xAA; 512];
         encoder.append_raw(0x01, &big).unwrap();
 
@@ -337,7 +277,6 @@ mod tests {
         let mut encoder = PacketEncoder::new();
         let mut decoder = PacketDecoder::new();
 
-        // No compression
         encoder.append_raw(0x00, b"before compression").unwrap();
         let bytes = encoder.take();
         decoder.queue_bytes(&bytes);
@@ -345,13 +284,10 @@ mod tests {
         assert_eq!(f.id, 0x00);
         assert_eq!(&f.payload[..], b"before compression");
 
-        // Enable compression
         encoder.set_compression(32);
         decoder.set_compression(32);
 
-        // Below threshold
         encoder.append_raw(0x01, b"small").unwrap();
-        // Above threshold
         let big = vec![0xBB; 256];
         encoder.append_raw(0x02, &big).unwrap();
 

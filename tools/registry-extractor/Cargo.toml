@@ -1,9 +1,12 @@
 [package]
 name = "registry-extractor"
+description = "Extracts Configuration-phase registry data from a live Minecraft server for Infrarust development"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
+publish = false
 
 [lints]
 workspace = true
@@ -15,9 +18,8 @@ path = "src/main.rs"
 [dependencies]
 infrarust_protocol = { workspace = true }
 infrarust-core = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 clap = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
 tracing = { workspace = true }

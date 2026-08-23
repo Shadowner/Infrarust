@@ -49,9 +49,7 @@ impl LocalProvider {
 impl ServerProvider for LocalProvider {
     fn start(
         &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), ServerManagerError>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
             if process_lock.is_some() {
@@ -126,9 +124,7 @@ impl ServerProvider for LocalProvider {
 
     fn stop(
         &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), ServerManagerError>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
             let process =
@@ -174,11 +170,7 @@ impl ServerProvider for LocalProvider {
     fn check_status(
         &self,
     ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<ProviderStatus, ServerManagerError>>
-                + Send
-                + '_,
-        >,
+        Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>,
     > {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
@@ -187,12 +179,16 @@ impl ServerProvider for LocalProvider {
                 Some(process) => {
                     // Check if the process has exited by trying try_wait
                     match process.child.try_wait() {
-                        Ok(Some(_status)) => {
+                        Ok(Some(status)) => {
                             // Process has exited — clean up
                             process.stdout_task.abort();
                             process.stderr_task.abort();
                             *process_lock = None;
-                            Ok(ProviderStatus::Stopped)
+                            if status.success() {
+                                Ok(ProviderStatus::Stopped)
+                            } else {
+                                Ok(ProviderStatus::Crashed)
+                            }
                         }
                         Ok(None) => {
                             // Process still running

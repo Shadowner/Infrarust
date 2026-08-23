@@ -11,10 +11,12 @@ minimal. Protocols 764 and newer are rejected.
 
 ## How it works
 
-The benchmark ping is an opaque Play packet (serverbound id `0x40`) carrying an 8-byte
-big-endian token. The mock backend echoes it back unchanged as clientbound id `0x41`.
-Both ids are high enough that Infrarust forwards them opaquely with no interception, so
-the round trip measures proxy traversal rather than any special handling.
+The benchmark ping is an opaque Play packet (serverbound id `0x40`) whose first 8 bytes
+are a big-endian timing token, optionally followed by incompressible padding
+(`--payload-size`). The mock backend echoes the full payload back as clientbound id
+`0x41`. Both ids are high enough that Infrarust forwards them opaquely with no
+interception, so the round trip measures proxy traversal rather than any special
+handling.
 
 The load generator is open-loop. Each worker sends pings on a fixed wall-clock grid via
 `sleep_until`, so the offered load stays constant no matter how the proxy responds. The
@@ -34,8 +36,8 @@ cargo build -p infrarust-mc-bench --release
 
 A minimal mock backend that accepts a login and echoes benchmark pings. Per connection
 it reads the Handshake and LoginStart, optionally sends `CSetCompression`, sends
-`CLoginSuccess`, then in Play echoes every ping (id `0x40`, 8-byte payload) back as id
-`0x41`. Other serverbound packets are ignored.
+`CLoginSuccess`, then in Play echoes every ping (id `0x40`) back as id `0x41` with its
+full payload. Other serverbound packets are ignored.
 
 | Flag | Default | Description |
 | --- | --- | --- |
@@ -64,6 +66,7 @@ and sends pings at the configured rate while concurrently recording echoes.
 | `--rate <hz>` | `20` | Pings per second, per connection. |
 | `--duration <secs>` | `30` | Measurement window (after warmup). |
 | `--warmup <secs>` | `5` | Warmup window (not recorded). |
+| `--payload-size <bytes>` | `8` | Ping payload size (min 8). The token plus deterministic, hard-to-compress padding. |
 
 Output: connection success/failure counts, pings sent, echoes, throughput (echoes/sec),
 and mean plus p50/p90/p99/p99.9/max latency in microseconds, aggregated across all
@@ -131,7 +134,7 @@ proxy_mode = "offline"
 mc-bench serve-backend --port 25566
 
 # terminal 2: proxy (run from tools/mc-bench/example-config)
-infrarust --config-path infrarust.toml
+infrarust --config infrarust.toml
 
 # terminal 3: load through the proxy (port 25565, the proxy's bind)
 mc-bench load --host 127.0.0.1 --port 25565 --server-address 127.0.0.1 \
@@ -145,3 +148,17 @@ mock backend.
 
 Set `proxy_mode = "passthrough"` in `bench.toml` to measure the proxy's transparent
 TCP-relay path (no login interception). Re-run the same load command from (b).
+
+### (d) Compressed traffic
+
+Start the backend with `--compression 256` and use pings large enough to cross the
+threshold, in both directions (the backend echoes the full payload):
+
+```sh
+mc-bench serve-backend --port 25566 --compression 256
+mc-bench load --host 127.0.0.1 --port 25565 --server-address 127.0.0.1 \
+    --concurrency 100 --rate 20 --duration 30 --warmup 5 --payload-size 512
+```
+
+This exercises the proxy's compressed intercepted path, where per-packet cost is
+dominated by zlib.

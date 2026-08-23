@@ -24,33 +24,21 @@
 use crate::bindings::codec_filter::RawPacket;
 pub use crate::bindings::codec_filter::{CodecSessionInit, ConnectionSide, ConnectionState};
 
-#[derive(Clone, Debug, Default)]
-pub struct PlayerInfo {
-    pub username: String,
-    pub uuid: Option<String>,
-}
-
 #[derive(Clone, Debug)]
 pub struct CodecContext {
     pub client_version: i32,
-    pub server_version: Option<i32>,
     pub state: ConnectionState,
     pub connection_id: u64,
     pub side: ConnectionSide,
-    pub player_info: Option<PlayerInfo>,
-    pub is_proxy_consumed: bool,
 }
 
 impl CodecContext {
     pub(crate) fn from_init(init: &CodecSessionInit) -> Self {
         Self {
             client_version: init.client_version,
-            server_version: None,
             state: ConnectionState::Handshake,
             connection_id: init.connection_id,
             side: init.side,
-            player_info: None,
-            is_proxy_consumed: false,
         }
     }
 }

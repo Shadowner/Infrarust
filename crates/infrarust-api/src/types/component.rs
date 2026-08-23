@@ -5,9 +5,16 @@
 
 use std::fmt;
 
+/// Maximum nesting depth accepted by [`Component::from_json`]; deeper
+/// structures are truncated to empty components (untrusted plugin ingress).
+pub const MAX_COMPONENT_DEPTH: usize = 64;
+
 /// A Minecraft rich text component.
 ///
 /// Supports builder-style construction for readable message creation.
+/// Construct via [`Component::text`] (or [`Component::default`]) and the
+/// builder methods; the struct is `#[non_exhaustive]` so future protocol
+/// fields can be added without a breaking change.
 ///
 /// # Example
 /// ```
@@ -22,6 +29,7 @@ use std::fmt;
 /// assert_eq!(msg.extra.len(), 1);
 /// ```
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct Component {
     /// The literal text content.
     pub text: String,
@@ -334,9 +342,7 @@ impl Component {
     fn write_nbt_string_field(buf: &mut Vec<u8>, name: &str, value: &str) {
         buf.push(0x08); // TAG_String
         Self::write_nbt_name(buf, name);
-        let bytes = value.as_bytes();
-        buf.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
-        buf.extend_from_slice(bytes);
+        Self::write_nbt_str(buf, value);
     }
 
     /// Writes an NBT TAG_Byte field (type byte + name + value).
@@ -348,7 +354,17 @@ impl Component {
 
     /// Writes an NBT field name (u16 length + UTF-8 bytes).
     fn write_nbt_name(buf: &mut Vec<u8>, name: &str) {
-        let bytes = name.as_bytes();
+        Self::write_nbt_str(buf, name);
+    }
+    fn write_nbt_str(buf: &mut Vec<u8>, s: &str) {
+        let mut bytes = s.as_bytes();
+        if bytes.len() > usize::from(u16::MAX) {
+            let mut end = usize::from(u16::MAX);
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            bytes = &bytes[..end];
+        }
         buf.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
         buf.extend_from_slice(bytes);
     }
@@ -524,16 +540,19 @@ impl Component {
     /// where the first element is the parent and the rest become `extra`).
     /// Fields this type does not model (e.g. `translate`, `score`, `selector`)
     /// are dropped. Malformed JSON returns [`ComponentParseError::InvalidJson`];
-    /// this never panics, even on hostile input (the recursion depth is bounded
-    /// by `serde_json`'s parser limit).
+    /// this never panics, even on hostile input (nesting beyond
+    /// [`MAX_COMPONENT_DEPTH`] levels is truncated to an empty component).
     pub fn from_json(s: &str) -> Result<Self, ComponentParseError> {
         let value: serde_json::Value =
             serde_json::from_str(s).map_err(|e| ComponentParseError::InvalidJson(e.to_string()))?;
-        Ok(Self::from_json_value(&value))
+        Ok(Self::from_json_value(&value, 0))
     }
 
-    fn from_json_value(value: &serde_json::Value) -> Self {
+    fn from_json_value(value: &serde_json::Value, depth: usize) -> Self {
         use serde_json::Value;
+        if depth >= MAX_COMPONENT_DEPTH {
+            return Self::text("");
+        }
         match value {
             Value::String(s) => Self::text(s.clone()),
             Value::Bool(b) => Self::text(b.to_string()),
@@ -544,9 +563,9 @@ impl Component {
                 let Some(first) = iter.next() else {
                     return Self::text("");
                 };
-                let mut root = Self::from_json_value(first);
+                let mut root = Self::from_json_value(first, depth + 1);
                 for item in iter {
-                    root.extra.push(Self::from_json_value(item));
+                    root.extra.push(Self::from_json_value(item, depth + 1));
                 }
                 root
             }
@@ -562,7 +581,10 @@ impl Component {
                 c.strikethrough = map.get("strikethrough").and_then(Value::as_bool);
                 c.obfuscated = map.get("obfuscated").and_then(Value::as_bool);
                 if let Some(extra) = map.get("extra").and_then(Value::as_array) {
-                    c.extra = extra.iter().map(Self::from_json_value).collect();
+                    c.extra = extra
+                        .iter()
+                        .map(|item| Self::from_json_value(item, depth + 1))
+                        .collect();
                 }
                 c.click_event = map
                     .get("clickEvent")
@@ -571,7 +593,7 @@ impl Component {
                 c.hover_event = map
                     .get("hoverEvent")
                     .and_then(Value::as_object)
-                    .and_then(Self::parse_hover_event);
+                    .and_then(|m| Self::parse_hover_event(m, depth));
                 c
             }
         }
@@ -588,7 +610,10 @@ impl Component {
         }
     }
 
-    fn parse_hover_event(map: &serde_json::Map<String, serde_json::Value>) -> Option<HoverEvent> {
+    fn parse_hover_event(
+        map: &serde_json::Map<String, serde_json::Value>,
+        depth: usize,
+    ) -> Option<HoverEvent> {
         if map.get("action").and_then(serde_json::Value::as_str)? != "show_text" {
             return None;
         }
@@ -596,6 +621,7 @@ impl Component {
         let contents = map.get("contents").or_else(|| map.get("value"))?;
         Some(HoverEvent::ShowText(Box::new(Self::from_json_value(
             contents,
+            depth + 1,
         ))))
     }
 }
@@ -763,6 +789,20 @@ mod tests {
         assert_eq!(t.fade_in_ticks, 5);
         assert_eq!(t.stay_ticks, 100);
         assert_eq!(t.fade_out_ticks, 10);
+    }
+
+    #[test]
+    fn nbt_network_oversized_string_truncated_at_char_boundary() {
+        let mut s = "a".repeat(65_534);
+        s.push('€');
+        let c = Component::text(s);
+        let nbt = c.to_nbt_network();
+        let len = u16::from_be_bytes([nbt[8], nbt[9]]) as usize;
+        assert_eq!(len, 65_534, "must cut before the split char");
+        let value = &nbt[10..10 + len];
+        assert!(std::str::from_utf8(value).is_ok());
+        assert_eq!(nbt[10 + len], 0x00);
+        assert_eq!(nbt.len(), 10 + len + 1);
     }
 
     #[test]
@@ -1004,5 +1044,22 @@ mod tests {
     fn from_json_unknown_fields_dropped() {
         let c = Component::from_json(r#"{"text":"x","translate":"k","extra_unknown":1}"#).unwrap();
         assert_eq!(c.text, "x");
+    }
+
+    #[test]
+    fn from_json_deep_nesting_truncated_not_panic() {
+        // 100 nested arrays: under serde_json's parser limit, over ours.
+        let depth = 100;
+        let json = format!("{}\"x\"{}", r#"["a","#.repeat(depth), "]".repeat(depth));
+        let c = Component::from_json(&json).unwrap();
+
+        let mut levels = 0;
+        let mut cur = &c;
+        while let Some(child) = cur.extra.first() {
+            levels += 1;
+            cur = child;
+        }
+        assert!(levels <= MAX_COMPONENT_DEPTH);
+        assert_eq!(cur.text, "", "innermost payload must be truncated");
     }
 }

@@ -30,12 +30,23 @@ pub struct HandshakeData {
 }
 
 /// Data resolved by the domain router middleware.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RoutingData {
     /// Matched server configuration.
     pub server_config: Arc<ServerConfig>,
     /// Config identifier (filename stem).
     pub config_id: String,
+    pub load_balancer: Arc<dyn crate::loadbalancer::LoadBalancer>,
+}
+
+impl std::fmt::Debug for RoutingData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RoutingData")
+            .field("server_config", &self.server_config)
+            .field("config_id", &self.config_id)
+            .field("load_balancer", &self.load_balancer.name())
+            .finish()
+    }
 }
 
 /// Data extracted by the login start parser middleware.

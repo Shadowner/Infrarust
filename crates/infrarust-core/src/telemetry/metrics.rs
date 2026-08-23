@@ -18,6 +18,9 @@ pub struct ProxyMetrics {
     connection_duration: Histogram<f64>,
     handshake_duration: Histogram<f64>,
     backend_connect_duration: Histogram<f64>,
+    backend_connect_failures: Counter<u64>,
+    backend_health_transitions: Counter<u64>,
+    backend_status_latency: Histogram<f64>,
     packets_relayed: Counter<u64>,
 }
 
@@ -61,6 +64,19 @@ impl ProxyMetrics {
             backend_connect_duration: meter
                 .f64_histogram("infrarust.backend.connect.duration")
                 .with_description("Backend connection time")
+                .with_unit("s")
+                .build(),
+            backend_connect_failures: meter
+                .u64_counter("infrarust.backend.connect.failures")
+                .with_description("Failed backend connection attempts")
+                .build(),
+            backend_health_transitions: meter
+                .u64_counter("infrarust.backend.health.transitions")
+                .with_description("Backend address health state changes")
+                .build(),
+            backend_status_latency: meter
+                .f64_histogram("infrarust.backend.status.latency")
+                .with_description("Backend status ping round-trip time")
                 .with_unit("s")
                 .build(),
             packets_relayed: meter
@@ -112,11 +128,41 @@ impl ProxyMetrics {
             .add(1, &[KeyValue::new("reason", reason.to_string())]);
     }
 
-    /// Records backend connection duration.
-    pub fn record_backend_connect(&self, duration_secs: f64, server: &str) {
-        self.backend_connect_duration.record(
+    /// Records one backend connection attempt against a precise address.
+    pub fn record_backend_connect(
+        &self,
+        duration_secs: f64,
+        server: &str,
+        address: &str,
+        succeeded: bool,
+    ) {
+        let attrs = [
+            KeyValue::new("server", server.to_string()),
+            KeyValue::new("address", address.to_string()),
+        ];
+        self.backend_connect_duration.record(duration_secs, &attrs);
+        if !succeeded {
+            self.backend_connect_failures.add(1, &attrs);
+        }
+    }
+
+    pub fn record_backend_health_transition(&self, address: &str, to: &str) {
+        self.backend_health_transitions.add(
+            1,
+            &[
+                KeyValue::new("address", address.to_string()),
+                KeyValue::new("to", to.to_string()),
+            ],
+        );
+    }
+
+    pub fn record_backend_status_latency(&self, duration_secs: f64, server: &str, address: &str) {
+        self.backend_status_latency.record(
             duration_secs,
-            &[KeyValue::new("server", server.to_string())],
+            &[
+                KeyValue::new("server", server.to_string()),
+                KeyValue::new("address", address.to_string()),
+            ],
         );
     }
 

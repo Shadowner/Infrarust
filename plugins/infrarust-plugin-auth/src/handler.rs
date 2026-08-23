@@ -347,19 +347,13 @@ impl LimboHandler for AuthHandler {
                 };
                 let password = password.to_string();
 
+                // Passwordless (premium) accounts verify against the dummy hash so
+                // messaging and timing match unknown accounts (no account-type oracle).
                 let hash = match self.storage.get_account_blocking(&username) {
-                    Ok(Some(account)) => match account.password_hash {
-                        Some(h) => h.clone(),
-                        None => {
-                            let msg = if account.premium_info.is_some() {
-                                "This is a premium account. Use your official Minecraft launcher."
-                            } else {
-                                "This account has no password set. Contact an administrator."
-                            };
-                            let _ = session.send_message(Component::error(msg));
-                            return Box::pin(async {});
-                        }
-                    },
+                    Ok(Some(AuthAccount {
+                        password_hash: Some(h),
+                        ..
+                    })) => h,
                     _ => self.dummy_hash.clone(),
                 };
 
@@ -567,5 +561,157 @@ impl LimboHandler for AuthHandler {
         self.cleanup_session(player_id);
         tracing::debug!(player_id = ?player_id, "Auth session cleaned up on session end");
         Box::pin(async {})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::account::Username;
+    use crate::test_support::{
+        TestEnv, fast_config, limbo_session, limbo_session_with, premium_profile, session_text,
+    };
+
+    #[tokio::test]
+    async fn register_flow_creates_account_and_accepts() {
+        let env = TestEnv::new().await;
+        let session = limbo_session(1, "Steve");
+
+        let result = env.handler.on_player_enter(&*session).await;
+        assert!(matches!(result, HandlerResult::HoldWithTimeout { .. }));
+
+        env.handler
+            .on_command(&*session, "register", &["hunter2hunter2", "hunter2hunter2"])
+            .await;
+
+        assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+        assert!(env.storage.has_account_blocking(&Username::new("Steve")));
+    }
+
+    #[tokio::test]
+    async fn register_rejects_short_and_mismatched_passwords() {
+        let env = TestEnv::new().await;
+        let session = limbo_session(1, "Steve");
+        env.handler.on_player_enter(&*session).await;
+
+        env.handler
+            .on_command(&*session, "register", &["short", "short"])
+            .await;
+        env.handler
+            .on_command(&*session, "register", &["longenough1", "longenough2"])
+            .await;
+
+        assert!(session.completions().is_empty());
+        assert!(!env.storage.has_account_blocking(&Username::new("Steve")));
+    }
+
+    #[tokio::test]
+    async fn login_flow_accepts_correct_password() {
+        let env = TestEnv::new().await;
+        env.create_account("Steve", Some("hunter2hunter2")).await;
+        let session = limbo_session(1, "Steve");
+
+        let result = env.handler.on_player_enter(&*session).await;
+        assert!(matches!(result, HandlerResult::HoldWithTimeout { .. }));
+
+        env.handler
+            .on_command(&*session, "login", &["hunter2hunter2"])
+            .await;
+
+        assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+    }
+
+    #[tokio::test]
+    async fn wrong_passwords_deny_after_max_attempts() {
+        let mut config = fast_config();
+        config.security.max_login_attempts = 2;
+        let env = TestEnv::with_config(config).await;
+        env.create_account("Steve", Some("hunter2hunter2")).await;
+        let session = limbo_session(1, "Steve");
+        env.handler.on_player_enter(&*session).await;
+
+        env.handler
+            .on_command(&*session, "login", &["wrong-password"])
+            .await;
+        assert!(session.completions().is_empty());
+
+        env.handler
+            .on_command(&*session, "login", &["wrong-password"])
+            .await;
+        assert!(matches!(
+            session.completions()[..],
+            [HandlerResult::Deny(_)]
+        ));
+    }
+
+    #[tokio::test]
+    async fn force_complete_bypasses_password_on_next_input() {
+        let env = TestEnv::new().await;
+        env.create_account("Steve", Some("hunter2hunter2")).await;
+        let session = limbo_session(1, "Steve");
+        env.handler.on_player_enter(&*session).await;
+
+        assert!(env.handler.force_complete_session(PlayerId::new(1)));
+
+        env.handler.on_chat(&*session, "hello").await;
+        assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+    }
+
+    #[tokio::test]
+    async fn premium_auto_login_accepts_and_creates_account() {
+        let mut config = fast_config();
+        config.premium.enabled = true;
+        let env = TestEnv::with_config(config).await;
+        let session = limbo_session_with(1, premium_profile(1, "Notch"));
+
+        let result = env.handler.on_player_enter(&*session).await;
+        assert!(matches!(result, HandlerResult::Accept));
+
+        let username = Username::new("Notch");
+        for _ in 0..200 {
+            if env.storage.has_account_blocking(&username) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let account = env
+            .storage
+            .get_account_blocking(&username)
+            .unwrap()
+            .expect("premium account created in background");
+        assert!(account.premium_info.is_some());
+        assert!(account.password_hash.is_none());
+    }
+
+    #[tokio::test]
+    async fn passwordless_account_login_matches_unknown_account_messaging() {
+        let env = TestEnv::new().await;
+        env.create_account("Notch", None).await;
+        env.set_premium_info("Notch", false).await;
+        let session = limbo_session(1, "Notch");
+        env.handler.on_player_enter(&*session).await;
+
+        env.handler
+            .on_command(&*session, "login", &["whatever-password"])
+            .await;
+
+        let text = session_text(&session);
+        assert!(text.contains("Wrong password"), "got: {text}");
+        assert!(!text.to_lowercase().contains("premium"), "got: {text}");
+        assert!(session.completions().is_empty());
+    }
+
+    #[tokio::test]
+    async fn session_end_cleans_up_state() {
+        let env = TestEnv::new().await;
+        env.create_account("Steve", Some("hunter2hunter2")).await;
+        let session = limbo_session(1, "Steve");
+        env.handler.on_player_enter(&*session).await;
+        assert!(env.handler.is_in_auth_limbo(PlayerId::new(1)));
+
+        env.handler
+            .on_session_end(PlayerId::new(1), SessionEndReason::Disconnected)
+            .await;
+        assert!(!env.handler.is_in_auth_limbo(PlayerId::new(1)));
     }
 }

@@ -1,21 +1,10 @@
 use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Join game packet (Clientbound).
-///
-/// Sent by the server when the player joins or is transferred. The proxy
-/// intercepts this to learn the entity ID, gamemode, and dimension info
-/// needed for server switching and Virtual Backend.
-///
-/// This is the most complex packet in the protocol with 3 format eras.
-/// Strategy:
-/// - **1.20.2+**: All fields are fully parsed.
-/// - **Pre-1.20.2**: Only `entity_id` is parsed; everything else is stored
-///   in `raw_payload` for opaque forwarding.
 #[derive(Debug, Clone)]
-#[allow(clippy::struct_excessive_bools)] // Protocol-defined fields, cannot refactor
+#[allow(clippy::struct_excessive_bools)]
 pub struct CJoinGame {
     pub entity_id: i32,
     pub is_hardcore: bool,
@@ -32,17 +21,12 @@ pub struct CJoinGame {
     pub hashed_seed: i64,
     pub is_debug: bool,
     pub is_flat: bool,
-    /// Dimension ID (as `VarInt`) for 1.20.5+, or dimension key index for 1.20.2-1.20.3.
     pub dimension: i32,
     pub portal_cooldown: i32,
     pub sea_level: i32,
     pub enforces_secure_chat: bool,
-    /// Death location (1.19+): dimension identifier.
     pub death_dimension: Option<String>,
-    /// Death location (1.19+): packed position.
     pub death_position: Option<i64>,
-    /// Opaque payload for pre-1.20.2 versions (everything after `entity_id`).
-    /// When set, encode writes entity ID + raw payload verbatim.
     pub raw_payload: Option<Vec<u8>>,
 }
 
@@ -79,19 +63,33 @@ impl Default for CJoinGame {
 impl Packet for CJoinGame {
     const NAME: &'static str = "CJoinGame";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x01,
+        V1_9    => 0x23,
+        V1_13   => 0x25,
+        V1_15   => 0x26,
+        V1_16   => 0x25,
+        V1_16_2 => 0x24,
+        V1_17   => 0x26,
+        V1_19   => 0x23,
+        V1_19_1 => 0x25,
+        V1_19_3 => 0x24,
+        V1_19_4 => 0x28,
+        V1_20_2 => 0x29,
+        V1_20_5 => 0x2B,
+        V1_21_2 => 0x2C,
+        V1_21_5 => 0x2B,
+        V1_21_9 => 0x30,
+        V26_1   => 0x31,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let entity_id = r.read_i32_be()?;
 
         if version.less_than(ProtocolVersion::V1_20_2) {
-            // Store everything else as opaque
             let raw_payload = r.read_remaining()?;
             Ok(Self {
                 entity_id,
@@ -119,7 +117,6 @@ impl Packet for CJoinGame {
     }
 }
 
-/// Decodes `JoinGame` for 1.20.2+ (Velocity's decode1202Up pattern).
 fn decode_1_20_2_up(
     r: &mut &[u8],
     entity_id: i32,
@@ -127,7 +124,6 @@ fn decode_1_20_2_up(
 ) -> ProtocolResult<CJoinGame> {
     let is_hardcore = r.read_bool()?;
 
-    // Level names
     let level_count = r.read_var_int()?.0 as usize;
     let mut level_names = Vec::with_capacity(level_count.min(64));
     for _ in 0..level_count {
@@ -141,12 +137,9 @@ fn decode_1_20_2_up(
     let enable_respawn_screen = r.read_bool()?;
     let do_limited_crafting = r.read_bool()?;
 
-    // Dimension: VarInt for 1.21.2+, String (identifier) for 1.20.2–1.21.1
     let dimension = if version.no_less_than(ProtocolVersion::V1_21_2) {
         r.read_var_int()?.0
     } else {
-        // For 1.20.2–1.21.1, dimension is a String identifier.
-        // We store 0 and the string is lost (proxy primarily targets 1.21.2+).
         let _dim_key = r.read_string()?;
         0
     };
@@ -193,7 +186,6 @@ fn decode_1_20_2_up(
     })
 }
 
-/// Encodes `JoinGame` for 1.20.2+.
 fn encode_1_20_2_up(
     pkt: &CJoinGame,
     mut w: &mut (impl std::io::Write + ?Sized),
@@ -201,8 +193,6 @@ fn encode_1_20_2_up(
 ) -> ProtocolResult<()> {
     w.write_bool(pkt.is_hardcore)?;
 
-    // Level names
-    // Level name count bounded by protocol
     w.write_var_int(&VarInt(pkt.level_names.len() as i32))?;
     for name in &pkt.level_names {
         w.write_string(name)?;
@@ -215,11 +205,9 @@ fn encode_1_20_2_up(
     w.write_bool(pkt.enable_respawn_screen)?;
     w.write_bool(pkt.do_limited_crafting)?;
 
-    // Dimension: VarInt for 1.21.2+, String identifier for 1.20.2–1.21.1
     if version.no_less_than(ProtocolVersion::V1_21_2) {
         w.write_var_int(&VarInt(pkt.dimension))?;
     } else {
-        // 1.20.2–1.21.1: dimension as String identifier
         w.write_string(&pkt.level_name)?;
     }
 
@@ -321,7 +309,7 @@ mod tests {
             dimension: 0,
             portal_cooldown: 20,
             sea_level: 63,
-            enforces_secure_chat: true, // intentionally true to verify it is NOT encoded
+            enforces_secure_chat: true,
             death_dimension: None,
             death_position: None,
             raw_payload: None,
@@ -349,14 +337,12 @@ mod tests {
             entity_id: -12345,
             ..Default::default()
         };
-        // Test with modern version
         let decoded = round_trip_version(&pkt, ProtocolVersion::V1_20_5);
         assert_eq!(decoded.entity_id, -12345);
     }
 
     #[test]
     fn test_join_game_opaque_data_preserved() {
-        // For pre-1.20.2, the packet stores raw_payload
         let raw = vec![0x01, 0x02, 0x03, 0x04, 0x05];
         let pkt = CJoinGame {
             entity_id: 99,

@@ -1,54 +1,53 @@
-//! Synchronize Player Position packet (Clientbound, 1.9+).
-//!
-//! Teleports the player to a position. The client must respond with
-//! Confirm Teleportation containing the matching `teleport_id`.
-
 use crate::codec::varint::VarInt;
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Synchronize Player Position packet (Clientbound).
-///
-/// Also known as "Player Position And Look" in older protocol versions.
-///
-/// Format changes:
-/// - Pre-1.9: x/y/z/yaw/pitch/flags (no teleport_id)
-/// - 1.9–1.21.1: x/y/z/yaw/pitch/flags(u8)/teleport_id(VarInt)
-/// - 1.21.2+: teleport_id(VarInt)/x/y/z/delta_x/delta_y/delta_z/yaw/pitch/flags(i32)
 #[derive(Debug, Clone)]
 pub struct CSynchronizePlayerPosition {
     pub x: f64,
     pub y: f64,
     pub z: f64,
-    /// Velocity / delta (1.21.2+). Zero for static teleport.
     pub delta_x: f64,
     pub delta_y: f64,
     pub delta_z: f64,
     pub yaw: f32,
     pub pitch: f32,
-    /// Relativity flags. For absolute positioning use 0.
-    /// Stored as i32 for 1.21.2+ (u8 for older, widened on decode).
     pub flags: i32,
-    /// Teleport ID — client echoes back in Confirm Teleportation (1.9+).
     pub teleport_id: i32,
 }
 
 impl Packet for CSynchronizePlayerPosition {
     const NAME: &'static str = "CSynchronizePlayerPosition";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x08,
+        V1_9    => 0x2E,
+        V1_12_1 => 0x2F,
+        V1_13   => 0x32,
+        V1_14   => 0x35,
+        V1_15   => 0x36,
+        V1_16   => 0x35,
+        V1_16_2 => 0x34,
+        V1_17   => 0x38,
+        V1_18   => 0x39,
+        V1_19   => 0x36,
+        V1_19_1 => 0x39,
+        V1_19_3 => 0x38,
+        V1_19_4 => 0x3C,
+        V1_20_2 => 0x3E,
+        V1_20_3 => 0x40,
+        V1_20_5 => 0x42,
+        V1_21_5 => 0x41,
+        V1_21_9 => 0x46,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         if version.no_less_than(ProtocolVersion::V1_21_2) {
-            // 1.21.2+: teleport_id first, then position, delta, angles, flags(i32)
             let teleport_id = r.read_var_int()?.0;
             let x = r.read_f64_be()?;
             let y = r.read_f64_be()?;
@@ -72,7 +71,6 @@ impl Packet for CSynchronizePlayerPosition {
                 teleport_id,
             })
         } else {
-            // Pre-1.21.2: position, angles, flags(u8), teleport_id
             let x = r.read_f64_be()?;
             let y = r.read_f64_be()?;
             let z = r.read_f64_be()?;
@@ -105,7 +103,6 @@ impl Packet for CSynchronizePlayerPosition {
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         if version.no_less_than(ProtocolVersion::V1_21_2) {
-            // 1.21.2+: teleport_id first
             w.write_var_int(&VarInt(self.teleport_id))?;
             w.write_f64_be(self.x)?;
             w.write_f64_be(self.y)?;

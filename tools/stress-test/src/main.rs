@@ -512,7 +512,7 @@ async fn main() {
     stop_clone.store(true, Ordering::Relaxed);
 
     // Wait for workers to finish (with a timeout so we don't hang)
-    let _ = tokio::time::timeout(Duration::from_secs(10), async {
+    let _ = timeout(Duration::from_secs(10), async {
         for h in handles {
             let _ = h.await;
         }

@@ -5,8 +5,7 @@
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
-use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::ProtocolVersion;
 
 /// What a chat/command packet resolved to.
 pub(crate) enum ChatAction {
@@ -18,19 +17,17 @@ pub(crate) enum ChatAction {
 
 /// Detects if a frame is a chat message or slash command.
 ///
-/// Returns `Some(ChatAction)` if the frame matches a serverbound chat
-/// packet (`SChatMessage` or `SChatCommand`), `None` otherwise.
+/// `chat_cmd_id`/`chat_msg_id` are the session's pre-resolved serverbound
+/// Play ids for `SChatCommand`/`SChatMessage` — this runs on every
+/// serverbound packet, so no registry lookups here.
+///
+/// Returns `Some(ChatAction)` if the frame matches, `None` otherwise.
 pub(crate) fn detect_chat_or_command(
     frame: &PacketFrame,
-    registry: &PacketRegistry,
+    chat_cmd_id: Option<i32>,
+    chat_msg_id: Option<i32>,
     version: ProtocolVersion,
 ) -> Option<ChatAction> {
-    // Check if it's a SChatCommand packet (1.19+)
-    let chat_cmd_id = registry.get_packet_id::<SChatCommand>(
-        ConnectionState::Play,
-        Direction::Serverbound,
-        version,
-    );
     if Some(frame.id) == chat_cmd_id {
         // Decode just the command string
         let mut data = frame.payload.as_ref();
@@ -39,12 +36,6 @@ pub(crate) fn detect_chat_or_command(
         }
     }
 
-    // Check if it's a SChatMessage packet
-    let chat_msg_id = registry.get_packet_id::<SChatMessage>(
-        ConnectionState::Play,
-        Direction::Serverbound,
-        version,
-    );
     if Some(frame.id) == chat_msg_id {
         // Decode just the message string
         let mut data = frame.payload.as_ref();

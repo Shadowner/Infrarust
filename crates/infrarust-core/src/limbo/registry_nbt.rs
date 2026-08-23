@@ -200,8 +200,8 @@ fn write_chat_type_registry(buf: &mut Vec<u8>) {
     write_nbt_string(buf, "parameters");
     buf.push(TAG_STRING);
     buf.extend_from_slice(&2_i32.to_be_bytes());
-    write_nbt_raw_string(buf, "sender");
-    write_nbt_raw_string(buf, "content");
+    write_nbt_string(buf, "sender");
+    write_nbt_string(buf, "content");
     buf.push(TAG_END);
 
     buf.push(TAG_COMPOUND);
@@ -211,8 +211,8 @@ fn write_chat_type_registry(buf: &mut Vec<u8>) {
     write_nbt_string(buf, "parameters");
     buf.push(TAG_STRING);
     buf.extend_from_slice(&2_i32.to_be_bytes());
-    write_nbt_raw_string(buf, "sender");
-    write_nbt_raw_string(buf, "content");
+    write_nbt_string(buf, "sender");
+    write_nbt_string(buf, "content");
     buf.push(TAG_END);
 
     buf.push(TAG_END);
@@ -246,16 +246,9 @@ fn write_damage_type_registry(buf: &mut Vec<u8>) {
     buf.push(TAG_END);
 }
 
+/// Writes an NBT string payload (no tag header, just u16 BE length + bytes):
+/// tag names, field values, and TAG_STRING list elements all share this shape.
 fn write_nbt_string(buf: &mut Vec<u8>, s: &str) {
-    let bytes = s.as_bytes();
-    #[allow(clippy::cast_possible_truncation)]
-    buf.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
-    buf.extend_from_slice(bytes);
-}
-
-/// Writes a raw NBT string value (no tag header, just u16 length + bytes).
-/// Used for list elements of type TAG_STRING.
-fn write_nbt_raw_string(buf: &mut Vec<u8>, s: &str) {
     let bytes = s.as_bytes();
     #[allow(clippy::cast_possible_truncation)]
     buf.extend_from_slice(&(bytes.len() as u16).to_be_bytes());

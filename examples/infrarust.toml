@@ -19,3 +19,4 @@ enable_audit_log = true
 
 # Activate the web admin API and UI
 [web]
+api_key = "dev-key-please-change-me"

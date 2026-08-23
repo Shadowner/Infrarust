@@ -55,9 +55,7 @@ impl PterodactylProvider {
 impl ServerProvider for PterodactylProvider {
     fn start(
         &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), ServerManagerError>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             tracing::info!(server_id = %self.server_id, "sending start signal to Pterodactyl");
             self.send_power_signal("start").await
@@ -66,9 +64,7 @@ impl ServerProvider for PterodactylProvider {
 
     fn stop(
         &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), ServerManagerError>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             tracing::info!(server_id = %self.server_id, "sending stop signal to Pterodactyl");
             self.send_power_signal("stop").await
@@ -78,11 +74,7 @@ impl ServerProvider for PterodactylProvider {
     fn check_status(
         &self,
     ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<ProviderStatus, ServerManagerError>>
-                + Send
-                + '_,
-        >,
+        Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>,
     > {
         Box::pin(async move {
             let url = format!(

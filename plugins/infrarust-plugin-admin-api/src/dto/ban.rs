@@ -1,7 +1,7 @@
 use infrarust_api::services::ban_service::BanEntry;
 use serde::Serialize;
 
-use crate::util::{ban_target_type_str, format_duration, format_system_time};
+use crate::util::{ban_target_type_str, ban_target_value, format_duration, format_system_time};
 
 #[derive(Serialize)]
 pub struct BanResponse {
@@ -17,20 +17,9 @@ pub struct BanResponse {
 
 impl BanResponse {
     pub fn from_entry(entry: &BanEntry) -> Self {
-        let target_type = ban_target_type_str(&entry.target).to_string();
-        let target_value = match &entry.target {
-            infrarust_api::services::ban_service::BanTarget::Ip(ip) => ip.to_string(),
-            infrarust_api::services::ban_service::BanTarget::Username(name) => name.clone(),
-            infrarust_api::services::ban_service::BanTarget::Uuid(uuid) => uuid.to_string(),
-            other => {
-                tracing::warn!(?other, "Unknown BanTarget variant");
-                "unknown".to_string()
-            }
-        };
-
         Self {
-            target_type,
-            target_value,
+            target_type: ban_target_type_str(&entry.target).to_string(),
+            target_value: ban_target_value(&entry.target),
             reason: entry.reason.clone(),
             expires_at: entry.expires_at.map(format_system_time),
             expires_in: entry.remaining().map(format_duration),

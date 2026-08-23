@@ -4,7 +4,6 @@
 
 use std::time::Duration;
 
-use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -24,6 +23,8 @@ use crate::error::CoreError;
 use crate::pipeline::types::HandshakeData;
 use crate::util::domain_rewrite::rewrite_handshake;
 
+const READ_CHUNK: usize = 16 * 1024;
+
 /// The backend side of a proxied connection.
 ///
 /// Can be replaced during a server switch (Phase 4+).
@@ -35,7 +36,7 @@ pub struct BackendBridge {
     pub state: ConnectionState,
     /// Protocol version of this connection.
     pub protocol_version: ProtocolVersion,
-    read_buf: BytesMut,
+    server_address: Option<infrarust_config::ServerAddress>,
 }
 
 impl BackendBridge {
@@ -46,8 +47,18 @@ impl BackendBridge {
             encoder: PacketEncoder::new(),
             state: ConnectionState::Login,
             protocol_version,
-            read_buf: BytesMut::with_capacity(4096),
+            server_address: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_server_address(mut self, address: infrarust_config::ServerAddress) -> Self {
+        self.server_address = Some(address);
+        self
+    }
+
+    pub const fn server_address(&self) -> Option<&infrarust_config::ServerAddress> {
+        self.server_address.as_ref()
     }
 
     /// Reads the next packet frame from the backend.
@@ -62,25 +73,41 @@ impl BackendBridge {
                 return Ok(Some(frame));
             }
 
-            self.read_buf.resize(4096, 0);
-            let n = self.stream.read(&mut self.read_buf).await?;
+            let buf = self.decoder.read_buf_mut();
+            buf.reserve(READ_CHUNK);
+            let n = self.stream.read_buf(buf).await?;
             if n == 0 {
                 return Ok(None);
             }
-
-            self.decoder.queue_bytes(&self.read_buf[..n]);
         }
     }
 
-    /// Writes an encoded packet frame to the backend.
+    /// Extracts the next frame already buffered in the decoder, without
+    /// reading from the socket. Used to drain a read that carried several
+    /// frames before flushing them as one write.
     ///
     /// # Errors
-    /// Returns `CoreError` on I/O or encoding errors.
-    pub async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
-        self.encoder.append_frame(frame)?;
+    /// Returns `CoreError` on protocol decode errors.
+    pub fn try_next_frame(&mut self) -> Result<Option<PacketFrame>, CoreError> {
+        Ok(self.decoder.try_next_frame()?)
+    }
+
+    pub fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
+        Ok(self.encoder.append_frame(frame)?)
+    }
+
+    pub async fn flush(&mut self) -> Result<(), CoreError> {
         let data = self.encoder.take();
+        if data.is_empty() {
+            return Ok(());
+        }
         self.stream.write_all(&data).await?;
         Ok(())
+    }
+
+    pub async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
+        self.queue_frame(frame)?;
+        self.flush().await
     }
 
     /// Encodes and sends a typed packet to the backend.
@@ -92,10 +119,24 @@ impl BackendBridge {
         packet: &P,
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
+        if self.state != P::STATE {
+            return Err(CoreError::Auth(format!(
+                "cannot send {} ({}) while the bridge is in {}",
+                P::NAME,
+                P::STATE,
+                self.state
+            )));
+        }
+
         let packet_id = registry
-            .get_packet_id::<P>(self.state, P::direction(), self.protocol_version)
+            .get_packet_id::<P>(self.protocol_version)
             .ok_or_else(|| {
-                CoreError::Auth(format!("no packet ID for {} in {:?}", P::NAME, self.state,))
+                CoreError::Auth(format!(
+                    "no packet ID for {} in {} ({})",
+                    P::NAME,
+                    P::STATE,
+                    P::DIRECTION
+                ))
             })?;
 
         let mut payload = Vec::new();
@@ -107,7 +148,8 @@ impl BackendBridge {
         Ok(())
     }
 
-    /// Activates packet compression with the given threshold.
+    /// Activates packet compression with the given threshold, or leaves it
+    /// disabled if `threshold` is negative.
     pub const fn set_compression(&mut self, threshold: i32) {
         self.decoder.set_compression(threshold);
         self.encoder.set_compression(threshold);
@@ -172,7 +214,7 @@ impl BackendBridge {
         };
 
         let packet_id = registry
-            .get_packet_id::<SLoginStart>(ConnectionState::Login, Direction::Serverbound, version)
+            .get_packet_id::<SLoginStart>(version)
             .unwrap_or(0x00);
 
         let mut payload = Vec::new();
@@ -208,7 +250,7 @@ impl BackendBridge {
         };
 
         let packet_id = registry
-            .get_packet_id::<SLoginStart>(ConnectionState::Login, Direction::Serverbound, version)
+            .get_packet_id::<SLoginStart>(version)
             .unwrap_or(0x00);
 
         let mut payload = Vec::new();

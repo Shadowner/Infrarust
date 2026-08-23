@@ -27,6 +27,56 @@ pub enum ApiError {
     Internal(String),
 }
 
+impl From<crate::server_dir::StoreError> for ApiError {
+    fn from(error: crate::server_dir::StoreError) -> Self {
+        use crate::server_dir::StoreError;
+        match error {
+            StoreError::InvalidId(_) | StoreError::Document(_) | StoreError::IdMismatch { .. } => {
+                ApiError::BadRequest(error.to_string())
+            }
+            StoreError::Occupied(_) => ApiError::Conflict(error.to_string()),
+            StoreError::Serialize { .. } | StoreError::Io { .. } => {
+                tracing::error!(error = %error, "Server directory write failed");
+                ApiError::Internal("Failed to persist the server config".into())
+            }
+        }
+    }
+}
+
+impl From<crate::drain_store::DrainStoreError> for ApiError {
+    fn from(error: crate::drain_store::DrainStoreError) -> Self {
+        tracing::error!(error = %error, "Drain store write failed");
+        ApiError::Internal("Failed to persist the drain state".into())
+    }
+}
+
+impl From<infrarust_api::services::config_service::ConfigWriteError> for ApiError {
+    fn from(error: infrarust_api::services::config_service::ConfigWriteError) -> Self {
+        use infrarust_api::services::config_service::ConfigWriteError;
+        match &error {
+            ConfigWriteError::PermissionDenied => ApiError::Forbidden(error.to_string()),
+            ConfigWriteError::Parse(_) | ConfigWriteError::Validation(_) => {
+                ApiError::BadRequest(error.to_string())
+            }
+            // `ConfigWriteError` is `#[non_exhaustive]`, so a wildcard is
+            // mandatory here; an unrecognized failure is a server-side one.
+            ConfigWriteError::Io(_) | _ => {
+                tracing::error!(error = %error, "Proxy config write failed");
+                ApiError::Internal("Failed to write the proxy config".into())
+            }
+        }
+    }
+}
+
+/// Every current variant means "the caller named something that is not
+/// there", so no match is needed and a future variant cannot be mishandled
+/// silently.
+impl From<infrarust_api::services::load_balancer::LbError> for ApiError {
+    fn from(error: infrarust_api::services::load_balancer::LbError) -> Self {
+        ApiError::NotFound(error.to_string())
+    }
+}
+
 #[derive(Serialize)]
 struct ApiErrorBody {
     error: ApiErrorDetail,

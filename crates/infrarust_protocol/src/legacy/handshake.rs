@@ -1,9 +1,3 @@
-//! Pre-Netty handshake (0x02) parsing for Minecraft 1.6 and earlier.
-//!
-//! Two formats are supported:
-//! - **Pre-1.3**: `0x02` + `0x00` + `u16 BE string_len` (low byte only, high was `0x00`) + UTF-16BE `"username;hostname:port"`
-//! - **1.3+**: `0x02` + `u8 protocol_version` + `string16 username` + `string16 hostname` + `i32 port`
-
 use crate::error::{ProtocolError, ProtocolResult};
 
 use super::ping::{build_kick_packet, decode_utf16be};
@@ -34,8 +28,6 @@ fn read_string16(data: &[u8], pos: usize, context: &str) -> ProtocolResult<(Stri
     Ok((s, start + byte_count))
 }
 
-/// # Errors
-/// Returns an error if the packet is truncated or malformed.
 pub fn parse_legacy_handshake(data: &[u8]) -> ProtocolResult<LegacyHandshakeRequest> {
     if data.is_empty() {
         return Err(ProtocolError::invalid(
@@ -44,7 +36,6 @@ pub fn parse_legacy_handshake(data: &[u8]) -> ProtocolResult<LegacyHandshakeRequ
     }
 
     if data[0] == 0x00 {
-        // Pre-1.3 format: [0x00] [low_byte_of_string_len] [UTF-16BE connection string]
         if data.len() < 2 {
             return Err(ProtocolError::invalid(
                 "legacy handshake: missing string length",
@@ -59,9 +50,8 @@ pub fn parse_legacy_handshake(data: &[u8]) -> ProtocolResult<LegacyHandshakeRequ
             ));
         }
         let connection_string = decode_utf16be(&data[start..start + byte_count])?;
-        Ok(parse_pre_1_3_connection_string(&connection_string))
+        parse_pre_1_3_connection_string(&connection_string)
     } else {
-        // 1.3+ format: [protocol_version] [string16 username] [string16 hostname] [i32 port]
         let protocol_version = data[0];
         let pos = 1;
 
@@ -82,36 +72,36 @@ pub fn parse_legacy_handshake(data: &[u8]) -> ProtocolResult<LegacyHandshakeRequ
     }
 }
 
-fn parse_pre_1_3_connection_string(s: &str) -> LegacyHandshakeRequest {
+fn parse_pre_1_3_connection_string(s: &str) -> ProtocolResult<LegacyHandshakeRequest> {
     if let Some((username, host_port)) = s.split_once(';') {
         if let Some((hostname, port_str)) = host_port.rsplit_once(':') {
-            let port = port_str.parse::<i32>().unwrap_or(25565);
-            LegacyHandshakeRequest {
+            let port = port_str.parse::<u16>().map_err(|_| {
+                ProtocolError::invalid(format!("legacy handshake: invalid port {port_str:?}"))
+            })?;
+            Ok(LegacyHandshakeRequest {
                 protocol_version: 0,
                 username: username.to_string(),
                 hostname: hostname.to_string(),
-                port,
-            }
+                port: i32::from(port),
+            })
         } else {
-            LegacyHandshakeRequest {
+            Ok(LegacyHandshakeRequest {
                 protocol_version: 0,
                 username: username.to_string(),
                 hostname: host_port.to_string(),
                 port: 25565,
-            }
+            })
         }
     } else {
-        LegacyHandshakeRequest {
+        Ok(LegacyHandshakeRequest {
             protocol_version: 0,
             username: s.to_string(),
             hostname: String::new(),
             port: 25565,
-        }
+        })
     }
 }
 
-/// # Errors
-/// Returns an error if the reason string is too long for the packet format.
 pub fn build_legacy_kick(reason: &str) -> ProtocolResult<Vec<u8>> {
     build_kick_packet(reason)
 }
@@ -143,7 +133,6 @@ mod tests {
     fn build_pre_1_3_packet(connection_string: &str) -> Vec<u8> {
         let utf16: Vec<u16> = connection_string.encode_utf16().collect();
         let mut data = Vec::new();
-        // Format byte 0x00 (pre-1.3)
         data.push(0x00);
         data.push(utf16.len() as u8);
         for code_unit in &utf16 {
@@ -198,6 +187,19 @@ mod tests {
         assert_eq!(req.username, "Player1");
         assert_eq!(req.hostname, "survival.server.net");
         assert_eq!(req.port, 25565);
+    }
+
+    #[test]
+    fn test_parse_pre_1_3_malformed_port_rejected() {
+        let data = build_pre_1_3_packet("Steve;mc.example.com:notaport");
+        let err = parse_legacy_handshake(&data).unwrap_err();
+        assert!(matches!(err, ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn test_parse_pre_1_3_out_of_range_port_rejected() {
+        let data = build_pre_1_3_packet("Steve;mc.example.com:99999");
+        assert!(parse_legacy_handshake(&data).is_err());
     }
 
     #[test]

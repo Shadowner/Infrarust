@@ -250,9 +250,11 @@ pub fn register_builtin_commands(
 ) {
     let services = Arc::new(CommandServices {
         player_registry: Arc::clone(&proxy_services.player_registry),
-        config_service: Arc::new(ConfigServiceImpl::new(Arc::clone(
-            &proxy_services.domain_router,
-        ))),
+        config_service: Arc::new(ConfigServiceImpl::new(
+            Arc::clone(&proxy_services.domain_router),
+            proxy_services.config_path.clone(),
+            Arc::clone(&proxy_services.config),
+        )),
         server_manager: proxy_services.server_manager.clone(),
         plugin_registry,
         command_manager: Arc::clone(&proxy_services.command_manager),
@@ -306,7 +308,11 @@ mod tests {
 
         let services = Arc::new(CommandServices {
             player_registry: Arc::new(PlayerRegistryImpl::new(Arc::new(ConnectionRegistry::new()))),
-            config_service: Arc::new(ConfigServiceImpl::new(Arc::new(DomainRouter::new()))),
+            config_service: Arc::new(ConfigServiceImpl::new(
+                Arc::new(DomainRouter::new()),
+                std::path::PathBuf::from("infrarust.toml"),
+                Arc::new(toml::from_str("").expect("empty proxy config is fully defaulted")),
+            )),
             server_manager: None,
             plugin_registry: Arc::new(PluginRegistryImpl::new()),
             command_manager: Arc::new(CommandManagerImpl::new()),

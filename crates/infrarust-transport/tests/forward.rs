@@ -51,7 +51,7 @@ async fn test_copy_forwarder_bidirectional() {
     let n = client_read.read(&mut buf).await.unwrap();
     assert_eq!(&buf[..n], b"hello client");
 
-    // Close both sides to allow copy_bidirectional to complete
+    // Close both sides to let the copy tasks complete
     drop(client_write);
     drop(client_read);
     drop(backend_write);
@@ -94,6 +94,73 @@ async fn test_copy_forwarder_shutdown() {
         .unwrap();
 
     assert!(matches!(result.reason, ForwardEndReason::Shutdown));
+}
+
+async fn assert_client_eof_half_close<F: Forwarder + 'static>(forwarder: F) {
+    let (client_side, proxy_client) = create_connected_pair().await;
+    let (proxy_backend, backend_side) = create_connected_pair().await;
+
+    let shutdown = CancellationToken::new();
+    let forward_handle = tokio::spawn(async move {
+        forwarder
+            .forward(proxy_client, proxy_backend, shutdown)
+            .await
+    });
+
+    let (mut client_read, mut client_write) = client_side.into_split();
+    let (mut backend_read, mut backend_write) = backend_side.into_split();
+
+    let request = b"ping from client";
+    client_write.write_all(request).await.unwrap();
+    client_write.shutdown().await.unwrap();
+
+    let mut received = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        backend_read.read_to_end(&mut received),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(received, request, "backend should see request then EOF");
+
+    let reply = b"pong from backend";
+    backend_write.write_all(reply).await.unwrap();
+    backend_write.shutdown().await.unwrap();
+
+    let mut returned = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        client_read.read_to_end(&mut returned),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(returned, reply, "client should still receive the reply");
+
+    let result = tokio::time::timeout(Duration::from_secs(5), forward_handle)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        matches!(result.reason, ForwardEndReason::ClientClosed),
+        "expected ClientClosed, got {:?}",
+        result.reason
+    );
+    assert_eq!(result.client_to_backend, request.len() as u64);
+    assert_eq!(result.backend_to_client, reply.len() as u64);
+}
+
+#[tokio::test]
+async fn test_copy_forwarder_client_eof_half_close() {
+    assert_client_eof_half_close(CopyForwarder).await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn test_splice_forwarder_client_eof_half_close() {
+    assert_client_eof_half_close(SpliceForwarder::new()).await;
 }
 
 #[cfg(target_os = "linux")]

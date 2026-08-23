@@ -48,42 +48,60 @@ pub fn labels_to_server_config(
         port: DEFAULT_MC_PORT,
     });
 
-    // Build a TOML string and parse it to satisfy deny_unknown_fields
-    // This ensures we get proper defaults for all fields.
-    let mut toml_str = format!(
-        "domains = [{}]\naddresses = [\"{}\"]\nproxy_mode = \"{:?}\"\nsend_proxy_protocol = {}",
-        domains
-            .iter()
-            .map(|d| format!("\"{}\"", d))
-            .collect::<Vec<_>>()
-            .join(", "),
-        server_address,
-        proxy_mode,
-        send_proxy_protocol,
-    );
+    // Deserializing through a toml::Table (instead of a struct literal) keeps
+    // serde defaults for all unset fields and escapes label values correctly.
+    let built = (|| -> Result<ServerConfig, Box<dyn std::error::Error>> {
+        use toml::{Table, Value};
 
-    if let Some(ref name) = name {
-        toml_str.push_str(&format!("\nname = \"{name}\""));
-    }
+        let mut table = Table::new();
+        table.insert("id".into(), Value::String(container_name.to_string()));
+        table.insert(
+            "domains".into(),
+            Value::Array(domains.iter().cloned().map(Value::String).collect()),
+        );
+        table.insert(
+            "addresses".into(),
+            Value::Array(vec![Value::String(server_address.to_string())]),
+        );
+        table.insert("proxy_mode".into(), Value::try_from(proxy_mode)?);
+        table.insert(
+            "send_proxy_protocol".into(),
+            Value::Boolean(send_proxy_protocol),
+        );
+        if let Some(name) = &name {
+            table.insert("name".into(), Value::String(name.clone()));
+        }
+        if let Some(network) = &network {
+            table.insert("network".into(), Value::String(network.clone()));
+        }
+        if let Some(text) = labels.get("infrarust.motd.text") {
+            let mut online = Table::new();
+            online.insert("text".into(), Value::String(text.clone()));
+            let mut motd = Table::new();
+            motd.insert("online".into(), Value::Table(online));
+            table.insert("motd".into(), Value::Table(motd));
+        }
 
-    if let Some(ref network) = network {
-        toml_str.push_str(&format!("\nnetwork = \"{network}\""));
-    }
+        Ok(table.try_into()?)
+    })();
 
-    // Add MOTD text if specified
-    if let Some(motd_text) = labels.get("infrarust.motd.text") {
-        toml_str.push_str(&format!("\n\n[motd.online]\ntext = \"{}\"", motd_text));
-    }
-
-    // Try to parse, fall back to manual construction
-    toml::from_str::<ServerConfig>(&toml_str).unwrap_or_else(|_| {
+    built.unwrap_or_else(|e| {
+        tracing::warn!(
+            container = %container_name,
+            error = %e,
+            "generated docker server config failed to parse, using minimal fallback"
+        );
         // Manual fallback — less complete but functional
         ServerConfig {
             id: Some(container_name.to_string()),
             name,
             network,
             domains,
-            addresses: vec![server_address],
+            addresses: vec![server_address.into()],
+            balance: Default::default(),
+            slow_start: None,
+            slow_start_aggression: 1.0,
+            active_health: None,
             proxy_mode,
             forwarding_mode: None,
             send_proxy_protocol,

@@ -22,6 +22,7 @@ All duration values use human-readable strings: `"5s"`, `"10m"`, `"1h30m"`.
 | `bind` | string | `"0.0.0.0:25565"` | Listen address and port |
 | `max_connections` | integer | `0` | Maximum simultaneous connections. 0 = unlimited |
 | `connect_timeout` | duration | `"5s"` | Timeout when connecting to a backend server |
+| `connect_max_attempts` | integer | `3` | Backend addresses tried before giving up. 0 = try them all |
 | `receive_proxy_protocol` | boolean | `false` | Accept HAProxy v1/v2 PROXY protocol from upstream |
 | `servers_dir` | string | `"./servers"` | Path to the directory containing server TOML files |
 | `plugins_dir` | string | `"./plugins"` | Path to the directory containing WASM plugin files |
@@ -222,12 +223,12 @@ Web admin API and UI. Absent from the file means the web plugin is not loaded.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enable_api` | boolean | `true` | Serve the REST admin API |
-| `enable_webui` | boolean | `true` | Serve the bundled web UI |
+| `enable_webui` | boolean | follows `enable_api` | Serve the bundled web UI. Cannot be `true` while `enable_api` is `false` |
 | `bind` | string | `"127.0.0.1:8080"` | Listen address for the web server |
 | `api_key` | string | none | API key for authenticating requests. Must be at least 16 characters |
 | `cors_origins` | array of strings | `[]` | Allowed CORS origins |
 
-If `bind` is a loopback address and no `api_key` is set, Infrarust generates an ephemeral key at startup and logs a warning. If `bind` is reachable from outside the host and no key (or the placeholder `CHANGE-ME`) is set, Infrarust refuses to start. A `[web.rate_limit]` sub-table sets `requests_per_minute` (default `60`).
+`enable_webui` follows `enable_api` unless you set it, so `enable_api = false` alone turns the UI off too. Setting `enable_webui = true` with `enable_api = false` is a configuration error: the UI is served by the API's HTTP server and calls it for every screen. If `bind` is a loopback address and no `api_key` is set, Infrarust generates an ephemeral key at startup and logs a warning. If `bind` is reachable from outside the host and no key (or the placeholder `CHANGE-ME`) is set, Infrarust refuses to start. A key shorter than 16 characters is refused on any bind, and the API refuses to write a config that would fail either rule. A `[web.rate_limit]` sub-table sets `requests_per_minute` (default `60`).
 
 ```toml
 [web]
@@ -287,7 +288,11 @@ Each file in the `servers_dir` directory defines one backend server. The filenam
 | `name` | string | none | Human-readable name. Becomes the server ID if set. Must match `[a-z0-9_-]+` |
 | `network` | string | none | Network group for server switching. Only servers in the same network can switch between each other. Omit to isolate the server |
 | `domains` | array of strings | `[]` | Domains that route to this server. Supports wildcards like `"*.mc.example.com"`. Empty means the server is only reachable via server switching |
-| `addresses` | array of strings | **required** | Backend server addresses in `"host:port"` format. Port defaults to 25565 if omitted. Multiple addresses are tried in order as sequential failover, not load balancing |
+| `addresses` | array | **required** | Backend addresses, each either `"host:port"` or `{ address = "host:port", weight = 3 }`. Port defaults to 25565 if omitted. Ordered by `balance` |
+| `balance` | string | `"first_available"` | Address selection strategy: `"first_available"`, `"round_robin"`, or `"least_conn"` |
+| `slow_start` | duration | none | Ramp a freshly healthy address up to full weight over this window, e.g. `"45s"` |
+| `slow_start_aggression` | float | `1.0` | Slow start curve. `1.0` is linear, higher is gentler at the start |
+| `active_health` | table | inherits global | Per-server override of the global `[active_health]` block |
 | `proxy_mode` | string | `"passthrough"` | How the proxy handles traffic. See [Proxy modes](#proxy-modes) |
 | `forwarding_mode` | string | none | Per-server override of the global `[forwarding]` mode: `"none"`, `"bungee_cord"`, `"bungee_guard"`, or `"velocity"`. Inherits the global setting when omitted |
 | `send_proxy_protocol` | boolean | `false` | Send PROXY protocol header to the backend |

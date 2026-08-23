@@ -329,6 +329,24 @@ mod tests {
     }
 
     #[test]
+    fn test_pass_keeps_packet_bytes_pointer_stable() {
+        let instance: Box<dyn CodecFilterInstance> = Box::new(MockInstance {
+            verdict_fn: Box::new(|_, _| CodecVerdict::Pass),
+            call_count: Arc::new(AtomicU32::new(0)),
+        });
+
+        let mut chain = chain_with_instances(vec![instance]);
+        let data = bytes::Bytes::from_static(b"payload");
+        let ptr = data.as_ptr();
+        let mut packet = RawPacket::new(0x2A, data);
+        let result = chain.process(&mut packet);
+        assert!(matches!(result, FilterResult::Pass));
+        assert_eq!(packet.packet_id, 0x2A);
+        assert_eq!(packet.data.as_ptr(), ptr);
+        assert_eq!(packet.data.len(), b"payload".len());
+    }
+
+    #[test]
     fn test_filter_modifies_payload() {
         let instance: Box<dyn CodecFilterInstance> = Box::new(MockInstance {
             verdict_fn: Box::new(|packet, _| {

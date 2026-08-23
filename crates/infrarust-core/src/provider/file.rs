@@ -38,9 +38,8 @@ impl ConfigProvider for FileProvider {
 
     fn load_initial(
         &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>>
+    {
         Box::pin(async move { self.do_load_initial() })
     }
 
@@ -48,8 +47,7 @@ impl ConfigProvider for FileProvider {
         &self,
         sender: mpsc::Sender<ProviderEvent>,
         shutdown: CancellationToken,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CoreError>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
         Box::pin(self.do_watch(sender, shutdown))
     }
 }
@@ -206,7 +204,7 @@ fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<P
 
         if let Some(old_config) = known.get(path) {
             // File exists in both — check if changed
-            if !configs_equal(old_config, config) {
+            if old_config != config {
                 events.push(ProviderEvent::Updated(ProviderConfig {
                     id: ProviderId::file(filename),
                     config: config.clone(),
@@ -240,15 +238,6 @@ fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<P
     }
 
     events
-}
-
-/// Compares two configs by their serializable fields to detect changes.
-///
-/// Uses a simple domain+address comparison since `ServerConfig` doesn't
-/// derive `PartialEq`. A content hash would be more robust but this covers
-/// the common cases.
-fn configs_equal(a: &ServerConfig, b: &ServerConfig) -> bool {
-    a == b
 }
 
 /// Loads a single server config from a TOML file.

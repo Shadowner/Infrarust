@@ -22,6 +22,8 @@ impl FromStr for ServerAddress {
     type Err = ConfigError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+
         // Try to parse as SocketAddr first (IP:port)
         if let Ok(sock) = s.parse::<SocketAddr>() {
             return Ok(Self {
@@ -34,6 +36,10 @@ impl FromStr for ServerAddress {
         if let Some((host, port_str)) = s.rsplit_once(':')
             && let Ok(port) = port_str.parse::<u16>()
         {
+            let host = host.trim();
+            if host.is_empty() {
+                return Err(ConfigError::InvalidAddress(s.to_string()));
+            }
             return Ok(Self {
                 host: host.to_string(),
                 port,

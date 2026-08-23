@@ -5,16 +5,15 @@
 
 use std::sync::Arc;
 
-use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::limbo::context::LimboEntryContext;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
+use infrarust_api::limbo::handler::{LimboHandler, SessionEndReason};
 use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
-use super::handler_chain::{LimboChainResult, LimboLoopState, run_handler_chain};
+use super::handler_chain::{LimboChainResult, run_handler_chain};
 use super::keepalive::KeepAliveState;
 use super::session::LimboSessionImpl;
 use super::virtual_session::VirtualSessionCore;
@@ -42,10 +41,10 @@ pub(crate) async fn enter_limbo(
     profile: GameProfile,
     version: ProtocolVersion,
     entry_context: LimboEntryContext,
-    registry: &PacketRegistry,
     services: &ProxyServices,
     cancel: CancellationToken,
 ) -> LimboExitResult {
+    let registry = Arc::clone(&services.packet_registry);
     let mut core = VirtualSessionCore::new(
         player_id,
         profile,
@@ -53,7 +52,6 @@ pub(crate) async fn enter_limbo(
         Arc::clone(&services.packet_registry),
     );
 
-    let (complete_tx, complete_rx) = watch::channel::<Option<HandlerResult>>(None);
     let limbo_token = cancel.child_token();
     let session = LimboSessionImpl::new(
         player_id,
@@ -61,16 +59,12 @@ pub(crate) async fn enter_limbo(
         version,
         entry_context,
         core.outgoing_tx.clone(),
-        complete_tx,
         limbo_token.clone(),
         Arc::clone(&services.packet_registry),
     );
     let _limbo_guard = limbo_token.drop_guard();
 
-    let mut limbo_state = LimboLoopState {
-        complete_rx,
-        keepalive: KeepAliveState::new(),
-    };
+    let mut keepalive = KeepAliveState::new();
 
     let session = Arc::new(session);
     session.set_self_ref(Arc::downgrade(&session));
@@ -80,11 +74,11 @@ pub(crate) async fn enter_limbo(
         session,
         client,
         &mut core,
-        &mut limbo_state,
+        &mut keepalive,
         services,
         cancel,
         version,
-        registry,
+        &registry,
         true,
     )
     .await;
@@ -93,7 +87,7 @@ pub(crate) async fn enter_limbo(
         chain_result,
         client,
         version,
-        registry,
+        &registry,
         &handlers,
         player_id,
     )
@@ -393,7 +387,6 @@ mod tests {
             LimboEntryContext::InitialConnection {
                 target_server: ServerId::new("lobby"),
             },
-            &services.packet_registry,
             &services,
             CancellationToken::new(),
         )

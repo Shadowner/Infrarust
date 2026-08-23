@@ -41,6 +41,7 @@ fn make_session(username: &str, ip: IpAddr) -> (Arc<PlayerSession>, Cancellation
         tx,
         token.clone(),
         infrarust_core::permissions::default_checker(),
+        Arc::new(infrarust_core::loadbalancer::BackendLoad::new()),
     ));
     (session, token)
 }
@@ -50,7 +51,7 @@ async fn test_ban_and_kick_online_player() {
     let (manager, registry, _dir) = temp_manager().await;
     let ip: IpAddr = "192.168.1.50".parse().unwrap();
     let (session, token) = make_session("Victim", ip);
-    registry.register(session);
+    let _guard = registry.register(session);
 
     assert!(!token.is_cancelled());
 
@@ -75,9 +76,9 @@ async fn test_ban_ip_kicks_multiple() {
     let (s1, t1) = make_session("Player1", ip);
     let (s2, t2) = make_session("Player2", ip);
     let (s3, t3) = make_session("Player3", ip);
-    registry.register(s1);
-    registry.register(s2);
-    registry.register(s3);
+    let _g1 = registry.register(s1);
+    let _g2 = registry.register(s2);
+    let _g3 = registry.register(s3);
 
     manager
         .ban(

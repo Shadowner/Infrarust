@@ -47,7 +47,7 @@ fn test_labels_to_config_custom_port() {
     ]);
     let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25566");
 
-    assert_eq!(config.addresses[0].port, 25566);
+    assert_eq!(config.addresses[0].address.port, 25566);
 }
 
 #[test]
@@ -59,6 +59,38 @@ fn test_labels_to_config_proxy_protocol() {
     let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565");
 
     assert!(config.send_proxy_protocol);
+}
+
+#[test]
+fn test_labels_to_config_motd_preserved() {
+    let labels = make_labels(&[
+        ("infrarust.enable", "true"),
+        ("infrarust.motd.text", "Welcome!"),
+    ]);
+    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565");
+
+    assert_eq!(config.id.as_deref(), Some("mc-test"));
+    assert_eq!(config.motd.online.unwrap().text, "Welcome!");
+}
+
+#[test]
+fn test_labels_to_config_special_chars_round_trip() {
+    let motd = "He said \"hi\"\nC:\\path [section]";
+    let labels = make_labels(&[("infrarust.enable", "true"), ("infrarust.motd.text", motd)]);
+    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565");
+
+    assert_eq!(config.motd.online.unwrap().text, motd);
+}
+
+#[test]
+fn test_labels_to_config_proxy_mode() {
+    let labels = make_labels(&[
+        ("infrarust.enable", "true"),
+        ("infrarust.proxy_mode", "client_only"),
+    ]);
+    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565");
+
+    assert_eq!(config.proxy_mode, infrarust_config::ProxyMode::ClientOnly);
 }
 
 #[test]

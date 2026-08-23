@@ -6,7 +6,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::time::Instant;
@@ -79,7 +79,9 @@ impl ClientConnection {
     /// Reads up to `n` bytes from the stream into the internal buffer
     /// without consuming them from the connection.
     ///
-    /// Returns a slice of the buffered data.
+    /// Returns a slice of the buffered data. Performs at most one read from
+    /// the socket, so the slice may be shorter than `n` after a short read
+    /// or EOF — callers needing exactly `n` bytes must call again.
     ///
     /// # Errors
     ///
@@ -88,13 +90,10 @@ impl ClientConnection {
         if self.buffered_data.len() < n {
             let needed = n - self.buffered_data.len();
             self.buffered_data.reserve(needed);
-            let mut buf = vec![0u8; needed];
-            let read = self
-                .stream
-                .read(&mut buf[..needed])
+            self.stream
+                .read_buf(&mut (&mut self.buffered_data).limit(needed))
                 .await
                 .map_err(TransportError::Forward)?;
-            self.buffered_data.extend_from_slice(&buf[..read]);
         }
         Ok(&self.buffered_data[..self.buffered_data.len().min(n)])
     }

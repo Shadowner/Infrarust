@@ -6,7 +6,7 @@ use std::time::Duration;
 use infrarust_api::error::ServiceError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::services::ban_service::{BanEntry, BanTarget};
-use infrarust_api::services::config_service::ServerConfig;
+use infrarust_api::services::config_service::{ServerConfig, ServerSource};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{PlayerId, ServerId};
 
@@ -85,7 +85,56 @@ impl infrarust_api::services::config_service::ConfigService for MockConfigServic
     fn get_all_server_configs(&self) -> Vec<ServerConfig> {
         vec![]
     }
+    fn get_server_document(&self, _server: &ServerId) -> Option<String> {
+        None
+    }
+    fn list_server_sources(&self) -> Vec<ServerSource> {
+        vec![]
+    }
+    fn get_proxy_config_document(&self) -> String {
+        String::new()
+    }
+    fn get_effective_proxy_config_document(&self) -> String {
+        String::new()
+    }
+    fn write_proxy_config_document(
+        &self,
+        _toml: &str,
+    ) -> Result<(), infrarust_api::services::config_service::ConfigWriteError> {
+        Err(infrarust_api::services::config_service::ConfigWriteError::PermissionDenied)
+    }
     fn get_value(&self, _key: &str) -> Option<String> {
         None
+    }
+}
+
+pub struct MockLoadBalancerService;
+
+impl infrarust_api::services::load_balancer::private::Sealed for MockLoadBalancerService {}
+
+impl infrarust_api::services::load_balancer::LoadBalancerService for MockLoadBalancerService {
+    fn strategy(&self, _server: &ServerId) -> Option<String> {
+        None
+    }
+    fn backends(
+        &self,
+        _server: &ServerId,
+    ) -> Vec<infrarust_api::services::load_balancer::BackendStatus> {
+        vec![]
+    }
+    fn set_drained(
+        &self,
+        _server: &ServerId,
+        _addr: &infrarust_api::types::ServerAddress,
+        _drained: bool,
+    ) -> Result<(), infrarust_api::services::load_balancer::LbError> {
+        Ok(())
+    }
+    fn reset_backend(
+        &self,
+        _server: &ServerId,
+        _addr: &infrarust_api::types::ServerAddress,
+    ) -> Result<(), infrarust_api::services::load_balancer::LbError> {
+        Ok(())
     }
 }
