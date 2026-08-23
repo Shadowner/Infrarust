@@ -1915,7 +1915,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1945,7 +1945,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-api"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "bytes",
  "serde",
@@ -1958,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-core"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "base64",
  "bollard",
@@ -2006,7 +2006,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-loader-wasm"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "bytes",
  "infrarust-api",
@@ -2028,7 +2028,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-mc-bench"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "clap",
  "hdrhistogram",
@@ -2039,7 +2039,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-admin-api"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "async-stream",
  "axum",
@@ -2070,7 +2070,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-auth"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "argon2",
  "bcrypt",
@@ -2093,7 +2093,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-hello"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "infrarust-api",
  "tracing",
@@ -2101,7 +2101,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-macros"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-sdk"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "infrarust-plugin-macros",
  "wit-bindgen 0.58.0",
@@ -2118,7 +2118,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-server-wake"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "dashmap",
  "infrarust-api",
@@ -2130,11 +2130,11 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-stats"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 
 [[package]]
 name = "infrarust-plugin-stats-native"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "infrarust-api",
  "infrarust-plugin-stats",
@@ -2143,11 +2143,11 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-wit"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 
 [[package]]
 name = "infrarust-stress-test"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "clap",
  "tokio",
@@ -2155,7 +2155,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-transport"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "bytes",
  "command-fds",
@@ -2173,7 +2173,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust_config"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "humantime",
  "humantime-serde",
@@ -2192,7 +2192,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust_protocol"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "aes",
  "bytes",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust_server_manager"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "dashmap",
  "infrarust_config",
@@ -3398,7 +3398,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "registry-extractor"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "anyhow",
  "bytes",

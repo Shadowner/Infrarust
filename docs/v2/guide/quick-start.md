@@ -88,7 +88,7 @@ infrarust
 You should see output like:
 
 ```
-INFO starting infrarust v2.0.0-beta.1 {bind=0.0.0.0:25565, servers_dir=./servers}
+INFO starting infrarust v2.0.0-beta.2 {bind=0.0.0.0:25565, servers_dir=./servers}
 INFO infrarust is ready, accepting connections
 INFO Web dashboard accessible at: http://127.0.0.1:8080
 ```

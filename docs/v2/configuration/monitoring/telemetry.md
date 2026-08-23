@@ -36,7 +36,7 @@ export_interval = "15s"
 
 [telemetry.resource]
 service_name = "infrarust"
-service_version = "2.0.0-beta.1"        # defaults to Infrarust's crate version
+service_version = "2.0.0-beta.2"        # defaults to Infrarust's crate version
 ```
 
 ## Configuration reference

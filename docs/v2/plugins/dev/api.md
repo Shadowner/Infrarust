@@ -24,7 +24,7 @@ fn on_enable<'a>(&'a self, ctx: &'a dyn PluginContext) -> BoxFuture<'a, Result<(
 }
 ```
 
-Import everything with `use infrarust_api::prelude::*;`. All crates are at version `2.0.0-beta.1` (Rust edition 2024, MSRV 1.94).
+Import everything with `use infrarust_api::prelude::*;`. All crates are at version `v2.0.0-beta.2` (Rust edition 2024, MSRV 1.94).
 
 ## The Plugin trait
 

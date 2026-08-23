@@ -394,7 +394,7 @@ pub trait VirtualBackendHandler: Send + Sync {
 The proxy core does not act on the `VirtualBackend` result yet. Returning it from an event handler is a no-op on the current release, so treat virtual backends as planned, not available. Use a limbo handler for proxy-hosted screens today.
 
 ::: info Planned
-Virtual backend routing is not implemented in the proxy on 2.0.0-beta.1. The trait is published so the API can stabilize ahead of the runtime support.
+Virtual backend routing is not implemented in the proxy on v2.0.0-beta.2. The trait is published so the API can stabilize ahead of the runtime support.
 :::
 
 ## Choosing the right layer

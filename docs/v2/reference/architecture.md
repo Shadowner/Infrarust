@@ -7,7 +7,7 @@ description: Internal structure of Infrarust v2. The workspace crate layout, the
 
 This page describes how Infrarust is put together internally: the crates that make up the workspace, the order in which middleware runs on each connection, the handlers that take over once routing is done, and the shared services that hold proxy state. It is meant for contributors and plugin authors who want to know where a given concern lives in the code.
 
-Everything here reflects version `2.0.0-beta.1` on the main branch. Infrarust is a Rust 2024 workspace with an MSRV of 1.94.
+Everything here reflects version `2.0.0-beta.2` on the main branch. Infrarust is a Rust 2024 workspace with an MSRV of 1.94.
 
 ## Crate layout
 

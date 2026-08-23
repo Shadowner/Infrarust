@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-macros"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -191,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-sdk"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 dependencies = [
  "infrarust-plugin-macros",
  "wit-bindgen 0.58.0",
