@@ -275,11 +275,7 @@ async function runVersion(ctx) {
     return row;
   }
 
-  const velocityBackend = servers.get('velocity');
-  const velocityReal = velocityBackend ? velocityBackend.hasVelocityForwarding() : true;
-  if (velocityBackend && !velocityReal) {
-    row.notes.push('the Paper build for this release has no Velocity modern forwarding');
-  }
+  let velocityEnforced = null;
 
   try {
     for (const [scenarioIndex, scenario] of scenarios.entries()) {
@@ -287,7 +283,7 @@ async function runVersion(ctx) {
         atLeast,
         authAvailable: ctx.authAvailable,
         paperAvailable,
-        velocityBackendReady: velocityReal,
+        velocityBackendReady: velocityEnforced,
       });
       if (skip) {
         row.cells.push({ scenario: scenario.id, status: 'skip', detail: skip });
@@ -305,6 +301,13 @@ async function runVersion(ctx) {
         username: usernameFor(versionIndex, scenarioIndex),
       });
       row.cells.push(cell);
+
+      if (scenario.gatesVelocity) {
+        velocityEnforced = cell.status === 'pass';
+        if (!velocityEnforced) {
+          row.notes.push('the Paper build for this release does not enforce Velocity forwarding');
+        }
+      }
     }
   } finally {
     for (const server of servers.values()) {

@@ -13,7 +13,7 @@ import {
 } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
 const MANIFEST_URL = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
@@ -25,6 +25,7 @@ const OS_NAME = 'linux';
 const OS_ARCH = 'x86_64';
 
 export function cacheRoot(base) {
+  base = resolve(base);
   return {
     root: base,
     versions: join(base, 'versions'),

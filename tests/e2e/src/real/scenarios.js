@@ -54,6 +54,15 @@ export const SCENARIOS = [
     expect: { joined: true, chatRelayed: true, proxySawPlayer: true, proxyActive: true },
   },
   {
+    id: 'velocity-direct-refused',
+    label: 'velocity backend, no proxy (must refuse)',
+    gatesVelocity: true,
+    proxy: null,
+    backend: 'velocity',
+    minVersion: VELOCITY_MIN_VERSION,
+    expect: { joined: false, rejection: /connect with Velocity/i },
+  },
+  {
     id: 'offline-velocity',
     label: 'offline + velocity',
     proxy: { proxyMode: 'offline', forwardingMode: 'velocity' },
@@ -71,14 +80,6 @@ export const SCENARIOS = [
     expect: { joined: true, chatRelayed: true, proxySawPlayer: true, proxyActive: true },
   },
   {
-    id: 'velocity-direct-refused',
-    label: 'velocity backend, no proxy (must refuse)',
-    proxy: null,
-    backend: 'velocity',
-    minVersion: VELOCITY_MIN_VERSION,
-    expect: { joined: false, rejection: /connect with Velocity/i },
-  },
-  {
     id: 'offline-wrong-secret',
     label: 'offline + velocity, mismatched secret (must refuse)',
     proxy: { proxyMode: 'offline', forwardingMode: 'velocity', secret: 'wrongSecretForVelocityForwarding0' },
@@ -88,15 +89,15 @@ export const SCENARIOS = [
   },
 ];
 
-export function skipReason(scenario, { atLeast, authAvailable, paperAvailable, velocityBackendReady = true }) {
+export function skipReason(scenario, { atLeast, authAvailable, paperAvailable, velocityBackendReady = null }) {
   if (scenario.linuxOnly && process.platform !== 'linux') return 'zero_copy is Linux-only';
   if (scenario.minVersion && !atLeast(scenario.minVersion)) {
     return `velocity forwarding needs ${scenario.minVersion}+ (no login plugin request before it)`;
   }
   if (scenario.needsAuth && !authAvailable) return 'no session server';
   if (BACKENDS[scenario.backend].flavour === 'paper' && !paperAvailable) return 'no Paper build for this version';
-  if (scenario.backend === 'velocity' && !velocityBackendReady) {
-    return 'this Paper build has no Velocity modern forwarding';
+  if (scenario.backend === 'velocity' && !scenario.gatesVelocity && velocityBackendReady === false) {
+    return 'this Paper build does not enforce Velocity forwarding';
   }
   return null;
 }
