@@ -11,7 +11,7 @@ export function renderReport(results, scenarios) {
   const counts = { pass: 0, fail: 0, skip: 0, untrusted: 0 };
   for (const row of results) for (const cell of row.cells) counts[cell.status] = (counts[cell.status] ?? 0) + 1;
 
-  const header = ['version', ...scenarios.map((s) => s.id)];
+  const header = ['version', 'protocol', ...scenarios.map((s) => s.id)];
   const lines = [
     '# Real-client connection matrix',
     '',
@@ -28,7 +28,7 @@ export function renderReport(results, scenarios) {
       const cell = row.cells.find((c) => c.scenario === s.id);
       return GLYPH[cell?.status] ?? '·';
     });
-    lines.push(`| ${row.version} | ${cells.join(' | ')} |`);
+    lines.push(`| ${row.version} | ${row.protocol ?? '?'} | ${cells.join(' | ')} |`);
   }
 
   const failures = [];

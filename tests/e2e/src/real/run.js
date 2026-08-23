@@ -309,6 +309,14 @@ async function runVersion(ctx) {
     }
   }
 
+  for (const cell of row.cells) {
+    const seen = cell.observations?.proxyPlayer?.protocol_version;
+    if (seen != null) {
+      row.protocol = seen;
+      break;
+    }
+  }
+
   row.elapsedMs = Date.now() - started;
   return row;
 }
@@ -513,7 +521,8 @@ function printRow(row, scenarios) {
     return GLYPH[cell?.status ?? 'skip'] ?? '?';
   });
   const secs = row.elapsedMs ? `${(row.elapsedMs / 1000).toFixed(0)}s` : '';
-  console.log(`${row.version.padEnd(9)} ${cells.join(' ')}  ${secs}`);
+  const proto = row.protocol != null ? String(row.protocol).padStart(4) : '   ?';
+  console.log(`${row.version.padEnd(9)} ${proto}  ${cells.join(' ')}  ${secs}`);
   for (const cell of row.cells) {
     if (cell.status === 'fail') console.log(`  ${cell.scenario}: ${cell.detail}`);
   }
