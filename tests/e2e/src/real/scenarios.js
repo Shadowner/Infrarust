@@ -88,12 +88,15 @@ export const SCENARIOS = [
   },
 ];
 
-export function skipReason(scenario, { atLeast, authAvailable, paperAvailable }) {
+export function skipReason(scenario, { atLeast, authAvailable, paperAvailable, velocityBackendReady = true }) {
   if (scenario.linuxOnly && process.platform !== 'linux') return 'zero_copy is Linux-only';
   if (scenario.minVersion && !atLeast(scenario.minVersion)) {
     return `velocity forwarding needs ${scenario.minVersion}+ (no login plugin request before it)`;
   }
   if (scenario.needsAuth && !authAvailable) return 'no session server';
   if (BACKENDS[scenario.backend].flavour === 'paper' && !paperAvailable) return 'no Paper build for this version';
+  if (scenario.backend === 'velocity' && !velocityBackendReady) {
+    return 'this Paper build has no Velocity modern forwarding';
+  }
   return null;
 }

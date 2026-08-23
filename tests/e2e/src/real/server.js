@@ -137,6 +137,10 @@ export class Server {
     }
   }
 
+  hasVelocityForwarding() {
+    return this.lines.some((l) => /Velocity/.test(l) && !/(compression|cipher) from Velocity/.test(l));
+  }
+
   say(message) {
     try {
       this.child.stdin.write(`say ${message}\n`);

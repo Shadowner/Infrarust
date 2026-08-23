@@ -275,9 +275,20 @@ async function runVersion(ctx) {
     return row;
   }
 
+  const velocityBackend = servers.get('velocity');
+  const velocityReal = velocityBackend ? velocityBackend.hasVelocityForwarding() : true;
+  if (velocityBackend && !velocityReal) {
+    row.notes.push('the Paper build for this release has no Velocity modern forwarding');
+  }
+
   try {
     for (const [scenarioIndex, scenario] of scenarios.entries()) {
-      const skip = skipReason(scenario, { atLeast, authAvailable: ctx.authAvailable, paperAvailable });
+      const skip = skipReason(scenario, {
+        atLeast,
+        authAvailable: ctx.authAvailable,
+        paperAvailable,
+        velocityBackendReady: velocityReal,
+      });
       if (skip) {
         row.cells.push({ scenario: scenario.id, status: 'skip', detail: skip });
         continue;
