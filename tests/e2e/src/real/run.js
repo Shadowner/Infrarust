@@ -303,13 +303,18 @@ async function runVersion(ctx) {
       row.cells.push(cell);
 
       if (scenario.gatesVelocity) {
-        velocityEnforced = cell.status === 'pass';
-        if (!velocityEnforced) {
+        const obs = cell.observations;
+        if (!obs || obs.stalledOut || obs.clientCrashed || obs.clientReason === 'spawn-failed') {
+          velocityEnforced = null;
+        } else if (obs.joined) {
+          velocityEnforced = false;
           row.notes.push('the Paper build for this release does not enforce Velocity forwarding');
           cell.status = 'untrusted';
           cell.detail =
             'this Paper build lets a direct connection in, so it does not enforce Velocity ' +
             'forwarding and no Velocity result is possible for this release';
+        } else {
+          velocityEnforced = true;
         }
       }
     }
