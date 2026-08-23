@@ -298,11 +298,12 @@ it does not decide.
 
 Tier C then added four more, all from launching the actual game:
 
-4. **The real client gets in, on every mode.** 1.7.10 through the latest release
-   join a real server through `passthrough`, `zero_copy`, `server_only`,
-   `offline` and `client_only`, and receive a message the server sends
-   afterwards. The oldest version is also the fastest: 1.7.10 finishes its six
-   applicable scenarios in 21 seconds.
+4. **The real client gets in, and the byte-relaying modes never break.**
+   `passthrough`, `zero_copy`, `server_only` and plain `offline` carry the real
+   game into the world on every release tried, from 1.7.10 up, and the player
+   then receives a message the server sends afterwards. The oldest version is
+   also the fastest: 1.7.10 finishes its six applicable scenarios in 20 seconds.
+   `client_only` and the Velocity scenarios are the ones finding 1 locks out.
 
 5. **Paper accepts our Velocity payload, and rejects a wrong one.** With modern
    forwarding on, Paper lets the proxied player in and refuses the same path
@@ -316,9 +317,19 @@ Tier C then added four more, all from launching the actual game:
    quick play appears. Any bench that drives the real client has to switch
    modes at that release or every client sits on the main menu.
 
-7. **The passthrough/zero_copy difference this bench first reported does not
-   exist.** All modes register a session; the harness was polling the admin API
-   after killing the client and sampling teardown, where `SpliceForwarder`
-   drains the peer direction and `CopyForwarder` aborts it. The fix was in the
-   bench, not the proxy — recorded here because the same mistake is easy to make
-   again.
+7. **Five things this tier reported before it was right.** Recorded because a
+   bench nobody can audit is worth little, and because each mistake has a shape
+   worth recognising again:
+
+   | It reported | The truth | Cause |
+   |---|---|---|
+   | `zero_copy` registers a session, `passthrough` does not | both do, as do all modes | polled the admin API *after* killing the client, sampling teardown |
+   | 1.14 Velocity broken | works | Paper 1.14 logs the login but never the `joined the game` broadcast |
+   | every negative control red | they pass | asserted the proxy's view against an `undefined` expectation |
+   | 1.13 Velocity broken | the backend cannot take part | Paper keeps `velocity-support` in its config without implementing it |
+   | Paper 1.14–1.19 has no forwarding | it does | read the boot log, which those builds do not write |
+
+   None of the five was proxy behaviour. Two consequences are now baked in: the
+   proxy's view is read while the player is still in the world, and whether a
+   Paper build really enforces Velocity is decided by the `velocity-direct-refused`
+   control rather than by anything the server says about itself.
