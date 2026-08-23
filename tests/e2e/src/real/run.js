@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Yggdrasil } from '../yggdrasil.js';
@@ -48,6 +48,7 @@ function parseArgs(argv) {
     timeoutMs: 210000,
     settleMs: 1500,
     keepGoing: true,
+    keepWorlds: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -64,6 +65,7 @@ function parseArgs(argv) {
       case '--donor-mc': opts.donorMc = next(); break;
       case '--timeout': opts.timeoutMs = Number(next()) * 1000; break;
       case '--stop-on-fail': opts.keepGoing = false; break;
+      case '--keep-worlds': opts.keepWorlds = true; break;
       default: throw new Error(`unknown option ${arg}`);
     }
   }
@@ -291,6 +293,11 @@ async function runVersion(ctx) {
     for (const server of servers.values()) {
       await server.stop();
       ctx.liveServers.delete(server);
+    }
+    if (!opts.keepWorlds) {
+      for (const name of servers.keys()) {
+        rmSync(join(cache, 'worlds', `${version}-${name}`), { recursive: true, force: true });
+      }
     }
   }
 

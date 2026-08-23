@@ -20,6 +20,9 @@ Usage: ./realclient.sh [options]
                         re-downloaded.
   --cache <dir>         Where to keep downloads. Defaults to ./.mccache
   --timeout <seconds>   Per-client budget. Default 210.
+  --keep-worlds         Do not delete each version's world after it is done.
+                        Worlds are superflat and regenerate in seconds, so they
+                        are dropped by default; keep them to inspect a failure.
   --skip-build          Do not rebuild the proxy first.
 
 Exit codes: 0 all good · 1 a case failed.
