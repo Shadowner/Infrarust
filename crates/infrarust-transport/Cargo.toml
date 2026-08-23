@@ -26,12 +26,16 @@ ppp = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 infrarust_config = { workspace = true }
-listenfd = "1.0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = { workspace = true }
 
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+listenfd = { workspace = true }
+
 [dev-dependencies]
-command-fds = "0.3.3"
-rusty-fork = "0.3.1"
 tokio = { workspace = true, features = ["test-util"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
+command-fds = { workspace = true }
+rusty-fork = { workspace = true }

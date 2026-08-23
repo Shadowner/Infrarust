@@ -1929,6 +1929,7 @@ dependencies = [
  "infrarust-plugin-auth",
  "infrarust-plugin-hello",
  "infrarust-plugin-server-wake",
+ "infrarust-transport",
  "infrarust_config",
  "mimalloc",
  "opentelemetry",
