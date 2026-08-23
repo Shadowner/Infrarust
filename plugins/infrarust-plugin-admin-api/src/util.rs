@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use infrarust_api::services::ban_service::BanTarget;
@@ -166,6 +167,33 @@ pub fn parse_address(raw: &str) -> Result<ServerAddress, ApiError> {
         host: host.to_string(),
         port: port.parse().map_err(|_| invalid())?,
     })
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{path}: {source}")]
+pub struct WriteError {
+    pub path: PathBuf,
+    pub source: std::io::Error,
+}
+
+pub async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), WriteError> {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".tmp");
+    let tmp = PathBuf::from(name);
+
+    tokio::fs::write(&tmp, bytes)
+        .await
+        .map_err(|source| WriteError {
+            path: tmp.clone(),
+            source,
+        })?;
+
+    tokio::fs::rename(&tmp, path)
+        .await
+        .map_err(|source| WriteError {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 #[cfg(test)]

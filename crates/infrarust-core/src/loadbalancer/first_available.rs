@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use super::{BackendCandidate, LoadBalancer};
+use super::{BackendCandidate, LoadBalancer, SelectionMode};
 
 pub struct FirstAvailable;
 
@@ -12,6 +12,7 @@ impl LoadBalancer for FirstAvailable {
     fn order_selectable<'a>(
         &self,
         selectable: &[&'a BackendCandidate],
+        _mode: SelectionMode,
     ) -> SmallVec<[&'a BackendCandidate; 4]> {
         selectable.iter().copied().collect()
     }
@@ -20,7 +21,7 @@ impl LoadBalancer for FirstAvailable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loadbalancer::test_candidate;
+    use crate::loadbalancer::{SelectionMode, test_candidate};
 
     fn hosts<'a>(ordered: &[&'a BackendCandidate]) -> Vec<&'a str> {
         ordered.iter().map(|c| c.address.host.as_str()).collect()
@@ -35,7 +36,10 @@ mod tests {
         ];
         let lb = FirstAvailable;
         for _ in 0..3 {
-            assert_eq!(hosts(&lb.order(&candidates)), ["a", "b", "c"]);
+            assert_eq!(
+                hosts(&lb.order(&candidates, SelectionMode::Advance)),
+                ["a", "b", "c"]
+            );
         }
     }
 
@@ -46,7 +50,10 @@ mod tests {
             test_candidate("b", true),
             test_candidate("c", true),
         ];
-        assert_eq!(hosts(&FirstAvailable.order(&candidates)), ["b", "c", "a"]);
+        assert_eq!(
+            hosts(&FirstAvailable.order(&candidates, SelectionMode::Advance)),
+            ["b", "c", "a"]
+        );
     }
 
     #[test]
@@ -57,6 +64,9 @@ mod tests {
             test_candidate("c", true),
         ];
         candidates[2].weight = 100;
-        assert_eq!(hosts(&FirstAvailable.order(&candidates)), ["a", "b", "c"]);
+        assert_eq!(
+            hosts(&FirstAvailable.order(&candidates, SelectionMode::Advance)),
+            ["a", "b", "c"]
+        );
     }
 }

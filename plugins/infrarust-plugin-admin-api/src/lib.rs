@@ -107,7 +107,9 @@ impl Plugin for AdminApiPlugin {
             };
 
             // Register API config provider for dynamic server management
-            let server_dir = Arc::new(ServerDir::open(&data_dir));
+            let server_dir = Arc::new(ServerDir::open(&data_dir).map_err(|e| {
+                PluginError::InitFailed(format!("Failed to open the servers directory: {e}"))
+            })?);
             let provider_sender = Arc::new(tokio::sync::Mutex::new(None));
 
             let provider = ApiConfigProvider {
@@ -542,6 +544,19 @@ api_key = \"super-secret-key-value\"
                 .any(|i| format!("server_{i}") == server.as_str())
                 .then_some(address)
         }
+
+        fn ensure_backend(&self, server: &ServerId, addr: &ServerAddress) -> Result<(), LbError> {
+            let known = self
+                .known(server)
+                .ok_or_else(|| LbError::UnknownServer(server.clone()))?;
+            if known != *addr {
+                return Err(LbError::UnknownAddress {
+                    server: server.clone(),
+                    address: addr.clone(),
+                });
+            }
+            Ok(())
+        }
     }
 
     impl infrarust_api::services::load_balancer::private::Sealed for MockLoadBalancerService {}
@@ -578,15 +593,7 @@ api_key = \"super-secret-key-value\"
             addr: &ServerAddress,
             drained: bool,
         ) -> Result<(), LbError> {
-            let known = self
-                .known(server)
-                .ok_or_else(|| LbError::UnknownServer(server.clone()))?;
-            if known != *addr {
-                return Err(LbError::UnknownAddress {
-                    server: server.clone(),
-                    address: addr.clone(),
-                });
-            }
+            self.ensure_backend(server, addr)?;
             let mut set = self.drained.lock().unwrap();
             if drained {
                 set.insert(addr.to_string());
@@ -597,7 +604,7 @@ api_key = \"super-secret-key-value\"
         }
 
         fn reset_backend(&self, server: &ServerId, addr: &ServerAddress) -> Result<(), LbError> {
-            self.set_drained(server, addr, false)
+            self.ensure_backend(server, addr)
         }
     }
 
@@ -629,19 +636,17 @@ api_key = \"super-secret-key-value\"
 
     // ── Helpers ──
 
-    /// One temp root for the whole test binary: `ServerDir` now writes real
-    /// files, so it cannot point at a shared fixed path.
-    fn test_data_dir() -> &'static std::path::Path {
-        static ROOT: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-        ROOT.get_or_init(|| tempfile::tempdir().unwrap()).path()
-    }
-
-    fn test_state() -> Arc<ApiState> {
+    fn test_state() -> (tempfile::TempDir, Arc<ApiState>) {
         test_state_custom("test-key", 1000)
     }
 
-    fn test_state_custom(api_key: &str, requests_per_minute: u64) -> Arc<ApiState> {
-        test_state_in(test_data_dir(), api_key, requests_per_minute)
+    fn test_state_custom(
+        api_key: &str,
+        requests_per_minute: u64,
+    ) -> (tempfile::TempDir, Arc<ApiState>) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_in(dir.path(), api_key, requests_per_minute);
+        (dir, state)
     }
 
     fn test_state_in(
@@ -688,7 +693,7 @@ api_key = \"super-secret-key-value\"
             proxy_shutdown: CancellationToken::new(),
             log_tx: None,
             log_history: None,
-            server_dir: Arc::new(crate::server_dir::ServerDir::open(data_dir)),
+            server_dir: Arc::new(crate::server_dir::ServerDir::open(data_dir).unwrap()),
             provider_sender: Arc::new(tokio::sync::Mutex::new(None)),
             health_cache: Arc::new(crate::health_cache::HealthCache::new()),
             health_checker: Arc::new(crate::health_checker::HealthChecker::new()),
@@ -710,7 +715,7 @@ api_key = \"super-secret-key-value\"
     }
 
     async fn auth_get(uri: &str) -> (StatusCode, serde_json::Value) {
-        let state = test_state();
+        let (_dir, state) = test_state();
         let app = build_router(state, true);
         let (name, value) = auth_header();
 
@@ -727,7 +732,7 @@ api_key = \"super-secret-key-value\"
     }
 
     async fn auth_post(uri: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
-        let state = test_state();
+        let (_dir, state) = test_state();
         let app = build_router(state, true);
         let (name, value) = auth_header();
 
@@ -790,7 +795,7 @@ api_key = \"super-secret-key-value\"
     }
 
     async fn auth_delete(uri: &str) -> (StatusCode, serde_json::Value) {
-        let state = test_state();
+        let (_dir, state) = test_state();
         let app = build_router(state, true);
         let (name, value) = auth_header();
 
@@ -811,7 +816,7 @@ api_key = \"super-secret-key-value\"
 
     #[tokio::test]
     async fn test_health_returns_200_without_auth() {
-        let state = test_state();
+        let (_dir, state) = test_state();
         let app = build_router(state, true);
 
         let request = Request::builder()
@@ -834,7 +839,7 @@ api_key = \"super-secret-key-value\"
 
     #[tokio::test]
     async fn test_proxy_status_returns_401_without_auth_with_error_body() {
-        let state = test_state();
+        let (_dir, state) = test_state();
         let app = build_router(state, true);
 
         let request = Request::builder()
@@ -857,7 +862,7 @@ api_key = \"super-secret-key-value\"
 
     #[tokio::test]
     async fn test_proxy_status_returns_401_with_bad_key() {
-        let state = test_state();
+        let (_dir, state) = test_state();
         let app = build_router(state, true);
 
         let request = Request::builder()
@@ -881,7 +886,8 @@ api_key = \"super-secret-key-value\"
 
     #[tokio::test]
     async fn test_empty_configured_key_rejects_empty_token() {
-        let app = build_router(test_state_custom("", 1000), true);
+        let (_dir, state) = test_state_custom("", 1000);
+        let app = build_router(state, true);
 
         let request = Request::builder()
             .uri("/api/v1/proxy")
@@ -895,7 +901,8 @@ api_key = \"super-secret-key-value\"
 
     #[tokio::test]
     async fn test_failed_auth_is_rate_limited() {
-        let app = build_router(test_state_custom("test-key", 2), true);
+        let (_dir, state) = test_state_custom("test-key", 2);
+        let app = build_router(state, true);
 
         for _ in 0..2 {
             let request = Request::builder()
@@ -918,7 +925,8 @@ api_key = \"super-secret-key-value\"
 
     #[tokio::test]
     async fn test_sse_routes_are_rate_limited() {
-        let app = build_router(test_state_custom("test-key", 1), true);
+        let (_dir, state) = test_state_custom("test-key", 1);
+        let app = build_router(state, true);
 
         let first = app
             .clone()
@@ -946,7 +954,7 @@ api_key = \"super-secret-key-value\"
 
     #[tokio::test]
     async fn test_proxy_status_returns_401_with_non_bearer() {
-        let state = test_state();
+        let (_dir, state) = test_state();
         let app = build_router(state, true);
 
         let request = Request::builder()
@@ -976,7 +984,7 @@ api_key = \"super-secret-key-value\"
 
     #[tokio::test]
     async fn test_unknown_route_returns_404() {
-        let state = test_state();
+        let (_dir, state) = test_state();
         let app = build_router(state, true);
 
         let request = Request::builder()
@@ -1070,7 +1078,7 @@ api_key = \"super-secret-key-value\"
 
     #[tokio::test]
     async fn test_servers_raw_returns_toml() {
-        let state = test_state();
+        let (_dir, state) = test_state();
         let app = build_router(state, true);
         let (name, value) = auth_header();
 
@@ -1111,7 +1119,7 @@ api_key = \"super-secret-key-value\"
 
     #[tokio::test]
     async fn test_servers_write_to_file_provider_is_forbidden() {
-        let state = test_state();
+        let (_dir, state) = test_state();
         let app = build_router(state, true);
         let (name, value) = auth_header();
 
@@ -1459,12 +1467,14 @@ server_id = \"abc\"
     async fn test_a_write_reaches_the_proxy_before_the_directory_is_released() {
         let dir = tempfile::tempdir().unwrap();
         let state = test_state_in(dir.path(), "test-key", 1000);
-        let (probe, blocked) =
-            crate::server_dir::test_support::RescanDuringSend::new(state.server_dir.clone());
-        *state.provider_sender.lock().await = Some(Box::new(probe));
+        let (sender, announcements) = crate::server_dir::test_support::DocumentDuringSend::new(
+            state.server_dir.clone(),
+            Duration::from_millis(100),
+        );
+        *state.provider_sender.lock().await = Some(Box::new(sender));
 
         let (status, _) = post_json(
-            state,
+            state.clone(),
             "/api/v1/servers",
             serde_json::json!({
                 "id": "lobby",
@@ -1473,12 +1483,87 @@ server_id = \"abc\"
             }),
         )
         .await;
-
         assert_eq!(status, StatusCode::CREATED);
-        assert!(
-            blocked.load(std::sync::atomic::Ordering::SeqCst),
-            "the directory was already released when the proxy was told"
-        );
+
+        let writers: Vec<_> = (0..4)
+            .map(|i| {
+                let state = state.clone();
+                tokio::spawn(async move {
+                    put_json(
+                        state,
+                        "/api/v1/servers/lobby",
+                        serde_json::json!({
+                            "id": "lobby",
+                            "domains": [format!("lobby{i}.example.com")],
+                            "addresses": ["10.0.0.1:25565"],
+                        }),
+                    )
+                    .await
+                    .0
+                })
+            })
+            .collect();
+        for writer in writers {
+            assert_eq!(writer.await.unwrap(), StatusCode::OK);
+        }
+
+        let announcements = announcements.lock().unwrap().clone();
+        assert_eq!(announcements.len(), 5);
+        for (announced, stored) in announcements {
+            assert_eq!(
+                stored.as_deref(),
+                Some(announced.as_str()),
+                "the proxy was told about a document the directory no longer held"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_writes_and_the_watcher_do_not_deadlock() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_in(dir.path(), "test-key", 1000);
+        let sender = crate::server_dir::test_support::SlowSender::new(Duration::from_millis(100));
+        *state.provider_sender.lock().await = Some(Box::new(sender));
+
+        let shutdown = CancellationToken::new();
+        tokio::spawn(crate::server_dir::watch(
+            state.server_dir.clone(),
+            state.provider_sender.clone(),
+            shutdown.clone(),
+        ));
+
+        let statuses = tokio::time::timeout(Duration::from_secs(20), async {
+            let writers: Vec<_> = (0..6)
+                .map(|i| {
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        post_json(
+                            state,
+                            "/api/v1/servers",
+                            serde_json::json!({
+                                "id": format!("lobby-{i}"),
+                                "domains": [format!("lobby{i}.example.com")],
+                                "addresses": ["10.0.0.1:25565"],
+                            }),
+                        )
+                        .await
+                        .0
+                    })
+                })
+                .collect();
+
+            let mut statuses = Vec::new();
+            for writer in writers {
+                statuses.push(writer.await.unwrap());
+            }
+            statuses
+        })
+        .await
+        .expect("the writers and the directory watcher deadlocked");
+        shutdown.cancel();
+
+        assert_eq!(statuses.len(), 6);
+        assert!(statuses.iter().all(|status| *status == StatusCode::CREATED));
     }
 
     /// A server the proxy also gets from somewhere else cannot be edited here:
@@ -1648,7 +1733,7 @@ server_id = \"abc\"
         ];
 
         for uri in endpoints {
-            let state = test_state();
+            let (_dir, state) = test_state();
             let app = build_router(state, true);
 
             let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
@@ -1880,7 +1965,8 @@ server_id = \"abc\"
         ];
 
         for (method, uri) in endpoints {
-            let app = build_router(test_state(), true);
+            let (_dir, state) = test_state();
+            let app = build_router(state, true);
             let request = Request::builder()
                 .method(method)
                 .uri(uri)
@@ -2013,6 +2099,43 @@ server_id = \"abc\"
         );
     }
 
+    #[tokio::test]
+    async fn test_deleting_a_server_forgets_its_drained_backends() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_in(dir.path(), "test-key", 1000);
+
+        let (status, _) = post_json(
+            state.clone(),
+            "/api/v1/servers",
+            serde_json::json!({
+                "id": "lobby",
+                "domains": ["lobby.example.com"],
+                "addresses": ["10.0.0.1:25565"],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        state
+            .drain_store
+            .set(
+                "lobby",
+                &crate::util::parse_address("10.0.0.1:25565").unwrap(),
+                true,
+            )
+            .await
+            .unwrap();
+
+        let (status, _) = auth_send(&state, http::Method::DELETE, "/api/v1/servers/lobby").await;
+        assert_eq!(status, StatusCode::OK);
+
+        assert!(
+            crate::drain_store::DrainStore::open(dir.path())
+                .entries()
+                .is_empty()
+        );
+    }
+
     /// The store must be keyed on the address, not on however the caller
     /// happened to spell it in the URL.
     #[tokio::test]
@@ -2045,9 +2168,17 @@ server_id = \"abc\"
     }
 
     #[tokio::test]
-    async fn test_reset_backend_succeeds() {
+    async fn test_reset_backend_leaves_the_drain_untouched() {
         let dir = tempfile::tempdir().unwrap();
         let state = test_state_in(dir.path(), "test-key", 1000);
+
+        let (status, _) = auth_send(
+            &state,
+            http::Method::POST,
+            "/api/v1/servers/server_0/backends/10.0.0.0:25565/drain",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
 
         let (status, body) = auth_send(
             &state,
@@ -2057,6 +2188,14 @@ server_id = \"abc\"
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["data"]["success"], true);
+
+        let (_, body) = auth_send(
+            &state,
+            http::Method::GET,
+            "/api/v1/servers/server_0/backends",
+        )
+        .await;
+        assert_eq!(body["data"]["backends"][0]["state"], "draining");
     }
 
     #[tokio::test]
@@ -2272,7 +2411,7 @@ server_id = \"abc\"
 
     #[tokio::test]
     async fn test_config_proxy_requires_auth() {
-        let state = test_state();
+        let (_dir, state) = test_state();
         let app = build_router(state, true);
 
         let request = Request::builder()

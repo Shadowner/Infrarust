@@ -14,7 +14,7 @@ use crate::bindings::infrarust::plugin::{
     ban_service, codec_registry, command_manager, config_service, event_bus, limbo, log,
     player_registry, scheduler, server_manager, types as wt,
 };
-use crate::consts::HOST_CALL_TIMEOUT;
+use crate::consts::{HOST_CALL_TIMEOUT, PLAYER_SWITCH_TIMEOUT};
 use crate::store_state::PluginStoreState;
 use crate::{convert, dispatch, proxies};
 
@@ -277,7 +277,7 @@ impl player_registry::HostPlayer for PluginStoreState {
         let player = self.resolve_player(&self_)?;
         let target = ServerId::from(target);
         Ok(
-            match timeout(HOST_CALL_TIMEOUT, player.switch_server(target)).await {
+            match timeout(PLAYER_SWITCH_TIMEOUT, player.switch_server(target)).await {
                 Ok(result) => result.map_err(convert::player_error_to_wit),
                 Err(_) => Err(wt::PlayerError::SwitchFailed(
                     "host call timed out".to_string(),
@@ -718,7 +718,20 @@ impl limbo::HostLimboSessionHandle for PluginStoreState {
 
 #[cfg(test)]
 mod tests {
-    use crate::bindings::infrarust::plugin::player_registry::Host as _;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant, SystemTime};
+
+    use infrarust_api::error::PlayerError;
+    use infrarust_api::event::BoxFuture;
+    use infrarust_api::permissions::PermissionLevel;
+    use infrarust_api::player::Player;
+    use infrarust_api::types::{
+        Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, TitleData,
+    };
+
+    use super::*;
+    use crate::bindings::infrarust::plugin::player_registry::{Host as _, HostPlayer as _};
     use crate::store_state::build_probe_state;
 
     #[tokio::test]
@@ -729,5 +742,101 @@ mod tests {
             .await
             .expect_err("malformed uuid must trap, not read as player-not-found");
         assert!(err.to_string().contains("invalid uuid"), "{err}");
+    }
+
+    struct StalledPlayer {
+        profile: GameProfile,
+    }
+
+    impl StalledPlayer {
+        fn new() -> Self {
+            Self {
+                profile: GameProfile {
+                    uuid: uuid::Uuid::nil(),
+                    username: "tester".to_string(),
+                    properties: vec![],
+                },
+            }
+        }
+    }
+
+    impl infrarust_api::player::private::Sealed for StalledPlayer {}
+
+    impl Player for StalledPlayer {
+        fn id(&self) -> PlayerId {
+            PlayerId::new(1)
+        }
+        fn profile(&self) -> &GameProfile {
+            &self.profile
+        }
+        fn protocol_version(&self) -> ProtocolVersion {
+            ProtocolVersion::MINECRAFT_1_21
+        }
+        fn remote_addr(&self) -> SocketAddr {
+            SocketAddr::from(([127, 0, 0, 1], 0))
+        }
+        fn current_server(&self) -> Option<ServerId> {
+            None
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        fn is_active(&self) -> bool {
+            true
+        }
+        fn disconnect(&self, _reason: Component) -> BoxFuture<'_, ()> {
+            Box::pin(std::future::pending())
+        }
+        fn send_message(&self, _message: Component) -> Result<(), PlayerError> {
+            Ok(())
+        }
+        fn send_title(&self, _title: TitleData) -> Result<(), PlayerError> {
+            Ok(())
+        }
+        fn send_action_bar(&self, _message: Component) -> Result<(), PlayerError> {
+            Ok(())
+        }
+        fn send_packet(&self, _packet: RawPacket) -> Result<(), PlayerError> {
+            Ok(())
+        }
+        fn switch_server(&self, _target: ServerId) -> BoxFuture<'_, Result<(), PlayerError>> {
+            Box::pin(std::future::pending())
+        }
+        fn is_online_mode(&self) -> bool {
+            true
+        }
+        fn permission_level(&self) -> PermissionLevel {
+            PermissionLevel::Player
+        }
+        fn has_permission(&self, _permission: &str) -> bool {
+            false
+        }
+        fn connected_at(&self) -> SystemTime {
+            SystemTime::UNIX_EPOCH
+        }
+    }
+
+    #[tokio::test]
+    async fn switch_server_gives_up_long_before_the_host_call_timeout() {
+        let mut state = build_probe_state("test".to_string());
+        let handle = state
+            .push_player(Arc::new(StalledPlayer::new()))
+            .expect("the resource table accepts a player");
+
+        let started = Instant::now();
+        let result = state
+            .switch_server(handle, "lobby".to_string())
+            .await
+            .expect("a saturated session is a player-error, not a trap");
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(result, Err(wt::PlayerError::SwitchFailed(_))),
+            "{result:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "held the instance lock for {elapsed:?}"
+        );
     }
 }

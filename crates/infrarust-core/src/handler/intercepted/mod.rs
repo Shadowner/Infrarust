@@ -129,6 +129,10 @@ impl InterceptedHandler {
 
         let mut login_completed = auth_result.login_completed;
 
+        let mut pending_ticket = ctx
+            .extensions
+            .remove::<crate::loadbalancer::PendingTicket>();
+
         let initial = initial_connect::resolve_initial_mode(
             &mut client,
             &auth_result,
@@ -136,6 +140,7 @@ impl InterceptedHandler {
             &routing,
             &handshake,
             backend_targets.as_ref(),
+            &mut pending_ticket,
             version,
             &self.services,
             &self.backend_connector,
@@ -192,8 +197,7 @@ impl InterceptedHandler {
             player_session.set_connected_address(backend.server_address().cloned());
         }
         // The session now owns the accounting for this address.
-        ctx.extensions
-            .remove::<crate::loadbalancer::PendingTicket>();
+        drop(pending_ticket);
 
         let session_guard = self.services.connection_registry.register(player_session);
         let session_id = session_guard.uuid();

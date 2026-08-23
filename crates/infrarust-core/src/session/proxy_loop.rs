@@ -76,8 +76,13 @@ fn raw_to_frame(raw: &RawPacket) -> PacketFrame {
     PacketFrame::new(raw.packet_id, raw.data.clone())
 }
 
+const fn assert_immutable_payload(_: &bytes::Bytes) {}
+
 #[inline]
 fn filter_modified(frame: &PacketFrame, raw: &RawPacket) -> bool {
+    assert_immutable_payload(&raw.data);
+    assert_immutable_payload(&frame.payload);
+
     raw.packet_id != frame.id
         || raw.data.len() != frame.payload.len()
         || raw.data.as_ptr() != frame.payload.as_ptr()
@@ -721,8 +726,15 @@ async fn handle_backend_to_client(
                 backend.set_compression(threshold);
                 client.queue_frame(&frame)?;
                 client.set_compression(threshold);
-                codec_chain.notify_compression_change(threshold);
-                tracing::debug!(threshold, "compression activated");
+                match client.compression_threshold() {
+                    Some(effective) => {
+                        codec_chain.notify_compression_change(effective);
+                        tracing::debug!(threshold = effective, "compression activated");
+                    }
+                    None => {
+                        tracing::debug!(threshold, "compression left disabled by backend");
+                    }
+                }
                 return Ok(BackendAction::Continue);
             }
 

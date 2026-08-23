@@ -145,10 +145,15 @@ impl ClientBridge {
         self.decrypt_cipher = Some(DecryptCipher::new(key));
     }
 
-    /// Activates packet compression with the given threshold.
+    /// Activates packet compression with the given threshold, or leaves it
+    /// disabled if `threshold` is negative.
     pub const fn set_compression(&mut self, threshold: i32) {
         self.decoder.set_compression(threshold);
         self.encoder.set_compression(threshold);
+    }
+
+    pub const fn compression_threshold(&self) -> Option<i32> {
+        self.encoder.compression_threshold()
     }
 
     /// Changes the protocol state (Login → Config → Play).

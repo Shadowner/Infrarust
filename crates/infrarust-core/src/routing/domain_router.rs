@@ -123,20 +123,36 @@ impl DomainRouter {
 
     /// Updates an existing configuration.
     ///
-    /// Removes old domain entries and re-registers with the new config.
+    /// Re-registers with the new config, then retires the domain entries it
+    /// dropped, so the config never leaves the router mid-update.
+    ///
     /// The load balancer instance survives when nothing it depends on
     /// changed, so an unrelated edit does not reset the rotation state.
     pub fn update(&self, id: ProviderId, config: ServerConfig) {
-        let reusable = self
-            .configs
-            .get(&id)
-            .filter(|entry| {
-                entry.config.balance_config() == config.balance_config()
-                    && entry.config.addresses == config.addresses
-            })
-            .map(|entry| Arc::clone(&entry.load_balancer));
-        self.remove(&id);
-        self.insert(id, config, reusable);
+        let previous = self.configs.get(&id).map(|entry| {
+            let reusable = (entry.config.balance_config() == config.balance_config()
+                && entry.config.addresses == config.addresses)
+                .then(|| Arc::clone(&entry.load_balancer));
+            (entry.domains.clone(), reusable)
+        });
+        let (stale_domains, reusable) = previous.unwrap_or_default();
+
+        let fresh_domains: Vec<String> = config.domains.iter().map(|d| d.to_lowercase()).collect();
+        self.insert(id.clone(), config, reusable);
+
+        let mut dropped_wildcard = false;
+        for domain in stale_domains.iter().filter(|d| !fresh_domains.contains(d)) {
+            if is_wildcard(domain) {
+                dropped_wildcard = true;
+            } else {
+                self.exact_domains
+                    .remove_if(domain, |_, owner| owner == &id);
+            }
+        }
+
+        if dropped_wildcard {
+            self.rebuild_wildcards();
+        }
     }
 
     /// Removes a configuration and all its domain entries.

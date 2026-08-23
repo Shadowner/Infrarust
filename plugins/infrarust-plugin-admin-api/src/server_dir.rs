@@ -52,6 +52,15 @@ pub enum StoreError {
     },
 }
 
+impl From<crate::util::WriteError> for StoreError {
+    fn from(error: crate::util::WriteError) -> Self {
+        StoreError::Io {
+            path: error.path,
+            source: error.source,
+        }
+    }
+}
+
 /// Longest id that fits a document name, matching
 /// `infrarust_config::validate_server_config`.
 pub const MAX_ID_LEN: usize = 64;
@@ -155,17 +164,20 @@ pub struct ServerDir {
 
 impl ServerDir {
     /// Opens `<data_dir>/servers/`, migrating a legacy `servers.json` if present.
-    pub fn open(data_dir: &Path) -> Self {
+    pub fn open(data_dir: &Path) -> Result<Self, StoreError> {
         let dir = data_dir.join(SERVERS_SUBDIR);
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            tracing::error!(dir = %dir.display(), error = %e, "Failed to create servers directory");
-        }
+        std::fs::create_dir_all(&dir).map_err(|source| StoreError::Io {
+            path: dir.clone(),
+            source,
+        })?;
 
         migrate_legacy_store(data_dir, &dir);
 
         let snapshot: HashMap<PathBuf, Entry> = scan(&dir)
-            .map_err(|e| tracing::error!(dir = %dir.display(), error = %e, "Failed to read the servers directory"))
-            .unwrap_or_default()
+            .map_err(|source| StoreError::Io {
+                path: dir.clone(),
+                source,
+            })?
             .into_iter()
             .filter_map(|(path, entry)| entry.map(|entry| (path, entry)))
             .collect();
@@ -176,11 +188,11 @@ impl ServerDir {
             "Loaded API-managed servers"
         );
 
-        Self {
+        Ok(Self {
             dir,
             snapshot: Mutex::new(snapshot),
             write_lock: tokio::sync::Mutex::new(()),
-        }
+        })
     }
 
     /// The documents to hand the proxy when it activates the provider.
@@ -311,20 +323,7 @@ impl ServerDir {
         text: String,
         config: ServerConfig,
     ) -> Result<(), StoreError> {
-        let tmp = path.with_extension("toml.tmp");
-
-        tokio::fs::write(&tmp, text.as_bytes())
-            .await
-            .map_err(|source| StoreError::Io {
-                path: tmp.clone(),
-                source,
-            })?;
-        tokio::fs::rename(&tmp, &path)
-            .await
-            .map_err(|source| StoreError::Io {
-                path: path.clone(),
-                source,
-            })?;
+        crate::util::write_atomic(&path, text.as_bytes()).await?;
 
         self.snapshot
             .lock()
@@ -451,15 +450,18 @@ pub fn to_document_text(config: &ServerConfig) -> Result<String, StoreError> {
 /// here. Nothing is diffed while the sender is missing, so the changes stay
 /// pending instead of being consumed by a rescan nobody hears.
 pub async fn reload(dir: &ServerDir, sender: &ProviderSenderSlot) -> Option<ReloadSummary> {
+    if sender.lock().await.is_none() {
+        tracing::warn!("Config provider is not connected yet, skipping rescan");
+        return None;
+    }
+
+    let changes = dir.diff().await;
     let mut summary = ReloadSummary::default();
 
     let guard = sender.lock().await;
-    let Some(sender) = guard.as_ref() else {
-        tracing::warn!("Config provider is not connected yet, skipping rescan");
-        return None;
-    };
+    let sender = guard.as_ref()?;
 
-    for change in dir.diff().await {
+    for change in changes {
         match &change {
             DirChange::Added(_) => summary.added += 1,
             DirChange::Updated(_) => summary.updated += 1,
@@ -677,13 +679,12 @@ fn migrate_legacy_store(data_dir: &Path, dir: &Path) {
 pub(crate) mod test_support {
     //! [`PluginProviderSender`]s standing in for the proxy.
 
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use infrarust_api::event::BoxFuture;
 
-    use super::{PluginProviderEvent, PluginProviderSender, ServerDir};
+    use super::{DocumentId, PluginProviderEvent, PluginProviderSender, ServerDir};
 
     #[derive(Clone, Default)]
     pub(crate) struct RecordingSender(Arc<Mutex<Vec<String>>>);
@@ -711,31 +712,68 @@ pub(crate) mod test_support {
         }
     }
 
-    /// Tries to rescan the directory from inside the event the write emits,
-    /// reporting whether the write was still holding it.
-    pub(crate) struct RescanDuringSend {
-        dir: Arc<ServerDir>,
-        blocked: Arc<AtomicBool>,
+    pub(crate) struct SlowSender {
+        delay: Duration,
     }
 
-    impl RescanDuringSend {
-        pub(crate) fn new(dir: Arc<ServerDir>) -> (Self, Arc<AtomicBool>) {
-            let blocked = Arc::new(AtomicBool::new(false));
+    impl SlowSender {
+        pub(crate) fn new(delay: Duration) -> Self {
+            Self { delay }
+        }
+    }
+
+    impl PluginProviderSender for SlowSender {
+        fn send(&self, _event: PluginProviderEvent) -> BoxFuture<'_, bool> {
+            Box::pin(async move {
+                tokio::time::sleep(self.delay).await;
+                true
+            })
+        }
+
+        fn is_shutdown(&self) -> bool {
+            false
+        }
+    }
+
+    pub(crate) type Announcements = Arc<Mutex<Vec<(String, Option<String>)>>>;
+
+    pub(crate) struct DocumentDuringSend {
+        dir: Arc<ServerDir>,
+        delay: Duration,
+        announcements: Announcements,
+    }
+
+    impl DocumentDuringSend {
+        pub(crate) fn new(dir: Arc<ServerDir>, delay: Duration) -> (Self, Announcements) {
+            let announcements = Arc::new(Mutex::new(Vec::new()));
             (
                 Self {
                     dir,
-                    blocked: blocked.clone(),
+                    delay,
+                    announcements: announcements.clone(),
                 },
-                blocked,
+                announcements,
             )
         }
     }
 
-    impl PluginProviderSender for RescanDuringSend {
-        fn send(&self, _event: PluginProviderEvent) -> BoxFuture<'_, bool> {
+    impl PluginProviderSender for DocumentDuringSend {
+        fn send(&self, event: PluginProviderEvent) -> BoxFuture<'_, bool> {
             Box::pin(async move {
-                let rescan = tokio::time::timeout(Duration::from_millis(200), self.dir.diff());
-                self.blocked.store(rescan.await.is_err(), Ordering::SeqCst);
+                let (id, announced) = match event {
+                    PluginProviderEvent::AddedDocument(doc)
+                    | PluginProviderEvent::UpdatedDocument(doc) => {
+                        (doc.id.as_str().to_string(), doc.toml)
+                    }
+                    _ => return true,
+                };
+                tokio::time::sleep(self.delay).await;
+                let stored = DocumentId::new(&id)
+                    .and_then(|id| std::fs::read_to_string(self.dir.path_of(&id)).ok());
+                self.announcements
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push((announced, stored));
                 true
             })
         }
@@ -769,7 +807,7 @@ mod tests {
 
     fn open() -> (tempfile::TempDir, ServerDir) {
         let root = tempfile::tempdir().unwrap();
-        let dir = ServerDir::open(root.path());
+        let dir = ServerDir::open(root.path()).unwrap();
         (root, dir)
     }
 
@@ -869,7 +907,7 @@ mod tests {
         let (root, dir) = open();
         store(&dir, "survival", SURVIVAL).await;
 
-        let reopened = ServerDir::open(root.path());
+        let reopened = ServerDir::open(root.path()).unwrap();
         let document = reopened.document_text("survival").unwrap();
         let config = parse_document("survival", &document).unwrap();
 
@@ -915,6 +953,17 @@ mod tests {
         let changes = dir.diff().await;
         assert_eq!(changes.len(), 1);
         assert!(matches!(&changes[0], DirChange::Removed(id) if id.as_str() == "lobby"));
+    }
+
+    #[test]
+    fn an_unreadable_directory_is_not_an_empty_one() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("servers"), b"not a directory").unwrap();
+
+        assert!(matches!(
+            ServerDir::open(root.path()),
+            Err(StoreError::Io { .. })
+        ));
     }
 
     /// A directory that cannot be listed says nothing about its servers, so it
@@ -1033,7 +1082,7 @@ mod tests {
         )
         .unwrap();
 
-        let dir = ServerDir::open(root.path());
+        let dir = ServerDir::open(root.path()).unwrap();
 
         assert!(root.path().join("servers.json.migrated").exists());
         assert!(!root.path().join(LEGACY_STORE).exists());
@@ -1062,7 +1111,7 @@ mod tests {
         )
         .unwrap();
 
-        let dir = ServerDir::open(root.path());
+        let dir = ServerDir::open(root.path()).unwrap();
 
         assert!(dir.owns("lobby"));
         assert!(root.path().join(LEGACY_STORE).exists());

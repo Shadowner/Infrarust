@@ -13,6 +13,7 @@ use super::auth::AuthResult;
 use crate::error::CoreError;
 use crate::forwarding::{ForwardingData, build_handshake_for_backend};
 use crate::limbo::registry::LimboHandlerRegistry;
+use crate::loadbalancer::PendingTicket;
 use crate::middleware::backend_selection::BackendTargets;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::services::ProxyServices;
@@ -75,6 +76,7 @@ pub(super) async fn resolve_initial_mode(
     routing: &RoutingData,
     handshake: &HandshakeData,
     backend_targets: Option<&BackendTargets>,
+    pending_ticket: &mut Option<PendingTicket>,
     version: ProtocolVersion,
     services: &ProxyServices,
     backend_connector: &BackendConnector,
@@ -203,6 +205,12 @@ pub(super) async fn resolve_initial_mode(
             services.backend_health.as_ref(),
         ),
     });
+    if let Some(picked) = redirected_targets
+        .as_ref()
+        .and_then(|t| t.addresses.first())
+    {
+        *pending_ticket = Some(services.pending_backends.reserve(picked));
+    }
     let backend_targets = redirected_targets.as_ref().or(backend_targets);
 
     if initial_mode.is_none() && !server_config.limbo_handlers.is_empty() {
@@ -491,6 +499,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     use crate::forwarding::{ForwardingHandler, ForwardingMode, build_forwarding_handler};
+    use crate::loadbalancer::AddressConnectionCount;
     use crate::pipeline::types::ConnectionIntent;
 
     use crate::limbo::test_helpers::{test_client_bridge, test_profile, test_proxy_services};
@@ -564,6 +573,17 @@ mod tests {
             addresses: smallvec::smallvec![origin_config.addresses[0].address.clone()],
         };
 
+        let origin_address = origin_config.addresses[0].address.clone();
+        let target_address: infrarust_config::ServerAddress =
+            target_addr.to_string().parse().unwrap();
+        let mut pending_ticket = Some(services.pending_backends.reserve(&origin_address));
+        assert_eq!(
+            services
+                .pending_backends
+                .active_connections_for_address(&origin_address),
+            1
+        );
+
         let mode = resolve_initial_mode(
             &mut client,
             &auth_result,
@@ -575,6 +595,7 @@ mod tests {
             },
             &handshake,
             Some(&stale_targets),
+            &mut pending_ticket,
             version,
             &services,
             &BackendConnector::new(
@@ -597,6 +618,28 @@ mod tests {
             backend.server_address().map(|a| a.port),
             Some(target_addr.port()),
             "the socket must reach the redirected server"
+        );
+
+        assert_eq!(
+            services
+                .pending_backends
+                .active_connections_for_address(&origin_address),
+            0,
+            "the origin reservation must not survive the redirection"
+        );
+        assert_eq!(
+            services
+                .pending_backends
+                .active_connections_for_address(&target_address),
+            1,
+            "the redirected address must be reserved until the session attaches"
+        );
+        drop(pending_ticket);
+        assert_eq!(
+            services
+                .pending_backends
+                .active_connections_for_address(&target_address),
+            0
         );
     }
 

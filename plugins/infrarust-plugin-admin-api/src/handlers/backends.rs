@@ -70,7 +70,7 @@ async fn set_drained(
         "Backend drain state changed via Admin API"
     );
 
-    state.drain_store.set(id, &parsed, drained).await;
+    state.drain_store.set(id, &parsed, drained).await?;
     Ok(())
 }
 

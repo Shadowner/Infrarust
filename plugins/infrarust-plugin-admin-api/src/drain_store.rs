@@ -25,6 +25,15 @@ const REAPPLY_ATTEMPTS: usize = 5;
 
 type Drained = BTreeMap<String, BTreeSet<String>>;
 
+#[derive(Debug, thiserror::Error)]
+pub enum DrainStoreError {
+    #[error("failed to serialize the drain store: {0}")]
+    Serialize(#[from] serde_json::Error),
+
+    #[error("{0}")]
+    Write(#[from] crate::util::WriteError),
+}
+
 pub struct DrainStore {
     path: PathBuf,
     drained: Mutex<Drained>,
@@ -73,9 +82,13 @@ impl DrainStore {
         }
     }
 
-    /// Records the intent and persists it. A write failure is logged, never
-    /// propagated: the live drain already took effect.
-    pub async fn set(&self, server: &str, address: &ServerAddress, drained: bool) {
+    /// Records the intent and persists it.
+    pub async fn set(
+        &self,
+        server: &str,
+        address: &ServerAddress,
+        drained: bool,
+    ) -> Result<(), DrainStoreError> {
         let key = format_address(address);
         let snapshot = {
             let mut entries = self.drained.lock().unwrap_or_else(|p| p.into_inner());
@@ -87,17 +100,27 @@ impl DrainStore {
                     entries.remove(server);
                 }
             }
-            serde_json::to_vec_pretty(&*entries)
+            serde_json::to_vec_pretty(&*entries)?
         };
 
-        match snapshot {
-            Ok(bytes) => {
-                if let Err(e) = tokio::fs::write(&self.path, bytes).await {
-                    tracing::error!(path = %self.path.display(), error = %e, "Failed to persist drain store");
-                }
+        self.persist(snapshot).await
+    }
+
+    pub async fn forget(&self, server: &str) -> Result<(), DrainStoreError> {
+        let snapshot = {
+            let mut entries = self.drained.lock().unwrap_or_else(|p| p.into_inner());
+            if entries.remove(server).is_none() {
+                return Ok(());
             }
-            Err(e) => tracing::error!(error = %e, "Failed to serialize drain store"),
-        }
+            serde_json::to_vec_pretty(&*entries)?
+        };
+
+        self.persist(snapshot).await
+    }
+
+    async fn persist(&self, bytes: Vec<u8>) -> Result<(), DrainStoreError> {
+        crate::util::write_atomic(&self.path, &bytes).await?;
+        Ok(())
     }
 
     pub fn entries(&self) -> Vec<(String, ServerAddress)> {
@@ -161,9 +184,18 @@ mod tests {
     async fn drains_survive_a_reopen() {
         let dir = tempfile::tempdir().unwrap();
         let store = DrainStore::open(dir.path());
-        store.set("lobby", &addr("10.0.0.1:25565"), true).await;
-        store.set("lobby", &addr("10.0.0.2:25565"), true).await;
-        store.set("lobby", &addr("10.0.0.1:25565"), false).await;
+        store
+            .set("lobby", &addr("10.0.0.1:25565"), true)
+            .await
+            .unwrap();
+        store
+            .set("lobby", &addr("10.0.0.2:25565"), true)
+            .await
+            .unwrap();
+        store
+            .set("lobby", &addr("10.0.0.1:25565"), false)
+            .await
+            .unwrap();
 
         let reopened = DrainStore::open(dir.path());
         assert_eq!(
@@ -176,8 +208,14 @@ mod tests {
     async fn clearing_the_last_address_drops_the_server() {
         let dir = tempfile::tempdir().unwrap();
         let store = DrainStore::open(dir.path());
-        store.set("lobby", &addr("10.0.0.1:25565"), true).await;
-        store.set("lobby", &addr("10.0.0.1:25565"), false).await;
+        store
+            .set("lobby", &addr("10.0.0.1:25565"), true)
+            .await
+            .unwrap();
+        store
+            .set("lobby", &addr("10.0.0.1:25565"), false)
+            .await
+            .unwrap();
 
         assert!(DrainStore::open(dir.path()).entries().is_empty());
     }
@@ -186,8 +224,11 @@ mod tests {
     async fn another_spelling_of_a_drained_address_clears_it() {
         let dir = tempfile::tempdir().unwrap();
         let store = DrainStore::open(dir.path());
-        store.set("lobby", &addr("[::1]:25565"), true).await;
-        store.set("lobby", &addr("::1:25565"), false).await;
+        store
+            .set("lobby", &addr("[::1]:25565"), true)
+            .await
+            .unwrap();
+        store.set("lobby", &addr("::1:25565"), false).await.unwrap();
 
         assert!(DrainStore::open(dir.path()).entries().is_empty());
     }
@@ -208,8 +249,49 @@ mod tests {
             "unparsable entries are dropped, the rest are readable"
         );
 
-        store.set("lobby", &addr("[::1]:25565"), false).await;
+        store
+            .set("lobby", &addr("[::1]:25565"), false)
+            .await
+            .unwrap();
         assert!(store.entries().is_empty());
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_server_drops_every_address_it_had_drained() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = DrainStore::open(dir.path());
+        store
+            .set("lobby", &addr("10.0.0.1:25565"), true)
+            .await
+            .unwrap();
+        store
+            .set("lobby", &addr("10.0.0.2:25565"), true)
+            .await
+            .unwrap();
+        store
+            .set("survival", &addr("10.0.0.3:25565"), true)
+            .await
+            .unwrap();
+
+        store.forget("lobby").await.unwrap();
+
+        assert_eq!(
+            DrainStore::open(dir.path()).entries(),
+            vec![("survival".to_string(), addr("10.0.0.3:25565"))]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_store_that_cannot_be_written_reports_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = DrainStore::open(&dir.path().join("gone"));
+
+        assert!(
+            store
+                .set("lobby", &addr("10.0.0.1:25565"), true)
+                .await
+                .is_err()
+        );
     }
 
     #[test]

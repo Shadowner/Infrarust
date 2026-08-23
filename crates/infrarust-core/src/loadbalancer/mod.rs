@@ -24,10 +24,10 @@ pub use load::BackendLoad;
 #[cfg(feature = "telemetry")]
 pub use observer::HealthTransitionMetrics;
 pub use observer::{BackendAttemptObserver, HealthTransitionEvents};
-pub use pending::{PendingRegistry, PendingTicket};
+pub use pending::{PendingRegistry, PendingTicket, reservation_ttl};
 pub use prober::ActiveHealthProber;
 pub use round_robin::RoundRobin;
-pub use selection::select_backend_addresses;
+pub use selection::{peek_backend_addresses, select_backend_addresses};
 pub use slow_start::SlowStartConfig;
 pub(crate) use slow_start::effective_weight;
 
@@ -57,6 +57,12 @@ impl BackendCandidate {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionMode {
+    Advance,
+    Peek,
+}
+
 /// Ordering strategy for the backend addresses of a `ServerConfig`, applied
 /// to each new incoming session.
 ///
@@ -78,6 +84,7 @@ pub trait LoadBalancer: Send + Sync {
     fn order_selectable<'a>(
         &self,
         selectable: &[&'a BackendCandidate],
+        mode: SelectionMode,
     ) -> SmallVec<[&'a BackendCandidate; 4]>;
 
     /// Returns the candidates in the order to try them.
@@ -93,9 +100,13 @@ pub trait LoadBalancer: Send + Sync {
     /// - **Draining** candidates are dropped entirely.
     ///   [`select_backend_addresses`] guarantees at least one candidate is
     ///   not draining, so the result still cannot be empty.
-    fn order<'a>(&self, candidates: &'a [BackendCandidate]) -> SmallVec<[&'a BackendCandidate; 4]> {
+    fn order<'a>(
+        &self,
+        candidates: &'a [BackendCandidate],
+        mode: SelectionMode,
+    ) -> SmallVec<[&'a BackendCandidate; 4]> {
         let (selectable, last_resort) = split_health(candidates);
-        let mut ordered = self.order_selectable(&selectable);
+        let mut ordered = self.order_selectable(&selectable, mode);
         ordered.extend(last_resort);
         ordered
     }
@@ -181,7 +192,11 @@ mod tests {
     fn test_order_never_empty() {
         let candidates = vec![test_candidate("a", true), test_candidate("b", false)];
         for lb in strategies() {
-            assert!(!lb.order(&candidates).is_empty(), "{}", lb.name());
+            assert!(
+                !lb.order(&candidates, SelectionMode::Advance).is_empty(),
+                "{}",
+                lb.name()
+            );
         }
     }
 
@@ -194,7 +209,7 @@ mod tests {
             test_candidate("d", true),
         ];
         for lb in strategies() {
-            let ordered = lb.order(&candidates);
+            let ordered = lb.order(&candidates, SelectionMode::Advance);
             assert_eq!(ordered.len(), 4, "{}", lb.name());
             assert!(
                 ordered[0].is_healthy() && ordered[1].is_healthy(),
@@ -217,7 +232,7 @@ mod tests {
             test_candidate("c", false),
         ];
         for lb in strategies() {
-            let ordered = lb.order(&candidates);
+            let ordered = lb.order(&candidates, SelectionMode::Advance);
             let hosts: Vec<&str> = ordered.iter().map(|c| c.address.host.as_str()).collect();
             assert_eq!(hosts, ["a", "b", "c"], "{}", lb.name());
         }
@@ -231,7 +246,7 @@ mod tests {
             test_candidate_in("c", BackendState::Healthy),
         ];
         for lb in strategies() {
-            let ordered = lb.order(&candidates);
+            let ordered = lb.order(&candidates, SelectionMode::Advance);
             let hosts: Vec<&str> = ordered.iter().map(|c| c.address.host.as_str()).collect();
             assert_eq!(hosts, ["c", "b", "a"], "{}", lb.name());
         }
@@ -275,7 +290,7 @@ mod tests {
         ];
         for lb in strategies() {
             let hosts: Vec<&str> = lb
-                .order(&candidates)
+                .order(&candidates, SelectionMode::Advance)
                 .iter()
                 .map(|c| c.address.host.as_str())
                 .collect();
@@ -295,7 +310,11 @@ mod tests {
             test_candidate_in("b", BackendState::Draining),
         ];
         for lb in strategies() {
-            assert!(lb.order(&candidates).is_empty(), "{}", lb.name());
+            assert!(
+                lb.order(&candidates, SelectionMode::Advance).is_empty(),
+                "{}",
+                lb.name()
+            );
         }
     }
 
@@ -307,7 +326,7 @@ mod tests {
         ];
         for lb in strategies() {
             let hosts: Vec<&str> = lb
-                .order(&candidates)
+                .order(&candidates, SelectionMode::Advance)
                 .iter()
                 .map(|c| c.address.host.as_str())
                 .collect();

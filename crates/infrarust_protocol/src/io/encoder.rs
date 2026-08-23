@@ -6,7 +6,7 @@ use crate::MAX_PACKET_SIZE;
 use crate::codec::VarInt;
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::io::compression::{self, ZlibCompressor};
-use crate::io::frame::PacketFrame;
+use crate::io::frame::{PacketFrame, should_compress};
 
 /// Writes a `VarInt` into a `BytesMut` buffer.
 fn write_varint(buf: &mut BytesMut, varint: VarInt) -> ProtocolResult<()> {
@@ -89,7 +89,7 @@ impl PacketEncoder {
             Some(threshold) => {
                 let uncompressed_len = packet_id_size + payload.len();
 
-                if (uncompressed_len as i32) >= threshold {
+                if should_compress(uncompressed_len, threshold) {
                     // Compress: [VarInt(packet_len)] [VarInt(uncompressed_len)] [compressed(VarInt(packet_id) + payload)]
 
                     // Build uncompressed data in the reusable scratch buffer.
@@ -164,13 +164,14 @@ impl PacketEncoder {
         self.buf.split()
     }
 
-    /// Enables compression with the given threshold.
+    /// Enables compression with the given threshold, or disables it if
+    /// `threshold` is negative.
     ///
     /// Called when the proxy receives/sends a `SetCompression` packet.
     /// `threshold` is the minimum uncompressed size (in bytes) above which
     /// packets are compressed. Typically 256.
     pub const fn set_compression(&mut self, threshold: i32) {
-        self.compression_threshold = Some(threshold);
+        self.compression_threshold = if threshold < 0 { None } else { Some(threshold) };
     }
 
     pub const fn compression_threshold(&self) -> Option<i32> {

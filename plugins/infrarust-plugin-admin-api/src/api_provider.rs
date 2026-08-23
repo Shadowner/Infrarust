@@ -76,7 +76,7 @@ mod tests {
     async fn a_file_added_before_the_hand_over_reaches_the_proxy() {
         let root = tempfile::tempdir().unwrap();
         let provider = ApiConfigProvider {
-            dir: Arc::new(ServerDir::open(root.path())),
+            dir: Arc::new(ServerDir::open(root.path()).unwrap()),
             sender: Arc::new(ProviderSenderSlot::new(None)),
         };
 
@@ -93,7 +93,7 @@ mod tests {
     async fn a_file_added_before_the_sender_is_installed_reaches_the_proxy() {
         let root = tempfile::tempdir().unwrap();
         let provider = ApiConfigProvider {
-            dir: Arc::new(ServerDir::open(root.path())),
+            dir: Arc::new(ServerDir::open(root.path()).unwrap()),
             sender: Arc::new(ProviderSenderSlot::new(None)),
         };
         assert!(provider.load_initial_documents().await.unwrap().is_empty());

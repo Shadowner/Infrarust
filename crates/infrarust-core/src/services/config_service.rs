@@ -163,27 +163,29 @@ impl ConfigService for ConfigServiceImpl {
             .parse::<DocumentMut>()
             .map_err(|e| ConfigWriteError::Parse(e.to_string()))?;
 
-        let _guard = self
-            .write_lock
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        off_async_worker(move || {
+            let _guard = self
+                .write_lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-        reinject(&mut document, &self.current_document(), PROXY_SECRETS);
-        let unrestored = still_redacted(&document, PROXY_SECRETS);
-        if !unrestored.is_empty() {
-            return Err(ConfigWriteError::Validation(format!(
-                "nothing to restore the redacted {} from: submit the real value",
-                unrestored.join(", ")
-            )));
-        }
+            reinject(&mut document, &self.current_document(), PROXY_SECRETS);
+            let unrestored = still_redacted(&document, PROXY_SECRETS);
+            if !unrestored.is_empty() {
+                return Err(ConfigWriteError::Validation(format!(
+                    "nothing to restore the redacted {} from: submit the real value",
+                    unrestored.join(", ")
+                )));
+            }
 
-        let text = document.to_string();
-        let config: ProxyConfig =
-            toml::from_str(&text).map_err(|e| ConfigWriteError::Parse(e.to_string()))?;
-        infrarust_config::validate_proxy_document(&config)
-            .map_err(|e| ConfigWriteError::Validation(e.to_string()))?;
+            let text = document.to_string();
+            let config: ProxyConfig =
+                toml::from_str(&text).map_err(|e| ConfigWriteError::Parse(e.to_string()))?;
+            infrarust_config::validate_proxy_document(&config)
+                .map_err(|e| ConfigWriteError::Validation(e.to_string()))?;
 
-        write_atomic(&self.config_path, &text).map_err(|e| ConfigWriteError::Io(e.to_string()))
+            write_atomic(&self.config_path, &text).map_err(|e| ConfigWriteError::Io(e.to_string()))
+        })
     }
 
     /// Not implemented: this impl only holds routing tables, and the trait
@@ -191,6 +193,15 @@ impl ConfigService for ConfigServiceImpl {
     /// callers cannot distinguish "unimplemented" from "key absent".
     fn get_value(&self, _key: &str) -> Option<String> {
         None
+    }
+}
+
+fn off_async_worker<T>(work: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(work)
+        }
+        _ => work(),
     }
 }
 
@@ -406,6 +417,26 @@ api_key = \"super-secret-key-value\"
         std::fs::read_to_string(root.path().join("infrarust.toml")).unwrap()
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_write_from_a_multi_thread_runtime_lands() {
+        let (service, root) = service(SAMPLE);
+        let document = service.get_proxy_config_document();
+
+        service.write_proxy_config_document(&document).unwrap();
+
+        assert!(stored(&root).contains("api_key = \"super-secret-key-value\""));
+    }
+
+    #[tokio::test]
+    async fn a_write_from_a_current_thread_runtime_lands() {
+        let (service, root) = service(SAMPLE);
+        let document = service.get_proxy_config_document();
+
+        service.write_proxy_config_document(&document).unwrap();
+
+        assert!(stored(&root).contains("api_key = \"super-secret-key-value\""));
+    }
+
     #[test]
     fn reading_redacts_the_web_api_key() {
         let (service, _root) = service(SAMPLE);
@@ -547,7 +578,8 @@ api_key = \"super-secret-key-value\"
 
     #[test]
     fn writing_rejects_a_public_bind_with_no_key_to_authenticate_with() {
-        let (service, root) = service("bind = \"0.0.0.0:25565\"\n[web]\nbind = \"127.0.0.1:8080\"\n");
+        let (service, root) =
+            service("bind = \"0.0.0.0:25565\"\n[web]\nbind = \"127.0.0.1:8080\"\n");
         let before = stored(&root);
         let document = service
             .get_proxy_config_document()
@@ -561,7 +593,8 @@ api_key = \"super-secret-key-value\"
 
     #[test]
     fn writing_rejects_a_redaction_nothing_can_restore() {
-        let (service, root) = service("bind = \"0.0.0.0:25565\"\n[web]\nbind = \"127.0.0.1:8080\"\n");
+        let (service, root) =
+            service("bind = \"0.0.0.0:25565\"\n[web]\nbind = \"127.0.0.1:8080\"\n");
         let before = stored(&root);
         let document = format!(
             "{}\n[web]\napi_key = \"{}\"\n",
@@ -629,9 +662,10 @@ api_key = \"super-secret-key-value\"
     #[test]
     fn writing_ignores_where_the_documents_directories_point() {
         let (service, root) = service(SAMPLE);
-        let document = service
-            .get_proxy_config_document()
-            .replace(&format!("{:?}", root.path().join("servers").display()), "\"./nowhere\"");
+        let document = service.get_proxy_config_document().replace(
+            &format!("{:?}", root.path().join("servers").display()),
+            "\"./nowhere\"",
+        );
         assert!(document.contains("./nowhere"));
 
         service.write_proxy_config_document(&document).unwrap();
@@ -713,7 +747,8 @@ api_key = \"super-secret-key-value\"
         std::thread::scope(|scope| {
             for worker in 0..8 {
                 let service = Arc::clone(&service);
-                let document = document.replace("0.0.0.0:25565", &format!("0.0.0.0:255{worker:02}"));
+                let document =
+                    document.replace("0.0.0.0:25565", &format!("0.0.0.0:255{worker:02}"));
                 scope.spawn(move || {
                     for _ in 0..20 {
                         service.write_proxy_config_document(&document).unwrap();

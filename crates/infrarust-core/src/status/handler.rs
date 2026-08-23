@@ -32,7 +32,7 @@ use crate::event_bus::EventBusImpl;
 use crate::event_bus::conversion::{
     component_to_json_value, core_to_api_ping_response, merge_ping_event,
 };
-use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, select_backend_addresses};
+use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, peek_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::registry::ConnectionRegistry;
@@ -229,7 +229,7 @@ impl StatusHandler {
             .relay(
                 config_id,
                 config,
-                &select_backend_addresses(
+                &peek_backend_addresses(
                     config,
                     routing.load_balancer.as_ref(),
                     self.counts.as_ref(),

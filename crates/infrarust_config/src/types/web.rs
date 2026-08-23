@@ -145,7 +145,13 @@ impl WebConfig {
             ApiKey::Missing => {
                 let generated = uuid::Uuid::new_v4().to_string();
                 tracing::warn!(
-                    "No API key configured for loopback bind ({}) — generated an ephemeral key: {generated}",
+                    "No API key configured for loopback bind ({}) — generated an ephemeral key, \
+                     printed once on stdout. Set `api_key` in the [web] section to keep it across restarts.",
+                    self.bind
+                );
+                println!(
+                    "[web] ephemeral API key for {}: {generated}\n\
+                     It changes on every restart and is not written to the configuration file.",
                     self.bind
                 );
                 self.api_key = Some(generated.clone());

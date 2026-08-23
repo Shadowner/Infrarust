@@ -13,7 +13,9 @@ use infrarust_server_manager::{ServerManagerService, ServerState};
 use infrarust_transport::{BackendConnector, select_forwarder};
 
 use crate::error::CoreError;
-use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, select_backend_addresses};
+use crate::loadbalancer::{
+    BackendHealthView, BackendLoad, peek_backend_addresses, select_backend_addresses,
+};
 use crate::pipeline::context::ConnectionContext;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
@@ -29,9 +31,30 @@ pub struct LegacyHandler {
     server_manager: Option<Arc<ServerManagerService>>,
     connection_registry: Arc<ConnectionRegistry>,
     backend_connector: Arc<BackendConnector>,
-    counts: Arc<dyn AddressConnectionCount>,
+    backend_load: Arc<BackendLoad>,
     health: Arc<dyn BackendHealthView>,
     shutdown: CancellationToken,
+}
+
+struct BackendLoadGuard {
+    load: Arc<BackendLoad>,
+    address: ServerAddress,
+}
+
+impl BackendLoadGuard {
+    fn acquire(load: &Arc<BackendLoad>, address: ServerAddress) -> Self {
+        load.acquire(&address);
+        Self {
+            load: Arc::clone(load),
+            address,
+        }
+    }
+}
+
+impl Drop for BackendLoadGuard {
+    fn drop(&mut self) {
+        self.load.release(&self.address);
+    }
 }
 
 impl LegacyHandler {
@@ -42,7 +65,7 @@ impl LegacyHandler {
         server_manager: Option<Arc<ServerManagerService>>,
         connection_registry: Arc<ConnectionRegistry>,
         backend_connector: Arc<BackendConnector>,
-        counts: Arc<dyn AddressConnectionCount>,
+        backend_load: Arc<BackendLoad>,
         health: Arc<dyn BackendHealthView>,
         shutdown: CancellationToken,
     ) -> Self {
@@ -52,7 +75,7 @@ impl LegacyHandler {
             server_manager,
             connection_registry,
             backend_connector,
-            counts,
+            backend_load,
             health,
             shutdown,
         }
@@ -66,7 +89,21 @@ impl LegacyHandler {
         select_backend_addresses(
             config,
             load_balancer,
-            self.counts.as_ref(),
+            self.backend_load.as_ref(),
+            self.health.as_ref(),
+        )
+        .to_vec()
+    }
+
+    fn previewed_addresses(
+        &self,
+        config: &ServerConfig,
+        load_balancer: &dyn crate::loadbalancer::LoadBalancer,
+    ) -> Vec<ServerAddress> {
+        peek_backend_addresses(
+            config,
+            load_balancer,
+            self.backend_load.as_ref(),
             self.health.as_ref(),
         )
         .to_vec()
@@ -116,7 +153,7 @@ impl LegacyHandler {
 
         let response_bytes = match server_config {
             Some((_provider_id, config, load_balancer)) => {
-                let addresses = self.ordered_addresses(&config, load_balancer.as_ref());
+                let addresses = self.previewed_addresses(&config, load_balancer.as_ref());
                 let full_ping = self.reconstruct_ping_packet(&raw_data);
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(5),
@@ -456,6 +493,8 @@ impl LegacyHandler {
             }
         };
 
+        let _load = BackendLoadGuard::acquire(&self.backend_load, backend.server_address().clone());
+
         // Forward the raw handshake bytes to backend
         let mut backend = backend;
         backend.stream_mut().write_all(&raw_data).await?;
@@ -556,5 +595,112 @@ impl LegacyHandler {
             .as_ref()
             .and_then(|m| m.online.as_ref())
             .map_or_else(|| "An Infrarust Proxy".to_string(), |e| e.text.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use infrarust_config::KeepaliveConfig;
+    use tokio::net::{TcpListener, TcpStream};
+
+    use super::*;
+    use crate::loadbalancer::{AddressConnectionCount, PassiveBackendHealth};
+    use crate::provider::ProviderId;
+
+    fn utf16be(s: &str) -> Vec<u8> {
+        let units: Vec<u16> = s.encode_utf16().collect();
+        let mut out = u16::try_from(units.len()).unwrap().to_be_bytes().to_vec();
+        for unit in units {
+            out.extend_from_slice(&unit.to_be_bytes());
+        }
+        out
+    }
+
+    fn legacy_login_tail(username: &str, hostname: &str, port: u16) -> Vec<u8> {
+        let mut out = vec![0x3C];
+        out.extend_from_slice(&utf16be(username));
+        out.extend_from_slice(&utf16be(hostname));
+        out.extend_from_slice(&i32::from(port).to_be_bytes());
+        out
+    }
+
+    async fn test_ctx(stream: TcpStream) -> ConnectionContext {
+        let peer = stream.local_addr().unwrap();
+        let local = stream.peer_addr().unwrap();
+        let mut ctx =
+            ConnectionContext::new_for_test(stream, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), local);
+        ctx.buffered_data.extend_from_slice(&[0x02]);
+        ctx
+    }
+
+    #[tokio::test]
+    async fn a_legacy_login_is_counted_on_its_backend_for_the_whole_forward() {
+        let backend_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_addr = backend_listener.local_addr().unwrap();
+        let address: ServerAddress = backend_addr.to_string().parse().unwrap();
+
+        let router = Arc::new(DomainRouter::new());
+        router.add(
+            ProviderId::file("lobby"),
+            toml::from_str(&format!(
+                "name = \"lobby\"\ndomains = [\"lobby.test\"]\naddresses = [\"{backend_addr}\"]\n"
+            ))
+            .unwrap(),
+        );
+
+        let load = Arc::new(BackendLoad::new());
+        let handler = Arc::new(LegacyHandler::new(
+            router,
+            None,
+            None,
+            Arc::new(ConnectionRegistry::new()),
+            Arc::new(BackendConnector::new(
+                std::time::Duration::from_secs(2),
+                KeepaliveConfig::default(),
+            )),
+            Arc::clone(&load),
+            Arc::new(PassiveBackendHealth::new()) as _,
+            CancellationToken::new(),
+        ));
+
+        let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_addr = proxy_listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(proxy_addr).await.unwrap();
+        let (server_side, _) = proxy_listener.accept().await.unwrap();
+
+        client
+            .write_all(&legacy_login_tail("Notch", "lobby.test", 25565))
+            .await
+            .unwrap();
+        client.flush().await.unwrap();
+
+        let mut ctx = test_ctx(server_side).await;
+        let login = {
+            let handler = Arc::clone(&handler);
+            tokio::spawn(async move { handler.handle_login(&mut ctx).await })
+        };
+
+        let (mut backend, _) = backend_listener.accept().await.unwrap();
+        let mut forwarded = [0u8; 1];
+        backend.read_exact(&mut forwarded).await.unwrap();
+        assert_eq!(forwarded[0], 0x02);
+        assert_eq!(
+            load.active_connections_for_address(&address),
+            1,
+            "a forwarded legacy session must be visible to least_conn"
+        );
+
+        drop(client);
+        drop(backend);
+        login.await.unwrap().unwrap();
+
+        assert_eq!(
+            load.active_connections_for_address(&address),
+            0,
+            "the count must be given back when the forward ends"
+        );
     }
 }

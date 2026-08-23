@@ -5,6 +5,7 @@ use infrarust_config::{ServerAddress, ServerConfig};
 
 use super::{
     AddressConnectionCount, BackendCandidate, BackendHealthView, BackendState, LoadBalancer,
+    SelectionMode,
 };
 
 pub fn select_backend_addresses(
@@ -12,6 +13,31 @@ pub fn select_backend_addresses(
     load_balancer: &dyn LoadBalancer,
     counts: &dyn AddressConnectionCount,
     health: &dyn BackendHealthView,
+) -> SmallVec<[ServerAddress; 4]> {
+    arrange(
+        server,
+        load_balancer,
+        counts,
+        health,
+        SelectionMode::Advance,
+    )
+}
+
+pub fn peek_backend_addresses(
+    server: &ServerConfig,
+    load_balancer: &dyn LoadBalancer,
+    counts: &dyn AddressConnectionCount,
+    health: &dyn BackendHealthView,
+) -> SmallVec<[ServerAddress; 4]> {
+    arrange(server, load_balancer, counts, health, SelectionMode::Peek)
+}
+
+fn arrange(
+    server: &ServerConfig,
+    load_balancer: &dyn LoadBalancer,
+    counts: &dyn AddressConnectionCount,
+    health: &dyn BackendHealthView,
+    mode: SelectionMode,
 ) -> SmallVec<[ServerAddress; 4]> {
     // Shortcut: a single address -> nothing to balance.
     if let [only] = server.addresses.as_slice() {
@@ -30,7 +56,7 @@ pub fn select_backend_addresses(
                 active_connections: counts.active_connections_for_address(&wa.address),
                 state: snapshot.state,
                 healthy_since: snapshot.healthy_since,
-                probe: snapshot.state == BackendState::Probing && health.claim_probe(&wa.address),
+                probe: snapshot.state == BackendState::Probing,
             }
         })
         .collect();
@@ -47,12 +73,26 @@ pub fn select_backend_addresses(
         }
     }
 
-    let ordered = load_balancer.order(&candidates);
+    let ordered = load_balancer.order(&candidates, mode);
 
-    ordered
-        .iter()
-        .filter(|c| c.probe)
-        .chain(ordered.iter().filter(|c| !c.probe))
+    let hoisted = match mode {
+        SelectionMode::Advance => ordered
+            .iter()
+            .position(|c| c.probe && health.claim_probe(&c.address)),
+        SelectionMode::Peek => None,
+    };
+
+    let Some(hoisted) = hoisted else {
+        return ordered.iter().map(|c| c.address.clone()).collect();
+    };
+    std::iter::once(ordered[hoisted])
+        .chain(
+            ordered
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != hoisted)
+                .map(|(_, c)| *c),
+        )
         .map(|c| c.address.clone())
         .collect()
 }
@@ -63,7 +103,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::loadbalancer::{FirstAvailable, HealthSnapshot};
+    use crate::loadbalancer::{FirstAvailable, HealthSnapshot, RoundRobin};
 
     struct NoConnections;
 
@@ -109,6 +149,32 @@ mod tests {
             .into_iter()
             .map(|a| a.host)
             .collect()
+    }
+
+    #[test]
+    fn status_pings_never_advance_the_login_rotation() {
+        let health = FixedHealth(HashMap::new());
+        let server = server();
+        let lb = RoundRobin::new(None);
+
+        let mut logins = Vec::new();
+        for round in 0..6 {
+            for _ in 0..round {
+                peek_backend_addresses(&server, &lb, &NoConnections, &health);
+            }
+            logins.push(
+                select_backend_addresses(&server, &lb, &NoConnections, &health)[0]
+                    .host
+                    .clone(),
+            );
+        }
+
+        assert_ne!(logins[0], logins[1]);
+        let expected: Vec<String> = (0..6).map(|i| logins[i % 2].clone()).collect();
+        assert_eq!(
+            logins, expected,
+            "ping traffic must not steer the login rotation"
+        );
     }
 
     #[test]

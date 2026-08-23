@@ -11,6 +11,15 @@ use super::{AddressConnectionCount, BackendLoad};
 
 const SWEEP_INTERVAL_OPS: u32 = 64;
 
+const LOGIN_NEGOTIATION_BUDGET: Duration = Duration::from_secs(60);
+
+pub fn reservation_ttl(connect_timeout: Duration, connect_max_attempts: usize) -> Duration {
+    let attempts = u32::try_from(connect_max_attempts.max(1)).unwrap_or(u32::MAX);
+    connect_timeout
+        .saturating_mul(attempts)
+        .saturating_add(LOGIN_NEGOTIATION_BUDGET)
+}
+
 struct Reservation {
     address: ServerAddress,
     expires_at: Instant,
@@ -56,9 +65,14 @@ impl PendingRegistry {
         }
     }
 
+    fn release(&self, id: u64) {
+        self.discard(id);
+        self.maybe_sweep();
+    }
+
     /// Idempotent: the reservation entry is the single source of truth, so an
     /// expiry sweep and a ticket drop can never release the same slot twice.
-    fn release(&self, id: u64) {
+    fn discard(&self, id: u64) {
         if let Some((_, reservation)) = self.reservations.remove(&id) {
             self.pending.release(&reservation.address);
         }
@@ -77,7 +91,7 @@ impl PendingRegistry {
             .map(|r| *r.key())
             .collect();
         for id in expired {
-            self.release(id);
+            self.discard(id);
         }
     }
 
@@ -89,6 +103,7 @@ impl PendingRegistry {
 
 impl AddressConnectionCount for PendingRegistry {
     fn active_connections_for_address(&self, addr: &ServerAddress) -> usize {
+        self.maybe_sweep();
         self.attached.active_connections_for_address(addr)
             + self.pending.active_connections_for_address(addr)
     }
@@ -159,6 +174,41 @@ mod tests {
         );
         drop(leaked);
         assert_eq!(registry.pending_for(&a), 0, "double release must be inert");
+    }
+
+    #[test]
+    fn a_lull_after_a_burst_still_sweeps_expired_reservations() {
+        let registry = registry(Duration::ZERO);
+        let a = addr("a");
+        let leaked: Vec<PendingTicket> = (0..8).map(|_| registry.reserve(&a)).collect();
+        assert_eq!(registry.pending_for(&a), 8);
+
+        for _ in 0..=SWEEP_INTERVAL_OPS {
+            registry.active_connections_for_address(&addr("other"));
+        }
+
+        assert_eq!(
+            registry.pending_for(&a),
+            0,
+            "reading the counter must sweep what the lull left behind"
+        );
+        drop(leaked);
+        assert_eq!(registry.pending_for(&a), 0);
+    }
+
+    #[test]
+    fn the_ttl_outlasts_the_whole_connect_budget() {
+        let connect_timeout = Duration::from_secs(5);
+        let ttl = reservation_ttl(connect_timeout, 3);
+        assert!(
+            ttl > connect_timeout * 3,
+            "the ticket lives until the session attaches, not until the socket opens"
+        );
+        assert_eq!(
+            reservation_ttl(connect_timeout, 0),
+            reservation_ttl(connect_timeout, 1),
+            "an unbounded attempt count still budgets for one dial"
+        );
     }
 
     #[test]
