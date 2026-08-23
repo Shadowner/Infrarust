@@ -94,7 +94,7 @@ The `PluginContext` trait provides access to every service and registration meth
 | `register_config_provider(provider)` | `()` | Register a dynamic config provider |
 | `proxy_info()` | `&ProxyInfo` | Read-only proxy version and runtime settings |
 | `capabilities()` | `&CapabilitySet` | Capabilities granted to this plugin |
-| `data_dir()` | `PathBuf` | This plugin's data directory |
+| `data_dir()` | `PathBuf` | This plugin's data directory, `<plugins_dir>/<plugin_id>`, created if missing |
 | `proxy_shutdown()` | `CancellationToken` | Token that fires when the proxy shuts down |
 | `plugin_id()` | `&str` | This plugin's ID |
 

@@ -222,7 +222,7 @@ Some of the available services:
 | `codec_filters()` | `Option<&dyn CodecFilterRegistry>` | Register packet-level filters, `Some` only with the `CodecFilter` capability |
 | `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register TCP-level filters, `Some` only with the `TransportFilter` capability |
 | `plugin_id()` | `&str` | This plugin's ID |
-| `data_dir()` | `PathBuf` | This plugin's data directory |
+| `data_dir()` | `PathBuf` | This plugin's data directory, `<plugins_dir>/<plugin_id>`, created if missing |
 | `proxy_shutdown()` | `CancellationToken` | A token that fires when the proxy shuts down |
 | `proxy_info()` | `&ProxyInfo` | Proxy name and version |
 | `capabilities()` | `&CapabilitySet` | Capabilities granted to this plugin |

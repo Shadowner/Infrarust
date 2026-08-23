@@ -312,7 +312,17 @@ impl PluginContext for PluginContextImpl {
     }
 
     fn data_dir(&self) -> PathBuf {
-        self.plugins_dir.join(&self.plugin_id)
+        let dir = self.plugins_dir.join(&self.plugin_id);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(
+                plugin = %self.plugin_id,
+                path = %dir.display(),
+                error = %e,
+                "Failed to create the plugin data directory"
+            );
+        }
+
+        dir
     }
 
     fn proxy_shutdown(&self) -> CancellationToken {
