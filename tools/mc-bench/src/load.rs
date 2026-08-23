@@ -264,7 +264,7 @@ async fn connect_and_login(
     let login = SLoginStart {
         uuid: Some(offline_uuid(&name)),
         name,
-        signature_data: None,
+        profile_key: None,
     };
     let login_id = registry
         .get_packet_id::<SLoginStart>(version)

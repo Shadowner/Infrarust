@@ -50,6 +50,7 @@ async fn make_context_with_login(ip: IpAddr, username: &str) -> ConnectionContex
     ctx.extensions.insert(LoginData {
         username: username.to_string(),
         player_uuid: None,
+        profile_key: None,
     });
     ctx
 }

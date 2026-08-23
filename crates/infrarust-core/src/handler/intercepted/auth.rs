@@ -194,7 +194,12 @@ async fn run_mojang_auth_flow(
     version: ProtocolVersion,
 ) -> Result<AuthResult, CoreError> {
     let game_profile = auth
-        .authenticate(client, &login_data.username, &services.packet_registry)
+        .authenticate(
+            client,
+            &login_data.username,
+            login_data.profile_key.as_ref(),
+            &services.packet_registry,
+        )
         .await?;
 
     tracing::info!(

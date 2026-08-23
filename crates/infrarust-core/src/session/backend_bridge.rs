@@ -210,7 +210,7 @@ impl BackendBridge {
         let login_start = SLoginStart {
             name: username.to_string(),
             uuid: Some(uuid),
-            signature_data: None,
+            profile_key: None,
         };
 
         let packet_id = registry
@@ -248,7 +248,7 @@ impl BackendBridge {
         let login_start = SLoginStart {
             name: username.to_string(),
             uuid: Some(uuid),
-            signature_data: None,
+            profile_key: None,
         };
 
         let packet_id = registry

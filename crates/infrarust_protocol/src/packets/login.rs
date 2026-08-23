@@ -58,11 +58,18 @@ fn write_uuid_int_array(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileKey {
+    pub expires_at: i64,
+    pub public_key: Vec<u8>,
+    pub key_signature: Vec<u8>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SLoginStart {
     pub name: String,
     pub uuid: Option<uuid::Uuid>,
-    pub signature_data: Option<Vec<u8>>,
+    pub profile_key: Option<ProfileKey>,
 }
 
 impl Packet for SLoginStart {
@@ -81,20 +88,15 @@ impl Packet for SLoginStart {
         }
 
         let mut uuid = None;
-        let mut signature_data = None;
+        let mut profile_key = None;
 
         if version.no_less_than(ProtocolVersion::V1_19) {
             if version.less_than(ProtocolVersion::V1_19_3) && r.read_bool()? {
-                let mut key_buf = Vec::new();
-                let ts = r.read_i64_be()?;
-                key_buf.extend_from_slice(&ts.to_be_bytes());
-                let pk = r.read_byte_array(512)?;
-                VarInt(pk.len() as i32).encode(&mut key_buf)?;
-                key_buf.extend_from_slice(&pk);
-                let sig = r.read_byte_array(4096)?;
-                VarInt(sig.len() as i32).encode(&mut key_buf)?;
-                key_buf.extend_from_slice(&sig);
-                signature_data = Some(key_buf);
+                profile_key = Some(ProfileKey {
+                    expires_at: r.read_i64_be()?,
+                    public_key: r.read_byte_array(512)?,
+                    key_signature: r.read_byte_array(4096)?,
+                });
             }
 
             let has_uuid = if version.no_less_than(ProtocolVersion::V1_20_2) {
@@ -112,7 +114,7 @@ impl Packet for SLoginStart {
         Ok(Self {
             name,
             uuid,
-            signature_data,
+            profile_key,
         })
     }
 
@@ -125,9 +127,11 @@ impl Packet for SLoginStart {
 
         if version.no_less_than(ProtocolVersion::V1_19) {
             if version.less_than(ProtocolVersion::V1_19_3) {
-                if let Some(ref sig) = self.signature_data {
+                if let Some(ref key) = self.profile_key {
                     w.write_bool(true)?;
-                    w.write_all(sig)?;
+                    w.write_i64_be(key.expires_at)?;
+                    w.write_byte_array(&key.public_key)?;
+                    w.write_byte_array(&key.key_signature)?;
                 } else {
                     w.write_bool(false)?;
                 }
@@ -217,11 +221,16 @@ impl Packet for CEncryptionRequest {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EncryptionProof {
+    VerifyToken(Vec<u8>),
+    Signature { salt: i64, signature: Vec<u8> },
+}
+
 #[derive(Debug, Clone)]
 pub struct SEncryptionResponse {
     pub shared_secret: Vec<u8>,
-    pub verify_token: Vec<u8>,
-    pub salt: Option<i64>,
+    pub proof: EncryptionProof,
 }
 
 impl Packet for SEncryptionResponse {
@@ -234,37 +243,36 @@ impl Packet for SEncryptionResponse {
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
-        let mut salt = None;
-
         if version.no_less_than(ProtocolVersion::V1_8) {
             let shared_secret = r.read_byte_array(128)?;
 
-            if version.no_less_than(ProtocolVersion::V1_19)
+            let signed = version.no_less_than(ProtocolVersion::V1_19)
                 && version.less_than(ProtocolVersion::V1_19_3)
-                && !r.read_bool()?
-            {
-                salt = Some(r.read_i64_be()?);
-            }
+                && !r.read_bool()?;
 
-            let max_vt = if version.no_less_than(ProtocolVersion::V1_19) {
-                256
+            let proof = if signed {
+                let salt = r.read_i64_be()?;
+                let signature = r.read_byte_array(1024)?;
+                EncryptionProof::Signature { salt, signature }
             } else {
-                128
+                let max_vt = if version.no_less_than(ProtocolVersion::V1_19) {
+                    256
+                } else {
+                    128
+                };
+                EncryptionProof::VerifyToken(r.read_byte_array(max_vt)?)
             };
-            let verify_token = r.read_byte_array(max_vt)?;
 
             Ok(Self {
                 shared_secret,
-                verify_token,
-                salt,
+                proof,
             })
         } else {
             let shared_secret = read_byte_array_short(r)?;
             let verify_token = read_byte_array_short(r)?;
             Ok(Self {
                 shared_secret,
-                verify_token,
-                salt: None,
+                proof: EncryptionProof::VerifyToken(verify_token),
             })
         }
     }
@@ -274,24 +282,38 @@ impl Packet for SEncryptionResponse {
         mut w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
+        let signed_band = version.no_less_than(ProtocolVersion::V1_19)
+            && version.less_than(ProtocolVersion::V1_19_3);
+
         if version.no_less_than(ProtocolVersion::V1_8) {
             w.write_byte_array(&self.shared_secret)?;
 
-            if version.no_less_than(ProtocolVersion::V1_19)
-                && version.less_than(ProtocolVersion::V1_19_3)
-            {
-                if let Some(salt) = self.salt {
+            match &self.proof {
+                EncryptionProof::VerifyToken(token) => {
+                    if signed_band {
+                        w.write_bool(true)?;
+                    }
+                    w.write_byte_array(token)?;
+                }
+                EncryptionProof::Signature { salt, signature } => {
+                    if !signed_band {
+                        return Err(ProtocolError::invalid(
+                            "signed encryption response is only valid for 1.19-1.19.2",
+                        ));
+                    }
                     w.write_bool(false)?;
-                    w.write_i64_be(salt)?;
-                } else {
-                    w.write_bool(true)?;
+                    w.write_i64_be(*salt)?;
+                    w.write_byte_array(signature)?;
                 }
             }
-
-            w.write_byte_array(&self.verify_token)?;
         } else {
+            let EncryptionProof::VerifyToken(token) = &self.proof else {
+                return Err(ProtocolError::invalid(
+                    "signed encryption response is only valid for 1.19-1.19.2",
+                ));
+            };
             write_byte_array_short(w, &self.shared_secret)?;
-            write_byte_array_short(w, &self.verify_token)?;
+            write_byte_array_short(w, token)?;
         }
 
         Ok(())
@@ -599,12 +621,12 @@ mod tests {
         let pkt = SLoginStart {
             name: "Notch".to_string(),
             uuid: None,
-            signature_data: None,
+            profile_key: None,
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_8);
         assert_eq!(decoded.name, "Notch");
         assert!(decoded.uuid.is_none());
-        assert!(decoded.signature_data.is_none());
+        assert!(decoded.profile_key.is_none());
     }
 
     #[test]
@@ -613,7 +635,7 @@ mod tests {
         let pkt = SLoginStart {
             name: "Notch".to_string(),
             uuid: Some(uuid),
-            signature_data: None,
+            profile_key: None,
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_20_2);
         assert_eq!(decoded.name, "Notch");
@@ -764,13 +786,110 @@ mod tests {
     fn test_encryption_response_v1_8() {
         let pkt = SEncryptionResponse {
             shared_secret: vec![0xAB; 16],
-            verify_token: vec![0xCD; 4],
-            salt: None,
+            proof: EncryptionProof::VerifyToken(vec![0xCD; 4]),
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_8);
         assert_eq!(decoded.shared_secret, vec![0xAB; 16]);
-        assert_eq!(decoded.verify_token, vec![0xCD; 4]);
-        assert!(decoded.salt.is_none());
+        assert_eq!(decoded.proof, EncryptionProof::VerifyToken(vec![0xCD; 4]));
+    }
+
+    fn signed_encryption_response_wire(secret: &[u8], salt: i64, signature: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.write_byte_array(secret).unwrap();
+        buf.write_bool(false).unwrap();
+        buf.write_i64_be(salt).unwrap();
+        buf.write_byte_array(signature).unwrap();
+        buf
+    }
+
+    #[test]
+    fn test_encryption_response_v1_19_signed_is_not_a_verify_token() {
+        let signature = vec![0x5A; 256];
+        let wire = signed_encryption_response_wire(&[0xAB; 128], 0x0123_4567_89AB_CDEF, &signature);
+
+        for version in [
+            ProtocolVersion::V1_19,
+            ProtocolVersion::V1_19_1,
+            ProtocolVersion(760),
+        ] {
+            let decoded = SEncryptionResponse::decode(&mut wire.as_slice(), version).unwrap();
+            assert_eq!(decoded.shared_secret, vec![0xAB; 128]);
+            assert_eq!(
+                decoded.proof,
+                EncryptionProof::Signature {
+                    salt: 0x0123_4567_89AB_CDEF,
+                    signature: signature.clone(),
+                },
+                "protocol {} must keep the signature distinct from a verify token",
+                version.0
+            );
+        }
+    }
+
+    #[test]
+    fn test_encryption_response_v1_19_unsigned_is_a_verify_token() {
+        let mut wire = Vec::new();
+        wire.write_byte_array(&[0xAB; 128]).unwrap();
+        wire.write_bool(true).unwrap();
+        wire.write_byte_array(&[0xCD; 128]).unwrap();
+
+        let decoded =
+            SEncryptionResponse::decode(&mut wire.as_slice(), ProtocolVersion::V1_19).unwrap();
+        assert_eq!(decoded.proof, EncryptionProof::VerifyToken(vec![0xCD; 128]));
+    }
+
+    #[test]
+    fn test_encryption_response_v1_19_3_has_no_signed_variant() {
+        let mut wire = Vec::new();
+        wire.write_byte_array(&[0xAB; 128]).unwrap();
+        wire.write_byte_array(&[0xCD; 128]).unwrap();
+
+        let decoded =
+            SEncryptionResponse::decode(&mut wire.as_slice(), ProtocolVersion::V1_19_3).unwrap();
+        assert_eq!(decoded.proof, EncryptionProof::VerifyToken(vec![0xCD; 128]));
+    }
+
+    #[test]
+    fn test_encryption_response_signed_round_trip() {
+        let pkt = SEncryptionResponse {
+            shared_secret: vec![0xAB; 128],
+            proof: EncryptionProof::Signature {
+                salt: -42,
+                signature: vec![0x5A; 512],
+            },
+        };
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_19_1);
+        assert_eq!(decoded.proof, pkt.proof);
+    }
+
+    #[test]
+    fn test_encryption_response_signed_outside_its_band_is_an_error() {
+        let pkt = SEncryptionResponse {
+            shared_secret: vec![0xAB; 128],
+            proof: EncryptionProof::Signature {
+                salt: 1,
+                signature: vec![0x5A; 4],
+            },
+        };
+        let mut buf = Vec::new();
+        assert!(pkt.encode(&mut buf, ProtocolVersion::V1_19_3).is_err());
+        assert!(pkt.encode(&mut buf, ProtocolVersion::V1_7_2).is_err());
+    }
+
+    #[test]
+    fn test_login_start_v1_19_carries_the_profile_key() {
+        let key = ProfileKey {
+            expires_at: 1_700_000_000_000,
+            public_key: vec![0x30, 0x82, 0x01, 0x22],
+            key_signature: vec![0x99; 512],
+        };
+        let pkt = SLoginStart {
+            name: "Notch".to_string(),
+            uuid: None,
+            profile_key: Some(key.clone()),
+        };
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_19);
+        assert_eq!(decoded.profile_key, Some(key));
     }
 
     #[test]

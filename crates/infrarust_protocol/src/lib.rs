@@ -27,11 +27,12 @@ pub use packets::{
     CLoginSuccess, CPingResponse, CPluginMessage, CRegistryData, CRespawn, CSetCenterChunk,
     CSetCompression, CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes,
     CStartConfiguration, CStatusResponse, CSynchronizePlayerPosition, CSystemChatMessage,
-    CTabCompleteResponse, CTitleLegacy, CTransfer, DimensionInfo, ErasedPacket, KnownPack, Packet,
-    PacketMapping, Property, SAcknowledgeConfiguration, SAcknowledgeFinishConfig, SChatCommand,
-    SChatMessage, SChatSessionUpdate, SConfigPluginMessage, SEncryptionResponse, SHandshake,
-    SKeepAlive, SKnownPacks, SLoginAcknowledged, SLoginPluginResponse, SLoginStart, SPingRequest,
-    SPluginMessage, SStatusRequest, STabCompleteRequest,
+    CTabCompleteResponse, CTitleLegacy, CTransfer, DimensionInfo, EncryptionProof, ErasedPacket,
+    KnownPack, Packet, PacketMapping, ProfileKey, Property, SAcknowledgeConfiguration,
+    SAcknowledgeFinishConfig, SChatCommand, SChatMessage, SChatSessionUpdate, SConfigPluginMessage,
+    SEncryptionResponse, SHandshake, SKeepAlive, SKnownPacks, SLoginAcknowledged,
+    SLoginPluginResponse, SLoginStart, SPingRequest, SPluginMessage, SStatusRequest,
+    STabCompleteRequest,
 };
 pub use registry::{DecodedPacket, PacketRegistry, build_default_registry};
 pub use version::{ConnectionState, Direction, ProtocolVersion};
