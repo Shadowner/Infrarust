@@ -1,43 +1,35 @@
-//! Encode/Decode implementations for Minecraft primitive types.
-//!
-//! All numeric types use big-endian byte order (Minecraft standard).
-//! Strings are `VarInt`-prefixed UTF-8. UUIDs are encoded as u128 big-endian.
-
 use std::io::{Read, Write};
 
 use uuid::Uuid;
 
 use crate::codec::varint::VarInt;
-use crate::codec::{Decode, Encode};
+use crate::codec::{Decode, Encode, McBufWriteExt};
 use crate::error::{ProtocolError, ProtocolResult};
 
-/// Default maximum string length in characters (Minecraft protocol limit).
 const MAX_STRING_CHARS: usize = 32767;
 
-/// Computes a cautious pre-allocation capacity.
-///
-/// Prevents a malicious `VarInt` length prefix from causing a massive allocation
-/// before any data has been read from the network.
 fn cautious_capacity(size_hint: usize) -> usize {
-    const MAX_PREALLOC_BYTES: usize = 1024 * 1024; // 1 MB
+    const MAX_PREALLOC_BYTES: usize = 1024 * 1024;
     size_hint.min(MAX_PREALLOC_BYTES)
+}
+
+pub(crate) fn bool_from_byte(byte: u8) -> ProtocolResult<bool> {
+    match byte {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(ProtocolError::invalid("bool value must be 0 or 1")),
+    }
 }
 
 impl Encode for bool {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
-        w.write_all(&[u8::from(*self)])?;
-        Ok(())
+        w.write_bool(*self)
     }
 }
 
 impl Decode<'_> for bool {
     fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
-        let byte = u8::decode(r)?;
-        match byte {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(ProtocolError::invalid("bool value must be 0 or 1")),
-        }
+        bool_from_byte(u8::decode(r)?)
     }
 }
 
@@ -119,7 +111,6 @@ impl Decode<'_> for String {
     }
 }
 
-/// Encodes a string with `VarInt` length prefix.
 pub(crate) fn encode_string(s: &str, w: &mut impl Write) -> ProtocolResult<()> {
     let char_len = s.chars().count();
     if char_len > MAX_STRING_CHARS {
@@ -131,14 +122,12 @@ pub(crate) fn encode_string(s: &str, w: &mut impl Write) -> ProtocolResult<()> {
     Ok(())
 }
 
-/// Decodes a `VarInt`-prefixed UTF-8 string with a character limit.
 pub(crate) fn decode_string(r: &mut &[u8], max_chars: usize) -> ProtocolResult<String> {
     let raw_len = VarInt::decode(r)?.0;
     if raw_len < 0 {
         return Err(ProtocolError::invalid("negative length"));
     }
     let byte_len = raw_len as usize;
-    // A single UTF-8 char is at most 4 bytes
     let max_bytes = max_chars * 4;
     if byte_len > max_bytes {
         return Err(ProtocolError::too_large(max_bytes, byte_len));
@@ -160,7 +149,7 @@ pub(crate) fn decode_string(r: &mut &[u8], max_chars: usize) -> ProtocolResult<S
 
 impl Encode for Uuid {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
-        self.as_u128().encode(w)
+        w.write_uuid(self)
     }
 }
 
@@ -173,9 +162,7 @@ impl Decode<'_> for Uuid {
 
 impl Encode for Vec<u8> {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
-        VarInt(self.len() as i32).encode(w)?;
-        w.write_all(self)?;
-        Ok(())
+        w.write_byte_array(self)
     }
 }
 
@@ -225,7 +212,6 @@ impl<'a, T: Decode<'a>> Decode<'a> for Option<T> {
     }
 }
 
-/// Reads a bounded string from a `Read` source.
 pub(crate) fn read_string_bounded_from_reader(
     reader: &mut impl Read,
     max_chars: usize,
@@ -383,7 +369,6 @@ mod tests {
         let val = "AB".to_string();
         let mut buf = Vec::new();
         val.encode(&mut buf).unwrap();
-        // VarInt(2) = 0x02, then ASCII 'A' = 0x41, 'B' = 0x42
         assert_eq!(buf, [0x02, 0x41, 0x42]);
     }
 
@@ -428,7 +413,6 @@ mod tests {
         let data: Vec<u8> = vec![1, 2, 3, 4, 5];
         let mut buf = Vec::new();
         data.encode(&mut buf).unwrap();
-        // VarInt(5) = 0x05
         assert_eq!(buf[0], 0x05);
         let mut slice: &[u8] = &buf;
         assert_eq!(Vec::<u8>::decode(&mut slice).unwrap(), data);
@@ -439,7 +423,7 @@ mod tests {
         let data: Vec<u8> = vec![];
         let mut buf = Vec::new();
         data.encode(&mut buf).unwrap();
-        assert_eq!(buf, [0x00]); // VarInt(0) only
+        assert_eq!(buf, [0x00]);
         let mut slice: &[u8] = &buf;
         assert_eq!(Vec::<u8>::decode(&mut slice).unwrap(), data);
     }
@@ -449,7 +433,7 @@ mod tests {
         let val: Option<i32> = Some(42);
         let mut buf = Vec::new();
         val.encode(&mut buf).unwrap();
-        assert_eq!(buf[0], 0x01); // true prefix
+        assert_eq!(buf[0], 0x01);
         let mut slice: &[u8] = &buf;
         assert_eq!(Option::<i32>::decode(&mut slice).unwrap(), Some(42));
     }
@@ -459,7 +443,7 @@ mod tests {
         let val: Option<i32> = None;
         let mut buf = Vec::new();
         val.encode(&mut buf).unwrap();
-        assert_eq!(buf, [0x00]); // false prefix only
+        assert_eq!(buf, [0x00]);
         let mut slice: &[u8] = &buf;
         assert_eq!(Option::<i32>::decode(&mut slice).unwrap(), None);
     }
@@ -525,7 +509,7 @@ mod tests {
         let data = {
             let mut buf = Vec::new();
             VarInt(2).encode(&mut buf).unwrap();
-            buf.extend_from_slice(&[0xFF, 0xFE]); // invalid UTF-8
+            buf.extend_from_slice(&[0xFF, 0xFE]);
             buf
         };
         let mut cursor = data.as_slice();
@@ -584,7 +568,7 @@ mod tests {
 
         let mut buf = Vec::new();
         VarInt(100).encode(&mut buf).unwrap();
-        buf.extend_from_slice(b"abc"); // only 3 of 100 claimed bytes
+        buf.extend_from_slice(b"abc");
         let mut reader = buf.as_slice();
         let err = reader.read_string().unwrap_err();
         assert!(matches!(err, ProtocolError::Incomplete { .. }));

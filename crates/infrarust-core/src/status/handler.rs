@@ -433,10 +433,7 @@ impl StatusHandler {
         packet: &P,
         version: ProtocolVersion,
     ) -> Result<(), CoreError> {
-        let packet_id = self
-            .registry
-            .get_packet_id::<P>(P::state(), P::direction(), version)
-            .unwrap_or(0);
+        let packet_id = self.registry.get_packet_id::<P>(version).unwrap_or(0);
 
         let mut payload = Vec::new();
         packet.encode(&mut payload, version)?;

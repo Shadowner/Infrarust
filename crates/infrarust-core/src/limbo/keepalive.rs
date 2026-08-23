@@ -11,7 +11,7 @@ use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::play::keepalive::{CKeepAlive, SKeepAlive};
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
 use crate::player::packets::encode_packet;
@@ -103,11 +103,7 @@ pub(crate) fn is_keepalive_response(
     registry: &PacketRegistry,
     version: ProtocolVersion,
 ) -> bool {
-    let expected_id = registry.get_packet_id::<SKeepAlive>(
-        ConnectionState::Play,
-        Direction::Serverbound,
-        version,
-    );
+    let expected_id = registry.get_packet_id::<SKeepAlive>(version);
     Some(frame.id) == expected_id
 }
 

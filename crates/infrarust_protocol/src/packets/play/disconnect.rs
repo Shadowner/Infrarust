@@ -1,37 +1,24 @@
-use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::play::common::{read_text_component, write_text_component};
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Play disconnect packet (Clientbound).
-///
-/// Sent by the server to kick a player with a reason message.
-///
-/// Format varies by version:
-/// - Pre-1.20.3: `reason` is a JSON text component (String).
-/// - 1.20.3+: `reason` is an NBT compound (binary).
-///
-/// The proxy stores the reason as opaque bytes to avoid parsing
-/// the content format. Use the convenience methods for JSON construction.
 #[derive(Debug, Clone)]
 pub struct CDisconnect {
     pub reason: Vec<u8>,
 }
 
 impl CDisconnect {
-    /// Creates a disconnect packet from a JSON text component string.
     pub fn from_json(json: &str) -> Self {
         Self {
             reason: json.as_bytes().to_vec(),
         }
     }
 
-    /// Creates a disconnect packet from pre-encoded NBT bytes (1.20.3+).
     pub fn from_nbt(nbt: Vec<u8>) -> Self {
         Self { reason: nbt }
     }
 
-    /// Returns the reason as a JSON string, if the content is valid UTF-8.
     pub fn as_json(&self) -> Option<&str> {
         std::str::from_utf8(&self.reason).ok()
     }
@@ -40,39 +27,38 @@ impl CDisconnect {
 impl Packet for CDisconnect {
     const NAME: &'static str = "CDisconnect";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x40,
+        V1_9    => 0x1A,
+        V1_13   => 0x1B,
+        V1_14   => 0x1A,
+        V1_15   => 0x1B,
+        V1_16   => 0x1A,
+        V1_16_2 => 0x19,
+        V1_17   => 0x1A,
+        V1_19   => 0x17,
+        V1_19_1 => 0x19,
+        V1_19_3 => 0x17,
+        V1_19_4 => 0x1A,
+        V1_20_2 => 0x1B,
+        V1_20_5 => 0x1D,
+        V1_21_5 => 0x1C,
+        V1_21_9 => 0x20,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
-        let reason = if version.less_than(ProtocolVersion::V1_20_3) {
-            r.read_string()?.into_bytes()
-        } else {
-            r.read_remaining()?
-        };
+        let reason = read_text_component(r, version, 0, Self::NAME)?;
         Ok(Self { reason })
     }
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
-        if version.less_than(ProtocolVersion::V1_20_3) {
-            let json = std::str::from_utf8(&self.reason).map_err(|_| {
-                crate::error::ProtocolError::invalid(
-                    "CDisconnect reason is not valid UTF-8 for JSON version",
-                )
-            })?;
-            w.write_string(json)?;
-        } else {
-            w.write_all(&self.reason)?;
-        }
-        Ok(())
+        write_text_component(w, &self.reason, version, Self::NAME, "reason")
     }
 }
 
@@ -80,12 +66,7 @@ impl Packet for CDisconnect {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-
-    fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        P::decode(&mut buf.as_slice(), version).unwrap()
-    }
+    use crate::packets::round_trip;
 
     #[test]
     fn test_disconnect_round_trip_json() {
@@ -96,7 +77,6 @@ mod tests {
 
     #[test]
     fn test_disconnect_round_trip_nbt() {
-        // Simulate NBT binary content
         let nbt_data = vec![0x0A, 0x00, 0x00, 0x08, 0x00, 0x04, 0x74, 0x65, 0x78, 0x74];
         let pkt = CDisconnect {
             reason: nbt_data.clone(),

@@ -2,9 +2,8 @@ use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-use super::Packet;
+use super::{Packet, PacketMapping};
 
-/// A known data pack entry used in `CKnownPacks` / `SKnownPacks`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownPack {
     pub namespace: String,
@@ -12,22 +11,18 @@ pub struct KnownPack {
     pub version: String,
 }
 
-/// Finish configuration packet (Clientbound).
-///
-/// Empty signal sent by the server to indicate the end of configuration phase.
 #[derive(Debug, Clone)]
 pub struct CFinishConfig;
 
 impl Packet for CFinishConfig {
     const NAME: &'static str = "CFinishConfig";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Config;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_20_2 => 0x02,
+        V1_20_5 => 0x03,
+    ];
 
     fn decode(_r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         Ok(Self)
@@ -42,22 +37,18 @@ impl Packet for CFinishConfig {
     }
 }
 
-/// Acknowledge finish configuration packet (Serverbound).
-///
-/// Empty confirmation from the client that it's ready to transition to Play.
 #[derive(Debug, Clone)]
 pub struct SAcknowledgeFinishConfig;
 
 impl Packet for SAcknowledgeFinishConfig {
     const NAME: &'static str = "SAcknowledgeFinishConfig";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Serverbound
-    }
+    const STATE: ConnectionState = ConnectionState::Config;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_20_2 => 0x02,
+        V1_20_5 => 0x03,
+    ];
 
     fn decode(_r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         Ok(Self)
@@ -72,10 +63,6 @@ impl Packet for SAcknowledgeFinishConfig {
     }
 }
 
-/// Registry data packet (Clientbound).
-///
-/// Contains registry synchronization data (NBT). The proxy stores this as
-/// opaque bytes and forwards it without parsing.
 #[derive(Debug, Clone)]
 pub struct CRegistryData {
     pub data: Vec<u8>,
@@ -84,13 +71,12 @@ pub struct CRegistryData {
 impl Packet for CRegistryData {
     const NAME: &'static str = "CRegistryData";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Config;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_20_2 => 0x05,
+        V1_20_5 => 0x07,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let data = r.read_remaining()?;
@@ -111,6 +97,13 @@ define_twin_packets! {
     clientbound: CKnownPacks,
     serverbound: SKnownPacks,
     state: ConnectionState::Config,
+    clientbound_ids: ids![
+        V1_20_5 => 0x0E,
+    ],
+    serverbound_ids: ids![
+        V1_20_5 => 0x07,
+    ],
+    encode_only: false,
     fields: {
         pub packs: Vec<KnownPack>,
     },
@@ -147,6 +140,15 @@ define_twin_packets! {
     clientbound: CConfigPluginMessage,
     serverbound: SConfigPluginMessage,
     state: ConnectionState::Config,
+    clientbound_ids: ids![
+        V1_20_2 => 0x00,
+        V1_20_5 => 0x01,
+    ],
+    serverbound_ids: ids![
+        V1_20_2 => 0x01,
+        V1_20_5 => 0x02,
+    ],
+    encode_only: false,
     fields: {
         pub channel: String,
         pub data: Vec<u8>,
@@ -163,13 +165,6 @@ define_twin_packets! {
     },
 }
 
-/// Disconnect packet in config state (Clientbound).
-///
-/// The reason is stored as opaque bytes because its format varies:
-/// - 1.20.2: JSON string
-/// - 1.20.3+: NBT compound
-///
-/// The proxy forwards it without parsing.
 #[derive(Debug, Clone)]
 pub struct CConfigDisconnect {
     pub reason: Vec<u8>,
@@ -178,13 +173,12 @@ pub struct CConfigDisconnect {
 impl Packet for CConfigDisconnect {
     const NAME: &'static str = "CConfigDisconnect";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Config
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Config;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_20_2 => 0x01,
+        V1_20_5 => 0x02,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let reason = r.read_remaining()?;
@@ -205,13 +199,8 @@ impl Packet for CConfigDisconnect {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::packets::round_trip;
     use crate::registry::build_default_registry;
-
-    fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        P::decode(&mut buf.as_slice(), version).unwrap()
-    }
 
     #[test]
     fn test_finish_config_round_trip() {
@@ -233,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_registry_data_opaque_payload() {
-        let data = vec![0x0A, 0x00, 0x00, 0xFF, 0xAB, 0xCD]; // arbitrary bytes
+        let data = vec![0x0A, 0x00, 0x00, 0xFF, 0xAB, 0xCD];
         let pkt = CRegistryData { data: data.clone() };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_20_2);
         assert_eq!(decoded.data, data);
@@ -283,10 +272,8 @@ mod tests {
         let mut s_buf = Vec::new();
         s_pkt.encode(&mut s_buf, ProtocolVersion::V1_20_5).unwrap();
 
-        // Same wire format
         assert_eq!(c_buf, s_buf);
 
-        // Cross-decode
         let decoded_s =
             SKnownPacks::decode(&mut c_buf.as_slice(), ProtocolVersion::V1_20_5).unwrap();
         assert_eq!(decoded_s.packs, packs);
@@ -326,35 +313,18 @@ mod tests {
         let registry = build_default_registry();
 
         for version in [ProtocolVersion::V1_19, ProtocolVersion::V1_20] {
-            // No config packets should exist for pre-1.20.2 versions
             assert!(
-                registry
-                    .get_packet_id::<CFinishConfig>(
-                        ConnectionState::Config,
-                        Direction::Clientbound,
-                        version,
-                    )
-                    .is_none(),
+                registry.get_packet_id::<CFinishConfig>(version).is_none(),
                 "CFinishConfig should NOT be registered for {version}"
             );
             assert!(
                 registry
-                    .get_packet_id::<SAcknowledgeFinishConfig>(
-                        ConnectionState::Config,
-                        Direction::Serverbound,
-                        version,
-                    )
+                    .get_packet_id::<SAcknowledgeFinishConfig>(version)
                     .is_none(),
                 "SAcknowledgeFinishConfig should NOT be registered for {version}"
             );
             assert!(
-                registry
-                    .get_packet_id::<CRegistryData>(
-                        ConnectionState::Config,
-                        Direction::Clientbound,
-                        version,
-                    )
-                    .is_none(),
+                registry.get_packet_id::<CRegistryData>(version).is_none(),
                 "CRegistryData should NOT be registered for {version}"
             );
         }

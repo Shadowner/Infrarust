@@ -174,13 +174,22 @@ impl ClientBridge {
         packet: &P,
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
+        if self.state != P::STATE {
+            return Err(CoreError::Auth(format!(
+                "cannot send {} ({}) while the bridge is in {}",
+                P::NAME,
+                P::STATE,
+                self.state
+            )));
+        }
+
         let packet_id = registry
-            .get_packet_id::<P>(self.state, P::direction(), self.protocol_version)
+            .get_packet_id::<P>(self.protocol_version)
             .ok_or_else(|| {
                 CoreError::Auth(format!(
-                    "no packet ID for {} in {:?}/{:?}",
+                    "no packet ID for {} in {}/{:?}",
                     P::NAME,
-                    self.state,
+                    P::STATE,
                     self.protocol_version
                 ))
             })?;

@@ -101,11 +101,7 @@ async fn handle_conn(
     // 3. Optional CSetCompression, then CLoginSuccess.
     if let Some(threshold) = compression {
         let id = registry
-            .get_packet_id::<CSetCompression>(
-                ConnectionState::Login,
-                Direction::Clientbound,
-                version,
-            )
+            .get_packet_id::<CSetCompression>(version)
             .unwrap_or(0x03);
         let mut payload = Vec::new();
         CSetCompression {
@@ -125,7 +121,7 @@ async fn handle_conn(
         session_id: None,
     };
     let success_id = registry
-        .get_packet_id::<CLoginSuccess>(ConnectionState::Login, Direction::Clientbound, version)
+        .get_packet_id::<CLoginSuccess>(version)
         .unwrap_or(0x02);
     let mut payload = Vec::new();
     success

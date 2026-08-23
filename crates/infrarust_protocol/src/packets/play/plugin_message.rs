@@ -2,14 +2,12 @@ use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
 use crate::version::ConnectionState;
 
-/// Shared decode for plugin message packets.
 fn decode_plugin_message(r: &mut &[u8]) -> ProtocolResult<(String, Vec<u8>)> {
     let channel = r.read_string()?;
     let data = r.read_remaining()?;
     Ok((channel, data))
 }
 
-/// Shared encode for plugin message packets.
 fn encode_plugin_message(
     mut w: &mut (impl std::io::Write + ?Sized),
     channel: &str,
@@ -20,12 +18,47 @@ fn encode_plugin_message(
     Ok(())
 }
 
-// Plugin message packets carry custom channel data (e.g. `minecraft:brand`, `velocity:player_info`).
-// The `data` field contains all remaining bytes after the channel string.
 define_twin_packets! {
     clientbound: CPluginMessage,
     serverbound: SPluginMessage,
     state: ConnectionState::Play,
+    clientbound_ids: ids![
+        V1_7_2  => 0x3F,
+        V1_9    => 0x18,
+        V1_13   => 0x19,
+        V1_14   => 0x18,
+        V1_15   => 0x19,
+        V1_16   => 0x18,
+        V1_16_2 => 0x17,
+        V1_17   => 0x18,
+        V1_19   => 0x15,
+        V1_19_1 => 0x16,
+        V1_19_3 => 0x15,
+        V1_19_4 => 0x17,
+        V1_20_2 => 0x18,
+        V1_20_5 => 0x19,
+        V1_21_5 => 0x18,
+    ],
+    serverbound_ids: ids![
+        V1_7_2  => 0x17,
+        V1_9    => 0x09,
+        V1_12   => 0x0A,
+        V1_12_1 => 0x09,
+        V1_13   => 0x0A,
+        V1_14   => 0x0B,
+        V1_17   => 0x0A,
+        V1_19   => 0x0C,
+        V1_19_1 => 0x0D,
+        V1_19_3 => 0x0C,
+        V1_19_4 => 0x0D,
+        V1_20_2 => 0x0F,
+        V1_20_3 => 0x10,
+        V1_20_5 => 0x12,
+        V1_21_2 => 0x14,
+        V1_21_6 => 0x15,
+        V26_1   => 0x16,
+    ],
+    encode_only: true,
     fields: {
         pub channel: String,
         pub data: Vec<u8>,
@@ -43,14 +76,8 @@ define_twin_packets! {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::packets::Packet;
+    use crate::packets::round_trip;
     use crate::version::ProtocolVersion;
-
-    fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        P::decode(&mut buf.as_slice(), version).unwrap()
-    }
 
     #[test]
     fn test_plugin_message_round_trip() {
@@ -75,7 +102,6 @@ mod tests {
 
     #[test]
     fn test_plugin_message_remaining_bytes() {
-        // Verify that all bytes after the channel are captured as data
         let pkt = CPluginMessage {
             channel: "test:channel".to_string(),
             data: vec![0xFF; 256],

@@ -1,13 +1,3 @@
-//! Frame-codec microbenchmarks (Layer B).
-//!
-//! Isolates the transport codec that the proxy's filter chain sits between:
-//! VarInt framing, zlib (de)compression, AES-128-CFB8, and the full
-//! `PacketEncoder`/`PacketDecoder` paths. Each is swept across representative
-//! Minecraft payload sizes so we can attribute a packet's cost to framing vs
-//! zlib vs crypto vs filtering (the latter measured in `infrarust-core`).
-//!
-//! Run with: `cargo bench -p infrarust_protocol`
-
 use divan::counter::BytesCount;
 use divan::{Bencher, black_box};
 
@@ -19,14 +9,9 @@ fn main() {
     divan::main();
 }
 
-/// Payload sizes: keepalive/movement (32–128B), small play packets (512B–2K),
-/// up to chunk-batch territory (4K–16K). Default compression threshold is 256,
-/// so sizes < 256 stay uncompressed even with compression enabled.
 const SIZES: &[usize] = &[32, 128, 512, 2048, 4096, 16384];
 const THRESHOLD: i32 = 256;
 
-/// Deterministic, hard-to-compress payload (LCG) so zlib cost is realistic
-/// rather than the degenerate near-zero of an all-same-byte buffer.
 fn payload(size: usize) -> Vec<u8> {
     let mut state: u32 = 0x9E37_79B9 ^ (size as u32);
     (0..size)
@@ -37,7 +22,6 @@ fn payload(size: usize) -> Vec<u8> {
         .collect()
 }
 
-/// Produces the on-wire bytes of one frame, as the decoder will receive them.
 fn encoded_frame(id: i32, payload: &[u8], compression: Option<i32>) -> Vec<u8> {
     let mut enc = PacketEncoder::new();
     if let Some(t) = compression {
@@ -47,11 +31,6 @@ fn encoded_frame(id: i32, payload: &[u8], compression: Option<i32>) -> Vec<u8> {
     enc.take().to_vec()
 }
 
-// ---------------------------------------------------------------------------
-// VarInt — the smallest unit; every frame has at least a length + id VarInt.
-// ---------------------------------------------------------------------------
-
-/// Values chosen to exercise 1- through 5-byte VarInt encodings.
 const VARINT_VALUES: &[i32] = &[0, 127, 128, 16_383, 2_097_151, i32::MAX];
 
 #[divan::bench(args = VARINT_VALUES)]
@@ -73,10 +52,6 @@ fn varint_decode(bencher: Bencher, value: i32) {
     });
 }
 
-/// Same as `varint_decode` but with trailing bytes after the VarInt (the
-/// realistic framing case — the packet payload always follows the length/id
-/// VarInt). The slack matters for any decoder sensitive to the available buffer
-/// length, e.g. wide/SIMD loads that read past the VarInt's end.
 #[divan::bench(args = VARINT_VALUES)]
 fn varint_decode_padded(bencher: Bencher, value: i32) {
     let mut buf = Vec::new();
@@ -87,14 +62,6 @@ fn varint_decode_padded(bencher: Bencher, value: i32) {
         black_box(VarInt::decode(&mut cursor).unwrap())
     });
 }
-
-// zlib cost is attributed via the `encode_compressed` − `encode_uncompressed`
-// (and decode) deltas below; the `compression` module is crate-private, so it
-// is benched through the public encoder/decoder rather than directly.
-
-// ---------------------------------------------------------------------------
-// AES-128-CFB8 — only paid on online-mode (client_only/full) connections.
-// ---------------------------------------------------------------------------
 
 #[divan::bench(args = SIZES)]
 fn aes_encrypt(bencher: Bencher, size: usize) {
@@ -120,10 +87,6 @@ fn aes_decrypt(bencher: Bencher, size: usize) {
             black_box(buf)
         });
 }
-
-// ---------------------------------------------------------------------------
-// Full frame encode / decode — what the proxy actually calls per packet.
-// ---------------------------------------------------------------------------
 
 #[divan::bench(args = SIZES)]
 fn encode_uncompressed(bencher: Bencher, size: usize) {

@@ -1,30 +1,12 @@
-//! Zlib compression abstraction with compile-time backend selection.
-//!
-//! By default (the `libdeflater` feature, enabled by the `infrarust` binary), uses
-//! `libdeflate` (C) for ~2-3x better performance. Building with `--no-default-features`
-//! falls back to `flate2` (pure Rust via `miniz_oxide`), which needs no C toolchain.
-//!
-//! Note: the two backends use different level scales — zlib (flate2) is 0-9, libdeflate
-//! is 1-12. A given numeric level is therefore not equivalent across backends.
-
 use crate::error::{ProtocolError, ProtocolResult};
 
 pub const DEFAULT_PACKET_COMPRESSION_LEVEL: u32 = 4;
 
-/// Compresses data in zlib format.
 pub trait ZlibCompressor {
-    /// Compresses `input` into `output` (zlib format).
-    ///
-    /// `output` is cleared then filled with compressed data.
     fn compress(&mut self, input: &[u8], output: &mut Vec<u8>) -> ProtocolResult<()>;
 }
 
-/// Decompresses data in zlib format.
 pub trait ZlibDecompressor {
-    /// Decompresses `input` (zlib) into `output`.
-    ///
-    /// `expected_size` is the known decompressed size (from the protocol's
-    /// `data_len` `VarInt`). `output` is cleared then filled.
     fn decompress(
         &mut self,
         input: &[u8],
@@ -84,8 +66,6 @@ impl ZlibDecompressor for Flate2Decompressor {
         decoder
             .read_exact(output)
             .map_err(|_| ProtocolError::invalid("failed to decompress packet data"))?;
-        // Verify no extra data (align with libdeflater behavior). This read also
-        // forces stream finalization: a corrupt zlib trailer/checksum errors here.
         let mut extra = [0u8; 1];
         let extra_read = decoder
             .read(&mut extra)
@@ -166,7 +146,6 @@ impl ZlibDecompressor for LibdeflateDecompressor {
     }
 }
 
-/// Creates the default compressor based on enabled features.
 pub fn new_compressor(level: u32) -> Box<dyn ZlibCompressor + Send + Sync> {
     #[cfg(feature = "libdeflater")]
     {
@@ -178,7 +157,6 @@ pub fn new_compressor(level: u32) -> Box<dyn ZlibCompressor + Send + Sync> {
     }
 }
 
-/// Creates the default decompressor based on enabled features.
 pub fn new_decompressor() -> Box<dyn ZlibDecompressor + Send + Sync> {
     #[cfg(feature = "libdeflater")]
     {
@@ -219,7 +197,6 @@ mod tests {
         let mut compressor = new_compressor(4);
         let mut decompressor = new_decompressor();
 
-        // 64 KB of patterned data
         let original: Vec<u8> = (0..65536).map(|i: u32| (i % 251) as u8).collect();
         let mut compressed = Vec::new();
         compressor.compress(&original, &mut compressed).unwrap();
@@ -235,7 +212,6 @@ mod tests {
     #[test]
     fn test_decompress_corrupted_data() {
         let mut decompressor = new_decompressor();
-        // Valid zlib header followed by corrupted data
         let corrupted = vec![0x78, 0x9C, 0xFF, 0xFF, 0xFF];
         let mut output = Vec::new();
         let result = decompressor.decompress(&corrupted, &mut output, 100);
@@ -250,7 +226,7 @@ mod tests {
         compressor.compress(original, &mut compressed).unwrap();
 
         let last = compressed.len() - 1;
-        compressed[last] ^= 0xFF; // corrupt the adler32 trailer
+        compressed[last] ^= 0xFF;
 
         let mut decompressor = Flate2Decompressor::new();
         let mut output = Vec::new();
@@ -262,9 +238,7 @@ mod tests {
     fn test_decompress_empty_input() {
         let mut decompressor = new_decompressor();
         let mut output = Vec::new();
-        // Empty input with expected_size=0 should not panic
         let result = decompressor.decompress(&[], &mut output, 0);
-        // Either Ok (0 bytes) or Err — the important thing is no panic
         let _ = result;
     }
 

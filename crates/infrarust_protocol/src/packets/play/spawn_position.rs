@@ -1,40 +1,21 @@
-//! Set Default Spawn Position packet (Clientbound).
-//!
-//! Sets the compass target and world spawn location.
-
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Packs block coordinates into a 64-bit position value.
-///
-/// Format: X (26 bits) | Z (26 bits) | Y (12 bits)
 pub fn pack_block_position(x: i32, y: i32, z: i32) -> i64 {
     ((x as i64 & 0x3FF_FFFF) << 38) | ((z as i64 & 0x3FF_FFFF) << 12) | (y as i64 & 0xFFF)
 }
 
-/// Set Default Spawn Position packet (Clientbound).
-///
-/// The `location` field is a packed block position (X/Y/Z in 64 bits).
-///
-/// Format changes:
-/// - Pre-1.21.9: `location` (i64) + `angle` (f32)
-/// - 1.21.9+: `dimension_name` (String) + `location` (i64) + `yaw` (f32) + `pitch` (f32)
 #[derive(Debug, Clone)]
 pub struct CSetDefaultSpawnPosition {
-    /// Dimension name identifier (1.21.9+). Defaults to `minecraft:overworld`.
     pub dimension_name: String,
-    /// Packed block position (see [`pack_block_position`]).
     pub location: i64,
-    /// Yaw angle at spawn.
     pub yaw: f32,
-    /// Pitch angle at spawn (1.21.9+).
     pub pitch: f32,
 }
 
 impl CSetDefaultSpawnPosition {
-    /// Creates a spawn position at the given block coordinates in the overworld.
     pub fn at(x: i32, y: i32, z: i32, yaw: f32) -> Self {
         Self {
             dimension_name: "minecraft:overworld".to_string(),
@@ -44,7 +25,6 @@ impl CSetDefaultSpawnPosition {
         }
     }
 
-    /// Creates a spawn position at the given block coordinates in a specific dimension.
     pub fn at_in(dimension: &str, x: i32, y: i32, z: i32, yaw: f32) -> Self {
         Self {
             dimension_name: dimension.to_string(),
@@ -58,13 +38,30 @@ impl CSetDefaultSpawnPosition {
 impl Packet for CSetDefaultSpawnPosition {
     const NAME: &'static str = "CSetDefaultSpawnPosition";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x05,
+        V1_9    => 0x43,
+        V1_12   => 0x46,
+        V1_13   => 0x49,
+        V1_14   => 0x4D,
+        V1_15   => 0x4E,
+        V1_16   => 0x42,
+        V1_17   => 0x4B,
+        V1_18   => 0x4C,
+        V1_19   => 0x4A,
+        V1_19_1 => 0x4D,
+        V1_19_3 => 0x4C,
+        V1_19_4 => 0x50,
+        V1_20_2 => 0x52,
+        V1_20_3 => 0x54,
+        V1_20_5 => 0x56,
+        V1_21_2 => 0x5B,
+        V1_21_5 => 0x5A,
+        V1_21_9 => 0x5F,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let dimension_name = if version.no_less_than(ProtocolVersion::V1_21_9) {
@@ -112,7 +109,6 @@ mod tests {
     #[test]
     fn pack_origin() {
         let packed = pack_block_position(0, 64, 0);
-        // Y=64 → bits 0..11 = 64
         assert_eq!(packed & 0xFFF, 64);
     }
 

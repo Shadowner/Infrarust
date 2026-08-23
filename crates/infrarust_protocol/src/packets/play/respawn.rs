@@ -1,18 +1,10 @@
 use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Respawn packet (Clientbound).
-///
-/// Sent when a player changes dimension (Overworld -> Nether, server switch).
-/// The proxy uses this for server switching: sending a fake Respawn makes
-/// the client think it changed dimension.
-///
-/// Strategy: full parse for >= 1.20.2, opaque for older versions.
 #[derive(Debug, Clone)]
 pub struct CRespawn {
-    /// Dimension ID (`VarInt`) for 1.20.5+.
     pub dimension: i32,
     pub level_name: String,
     pub hashed_seed: i64,
@@ -20,13 +12,11 @@ pub struct CRespawn {
     pub previous_gamemode: i8,
     pub is_debug: bool,
     pub is_flat: bool,
-    /// Bitmask of data to keep across respawn (1.16+).
     pub data_to_keep: u8,
     pub death_dimension: Option<String>,
     pub death_position: Option<i64>,
     pub portal_cooldown: i32,
     pub sea_level: i32,
-    /// Opaque payload for pre-1.20.2 versions.
     pub raw_payload: Option<Vec<u8>>,
 }
 
@@ -54,13 +44,32 @@ impl Default for CRespawn {
 impl Packet for CRespawn {
     const NAME: &'static str = "CRespawn";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_7_2  => 0x07,
+        V1_9    => 0x33,
+        V1_12   => 0x34,
+        V1_12_1 => 0x35,
+        V1_13   => 0x38,
+        V1_14   => 0x3A,
+        V1_15   => 0x3B,
+        V1_16   => 0x3A,
+        V1_16_2 => 0x39,
+        V1_17   => 0x3D,
+        V1_19   => 0x3B,
+        V1_19_1 => 0x3E,
+        V1_19_3 => 0x3D,
+        V1_19_4 => 0x41,
+        V1_20_2 => 0x43,
+        V1_20_3 => 0x45,
+        V1_20_5 => 0x47,
+        V1_21_2 => 0x4C,
+        V1_21_5 => 0x4B,
+        V1_21_9 => 0x50,
+        V26_1   => 0x52,
+    ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         if version.less_than(ProtocolVersion::V1_20_2) {
@@ -87,9 +96,7 @@ impl Packet for CRespawn {
     }
 }
 
-/// Decodes Respawn for 1.20.2+ (follows Velocity's `RespawnPacket` pattern).
 fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<CRespawn> {
-    // Dimension: VarInt for 1.20.5+, String for 1.20.2–1.20.3
     let dimension = if version.no_less_than(ProtocolVersion::V1_20_5) {
         r.read_var_int()?.0
     } else {
@@ -107,7 +114,6 @@ fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<C
     let (death_dimension, death_position) = super::common::decode_death_location(r)?;
     let (portal_cooldown, sea_level) = super::common::decode_world_info(r, version)?;
 
-    // data_to_keep: read at the END for 1.20.2+
     let data_to_keep = r.read_u8()?;
 
     Ok(CRespawn {
@@ -127,7 +133,6 @@ fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<C
     })
 }
 
-/// Encodes Respawn for 1.20.2+.
 fn encode_1_20_2_up(
     pkt: &CRespawn,
     mut w: &mut (impl std::io::Write + ?Sized),
@@ -149,7 +154,6 @@ fn encode_1_20_2_up(
     super::common::encode_death_location(w, pkt.death_dimension.as_deref(), pkt.death_position)?;
     super::common::encode_world_info(w, pkt.portal_cooldown, pkt.sea_level, version)?;
 
-    // data_to_keep at END for 1.20.2+
     w.write_u8(pkt.data_to_keep)?;
 
     Ok(())

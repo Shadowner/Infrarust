@@ -1,33 +1,38 @@
-//! Set Center Chunk packet (Clientbound, 1.14+).
-//!
-//! Tells the client which chunk is at the center of the view. Required
-//! before sending chunk data so the client knows which chunks to render.
-
 use crate::codec::varint::VarInt;
 use crate::codec::{McBufReadExt, McBufWriteExt};
 use crate::error::ProtocolResult;
-use crate::packets::Packet;
+use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
-/// Set Center Chunk packet (Clientbound).
 #[derive(Debug, Clone)]
 pub struct CSetCenterChunk {
-    /// Chunk X coordinate.
     pub chunk_x: i32,
-    /// Chunk Z coordinate.
     pub chunk_z: i32,
 }
 
 impl Packet for CSetCenterChunk {
     const NAME: &'static str = "CSetCenterChunk";
 
-    fn state() -> ConnectionState {
-        ConnectionState::Play
-    }
-
-    fn direction() -> Direction {
-        Direction::Clientbound
-    }
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_14   => 0x40,
+        V1_15   => 0x41,
+        V1_16   => 0x40,
+        V1_17   => 0x49,
+        V1_18   => 0x4A,
+        V1_19   => 0x48,
+        V1_19_1 => 0x4B,
+        V1_19_3 => 0x4A,
+        V1_19_4 => 0x4E,
+        V1_20_2 => 0x50,
+        V1_20_3 => 0x52,
+        V1_20_5 => 0x54,
+        V1_21_2 => 0x58,
+        V1_21_5 => 0x57,
+        V1_21_9 => 0x5C,
+    ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
         let chunk_x = r.read_var_int()?.0;
