@@ -18,7 +18,17 @@ It is meant to be run by hand on a machine you own, not on hosted CI runners.
 ./run.sh                                   # whole matrix, mock backends (~5 min)
 ./run.sh --skip-build                      # reuse target/release/infrarust
 ./run.sh --version 1.20.1 --scenario offline-velocity   # one cell, for debugging
+
+./realclient.sh --skip-build               # tier C: the actual game, anchors
 ```
+
+Three tiers, in increasing order of what they prove and cost:
+
+| Tier | Client | Backend | Covers | Entry point |
+|---|---|---|---|---|
+| A | node-minecraft-protocol | mock | 30 versions × 11 scenarios, ~5 min | `run.sh` |
+| B | node-minecraft-protocol | real Paper | anchor versions | `run.sh --backends real` |
+| C | **the real Minecraft client** | real vanilla/Paper | every release 1.7.10 → latest | `realclient.sh` |
 
 Exit codes: `0` everything as expected, `1` a case failed, `2` a known finding
 stopped reproducing and the baseline needs updating.
@@ -157,6 +167,114 @@ Some hard-won details are baked into `tierb.sh` and `docker-compose.yml`:
   `connection-throttle` (4000 ms by default), so `--backends real` paces itself.
   Override with `--case-delay`.
 
+## Tier C: the real game client
+
+Tiers A and B both drive the login with a reimplementation of the protocol. That
+is the right tool for breadth, and it is not proof: it shows that *an*
+implementation gets through, not that Minecraft does. Tier C launches the actual
+game — Mojang's client jar, Mojang's authlib, Mojang's netty pipeline — once per
+release from 1.7.10 to the latest.
+
+```sh
+./realclient.sh --skip-build                                   # anchors, ~20 min
+./realclient.sh --set all                                      # all 75 releases
+./realclient.sh --versions 1.7.10 --scenario direct,passthrough  # one cell
+./realclient.sh --session-server http://127.0.0.1:25585        # enables client_only
+./realclient.sh --donor-mc ~/.local/share/multimc              # reuse a launcher's cache
+```
+
+Needs `Xvfb` and `unzip`. No container runtime, no root, no `/etc/hosts` entry.
+Everything else is downloaded into `.mccache/` on first use: client jars,
+libraries, natives, assets, server jars, and Mojang's own JREs — about 15 GB for
+the full sweep. `--donor-mc` hard-links assets and libraries out of an existing
+launcher instead of re-fetching them.
+
+### It is the real launcher path
+
+`src/real/mojang.js` resolves each version exactly as the official launcher
+does: apply the library `rules`, unpack the native classifiers, materialise the
+asset index by hash, and pick the JRE named in the version's own `javaVersion`
+block. The argument template comes from the version JSON rather than a table
+here, so a release that changes its arguments is followed rather than silently
+launched wrong.
+
+Version-specific JREs matter: `jre-legacy` (8) through 1.16.5, `java-runtime-alpha`
+(16) for 1.17.x, `beta`/`gamma` (17) through 1.20.4, `delta` (21) through
+1.21.11, `epsilon` (25) from 26.1. The bench uses a system JVM when the major
+version matches and fetches Mojang's own otherwise.
+
+### Auto-connect, and the one boundary that matters
+
+The client has to join without a human clicking anything, and the flag that does
+it changed:
+
+| Releases | Flag |
+|---|---|
+| 1.7.10 – 1.19.4 | `--server <host> --port <port>` |
+| 1.20 – latest | `--quickPlayMultiplayer <host>:<port>` |
+
+There is no overlap: `--server` was removed in the same release that added quick
+play. This is pinned to observed bytes rather than to documentation, because
+getting it wrong leaves every client sitting on the main menu and the whole tier
+reporting nothing:
+
+```sh
+unzip -p <client>.jar net/minecraft/client/main/Main.class | strings | grep -E '^(server|port|quickPlayMultiplayer)$'
+```
+
+### A proxy per scenario, not a domain per scenario
+
+Tier A separates scenarios by handshake domain, which works because its client
+can lie about the hostname. A real client resolves what it is told to connect
+to, so tier C gives each scenario its own Infrarust process on its own port,
+with a single server definition matching `domains = ["*"]`. The bench therefore
+needs no DNS, no hosts file and no internet.
+
+### The verdict
+
+Three signals, in order of what they prove:
+
+1. **The server logs `<player> joined the game`.** Written after the player
+   entity exists, so the play state is fully established, and unchanged from
+   1.7.10 to today — unlike the client's own output, whose log4j layout and
+   wording move around constantly. The vanilla client never prints a join line
+   in *any* version, so this has to come from the server.
+2. **The server says something and the client logs it.** Once the player is in,
+   the bench runs `say BENCH-<player>` on the server console and waits for that
+   token to appear in the client's own output. A join only proves the login got
+   through; this proves the real game decoded play-state data that travelled
+   through the proxy.
+3. **The proxy's `/api/v1/players`**, queried *while the player is still in the
+   world*. Every proxy mode registers a session; what separates the families is
+   `is_active` — `false` for passthrough/zero_copy/server_only, which cannot
+   inject packets, `true` for the intercepted modes. Asking after the client is
+   gone samples teardown instead, and the answer then depends on which forwarder
+   was used, which is how this bench first "discovered" a difference between
+   passthrough and zero_copy that does not exist.
+
+### Controls, so the matrix can go red
+
+| Scenario | What it proves |
+|---|---|
+| `direct` | the client can reach a server here at all, with no proxy involved |
+| `velocity-direct-refused` | the Paper backend really does enforce Velocity forwarding |
+| `offline-wrong-secret` | the same path with a deliberately wrong secret is refused |
+
+`direct` is load-bearing. When it fails for a release, that release cannot run
+the game on this machine and its proxied cells are reported ⚠️ *untrusted*
+rather than ❌ — blaming the proxy for a client that never started would be a
+lie. The two negative controls exist because a green Velocity row means nothing
+unless an unsigned or wrongly-signed payload is observed to be rejected.
+
+### client_only with a real client
+
+`client_only` is the mode where the proxy runs the encryption handshake and
+verifies the join against a session server. Testing it with the real game needs
+the game to authenticate somewhere we control, which is
+[authlib-injector](https://github.com/yushijinhun/authlib-injector) attached as
+a `-javaagent` and pointed at the same drasl instance the proxy checks against.
+Both halves are then genuine: real RSA, real AES, real `join`/`hasJoined`.
+
 ## Findings so far
 
 Running this bench found three things, all reproducible:
@@ -177,3 +295,30 @@ Running this bench found three things, all reproducible:
 
 The first two are proxy behaviour and are left alone here: this bench reports,
 it does not decide.
+
+Tier C then added four more, all from launching the actual game:
+
+4. **The real client gets in, on every mode.** 1.7.10 through the latest release
+   join a real server through `passthrough`, `zero_copy`, `server_only`,
+   `offline` and `client_only`, and receive a message the server sends
+   afterwards. The oldest version is also the fastest: 1.7.10 finishes its six
+   applicable scenarios in 21 seconds.
+
+5. **Paper accepts our Velocity payload, and rejects a wrong one.** With modern
+   forwarding on, Paper lets the proxied player in and refuses the same path
+   when the proxy signs with a different secret — *"Unable to verify player
+   details"* — and refuses a direct connection outright — *"This server requires
+   you to connect with Velocity."* Those two red cells are what make the green
+   ones mean something.
+
+6. **`--server` and `--quickPlayMultiplayer` do not overlap.** `--server`/`--port`
+   exists from 1.7.10 to 1.19.4 and is gone in 1.20, which is exactly where
+   quick play appears. Any bench that drives the real client has to switch
+   modes at that release or every client sits on the main menu.
+
+7. **The passthrough/zero_copy difference this bench first reported does not
+   exist.** All modes register a session; the harness was polling the admin API
+   after killing the client and sampling teardown, where `SpliceForwarder`
+   drains the peer direction and `CopyForwarder` aborts it. The fix was in the
+   bench, not the proxy — recorded here because the same mistake is easy to make
+   again.

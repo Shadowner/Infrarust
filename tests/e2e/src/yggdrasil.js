@@ -10,6 +10,14 @@ export class Yggdrasil {
     return `${this.baseUrl}/session/minecraft/hasJoined`;
   }
 
+  get apiRoot() {
+    return `${this.baseUrl}/authlib-injector`;
+  }
+
+  get injectorHasJoinedUrl() {
+    return `${this.apiRoot}/sessionserver/session/minecraft/hasJoined`;
+  }
+
   get sessionServer() {
     return this.baseUrl;
   }
