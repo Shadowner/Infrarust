@@ -7,6 +7,15 @@ function evidence(obs) {
   return obs.clientTail?.slice(-8);
 }
 
+function shape(detail) {
+  return (detail ?? 'unknown')
+    .replace(/E\d\ds\d\d/g, '<player>')
+    .replace(/ProtocolVersion\(\d+\)/g, 'ProtocolVersion(N)')
+    .replace(/\b\d{2,}\b/g, 'N')
+    .replace(/\[\d\d:\d\d:\d\d\]/g, '')
+    .trim();
+}
+
 export function renderReport(results, scenarios) {
   const counts = { pass: 0, fail: 0, skip: 0, untrusted: 0 };
   for (const row of results) for (const cell of row.cells) counts[cell.status] = (counts[cell.status] ?? 0) + 1;
@@ -34,16 +43,29 @@ export function renderReport(results, scenarios) {
   const failures = [];
   for (const row of results) {
     for (const cell of row.cells) {
-      if (cell.status === 'fail') failures.push({ version: row.version, ...cell });
+      if (cell.status === 'fail') failures.push({ version: row.version, protocol: row.protocol, ...cell });
     }
   }
 
   if (failures.length > 0) {
-    lines.push('', '## Failures', '');
+    const groups = new Map();
     for (const failure of failures) {
-      lines.push(`### ${failure.version} · ${failure.scenario}`, '', failure.detail, '');
-      const tail = evidence(failure.observations);
-      if (tail?.length) lines.push('```', ...tail, '```', '');
+      const cause = shape(failure.detail);
+      if (!groups.has(cause)) groups.set(cause, []);
+      groups.get(cause).push(failure);
+    }
+
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    lines.push('', '## Failures', '', `${plural(failures.length, 'failure')}, ${plural(groups.size, 'distinct cause')}.`, '');
+
+    for (const [cause, group] of [...groups].sort((a, b) => b[1].length - a[1].length)) {
+      lines.push(`### ${cause}`, '');
+      const affected = [...new Set(group.map((f) => `${f.version}${f.protocol != null ? ` (${f.protocol})` : ''}`))];
+      const scenarios = [...new Set(group.map((f) => f.scenario))];
+      lines.push(`Scenarios: ${scenarios.join(', ')}`, '');
+      lines.push(`Releases: ${affected.join(', ')}`, '');
+      const tail = evidence(group[0].observations);
+      if (tail?.length) lines.push(`First instance, ${group[0].version} · ${group[0].scenario}:`, '', '```', ...tail, '```', '');
     }
   }
 
