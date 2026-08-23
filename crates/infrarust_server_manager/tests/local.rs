@@ -23,9 +23,9 @@ fn make_mock_script(dir: &std::path::Path, name: &str, content: &str) -> std::pa
 
 fn make_config(script_path: &std::path::Path, working_dir: &std::path::Path) -> LocalManagerConfig {
     LocalManagerConfig {
-        command: script_path.to_str().unwrap().to_string(),
+        command: "bash".to_string(),
         working_dir: working_dir.to_path_buf(),
-        args: vec![],
+        args: vec![script_path.to_str().unwrap().to_string()],
         ready_pattern: r#"For help, type "help""#.to_string(),
         shutdown_timeout: std::time::Duration::from_secs(5),
         shutdown_after: None,
@@ -175,9 +175,25 @@ done
 }
 
 #[tokio::test]
-async fn test_start_process_dies_early() {
+async fn test_unexpected_exit_code_reports_crashed() {
     let dir = tempfile::tempdir().unwrap();
     let script = make_mock_script(dir.path(), "server.sh", "#!/bin/bash\nexit 1\n");
+    let config = make_config(&script, dir.path());
+    let provider = LocalProvider::new(config);
+
+    provider.start().await.unwrap();
+
+    // Wait for process to exit
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let status = provider.check_status().await.unwrap();
+    assert_eq!(status, ProviderStatus::Crashed);
+}
+
+#[tokio::test]
+async fn test_clean_self_exit_reports_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = make_mock_script(dir.path(), "server.sh", "#!/bin/bash\nexit 0\n");
     let config = make_config(&script, dir.path());
     let provider = LocalProvider::new(config);
 

@@ -96,7 +96,7 @@ impl Default for ProxyInfo {
     fn default() -> Self {
         Self {
             version: String::new(),
-            bind: std::net::SocketAddr::from(([0, 0, 0, 0], 25565)),
+            bind: SocketAddr::from(([0, 0, 0, 0], 25565)),
             max_connections: 0,
             connect_timeout: Duration::from_secs(5),
             receive_proxy_protocol: false,

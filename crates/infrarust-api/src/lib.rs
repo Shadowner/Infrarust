@@ -9,31 +9,31 @@
 //!
 //! ## Quick Start
 //!
-//! ```ignore
+//! ```no_run
 //! use infrarust_api::prelude::*;
 //!
 //! struct MyPlugin;
 //!
 //! impl Plugin for MyPlugin {
 //!     fn metadata(&self) -> PluginMetadata {
-//!         PluginMetadata {
-//!             id: "my_plugin".into(),
-//!             name: "My Plugin".into(),
-//!             version: "1.0.0".into(),
-//!             authors: vec!["You".into()],
-//!             description: Some("An example plugin".into()),
-//!             dependencies: vec![],
-//!         }
+//!         PluginMetadata::new("my_plugin", "My Plugin", "1.0.0")
+//!             .author("You")
+//!             .description("An example plugin")
 //!     }
 //!
-//!     async fn on_enable(&self, ctx: &dyn PluginContext) -> Result<(), PluginError> {
-//!         ctx.event_bus().subscribe::<PostLoginEvent>(
-//!             EventPriority::NORMAL,
-//!             |event| {
-//!                 tracing::info!("Player joined: {}", event.profile.username);
-//!             },
-//!         );
-//!         Ok(())
+//!     fn on_enable<'a>(
+//!         &'a self,
+//!         ctx: &'a dyn PluginContext,
+//!     ) -> BoxFuture<'a, Result<(), PluginError>> {
+//!         Box::pin(async move {
+//!             ctx.event_bus().subscribe::<PostLoginEvent, _>(
+//!                 EventPriority::NORMAL,
+//!                 |event| {
+//!                     tracing::info!("Player joined: {}", event.profile.username);
+//!                 },
+//!             );
+//!             Ok(())
+//!         })
 //!     }
 //! }
 //! ```
@@ -44,7 +44,7 @@
 //! |------|-----------|------------|
 //! | 1 | Event listeners, commands | [`Plugin`](plugin::Plugin), [`EventBus`](event::bus::EventBus) |
 //! | 2 | Limbo handlers (proxy handles protocol) | [`LimboHandler`](limbo::LimboHandler) |
-//! | 3 | Virtual backends (full packet control) | [`VirtualBackendHandler`](virtual_backend::VirtualBackendHandler) |
+//! | 3 | Virtual backends (full packet control) — *planned, not yet dispatched by the proxy* | [`VirtualBackendHandler`](virtual_backend::VirtualBackendHandler) |
 //!
 //! ## Modules
 //!
@@ -54,10 +54,14 @@
 //! - [`filter`] — Codec and transport filter system
 //! - [`plugin`] — Plugin trait and lifecycle
 //! - [`player`] — Player trait
+//! - [`permissions`] — Permission levels and plugin capabilities
 //! - [`services`] — Proxy service traits
 //! - [`limbo`] — Limbo handler system (Tier 2)
-//! - [`virtual_backend`] — Virtual backend system (Tier 3)
+//! - [`virtual_backend`] — Virtual backend system (Tier 3, planned)
 //! - [`command`] — Command system
+//! - [`loader`] — Plugin discovery and loading traits
+//! - [`message`] — Proxy-branded chat message helpers
+//! - [`provider`] — Plugin-provided server config sources
 //! - [`error`] — Error types
 //! - [`prelude`] — Convenience re-exports
 

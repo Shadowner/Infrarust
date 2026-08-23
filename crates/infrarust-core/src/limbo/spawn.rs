@@ -201,10 +201,7 @@ async fn send_limbo_respawn(
     let mut payload = Vec::new();
     respawn.encode(&mut payload, version)?;
 
-    let frame = PacketFrame {
-        id: packet_id,
-        payload: payload.into(),
-    };
+    let frame = PacketFrame::new(packet_id, payload.into());
     client.write_frame(&frame).await
 }
 
@@ -465,10 +462,7 @@ async fn send_clear_inventory(
         buf.extend(std::iter::repeat_n(0, 46)); // empty slots: present=false
     }
 
-    let frame = PacketFrame {
-        id: packet_id,
-        payload: Bytes::from(buf),
-    };
+    let frame = PacketFrame::new(packet_id, Bytes::from(buf));
     client.write_frame(&frame).await?;
     Ok(())
 }

@@ -4,6 +4,8 @@ pub mod forcechangepassword;
 pub mod forcelogin;
 pub mod forceunregister;
 pub mod premium;
+#[cfg(test)]
+mod tests;
 pub mod unregister;
 
 use std::sync::Arc;
@@ -12,6 +14,7 @@ use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::PlayerId;
 
+use crate::config::AuthConfig;
 use crate::handler::AuthHandler;
 
 pub fn register_commands(ctx: &dyn PluginContext, handler: Arc<AuthHandler>) {
@@ -81,8 +84,17 @@ pub fn register_commands(ctx: &dyn PluginContext, handler: Arc<AuthHandler>) {
     }
 }
 
-fn is_admin(player_id: PlayerId, player_registry: &dyn PlayerRegistry) -> bool {
+fn is_admin(
+    player_id: PlayerId,
+    player_registry: &dyn PlayerRegistry,
+    config: &AuthConfig,
+) -> bool {
     player_registry
         .get_player_by_id(player_id)
-        .is_some_and(|p| p.has_permission("infrarust.admin"))
+        .is_some_and(|p| {
+            p.has_permission("infrarust.admin")
+                || config
+                    .admin_set()
+                    .contains(&p.profile().username.to_lowercase())
+        })
 }

@@ -122,7 +122,7 @@ impl BanEntry {
         Self {
             target,
             reason,
-            expires_at: duration.map(|d| now + d),
+            expires_at: duration.and_then(|d| now.checked_add(d)),
             created_at: now,
             source,
         }
@@ -229,6 +229,18 @@ mod tests {
         assert!(!entry.is_permanent());
         assert!(!entry.is_expired());
         assert!(entry.remaining().is_some());
+    }
+
+    #[test]
+    fn ban_entry_overflowing_duration_is_permanent() {
+        let entry = BanEntry::new(
+            BanTarget::Username("griefer".into()),
+            None,
+            Some(Duration::MAX),
+            "admin".into(),
+        );
+        assert!(entry.is_permanent());
+        assert!(!entry.is_expired());
     }
 
     #[test]

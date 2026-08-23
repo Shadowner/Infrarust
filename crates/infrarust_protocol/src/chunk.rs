@@ -78,10 +78,7 @@ pub fn build_chunk_data_frame(
 ) -> Result<PacketFrame, crate::error::ProtocolError> {
     let id = chunk_data_packet_id(version);
     let payload = build_chunk_data_payload(chunk_x, chunk_z, num_sections, version);
-    Ok(PacketFrame {
-        id,
-        payload: Bytes::from(payload),
-    })
+    Ok(PacketFrame::new(id, Bytes::from(payload)))
 }
 
 /// Wire layout varies by version. 1.14+: heightmaps, sections, block entities.

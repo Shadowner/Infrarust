@@ -62,6 +62,11 @@ impl<P: Packet + 'static> PacketRegistration<P> {
     /// call to `map()`, or until the last supported version if this is the
     /// last mapping.
     ///
+    /// Mappings must be added in strictly ascending `from` order —
+    /// [`register`](Self::register) debug-asserts this, since an
+    /// out-of-order or duplicate `from` silently mis-assigns packet IDs
+    /// (last insert wins).
+    ///
     /// `encode_only`: if true, the proxy can encode this packet but won't
     /// decode it (no `DecoderFn` in `id_to_decoder`).
     #[allow(clippy::return_self_not_must_use)] // Builder pattern, chaining is the expected usage
@@ -109,6 +114,12 @@ impl<P: Packet + 'static> PacketRegistration<P> {
     ///   - Always: insert into `type_to_id` (`TypeId` → `packet_id`) for encoding
     ///   - If !`encode_only`: insert into `id_to_decoder` (`packet_id` → `DecoderFn`) for decoding
     pub fn register(self, registry: &mut PacketRegistry) {
+        debug_assert!(
+            self.mappings.windows(2).all(|w| w[0].from < w[1].from),
+            "{} mappings must be strictly ascending by `from`",
+            P::NAME
+        );
+
         let last_supported = match ProtocolVersion::SUPPORTED.last() {
             Some(v) => *v,
             None => return,
@@ -849,4 +860,29 @@ pub fn build_default_registry() -> PacketRegistry {
     .register(&mut registry);
 
     registry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_registry_mappings_are_strictly_ascending() {
+        // register() debug-asserts ascending `from` order for every packet.
+        let _ = build_default_registry();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "strictly ascending")]
+    fn out_of_order_mapping_panics_in_debug() {
+        let mut registry = PacketRegistry::new();
+        PacketRegistration::<crate::packets::SHandshake>::new(
+            ConnectionState::Handshake,
+            Direction::Serverbound,
+        )
+        .map(0x01, ProtocolVersion::V1_9, false)
+        .map(0x00, ProtocolVersion::V1_7_2, false)
+        .register(&mut registry);
+    }
 }

@@ -27,7 +27,7 @@ Filter packets. Plugins can register codec-level filters to inspect or modify Mi
 
 Schedule tasks. Plugins can run code on a fixed interval using the scheduler, for periodic cleanup, broadcasts, or polling.
 
-Provide dynamic configuration. Plugins can register a config provider that supplies server definitions from external sources (databases, APIs, service discovery) instead of static files.
+Provide dynamic configuration. Plugins can register a config provider that supplies server definitions from external sources (databases, APIs, service discovery) instead of static files. A provider can hand over either a built `ServerConfig` or a raw TOML document, which the proxy then parses and validates exactly as it would a file under `servers_dir`. The admin API uses the document form so that a server created over HTTP supports every key a file does.
 
 ## Built-in plugins
 
@@ -35,7 +35,7 @@ Infrarust includes three built-in plugins:
 
 | Plugin | Activation | Description |
 |--------|------------|-------------|
-| [Admin API & Web UI](./builtin/admin-api) | `[web]` section in `infrarust.toml` | REST API and embedded web dashboard for proxy administration and monitoring. |
+| [Admin API & Web UI](./builtin/admin-api) | `[web]` section in `infrarust.toml`, with `enable_api` on | REST API and embedded web dashboard for monitoring, server and proxy configuration, and backend drain controls. |
 | [Auth](./builtin/auth) | `plugin-auth` feature flag | Password-based authentication with `/login` and `/register` commands. Holds players in limbo until authenticated. |
 | [Server Wake](./builtin/server-wake) | `plugin-server-wake` feature flag | Holds players in limbo while a backend server starts up, showing status messages. |
 

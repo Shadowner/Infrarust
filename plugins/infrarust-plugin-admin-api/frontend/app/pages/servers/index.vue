@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import {
-  PlusIcon,
-  PlayIcon,
-  StopIcon,
+  LockClosedIcon,
   PencilSquareIcon,
+  PlayIcon,
+  PlusIcon,
+  StopIcon,
   TrashIcon,
-  ServerStackIcon,
-  CloudIcon,
 } from '@heroicons/vue/24/outline';
-import type { ServerDto, ApiEnvelope, MutationResult } from '~/types/api';
+import type { ApiEnvelope, MutationResult, ServerDto } from '~/types/api';
 import type { ServerStateChangePayload } from '~/types/events';
+import { resolveServerStatus } from '~/utils/serverStatus';
 
 const { request } = useApi();
 const { push } = useToast();
@@ -37,23 +37,28 @@ onEvent('server.state_change', (data) => {
   }
 });
 
-const configServers = computed(() => rows.value.filter((s) => !s.is_api_managed));
-const apiServers = computed(() => rows.value.filter((s) => s.is_api_managed));
 const allServerIds = computed(() => rows.value.map((s) => s.id));
-
-// Health checks with auto-refresh
 const { getHealth, loading: healthLoading } = useServerHealth(allServerIds);
 
-function serverStatus(server: ServerDto) {
-  const h = getHealth(server.id);
-  if (h) return h.online ? 'online' : 'offline';
-  return server.state ?? 'unknown';
-}
+const sources = computed(() => {
+  const seen = new Map<string, number>();
+  for (const server of rows.value) {
+    seen.set(server.source, (seen.get(server.source) ?? 0) + 1);
+  }
+  return [...seen.entries()].map(([source, count]) => ({ source, count }));
+});
+
+const sourceFilter = ref<string>('');
+const visibleServers = computed(() =>
+  sourceFilter.value ? rows.value.filter((s) => s.source === sourceFilter.value) : rows.value
+);
+
+const serverStatus = (server: ServerDto) => resolveServerStatus(server, getHealth(server.id));
 
 function stateAccent(server: ServerDto) {
   const status = serverStatus(server);
   if (status === 'online') return 'border-l-[3px] border-l-[#5daf50]';
-  if (status === 'offline' || status === 'crashed') return 'border-l-[3px] border-l-[#cc3e38]';
+  if (['offline', 'crashed', 'unreachable'].includes(status)) return 'border-l-[3px] border-l-[#cc3e38]';
   if (['starting', 'stopping'].includes(status)) return 'border-l-[3px] border-l-[#e9a047]';
   return 'border-l-[3px] border-l-slate-500';
 }
@@ -77,7 +82,7 @@ async function stopServer(id: string) {
 }
 
 async function deleteServer(id: string) {
-  const confirmed = await ask('Delete Server', `Permanently delete '${id}'?`);
+  const confirmed = await ask('Delete server', `Permanently delete '${id}'?`);
   if (!confirmed) return;
   try {
     await request<ApiEnvelope<MutationResult>>(`/servers/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -92,7 +97,6 @@ async function deleteServer(id: string) {
 
 <template>
   <div class="grid gap-6">
-    <!-- Header -->
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-3">
         <h2 class="text-xl font-bold tracking-tight">Servers</h2>
@@ -103,121 +107,104 @@ async function deleteServer(id: string) {
       </div>
       <NuxtLink to="/servers/create" class="btn btn-primary flex items-center gap-1.5">
         <PlusIcon class="h-4 w-4" />
-        <span class="hidden sm:inline">New Server</span>
+        <span class="hidden sm:inline">New server</span>
       </NuxtLink>
     </div>
 
-    <!-- API-managed servers -->
-    <section>
-      <div class="mb-3 flex items-center gap-2">
-        <CloudIcon class="h-4 w-4 text-[var(--ir-accent)]" />
-        <h3 class="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">API Managed</h3>
-        <span class="text-[10px] text-[var(--ir-text-muted)]">(editable)</span>
-      </div>
+    <div v-if="sources.length > 1" class="flex flex-wrap items-center gap-2">
+      <span class="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Source</span>
+      <button
+        class="rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors"
+        :class="sourceFilter === ''
+          ? 'border-[var(--ir-border-strong)] bg-[var(--ir-accent-soft)] text-[var(--ir-accent)]'
+          : 'border-[var(--ir-border)] text-[var(--ir-text-muted)] hover:text-white'"
+        @click="sourceFilter = ''"
+      >
+        All
+      </button>
+      <button
+        v-for="entry in sources"
+        :key="entry.source"
+        class="rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors"
+        :class="sourceFilter === entry.source
+          ? 'border-[var(--ir-border-strong)] bg-[var(--ir-accent-soft)] text-[var(--ir-accent)]'
+          : 'border-[var(--ir-border)] text-[var(--ir-text-muted)] hover:text-white'"
+        @click="sourceFilter = entry.source"
+      >
+        {{ entry.source }} ({{ entry.count }})
+      </button>
+    </div>
 
-      <div v-if="apiServers.length === 0" class="glass-pane p-6 text-center">
-        <p class="text-sm text-[var(--ir-text-muted)]">No API-managed servers yet.</p>
-        <NuxtLink to="/servers/create" class="mt-2 inline-flex items-center gap-1.5 text-sm text-[var(--ir-accent)] hover:underline">
-          <PlusIcon class="h-4 w-4" /> Create one
-        </NuxtLink>
-      </div>
+    <div v-if="visibleServers.length === 0" class="glass-pane p-6 text-center">
+      <p class="text-sm text-[var(--ir-text-muted)]">No servers to show.</p>
+      <NuxtLink to="/servers/create" class="mt-2 inline-flex items-center gap-1.5 text-sm text-[var(--ir-accent)] hover:underline">
+        <PlusIcon class="h-4 w-4" /> Create one
+      </NuxtLink>
+    </div>
 
-      <div v-else class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <NuxtLink
-          v-for="server in apiServers"
-          :key="server.id"
-          :to="`/servers/${server.id}`"
-          class="glass-pane glass-pane-interactive overflow-hidden p-4"
-          :class="stateAccent(server)"
-        >
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <h3 class="font-semibold">{{ server.id }}</h3>
-              <span class="rounded bg-[var(--ir-accent-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[var(--ir-accent)]">API</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span v-if="getHealth(server.id)?.latency_ms != null" class="font-mono text-[10px] text-[var(--ir-text-muted)]">
-                {{ getHealth(server.id)?.latency_ms }}ms
-              </span>
-              <StatusBadge :status="serverStatus(server)" />
-            </div>
+    <TransitionGroup v-else name="list" tag="div" class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <NuxtLink
+        v-for="server in visibleServers"
+        :key="server.id"
+        :to="`/servers/${server.id}`"
+        class="glass-pane glass-pane-interactive overflow-hidden p-4"
+        :class="stateAccent(server)"
+      >
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex min-w-0 items-center gap-2">
+            <h3 class="truncate font-semibold">{{ server.id }}</h3>
+            <span class="shrink-0 rounded bg-[var(--ir-surface-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[var(--ir-text-muted)]">
+              {{ server.source }}
+            </span>
+            <span
+              v-if="!server.editable"
+              class="inline-flex shrink-0 items-center gap-1 text-[10px] text-[var(--ir-text-muted)]"
+              title="Read-only: this server is owned by its config provider"
+            >
+              <LockClosedIcon class="h-3 w-3" />
+              read-only
+            </span>
           </div>
-          <div class="mt-2.5 space-y-1">
-            <p class="text-xs font-mono text-[var(--ir-text-muted)]">{{ server.addresses.join(', ') }}</p>
-            <div class="flex items-center gap-2">
-              <span class="text-[10px] text-[var(--ir-text-muted)]">{{ server.proxy_mode }}</span>
+          <div class="flex shrink-0 items-center gap-2">
+            <span v-if="getHealth(server.id)?.latency_ms != null" class="font-mono text-[10px] text-[var(--ir-text-muted)]">
+              {{ getHealth(server.id)?.latency_ms }}ms
+            </span>
+            <StatusBadge :status="serverStatus(server)" />
+          </div>
+        </div>
+
+        <div class="mt-2.5 space-y-1">
+          <p class="truncate text-xs font-mono text-[var(--ir-text-muted)]">{{ server.addresses.join(', ') }}</p>
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] text-[var(--ir-text-muted)]">{{ server.proxy_mode }}</span>
+            <span class="h-1 w-1 rounded-full bg-[var(--ir-border)]" />
+            <span class="text-[10px] text-[var(--ir-text-muted)]">{{ server.player_count }} players</span>
+            <template v-if="getHealth(server.id)?.version_name">
               <span class="h-1 w-1 rounded-full bg-[var(--ir-border)]" />
-              <span class="text-[10px] text-[var(--ir-text-muted)]">{{ server.player_count }} players</span>
-              <template v-if="getHealth(server.id)?.version_name">
-                <span class="h-1 w-1 rounded-full bg-[var(--ir-border)]" />
-                <span class="text-[10px] text-[var(--ir-text-muted)]">{{ getHealth(server.id)?.version_name }}</span>
-              </template>
-            </div>
+              <span class="text-[10px] text-[var(--ir-text-muted)]">{{ getHealth(server.id)?.version_name }}</span>
+            </template>
           </div>
-          <div class="mt-3 flex items-center gap-1.5" @click.prevent>
-            <button v-if="server.has_server_manager" class="btn btn-ghost flex items-center gap-1 text-xs" @click="startServer(server.id)">
-              <PlayIcon class="h-3.5 w-3.5" /> Start
-            </button>
-            <button v-if="server.has_server_manager" class="btn btn-ghost flex items-center gap-1 text-xs" @click="stopServer(server.id)">
-              <StopIcon class="h-3.5 w-3.5" /> Stop
-            </button>
-            <NuxtLink :to="`/servers/${server.id}/edit`" class="btn btn-ghost flex items-center gap-1 text-xs" @click.stop>
-              <PencilSquareIcon class="h-3.5 w-3.5" /> Edit
-            </NuxtLink>
-            <button class="btn btn-ghost flex items-center gap-1 text-xs text-[var(--ir-danger)] ml-auto" @click="deleteServer(server.id)">
-              <TrashIcon class="h-3.5 w-3.5" /> Delete
-            </button>
-          </div>
-        </NuxtLink>
-      </div>
-    </section>
+        </div>
 
-    <!-- Config-managed servers -->
-    <section v-if="configServers.length > 0">
-      <div class="mb-3 flex items-center gap-2">
-        <ServerStackIcon class="h-4 w-4 text-[var(--ir-text-muted)]" />
-        <h3 class="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Config Providers</h3>
-        <span class="text-[10px] text-[var(--ir-text-muted)]">(file, docker)</span>
-      </div>
-      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <NuxtLink
-          v-for="server in configServers"
-          :key="server.id"
-          :to="`/servers/${server.id}`"
-          class="glass-pane glass-pane-interactive overflow-hidden p-4"
-          :class="stateAccent(server)"
-        >
-          <div class="flex items-center justify-between">
-            <h3 class="font-semibold">{{ server.id }}</h3>
-            <div class="flex items-center gap-2">
-              <span v-if="getHealth(server.id)?.latency_ms != null" class="font-mono text-[10px] text-[var(--ir-text-muted)]">
-                {{ getHealth(server.id)?.latency_ms }}ms
-              </span>
-              <StatusBadge :status="serverStatus(server)" />
-            </div>
-          </div>
-          <div class="mt-2.5 space-y-1">
-            <p class="text-xs font-mono text-[var(--ir-text-muted)]">{{ server.addresses.join(', ') }}</p>
-            <div class="flex items-center gap-2">
-              <span class="text-[10px] text-[var(--ir-text-muted)]">{{ server.proxy_mode }}</span>
-              <span class="h-1 w-1 rounded-full bg-[var(--ir-border)]" />
-              <span class="text-[10px] text-[var(--ir-text-muted)]">{{ server.player_count }} players</span>
-              <template v-if="getHealth(server.id)?.version_name">
-                <span class="h-1 w-1 rounded-full bg-[var(--ir-border)]" />
-                <span class="text-[10px] text-[var(--ir-text-muted)]">{{ getHealth(server.id)?.version_name }}</span>
-              </template>
-            </div>
-          </div>
-          <div v-if="server.has_server_manager" class="mt-3 flex gap-1.5" @click.prevent>
-            <button class="btn btn-ghost flex items-center gap-1 text-xs" @click="startServer(server.id)">
-              <PlayIcon class="h-3.5 w-3.5" /> Start
-            </button>
-            <button class="btn btn-ghost flex items-center gap-1 text-xs" @click="stopServer(server.id)">
-              <StopIcon class="h-3.5 w-3.5" /> Stop
-            </button>
-          </div>
-        </NuxtLink>
-      </div>
-    </section>
+        <div class="mt-3 flex items-center gap-1.5" @click.prevent>
+          <button v-if="server.has_server_manager" class="btn btn-ghost flex items-center gap-1 text-xs" @click="startServer(server.id)">
+            <PlayIcon class="h-3.5 w-3.5" /> Start
+          </button>
+          <button v-if="server.has_server_manager" class="btn btn-ghost flex items-center gap-1 text-xs" @click="stopServer(server.id)">
+            <StopIcon class="h-3.5 w-3.5" /> Stop
+          </button>
+          <NuxtLink v-if="server.editable" :to="`/servers/${server.id}/edit`" class="btn btn-ghost flex items-center gap-1 text-xs" @click.stop>
+            <PencilSquareIcon class="h-3.5 w-3.5" /> Edit
+          </NuxtLink>
+          <button
+            v-if="server.editable"
+            class="btn btn-ghost ml-auto flex items-center gap-1 text-xs text-[var(--ir-danger)]"
+            @click="deleteServer(server.id)"
+          >
+            <TrashIcon class="h-3.5 w-3.5" /> Delete
+          </button>
+        </div>
+      </NuxtLink>
+    </TransitionGroup>
   </div>
 </template>

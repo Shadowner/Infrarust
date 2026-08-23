@@ -5,10 +5,11 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod handler;
-pub mod ip_mask;
 pub mod password;
 pub mod premium;
 pub mod storage;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod util;
 
 use std::collections::HashSet;
@@ -24,7 +25,7 @@ use infrarust_api::types::PlayerId;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::load_or_create_config;
+use crate::config::{StorageConfig, load_or_create_config};
 use crate::handler::AuthHandler;
 use crate::storage::AuthStorage;
 use crate::storage::json::JsonFileStorage;
@@ -170,7 +171,17 @@ impl Plugin for AuthPlugin {
 
             let save_cancel = CancellationToken::new();
             let save_storage = Arc::clone(&storage);
-            let save_interval = config.storage.auto_save_interval_seconds;
+            // tokio::time::interval panics on a zero duration.
+            let save_interval = match config.storage.auto_save_interval_seconds {
+                0 => {
+                    let fallback = StorageConfig::default().auto_save_interval_seconds;
+                    tracing::warn!(
+                        "storage.auto_save_interval_seconds = 0 is invalid — using {fallback}s"
+                    );
+                    fallback
+                }
+                secs => secs,
+            };
             let save_token = save_cancel.clone();
             tokio::spawn(async move {
                 let mut interval =

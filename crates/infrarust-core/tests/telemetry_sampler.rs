@@ -2,8 +2,8 @@
 //! Tests for `InfrarustSampler` (feature-gated).
 #![cfg(feature = "telemetry")]
 
-use opentelemetry::trace::{SamplingDecision, SpanKind, TraceId};
-use opentelemetry_sdk::trace::{Sampler, ShouldSample};
+use opentelemetry::trace::{SpanKind, TraceId};
+use opentelemetry_sdk::trace::{Sampler, SamplingDecision, ShouldSample};
 
 use infrarust_core::telemetry::InfrarustSampler;
 

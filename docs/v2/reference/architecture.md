@@ -76,7 +76,7 @@ The forwarding family (`passthrough`, the default, plus `zero_copy` and `server_
 The intercepted family (`client_only` and `offline`) parses packets, which is what makes server switching and limbo possible. `offline` and `client_only` each have their own configured `InterceptedHandler`. `client_only` runs Mojang authentication on the proxy side and expects the backend in offline mode; `offline` is a transparent relay with no authentication.
 
 ::: info
-Multiple backend `addresses` on a server are tried in order as sequential failover, not as a load balancer. Per-backend load balancing (round-robin, least-connection) is planned and lives on a separate branch, so treat it as not yet available on main.
+Multiple backend `addresses` on a server are ordered by that server's balancing strategy, and failing addresses are ejected until they answer again. See [Load balancing](../configuration/load-balancing).
 :::
 
 ## Services and registries

@@ -50,11 +50,28 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
             get(handlers::servers::list).post(handlers::servers::create),
         )
         .route(
+            "/api/v1/servers/validate",
+            post(handlers::servers::validate),
+        )
+        .route(
             "/api/v1/servers/{id}",
             get(handlers::servers::get)
                 .put(handlers::servers::update)
                 .delete(handlers::servers::delete),
         )
+        .route(
+            "/api/v1/servers/{id}/raw",
+            get(handlers::servers::get_raw).put(handlers::servers::update_raw),
+        )
+        .route(
+            "/api/v1/servers/{id}/config",
+            get(handlers::servers::get_config),
+        )
+        .route(
+            "/api/v1/servers/{id}/backends",
+            get(handlers::backends::list),
+        )
+        .route("/api/v1/health/backends", get(handlers::backends::list_all))
         .route("/api/v1/plugins", get(handlers::plugins::list))
         .route("/api/v1/plugins/{id}", get(handlers::plugins::get))
         .route("/api/v1/stats", get(handlers::stats::overview))
@@ -62,6 +79,15 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
         .route(
             "/api/v1/config/providers",
             get(handlers::config::list_providers),
+        )
+        .route("/api/v1/config/proxy", get(handlers::config::get_proxy))
+        .route(
+            "/api/v1/config/proxy/raw",
+            get(handlers::config::get_proxy_raw).put(handlers::config::update_proxy_raw),
+        )
+        .route(
+            "/api/v1/config/proxy/validate",
+            post(handlers::config::validate_proxy),
         )
         // ── Log history (REST, not SSE) ──
         .route("/api/v1/logs/history", get(sse::handlers::log_history))
@@ -96,6 +122,18 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
             "/api/v1/servers/{id}/health/cached",
             get(handlers::servers::health_cached),
         )
+        .route(
+            "/api/v1/servers/{id}/backends/{address}/drain",
+            post(handlers::backends::drain),
+        )
+        .route(
+            "/api/v1/servers/{id}/backends/{address}/enable",
+            post(handlers::backends::enable),
+        )
+        .route(
+            "/api/v1/servers/{id}/backends/{address}/reset",
+            post(handlers::backends::reset),
+        )
         .route("/api/v1/config/reload", post(handlers::config::reload))
         .route(
             "/api/v1/plugins/{id}/disable",
@@ -107,13 +145,14 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
         )
         .route("/api/v1/proxy/shutdown", post(handlers::proxy::shutdown))
         .route("/api/v1/proxy/gc", post(handlers::proxy::gc))
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            rate_limit::rate_limit_middleware,
-        ))
+        // Rate limiting must wrap auth so failed-auth requests are throttled too.
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
+        ))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::rate_limit_middleware,
         ))
         .route_layer(timeout_layer);
 
@@ -121,7 +160,11 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
     // (auth verified via ?token= query param inside each handler)
     let sse_routes = Router::new()
         .route("/api/v1/events", get(sse::handlers::event_stream))
-        .route("/api/v1/logs", get(sse::handlers::log_stream));
+        .route("/api/v1/logs", get(sse::handlers::log_stream))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::rate_limit_middleware,
+        ));
 
     let router = Router::new()
         .merge(public_routes)
@@ -138,10 +181,11 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
         ServiceBuilder::new()
             .layer(
                 TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                    // Path only: the query string carries the SSE ?token= API key.
                     tracing::info_span!(
                         "http_request",
                         method = %request.method(),
-                        uri = %request.uri(),
+                        path = %request.uri().path(),
                     )
                 }),
             )

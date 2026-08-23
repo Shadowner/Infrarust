@@ -18,11 +18,16 @@ use divan::{Bencher, black_box};
 
 use infrarust_api::types::RawPacket;
 use infrarust_core::filter::codec_chain::CodecFilterChain;
+use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
+use infrarust_protocol::packets::play::chat_session::SChatSessionUpdate;
+use infrarust_protocol::packets::play::tab_complete::STabCompleteRequest;
+use infrarust_protocol::registry::build_default_registry;
+use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_protocol::{PacketDecoder, PacketEncoder};
 
 #[path = "shared/filters.rs"]
 mod filters;
-use filters::{SIZES, pass_chain, payload_vec, realistic_chain, scan_chain};
+use filters::{PROTOCOL, SIZES, pass_chain, payload_vec, realistic_chain, scan_chain};
 
 fn main() {
     divan::main();
@@ -90,4 +95,72 @@ fn scan_compressed(bencher: Bencher, size: usize) {
 #[divan::bench(args = SIZES)]
 fn realistic_uncompressed(bencher: Bencher, size: usize) {
     run(bencher, size, None, realistic_chain());
+}
+
+fn run_forward(bencher: Bencher, size: usize, compression: Option<i32>) {
+    let bytes = frame_bytes(size, compression);
+    let mut decoder = PacketDecoder::new();
+    let mut encoder = PacketEncoder::new();
+    if let Some(t) = compression {
+        decoder.set_compression(t);
+        encoder.set_compression(t);
+    }
+    bencher.counter(BytesCount::new(size)).bench_local(|| {
+        decoder.queue_bytes(&bytes);
+        let frame = decoder.try_next_frame().unwrap().unwrap();
+        encoder.append_frame(&frame).unwrap();
+        black_box(encoder.take())
+    });
+}
+
+#[divan::bench(args = SIZES)]
+fn forward_uncompressed(bencher: Bencher, size: usize) {
+    run_forward(bencher, size, None);
+}
+
+#[divan::bench(args = SIZES)]
+fn forward_compressed(bencher: Bencher, size: usize) {
+    run_forward(bencher, size, Some(THRESHOLD));
+}
+
+fn hot_ids(registry: &infrarust_protocol::PacketRegistry) -> [Option<i32>; 4] {
+    let version = ProtocolVersion(PROTOCOL);
+    [
+        registry.get_packet_id::<SChatSessionUpdate>(
+            ConnectionState::Play,
+            Direction::Serverbound,
+            version,
+        ),
+        registry.get_packet_id::<STabCompleteRequest>(
+            ConnectionState::Play,
+            Direction::Serverbound,
+            version,
+        ),
+        registry.get_packet_id::<SChatCommand>(
+            ConnectionState::Play,
+            Direction::Serverbound,
+            version,
+        ),
+        registry.get_packet_id::<SChatMessage>(
+            ConnectionState::Play,
+            Direction::Serverbound,
+            version,
+        ),
+    ]
+}
+
+#[divan::bench]
+fn registry_hot_lookups(bencher: Bencher) {
+    let registry = build_default_registry();
+    bencher.bench_local(|| black_box(hot_ids(black_box(&registry))));
+}
+
+#[divan::bench]
+fn registry_hot_lookups_cached(bencher: Bencher) {
+    let registry = build_default_registry();
+    let ids = hot_ids(&registry);
+    bencher.bench_local(|| {
+        let id = Some(black_box(0x10_i32));
+        black_box(black_box(&ids).contains(&id))
+    });
 }

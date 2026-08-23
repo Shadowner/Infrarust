@@ -239,8 +239,13 @@ pub(crate) fn read_string_bounded_from_reader(
     if byte_len > max_bytes {
         return Err(ProtocolError::too_large(max_bytes, byte_len));
     }
-    let mut buf = vec![0u8; byte_len];
-    reader.read_exact(&mut buf)?;
+    let mut buf = Vec::with_capacity(cautious_capacity(byte_len));
+    let read = reader.take(byte_len as u64).read_to_end(&mut buf)?;
+    if read < byte_len {
+        return Err(ProtocolError::Incomplete {
+            context: "String data",
+        });
+    }
     let s =
         String::from_utf8(buf).map_err(|_| ProtocolError::invalid("invalid UTF-8 in string"))?;
     if s.chars().count() > max_chars {
@@ -560,6 +565,29 @@ mod tests {
         let result = reader.read_byte_array(1024);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn test_read_string_hostile_length_prefix_errors() {
+        use crate::codec::McBufReadExt;
+
+        let mut buf = Vec::new();
+        VarInt(100_000).encode(&mut buf).unwrap();
+        let mut reader = buf.as_slice();
+        let err = reader.read_string().unwrap_err();
+        assert!(matches!(err, ProtocolError::Incomplete { .. }));
+    }
+
+    #[test]
+    fn test_read_string_truncated_data_errors() {
+        use crate::codec::McBufReadExt;
+
+        let mut buf = Vec::new();
+        VarInt(100).encode(&mut buf).unwrap();
+        buf.extend_from_slice(b"abc"); // only 3 of 100 claimed bytes
+        let mut reader = buf.as_slice();
+        let err = reader.read_string().unwrap_err();
+        assert!(matches!(err, ProtocolError::Incomplete { .. }));
     }
 
     #[test]

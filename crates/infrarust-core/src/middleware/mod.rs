@@ -1,3 +1,4 @@
+pub mod backend_selection;
 pub mod ban_check;
 pub mod ban_ip_check;
 pub mod domain_router;

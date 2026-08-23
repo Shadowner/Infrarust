@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use infrarust_api::services::load_balancer::BackendStatus;
+use serde::Serialize;
 
 use super::player::PlayerSummary;
 
@@ -10,8 +11,10 @@ pub struct ServerResponse {
     pub proxy_mode: String,
     pub state: Option<String>,
     pub player_count: usize,
-    /// `true` if created via the Admin API (editable/deletable).
-    pub is_api_managed: bool,
+    /// Provider type that supplied the config, e.g. `file` or `plugin:admin_api:api`.
+    pub source: String,
+    /// `true` if this plugin owns the config file and can rewrite it.
+    pub editable: bool,
     /// `true` if the server has a server manager (supports start/stop).
     pub has_server_manager: bool,
 }
@@ -26,8 +29,42 @@ pub struct ServerDetailResponse {
     pub state: Option<String>,
     pub player_count: usize,
     pub players: Vec<PlayerSummary>,
-    pub is_api_managed: bool,
+    pub source: String,
+    pub editable: bool,
     pub has_server_manager: bool,
+}
+
+#[derive(Serialize)]
+pub struct BackendStatusResponse {
+    pub address: String,
+    pub weight: u32,
+    pub effective_weight: u32,
+    pub state: &'static str,
+    pub active_connections: usize,
+    pub healthy_since_secs: Option<u64>,
+    pub ejections: u32,
+    pub last_failure_secs_ago: Option<u64>,
+}
+
+impl BackendStatusResponse {
+    pub fn from_status(status: &BackendStatus) -> Self {
+        Self {
+            address: crate::util::format_address(&status.address),
+            weight: status.weight,
+            effective_weight: status.effective_weight,
+            state: status.state.as_str(),
+            active_connections: status.active_connections,
+            healthy_since_secs: status.healthy_since_secs,
+            ejections: status.ejections,
+            last_failure_secs_ago: status.last_failure_secs_ago,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct ServerBackendsResponse {
+    pub strategy: String,
+    pub backends: Vec<BackendStatusResponse>,
 }
 
 #[derive(Serialize)]
@@ -36,28 +73,11 @@ pub struct ProviderResponse {
     pub configs_count: usize,
 }
 
-#[derive(Deserialize)]
-pub struct CreateServerRequest {
-    pub id: String,
-    pub domains: Vec<String>,
-    /// Addresses in `"host:port"` format.
-    pub addresses: Vec<String>,
-    #[serde(default = "default_proxy_mode")]
-    pub proxy_mode: String,
-    #[serde(default)]
-    pub limbo_handlers: Vec<String>,
-}
-
-fn default_proxy_mode() -> String {
-    "passthrough".to_string()
-}
-
-#[derive(Deserialize)]
-pub struct UpdateServerRequest {
-    pub domains: Option<Vec<String>>,
-    pub addresses: Option<Vec<String>>,
-    pub proxy_mode: Option<String>,
-    pub limbo_handlers: Option<Vec<String>>,
+#[derive(Serialize)]
+pub struct ValidationResponse {
+    pub valid: bool,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]

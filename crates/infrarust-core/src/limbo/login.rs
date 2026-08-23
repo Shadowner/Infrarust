@@ -79,10 +79,8 @@ pub(crate) async fn complete_config_for_limbo(
     CFinishConfig
         .encode(&mut finish_payload, version)
         .map_err(|e| CoreError::Other(e.to_string()))?;
-    let finish_frame = infrarust_protocol::io::PacketFrame {
-        id: finish_id,
-        payload: bytes::Bytes::from(finish_payload),
-    };
+    let finish_frame =
+        infrarust_protocol::io::PacketFrame::new(finish_id, bytes::Bytes::from(finish_payload));
     client.write_frame(&finish_frame).await?;
 
     // 4. Wait for SAcknowledgeFinishConfig, absorbing any other client packets

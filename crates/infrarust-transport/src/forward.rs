@@ -1,7 +1,7 @@
 //! Bidirectional TCP forwarding.
 //!
 //! Provides two forwarding strategies:
-//! - `CopyForwarder`: portable userspace copy via `tokio::io::copy_bidirectional`
+//! - `CopyForwarder`: portable userspace copy via two spawned `tokio::io::copy` tasks
 //! - `SpliceForwarder`: Linux-only zero-copy via `splice(2)` syscall
 
 use std::future::Future;
@@ -50,7 +50,7 @@ pub trait Forwarder: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = ForwardResult> + Send + '_>>;
 }
 
-/// Portable userspace copy forwarder using `tokio::io::copy_bidirectional`.
+/// Portable userspace copy forwarder spawning one `tokio::io::copy` task per direction.
 #[derive(Debug, Default)]
 pub struct CopyForwarder;
 
@@ -199,6 +199,7 @@ mod splice_impl {
     struct KernelPipe {
         read_fd: OwnedFd,
         write_fd: OwnedFd,
+        size: usize,
     }
 
     impl KernelPipe {
@@ -218,7 +219,11 @@ mod splice_impl {
             // Pipe size is always a reasonable value (e.g. 64 KiB), safe to truncate to i32.
             let _ = nix::fcntl::fcntl(&write_fd, nix::fcntl::FcntlArg::F_SETPIPE_SZ(size as i32));
 
-            Ok(Self { read_fd, write_fd })
+            Ok(Self {
+                read_fd,
+                write_fd,
+                size,
+            })
         }
     }
 
@@ -266,7 +271,7 @@ mod splice_impl {
                             None,
                             &pipe.write_fd,
                             None,
-                            65536,
+                            pipe.size,
                             flags,
                         ).map_err(nix_to_io_error)
                     }) {
@@ -284,7 +289,7 @@ mod splice_impl {
                 tokio::select! {
                     biased;
                     () = shutdown.cancelled() => {
-                        return Ok(total);
+                        return Ok(total + pumped as u64);
                     }
                     result = dst.ready(Interest::WRITABLE) => {
                         let _ = result?;
@@ -312,9 +317,7 @@ mod splice_impl {
             }
 
             // pumped is a byte count from splice, always fits in u64.
-            {
-                total += pumped as u64;
-            }
+            total += pumped as u64;
         }
 
         // Propagate EOF to the other end by half-closing the destination's write side.

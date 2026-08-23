@@ -86,10 +86,9 @@ fn verify_password_sync(password: &str, hash_str: &str) -> Result<bool, AuthErro
     } else if is_bcrypt_hash(hash_str) {
         bcrypt::verify(password, hash_str).map_err(|e| AuthError::Hashing(e.to_string()))
     } else {
-        let prefix_len = hash_str.len().min(8);
+        let prefix: String = hash_str.chars().take(8).collect();
         Err(AuthError::Hashing(format!(
-            "unsupported hash format: {}",
-            &hash_str[..prefix_len]
+            "unsupported hash format: {prefix}"
         )))
     }
 }
@@ -185,5 +184,13 @@ mod tests {
         let hash = AuthPasswordHash::new("$sha256$notsupported");
         let result = verify_password("test", &hash).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_unsupported_hash_with_multibyte_char_at_prefix_boundary() {
+        // 'é' straddles byte 8 — a byte slice here would panic.
+        let hash = AuthPasswordHash::new("1234567é89");
+        let err = verify_password("test", &hash).await.unwrap_err();
+        assert!(err.to_string().contains("unsupported hash format"));
     }
 }

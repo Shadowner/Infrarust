@@ -64,6 +64,7 @@ pub trait LimboSession: Send + Sync + private::Sealed {
     ///
     /// The handle can be stored in shared state (`DashMap`, `Arc<..>`),
     /// captured in `tokio::spawn` closures, or passed to event-listener
+    /// closures that outlive this callback.
     fn handle(&self) -> SessionHandle;
 
     /// Returns the session's cancellation token, cancelled when this limbo

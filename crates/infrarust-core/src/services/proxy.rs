@@ -14,6 +14,7 @@ use crate::filter::transport_chain::TransportFilterChain;
 use crate::forwarding::{ForwardingHandler, ForwardingMode, build_forwarding_handler};
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::limbo::registry_cache::RegistryCodecCache;
+use crate::loadbalancer::BackendHealthView;
 use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::provider::ProviderEvent;
@@ -36,6 +37,11 @@ pub struct ProxyServices {
     pub command_manager: Arc<CommandManagerImpl>,
     /// Connection registry for tracking active player sessions.
     pub connection_registry: Arc<ConnectionRegistry>,
+    /// Per-address session counts, handed to every `PlayerSession`.
+    pub backend_load: Arc<crate::loadbalancer::BackendLoad>,
+    /// Counts as backend selection sees them: attached sessions plus logins
+    /// still negotiating. Used for selection outside the login pipeline.
+    pub pending_backends: Arc<crate::loadbalancer::PendingRegistry>,
     /// Packet registry for decoding/encoding packets by version.
     pub packet_registry: Arc<PacketRegistry>,
     /// Server manager for starting/stopping managed servers.
@@ -44,8 +50,15 @@ pub struct ProxyServices {
     pub ban_manager: Arc<BanManager>,
     /// Proxy configuration.
     pub config: Arc<ProxyConfig>,
+    /// Path of the `infrarust.toml` the proxy was started from.
+    pub config_path: std::path::PathBuf,
     /// Domain router for resolving server configs by domain.
     pub domain_router: Arc<DomainRouter>,
+    /// Per-address backend health, consumed for backend selection outside
+    /// the login pipeline (server switches, limbo exits).
+    pub backend_health: Arc<dyn BackendHealthView>,
+    /// Backend visibility and drain control, handed to plugins.
+    pub load_balancer_service: Arc<crate::services::load_balancer_service::LoadBalancerServiceImpl>,
     /// Codec filter registry for building per-connection filter chains.
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     /// Transport filter chain applied to accepted connections.

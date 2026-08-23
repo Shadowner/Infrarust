@@ -17,6 +17,7 @@ const KNOWN_EVENTS = [
   'player.leave',
   'player.switch',
   'server.state_change',
+  'backend.health_change',
   'config.reload',
   'ban.created',
   'ban.removed',

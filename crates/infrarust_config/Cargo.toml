@@ -2,9 +2,17 @@
 name = "infrarust_config"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
 description = "Configuration management for Infrarust, a Minecraft proxy server written in Rust."
+readme = "README.md"
+keywords = ["minecraft", "proxy", "configuration"]
+categories = ["game-development", "config"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true
@@ -15,6 +23,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
+toml_edit = { workspace = true }
 ipnet = { workspace = true }
 humantime = { workspace = true }
 humantime-serde = { workspace = true }

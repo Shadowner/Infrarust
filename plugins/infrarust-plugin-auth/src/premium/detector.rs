@@ -88,9 +88,15 @@ impl PremiumDetector {
                             event.deny(Component::error(&detector.config.messages.rate_limited));
                         }
                     },
-                    Err(e) => {
-                        tracing::warn!(%username, error = %e, "Mojang API error — fail-open");
-                    }
+                    Err(e) => match detector.config.lookup_error_action {
+                        RateLimitAction::AllowOffline => {
+                            tracing::warn!(%username, error = %e, "Mojang API error — fail-open");
+                        }
+                        RateLimitAction::Deny => {
+                            tracing::warn!(%username, error = %e, "Mojang API error — denying");
+                            event.deny(Component::error(&detector.config.messages.lookup_failed));
+                        }
+                    },
                 }
             })
         }

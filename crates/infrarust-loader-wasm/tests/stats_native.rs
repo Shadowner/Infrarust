@@ -28,7 +28,8 @@ use tokio_util::sync::CancellationToken;
 
 mod mock_services;
 use mock_services::{
-    MockBanService, MockConfigService, MockPlayerRegistry, RecordingPlayerRegistry,
+    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
+    RecordingPlayerRegistry,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -42,6 +43,7 @@ async fn native_count_command_matches_wasm() {
         command_manager: Arc::clone(&command_manager) as Arc<dyn CommandManager>,
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        load_balancer_service: Arc::new(MockLoadBalancerService),
         plugin_registry: Arc::new(PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(CodecFilterRegistryImpl::new()),
         transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),

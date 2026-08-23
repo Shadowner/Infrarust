@@ -6,8 +6,8 @@
 
 // Core types
 pub use crate::types::{
-    ClickEvent, Component, GameProfile, HoverEvent, Permission, PlayerId, ProfileProperty,
-    ProtocolVersion, RawPacket, ServerAddress, ServerId, ServerInfo, TitleData,
+    ClickEvent, Component, GameProfile, HoverEvent, PlayerId, ProfileProperty, ProtocolVersion,
+    RawPacket, ServerAddress, ServerId, TitleData,
 };
 
 // Error types
@@ -31,12 +31,18 @@ pub use crate::player::Player;
 
 // Services
 pub use crate::services::{
-    BanEntry, BanService, BanTarget, ConfigService, PlayerRegistry, ProxyMode, Scheduler,
+    BackendState, BackendStatus, BanEntry, BanService, BanTarget, ConfigService, ConfigWriteError,
+    LbError, LoadBalancerService, PlayerRegistry, PluginRegistry, ProxyInfo, ProxyMode, Scheduler,
     ServerConfig, ServerManager, ServerState, TaskHandle,
 };
 
+// Permissions and capabilities
+pub use crate::permissions::{Capability, CapabilitySet, PermissionChecker, PermissionLevel};
+
 // Limbo
-pub use crate::limbo::{HandlerResult, LimboEntryContext, LimboHandler, LimboSession};
+pub use crate::limbo::{
+    HandlerResult, LimboEntryContext, LimboHandler, LimboSession, SessionEndReason, SessionHandle,
+};
 
 // Virtual backend
 pub use crate::virtual_backend::{VirtualBackendHandler, VirtualBackendSession};
@@ -54,7 +60,9 @@ pub use crate::filter::{
     FrameOutput, TransportContext, TransportFilter, TransportFilterRegistry,
 };
 
-pub use crate::provider::{PluginConfigProvider, PluginProviderEvent, PluginProviderSender};
+pub use crate::provider::{
+    PluginConfigProvider, PluginProviderEvent, PluginProviderSender, ServerDocument,
+};
 
 // Standard library
 pub use std::sync::Arc;

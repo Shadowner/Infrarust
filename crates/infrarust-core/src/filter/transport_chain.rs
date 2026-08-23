@@ -7,6 +7,11 @@ use infrarust_api::filter::{FilterVerdict, TransportContext, TransportFilter};
 /// A chain of [`TransportFilter`]s applied to each connection.
 ///
 /// Filters are shared (`Arc`) and the chain is cloned per-connection.
+///
+/// Only `on_accept`/`on_close` are wired into the accept path. The
+/// `TransportFilter` data hooks (`on_client_data`/`on_server_data`) are
+/// never invoked — they would require wrapping the TCP stream, which is
+/// not implemented.
 #[derive(Clone)]
 pub struct TransportFilterChain {
     filters: Arc<Vec<Arc<dyn TransportFilter>>>,
@@ -40,10 +45,6 @@ impl TransportFilterChain {
         }
         FilterVerdict::Continue
     }
-
-    // TODO: on_client_data/on_server_data wrapping
-    // These require wrapping the TCP stream to intercept raw bytes.
-    // Will be implemented when a real use case demands it.
 
     /// Notifies all filters of connection close.
     pub fn on_close(&self, ctx: &TransportContext) {

@@ -184,10 +184,10 @@ impl EventBusImpl {
             for entry in handlers.iter() {
                 match &entry.kind {
                     HandlerKind::Sync(handler) => {
-                        handler(event as &mut dyn std::any::Any);
+                        handler(event as &mut dyn Any);
                     }
                     HandlerKind::Async(handler) => {
-                        handler(event as &mut dyn std::any::Any).await;
+                        handler(event as &mut dyn Any).await;
                     }
                 }
             }
@@ -304,28 +304,100 @@ impl EventBus for EventBusImpl {
                 .handlers
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            for vec_arc in map.values_mut() {
-                let vec = Arc::make_mut(vec_arc);
-                if let Some(pos) = vec.iter().position(|h| h.handle == handle) {
-                    vec.remove(pos);
-                    return;
-                }
+            if remove_handler(&mut map, handle) {
+                return;
             }
         }
         // Search packet handlers
-        {
-            let mut map = self
-                .packet_handlers
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            for vec_arc in map.values_mut() {
-                let vec = Arc::make_mut(vec_arc);
-                if let Some(pos) = vec.iter().position(|h| h.handle == handle) {
-                    vec.remove(pos);
-                    self.packet_listener_count.fetch_sub(1, Ordering::Relaxed);
-                    return;
-                }
-            }
+        let mut map = self
+            .packet_handlers
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if remove_handler(&mut map, handle) {
+            self.packet_listener_count.fetch_sub(1, Ordering::Relaxed);
         }
+    }
+}
+fn remove_handler<K: Copy + Eq + std::hash::Hash>(
+    map: &mut HashMap<K, Arc<Vec<HandlerEntry>>>,
+    handle: ListenerHandle,
+) -> bool {
+    let Some((key, pos)) = map
+        .iter()
+        .find_map(|(k, v)| v.iter().position(|h| h.handle == handle).map(|p| (*k, p)))
+    else {
+        return false;
+    };
+
+    if map.get(&key).is_some_and(|v| v.len() == 1) {
+        map.remove(&key);
+    } else if let Some(vec_arc) = map.get_mut(&key) {
+        Arc::make_mut(vec_arc).remove(pos);
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    struct TestEvent;
+    impl Event for TestEvent {}
+
+    fn noop_handler() -> ErasedHandler {
+        Box::new(|_| {})
+    }
+
+    fn packet_filter() -> PacketFilter {
+        PacketFilter {
+            packet_id: 0x01,
+            state: ConnectionState::Play,
+            direction: PacketDirection::Serverbound,
+        }
+    }
+
+    #[test]
+    fn unsubscribe_prunes_empty_lifecycle_entry() {
+        let bus = EventBusImpl::new();
+        let keep = bus.subscribe_erased(
+            TypeId::of::<TestEvent>(),
+            EventPriority::NORMAL,
+            noop_handler(),
+        );
+        let removed = bus.subscribe_erased(
+            TypeId::of::<TestEvent>(),
+            EventPriority::NORMAL,
+            noop_handler(),
+        );
+
+        bus.unsubscribe(removed);
+        assert_eq!(bus.handlers.read().unwrap().len(), 1);
+
+        bus.unsubscribe(keep);
+        assert!(bus.handlers.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn unsubscribe_prunes_empty_packet_entry() {
+        let bus = EventBusImpl::new();
+        let handle = bus.subscribe_packet(packet_filter(), EventPriority::NORMAL, noop_handler());
+
+        bus.unsubscribe(handle);
+        assert!(bus.packet_handlers.read().unwrap().is_empty());
+        assert_eq!(bus.packet_listener_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn unsubscribe_unknown_handle_is_noop() {
+        let bus = EventBusImpl::new();
+        bus.subscribe_erased(
+            TypeId::of::<TestEvent>(),
+            EventPriority::NORMAL,
+            noop_handler(),
+        );
+
+        bus.unsubscribe(ListenerHandle::new(9999));
+        assert_eq!(bus.handlers.read().unwrap().len(), 1);
     }
 }

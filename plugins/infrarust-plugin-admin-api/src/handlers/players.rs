@@ -17,6 +17,17 @@ use crate::response::{
 use crate::state::ApiState;
 use crate::util::proxy_mode_str;
 
+const MAX_TEXT_LEN: usize = 256;
+
+fn validate_text(text: &str) -> Result<(), ApiError> {
+    if text.len() > MAX_TEXT_LEN {
+        return Err(ApiError::BadRequest(format!(
+            "text too long (max {MAX_TEXT_LEN} characters)"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PlayerListQuery {
     #[serde(default = "default_page")]
@@ -171,6 +182,8 @@ pub async fn message(
     Path(username): Path<String>,
     Json(body): Json<MessageRequest>,
 ) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
+    validate_text(&body.text)?;
+
     let player = find_player(&state, &username)
         .ok_or_else(|| ApiError::NotFound(format!("Player '{username}' not found")))?;
 
@@ -193,6 +206,8 @@ pub async fn broadcast(
     State(state): State<Arc<ApiState>>,
     Json(body): Json<BroadcastRequest>,
 ) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
+    validate_text(&body.text)?;
+
     let players = state.player_registry.get_all_players();
     let mut sent = 0usize;
     let mut failed = 0usize;

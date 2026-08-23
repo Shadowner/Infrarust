@@ -5,8 +5,8 @@
 //! - Other root spans → always sampled (safe default)
 
 use opentelemetry::KeyValue;
-use opentelemetry::trace::{Link, SamplingDecision, SamplingResult, SpanKind, TraceId};
-use opentelemetry_sdk::trace::{Sampler, ShouldSample};
+use opentelemetry::trace::{Link, SpanKind, TraceId};
+use opentelemetry_sdk::trace::{Sampler, SamplingDecision, SamplingResult, ShouldSample};
 
 /// Custom sampler that always traces login connections and
 /// ratio-samples status pings.

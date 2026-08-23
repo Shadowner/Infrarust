@@ -27,7 +27,7 @@ target/wasm32-wasip2/release/{{crate_name}}.wasm
 ## Install
 
 Copy the `.wasm` into your Infrarust `plugins/` directory and (re)start the proxy.
-Infrarust discovers any component implementing the `infrarust:plugin@0.1.0` world.
+Infrarust discovers any component implementing the `infrarust:plugin@0.2.3` world.
 
 ## Develop
 

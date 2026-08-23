@@ -48,6 +48,7 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `Command` | `command` | Register commands | Yes |
 | `Scheduler` | `scheduler` | Schedule tasks | Yes |
 | `ConfigRead` | `config-read` | Read the proxy configuration | Yes |
+| `ConfigWrite` | `config-write` | Rewrite the global `infrarust.toml` (no host binding yet, see below) | No |
 | `RawPacket` | `raw-packet` | Emit raw packets and gate `player.send-packet` | No |
 | `ServerManage` | `server-manage` | Start/stop servers and read their state | No |
 | `Ban` | `ban` | Use the ban service | No |
@@ -58,6 +59,10 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `PermissionProvider` | `permission-provider` | Provide a custom permission checker | No |
 | `FilesystemExtended` | `filesystem-extended` | Filesystem access beyond the per-plugin data directory (deferred) | No |
 | `Network` | `network` | Outbound network access (deferred) | No |
+
+::: warning config-write has no WASM binding
+`config-write` parses and can be granted, but the WIT contract exposes no write function, so a WASM plugin holding it still cannot rewrite `infrarust.toml`. The capability gates the native path: `ConfigService::write_proxy_config_document` is served by a read-only wrapper unless the plugin holds it.
+:::
 
 ::: warning transport-filter is host-only
 `transport-filter` is a valid capability string, but `from_config_strings` puts it in the rejected list rather than granting it. A WASM plugin cannot register transport filters. The capability exists for native plugins, which receive it through `native_trusted`.

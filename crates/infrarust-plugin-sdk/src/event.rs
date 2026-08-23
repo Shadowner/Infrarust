@@ -4,6 +4,12 @@
 //! kinds are the generated records; the six modifiable kinds are wrappers that
 //! carry an optional result a handler sets via `deny`/`redirect_to`/etc. An
 //! unset result yields [`EventOutcome::None`] so the host keeps native behavior.
+//!
+//! Carried by the WIT contract but not yet exposed here (planned):
+//! the `raw-packet` kind has no typed [`GuestEvent`] wrapper, and
+//! [`PermissionsSetupEvent`] is observe-only — a custom permission checker
+//! cannot be registered from WASM yet (the generated glue answers
+//! `Player`/`false` for the permission dispatch).
 
 use crate::bindings::event_bus::EventKind;
 use crate::bindings::guest::{self, Event, EventOutcome};

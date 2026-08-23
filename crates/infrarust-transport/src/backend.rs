@@ -4,6 +4,7 @@
 //! with failover, timeout, and optional proxy protocol v2.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use socket2::Socket;
@@ -17,13 +18,45 @@ use crate::error::TransportError;
 use crate::proxy_protocol::encode_proxy_protocol_v2;
 use crate::socket::configure_stream_socket;
 
+pub struct ConnectAttempt<'a> {
+    pub server_id: &'a str,
+    pub address: &'a ServerAddress,
+    pub elapsed: Duration,
+    pub error: Option<&'a TransportError>,
+}
+
+impl ConnectAttempt<'_> {
+    pub const fn succeeded(&self) -> bool {
+        self.error.is_none()
+    }
+}
+
+pub trait ConnectAttemptObserver: Send + Sync {
+    fn on_attempt(&self, attempt: &ConnectAttempt<'_>);
+}
+
 /// Connects to backend servers with failover and timeout.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BackendConnector {
     /// Default connection timeout.
     pub default_timeout: Duration,
     /// TCP keepalive configuration for backend connections.
     pub keepalive: KeepaliveConfig,
+    /// Addresses tried before giving up. `0` means no limit.
+    max_attempts: usize,
+    /// Notified of every connection attempt outcome (per address).
+    observer: Option<Arc<dyn ConnectAttemptObserver>>,
+}
+
+impl std::fmt::Debug for BackendConnector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BackendConnector")
+            .field("default_timeout", &self.default_timeout)
+            .field("keepalive", &self.keepalive)
+            .field("max_attempts", &self.max_attempts)
+            .field("has_observer", &self.observer.is_some())
+            .finish()
+    }
 }
 
 impl BackendConnector {
@@ -31,7 +64,21 @@ impl BackendConnector {
         Self {
             default_timeout,
             keepalive,
+            max_attempts: 0,
+            observer: None,
         }
+    }
+
+    #[must_use]
+    pub const fn with_max_attempts(mut self, max_attempts: usize) -> Self {
+        self.max_attempts = max_attempts;
+        self
+    }
+
+    #[must_use]
+    pub fn with_observer(mut self, observer: Arc<dyn ConnectAttemptObserver>) -> Self {
+        self.observer = Some(observer);
+        self
     }
 
     /// Connects to one of the given backend addresses.
@@ -58,12 +105,31 @@ impl BackendConnector {
         let timeout = timeout_override.unwrap_or(self.default_timeout);
         let mut last_error = None;
 
-        for address in addresses {
-            match self
+        let attempts = if self.max_attempts == 0 {
+            addresses.len()
+        } else {
+            self.max_attempts.min(addresses.len())
+        };
+
+        for address in &addresses[..attempts] {
+            let started = Instant::now();
+            let outcome = self
                 .try_connect(address, timeout, send_proxy_protocol, client_info)
-                .await
-            {
-                Ok(conn) => return Ok(conn),
+                .await;
+            let elapsed = started.elapsed();
+
+            match outcome {
+                Ok(conn) => {
+                    if let Some(ref observer) = self.observer {
+                        observer.on_attempt(&ConnectAttempt {
+                            server_id,
+                            address,
+                            elapsed,
+                            error: None,
+                        });
+                    }
+                    return Ok(conn);
+                }
                 Err(e) => {
                     tracing::warn!(
                         server_id = server_id,
@@ -71,6 +137,14 @@ impl BackendConnector {
                         error = %e,
                         "backend connection attempt failed"
                     );
+                    if let Some(ref observer) = self.observer {
+                        observer.on_attempt(&ConnectAttempt {
+                            server_id,
+                            address,
+                            elapsed,
+                            error: Some(&e),
+                        });
+                    }
                     last_error = Some(e);
                 }
             }
@@ -94,17 +168,13 @@ impl BackendConnector {
 
         let mut stream = tokio::time::timeout(timeout, TcpStream::connect(&connect_addr))
             .await
-            .map_err(|_| {
-                let addr: SocketAddr = connect_addr
-                    .parse()
-                    .unwrap_or_else(|_| SocketAddr::new([0, 0, 0, 0].into(), address.port));
-                TransportError::ConnectTimeout { addr, timeout }
+            .map_err(|_| TransportError::ConnectTimeout {
+                addr: connect_addr.clone(),
+                timeout,
             })?
-            .map_err(|source| {
-                let addr: SocketAddr = connect_addr
-                    .parse()
-                    .unwrap_or_else(|_| SocketAddr::new([0, 0, 0, 0].into(), address.port));
-                TransportError::BackendConnect { addr, source }
+            .map_err(|source| TransportError::BackendConnect {
+                addr: connect_addr,
+                source,
             })?;
 
         let remote_addr = stream.peer_addr().map_err(TransportError::SocketConfig)?;
@@ -126,6 +196,7 @@ impl BackendConnector {
         Ok(BackendConnection {
             stream,
             remote_addr,
+            server_address: address.clone(),
             connected_at: Instant::now(),
         })
     }
@@ -136,6 +207,7 @@ impl BackendConnector {
 pub struct BackendConnection {
     stream: TcpStream,
     remote_addr: SocketAddr,
+    server_address: ServerAddress,
     connected_at: Instant,
 }
 
@@ -158,6 +230,10 @@ impl BackendConnection {
     /// Returns the remote backend address.
     pub const fn remote_addr(&self) -> SocketAddr {
         self.remote_addr
+    }
+
+    pub const fn server_address(&self) -> &ServerAddress {
+        &self.server_address
     }
 
     /// Returns the time when the connection was established.

@@ -17,7 +17,9 @@ use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::NoopServerManager;
 
 mod mock_services;
-use mock_services::{MockBanService, MockConfigService, MockPlayerRegistry};
+use mock_services::{
+    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
+};
 
 struct MockPluginContext {
     plugin_id: String,
@@ -76,8 +78,8 @@ impl PluginContext for MockPluginContext {
     fn plugin_id(&self) -> &str {
         &self.plugin_id
     }
-    fn data_dir(&self) -> std::path::PathBuf {
-        std::path::PathBuf::from("plugins").join(&self.plugin_id)
+    fn data_dir(&self) -> PathBuf {
+        PathBuf::from("plugins").join(&self.plugin_id)
     }
     fn plugin_registry(&self) -> &dyn infrarust_api::services::plugin_registry::PluginRegistry {
         unimplemented!("mock")
@@ -93,6 +95,16 @@ impl PluginContext for MockPluginContext {
         unimplemented!("mock")
     }
     fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
+        unimplemented!("mock")
+    }
+    fn load_balancer_service(
+        &self,
+    ) -> &dyn infrarust_api::services::load_balancer::LoadBalancerService {
+        unimplemented!("mock")
+    }
+    fn load_balancer_service_handle(
+        &self,
+    ) -> Arc<dyn infrarust_api::services::load_balancer::LoadBalancerService> {
         unimplemented!("mock")
     }
     fn config_service_handle(
@@ -142,6 +154,7 @@ fn make_services() -> PluginServices {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        load_balancer_service: Arc::new(MockLoadBalancerService),
         plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
@@ -270,6 +283,38 @@ async fn test_enable_all_calls_on_enable() {
     assert!(errors.is_empty());
     assert!(s1.on_enable_called.load(Ordering::SeqCst));
     assert!(s2.on_enable_called.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn test_config_disabled_plugin_is_skipped() {
+    let loader = StaticPluginLoader::new();
+    let counter = Arc::new(AtomicUsize::new(0));
+
+    let s_on = register_mock(
+        &loader,
+        PluginMetadata::new("on", "on", "1.0"),
+        false,
+        counter.clone(),
+    );
+    let s_off = register_mock(
+        &loader,
+        PluginMetadata::new("off", "off", "1.0"),
+        false,
+        counter,
+    );
+
+    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    manager.set_disabled_plugins(std::collections::HashSet::from(["off".to_string()]));
+    manager.discover_all(Path::new("plugins")).await.unwrap();
+    let errors = manager.load_and_enable_all(&MockPluginContextFactory).await;
+
+    assert!(errors.is_empty());
+    assert!(s_on.on_enable_called.load(Ordering::SeqCst));
+    assert!(!s_off.on_enable_called.load(Ordering::SeqCst));
+    assert!(matches!(
+        manager.plugin_state("off"),
+        Some(PluginState::Disabled)
+    ));
 }
 
 #[tokio::test]
@@ -423,6 +468,7 @@ async fn test_cleanup_on_disable() {
         command_manager: Arc::new(CommandManagerImpl::new()),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(MockConfigService),
+        load_balancer_service: Arc::new(MockLoadBalancerService),
         plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),

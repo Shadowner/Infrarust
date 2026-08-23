@@ -43,7 +43,9 @@ mod bench {
     use infrarust_core::services::server_manager_bridge::NoopServerManager;
     use infrarust_loader_wasm::{WasmPluginLoader, build_engine};
 
-    use super::mock_services::{MockBanService, MockConfigService, MockPlayerRegistry};
+    use super::mock_services::{
+        MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
+    };
 
     const ITERS: u64 = 200_000;
     const WARMUP: u64 = 20_000;
@@ -115,6 +117,7 @@ mod bench {
             command_manager: Arc::new(CommandManagerImpl::new()),
             scheduler: Arc::new(SchedulerImpl::new()),
             config_service: Arc::new(MockConfigService),
+            load_balancer_service: Arc::new(MockLoadBalancerService),
             plugin_registry: Arc::new(PluginRegistryImpl::new()),
             codec_filter_registry: Arc::clone(&registry),
             transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),

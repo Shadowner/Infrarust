@@ -4,7 +4,6 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AuthError;
-use crate::ip_mask::IpMaskingMode;
 use crate::premium::config::PremiumConfig;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -14,10 +13,13 @@ pub struct AuthConfig {
     pub hashing: HashingConfig,
     pub password_policy: PasswordPolicyConfig,
     pub security: SecurityConfig,
-    pub privacy: PrivacyConfig,
     pub admin: AdminConfig,
     pub messages: AuthMessages,
     pub premium: PremiumConfig,
+    /// Removed setting (`[privacy] log_ip_masking`) — retained only to warn
+    /// operators whose config still sets it.
+    #[serde(default, skip_serializing)]
+    privacy: Option<toml::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,23 +98,11 @@ impl Default for SecurityConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct PrivacyConfig {
-    pub log_ip_masking: IpMaskingMode,
-}
-
-impl Default for PrivacyConfig {
-    fn default() -> Self {
-        Self {
-            log_ip_masking: IpMaskingMode::LastTwoOctets,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AdminConfig {
+    /// Usernames granted admin commands in addition to players holding the
+    /// `infrarust.admin` permission.
     pub admin_usernames: Vec<String>,
 }
 
@@ -239,7 +229,14 @@ pub async fn load_or_create_config(path: &Path) -> Result<AuthConfig, AuthError>
         let content = tokio::fs::read_to_string(path)
             .await
             .map_err(AuthError::Io)?;
-        toml::from_str(&content).map_err(|e| AuthError::Config(e.to_string()))
+        let config: AuthConfig =
+            toml::from_str(&content).map_err(|e| AuthError::Config(e.to_string()))?;
+        if config.privacy.is_some() {
+            tracing::warn!(
+                "[privacy] log_ip_masking has been removed — the auth plugin never logs player IPs"
+            );
+        }
+        Ok(config)
     } else {
         let config = AuthConfig::default();
         let content =
@@ -269,6 +266,18 @@ mod tests {
         let config = AuthConfig::default();
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let _: AuthConfig = toml::from_str(&toml_str).unwrap();
+    }
+
+    #[test]
+    fn removed_privacy_section_is_detected_not_rejected() {
+        let parsed: AuthConfig =
+            toml::from_str("[privacy]\nlog_ip_masking = \"last_two_octets\"").unwrap();
+        assert!(parsed.privacy.is_some());
+
+        let parsed: AuthConfig = toml::from_str("").unwrap();
+        assert!(parsed.privacy.is_none());
+        // Generated configs must not re-introduce the removed section.
+        assert!(!toml::to_string_pretty(&parsed).unwrap().contains("privacy"));
     }
 
     #[test]

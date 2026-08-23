@@ -121,7 +121,7 @@ fn main() -> ExitCode {
 
     let formatter = InfrarustFormatter::new();
 
-    let log_layer = if config.web.is_some() {
+    let log_layer = if config.web.as_ref().is_some_and(|w| w.enable_api) {
         use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
         let lb = LogBroadcast::new(512, 1000);
         let layer = BroadcastLogLayer::new(lb.tx.clone(), lb.history.clone(), 1000);
@@ -212,7 +212,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match runtime.block_on(run(config)) {
+    match runtime.block_on(run(config, cli.config)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!("{e:#}");
@@ -275,7 +275,7 @@ fn build_proxy_info(config: &ProxyConfig) -> infrarust_api::services::proxy_info
         telemetry_enabled: config.telemetry.as_ref().is_some_and(|t| t.enabled),
         docker_enabled: config.docker.is_some(),
         web_api_enabled: config.web.as_ref().is_some_and(|w| w.enable_api),
-        web_ui_enabled: config.web.as_ref().is_some_and(|w| w.enable_webui),
+        web_ui_enabled: config.web.as_ref().is_some_and(|w| w.webui_enabled()),
         unknown_domain_behavior: match config.unknown_domain_behavior {
             infrarust_config::UnknownDomainBehavior::DefaultMotd => {
                 UnknownDomainBehavior::DefaultMotd
@@ -285,7 +285,7 @@ fn build_proxy_info(config: &ProxyConfig) -> infrarust_api::services::proxy_info
     }
 }
 
-async fn run(config: ProxyConfig) -> anyhow::Result<()> {
+async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
 
     // Signal handler in background
@@ -306,7 +306,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let wasm_engine = infrarust_loader_wasm::build_engine(&config)?;
 
     // Build and run the proxy server
-    let mut server = ProxyServer::new(config, shutdown.clone())
+    let mut server = ProxyServer::new(config, config_path, shutdown.clone())
         .await
         .context("failed to initialize proxy server")?;
 
@@ -322,6 +322,13 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     )));
 
     let mut plugin_manager = PluginManager::new(loaders);
+    plugin_manager.set_disabled_plugins(
+        plugin_cfgs
+            .iter()
+            .filter(|(_, c)| !c.enabled)
+            .map(|(id, _)| id.clone())
+            .collect(),
+    );
 
     let services = server.services();
 
@@ -360,7 +367,12 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         command_manager: Arc::clone(&services.command_manager)
             as Arc<dyn infrarust_api::command::CommandManager>,
         scheduler: Arc::new(SchedulerImpl::new()),
-        config_service: Arc::new(ConfigServiceImpl::new(Arc::clone(&services.domain_router))),
+        config_service: Arc::new(ConfigServiceImpl::new(
+            Arc::clone(&services.domain_router),
+            services.config_path.clone(),
+            Arc::clone(&services.config),
+        )),
+        load_balancer_service: Arc::clone(&services.load_balancer_service) as _,
         plugin_registry: Arc::clone(&plugin_registry)
             as Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry>,
         codec_filter_registry: Arc::clone(&services.codec_filter_registry),
@@ -409,9 +421,7 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
 
     // Collect limbo handlers registered by plugins and populate the registry
     for handler in plugin_manager.collect_limbo_handlers() {
-        services
-            .limbo_handler_registry
-            .register(std::sync::Arc::from(handler));
+        services.limbo_handler_registry.register(Arc::from(handler));
     }
 
     let plugin_providers = plugin_manager.collect_config_providers();
@@ -436,6 +446,8 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let console_ban_manager = Arc::clone(&services.ban_manager);
     let console_server_manager = services.server_manager.clone();
     let console_domain_router = Arc::clone(&services.domain_router);
+    let console_config_path = services.config_path.clone();
+    let console_config = Arc::clone(&services.config);
     let console_permission_service = Arc::clone(&services.permission_service);
 
     // Rebuild transport filter chain now that plugins may have registered filters
@@ -450,7 +462,11 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         console_connection_registry,
         console_ban_manager,
         console_server_manager,
-        Arc::new(ConfigServiceImpl::new(console_domain_router)),
+        Arc::new(ConfigServiceImpl::new(
+            console_domain_router,
+            console_config_path,
+            console_config,
+        )),
         Arc::clone(&plugin_manager),
         console_permission_service,
         shutdown.clone(),
@@ -462,8 +478,8 @@ async fn run(config: ProxyConfig) -> anyhow::Result<()> {
 
     tracing::info!("infrarust is ready, accepting connections");
 
-    if let Some(web) = &web_config {
-        let label = if web.enable_webui {
+    if let Some(web) = web_config.as_ref().filter(|w| w.enable_api) {
+        let label = if web.webui_enabled() {
             "Web dashboard"
         } else {
             "API"

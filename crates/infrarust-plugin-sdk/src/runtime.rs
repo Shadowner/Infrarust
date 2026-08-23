@@ -34,6 +34,8 @@ thread_local! {
     static CODEC_DECLARED: Cell<bool> = const { Cell::new(false) };
     static LIMBO_HANDLERS: RefCell<HashMap<u64, Box<dyn LimboHandler>>> = RefCell::new(HashMap::new());
     static LIMBO_DECLARED: Cell<bool> = const { Cell::new(false) };
+    static EVENT_DISPATCHING: Cell<Option<u64>> = const { Cell::new(None) };
+    static EVENT_DISPATCH_CANCELLED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn next_id() -> u64 {
@@ -65,8 +67,17 @@ pub fn register_event<E: GuestEvent>(
 
 /// Drop a single event handler by its `listener_id` (see [`register_event`]).
 pub fn unsubscribe_event(handle: u64) {
-    EVENT_HANDLERS.with(|hs| hs.borrow_mut().remove(&handle));
+    remove_event_handler(handle);
     crate::bindings::event_bus::unsubscribe(handle);
+}
+
+/// Tombstones the handle when it is the one currently dispatching (its closure
+/// is out of the map), so [`handle_event`] drops it instead of reinserting it.
+fn remove_event_handler(handle: u64) {
+    if EVENT_DISPATCHING.with(Cell::get) == Some(handle) {
+        EVENT_DISPATCH_CANCELLED.with(|c| c.set(true));
+    }
+    EVENT_HANDLERS.with(|hs| hs.borrow_mut().remove(&handle));
 }
 
 pub fn register_command(
@@ -96,14 +107,22 @@ pub fn schedule_interval(period_ms: u64, task: TaskClosure) -> u64 {
     crate::bindings::scheduler::interval(period_ms, id)
 }
 
+/// Remove-call-reinsert so the handler can (un)subscribe without a `RefCell`
+/// re-borrow panic; a self-unsubscribe during the call is detected via the
+/// tombstone in [`remove_event_handler`] and drops the closure for good.
 pub fn handle_event(listener: u64, ev: Event) -> EventOutcome {
     let closure = EVENT_HANDLERS.with(|hs| hs.borrow_mut().remove(&listener));
     match closure {
         Some(mut closure) => {
+            EVENT_DISPATCHING.with(|d| d.set(Some(listener)));
+            EVENT_DISPATCH_CANCELLED.with(|c| c.set(false));
             let outcome = closure(ev);
-            EVENT_HANDLERS.with(|hs| {
-                hs.borrow_mut().entry(listener).or_insert(closure);
-            });
+            EVENT_DISPATCHING.with(|d| d.set(None));
+            if !EVENT_DISPATCH_CANCELLED.with(Cell::take) {
+                EVENT_HANDLERS.with(|hs| {
+                    hs.borrow_mut().entry(listener).or_insert(closure);
+                });
+            }
             outcome
         }
         None => EventOutcome::None,
@@ -182,9 +201,31 @@ fn declare_codec_filters<P: Plugin>(notify: bool) {
 }
 
 pub fn register_limbo_handler(name: &str, handler: Box<dyn LimboHandler>) {
+    let id = insert_limbo_handler(handler);
+    crate::bindings::limbo::register_limbo_handler(name, id);
+}
+
+fn insert_limbo_handler(handler: Box<dyn LimboHandler>) -> u64 {
     let id = next_id();
     LIMBO_HANDLERS.with(|h| h.borrow_mut().insert(id, handler));
-    crate::bindings::limbo::register_limbo_handler(name, id);
+    id
+}
+
+/// Remove-call-reinsert (like [`handle_event`]) so the handler can re-register
+/// from within its own callback without a `RefCell` re-borrow panic.
+fn with_limbo_handler<R>(
+    handler: u64,
+    missing: impl FnOnce() -> R,
+    call: impl FnOnce(&dyn LimboHandler) -> R,
+) -> R {
+    let Some(hdlr) = LIMBO_HANDLERS.with(|h| h.borrow_mut().remove(&handler)) else {
+        return missing();
+    };
+    let out = call(hdlr.as_ref());
+    LIMBO_HANDLERS.with(|h| {
+        h.borrow_mut().entry(handler).or_insert(hdlr);
+    });
+    out
 }
 
 fn declare_limbo_handlers<P: Plugin>() {
@@ -200,10 +241,11 @@ pub fn limbo_on_player_enter(
     handler: u64,
     session: &crate::bindings::guest::LimboSession,
 ) -> crate::bindings::guest::HandlerResult {
-    LIMBO_HANDLERS.with(|h| match h.borrow().get(&handler) {
-        Some(hdlr) => hdlr.on_player_enter(&LimboSession::new(session)).into_wit(),
-        None => HandlerOutcome::Accept.into_wit(),
-    })
+    with_limbo_handler(
+        handler,
+        || HandlerOutcome::Accept.into_wit(),
+        |hdlr| hdlr.on_player_enter(&LimboSession::new(session)).into_wit(),
+    )
 }
 
 pub fn limbo_on_command(
@@ -212,11 +254,11 @@ pub fn limbo_on_command(
     command: String,
     args: Vec<String>,
 ) {
-    LIMBO_HANDLERS.with(|h| {
-        if let Some(hdlr) = h.borrow().get(&handler) {
-            hdlr.on_command(&LimboSession::new(session), &command, &args);
-        }
-    });
+    with_limbo_handler(
+        handler,
+        || (),
+        |hdlr| hdlr.on_command(&LimboSession::new(session), &command, &args),
+    );
 }
 
 pub fn limbo_on_chat(
@@ -224,19 +266,15 @@ pub fn limbo_on_chat(
     session: &crate::bindings::guest::LimboSession,
     message: String,
 ) {
-    LIMBO_HANDLERS.with(|h| {
-        if let Some(hdlr) = h.borrow().get(&handler) {
-            hdlr.on_chat(&LimboSession::new(session), &message);
-        }
-    });
+    with_limbo_handler(
+        handler,
+        || (),
+        |hdlr| hdlr.on_chat(&LimboSession::new(session), &message),
+    );
 }
 
 pub fn limbo_on_disconnect(handler: u64, player: u64) {
-    LIMBO_HANDLERS.with(|h| {
-        if let Some(hdlr) = h.borrow().get(&handler) {
-            hdlr.on_disconnect(player);
-        }
-    });
+    with_limbo_handler(handler, || (), |hdlr| hdlr.on_disconnect(player));
 }
 
 pub fn limbo_on_session_end(
@@ -244,11 +282,11 @@ pub fn limbo_on_session_end(
     player: u64,
     reason: crate::bindings::guest::SessionEndReason,
 ) {
-    LIMBO_HANDLERS.with(|h| {
-        if let Some(hdlr) = h.borrow().get(&handler) {
-            hdlr.on_session_end(player, crate::limbo::SessionEndReason::from_wit(reason));
-        }
-    });
+    with_limbo_handler(
+        handler,
+        || (),
+        |hdlr| hdlr.on_session_end(player, crate::limbo::SessionEndReason::from_wit(reason)),
+    );
 }
 pub fn create_codec_filter<P: Plugin>(factory: u64, init: CodecSessionInit) -> FilterInstanceProxy {
     declare_codec_filters::<P>(false);
@@ -307,5 +345,114 @@ impl CodecFilter for PassthroughFilter {
         _out: &mut Injections,
     ) -> Verdict {
         Verdict::Pass
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::limbo::{HandlerOutcome, LimboHandler, LimboSession};
+
+    struct Noop;
+    impl LimboHandler for Noop {
+        fn on_player_enter(&self, _session: &LimboSession) -> HandlerOutcome {
+            HandlerOutcome::Accept
+        }
+    }
+
+    struct Reregistering {
+        calls: Rc<Cell<u32>>,
+        registered_id: Rc<Cell<Option<u64>>>,
+    }
+    impl LimboHandler for Reregistering {
+        fn on_player_enter(&self, _session: &LimboSession) -> HandlerOutcome {
+            HandlerOutcome::Accept
+        }
+        fn on_disconnect(&self, _player_id: u64) {
+            self.calls.set(self.calls.get() + 1);
+            self.registered_id
+                .set(Some(insert_limbo_handler(Box::new(Noop))));
+        }
+    }
+
+    /// Re-registering a limbo handler from within a dispatched callback must not
+    /// re-borrow the handler map (previously a `BorrowMutError` panic → trap).
+    #[test]
+    fn limbo_callback_can_reregister_a_handler() {
+        let calls = Rc::new(Cell::new(0));
+        let registered_id = Rc::new(Cell::new(None));
+        let id = insert_limbo_handler(Box::new(Reregistering {
+            calls: Rc::clone(&calls),
+            registered_id: Rc::clone(&registered_id),
+        }));
+
+        limbo_on_disconnect(id, 1);
+        assert_eq!(calls.get(), 1);
+        let new_id = registered_id.get().expect("callback ran re-registration");
+        LIMBO_HANDLERS.with(|h| {
+            let map = h.borrow();
+            assert!(map.contains_key(&id), "dispatched handler reinserted");
+            assert!(map.contains_key(&new_id), "re-registered handler kept");
+        });
+
+        limbo_on_disconnect(id, 1);
+        assert_eq!(calls.get(), 2, "handler still dispatchable after reinsert");
+    }
+
+    struct DropFlag(Rc<Cell<bool>>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    /// A handler unsubscribing itself mid-dispatch must not be reinserted
+    /// (previously the closure leaked in the registry forever).
+    #[test]
+    fn self_unsubscribe_during_dispatch_drops_the_closure() {
+        let dropped = Rc::new(Cell::new(false));
+        let flag = DropFlag(Rc::clone(&dropped));
+        let id = 9001;
+        EVENT_HANDLERS.with(|hs| {
+            hs.borrow_mut().insert(
+                id,
+                Box::new(move |_| {
+                    let _ = &flag;
+                    remove_event_handler(id);
+                    EventOutcome::None
+                }),
+            );
+        });
+
+        let outcome = handle_event(id, Event::ProxyShutdown);
+        assert!(matches!(outcome, EventOutcome::None));
+        assert!(dropped.get(), "closure dropped, not reinserted");
+        EVENT_HANDLERS.with(|hs| assert!(!hs.borrow().contains_key(&id)));
+    }
+
+    #[test]
+    fn unsubscribing_another_handler_mid_dispatch_keeps_the_running_one() {
+        let (a, b) = (9101, 9102);
+        EVENT_HANDLERS.with(|hs| {
+            let mut hs = hs.borrow_mut();
+            hs.insert(
+                a,
+                Box::new(move |_| {
+                    remove_event_handler(b);
+                    EventOutcome::None
+                }),
+            );
+            hs.insert(b, Box::new(|_| EventOutcome::None));
+        });
+
+        handle_event(a, Event::ProxyShutdown);
+        EVENT_HANDLERS.with(|hs| {
+            let map = hs.borrow();
+            assert!(map.contains_key(&a), "running handler reinserted");
+            assert!(!map.contains_key(&b), "other handler removed");
+        });
     }
 }

@@ -61,9 +61,9 @@ You can lower the TTL in `infrarust.toml`:
 ttl = "2s"
 ```
 
-### Custom MOTD for unreachable state
+### Custom MOTD for unreachable backends
 
-You can configure a per-server MOTD that displays when the backend is unreachable, instead of showing the default "§cServer unreachable" response:
+You can configure a per-server MOTD that displays when the backend is down, instead of the generic unreachable response:
 
 ```toml
 [motd.unreachable]

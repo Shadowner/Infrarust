@@ -3,6 +3,12 @@
 //! Allows plugins to dynamically provide server configurations from
 //! external sources (databases, APIs, service discovery, etc.).
 //!
+//! Configurations can be supplied either as the projected [`ServerConfig`],
+//! which only carries the fields this crate models, or as a [`ServerDocument`]
+//! holding raw TOML, which the proxy parses with its own full config schema.
+//! Documents are the only way to reach fields such as load balancing, MOTD or
+//! health probing.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -17,6 +23,17 @@
 //!         Box::pin(async {
 //!             // Fetch configs from your source
 //!             Ok(vec![])
+//!         })
+//!     }
+//!
+//!     fn load_initial_documents(
+//!         &self,
+//!     ) -> BoxFuture<'_, Result<Vec<ServerDocument>, PluginError>> {
+//!         Box::pin(async {
+//!             Ok(vec![ServerDocument {
+//!                 id: ServerId::new("survival"),
+//!                 toml: r#"addresses = ["10.0.0.1:25565"]"#.to_string(),
+//!             }])
 //!         })
 //!     }
 //!
@@ -42,11 +59,25 @@ use crate::event::BoxFuture;
 use crate::services::config_service::ServerConfig;
 use crate::types::ServerId;
 
+/// A server configuration as raw TOML, parsed by the proxy against its
+/// full configuration schema.
+///
+/// `id` identifies the document within the provider and becomes the server id
+/// when the TOML itself does not set one.
+#[derive(Debug, Clone)]
+pub struct ServerDocument {
+    pub id: ServerId,
+    pub toml: String,
+}
+
 /// Event emitted by a plugin config provider when configurations change.
+#[non_exhaustive]
 pub enum PluginProviderEvent {
     Added(ServerConfig),
     Updated(ServerConfig),
     Removed(ServerId),
+    AddedDocument(ServerDocument),
+    UpdatedDocument(ServerDocument),
 }
 
 /// Abstraction over the event channel used to send provider events.
@@ -87,6 +118,15 @@ pub trait PluginConfigProvider: Send + Sync {
     /// starts accepting connections. Individual failures should be
     /// logged and skipped rather than propagated.
     fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ServerConfig>, PluginError>>;
+
+    /// Loads the initial set of raw TOML server configurations.
+    ///
+    /// Called alongside [`load_initial`](Self::load_initial); a provider may
+    /// use either or both. Documents that fail to parse or validate are
+    /// logged and skipped by the proxy.
+    fn load_initial_documents(&self) -> BoxFuture<'_, Result<Vec<ServerDocument>, PluginError>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
 
     /// Watches for configuration changes and sends events.
     ///

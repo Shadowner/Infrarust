@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 ARG RUST_VERSION=1.94
 ARG ALPINE_VERSION=3.21
 ARG NODE_VERSION=22
@@ -35,7 +36,10 @@ COPY --from=frontend-builder /frontend/.output/public/ \
 ENV OPENSSL_STATIC=1
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 
-RUN ARCH=$(uname -m) && \
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/usr/crates/infrarust/target \
+    ARCH=$(uname -m) && \
     case "$ARCH" in \
         x86_64) \
             TARGET="x86_64-unknown-linux-musl" \
@@ -54,7 +58,6 @@ RUN ARCH=$(uname -m) && \
     rustup target add "$TARGET" && \
     cargo build --release --target "$TARGET" -p infrarust --features docker && \
     cp "target/$TARGET/release/infrarust" /usr/local/bin/infrarust && \
-    strip /usr/local/bin/infrarust && \
     echo "Build completed successfully"
 
 # Stage 3: Runtime
@@ -67,6 +70,8 @@ WORKDIR /app
 VOLUME ["/app/config"]
 EXPOSE 25565
 EXPOSE 8080
+
+USER 65532:65532
 
 ENTRYPOINT ["/sbin/infrarust"]
 CMD ["--config", "/app/config/infrarust.toml", "--plugins-dir", "/app/config/plugins", "--servers-dir", "/app/config/servers"]

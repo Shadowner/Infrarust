@@ -147,6 +147,121 @@ async fn test_decode_v1_with_leftover() {
     assert_eq!(leftover, extra.to_vec());
 }
 
+async fn write_fragmented(stream: &mut tokio::net::TcpStream, data: &[u8]) {
+    for byte in data {
+        stream.write_all(std::slice::from_ref(byte)).await.unwrap();
+        stream.flush().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+}
+
+#[tokio::test]
+async fn test_decode_v1_fragmented() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (mut server_stream, _) = listener.accept().await.unwrap();
+
+    let header = b"PROXY TCP4 192.168.1.1 10.0.0.1 12345 25565\r\n";
+    let writer = tokio::spawn(async move {
+        write_fragmented(&mut client, header).await;
+        client
+    });
+
+    let (info, leftover) = decode_proxy_protocol(&mut server_stream).await.unwrap();
+    writer.await.unwrap();
+
+    let info = info.expect("expected Some for fragmented TCP4 header");
+    assert_eq!(info.version, ProxyProtocolVersion::V1);
+    assert_eq!(info.source_addr, "192.168.1.1:12345".parse().unwrap());
+    assert_eq!(info.dest_addr, "10.0.0.1:25565".parse().unwrap());
+    assert!(leftover.is_empty());
+}
+
+#[tokio::test]
+async fn test_decode_v2_fragmented() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (mut server_stream, _) = listener.accept().await.unwrap();
+
+    let addresses = ppp::v2::IPv4::new([192, 168, 1, 1], [10, 0, 0, 1], 12345, 25565);
+    let version_command = ppp::v2::Version::Two as u8 | ppp::v2::Command::Proxy as u8;
+    let header_bytes =
+        ppp::v2::Builder::with_addresses(version_command, ppp::v2::Protocol::Stream, addresses)
+            .build()
+            .unwrap();
+
+    let writer = tokio::spawn(async move {
+        write_fragmented(&mut client, &header_bytes).await;
+        client
+    });
+
+    let (info, leftover) = decode_proxy_protocol(&mut server_stream).await.unwrap();
+    writer.await.unwrap();
+
+    let info = info.expect("expected Some for fragmented v2 header");
+    assert_eq!(info.version, ProxyProtocolVersion::V2);
+    assert_eq!(info.source_addr, "192.168.1.1:12345".parse().unwrap());
+    assert_eq!(info.dest_addr, "10.0.0.1:25565".parse().unwrap());
+    assert!(leftover.is_empty());
+}
+
+#[tokio::test]
+async fn test_oversize_header_rejected() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (mut server_stream, _) = listener.accept().await.unwrap();
+
+    // Valid v1 prefix that never terminates with CRLF, exceeding MAX_HEADER_SIZE (536).
+    let mut oversize = b"PROXY TCP4 ".to_vec();
+    oversize.extend(std::iter::repeat_n(b'1', 600));
+    client.write_all(&oversize).await.unwrap();
+
+    let err = decode_proxy_protocol(&mut server_stream).await.unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            infrarust_transport::TransportError::InvalidProxyProtocol(msg)
+                if msg.contains("exceeds maximum size")
+        ),
+        "expected oversize rejection, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_encode_v2_mixed_v4_source_v6_dest() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (mut server_stream, _) = listener.accept().await.unwrap();
+
+    let info = infrarust_transport::ConnectionInfo {
+        peer_addr: "192.168.1.1:12345".parse().unwrap(),
+        real_ip: None,
+        real_port: None,
+        local_addr: "[2001:db8::1]:25565".parse().unwrap(),
+        connected_at: tokio::time::Instant::now(),
+    };
+
+    encode_proxy_protocol_v2(&mut client, &info).await.unwrap();
+
+    let (decoded, leftover) = decode_proxy_protocol(&mut server_stream).await.unwrap();
+    let decoded = decoded.expect("expected Some for mixed-family encoded header");
+    assert_eq!(decoded.version, ProxyProtocolVersion::V2);
+    assert_eq!(
+        decoded.source_addr,
+        "[::ffff:192.168.1.1]:12345".parse().unwrap()
+    );
+    assert_eq!(decoded.dest_addr, "[2001:db8::1]:25565".parse().unwrap());
+    assert!(leftover.is_empty());
+}
+
 #[tokio::test]
 async fn test_no_proxy_protocol() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

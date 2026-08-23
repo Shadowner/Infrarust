@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -11,14 +13,18 @@ use crate::state::ApiState;
 
 const WINDOW_SECS: u64 = 60;
 
+/// Fixed-window rate limiter keyed by client IP.
+///
+/// The `None` key is a shared fallback for requests without a known peer
+/// address (e.g. tests driving the router without `ConnectInfo`).
 pub struct RateLimiter {
-    inner: Mutex<RateLimiterInner>,
+    clients: Mutex<HashMap<Option<IpAddr>, Window>>,
     max_requests: u64,
 }
 
-struct RateLimiterInner {
+struct Window {
     count: u64,
-    window_start: Instant,
+    start: Instant,
 }
 
 pub struct RateLimitInfo {
@@ -31,16 +37,13 @@ pub struct RateLimitInfo {
 impl RateLimiter {
     pub fn new(max_requests_per_minute: u64) -> Self {
         Self {
-            inner: Mutex::new(RateLimiterInner {
-                count: 0,
-                window_start: Instant::now(),
-            }),
+            clients: Mutex::new(HashMap::new()),
             max_requests: max_requests_per_minute,
         }
     }
 
-    pub fn check(&self) -> RateLimitInfo {
-        let mut inner = match self.inner.lock() {
+    pub fn check(&self, client: Option<IpAddr>) -> RateLimitInfo {
+        let mut clients = match self.clients.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
                 tracing::warn!("Rate limiter lock poisoned, allowing request");
@@ -49,27 +52,20 @@ impl RateLimiter {
         };
 
         let now = Instant::now();
-        let elapsed = now.duration_since(inner.window_start).as_secs();
+        clients.retain(|_, w| now.duration_since(w.start).as_secs() < WINDOW_SECS);
 
-        if elapsed >= WINDOW_SECS {
-            inner.window_start = now;
-            inner.count = 1;
-            return RateLimitInfo {
-                allowed: true,
-                limit: self.max_requests,
-                remaining: self.max_requests.saturating_sub(1),
-                reset_in: WINDOW_SECS,
-            };
-        }
+        let window = clients.entry(client).or_insert(Window {
+            count: 0,
+            start: now,
+        });
+        let reset_in = WINDOW_SECS.saturating_sub(now.duration_since(window.start).as_secs());
 
-        let reset_in = WINDOW_SECS.saturating_sub(elapsed);
-
-        if inner.count < self.max_requests {
-            inner.count += 1;
+        if window.count < self.max_requests {
+            window.count += 1;
             RateLimitInfo {
                 allowed: true,
                 limit: self.max_requests,
-                remaining: self.max_requests.saturating_sub(inner.count),
+                remaining: self.max_requests.saturating_sub(window.count),
                 reset_in,
             }
         } else {
@@ -92,7 +88,12 @@ pub async fn rate_limit_middleware(
     request: axum::extract::Request,
     next: Next,
 ) -> Response {
-    let info = state.rate_limiter.check();
+    let client_ip = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip());
+
+    let info = state.rate_limiter.check(client_ip);
 
     if !info.allowed {
         let mut response = (
@@ -123,4 +124,30 @@ pub async fn rate_limit_middleware(
     headers.insert("X-RateLimit-Reset", header_value(info.reset_in));
 
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use super::*;
+
+    #[test]
+    fn per_client_budgets_are_independent() {
+        let limiter = RateLimiter::new(2);
+        let a = Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
+        let b = Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)));
+
+        assert!(limiter.check(a).allowed);
+        assert!(limiter.check(a).allowed);
+        assert!(!limiter.check(a).allowed);
+        assert!(limiter.check(b).allowed);
+    }
+
+    #[test]
+    fn unknown_clients_share_the_fallback_bucket() {
+        let limiter = RateLimiter::new(1);
+        assert!(limiter.check(None).allowed);
+        assert!(!limiter.check(None).allowed);
+    }
 }

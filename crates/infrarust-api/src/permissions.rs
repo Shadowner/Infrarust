@@ -70,6 +70,8 @@ pub enum Capability {
     Scheduler,
     /// Read the proxy configuration.
     ConfigRead,
+    /// Rewrite the global proxy configuration file.
+    ConfigWrite,
     /// Register codec filters (WASM: gated; native: implicit).
     CodecFilter,
     TransportFilter,
@@ -86,7 +88,7 @@ pub enum Capability {
 }
 
 impl Capability {
-    pub const ALL: [Capability; 16] = [
+    pub const ALL: [Capability; 17] = [
         Capability::EventBus,
         Capability::PlayerRead,
         Capability::PlayerWrite,
@@ -96,6 +98,7 @@ impl Capability {
         Capability::Command,
         Capability::Scheduler,
         Capability::ConfigRead,
+        Capability::ConfigWrite,
         Capability::CodecFilter,
         Capability::TransportFilter,
         Capability::Limbo,
@@ -117,6 +120,7 @@ impl Capability {
             Capability::Command => "command",
             Capability::Scheduler => "scheduler",
             Capability::ConfigRead => "config-read",
+            Capability::ConfigWrite => "config-write",
             Capability::CodecFilter => "codec-filter",
             Capability::TransportFilter => "transport-filter",
             Capability::Limbo => "limbo",
@@ -139,6 +143,7 @@ impl Capability {
             "command" => Capability::Command,
             "scheduler" => Capability::Scheduler,
             "config-read" => Capability::ConfigRead,
+            "config-write" => Capability::ConfigWrite,
             "codec-filter" => Capability::CodecFilter,
             "transport-filter" => Capability::TransportFilter,
             "limbo" => Capability::Limbo,
@@ -238,7 +243,7 @@ mod tests {
                 "from_kebab lost {cap:?}"
             );
         }
-        assert_eq!(Capability::ALL.len(), 16);
+        assert_eq!(Capability::ALL.len(), 17);
         assert_eq!(names.len(), Capability::ALL.len());
     }
 
@@ -263,6 +268,7 @@ mod tests {
             assert!(b.has(cap), "baseline missing {cap:?}");
         }
         assert!(!b.has(Capability::Ban));
+        assert!(!b.has(Capability::ConfigWrite));
         assert!(!b.has(Capability::CodecFilter));
         assert!(!b.has(Capability::TransportFilter));
     }

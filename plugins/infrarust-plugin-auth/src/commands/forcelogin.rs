@@ -23,7 +23,7 @@ impl CommandHandler for ForceLoginCommand {
                 return;
             };
 
-            if !super::is_admin(sender_id, player_registry) {
+            if !super::is_admin(sender_id, player_registry, self.handler.config()) {
                 if let Some(player) = player_registry.get_player_by_id(sender_id) {
                     let _ = player.send_message(parse_colored(
                         &self.handler.config().messages.admin_no_permission,

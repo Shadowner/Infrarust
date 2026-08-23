@@ -1,27 +1,41 @@
 <script setup lang="ts">
 import {
-  PlayIcon,
-  StopIcon,
-  PencilSquareIcon,
-  TrashIcon,
   ArrowLeftIcon,
-  HeartIcon,
   ArrowPathIcon,
+  LockClosedIcon,
+  PencilSquareIcon,
+  PlayIcon,
+  ScaleIcon,
+  SignalIcon,
+  StopIcon,
+  TrashIcon,
 } from '@heroicons/vue/24/outline';
-import type { ServerDetailDto, HealthCheckDto, ApiEnvelope, MutationResult } from '~/types/api';
+import type {
+  ApiEnvelope,
+  HealthCheckDto,
+  MutationResult,
+  ServerBackendsDto,
+  ServerDetailDto,
+} from '~/types/api';
+import type { BackendHealthChangePayload } from '~/types/events';
 
 const route = useRoute();
 const { request } = useApi();
 const { push } = useToast();
 const { ask } = useConfirm();
+const { onEvent } = useEventBus();
 const serverId = route.params.id as string;
+const encodedId = encodeURIComponent(serverId);
+
 const server = ref<ServerDetailDto | null>(null);
 const health = ref<HealthCheckDto | null>(null);
 const healthLoading = ref(false);
+const backends = ref<ServerBackendsDto | null>(null);
+const backendsLoading = ref(false);
 
 const { data } = await useAsyncData(`server:${serverId}`, async () => {
   try {
-    const res = await request<ApiEnvelope<ServerDetailDto>>(`/servers/${encodeURIComponent(serverId)}`);
+    const res = await request<ApiEnvelope<ServerDetailDto>>(`/servers/${encodedId}`);
     return res.data;
   } catch {
     push({ type: 'error', title: 'Server not found' });
@@ -30,20 +44,40 @@ const { data } = await useAsyncData(`server:${serverId}`, async () => {
 });
 server.value = data.value ?? null;
 
-// Try to load cached health check
-onMounted(async () => {
+async function fetchBackends() {
+  backendsLoading.value = true;
   try {
-    const res = await request<ApiEnvelope<HealthCheckDto>>(`/servers/${encodeURIComponent(serverId)}/health/cached`);
+    const res = await request<ApiEnvelope<ServerBackendsDto>>(`/servers/${encodedId}/backends`);
+    backends.value = res.data;
+  } catch {
+    backends.value = null;
+  } finally {
+    backendsLoading.value = false;
+  }
+}
+
+onMounted(async () => {
+  await fetchBackends();
+  try {
+    const res = await request<ApiEnvelope<HealthCheckDto>>(`/servers/${encodedId}/health/cached`);
     health.value = res.data;
   } catch {
-    // No cached health — that's fine
+    // No cached ping yet.
   }
+});
+
+onEvent('backend.health_change', (payload) => {
+  const event = payload as BackendHealthChangePayload;
+  if (!event.server_ids?.includes(serverId)) return;
+  const backend = backends.value?.backends.find((b) => b.address === event.address);
+  if (backend) backend.state = event.state;
+  else fetchBackends();
 });
 
 async function checkHealth() {
   healthLoading.value = true;
   try {
-    const res = await request<ApiEnvelope<HealthCheckDto>>(`/servers/${encodeURIComponent(serverId)}/health`);
+    const res = await request<ApiEnvelope<HealthCheckDto>>(`/servers/${encodedId}/health`);
     health.value = res.data;
     if (res.data.online) {
       push({ type: 'success', title: 'Server is online', message: `${res.data.latency_ms}ms latency` });
@@ -51,7 +85,7 @@ async function checkHealth() {
       push({ type: 'error', title: 'Server is offline', message: res.data.error ?? undefined });
     }
   } catch {
-    push({ type: 'error', title: 'Health check failed' });
+    push({ type: 'error', title: 'Status ping failed' });
   } finally {
     healthLoading.value = false;
   }
@@ -59,7 +93,7 @@ async function checkHealth() {
 
 async function startServer() {
   try {
-    await request<ApiEnvelope<MutationResult>>(`/servers/${encodeURIComponent(serverId)}/start`, { method: 'POST', body: {} });
+    await request<ApiEnvelope<MutationResult>>(`/servers/${encodedId}/start`, { method: 'POST', body: {} });
     push({ type: 'success', title: 'Start requested' });
   } catch {
     push({ type: 'error', title: 'Failed to start server' });
@@ -68,7 +102,7 @@ async function startServer() {
 
 async function stopServer() {
   try {
-    await request<ApiEnvelope<MutationResult>>(`/servers/${encodeURIComponent(serverId)}/stop`, { method: 'POST', body: {} });
+    await request<ApiEnvelope<MutationResult>>(`/servers/${encodedId}/stop`, { method: 'POST', body: {} });
     push({ type: 'success', title: 'Stop requested' });
   } catch {
     push({ type: 'error', title: 'Failed to stop server' });
@@ -76,10 +110,10 @@ async function stopServer() {
 }
 
 async function deleteServer() {
-  const confirmed = await ask('Delete Server', `Permanently delete server '${serverId}'? This cannot be undone.`);
+  const confirmed = await ask('Delete server', `Permanently delete server '${serverId}'? This cannot be undone.`);
   if (!confirmed) return;
   try {
-    await request<ApiEnvelope<MutationResult>>(`/servers/${encodeURIComponent(serverId)}`, { method: 'DELETE' });
+    await request<ApiEnvelope<MutationResult>>(`/servers/${encodedId}`, { method: 'DELETE' });
     push({ type: 'success', title: `Server '${serverId}' deleted` });
     navigateTo('/servers');
   } catch (e: unknown) {
@@ -109,40 +143,61 @@ function relativeTime(ts: string) {
 
     <!-- Header -->
     <div class="glass-pane flex items-center justify-between p-5">
-      <div class="flex items-center gap-3">
-        <div>
-          <div class="flex items-center gap-2">
-            <h2 class="text-xl font-bold tracking-tight">{{ serverId }}</h2>
-            <span v-if="server?.is_api_managed" class="rounded bg-[var(--ir-accent-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[var(--ir-accent)]">
-              API
-            </span>
-          </div>
-          <p class="mt-1 text-xs text-[var(--ir-text-muted)]">{{ server?.proxy_mode ?? '—' }} mode</p>
+      <div>
+        <div class="flex items-center gap-2">
+          <h2 class="text-xl font-bold tracking-tight">{{ serverId }}</h2>
+          <span v-if="server" class="rounded bg-[var(--ir-surface-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[var(--ir-text-muted)]">
+            {{ server.source }}
+          </span>
+          <span v-if="server && !server.editable" class="inline-flex items-center gap-1 text-[10px] text-[var(--ir-text-muted)]">
+            <LockClosedIcon class="h-3 w-3" /> read-only
+          </span>
         </div>
+        <p class="mt-1 text-xs text-[var(--ir-text-muted)]">{{ server?.proxy_mode ?? '—' }} mode</p>
       </div>
       <StatusBadge :status="server?.state ?? 'unknown'" />
     </div>
 
-    <!-- Health Check -->
+    <!-- Backends -->
     <div class="glass-pane overflow-hidden p-5">
-      <div class="flex items-center justify-between mb-4">
+      <div class="mb-4 flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <HeartIcon class="h-4 w-4 text-[var(--ir-accent)]" />
-          <h3 class="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Health Check</h3>
+          <ScaleIcon class="h-4 w-4 text-[var(--ir-accent)]" />
+          <h3 class="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Backends</h3>
         </div>
-        <button
-          class="btn btn-ghost flex items-center gap-1.5 text-xs"
-          :disabled="healthLoading"
-          @click="checkHealth"
-        >
-          <ArrowPathIcon class="h-3.5 w-3.5" :class="healthLoading ? 'animate-spin' : ''" />
-          {{ healthLoading ? 'Checking...' : 'Check Now' }}
+        <button class="btn btn-ghost flex items-center gap-1.5 text-xs" :disabled="backendsLoading" @click="fetchBackends">
+          <ArrowPathIcon class="h-3.5 w-3.5" :class="backendsLoading ? 'animate-spin' : ''" />
+          Refresh
         </button>
       </div>
 
-      <!-- Health result -->
+      <BackendTable
+        v-if="backends"
+        :server-id="serverId"
+        :backends="backends.backends"
+        :strategy="backends.strategy"
+        :locked="server ? !server.editable : true"
+        @changed="fetchBackends"
+      />
+      <p v-else class="py-4 text-center text-sm text-[var(--ir-text-muted)]">
+        The proxy reported no load-balancer state for this server.
+      </p>
+    </div>
+
+    <!-- Status ping -->
+    <div class="glass-pane overflow-hidden p-5">
+      <div class="mb-4 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <SignalIcon class="h-4 w-4 text-[var(--ir-accent)]" />
+          <h3 class="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Status ping</h3>
+        </div>
+        <button class="btn btn-ghost flex items-center gap-1.5 text-xs" :disabled="healthLoading" @click="checkHealth">
+          <ArrowPathIcon class="h-3.5 w-3.5" :class="healthLoading ? 'animate-spin' : ''" />
+          {{ healthLoading ? 'Pinging...' : 'Ping now' }}
+        </button>
+      </div>
+
       <div v-if="health" class="space-y-4">
-        <!-- Status bar -->
         <div class="flex items-center gap-3">
           <span
             class="h-3 w-3 rounded-full"
@@ -158,12 +213,10 @@ function relativeTime(ts: string) {
           <span class="ml-auto text-[10px] text-[var(--ir-text-muted)]">{{ relativeTime(health.checked_at) }}</span>
         </div>
 
-        <!-- Error -->
-        <div v-if="health.error" class="rounded-lg bg-[rgba(204,62,56,0.1)] border border-[rgba(204,62,56,0.25)] p-3 text-xs text-[#ffc0bc]">
+        <div v-if="health.error" class="rounded-lg border border-[rgba(204,62,56,0.25)] bg-[rgba(204,62,56,0.1)] p-3 text-xs text-[#ffc0bc]">
           {{ health.error }}
         </div>
 
-        <!-- MOTD + Favicon -->
         <div v-if="health.online && health.motd" class="flex items-start gap-4">
           <img
             v-if="health.favicon"
@@ -172,20 +225,19 @@ function relativeTime(ts: string) {
             class="h-16 w-16 rounded-lg border border-[var(--ir-border)]"
             style="image-rendering: pixelated;"
           />
-          <div class="min-w-0 flex-1 rounded-lg bg-[#080808] border border-[var(--ir-border)] p-3">
+          <div class="min-w-0 flex-1 rounded-lg border border-[var(--ir-border)] bg-[#080808] p-3">
             <MinecraftMotd :motd="health.motd" />
           </div>
         </div>
 
-        <!-- Players -->
         <div v-if="health.online && health.players_online != null" class="flex items-center gap-3 text-sm">
           <span class="text-[var(--ir-text-muted)]">Players</span>
           <span class="font-mono">{{ health.players_online }} / {{ health.players_max }}</span>
-          <div v-if="health.player_sample?.length" class="flex items-center gap-1.5 ml-2">
+          <div v-if="health.player_sample?.length" class="ml-2 flex items-center gap-1.5">
             <span
               v-for="p in health.player_sample.slice(0, 5)"
               :key="p.id"
-              class="rounded bg-[var(--ir-surface-soft)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--ir-text-muted)]"
+              class="rounded bg-[var(--ir-surface-soft)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--ir-text-muted)]"
             >
               {{ p.name }}
             </span>
@@ -196,9 +248,8 @@ function relativeTime(ts: string) {
         </div>
       </div>
 
-      <!-- Empty state -->
       <div v-else class="py-4 text-center text-sm text-[var(--ir-text-muted)]">
-        Click "Check Now" to ping this server and retrieve its status.
+        Ping this server to read its MOTD, version and player sample.
       </div>
     </div>
 
@@ -207,21 +258,22 @@ function relativeTime(ts: string) {
       <div class="glass-pane p-5">
         <h3 class="mb-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Configuration</h3>
         <div class="space-y-2 text-sm">
-          <div class="flex justify-between"><span class="text-[var(--ir-text-muted)]">Addresses</span><span class="font-mono text-xs">{{ server?.addresses?.join(', ') ?? '—' }}</span></div>
-          <div class="flex justify-between"><span class="text-[var(--ir-text-muted)]">Domains</span><span class="font-mono text-xs">{{ server?.domains?.join(', ') ?? '—' }}</span></div>
-          <div class="flex justify-between"><span class="text-[var(--ir-text-muted)]">Mode</span><span>{{ server?.proxy_mode ?? '—' }}</span></div>
-          <div class="flex justify-between"><span class="text-[var(--ir-text-muted)]">Handlers</span><span class="text-xs">{{ server?.limbo_handlers?.join(', ') || 'none' }}</span></div>
-          <div class="flex justify-between">
-            <span class="text-[var(--ir-text-muted)]">Server Manager</span>
+          <div class="flex justify-between gap-3"><span class="text-[var(--ir-text-muted)]">Addresses</span><span class="text-right font-mono text-xs">{{ server?.addresses?.join(', ') ?? '—' }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-[var(--ir-text-muted)]">Domains</span><span class="text-right font-mono text-xs">{{ server?.domains?.join(', ') ?? '—' }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-[var(--ir-text-muted)]">Mode</span><span>{{ server?.proxy_mode ?? '—' }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-[var(--ir-text-muted)]">Balance</span><span class="font-mono text-xs">{{ backends?.strategy ?? '—' }}</span></div>
+          <div class="flex justify-between gap-3"><span class="text-[var(--ir-text-muted)]">Handlers</span><span class="text-xs">{{ server?.limbo_handlers?.join(', ') || 'none' }}</span></div>
+          <div class="flex justify-between gap-3">
+            <span class="text-[var(--ir-text-muted)]">Server manager</span>
             <StatusBadge :status="server?.has_server_manager ? 'Enabled' : 'Disabled'" />
           </div>
         </div>
       </div>
       <div class="glass-pane p-5">
-        <h3 class="mb-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Connected Players ({{ server?.player_count ?? 0 }})</h3>
+        <h3 class="mb-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Connected players ({{ server?.player_count ?? 0 }})</h3>
         <div v-if="server?.players?.length" class="space-y-2">
           <div v-for="p in server.players" :key="p.uuid" class="flex items-center gap-2 text-sm">
-            <img :src="`https://minotar.net/helm/${p.username}/20`" class="h-5 w-5 rounded" loading="lazy" />
+            <img :src="`https://minotar.net/helm/${p.username}/20`" class="h-5 w-5 rounded" loading="lazy" alt="" />
             <NuxtLink :to="`/players/${p.username}`" class="hover:text-[var(--ir-accent)]">{{ p.username }}</NuxtLink>
           </div>
         </div>
@@ -240,17 +292,17 @@ function relativeTime(ts: string) {
         </button>
       </template>
 
-      <template v-if="server?.is_api_managed">
+      <template v-if="server?.editable">
         <NuxtLink :to="`/servers/${serverId}/edit`" class="btn btn-secondary flex items-center gap-2">
           <PencilSquareIcon class="h-4 w-4" /> Edit
         </NuxtLink>
-        <button class="btn btn-danger flex items-center gap-2 ml-auto" @click="deleteServer">
+        <button class="btn btn-danger ml-auto flex items-center gap-2" @click="deleteServer">
           <TrashIcon class="h-4 w-4" /> Delete
         </button>
       </template>
 
-      <p v-if="!server?.has_server_manager && !server?.is_api_managed" class="text-xs text-[var(--ir-text-muted)]">
-        This server is managed by a config provider and cannot be edited or controlled from here.
+      <p v-else-if="server" class="text-xs text-[var(--ir-text-muted)]">
+        Owned by the <span class="font-mono">{{ server.source }}</span> provider, so it cannot be edited or deleted here.
       </p>
     </div>
   </div>

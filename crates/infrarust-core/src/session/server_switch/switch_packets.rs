@@ -82,10 +82,7 @@ async fn send_respawn(
     let mut payload = Vec::new();
     respawn.encode(&mut payload, version)?;
 
-    let frame = PacketFrame {
-        id: packet_id,
-        payload: payload.into(),
-    };
+    let frame = PacketFrame::new(packet_id, payload.into());
     client.write_frame(&frame).await?;
     Ok(())
 }

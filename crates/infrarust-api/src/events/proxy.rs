@@ -1,8 +1,9 @@
 //! Proxy-level events.
 
 use crate::event::Event;
+use crate::services::load_balancer::BackendState;
 use crate::services::server_manager::ServerState;
-use crate::types::{Component, ProtocolVersion, ServerId};
+use crate::types::{Component, ProtocolVersion, ServerAddress, ServerId};
 
 /// Fired when the proxy receives a server list ping request.
 ///
@@ -83,6 +84,14 @@ impl Event for ProxyShutdownEvent {}
 pub struct ConfigReloadEvent;
 
 impl Event for ConfigReloadEvent {}
+
+pub struct BackendHealthEvent {
+    pub address: ServerAddress,
+    pub servers: Vec<ServerId>,
+    pub state: BackendState,
+}
+
+impl Event for BackendHealthEvent {}
 
 /// Fired when a backend server changes state.
 pub struct ServerStateChangeEvent {

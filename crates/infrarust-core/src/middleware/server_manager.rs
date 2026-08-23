@@ -7,6 +7,7 @@ use std::sync::Arc;
 use infrarust_server_manager::{ServerManagerError, ServerManagerService, ServerState};
 
 use crate::error::CoreError;
+use crate::loadbalancer::PassiveBackendHealth;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::types::RoutingData;
@@ -19,11 +20,21 @@ use crate::pipeline::types::RoutingData;
 /// **Requires**: `RoutingData` (from `DomainRouterMiddleware`)
 pub struct ServerManagerMiddleware {
     server_manager: Arc<ServerManagerService>,
+    backend_health: Option<Arc<PassiveBackendHealth>>,
 }
 
 impl ServerManagerMiddleware {
     pub const fn new(server_manager: Arc<ServerManagerService>) -> Self {
-        Self { server_manager }
+        Self {
+            server_manager,
+            backend_health: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_backend_health(mut self, health: Arc<PassiveBackendHealth>) -> Self {
+        self.backend_health = Some(health);
+        self
     }
 }
 
@@ -59,7 +70,19 @@ impl Middleware for ServerManagerMiddleware {
                 )),
                 ServerState::Sleeping | ServerState::Crashed | ServerState::Starting => {
                     match self.server_manager.ensure_started(&server_id).await {
-                        Ok(()) => Ok(MiddlewareResult::Continue),
+                        Ok(()) => {
+                            if let Some(ref health) = self.backend_health {
+                                let window = routing
+                                    .server_config
+                                    .balance_config()
+                                    .slow_start
+                                    .unwrap_or_default();
+                                for wa in &routing.server_config.addresses {
+                                    health.mark_warming(&wa.address, window);
+                                }
+                            }
+                            Ok(MiddlewareResult::Continue)
+                        }
                         Err(ServerManagerError::StartTimeout { .. }) => {
                             Ok(MiddlewareResult::Reject(
                                 "Server failed to start in time. Please try again.".into(),

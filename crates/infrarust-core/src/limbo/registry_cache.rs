@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use bytes::Bytes;
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::version::ProtocolVersion;
 
@@ -29,6 +30,7 @@ impl RegistryCodecCache {
     }
 
     pub fn collect_registry_frame(&self, version: ProtocolVersion, frame: PacketFrame) {
+        let frame = PacketFrame::new(frame.id, Bytes::copy_from_slice(&frame.payload));
         let mut map = self.captured.write().expect("registry cache lock poisoned");
         let entry = map.entry(version).or_insert_with(|| CapturedFrames {
             registry_frames: Vec::new(),
@@ -41,6 +43,7 @@ impl RegistryCodecCache {
     }
 
     pub fn collect_known_packs_frame(&self, version: ProtocolVersion, frame: PacketFrame) {
+        let frame = PacketFrame::new(frame.id, Bytes::copy_from_slice(&frame.payload));
         let mut map = self.captured.write().expect("registry cache lock poisoned");
         let entry = map.entry(version).or_insert_with(|| CapturedFrames {
             registry_frames: Vec::new(),

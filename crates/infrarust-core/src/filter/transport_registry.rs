@@ -36,8 +36,8 @@ impl TransportFilterRegistryImpl {
                 .filter_map(|id| {
                     filters
                         .iter()
-                        .find(|f| TransportFilter::metadata(f.as_ref()).id.as_str() == id.as_str())
-                        .cloned()
+                        .find(|(m, _)| m.id == *id)
+                        .map(|(_, f)| Arc::clone(f))
                 })
                 .collect();
 

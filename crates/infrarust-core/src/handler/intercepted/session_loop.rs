@@ -50,6 +50,9 @@ pub(super) async fn run_session_loop(
     loop {
         match mode {
             ConnectionMode::Backend(ref mut backend) => {
+                if let Some(session) = services.connection_registry.get(session_id) {
+                    session.set_connected_address(backend.server_address().cloned());
+                }
                 let outcome = proxy_loop(
                     client,
                     backend,
@@ -191,6 +194,9 @@ pub(super) async fn run_session_loop(
                 }
             }
             ConnectionMode::Limbo(ref handlers, ref entry_ctx) => {
+                if let Some(session) = services.connection_registry.get(session_id) {
+                    session.set_connected_address(None);
+                }
                 let exit = enter_limbo(
                     client,
                     handlers.clone(),
@@ -198,7 +204,6 @@ pub(super) async fn run_session_loop(
                     api_profile.clone(),
                     version,
                     entry_ctx.clone(),
-                    &services.packet_registry,
                     services,
                     session_token.clone(),
                 )

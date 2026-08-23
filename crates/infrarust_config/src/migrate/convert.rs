@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use crate::server::ServerConfig;
 use crate::types::{
-    DomainRewrite, IpFilterConfig, LocalManagerConfig, MotdConfig, MotdEntry, ProxyMode,
-    ServerAddress, ServerManagerConfig,
+    BalanceStrategy, DomainRewrite, IpFilterConfig, LocalManagerConfig, MotdConfig, MotdEntry,
+    ProxyMode, ServerAddress, ServerManagerConfig, WeightedAddress,
 };
 
 use super::v1_types::{V1MotdEntry, V1ServerConfig};
@@ -39,42 +39,38 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
         });
     };
 
-    let name = v1
+    let raw_name = v1
         .config_id
-        .as_ref()
-        .map(|id| {
-            id.split('@')
-                .next()
-                .unwrap_or(id)
-                .to_lowercase()
-                .chars()
-                .map(|c| {
-                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                        c
-                    } else {
-                        '-'
-                    }
-                })
-                .collect::<String>()
-        })
-        .or_else(|| {
-            let stem = filename
+        .as_deref()
+        .map(|id| id.split('@').next().unwrap_or(id))
+        .unwrap_or_else(|| {
+            filename
                 .strip_suffix(".yaml")
                 .or_else(|| filename.strip_suffix(".yml"))
-                .unwrap_or(filename);
-            Some(
-                stem.to_lowercase()
-                    .chars()
-                    .map(|c| {
-                        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                            c
-                        } else {
-                            '-'
-                        }
-                    })
-                    .collect(),
-            )
+                .unwrap_or(filename)
         });
+    let sanitized = sanitize_id(raw_name);
+    let name = if sanitized.is_empty() {
+        warn(
+            &mut warnings,
+            MigrationSeverity::Warning,
+            &format!(
+                "config id '{raw_name}' has no usable characters; the V2 id will derive from the output filename"
+            ),
+        );
+        None
+    } else {
+        if sanitized != raw_name {
+            warn(
+                &mut warnings,
+                MigrationSeverity::Warning,
+                &format!(
+                    "config id '{raw_name}' sanitized to '{sanitized}'; check for collisions with other migrated configs"
+                ),
+            );
+        }
+        Some(sanitized)
+    };
 
     let proxy_mode = match v1.proxy_mode.as_deref() {
         Some("passthrough") | None => ProxyMode::Passthrough,
@@ -108,10 +104,10 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
         );
     }
 
-    let mut addresses: Vec<ServerAddress> = Vec::new();
+    let mut addresses: Vec<WeightedAddress> = Vec::new();
     for addr in &v1.addresses {
-        match addr.parse() {
-            Ok(parsed) => addresses.push(parsed),
+        match addr.parse::<ServerAddress>() {
+            Ok(parsed) => addresses.push(parsed.into()),
             Err(e) => warn(
                 &mut warnings,
                 MigrationSeverity::Error,
@@ -181,8 +177,12 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
         id: None,
         name,
         network: None,
+        active_health: None,
         domains: v1.domains.clone(),
         addresses,
+        balance: BalanceStrategy::default(),
+        slow_start: None,
+        slow_start_aggression: 1.0,
         proxy_mode,
         forwarding_mode: None,
         send_proxy_protocol: v1.send_proxy_protocol.unwrap_or(false),
@@ -197,6 +197,20 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
     };
 
     MigrationResult { config, warnings }
+}
+
+/// Lowercases, maps disallowed characters to '-', collapses '-' runs
+/// and trims leading/trailing '-'.
+fn sanitize_id(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for c in raw.to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_end_matches('-').to_string()
 }
 
 fn convert_v1_motd_entry(entry: &V1MotdEntry) -> Option<MotdEntry> {
@@ -297,7 +311,6 @@ fn convert_motds(
 
     MotdConfig {
         online,
-        offline: None,
         sleeping,
         starting,
         crashed,
@@ -478,8 +491,8 @@ fn convert_ip_filter(
 use super::v1_types::V1InfrarustConfig;
 use crate::proxy::ProxyConfig;
 use crate::types::{
-    BanConfig, DockerProviderConfig, KeepaliveConfig, MetricsConfig, RateLimitConfig,
-    ResourceConfig, StatusCacheConfig, TelemetryConfig, TracesConfig,
+    ActiveHealthConfig, BanConfig, DockerProviderConfig, KeepaliveConfig, MetricsConfig,
+    RateLimitConfig, ResourceConfig, StatusCacheConfig, TelemetryConfig, TracesConfig,
 };
 
 pub struct ProxyMigrationResult {
@@ -491,11 +504,27 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
     let mut warnings = Vec::new();
     let file = "config.yaml".to_string();
 
-    let bind = v1
-        .bind
-        .as_ref()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(crate::defaults::bind);
+    // V1 accepted Infrared-style ":25565" binds (host defaulting to 0.0.0.0).
+    let parse_bind = |raw: &str| {
+        raw.parse().ok().or_else(|| {
+            raw.starts_with(':')
+                .then(|| format!("0.0.0.0{raw}").parse().ok())?
+        })
+    };
+    let bind = match v1.bind.as_deref() {
+        Some(raw) => parse_bind(raw).unwrap_or_else(|| {
+            warnings.push(MigrationWarning {
+                severity: MigrationSeverity::Warning,
+                file: file.clone(),
+                message: format!(
+                    "Cannot parse bind '{raw}', falling back to {}",
+                    crate::defaults::bind()
+                ),
+            });
+            crate::defaults::bind()
+        }),
+        None => crate::defaults::bind(),
+    };
 
     let keepalive = v1
         .keep_alive_timeout
@@ -705,8 +734,10 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
 
     let config = ProxyConfig {
         bind,
+        active_health: ActiveHealthConfig::default(),
         max_connections: 0,
         connect_timeout: crate::defaults::connect_timeout(),
+        connect_max_attempts: crate::defaults::connect_max_attempts(),
         receive_proxy_protocol,
         servers_dir,
         plugins_dir: crate::defaults::plugins_dir(),
@@ -794,7 +825,69 @@ mod tests {
         let mut v1 = minimal_v1();
         v1.config_id = Some("My Server!@file_provider".to_string());
         let result = convert_v1_to_v2(&v1, "test.yaml");
-        assert_eq!(result.config.name, Some("my-server-".to_string()));
+        assert_eq!(result.config.name, Some("my-server".to_string()));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.severity == MigrationSeverity::Warning
+                    && w.message.contains("sanitized to 'my-server'")),
+            "lossy sanitization must be surfaced as a warning"
+        );
+    }
+
+    #[test]
+    fn test_config_id_sanitization_collapses_dash_runs() {
+        let mut v1 = minimal_v1();
+        v1.config_id = Some("a  b--c".to_string());
+        let result = convert_v1_to_v2(&v1, "test.yaml");
+        assert_eq!(result.config.name, Some("a-b-c".to_string()));
+    }
+
+    #[test]
+    fn test_config_id_without_usable_characters_is_dropped() {
+        let mut v1 = minimal_v1();
+        v1.config_id = Some("!!!".to_string());
+        let result = convert_v1_to_v2(&v1, "test.yaml");
+        assert_eq!(result.config.name, None);
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.severity == MigrationSeverity::Warning)
+        );
+    }
+
+    #[test]
+    fn test_clean_config_id_does_not_warn() {
+        let mut v1 = minimal_v1();
+        v1.config_id = Some("survival-1@file_provider".to_string());
+        let result = convert_v1_to_v2(&v1, "test.yaml");
+        assert_eq!(result.config.name, Some("survival-1".to_string()));
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_unparseable_v1_bind_warns_and_falls_back() {
+        let v1: V1InfrarustConfig = serde_yml::from_str("bind: \"not an address\"").unwrap();
+        let result = convert_v1_proxy_config(&v1);
+        assert_eq!(result.config.bind, crate::defaults::bind());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.severity == MigrationSeverity::Warning
+                    && w.message.contains("Cannot parse bind")),
+            "dropped v1 bind must be surfaced as a warning"
+        );
+    }
+
+    #[test]
+    fn test_infrared_style_v1_bind_is_kept() {
+        let v1: V1InfrarustConfig = serde_yml::from_str("bind: \":25577\"").unwrap();
+        let result = convert_v1_proxy_config(&v1);
+        assert_eq!(result.config.bind, "0.0.0.0:25577".parse().unwrap());
+        assert!(result.warnings.is_empty());
     }
 
     #[test]

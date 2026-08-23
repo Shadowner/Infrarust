@@ -59,7 +59,7 @@ pub fn parse_legacy_handshake(data: &[u8]) -> ProtocolResult<LegacyHandshakeRequ
             ));
         }
         let connection_string = decode_utf16be(&data[start..start + byte_count])?;
-        Ok(parse_pre_1_3_connection_string(&connection_string))
+        parse_pre_1_3_connection_string(&connection_string)
     } else {
         // 1.3+ format: [protocol_version] [string16 username] [string16 hostname] [i32 port]
         let protocol_version = data[0];
@@ -82,31 +82,33 @@ pub fn parse_legacy_handshake(data: &[u8]) -> ProtocolResult<LegacyHandshakeRequ
     }
 }
 
-fn parse_pre_1_3_connection_string(s: &str) -> LegacyHandshakeRequest {
+fn parse_pre_1_3_connection_string(s: &str) -> ProtocolResult<LegacyHandshakeRequest> {
     if let Some((username, host_port)) = s.split_once(';') {
         if let Some((hostname, port_str)) = host_port.rsplit_once(':') {
-            let port = port_str.parse::<i32>().unwrap_or(25565);
-            LegacyHandshakeRequest {
+            let port = port_str.parse::<u16>().map_err(|_| {
+                ProtocolError::invalid(format!("legacy handshake: invalid port {port_str:?}"))
+            })?;
+            Ok(LegacyHandshakeRequest {
                 protocol_version: 0,
                 username: username.to_string(),
                 hostname: hostname.to_string(),
-                port,
-            }
+                port: i32::from(port),
+            })
         } else {
-            LegacyHandshakeRequest {
+            Ok(LegacyHandshakeRequest {
                 protocol_version: 0,
                 username: username.to_string(),
                 hostname: host_port.to_string(),
                 port: 25565,
-            }
+            })
         }
     } else {
-        LegacyHandshakeRequest {
+        Ok(LegacyHandshakeRequest {
             protocol_version: 0,
             username: s.to_string(),
             hostname: String::new(),
             port: 25565,
-        }
+        })
     }
 }
 
@@ -198,6 +200,19 @@ mod tests {
         assert_eq!(req.username, "Player1");
         assert_eq!(req.hostname, "survival.server.net");
         assert_eq!(req.port, 25565);
+    }
+
+    #[test]
+    fn test_parse_pre_1_3_malformed_port_rejected() {
+        let data = build_pre_1_3_packet("Steve;mc.example.com:notaport");
+        let err = parse_legacy_handshake(&data).unwrap_err();
+        assert!(matches!(err, ProtocolError::Invalid { .. }));
+    }
+
+    #[test]
+    fn test_parse_pre_1_3_out_of_range_port_rejected() {
+        let data = build_pre_1_3_packet("Steve;mc.example.com:99999");
+        assert!(parse_legacy_handshake(&data).is_err());
     }
 
     #[test]

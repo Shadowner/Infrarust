@@ -6,7 +6,7 @@ use crate::MAX_PACKET_SIZE;
 use crate::codec::VarInt;
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::io::compression::{self, ZlibCompressor};
-use crate::io::frame::PacketFrame;
+use crate::io::frame::{PacketFrame, should_compress};
 
 /// Writes a `VarInt` into a `BytesMut` buffer.
 fn write_varint(buf: &mut BytesMut, varint: VarInt) -> ProtocolResult<()> {
@@ -31,7 +31,7 @@ fn write_varint(buf: &mut BytesMut, varint: VarInt) -> ProtocolResult<()> {
 /// let mut decoder = PacketDecoder::new();
 ///
 /// // Encode a frame
-/// let frame = PacketFrame { id: 0x42, payload: Bytes::from_static(b"hello") };
+/// let frame = PacketFrame::new(0x42, Bytes::from_static(b"hello"));
 /// encoder.append_frame(&frame).unwrap();
 ///
 /// // Feed encoded bytes into the decoder
@@ -89,7 +89,7 @@ impl PacketEncoder {
             Some(threshold) => {
                 let uncompressed_len = packet_id_size + payload.len();
 
-                if (uncompressed_len as i32) >= threshold {
+                if should_compress(uncompressed_len, threshold) {
                     // Compress: [VarInt(packet_len)] [VarInt(uncompressed_len)] [compressed(VarInt(packet_id) + payload)]
 
                     // Build uncompressed data in the reusable scratch buffer.
@@ -138,11 +138,20 @@ impl PacketEncoder {
         Ok(())
     }
 
-    /// Encodes a [`PacketFrame`] directly (shortcut for [`append_raw`](Self::append_raw)).
+    /// Encodes a [`PacketFrame`] directly.
+    ///
+    /// Unmodified frames decoded under the same compression threshold are
+    /// forwarded as their original wire bytes, skipping re-encoding (and in
+    /// particular re-compression). Anything else goes through
+    /// [`append_raw`](Self::append_raw).
     ///
     /// # Errors
     /// Returns an error if the packet exceeds size limits or compression fails.
     pub fn append_frame(&mut self, frame: &PacketFrame) -> ProtocolResult<()> {
+        if let Some(wire) = frame.raw_wire(self.compression_threshold) {
+            self.buf.extend_from_slice(wire);
+            return Ok(());
+        }
         self.append_raw(frame.id, &frame.payload)
     }
 
@@ -155,13 +164,14 @@ impl PacketEncoder {
         self.buf.split()
     }
 
-    /// Enables compression with the given threshold.
+    /// Enables compression with the given threshold, or disables it if
+    /// `threshold` is negative.
     ///
     /// Called when the proxy receives/sends a `SetCompression` packet.
     /// `threshold` is the minimum uncompressed size (in bytes) above which
     /// packets are compressed. Typically 256.
     pub const fn set_compression(&mut self, threshold: i32) {
-        self.compression_threshold = Some(threshold);
+        self.compression_threshold = if threshold < 0 { None } else { Some(threshold) };
     }
 
     pub const fn compression_threshold(&self) -> Option<i32> {
@@ -196,10 +206,7 @@ mod tests {
 
     #[test]
     fn test_encode_frame_shortcut() {
-        let frame = PacketFrame {
-            id: 0x0F,
-            payload: bytes::Bytes::from_static(b"test"),
-        };
+        let frame = PacketFrame::new(0x0F, bytes::Bytes::from_static(b"test"));
 
         let mut enc1 = PacketEncoder::new();
         enc1.append_frame(&frame).unwrap();

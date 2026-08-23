@@ -101,7 +101,7 @@ impl PacketRegistry {
     /// handshake.encode(&mut payload, ProtocolVersion::V1_21).unwrap();
     ///
     /// // Wrap in a frame (packet id 0x00 for handshake)
-    /// let frame = PacketFrame { id: 0x00, payload: Bytes::from(payload) };
+    /// let frame = PacketFrame::new(0x00, Bytes::from(payload));
     ///
     /// // Decode via the registry → Typed
     /// let decoded = registry.decode_frame(
@@ -113,7 +113,7 @@ impl PacketRegistry {
     /// assert!(matches!(decoded, DecodedPacket::Typed { .. }));
     ///
     /// // Unknown packet id → Opaque
-    /// let unknown = PacketFrame { id: 0xFF, payload: Bytes::new() };
+    /// let unknown = PacketFrame::new(0xFF, Bytes::new());
     /// let decoded = registry.decode_frame(
     ///     &unknown,
     ///     ConnectionState::Handshake,
@@ -246,10 +246,7 @@ mod tests {
     fn test_decode_registered_packet_returns_typed() {
         let registry = build_default_registry();
         let payload = make_handshake_payload(767, "mc.example.com", 25565, 2);
-        let frame = PacketFrame {
-            id: 0x00,
-            payload: bytes::Bytes::from(payload),
-        };
+        let frame = PacketFrame::new(0x00, Bytes::from(payload));
 
         let decoded = registry
             .decode_frame(
@@ -277,10 +274,7 @@ mod tests {
     fn test_decode_unknown_id_returns_opaque() {
         let registry = build_default_registry();
         let payload = vec![1, 2, 3, 4];
-        let frame = PacketFrame {
-            id: 0xFF,
-            payload: bytes::Bytes::from(payload.clone()),
-        };
+        let frame = PacketFrame::new(0xFF, Bytes::from(payload.clone()));
 
         let decoded = registry
             .decode_frame(
@@ -309,10 +303,7 @@ mod tests {
             .register(&mut registry);
 
         let payload = make_handshake_payload(47, "mc.example.com", 25565, 2);
-        let frame = PacketFrame {
-            id: 0x00,
-            payload: bytes::Bytes::from(payload),
-        };
+        let frame = PacketFrame::new(0x00, Bytes::from(payload));
 
         // V1_8 is not in the registry (only V1_9+)
         let decoded = registry
@@ -573,10 +564,7 @@ mod tests {
     fn test_decode_frame_with_corrupted_payload_returns_error() {
         let registry = build_default_registry();
         // Truncated payload — VarInt starts but string is missing
-        let frame = PacketFrame {
-            id: 0x00,
-            payload: bytes::Bytes::from_static(&[0xFF, 0x05]),
-        };
+        let frame = PacketFrame::new(0x00, Bytes::from_static(&[0xFF, 0x05]));
 
         let result = registry.decode_frame(
             &frame,

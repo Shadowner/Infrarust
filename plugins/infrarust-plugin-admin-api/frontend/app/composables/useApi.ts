@@ -1,7 +1,9 @@
 interface ApiOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   query?: Record<string, string | number | boolean | undefined>;
-  body?: Record<string, unknown>;
+  body?: Record<string, unknown> | unknown[] | string;
+  headers?: Record<string, string>;
+  responseType?: 'json' | 'text';
 }
 
 export const useApi = () => {
@@ -12,16 +14,18 @@ export const useApi = () => {
   const request = async <T>(path: string, options: ApiOptions = {}): Promise<T> => {
     const method = options.method ?? 'GET';
 
+    const headers: Record<string, string> = { ...options.headers };
+    if (apiKey.value) {
+      headers.Authorization = `Bearer ${apiKey.value}`;
+    }
+
     try {
       return await $fetch<T>(`${config.public.apiBase}${path}`, {
         method,
         query: options.query,
         body: options.body,
-        headers: apiKey.value
-          ? {
-              Authorization: `Bearer ${apiKey.value}`,
-            }
-          : undefined,
+        responseType: options.responseType,
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
       });
     } catch (error: unknown) {
       const response = (error as { response?: { status?: number; headers?: Headers } }).response;
@@ -36,7 +40,17 @@ export const useApi = () => {
     }
   };
 
+  /** `text/plain` TOML endpoints (`/servers/{id}/raw`, `/config/proxy/raw`). */
+  const requestToml = (path: string, toml?: string): Promise<string> =>
+    request<string>(path, {
+      method: toml === undefined ? 'GET' : 'PUT',
+      body: toml,
+      headers: toml === undefined ? { Accept: 'text/plain' } : { 'Content-Type': 'text/plain' },
+      responseType: 'text',
+    });
+
   return {
     request,
+    requestToml,
   };
 };

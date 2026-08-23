@@ -2,8 +2,14 @@
 name = "infrarust-plugin-hello"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
+description = "Minimal example plugin for the Infrarust Minecraft proxy"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true

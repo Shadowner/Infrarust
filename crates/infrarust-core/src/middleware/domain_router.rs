@@ -40,7 +40,9 @@ impl Middleware for DomainRouterMiddleware {
             let domain = &handshake.domain;
 
             // Resolve domain to server config
-            let Some((_provider_id, server_config)) = self.domain_router.resolve(domain) else {
+            let Some((_provider_id, server_config, load_balancer)) =
+                self.domain_router.resolve_route(domain)
+            else {
                 tracing::debug!(domain, "no server found for domain");
                 return Ok(MiddlewareResult::Reject(format!(
                     "Unknown server: {domain}"
@@ -68,6 +70,7 @@ impl Middleware for DomainRouterMiddleware {
             ctx.extensions.insert(RoutingData {
                 server_config,
                 config_id,
+                load_balancer,
             });
 
             Ok(MiddlewareResult::Continue)

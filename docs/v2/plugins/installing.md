@@ -68,6 +68,7 @@ Additional capabilities that require an explicit grant:
 | `raw-packet` | Emit raw packets and receive `RawPacketEvent` |
 | `codec-filter` | Register codec-level packet filters |
 | `limbo` | Provide limbo handlers (hold players in a void world) |
+| `config-write` | Rewrite the global `infrarust.toml` |
 | `filesystem-extended` | Access paths outside the plugin's data directory |
 | `network` | Make outbound network connections |
 

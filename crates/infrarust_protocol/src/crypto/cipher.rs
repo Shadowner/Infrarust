@@ -5,9 +5,8 @@
 //! continues where the previous one left off.
 
 use aes::Aes128;
-use cfb8::Decryptor as Cfb8Decryptor;
 use cfb8::Encryptor as Cfb8Encryptor;
-use cipher::{Array, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
+use cipher::{Block, BlockCipherEncrypt, KeyInit, KeyIvInit};
 
 /// Encrypts a byte stream using AES-128-CFB8.
 ///
@@ -24,7 +23,9 @@ pub struct EncryptCipher {
 /// previous one left off. Bytes must be decrypted in the exact order they
 /// were received from the socket.
 pub struct DecryptCipher {
-    inner: Cfb8Decryptor<Aes128>,
+    cipher: Aes128,
+    /// The last 16 ciphertext bytes seen (initially the IV).
+    window: [u8; 16],
 }
 
 impl EncryptCipher {
@@ -46,12 +47,7 @@ impl EncryptCipher {
     ///
     /// The cipher state advances by `data.len()` bytes.
     pub fn encrypt(&mut self, data: &mut [u8]) {
-        // CFB8 has BlockSize=U1, so we process byte-by-byte via BlockModeEncrypt
-        for byte in data.iter_mut() {
-            let mut block = Array::from([*byte]);
-            self.inner.encrypt_block(&mut block);
-            *byte = block[0];
-        }
+        self.inner.encrypt(data);
     }
 }
 
@@ -65,19 +61,50 @@ impl DecryptCipher {
     #[allow(clippy::expect_used)]
     pub fn new(key: &[u8; 16]) -> Self {
         Self {
-            inner: Cfb8Decryptor::<Aes128>::new_from_slices(key, key)
-                .expect("key and iv are always 16 bytes"),
+            cipher: Aes128::new_from_slice(key).expect("key is always 16 bytes"),
+            window: *key,
         }
     }
 
     /// Decrypts data in-place.
     ///
     /// The cipher state advances by `data.len()` bytes.
+    ///
+    /// Plaintext byte `i` is `ct[i] ^ AES(K, w_i)[0]` where `w_i` is the 16
+    /// ciphertext bytes preceding `i` (seeded by the IV).
     pub fn decrypt(&mut self, data: &mut [u8]) {
-        for byte in data.iter_mut() {
-            let mut block = Array::from([*byte]);
-            self.inner.decrypt_block(&mut block);
-            *byte = block[0];
+        const BATCH: usize = 64;
+        let mut keystream = [Block::<Aes128>::default(); BATCH];
+
+        let mut offset = 0;
+        while offset < data.len() {
+            let n = BATCH.min(data.len() - offset);
+            let batch = &data[offset..offset + n];
+
+            for (j, block) in keystream[..n].iter_mut().enumerate() {
+                if let Some(start) = j.checked_sub(16) {
+                    block.copy_from_slice(&batch[start..j]);
+                } else {
+                    let carry = 16 - j;
+                    block[..carry].copy_from_slice(&self.window[j..]);
+                    block[carry..].copy_from_slice(&batch[..j]);
+                }
+            }
+
+            // Slide the window over the ciphertext before it is overwritten.
+            if n >= 16 {
+                self.window.copy_from_slice(&batch[n - 16..]);
+            } else {
+                self.window.copy_within(n.., 0);
+                self.window[16 - n..].copy_from_slice(batch);
+            }
+
+            self.cipher.encrypt_blocks(&mut keystream[..n]);
+
+            for (byte, ks) in data[offset..offset + n].iter_mut().zip(&keystream) {
+                *byte ^= ks[0];
+            }
+            offset += n;
         }
     }
 }
@@ -200,6 +227,38 @@ mod tests {
         dec.decrypt(&mut data);
 
         assert_ne!(&data[..], &original[..]);
+    }
+
+    /// Differential test against the cfb8 crate's reference decryptor,
+    /// split across irregular chunk sizes to cross every batch boundary
+    /// and exercise the sliding-window state between calls.
+    #[test]
+    fn test_decrypt_matches_reference_cfb8() {
+        use cipher::BlockModeDecrypt;
+
+        let key = [0x5Au8; 16];
+        let ciphertext: Vec<u8> = (0..4096u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect();
+
+        let mut reference = ciphertext.clone();
+        let mut ref_dec = cfb8::Decryptor::<Aes128>::new_from_slices(&key, &key).unwrap();
+        for byte in &mut reference {
+            let mut block = cipher::Array::from([*byte]);
+            ref_dec.decrypt_block(&mut block);
+            *byte = block[0];
+        }
+
+        let mut ours = ciphertext;
+        let mut dec = DecryptCipher::new(&key);
+        let mut pos = 0;
+        for chunk in [1usize, 7, 15, 16, 17, 33, 63, 64, 65, 100, 512] {
+            dec.decrypt(&mut ours[pos..pos + chunk]);
+            pos += chunk;
+        }
+        dec.decrypt(&mut ours[pos..]);
+
+        assert_eq!(ours, reference);
     }
 
     #[test]

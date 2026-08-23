@@ -1,7 +1,7 @@
 # Minimal Infrarust config for benchmarking with mc-bench.
 # Fields live at the top level (this file maps directly to ProxyConfig).
 #
-# Run the proxy from this directory:  infrarust --config-path infrarust.toml
+# Run the proxy from this directory:  infrarust --config infrarust.toml
 # Then point the load generator at the proxy:  mc-bench load --port 25565
 bind = "127.0.0.1:25565"
 servers_dir = "./servers"

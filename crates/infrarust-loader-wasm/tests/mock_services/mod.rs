@@ -12,7 +12,7 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::permissions::PermissionLevel;
 use infrarust_api::player::Player;
 use infrarust_api::services::ban_service::{BanEntry, BanTarget};
-use infrarust_api::services::config_service::{ConfigService, ServerConfig};
+use infrarust_api::services::config_service::{ConfigService, ServerConfig, ServerSource};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
@@ -23,25 +23,19 @@ pub struct MockPlayerRegistry;
 impl infrarust_api::services::player_registry::private::Sealed for MockPlayerRegistry {}
 
 impl PlayerRegistry for MockPlayerRegistry {
-    fn get_player(&self, _username: &str) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player(&self, _username: &str) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_player_by_uuid(
-        &self,
-        _uuid: &uuid::Uuid,
-    ) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player_by_uuid(&self, _uuid: &uuid::Uuid) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_players_on_server(
-        &self,
-        _server: &ServerId,
-    ) -> Vec<Arc<dyn infrarust_api::player::Player>> {
+    fn get_players_on_server(&self, _server: &ServerId) -> Vec<Arc<dyn Player>> {
         vec![]
     }
-    fn get_all_players(&self) -> Vec<Arc<dyn infrarust_api::player::Player>> {
+    fn get_all_players(&self) -> Vec<Arc<dyn Player>> {
         vec![]
     }
     fn online_count(&self) -> usize {
@@ -93,6 +87,24 @@ impl ConfigService for MockConfigService {
     fn get_all_server_configs(&self) -> Vec<ServerConfig> {
         vec![]
     }
+    fn get_server_document(&self, _server: &ServerId) -> Option<String> {
+        None
+    }
+    fn list_server_sources(&self) -> Vec<ServerSource> {
+        vec![]
+    }
+    fn get_proxy_config_document(&self) -> String {
+        String::new()
+    }
+    fn get_effective_proxy_config_document(&self) -> String {
+        String::new()
+    }
+    fn write_proxy_config_document(
+        &self,
+        _toml: &str,
+    ) -> Result<(), infrarust_api::services::config_service::ConfigWriteError> {
+        Err(infrarust_api::services::config_service::ConfigWriteError::PermissionDenied)
+    }
     fn get_value(&self, _key: &str) -> Option<String> {
         None
     }
@@ -107,25 +119,19 @@ pub struct CountingPlayerRegistry {
 impl infrarust_api::services::player_registry::private::Sealed for CountingPlayerRegistry {}
 
 impl PlayerRegistry for CountingPlayerRegistry {
-    fn get_player(&self, _username: &str) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player(&self, _username: &str) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_player_by_uuid(
-        &self,
-        _uuid: &uuid::Uuid,
-    ) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player_by_uuid(&self, _uuid: &uuid::Uuid) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn infrarust_api::player::Player>> {
+    fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn Player>> {
         None
     }
-    fn get_players_on_server(
-        &self,
-        _server: &ServerId,
-    ) -> Vec<Arc<dyn infrarust_api::player::Player>> {
+    fn get_players_on_server(&self, _server: &ServerId) -> Vec<Arc<dyn Player>> {
         vec![]
     }
-    fn get_all_players(&self) -> Vec<Arc<dyn infrarust_api::player::Player>> {
+    fn get_all_players(&self) -> Vec<Arc<dyn Player>> {
         vec![]
     }
     fn online_count(&self) -> usize {
@@ -262,7 +268,56 @@ impl ConfigService for MapConfigService {
     fn get_all_server_configs(&self) -> Vec<ServerConfig> {
         vec![]
     }
+    fn get_server_document(&self, _server: &ServerId) -> Option<String> {
+        None
+    }
+    fn list_server_sources(&self) -> Vec<ServerSource> {
+        vec![]
+    }
+    fn get_proxy_config_document(&self) -> String {
+        String::new()
+    }
+    fn get_effective_proxy_config_document(&self) -> String {
+        String::new()
+    }
+    fn write_proxy_config_document(
+        &self,
+        _toml: &str,
+    ) -> Result<(), infrarust_api::services::config_service::ConfigWriteError> {
+        Err(infrarust_api::services::config_service::ConfigWriteError::PermissionDenied)
+    }
     fn get_value(&self, key: &str) -> Option<String> {
         self.values.get(key).cloned()
+    }
+}
+
+pub struct MockLoadBalancerService;
+
+impl infrarust_api::services::load_balancer::private::Sealed for MockLoadBalancerService {}
+
+impl infrarust_api::services::load_balancer::LoadBalancerService for MockLoadBalancerService {
+    fn strategy(&self, _server: &ServerId) -> Option<String> {
+        None
+    }
+    fn backends(
+        &self,
+        _server: &ServerId,
+    ) -> Vec<infrarust_api::services::load_balancer::BackendStatus> {
+        vec![]
+    }
+    fn set_drained(
+        &self,
+        _server: &ServerId,
+        _addr: &infrarust_api::types::ServerAddress,
+        _drained: bool,
+    ) -> Result<(), infrarust_api::services::load_balancer::LbError> {
+        Ok(())
+    }
+    fn reset_backend(
+        &self,
+        _server: &ServerId,
+        _addr: &infrarust_api::types::ServerAddress,
+    ) -> Result<(), infrarust_api::services::load_balancer::LbError> {
+        Ok(())
     }
 }

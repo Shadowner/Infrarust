@@ -94,7 +94,7 @@ pub fn build_handshake_for_backend(
         DomainRewrite::FromBackend => server_config
             .addresses
             .first()
-            .map(|a| a.host.clone())
+            .map(|a| a.address.host.clone())
             .unwrap_or_else(|| handshake_data.domain.clone()),
         _ => handshake_data.domain.clone(),
     };

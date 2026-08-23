@@ -157,10 +157,7 @@ mod tests {
         pkt.encode(&mut buf, ProtocolVersion::V1_21).unwrap();
         assert!(buf.is_empty());
         let decoded = SStatusRequest::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
-        assert_eq!(
-            std::mem::size_of_val(&decoded),
-            std::mem::size_of::<SStatusRequest>()
-        );
+        assert_eq!(size_of_val(&decoded), size_of::<SStatusRequest>());
     }
 
     #[test]

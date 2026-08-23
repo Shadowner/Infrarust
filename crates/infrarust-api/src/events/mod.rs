@@ -19,9 +19,12 @@ pub use connection::{
     PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPreConnectEvent,
     ServerPreConnectResult, ServerSwitchEvent,
 };
-pub use lifecycle::{DisconnectEvent, PostLoginEvent, PreLoginEvent, PreLoginResult};
+pub use lifecycle::{
+    DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult,
+    PostLoginEvent, PreLoginEvent, PreLoginResult,
+};
 pub use packet::{PacketDirection, RawPacketEvent, RawPacketResult};
 pub use proxy::{
-    ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent, ProxyShutdownEvent,
-    ServerStateChangeEvent,
+    BackendHealthEvent, ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent,
+    ProxyShutdownEvent, ServerStateChangeEvent,
 };

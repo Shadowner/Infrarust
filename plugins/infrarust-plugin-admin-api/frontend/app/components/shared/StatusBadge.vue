@@ -6,6 +6,7 @@ const props = defineProps<{
 const tooltips: Record<string, string> = {
   intercepted: 'The proxy can read and modify packets for this player. Commands like send, message, and server transfer are available.',
   passthrough: 'Traffic is encrypted end-to-end, the proxy forwards packets without inspecting them. Only kick and ban are available.',
+  unreachable: 'The last health check could not reach the backend. Nothing here reports the backend as stopped, so it is down rather than idle.',
 };
 
 const tooltip = computed(() => tooltips[props.status.toLowerCase()]);
@@ -33,7 +34,7 @@ const config = computed(() => {
     return { dot: 'bg-slate-400', classes: 'border-[rgba(148,163,184,0.28)] bg-[rgba(148,163,184,0.15)] text-slate-200', pulse: false };
   if (['starting', 'stopping', 'warn'].includes(normalized))
     return { dot: 'bg-[#e9a047]', classes: 'border-[rgba(233,160,71,0.34)] bg-[rgba(233,160,71,0.15)] text-[#ffd8ad]', pulse: true };
-  if (['crashed', 'error'].includes(normalized))
+  if (['crashed', 'error', 'unreachable'].includes(normalized))
     return { dot: 'bg-[#cc3e38]', classes: 'border-[rgba(204,62,56,0.4)] bg-[rgba(204,62,56,0.16)] text-[#ffc0bc]', pulse: true };
   return { dot: 'bg-[var(--ir-accent)]', classes: 'border-[var(--ir-border-strong)] bg-[var(--ir-accent-soft)] text-[var(--ir-text)]', pulse: false };
 });

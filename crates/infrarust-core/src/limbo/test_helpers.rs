@@ -44,7 +44,7 @@ use crate::session::client_bridge::ClientBridge;
 
 pub fn test_profile() -> GameProfile {
     GameProfile {
-        uuid: uuid::Uuid::nil(),
+        uuid: Uuid::nil(),
         username: "LimboTester".to_string(),
         properties: vec![],
     }
@@ -64,10 +64,7 @@ pub fn build_frame<P: Packet + 'static>(
         .expect("packet ID should exist in registry");
     let mut payload = Vec::new();
     packet.encode(&mut payload, version).unwrap();
-    PacketFrame {
-        id: packet_id,
-        payload: Bytes::from(payload),
-    }
+    PacketFrame::new(packet_id, Bytes::from(payload))
 }
 
 /// Returns `(server-side ClientBridge, raw client TcpStream)` via loopback.
@@ -83,16 +80,33 @@ pub async fn test_client_bridge(version: ProtocolVersion) -> (ClientBridge, TcpS
 
 pub fn test_proxy_services() -> ProxyServices {
     let connection_registry = Arc::new(ConnectionRegistry::new());
+    let backend_load = Arc::new(crate::loadbalancer::BackendLoad::new());
+    let backend_health = Arc::new(crate::loadbalancer::PassiveBackendHealth::new());
+    let domain_router = Arc::new(DomainRouter::new());
     let packet_registry = Arc::new(test_registry());
     let ban_storage: Arc<dyn BanStorage> = Arc::new(NullBanStorage);
     let provider: Arc<dyn crate::registry_data::RegistryDataProvider> =
         Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider);
+
+    let pending_backends = Arc::new(crate::loadbalancer::PendingRegistry::new(
+        Arc::clone(&backend_load) as _,
+        std::time::Duration::from_secs(10),
+    ));
 
     ProxyServices {
         event_bus: Arc::new(EventBusImpl::new()),
         player_registry: Arc::new(PlayerRegistryImpl::new(Arc::clone(&connection_registry))),
         command_manager: Arc::new(CommandManagerImpl::new()),
         connection_registry,
+        load_balancer_service: Arc::new(
+            crate::services::load_balancer_service::LoadBalancerServiceImpl::new(
+                Arc::clone(&domain_router),
+                Arc::clone(&backend_health),
+                Arc::clone(&backend_load) as _,
+            ),
+        ),
+        pending_backends,
+        backend_load,
         packet_registry,
         server_manager: None,
         ban_manager: Arc::new(BanManager::new(
@@ -100,7 +114,9 @@ pub fn test_proxy_services() -> ProxyServices {
             Arc::new(ConnectionRegistry::new()),
         )),
         config: Arc::new(toml::from_str("").unwrap()),
-        domain_router: Arc::new(DomainRouter::new()),
+        config_path: std::path::PathBuf::from("infrarust.toml"),
+        domain_router,
+        backend_health,
         codec_filter_registry: Arc::new(CodecFilterRegistryImpl::new()),
         transport_filter_chain: TransportFilterChain::empty(),
         limbo_handler_registry: Arc::new(LimboHandlerRegistry::new()),
@@ -183,10 +199,6 @@ impl LimboHandler for FixedHandler {
         let result = self.result.clone();
         Box::pin(async move { result })
     }
-
-    fn on_disconnect(&self, _player_id: PlayerId) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
-    }
 }
 
 pub struct TrackingHandler {
@@ -208,10 +220,6 @@ impl LimboHandler for TrackingHandler {
         let result = self.result.clone();
         Box::pin(async move { result })
     }
-
-    fn on_disconnect(&self, _player_id: PlayerId) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
-    }
 }
 
 pub struct HoldHandler {
@@ -228,10 +236,6 @@ impl LimboHandler for HoldHandler {
         _session: &'a dyn LimboSession,
     ) -> BoxFuture<'a, HandlerResult> {
         Box::pin(async { HandlerResult::Hold })
-    }
-
-    fn on_disconnect(&self, _player_id: PlayerId) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
     }
 }
 

@@ -8,11 +8,12 @@ import {
   InformationCircleIcon,
 } from '@heroicons/vue/24/outline';
 import type { Component } from 'vue';
+import type { ProxyMode } from '~/types/api';
 
-const modelValue = defineModel<string>({ default: 'passthrough' });
+const modelValue = defineModel<ProxyMode>({ default: 'passthrough' });
 
 interface ModeOption {
-  value: string;
+  value: ProxyMode;
   label: string;
   description: string;
   icon: Component;
@@ -30,7 +31,13 @@ const passthroughModes: ModeOption[] = [
     label: 'Zero Copy',
     description: 'Kernel-level relay via splice(2) on Linux. Falls back to passthrough elsewhere.',
     icon: BoltIcon,
-  }
+  },
+  {
+    value: 'server_only',
+    label: 'Server Only',
+    description: 'Authentication stays on the backend. Raw forwarding after the handshake.',
+    icon: ServerIcon,
+  },
 ];
 
 const interceptedModes: ModeOption[] = [
@@ -62,7 +69,7 @@ const interceptedModes: ModeOption[] = [
           Works with every Minecraft version, modded or not.
         </p>
       </div>
-      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-2">
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         <button
           v-for="mode in passthroughModes"
           :key="mode.value"

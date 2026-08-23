@@ -2,8 +2,14 @@
 name = "infrarust-plugin-server-wake"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
+description = "On-demand backend wake-up plugin for the Infrarust Minecraft proxy"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true
@@ -13,6 +19,5 @@ infrarust-api = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 dashmap = { workspace = true }
-tokio = { workspace = true }
-tokio-util = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
 tracing = { workspace = true }

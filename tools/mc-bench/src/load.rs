@@ -49,6 +49,10 @@ pub struct LoadArgs {
     /// Warmup duration in seconds (not recorded).
     #[arg(long, default_value_t = 5)]
     warmup: u64,
+    /// Ping payload size in bytes (min 8: the timing token). Sizes at or above
+    /// the backend's compression threshold exercise the compressed proxy path.
+    #[arg(long, default_value_t = 8)]
+    payload_size: usize,
 }
 
 /// One latency sample reported by a worker, in microseconds.
@@ -85,6 +89,12 @@ pub async fn run(args: LoadArgs) -> std::io::Result<()> {
             "rate must be > 0",
         ));
     }
+    if args.payload_size < 8 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "payload-size must be >= 8 (the timing token)",
+        ));
+    }
 
     let registry = Arc::new(build_default_registry());
     let counters = Arc::new(Counters::default());
@@ -92,7 +102,7 @@ pub async fn run(args: LoadArgs) -> std::io::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Sample>();
 
     println!(
-        "mc-bench load → {}:{} (server_address={}, protocol={}, concurrency={}, rate={}hz, warmup={}s, duration={}s)",
+        "mc-bench load → {}:{} (server_address={}, protocol={}, concurrency={}, rate={}hz, warmup={}s, duration={}s, payload={}B)",
         args.host,
         args.port,
         args.server_address,
@@ -101,6 +111,7 @@ pub async fn run(args: LoadArgs) -> std::io::Result<()> {
         args.rate,
         args.warmup,
         args.duration,
+        args.payload_size,
     );
 
     // Aligned start so every worker shares one warmup/measurement window.
@@ -194,6 +205,7 @@ async fn run_worker(
     // send time, so latency reflects proxy/backend service time, not the
     // generator's own timer granularity. Warmup pings carry 0 and are skipped.
     let interval = Duration::from_nanos(1_000_000_000 / args.rate);
+    let mut payload = ping_payload(args.payload_size);
     let mut next = grid_start;
     while next < stop_at {
         sleep_until(next).await;
@@ -203,7 +215,7 @@ async fn run_worker(
         } else {
             0
         };
-        let payload = token.to_be_bytes();
+        payload[..8].copy_from_slice(&token.to_be_bytes());
         if writer
             .write_frame(PING_SERVERBOUND_ID, &payload)
             .await
@@ -319,6 +331,18 @@ fn report(hist: &Histogram<u64>, counters: &Counters, duration_secs: u64) {
     println!("  p99    {:>10}", hist.value_at_quantile(0.99));
     println!("  p99.9  {:>10}", hist.value_at_quantile(0.999));
     println!("  max    {:>10}", hist.max());
+}
+
+/// Ping payload: 8-byte token slot followed by deterministic, hard-to-compress
+/// LCG padding, so above-threshold pings cost realistic zlib work in the proxy.
+fn ping_payload(size: usize) -> Vec<u8> {
+    let mut state: u32 = 0x9E37_79B9 ^ (size as u32);
+    (0..size)
+        .map(|_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 24) as u8
+        })
+        .collect()
 }
 
 fn offline_uuid(name: &str) -> uuid::Uuid {

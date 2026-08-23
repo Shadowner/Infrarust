@@ -19,6 +19,7 @@ const VELOCITY_PLAYER_INFO_CHANNEL: &str = "velocity:player_info";
 /// - `0x01` = MODERN_DEFAULT (1.13+)
 /// - `0x02` = WITH_KEY (1.19)
 /// - `0x03` = WITH_KEY_V2 (1.19.1)
+/// - `0x04` = LAZY_SESSION (1.19.3+)
 const MAX_SUPPORTED_FORWARDING_VERSION: u8 = 0x04;
 
 pub struct VelocityForwardingHandler;
