@@ -343,7 +343,13 @@ fn test_proxy_disabling_the_api_alone_is_valid() {
     let config = proxy_from_toml("[web]\nenable_api = false", dir.path());
 
     assert!(validate_proxy_config(&config).is_ok());
-    assert!(!config.web.as_ref().expect("a [web] section").webui_enabled());
+    assert!(
+        !config
+            .web
+            .as_ref()
+            .expect("a [web] section")
+            .webui_enabled()
+    );
 }
 
 #[test]

@@ -222,6 +222,10 @@ async fn wait_for_hold(
             }
 
             result = &mut complete_rx => {
+                debug_assert!(
+                    result.is_ok(),
+                    "limbo hold completion sender dropped without sending a result"
+                );
                 return match result {
                     Ok(result) => process_handler_result(result),
                     Err(_) => HandlerAction::Continue,

@@ -49,7 +49,7 @@ pub(crate) fn effective_weight(c: &BackendCandidate, slow_start: Option<&SlowSta
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loadbalancer::test_candidate;
+    use crate::loadbalancer::{SelectionMode, test_candidate};
 
     fn cfg(window_secs: u64, aggression: f64) -> SlowStartConfig {
         SlowStartConfig {
@@ -138,7 +138,12 @@ mod tests {
 
         let candidates = vec![warming, stable];
         for _ in 0..5 {
-            assert_eq!(lb.order(&candidates)[0].address.host, "stable");
+            assert_eq!(
+                lb.order(&candidates, SelectionMode::Advance)[0]
+                    .address
+                    .host,
+                "stable"
+            );
         }
     }
 
@@ -155,7 +160,7 @@ mod tests {
 
         let candidates = vec![warming, stable];
         for _ in 0..5 {
-            let ordered = lb.order(&candidates);
+            let ordered = lb.order(&candidates, SelectionMode::Advance);
             assert_eq!(ordered[0].address.host, "stable");
             // Still present as failover, never dropped.
             assert_eq!(ordered[1].address.host, "warming");
@@ -173,7 +178,12 @@ mod tests {
 
         let candidates = vec![warming, stable];
         let warming_picks = (0..100)
-            .filter(|_| lb.order(&candidates)[0].address.host == "warming")
+            .filter(|_| {
+                lb.order(&candidates, SelectionMode::Advance)[0]
+                    .address
+                    .host
+                    == "warming"
+            })
             .count();
         assert!(
             warming_picks <= 5,

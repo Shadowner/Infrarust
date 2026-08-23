@@ -518,6 +518,8 @@ pub async fn delete(
     let event = PluginProviderEvent::Removed(ServerId::new(removed.id().as_str()));
     announce(&state, removed, event).await;
 
+    state.drain_store.forget(&id).await?;
+
     tracing::info!(
         target: "audit",
         action = "server_delete",

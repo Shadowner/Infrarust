@@ -151,7 +151,9 @@ impl ActiveHealthProber {
 
         last_probe.retain(|addr, _| known.contains(addr));
         drop(last_probe);
-        self.health.retain_known(&known);
+        if !known.is_empty() {
+            self.health.retain_known(&known);
+        }
 
         (targets, period.max(MIN_SWEEP_PERIOD))
     }
@@ -233,6 +235,13 @@ mod tests {
     fn config(address: &str) -> ServerConfig {
         toml::from_str(&format!(
             "name = \"probed\"\ndomains = [\"probed.test\"]\naddresses = [\"{address}\"]\n"
+        ))
+        .unwrap()
+    }
+
+    fn config_pair(name: &str, first: &str, second: &str) -> ServerConfig {
+        toml::from_str(&format!(
+            "name = \"{name}\"\ndomains = [\"{name}.test\"]\naddresses = [\"{first}\", \"{second}\"]\n"
         ))
         .unwrap()
     }
@@ -385,9 +394,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_status_ping_cannot_burn_a_recovery_probe() {
+        let router = Arc::new(DomainRouter::new());
+        let server = config_pair("lobby", "10.255.255.1:25565", "10.255.255.2:25565");
+        router.add(ProviderId::file("lobby"), server.clone());
+
+        let health = Arc::new(PassiveBackendHealth::with_threshold(1));
+        let ejected: ServerAddress = "10.255.255.1:25565".parse().unwrap();
+        health.record_failure(&ejected);
+        health.rewind_failures_for_test(&ejected);
+        assert_eq!(health.snapshot(&ejected).state, BackendState::Probing);
+
+        crate::loadbalancer::peek_backend_addresses(
+            &server,
+            &crate::loadbalancer::FirstAvailable,
+            &crate::loadbalancer::BackendLoad::new(),
+            health.as_ref(),
+        );
+
+        let (targets, _) = prober(&router, &health).due_targets(Instant::now());
+        let probed: Vec<&ServerAddress> = targets.iter().map(|t| &t.address).collect();
+        assert_eq!(
+            probed,
+            [&ejected],
+            "a status ping must leave the recovery probe to the prober"
+        );
+    }
+
     #[tokio::test]
     async fn sweep_forgets_addresses_that_left_the_config() {
         let router = Arc::new(DomainRouter::new());
+        router.add(
+            ProviderId::file("still_there"),
+            config("10.255.255.2:25565"),
+        );
         let health = Arc::new(PassiveBackendHealth::with_threshold(1));
         let gone: ServerAddress = "10.255.255.1:25565".parse().unwrap();
         health.record_failure(&gone);
@@ -395,5 +436,60 @@ mod tests {
 
         prober(&router, &health).sweep().await;
         assert_eq!(health.snapshot(&gone).state, BackendState::Healthy);
+    }
+
+    #[tokio::test]
+    async fn an_empty_routing_table_forgets_nothing() {
+        let router = Arc::new(DomainRouter::new());
+        let health = Arc::new(PassiveBackendHealth::with_threshold(1));
+        let ejected: ServerAddress = "10.255.255.1:25565".parse().unwrap();
+        health.record_failure(&ejected);
+
+        prober(&router, &health).sweep().await;
+
+        assert_ne!(
+            health.snapshot(&ejected).state,
+            BackendState::Healthy,
+            "an empty routing table is a reload window, not a purge order"
+        );
+    }
+
+    #[test]
+    fn a_config_update_never_clears_health_under_a_sweep() {
+        let router = Arc::new(DomainRouter::new());
+        let address = "10.255.255.1:25565";
+        router.add(ProviderId::file("lobby"), config(address));
+        let health = Arc::new(PassiveBackendHealth::with_threshold(1));
+        let ejected: ServerAddress = address.parse().unwrap();
+        health.record_failure(&ejected);
+        assert_ne!(health.snapshot(&ejected).state, BackendState::Healthy);
+
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = {
+            let router = Arc::clone(&router);
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    router.update(ProviderId::file("lobby"), config(address));
+                }
+            })
+        };
+
+        let prober = prober_with(&router, &health, "[active_health]\nenabled = false\n");
+        let mut resurrected = false;
+        for _ in 0..20_000 {
+            prober.due_targets(Instant::now());
+            if health.snapshot(&ejected).state == BackendState::Healthy {
+                resurrected = true;
+                break;
+            }
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        writer.join().expect("writer thread panicked");
+
+        assert!(
+            !resurrected,
+            "a hot reload must not silently reinstate an ejected backend"
+        );
     }
 }

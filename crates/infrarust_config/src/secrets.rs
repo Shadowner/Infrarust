@@ -137,7 +137,11 @@ mod tests {
         let mut submitted = doc("[web]\napi_key = \"topsecret\"\n");
         redact(&mut submitted, PROXY_SECRETS);
 
-        reinject(&mut submitted, &doc("bind = \"0.0.0.0:25565\"\n"), PROXY_SECRETS);
+        reinject(
+            &mut submitted,
+            &doc("bind = \"0.0.0.0:25565\"\n"),
+            PROXY_SECRETS,
+        );
 
         assert_eq!(still_redacted(&submitted, PROXY_SECRETS), ["web.api_key"]);
     }

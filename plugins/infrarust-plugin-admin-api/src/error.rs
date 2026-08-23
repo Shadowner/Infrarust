@@ -43,6 +43,13 @@ impl From<crate::server_dir::StoreError> for ApiError {
     }
 }
 
+impl From<crate::drain_store::DrainStoreError> for ApiError {
+    fn from(error: crate::drain_store::DrainStoreError) -> Self {
+        tracing::error!(error = %error, "Drain store write failed");
+        ApiError::Internal("Failed to persist the drain state".into())
+    }
+}
+
 impl From<infrarust_api::services::config_service::ConfigWriteError> for ApiError {
     fn from(error: infrarust_api::services::config_service::ConfigWriteError) -> Self {
         use infrarust_api::services::config_service::ConfigWriteError;

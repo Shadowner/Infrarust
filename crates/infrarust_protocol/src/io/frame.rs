@@ -39,3 +39,8 @@ impl PacketFrame {
             .map(|raw| raw.bytes.as_ref())
     }
 }
+
+#[must_use]
+pub(crate) const fn should_compress(uncompressed_len: usize, threshold: i32) -> bool {
+    threshold >= 0 && uncompressed_len >= threshold as usize
+}

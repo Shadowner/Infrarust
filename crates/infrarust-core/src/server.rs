@@ -114,7 +114,10 @@ impl ProxyServer {
         let backend_load = Arc::new(crate::loadbalancer::BackendLoad::new());
         let pending_backends = Arc::new(crate::loadbalancer::PendingRegistry::new(
             Arc::clone(&backend_load) as _,
-            config.connect_timeout + std::time::Duration::from_secs(5),
+            crate::loadbalancer::reservation_ttl(
+                config.connect_timeout,
+                config.connect_max_attempts,
+            ),
         ));
 
         // Build status subsystem
@@ -240,7 +243,7 @@ impl ProxyServer {
             server_manager.as_ref().map(Arc::clone),
             Arc::clone(&registry),
             Arc::clone(&backend_connector),
-            Arc::clone(&backend_load) as _,
+            Arc::clone(&backend_load),
             Arc::clone(&backend_health) as _,
             shutdown.clone(),
         );
@@ -283,7 +286,7 @@ impl ProxyServer {
                 crate::services::load_balancer_service::LoadBalancerServiceImpl::new(
                     Arc::clone(&domain_router),
                     Arc::clone(&backend_health),
-                    Arc::clone(&pending_backends) as _,
+                    Arc::clone(&backend_load) as _,
                 ),
             ),
             codec_filter_registry: Arc::clone(&codec_filter_registry),

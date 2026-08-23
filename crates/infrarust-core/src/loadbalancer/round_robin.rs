@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 use infrarust_config::ServerAddress;
 
 use super::slow_start::{SlowStartConfig, effective_weight};
-use super::{BackendCandidate, LoadBalancer};
+use super::{BackendCandidate, LoadBalancer, SelectionMode};
 
 pub struct RoundRobin {
     state: Mutex<HashMap<ServerAddress, f64>>,
@@ -30,37 +30,44 @@ impl LoadBalancer for RoundRobin {
     fn order_selectable<'a>(
         &self,
         selectable: &[&'a BackendCandidate],
+        mode: SelectionMode,
     ) -> SmallVec<[&'a BackendCandidate; 4]> {
         let mut cw = self
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-        cw.retain(|addr, _| selectable.iter().any(|c| &c.address == addr));
-
         let mut total = 0.0_f64;
-        for c in selectable {
-            let eff = effective_weight(c, self.slow_start.as_ref());
-            *cw.entry(c.address.clone()).or_insert(0.0) += eff;
-            total += eff;
-        }
+        let raised: SmallVec<[f64; 4]> = selectable
+            .iter()
+            .map(|c| {
+                let eff = effective_weight(c, self.slow_start.as_ref());
+                total += eff;
+                cw.get(&c.address).copied().unwrap_or(0.0) + eff
+            })
+            .collect();
 
-        let picked = selectable.iter().enumerate().max_by(|(_, a), (_, b)| {
-            cw[&a.address]
-                .partial_cmp(&cw[&b.address])
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        let Some((pick_idx, picked)) = picked else {
+        let picked = raised
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let Some((pick_idx, _)) = picked else {
             return SmallVec::new();
         };
 
-        if let Some(w) = cw.get_mut(&picked.address) {
-            *w -= total;
+        if mode == SelectionMode::Advance {
+            cw.retain(|addr, _| selectable.iter().any(|c| &c.address == addr));
+            for (c, weight) in selectable.iter().zip(&raised) {
+                cw.insert(c.address.clone(), *weight);
+            }
+            if let Some(w) = cw.get_mut(&selectable[pick_idx].address) {
+                *w -= total;
+            }
         }
         drop(cw);
 
         let mut result = SmallVec::new();
-        result.push(*picked);
+        result.push(selectable[pick_idx]);
         result.extend(
             selectable
                 .iter()
@@ -76,10 +83,13 @@ impl LoadBalancer for RoundRobin {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::loadbalancer::test_candidate;
+    use crate::loadbalancer::{SelectionMode, test_candidate};
 
     fn pick<'a>(lb: &RoundRobin, candidates: &'a [BackendCandidate]) -> &'a str {
-        lb.order(candidates)[0].address.host.as_str()
+        lb.order(candidates, SelectionMode::Advance)[0]
+            .address
+            .host
+            .as_str()
     }
 
     #[test]
@@ -176,7 +186,7 @@ mod tests {
         ];
         let lb = RoundRobin::new(None);
         for _ in 0..6 {
-            let ordered = lb.order(&candidates);
+            let ordered = lb.order(&candidates, SelectionMode::Advance);
             assert_ne!(ordered[0].address.host, "sick");
             assert_eq!(ordered.last().unwrap().address.host, "sick");
         }

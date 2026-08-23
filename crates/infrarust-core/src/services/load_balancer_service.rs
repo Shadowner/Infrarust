@@ -132,7 +132,7 @@ mod tests {
 
     use infrarust_api::services::load_balancer::BackendState as ApiBackendState;
 
-    use crate::loadbalancer::BackendLoad;
+    use crate::loadbalancer::{BackendLoad, PendingRegistry};
     use crate::provider::ProviderId;
 
     fn service(addresses: &str) -> (LoadBalancerServiceImpl, Arc<PassiveBackendHealth>) {
@@ -165,6 +165,41 @@ mod tests {
         assert_eq!(backends[0].address.to_string(), "10.0.0.1:25565");
         assert_eq!(backends[0].state, ApiBackendState::Healthy);
         assert_eq!(backends[0].effective_weight, 1);
+    }
+
+    #[test]
+    fn active_connections_leave_out_the_logins_still_negotiating() {
+        let router = Arc::new(DomainRouter::new());
+        router.add(
+            ProviderId::file("lobby"),
+            toml::from_str(
+                "name = \"lobby\"\ndomains = [\"lobby.test\"]\naddresses = [\"10.0.0.1:25565\"]\n",
+            )
+            .unwrap(),
+        );
+        let attached = Arc::new(BackendLoad::new());
+        let pending = Arc::new(PendingRegistry::new(
+            Arc::clone(&attached) as _,
+            std::time::Duration::from_secs(60),
+        ));
+        let service = LoadBalancerServiceImpl::new(
+            router,
+            Arc::new(PassiveBackendHealth::new()),
+            Arc::clone(&attached) as _,
+        );
+        let address = ServerAddress {
+            host: "10.0.0.1".into(),
+            port: 25565,
+        };
+
+        attached.acquire(&address);
+        let _ticket = pending.reserve(&address);
+
+        assert_eq!(
+            service.backends(&ServerId::new("lobby"))[0].active_connections,
+            1,
+            "a reservation is not an active connection"
+        );
     }
 
     #[test]

@@ -148,7 +148,8 @@ impl BackendBridge {
         Ok(())
     }
 
-    /// Activates packet compression with the given threshold.
+    /// Activates packet compression with the given threshold, or leaves it
+    /// disabled if `threshold` is negative.
     pub const fn set_compression(&mut self, threshold: i32) {
         self.decoder.set_compression(threshold);
         self.encoder.set_compression(threshold);

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use smallvec::SmallVec;
 
 use super::slow_start::{SlowStartConfig, effective_weight};
-use super::{BackendCandidate, LoadBalancer};
+use super::{BackendCandidate, LoadBalancer, SelectionMode};
 
 pub struct LeastConnections {
     tie_breaker: AtomicUsize,
@@ -27,6 +27,7 @@ impl LoadBalancer for LeastConnections {
     fn order_selectable<'a>(
         &self,
         selectable: &[&'a BackendCandidate],
+        mode: SelectionMode,
     ) -> SmallVec<[&'a BackendCandidate; 4]> {
         let scores: SmallVec<[f64; 4]> = selectable
             .iter()
@@ -45,7 +46,11 @@ impl LoadBalancer for LeastConnections {
             .map(|(i, _)| i)
             .collect();
 
-        let pick = tied[self.tie_breaker.fetch_add(1, Ordering::Relaxed) % tied.len()];
+        let rotation = match mode {
+            SelectionMode::Advance => self.tie_breaker.fetch_add(1, Ordering::Relaxed),
+            SelectionMode::Peek => self.tie_breaker.load(Ordering::Relaxed),
+        };
+        let pick = tied[rotation % tied.len()];
 
         let mut rest: SmallVec<[usize; 4]> = (0..selectable.len()).filter(|i| *i != pick).collect();
         rest.sort_by(|a, b| {
@@ -65,7 +70,7 @@ impl LoadBalancer for LeastConnections {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::loadbalancer::test_candidate;
+    use crate::loadbalancer::{SelectionMode, test_candidate};
 
     fn with_conns(host: &str, conns: usize) -> BackendCandidate {
         let mut c = test_candidate(host, true);
@@ -74,7 +79,10 @@ mod tests {
     }
 
     fn pick<'a>(lb: &LeastConnections, candidates: &'a [BackendCandidate]) -> &'a str {
-        lb.order(candidates)[0].address.host.as_str()
+        lb.order(candidates, SelectionMode::Advance)[0]
+            .address
+            .host
+            .as_str()
     }
 
     #[test]
@@ -114,7 +122,7 @@ mod tests {
         candidates[0].healthy_since = Some(since);
         candidates[1].healthy_since = Some(since);
         for _ in 0..1000 {
-            assert_eq!(lb.order(&candidates).len(), 2);
+            assert_eq!(lb.order(&candidates, SelectionMode::Advance).len(), 2);
         }
     }
 
@@ -126,7 +134,7 @@ mod tests {
             with_conns("c", 3),
             with_conns("d", 9),
         ];
-        let ordered = LeastConnections::new(None).order(&candidates);
+        let ordered = LeastConnections::new(None).order(&candidates, SelectionMode::Advance);
         let hosts: Vec<&str> = ordered.iter().map(|c| c.address.host.as_str()).collect();
         assert_eq!(hosts, ["b", "c", "a", "d"]);
     }
@@ -153,7 +161,7 @@ mod tests {
     fn test_lc_unhealthy_in_queue() {
         let mut candidates = vec![with_conns("a", 5), with_conns("free", 0)];
         candidates[1].state = crate::loadbalancer::BackendState::Unhealthy;
-        let ordered = LeastConnections::new(None).order(&candidates);
+        let ordered = LeastConnections::new(None).order(&candidates, SelectionMode::Advance);
         // Even with 0 connections, the unhealthy address stays last.
         assert_eq!(ordered[0].address.host, "a");
         assert_eq!(ordered[1].address.host, "free");

@@ -30,8 +30,11 @@ impl BackendLoad {
     }
 
     pub(crate) fn release(&self, addr: &ServerAddress) {
-        self.counts
-            .remove_if(addr, |_, count| count.fetch_sub(1, Ordering::Relaxed) == 1);
+        self.counts.remove_if(addr, |_, count| {
+            count
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+                .is_ok_and(|previous| previous == 1)
+        });
     }
 
     #[cfg(test)]
@@ -75,6 +78,26 @@ mod tests {
         load.release(&a);
         assert_eq!(load.active_connections_for_address(&a), 0);
         assert_eq!(load.tracked_addresses(), 0, "empty entry must be dropped");
+    }
+
+    #[test]
+    fn release_below_zero_cannot_wrap_the_counter() {
+        let load = BackendLoad::new();
+        let a = addr("a");
+        load.acquire(&a);
+        load.release(&a);
+        load.release(&a);
+        assert_eq!(load.active_connections_for_address(&a), 0);
+        assert_eq!(load.tracked_addresses(), 0);
+    }
+
+    #[test]
+    fn release_of_a_zeroed_entry_cannot_wrap() {
+        let load = BackendLoad::new();
+        let a = addr("a");
+        load.counts.entry(a.clone()).or_default();
+        load.release(&a);
+        assert_eq!(load.active_connections_for_address(&a), 0);
     }
 
     #[test]

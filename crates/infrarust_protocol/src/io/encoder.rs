@@ -4,7 +4,7 @@ use crate::MAX_PACKET_SIZE;
 use crate::codec::VarInt;
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::io::compression::{self, ZlibCompressor};
-use crate::io::frame::PacketFrame;
+use crate::io::frame::{PacketFrame, should_compress};
 
 fn write_varint(buf: &mut BytesMut, varint: VarInt) -> ProtocolResult<()> {
     varint.encode(&mut buf.writer())
@@ -49,7 +49,7 @@ impl PacketEncoder {
             Some(threshold) => {
                 let uncompressed_len = packet_id_size + payload.len();
 
-                if (uncompressed_len as i32) >= threshold {
+                if should_compress(uncompressed_len, threshold) {
                     self.scratch_buf.clear();
                     self.scratch_buf.reserve(packet_id_size + payload.len());
                     packet_id_varint.encode(&mut self.scratch_buf)?;
@@ -106,7 +106,7 @@ impl PacketEncoder {
     }
 
     pub const fn set_compression(&mut self, threshold: i32) {
-        self.compression_threshold = Some(threshold);
+        self.compression_threshold = if threshold < 0 { None } else { Some(threshold) };
     }
 
     pub const fn compression_threshold(&self) -> Option<i32> {

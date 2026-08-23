@@ -102,7 +102,7 @@ pub fn test_proxy_services() -> ProxyServices {
             crate::services::load_balancer_service::LoadBalancerServiceImpl::new(
                 Arc::clone(&domain_router),
                 Arc::clone(&backend_health),
-                Arc::clone(&pending_backends) as _,
+                Arc::clone(&backend_load) as _,
             ),
         ),
         pending_backends,

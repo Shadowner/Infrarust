@@ -32,7 +32,7 @@ use infrarust_loader_wasm::{WasmPluginLoader, build_engine};
 mod mock_services;
 use mock_services::{
     CountingPlayerRegistry, MapConfigService, MockBanService, MockConfigService,
-    MockPlayerRegistry, RecordingPlayerRegistry,
+    MockLoadBalancerService, MockPlayerRegistry, RecordingPlayerRegistry,
 };
 
 const FIXTURE_DIR: &str = env!("INFRARUST_WASM_FIXTURE_DIR");
@@ -67,6 +67,7 @@ fn make_env(
         command_manager: Arc::clone(&command_manager) as Arc<dyn CommandManager>,
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service,
+        load_balancer_service: Arc::new(MockLoadBalancerService),
         plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
         codec_filter_registry: Arc::new(
             infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),

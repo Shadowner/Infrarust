@@ -13,7 +13,8 @@ use smallvec::SmallVec;
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_core::loadbalancer::{
     AddressConnectionCount, BackendCandidate, BackendHealthView, BackendState, HealthSnapshot,
-    LeastConnections, LoadBalancer, PendingRegistry, PendingTicket, select_backend_addresses,
+    LeastConnections, LoadBalancer, PendingRegistry, PendingTicket, SelectionMode,
+    peek_backend_addresses, select_backend_addresses,
 };
 use infrarust_core::middleware::backend_selection::{BackendSelectionMiddleware, BackendTargets};
 use infrarust_core::pipeline::context::ConnectionContext;
@@ -146,12 +147,17 @@ impl LoadBalancer for CapturingLb {
     fn order_selectable<'a>(
         &self,
         selectable: &[&'a BackendCandidate],
+        _mode: SelectionMode,
     ) -> SmallVec<[&'a BackendCandidate; 4]> {
         selectable.iter().copied().collect()
     }
 
     /// Overridden to capture every candidate, ejected ones included.
-    fn order<'a>(&self, candidates: &'a [BackendCandidate]) -> SmallVec<[&'a BackendCandidate; 4]> {
+    fn order<'a>(
+        &self,
+        candidates: &'a [BackendCandidate],
+        _mode: SelectionMode,
+    ) -> SmallVec<[&'a BackendCandidate; 4]> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         *self.seen.lock().unwrap() = candidates.to_vec();
         candidates.iter().collect()
@@ -335,6 +341,52 @@ fn test_claimed_probe_is_tried_first() {
     // The claim is consumed: the next selection leaves it in the tail.
     let ordered = select_backend_addresses(&config, &lb, &counts, &health);
     assert_eq!(ordered.last(), Some(&addr("10.0.0.3")));
+}
+
+#[test]
+fn test_probe_hoisting_leaves_room_for_a_healthy_address() {
+    let counts = MockCounts::default();
+    let health = MockHealth::default();
+    for host in ["10.0.0.1", "10.0.0.2", "10.0.0.3"] {
+        health.set_probing(&addr(host));
+    }
+    let config = server_config(&[
+        "10.0.0.1:25565",
+        "10.0.0.2:25565",
+        "10.0.0.3:25565",
+        "10.0.0.4:25565",
+    ]);
+
+    let ordered = select_backend_addresses(&config, &LeastConnections::new(None), &counts, &health);
+
+    let attempts = infrarust_config::defaults::connect_max_attempts();
+    assert!(
+        ordered[..attempts].contains(&addr("10.0.0.4")),
+        "the healthy address fell outside the {attempts} dialled addresses: {ordered:?}"
+    );
+}
+
+#[test]
+fn test_a_peek_claims_no_probe() {
+    let counts = MockCounts::default();
+    let health = MockHealth::default();
+    health.set_probing(&addr("10.0.0.2"));
+    let config = server_config(&["10.0.0.1:25565", "10.0.0.2:25565"]);
+    let lb = LeastConnections::new(None);
+
+    let previewed = peek_backend_addresses(&config, &lb, &counts, &health);
+    assert_eq!(
+        previewed.last(),
+        Some(&addr("10.0.0.2")),
+        "a preview never hoists a probe"
+    );
+
+    let ordered = select_backend_addresses(&config, &lb, &counts, &health);
+    assert_eq!(
+        ordered.first(),
+        Some(&addr("10.0.0.2")),
+        "the probe must still be claimable by the login that follows"
+    );
 }
 
 /// Without reservations, every login started before the first one attaches
