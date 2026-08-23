@@ -83,6 +83,7 @@ impl Listener {
     ) -> Result<Self, TransportError> {
         let socket = configure_listener_socket(config.bind, config.so_reuseport)?;
         let inner = into_tokio_listener(socket)?;
+        let local_addr = inner.local_addr().map_err(TransportError::SocketConfig)?;
 
         let semaphore = if config.max_connections > 0 {
             Some(Arc::new(Semaphore::new(config.max_connections as usize)))
@@ -90,7 +91,7 @@ impl Listener {
             None
         };
 
-        tracing::info!(bind = %config.bind, max_connections = config.max_connections, "listener bound");
+        tracing::info!(bind = %local_addr, max_connections = config.max_connections, "listener bound");
 
         Ok(Self {
             inner,

@@ -14,8 +14,8 @@ pub enum TransportError {
         source: std::io::Error,
     },
 
-    #[error("socket file descriptor error: {0}")]
-    SocketFileDescriptor(std::io::Error),
+    #[error("socket activation error: {0}")]
+    SocketActivation(std::io::Error),
 
     /// Failed to accept incoming connection.
     #[error("accept error: {0}")]

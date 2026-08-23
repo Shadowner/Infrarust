@@ -385,7 +385,7 @@ impl ProxyServer {
 
         let listener = Listener::bind(listener_config, self.shutdown.clone()).await?;
 
-        tracing::info!(bind = %config.bind, "proxy server listening");
+        tracing::info!(bind = %listener.local_addr()?, "proxy server listening");
 
         // Start server manager health check and monitoring
         if let Some(ref sm) = self.services.server_manager {

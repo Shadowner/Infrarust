@@ -80,6 +80,11 @@ fn main() -> ExitCode {
         return migrate::run(input, output, config.as_deref());
     }
 
+    if let Err(e) = infrarust_transport::init_socket_activation() {
+        eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+
     let config = if !cli.config.exists()
         && cli.config == Path::new("infrarust.toml")
         && std::io::stdout().is_terminal()
