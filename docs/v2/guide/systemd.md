@@ -171,6 +171,67 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 This lets the process bind to port 25565 without running as root.
 
+Option C: let systemd own the socket, using socket activation. See the next section.
+
+## Socket activation
+
+With socket activation, systemd creates the listening socket itself and hands it to Infrarust as an inherited file descriptor. Infrarust detects it through the standard `LISTEN_FDS` protocol and accepts connections on it instead of binding its own.
+
+This is useful in two situations:
+
+- **Privileged ports:** systemd binds port 25565 as root before dropping to the `infrarust` user, so no `AmbientCapabilities` is needed.
+- **Rootless containers:** under rootless Podman, a userspace port forwarder sits in front of the proxy and rewrites the source address of every connection, so every player appears to come from the same local IP. A socket created outside the container skips the forwarder, so connections arrive at kernel speed and keep the client source address that bans, rate limiting, and logs depend on.
+
+Create `/etc/systemd/system/infrarust.socket`:
+
+```ini
+[Unit]
+Description=Infrarust Minecraft Reverse Proxy Socket
+
+[Socket]
+ListenStream=0.0.0.0:25565
+Accept=no
+
+[Install]
+WantedBy=sockets.target
+```
+
+`Accept=no` is required: Infrarust needs the listening socket itself, not one connection per instance.
+
+Then bind the service to it in `/etc/systemd/system/infrarust.service`:
+
+```ini{3,4}
+[Unit]
+Description=Infrarust Minecraft Reverse Proxy
+Requires=infrarust.socket
+After=infrarust.socket
+```
+
+Enable the socket:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now infrarust.socket
+```
+
+systemd now starts Infrarust on the first incoming connection. To keep the proxy running permanently instead of on demand, leave `infrarust.service` enabled as well. It still picks up the socket from systemd.
+
+Check the logs to confirm the handover:
+
+```bash
+journalctl -u infrarust | grep "socket activation"
+```
+
+The `listener bound` line just after it reports the address the proxy is listening on.
+
+::: warning
+When a socket is passed in, the `bind` address in `infrarust.toml` and the `so_reuseport` setting are ignored. The listening address and backlog belong to the `.socket` unit. Only the first passed file descriptor is used; Infrarust listens on one socket.
+:::
+
+::: tip
+The same mechanism works with any activator that speaks the systemd protocol. [`systemfd`](https://github.com/mitsuhiko/systemfd) is handy during development: `systemfd --no-pid -s tcp::25565 -- infrarust` keeps the port open across restarts.
+:::
+
 ## Updating Infrarust
 
 To deploy a new version:
