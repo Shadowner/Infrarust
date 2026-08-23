@@ -82,6 +82,12 @@ impl ProtocolVersion {
         Self::V26_2,
     ];
 
+    pub const HIGHEST_KNOWN: Self = Self::V26_2;
+
+    pub const fn is_known(self) -> bool {
+        self.0 <= Self::HIGHEST_KNOWN.0
+    }
+
     pub fn no_less_than(self, other: Self) -> bool {
         self >= other
     }
@@ -170,6 +176,18 @@ pub enum ConnectionState {
 }
 
 impl ConnectionState {
+    pub const COUNT: usize = 5;
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Handshake => 0,
+            Self::Status => 1,
+            Self::Login => 2,
+            Self::Config => 3,
+            Self::Play => 4,
+        }
+    }
+
     pub const fn handshake_id(self) -> Option<i32> {
         match self {
             Self::Status => Some(1),
@@ -204,6 +222,17 @@ impl fmt::Display for ConnectionState {
 pub enum Direction {
     Serverbound,
     Clientbound,
+}
+
+impl Direction {
+    pub const COUNT: usize = 2;
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Serverbound => 0,
+            Self::Clientbound => 1,
+        }
+    }
 }
 
 impl fmt::Display for Direction {
@@ -317,6 +346,43 @@ mod tests {
             display.contains("protocol:42"),
             "expected 'protocol:42', got '{display}'"
         );
+    }
+
+    #[test]
+    fn test_highest_known_is_last_supported() {
+        assert_eq!(
+            Some(&ProtocolVersion::HIGHEST_KNOWN),
+            ProtocolVersion::SUPPORTED.last()
+        );
+    }
+
+    #[test]
+    fn test_is_known_covers_the_table_and_stops_above_it() {
+        assert!(ProtocolVersion::V1_7_2.is_known());
+        assert!(ProtocolVersion::HIGHEST_KNOWN.is_known());
+        assert!(ProtocolVersion(108).is_known());
+        assert!(!ProtocolVersion(777).is_known());
+    }
+
+    #[test]
+    fn test_state_and_direction_indices_are_dense() {
+        let states = [
+            ConnectionState::Handshake,
+            ConnectionState::Status,
+            ConnectionState::Login,
+            ConnectionState::Config,
+            ConnectionState::Play,
+        ];
+        assert_eq!(states.len(), ConnectionState::COUNT);
+        for (expected, state) in states.iter().enumerate() {
+            assert_eq!(state.index(), expected);
+        }
+
+        let directions = [Direction::Serverbound, Direction::Clientbound];
+        assert_eq!(directions.len(), Direction::COUNT);
+        for (expected, direction) in directions.iter().enumerate() {
+            assert_eq!(direction.index(), expected);
+        }
     }
 
     #[test]

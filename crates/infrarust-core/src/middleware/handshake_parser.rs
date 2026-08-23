@@ -124,6 +124,14 @@ impl Middleware for HandshakeParserMiddleware {
                     "handshake parsed"
                 );
 
+                if !protocol_version.is_known() {
+                    tracing::warn!(
+                        protocol = protocol_version.0,
+                        inherits = %ProtocolVersion::HIGHEST_KNOWN,
+                        "client protocol is newer than any version this build knows;                          play and config packet ids are inherited and may be wrong"
+                    );
+                }
+
                 ctx.extensions.insert(HandshakeData {
                     domain,
                     port,

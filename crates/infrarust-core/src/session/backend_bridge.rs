@@ -215,7 +215,9 @@ impl BackendBridge {
 
         let packet_id = registry
             .get_packet_id::<SLoginStart>(version)
-            .unwrap_or(0x00);
+            .ok_or_else(|| {
+                CoreError::Auth(format!("no SLoginStart id for protocol {}", version.0))
+            })?;
 
         let mut payload = Vec::new();
         login_start.encode(&mut payload, version)?;
@@ -251,7 +253,9 @@ impl BackendBridge {
 
         let packet_id = registry
             .get_packet_id::<SLoginStart>(version)
-            .unwrap_or(0x00);
+            .ok_or_else(|| {
+                CoreError::Auth(format!("no SLoginStart id for protocol {}", version.0))
+            })?;
 
         let mut payload = Vec::new();
         login_start.encode(&mut payload, version)?;

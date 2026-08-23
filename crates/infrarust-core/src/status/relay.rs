@@ -143,7 +143,7 @@ pub(crate) async fn status_exchange(
         server_port: address.port,
         next_state: ConnectionState::Status,
     };
-    send_packet(registry, stream, &handshake, protocol_version).await?;
+    send_packet(registry, stream, &handshake, STATUS_PROTOCOL_VERSION).await?;
 
     send_packet(registry, stream, &SStatusRequest, STATUS_PROTOCOL_VERSION).await?;
 
@@ -237,7 +237,13 @@ async fn send_packet<P: Packet>(
     packet: &P,
     version: ProtocolVersion,
 ) -> Result<(), CoreError> {
-    let packet_id = registry.get_packet_id::<P>(version).unwrap_or(0);
+    let packet_id = registry.get_packet_id::<P>(version).ok_or_else(|| {
+        CoreError::Other(format!(
+            "no packet id for {} at protocol {}",
+            P::NAME,
+            version.0
+        ))
+    })?;
 
     let mut payload = Vec::new();
     packet.encode(&mut payload, version)?;

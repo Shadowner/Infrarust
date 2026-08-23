@@ -12,7 +12,7 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_protocol::{CLoginSuccess, CSetCompression, PacketRegistry, SHandshake, VarInt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::proto::{FramedConn, PING_CLIENTBOUND_ID, PING_SERVERBOUND_ID, snap_to_supported};
+use crate::proto::{FramedConn, PING_CLIENTBOUND_ID, PING_SERVERBOUND_ID};
 
 #[derive(Args, Debug)]
 pub struct BackendArgs {
@@ -78,7 +78,7 @@ async fn handle_conn(
             "protocol {proto} >= 764 unsupported; this mock targets < 1.20.2 (no config phase)"
         )));
     }
-    let version = snap_to_supported(proto);
+    let version = ProtocolVersion(proto);
 
     // 2. LoginStart — we only need the username for the success reply.
     let login_frame = conn
