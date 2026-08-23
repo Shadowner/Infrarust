@@ -636,6 +636,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "command-fds"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b60b5124979fccd9addd89d8b97a1d6eebb4950694520c75ddd722535ea443f"
+dependencies = [
+ "nix",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "compression-codecs"
 version = "0.4.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1919,6 +1929,7 @@ dependencies = [
  "infrarust-plugin-auth",
  "infrarust-plugin-hello",
  "infrarust-plugin-server-wake",
+ "infrarust-transport",
  "infrarust_config",
  "mimalloc",
  "opentelemetry",
@@ -2147,9 +2158,12 @@ name = "infrarust-transport"
 version = "2.0.0-beta.1"
 dependencies = [
  "bytes",
+ "command-fds",
  "infrarust_config",
+ "listenfd",
  "nix",
  "ppp",
+ "rusty-fork",
  "socket2",
  "thiserror 2.0.18",
  "tokio",
@@ -2447,6 +2461,17 @@ name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
+
+[[package]]
+name = "listenfd"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b87bc54a4629b4294d0b3ef041b64c40c611097a677d9dc07b2c67739fe39dba"
+dependencies = [
+ "libc",
+ "uuid",
+ "winapi",
+]
 
 [[package]]
 name = "litemap"
@@ -3116,6 +3141,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick-error"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
+
+[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3616,6 +3647,18 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "rusty-fork"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc6bf79ff24e648f6da1f8d1f011e9cac26491b619e6b9280f2b47f1774e6ee2"
+dependencies = [
+ "fnv",
+ "quick-error",
+ "tempfile",
+ "wait-timeout",
+]
 
 [[package]]
 name = "ryu"
@@ -4548,6 +4591,15 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "wait-timeout"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "walkdir"

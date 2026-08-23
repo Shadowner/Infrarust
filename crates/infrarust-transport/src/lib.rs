@@ -21,7 +21,8 @@ pub use proxy_protocol::{
     ProxyProtocolInfo, ProxyProtocolVersion, decode_proxy_protocol, encode_proxy_protocol_v2,
 };
 pub use socket::{
-    configure_listener_socket, configure_stream_socket, into_tokio_listener, into_tokio_stream,
+    configure_listener_socket, configure_stream_socket, init_socket_activation,
+    into_tokio_listener, into_tokio_stream,
 };
 
 #[cfg(target_os = "linux")]

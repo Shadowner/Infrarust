@@ -6,6 +6,8 @@
 
 use std::net::SocketAddr;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use listenfd::ListenFd;
 use socket2::{Domain, Protocol, Socket, TcpKeepalive, Type};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -13,10 +15,40 @@ use infrarust_config::KeepaliveConfig;
 
 use crate::error::TransportError;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+static ACTIVATED_LISTENER: std::sync::Mutex<Option<std::net::TcpListener>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn activated_listener() -> std::sync::MutexGuard<'static, Option<std::net::TcpListener>> {
+    ACTIVATED_LISTENER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+pub fn init_socket_activation() -> Result<(), TransportError> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        if let Some(listener) = ListenFd::from_env()
+            .take_tcp_listener(0)
+            .map_err(TransportError::SocketActivation)?
+        {
+            *activated_listener() = Some(listener);
+        }
+    }
+
+    Ok(())
+}
+
 /// Creates and configures a listener socket.
 ///
 /// Sets `SO_REUSEADDR` (always), `SO_REUSEPORT` (Linux, if requested),
 /// nonblocking mode, then binds and listens with a backlog of 1024.
+///
+/// If [`init_socket_activation`] claimed a socket, adopts that socket and
+/// only sets nonblocking mode on it. `addr` and `reuseport` are then
+/// ignored: the listening address, backlog and socket options belong to
+/// whatever activated the socket.
 ///
 /// # Errors
 ///
@@ -26,6 +58,17 @@ pub fn configure_listener_socket(
     addr: SocketAddr,
     reuseport: bool,
 ) -> Result<Socket, TransportError> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if let Some(listener) = activated_listener().take() {
+        let socket = Socket::from(listener);
+        socket
+            .set_nonblocking(true)
+            .map_err(TransportError::SocketConfig)?;
+
+        tracing::info!(configured_bind = %addr, "adopting socket passed by socket activation");
+        return Ok(socket);
+    }
+
     let domain = if addr.is_ipv4() {
         Domain::IPV4
     } else {

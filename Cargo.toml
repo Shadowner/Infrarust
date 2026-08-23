@@ -124,10 +124,13 @@ wildmatch = "2.6.1"
 
 # Platform-specific
 nix = { version = "0.31", features = ["fs", "net", "zerocopy"] }
+listenfd = "1.0.2"
 mimalloc = "0.1.52"
 
 # Testing
 tempfile = "3.27.0"
+command-fds = "0.3.3"
+rusty-fork = "0.3.1"
 
 # Benchmarking / load testing
 divan = "0.1"

@@ -48,6 +48,7 @@ uuid = { workspace = true }
 infrarust-api = { workspace = true }
 infrarust_config = { workspace = true }
 infrarust-core = { workspace = true }
+infrarust-transport = { workspace = true }
 
 # Plugins (optional)
 infrarust-plugin-auth = { workspace = true, optional = true }
