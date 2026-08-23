@@ -306,6 +306,10 @@ async function runVersion(ctx) {
         velocityEnforced = cell.status === 'pass';
         if (!velocityEnforced) {
           row.notes.push('the Paper build for this release does not enforce Velocity forwarding');
+          cell.status = 'untrusted';
+          cell.detail =
+            'this Paper build lets a direct connection in, so it does not enforce Velocity ' +
+            'forwarding and no Velocity result is possible for this release';
         }
       }
     }
