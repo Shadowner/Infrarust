@@ -11,7 +11,7 @@ It depends on the proxy mode.
 
 Forwarding modes (passthrough, zero_copy, server_only) work with every Minecraft version from 1.7 onward, including snapshots, modded servers, and future releases. The proxy only reads the handshake packet, which hasn't changed since 1.7. It never parses game packets, so the client version doesn't matter.
 
-Intercepted modes (client_only, offline) parse and re-encode game packets, so they depend on Infrarust's protocol implementation. The protocol crate currently defines 34 versions, from 1.7.2 (protocol 4) through 1.21.11 (protocol 774). The limbo system handles version-specific spawn sequences for clients as old as pre-1.16.
+Intercepted modes (client_only, offline) parse and re-encode game packets, so they depend on Infrarust's protocol implementation. The protocol crate names 36 versions, from 1.7.2 (protocol 4) through 26.2 (protocol 776), but it does not need a client's exact protocol number to be one of them: packet mappings are resolved by *band*, so a number that falls between two named versions uses the mapping in force at that point. A patch release Mojang ships between two named versions therefore works without any change here. The limbo system handles version-specific spawn sequences for clients as old as pre-1.16.
 
 Legacy clients (Beta 1.8 through 1.6) are detected during the handshake and handled separately. They receive a legacy ping response but cannot log in through the proxy.
 

@@ -167,6 +167,43 @@ Some hard-won details are baked into `tierb.sh` and `docker-compose.yml`:
   `connection-throttle` (4000 ms by default), so `--backends real` paces itself.
   Override with `--case-delay`.
 
+## What the benches changed
+
+The point of a bench is to change something. Two proxy defects were found by
+launching the real client at all 75 releases, and both are fixed:
+
+**Packet ids are resolved by band, not by exact protocol number.** 18 releases
+could not be served in any intercepted mode because their protocol number was
+absent from `ProtocolVersion::SUPPORTED`. The fix adds no versions to that
+table: `register()` was already computing each mapping's version range and then
+discarding it, so the registry now keeps it. A number that falls between two
+named versions uses the mapping in force at that point, which also means the
+next patch release Mojang ships needs no change here. An explicit upper bound on
+a mapping is still honoured — which is why this beat the obvious alternative of
+snapping an unknown number down to the nearest known one.
+
+**The signed encryption response is accepted.** From 1.19 a client holding a
+chat profile key answers the encryption request with a salt and a signature
+instead of an RSA-encrypted verify token. The proxy decoded those bytes into the
+verify-token field and then RSA-decrypted them, which fails, so every player with
+a real Mojang account on 1.19, 1.19.1 and 1.19.2 was dropped mid-handshake by the
+one mode whose purpose is authenticating them. The signature is now verified
+against the profile key from the login start packet.
+
+Neither defect could have been found by tiers A and B. The first needs a client
+for a version node-minecraft-protocol does not implement; the second needs a
+client that actually holds a chat key, which a protocol reimplementation never
+sends. Both were verified the same way they were found — by re-running exactly
+the releases that failed:
+
+| | before | after |
+|---|---|---|
+| 1.9.1 · protocol 108 | `client_only` ❌ | ✅ |
+| 1.14.4 · protocol 498 | 3 red, 329 s | 10/10, 78 s |
+| 1.17.1 · protocol 756 | 3 red | 10/10 |
+| 1.19 · protocol 759 | 2 red | 10/10 |
+| 1.18.2, 1.19.3 (controls) | 10/10 | 10/10, unchanged |
+
 ## Tier C: the real game client
 
 Tiers A and B both drive the login with a reimplementation of the protocol. That
@@ -279,12 +316,14 @@ Both halves are then genuine: real RSA, real AES, real `join`/`hasJoined`.
 
 Running this bench found three things, all reproducible:
 
-1. **The proxy cannot serve six Minecraft versions in any intercepted mode.**
-   1.10.2, 1.11.2, 1.13.2, 1.14.4, 1.15.2 and 1.17.1 have protocol numbers
-   (210, 316, 404, 498, 578, 756) that are absent from `ProtocolVersion::SUPPORTED`.
-   The registry is keyed by exact protocol number, so every attempt to *send* a
-   packet to such a client fails with `no packet ID for … in login/ProtocolVersion(N)`.
-   All 14 failures in the full matrix are this one cause.
+1. **The proxy could not serve 18 Minecraft releases in any intercepted mode.**
+   *Fixed — see "What the benches changed" below.* Their protocol numbers (108,
+   210, 315, 316, 401, 404, 480, 485, 490, 498, 575, 578, 736, 753, 756) were
+   absent from `ProtocolVersion::SUPPORTED`, and the registry was keyed by exact
+   protocol number, so every attempt to *send* a packet to such a client failed.
+   Tier A saw six of them; the real-client sweep over all 75 releases found the
+   other nine, because it does not depend on a third-party library supporting
+   the version.
 
 2. **BungeeCord/BungeeGuard forwarding does nothing in `offline` mode**, and
    against a real backend that means players cannot connect at all. Tracked as a
@@ -293,8 +332,8 @@ Running this bench found three things, all reproducible:
 3. **`mode = "bungeecord"` and `"bungeeguard"`, as the docs spelled them, do not
    parse.** serde expects `bungee_cord` / `bungee_guard`. Fixed in the docs.
 
-The first two are proxy behaviour and are left alone here: this bench reports,
-it does not decide.
+Finding 2 is proxy behaviour and is left alone here: this bench reports, it does
+not decide. Finding 1 was fixed once the sweep had measured its full extent.
 
 Tier C then added four more, all from launching the actual game:
 
