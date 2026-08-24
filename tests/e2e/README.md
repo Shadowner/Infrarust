@@ -173,8 +173,9 @@ The point of a bench is to change something. Two proxy defects were found by
 launching the real client at all 75 releases, and both are fixed:
 
 **Packet ids are resolved by band, not by exact protocol number.** 18 releases
-could not be served in any intercepted mode because their protocol number was
-absent from `ProtocolVersion::SUPPORTED`. The fix adds no versions to that
+could not reach `client_only` or Velocity forwarding — the paths where the proxy
+authors a login packet itself — because their protocol number was absent from
+`ProtocolVersion::SUPPORTED`. The fix adds no versions to that
 table: `register()` was already computing each mapping's version range and then
 discarding it, so the registry now keeps it. A number that falls between two
 named versions uses the mapping in force at that point, which also means the
@@ -316,7 +317,10 @@ Both halves are then genuine: real RSA, real AES, real `join`/`hasJoined`.
 
 Running this bench found three things, all reproducible:
 
-1. **The proxy could not serve 18 Minecraft releases in any intercepted mode.**
+1. **The proxy could not serve 18 Minecraft releases wherever it had to author a
+   login packet itself** — `client_only`, which needs CEncryptionRequest, and
+   anything with Velocity forwarding, which needs CLoginSuccess. Plain `offline`
+   passed on all 18, because there the backend sends LoginSuccess.
    *Fixed — see "What the benches changed" below.* Their protocol numbers (108,
    210, 315, 316, 401, 404, 480, 485, 490, 498, 575, 578, 736, 753, 756) were
    absent from `ProtocolVersion::SUPPORTED`, and the registry was keyed by exact
