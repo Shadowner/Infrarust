@@ -2,7 +2,6 @@
 
 use std::io;
 
-use infrarust_protocol::version::ProtocolVersion;
 use infrarust_protocol::{PacketDecoder, PacketEncoder, PacketFrame};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -13,21 +12,6 @@ pub const PING_SERVERBOUND_ID: i32 = 0x40;
 
 /// Clientbound id for the benchmark echo. Same opaque-forwarding rationale.
 pub const PING_CLIENTBOUND_ID: i32 = 0x41;
-
-/// Snaps an arbitrary protocol number to the nearest supported version that is
-/// `<= proto`, so registry lookups for handshake/login packets succeed even when
-/// the caller passes an exact wire number that has no dedicated constant.
-///
-/// The returned version is only used for registry id lookups and typed
-/// encode/decode; the handshake still advertises the original `proto` number.
-pub fn snap_to_supported(proto: i32) -> ProtocolVersion {
-    let target = ProtocolVersion(proto);
-    ProtocolVersion::SUPPORTED
-        .iter()
-        .copied()
-        .rfind(|v| v.no_greater_than(target))
-        .unwrap_or(ProtocolVersion::V1_8)
-}
 
 /// A framed connection wrapping a `TcpStream` with the protocol encoder/decoder.
 pub struct FramedConn {

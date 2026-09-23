@@ -1,0 +1,11 @@
+Domain = "localhost"
+BaseURL = "http://localhost:25585"
+ListenAddress = "0.0.0.0:25585"
+DefaultAdmins = ["admin"]
+
+PlayerUUIDGeneration = "offline"
+MinPasswordLength = 4
+
+[RegistrationNewPlayer]
+Allow = true
+RequireInvite = false

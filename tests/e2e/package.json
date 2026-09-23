@@ -1,0 +1,15 @@
+{
+  "name": "infrarust-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end multi-version connection bench for Infrarust",
+  "scripts": {
+    "selftest": "node src/selftest.js",
+    "bench": "node src/run.js",
+    "realclient": "node src/real/run.js"
+  },
+  "dependencies": {
+    "minecraft-protocol": "^1.63.0"
+  }
+}

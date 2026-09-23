@@ -18,8 +18,8 @@ Infrarust supports four forwarding modes:
 |---|---|---|---|
 | `none` | n/a | n/a | Backend handles auth itself |
 | `velocity` | Plugin message channel | HMAC-SHA256 signed | Paper, Purpur, Fabric (via mod) |
-| `bungeecord` | Handshake injection | None (trust-based) | Spigot, Paper, most forks |
-| `bungeeguard` | Handshake injection + token | Shared token | Spigot/Paper with BungeeGuard plugin |
+| `bungee_cord` | Handshake injection | None (trust-based) | Spigot, Paper, most forks |
+| `bungee_guard` | Handshake injection + token | Shared token | Spigot/Paper with BungeeGuard plugin |
 
 ## Configuration
 
@@ -35,12 +35,12 @@ secret_file = "forwarding.secret"
 
 ```toml [BungeeCord]
 [forwarding]
-mode = "bungeecord"
+mode = "bungee_cord"
 ```
 
 ```toml [BungeeGuard]
 [forwarding]
-mode = "bungeeguard"
+mode = "bungee_guard"
 secret_file = "forwarding.secret"
 ```
 
@@ -55,8 +55,8 @@ mode = "none"
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `mode` | string | `"none"` | Forwarding mode: `none`, `velocity` (alias: `modern`), `bungeecord` (alias: `legacy`), `bungeeguard`. |
-| `secret_file` | path | `"forwarding.secret"` | Path to the shared secret file. Used by `velocity` and `bungeeguard` modes. Created automatically if it doesn't exist. |
+| `mode` | string | `"none"` | Forwarding mode: `none`, `velocity` (alias: `modern`), `bungee_cord` (alias: `legacy`), `bungee_guard`. |
+| `secret_file` | path | `"forwarding.secret"` | Path to the shared secret file. Used by `velocity` and `bungee_guard` modes. Created automatically if it doesn't exist. |
 | `bungeecord_channel` | bool | `true` | Enable BungeeCord plugin messaging channel support. |
 
 ### Per-server override
@@ -150,7 +150,7 @@ The four segments are: original domain, player's real IP, UUID (without dashes),
 ::: danger Insecure by design
 BungeeCord forwarding has no authentication. Anyone who can reach your backend directly can forge a handshake and impersonate any player. Only use this if your backends sit on a private network with no direct access.
 
-If backend ports are exposed, use `velocity` or `bungeeguard` instead.
+If backend ports are exposed, use `velocity` or `bungee_guard` instead.
 :::
 
 ### Backend configuration

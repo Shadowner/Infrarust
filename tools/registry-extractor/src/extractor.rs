@@ -61,7 +61,7 @@ pub async fn extract_registry_data(
     let login_start = SLoginStart {
         name: username.to_string(),
         uuid: Some(offline_uuid(username)),
-        signature_data: None,
+        profile_key: None,
     };
     send_packet(
         &mut stream,

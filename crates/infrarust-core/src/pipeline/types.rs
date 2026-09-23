@@ -3,6 +3,7 @@ use std::sync::Arc;
 use bytes::BytesMut;
 use infrarust_config::ServerConfig;
 use infrarust_protocol::ProtocolVersion;
+use infrarust_protocol::packets::ProfileKey;
 use uuid::Uuid;
 
 /// Intent extracted from the Minecraft handshake packet.
@@ -56,6 +57,7 @@ pub struct LoginData {
     pub username: String,
     /// Player UUID (present in 1.20.2+).
     pub player_uuid: Option<Uuid>,
+    pub profile_key: Option<ProfileKey>,
 }
 
 /// Marker type inserted into extensions when a legacy ping is detected (first byte 0xFE).

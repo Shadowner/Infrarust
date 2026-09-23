@@ -25,20 +25,74 @@ pub enum DecodedPacket {
     },
 }
 
+struct DecoderBand {
+    from: i32,
+    to: i32,
+    decoder: DecoderFn,
+}
+
+fn band_end(ids: &[PacketMapping], index: usize) -> i32 {
+    match (ids[index].to, ids.get(index + 1)) {
+        (Some(explicit_to), _) => explicit_to.0,
+        (None, Some(next)) => next.from.0 - 1,
+        (None, None) => i32::MAX,
+    }
+}
+
+fn resolve_id(ids: &[PacketMapping], version: ProtocolVersion) -> Option<i32> {
+    let index = ids
+        .partition_point(|m| m.from.0 <= version.0)
+        .checked_sub(1)?;
+    (version.0 <= band_end(ids, index)).then_some(ids[index].id)
+}
+
 #[derive(Default)]
-struct VersionRegistry {
-    id_to_decoder: HashMap<i32, DecoderFn>,
-    type_to_id: HashMap<TypeId, i32>,
+struct StateRegistry {
+    type_to_ids: HashMap<TypeId, &'static [PacketMapping]>,
+    decoders: Vec<Vec<DecoderBand>>,
+}
+
+impl StateRegistry {
+    fn decoder(&self, packet_id: i32, version: ProtocolVersion) -> Option<DecoderFn> {
+        let bands = usize::try_from(packet_id)
+            .ok()
+            .and_then(|i| self.decoders.get(i))?;
+
+        bands
+            .iter()
+            .find(|band| version.0 >= band.from && version.0 <= band.to)
+            .map(|band| band.decoder)
+    }
+
+    fn insert_decoder(&mut self, packet_id: i32, band: DecoderBand, name: &'static str) {
+        let Ok(index) = usize::try_from(packet_id) else {
+            debug_assert!(false, "{name} has a negative packet id {packet_id}");
+            return;
+        };
+
+        if index >= self.decoders.len() {
+            self.decoders.resize_with(index + 1, Vec::new);
+        }
+
+        let bands = &mut self.decoders[index];
+        debug_assert!(
+            !bands
+                .iter()
+                .any(|other| band.from <= other.to && other.from <= band.to),
+            "{name} overlaps another decoder on id 0x{packet_id:02X}"
+        );
+        bands.push(band);
+    }
 }
 
 pub struct PacketRegistry {
-    registries: HashMap<(ConnectionState, Direction, ProtocolVersion), VersionRegistry>,
+    states: [[StateRegistry; Direction::COUNT]; ConnectionState::COUNT],
 }
 
 impl PacketRegistry {
     pub fn new() -> Self {
         Self {
-            registries: HashMap::new(),
+            states: std::array::from_fn(|_| std::array::from_fn(|_| StateRegistry::default())),
         }
     }
 
@@ -49,11 +103,7 @@ impl PacketRegistry {
         direction: Direction,
         version: ProtocolVersion,
     ) -> ProtocolResult<DecodedPacket> {
-        let key = (state, direction, version);
-
-        if let Some(ver_reg) = self.registries.get(&key)
-            && let Some(decoder) = ver_reg.id_to_decoder.get(&frame.id)
-        {
+        if let Some(decoder) = self.state(state, direction).decoder(frame.id, version) {
             let mut payload = frame.payload.as_ref();
             let packet = decoder(&mut payload, version)?;
             return Ok(DecodedPacket::Typed {
@@ -82,39 +132,31 @@ impl PacketRegistry {
             P::NAME
         );
 
-        let Some(&last_supported) = ProtocolVersion::SUPPORTED.last() else {
+        let state = self.state_mut(P::STATE, P::DIRECTION);
+        state.type_to_ids.insert(TypeId::of::<P>(), P::IDS);
+
+        if P::ENCODE_ONLY {
             return;
-        };
+        }
 
         let decoder: DecoderFn = |r, v| Ok(Box::new(P::decode(r, v)?));
-        let type_id = TypeId::of::<P>();
-
-        for (i, mapping) in P::IDS.iter().enumerate() {
-            let (to, inclusive) = match (mapping.to, P::IDS.get(i + 1)) {
-                (Some(explicit_to), _) => (explicit_to, true),
-                (None, Some(next)) => (next.from, false),
-                (None, None) => (last_supported, true),
+        for (index, mapping) in P::IDS.iter().enumerate() {
+            let band = DecoderBand {
+                from: mapping.from.0,
+                to: band_end(P::IDS, index),
+                decoder,
             };
-
-            for version in ProtocolVersion::range(mapping.from, to) {
-                if !inclusive && version == to {
-                    continue;
-                }
-
-                let key = (P::STATE, P::DIRECTION, version);
-                self.insert_type_mapping(key, type_id, mapping.id);
-
-                if !P::ENCODE_ONLY {
-                    self.insert_decoder(key, mapping.id, decoder);
-                }
-            }
+            state.insert_decoder(mapping.id, band, P::NAME);
         }
     }
 
     pub fn get_packet_id<P: Packet>(&self, version: ProtocolVersion) -> Option<i32> {
-        self.registries
-            .get(&(P::STATE, P::DIRECTION, version))
-            .and_then(|ver_reg| ver_reg.type_to_id.get(&TypeId::of::<P>()).copied())
+        let ids = self
+            .state(P::STATE, P::DIRECTION)
+            .type_to_ids
+            .get(&TypeId::of::<P>())?;
+
+        resolve_id(ids, version)
     }
 
     pub fn has_decoder(
@@ -124,30 +166,17 @@ impl PacketRegistry {
         version: ProtocolVersion,
         packet_id: i32,
     ) -> bool {
-        let key = (state, direction, version);
-        self.registries
-            .get(&key)
-            .is_some_and(|ver_reg| ver_reg.id_to_decoder.contains_key(&packet_id))
+        self.state(state, direction)
+            .decoder(packet_id, version)
+            .is_some()
     }
 
-    pub(crate) fn insert_type_mapping(
-        &mut self,
-        key: (ConnectionState, Direction, ProtocolVersion),
-        type_id: TypeId,
-        packet_id: i32,
-    ) {
-        let ver_reg = self.registries.entry(key).or_default();
-        ver_reg.type_to_id.insert(type_id, packet_id);
+    fn state(&self, state: ConnectionState, direction: Direction) -> &StateRegistry {
+        &self.states[state.index()][direction.index()]
     }
 
-    fn insert_decoder(
-        &mut self,
-        key: (ConnectionState, Direction, ProtocolVersion),
-        packet_id: i32,
-        decoder: DecoderFn,
-    ) {
-        let ver_reg = self.registries.entry(key).or_default();
-        ver_reg.id_to_decoder.insert(packet_id, decoder);
+    fn state_mut(&mut self, state: ConnectionState, direction: Direction) -> &mut StateRegistry {
+        &mut self.states[state.index()][direction.index()]
     }
 }
 
@@ -203,6 +232,8 @@ mod tests {
     test_packet!(OpenEndedIds, false, ids![V1_7_2 => 0x00]);
 
     test_packet!(BoundedIds, false, ids![V1_17 ..= V1_18_2 => 0x0F]);
+
+    test_packet!(NarrowBoundedIds, false, ids![V1_9 ..= V1_9 => 0x0F]);
 
     test_packet!(EncodeOnlyIds, true, ids![V1_7_2 => 0x10]);
 
@@ -407,6 +438,183 @@ mod tests {
             registry.get_packet_id::<BoundedIds>(ProtocolVersion::V1_19),
             None
         );
+    }
+
+    const GAP_PROTOCOLS: [(i32, ProtocolVersion); 15] = [
+        (108, ProtocolVersion::V1_9),
+        (210, ProtocolVersion::V1_9_4),
+        (315, ProtocolVersion::V1_9_4),
+        (316, ProtocolVersion::V1_9_4),
+        (401, ProtocolVersion::V1_13),
+        (404, ProtocolVersion::V1_13),
+        (480, ProtocolVersion::V1_14),
+        (485, ProtocolVersion::V1_14),
+        (490, ProtocolVersion::V1_14),
+        (498, ProtocolVersion::V1_14),
+        (575, ProtocolVersion::V1_15),
+        (578, ProtocolVersion::V1_15),
+        (736, ProtocolVersion::V1_16),
+        (753, ProtocolVersion::V1_16_2),
+        (756, ProtocolVersion::V1_17),
+    ];
+
+    fn assert_same_resolution(
+        reg: &PacketRegistry,
+        actual: ProtocolVersion,
+        expected: ProtocolVersion,
+    ) {
+        for descriptor in DEFAULT_PACKETS {
+            assert_eq!(
+                (descriptor.packet_id)(reg, actual),
+                (descriptor.packet_id)(reg, expected),
+                "{} encode id differs between {} and {}",
+                descriptor.name,
+                actual.0,
+                expected.0
+            );
+        }
+
+        for state in ALL_STATES {
+            for direction in ALL_DIRECTIONS {
+                for id in 0..=0xFF_i32 {
+                    assert_eq!(
+                        reg.has_decoder(state, direction, actual, id),
+                        reg.has_decoder(state, direction, expected, id),
+                        "{state}/{direction} decoder 0x{id:02X} differs between {} and {}",
+                        actual.0,
+                        expected.0
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_gap_protocols_resolve_like_their_band_opener() {
+        let registry = build_default_registry();
+
+        for (protocol, opener) in GAP_PROTOCOLS {
+            assert!(
+                !ProtocolVersion::SUPPORTED.contains(&ProtocolVersion(protocol)),
+                "{protocol} is listed now; this case no longer tests a gap"
+            );
+            assert_same_resolution(&registry, ProtocolVersion(protocol), opener);
+        }
+    }
+
+    #[test]
+    fn test_gap_protocols_can_emit_the_login_packets_the_proxy_authors() {
+        use crate::packets::{CLoginDisconnect, SEncryptionResponse, SLoginStart};
+
+        let registry = build_default_registry();
+
+        for (protocol, _) in GAP_PROTOCOLS {
+            let version = ProtocolVersion(protocol);
+            assert_eq!(
+                registry.get_packet_id::<CEncryptionRequest>(version),
+                Some(0x01),
+                "CEncryptionRequest unavailable for protocol {protocol}"
+            );
+            assert_eq!(
+                registry.get_packet_id::<CLoginSuccess>(version),
+                Some(0x02),
+                "CLoginSuccess unavailable for protocol {protocol}"
+            );
+            assert_eq!(
+                registry.get_packet_id::<CLoginDisconnect>(version),
+                Some(0x00)
+            );
+            assert_eq!(registry.get_packet_id::<SLoginStart>(version), Some(0x00));
+            assert_eq!(
+                registry.get_packet_id::<SEncryptionResponse>(version),
+                Some(0x01)
+            );
+        }
+    }
+
+    #[test]
+    fn test_protocol_above_highest_known_inherits_it() {
+        let registry = build_default_registry();
+
+        assert_same_resolution(
+            &registry,
+            ProtocolVersion(ProtocolVersion::HIGHEST_KNOWN.0 + 1),
+            ProtocolVersion::HIGHEST_KNOWN,
+        );
+    }
+
+    #[test]
+    fn test_below_the_first_mapping_still_resolves_to_nothing() {
+        let registry = build_default_registry();
+
+        for version in [
+            ProtocolVersion(3),
+            ProtocolVersion::LEGACY,
+            ProtocolVersion::UNKNOWN,
+        ] {
+            assert_eq!(registry.get_packet_id::<SHandshake>(version), None);
+            assert_eq!(registry.get_packet_id::<CEncryptionRequest>(version), None);
+            assert_eq!(registry.get_packet_id::<CLoginSuccess>(version), None);
+
+            for state in ALL_STATES {
+                for direction in ALL_DIRECTIONS {
+                    for id in 0..=0xFF_i32 {
+                        assert!(
+                            !registry.has_decoder(state, direction, version, id),
+                            "unexpected decoder for protocol {}",
+                            version.0
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_unlisted_number_past_an_explicit_bound_is_none() {
+        let mut registry = PacketRegistry::new();
+        registry.register::<NarrowBoundedIds>();
+
+        assert_eq!(
+            registry.get_packet_id::<NarrowBoundedIds>(ProtocolVersion::V1_9),
+            Some(0x0F)
+        );
+
+        assert_eq!(
+            registry.get_packet_id::<NarrowBoundedIds>(ProtocolVersion(108)),
+            None
+        );
+        assert!(!registry.has_decoder(
+            ConnectionState::Handshake,
+            Direction::Serverbound,
+            ProtocolVersion(108),
+            0x0F,
+        ));
+    }
+
+    #[test]
+    fn test_negative_and_huge_packet_ids_do_not_panic() {
+        let registry = build_default_registry();
+
+        for id in [-1, i32::MIN, i32::MAX, 1_000_000] {
+            assert!(!registry.has_decoder(
+                ConnectionState::Login,
+                Direction::Serverbound,
+                ProtocolVersion::V1_21,
+                id,
+            ));
+
+            let frame = PacketFrame::new(id, Bytes::from_static(&[0u8; 4]));
+            let decoded = registry
+                .decode_frame(
+                    &frame,
+                    ConnectionState::Login,
+                    Direction::Serverbound,
+                    ProtocolVersion::V1_21,
+                )
+                .unwrap();
+            assert!(matches!(decoded, DecodedPacket::Opaque { .. }));
+        }
     }
 
     #[test]

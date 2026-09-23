@@ -5,11 +5,16 @@
 
 use num_bigint::BigInt;
 use rand::RngCore;
-use rsa::pkcs8::EncodePublicKey;
-use rsa::{Pkcs1v15Encrypt, RsaPrivateKey};
+use rsa::pkcs1v15::{Signature, VerifyingKey};
+use rsa::pkcs8::{DecodePublicKey, EncodePublicKey};
+use rsa::sha2::Sha256;
+use rsa::signature::Verifier;
+use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
 use sha1::{Digest, Sha1};
 
-use infrarust_protocol::packets::login::{CEncryptionRequest, SEncryptionResponse};
+use infrarust_protocol::packets::login::{
+    CEncryptionRequest, EncryptionProof, ProfileKey, SEncryptionResponse,
+};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction};
 
@@ -72,14 +77,14 @@ impl MojangAuth {
     ///
     /// 1. Sends `EncryptionRequest` to client
     /// 2. Reads `EncryptionResponse`
-    /// 3. Decrypts and verifies shared secret + verify token
+    /// 3. Decrypts the shared secret and checks the response's proof of freshness
     /// 4. Computes server hash and calls Mojang session server
     /// 5. Enables encryption on the client bridge
     /// 6. Returns the authenticated `GameProfile`
     ///
     /// # Errors
-    /// Returns `CoreError::Auth` on RSA decrypt failure, token mismatch,
-    /// or session server verification failure.
+    /// Returns `CoreError::Auth` on RSA decrypt failure, a failed freshness
+    /// check, or session server verification failure.
     ///
     /// # Panics
     /// Panics if the shared secret is validated as 16 bytes but the
@@ -88,6 +93,7 @@ impl MojangAuth {
         &self,
         client: &mut ClientBridge,
         username: &str,
+        profile_key: Option<&ProfileKey>,
         registry: &PacketRegistry,
     ) -> Result<GameProfile, CoreError> {
         // Generate random verify token
@@ -148,15 +154,26 @@ impl MojangAuth {
             )));
         }
 
-        // Decrypt verify token
-        let decrypted_token = self
-            .rsa_key
-            .decrypt(Pkcs1v15Encrypt, &enc_response.verify_token)
-            .map_err(|e| CoreError::Auth(format!("verify token decrypt failed: {e}")))?;
+        match &enc_response.proof {
+            EncryptionProof::VerifyToken(token) => {
+                let decrypted_token = self
+                    .rsa_key
+                    .decrypt(Pkcs1v15Encrypt, token)
+                    .map_err(|e| CoreError::Auth(format!("verify token decrypt failed: {e}")))?;
 
-        // Verify token matches
-        if decrypted_token != verify_token {
-            return Err(CoreError::Auth("verify token mismatch".to_string()));
+                if decrypted_token != verify_token {
+                    return Err(CoreError::Auth("verify token mismatch".to_string()));
+                }
+            }
+            EncryptionProof::Signature { salt, signature } => {
+                let key = profile_key.ok_or_else(|| {
+                    CoreError::Auth(
+                        "signed encryption response but no profile key in login start".to_string(),
+                    )
+                })?;
+
+                verify_challenge_signature(&key.public_key, &verify_token, *salt, signature)?;
+            }
         }
 
         // Compute server hash
@@ -203,6 +220,27 @@ impl MojangAuth {
 
         Ok(profile)
     }
+}
+
+fn verify_challenge_signature(
+    public_key_der: &[u8],
+    nonce: &[u8],
+    salt: i64,
+    signature: &[u8],
+) -> Result<(), CoreError> {
+    let key = RsaPublicKey::from_public_key_der(public_key_der)
+        .map_err(|e| CoreError::Auth(format!("invalid profile public key: {e}")))?;
+
+    let signature = Signature::try_from(signature)
+        .map_err(|e| CoreError::Auth(format!("malformed challenge signature: {e}")))?;
+
+    let mut signed = Vec::with_capacity(nonce.len() + 8);
+    signed.extend_from_slice(nonce);
+    signed.extend_from_slice(&salt.to_be_bytes());
+
+    VerifyingKey::<Sha256>::new(key)
+        .verify(&signed, &signature)
+        .map_err(|e| CoreError::Auth(format!("challenge signature mismatch: {e}")))
 }
 
 /// Computes the Minecraft server hash (non-standard SHA-1).
@@ -264,6 +302,50 @@ mod tests {
             minecraft_server_hash("simon", &[], &[]),
             "88e16a1019277b15d58faf0541e11910eb756f6"
         );
+    }
+
+    fn sign_challenge(nonce: &[u8], salt: i64) -> (Vec<u8>, Vec<u8>) {
+        use rsa::pkcs1v15::SigningKey;
+        use rsa::signature::{SignatureEncoding, Signer};
+
+        let mut rng = rand::rngs::OsRng;
+        let key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let der = key.to_public_key().to_public_key_der().unwrap().to_vec();
+
+        let mut signed = nonce.to_vec();
+        signed.extend_from_slice(&salt.to_be_bytes());
+        let signature = SigningKey::<Sha256>::new(key).sign(&signed).to_vec();
+
+        (der, signature)
+    }
+
+    #[test]
+    fn test_challenge_signature_accepts_the_clients_answer() {
+        let nonce = [0x01, 0x02, 0x03, 0x04];
+        let salt = 0x0123_4567_89AB_CDEF_u64 as i64;
+        let (der, signature) = sign_challenge(&nonce, salt);
+
+        verify_challenge_signature(&der, &nonce, salt, &signature)
+            .expect("a correctly signed challenge must be accepted");
+    }
+
+    #[test]
+    fn test_challenge_signature_rejects_a_replay() {
+        let nonce = [0x01, 0x02, 0x03, 0x04];
+        let salt = 42;
+        let (der, signature) = sign_challenge(&nonce, salt);
+
+        assert!(verify_challenge_signature(&der, &[0x09; 4], salt, &signature).is_err());
+        assert!(verify_challenge_signature(&der, &nonce, salt + 1, &signature).is_err());
+    }
+
+    #[test]
+    fn test_challenge_signature_is_not_an_encrypted_verify_token() {
+        let nonce = [0x01, 0x02, 0x03, 0x04];
+        let (_, signature) = sign_challenge(&nonce, 7);
+
+        let auth = MojangAuth::new().unwrap();
+        assert!(auth.rsa_key.decrypt(Pkcs1v15Encrypt, &signature).is_err());
     }
 
     #[test]

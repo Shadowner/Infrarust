@@ -51,7 +51,7 @@ Forwarding solves the problem the intercepted modes create: the backend runs `on
 Forwarding is configured in the `[forwarding]` table. It can be set globally in `infrarust.toml` (the `ProxyConfig` struct) and applies to all servers by default. The `mode` field of `ForwardingConfig` is one of:
 
 - `none` (the default): nothing is injected. Use this with forwarding proxy modes where the backend authenticates on its own.
-- `bungeecord` (alias `legacy`): the classic BungeeCord scheme.
+- `bungee_cord` (alias `legacy`): the classic BungeeCord scheme.
 - `bungee_guard`: BungeeCord's wire format plus a shared-secret token.
 - `velocity` (alias `modern`): Velocity's modern forwarding with HMAC-signed payloads.
 
@@ -74,7 +74,7 @@ Velocity's modern forwarding does not touch the handshake. Instead, during login
 `bungee_guard` and `velocity` both need a shared secret that the proxy and every backend agree on. Infrarust reads it from the file named by `secret_file` in the `[forwarding]` table, which defaults to `forwarding.secret`. If the file does not exist, the proxy generates a 32-character alphanumeric secret on first start, writes it with `0600` permissions on Unix, and logs where it put it. You then copy that file's contents to each backend. For a Paper server, that is `proxies.velocity.secret` in `config/paper-global.yml`.
 
 ::: warning
-The forwarding secret is what stops an attacker who can reach your backend port from impersonating any player. Keep the backend unreachable from the public internet, use `bungee_guard` or `velocity` rather than plain `bungeecord`, and treat `forwarding.secret` like a password. An empty secret file is rejected at startup rather than silently accepted.
+The forwarding secret is what stops an attacker who can reach your backend port from impersonating any player. Keep the backend unreachable from the public internet, use `bungee_guard` or `velocity` rather than plain `bungee_cord`, and treat `forwarding.secret` like a password. An empty secret file is rejected at startup rather than silently accepted.
 :::
 
 ## Putting it together

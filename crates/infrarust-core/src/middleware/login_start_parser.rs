@@ -89,6 +89,7 @@ impl Middleware for LoginStartParserMiddleware {
             ctx.extensions.insert(LoginData {
                 username: login_start.name.clone(),
                 player_uuid: login_start.uuid,
+                profile_key: login_start.profile_key,
             });
 
             let remaining = decoder.into_remaining();

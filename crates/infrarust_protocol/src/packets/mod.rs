@@ -11,7 +11,8 @@ pub use config::{
 pub use handshake::SHandshake;
 pub use login::{
     CEncryptionRequest, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression,
-    Property, SEncryptionResponse, SLoginAcknowledged, SLoginPluginResponse, SLoginStart,
+    EncryptionProof, ProfileKey, Property, SEncryptionResponse, SLoginAcknowledged,
+    SLoginPluginResponse, SLoginStart,
 };
 pub use play::{
     CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CChunkData, CCommands, CDisconnect,

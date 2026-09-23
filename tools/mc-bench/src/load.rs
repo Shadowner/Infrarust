@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 use tokio::time::Instant as TokioInstant;
 use tokio::time::sleep_until;
 
-use crate::proto::{FramedConn, PING_CLIENTBOUND_ID, PING_SERVERBOUND_ID, snap_to_supported};
+use crate::proto::{FramedConn, PING_CLIENTBOUND_ID, PING_SERVERBOUND_ID};
 
 #[derive(Args, Debug, Clone)]
 pub struct LoadArgs {
@@ -238,7 +238,7 @@ async fn connect_and_login(
     args: &LoadArgs,
     registry: &PacketRegistry,
 ) -> std::io::Result<FramedConn> {
-    let version = snap_to_supported(args.protocol);
+    let version = ProtocolVersion(args.protocol);
     let stream = TcpStream::connect((args.host.as_str(), args.port)).await?;
     stream.set_nodelay(true)?;
     let mut conn = FramedConn::new(stream);
@@ -264,7 +264,7 @@ async fn connect_and_login(
     let login = SLoginStart {
         uuid: Some(offline_uuid(&name)),
         name,
-        signature_data: None,
+        profile_key: None,
     };
     let login_id = registry
         .get_packet_id::<SLoginStart>(version)

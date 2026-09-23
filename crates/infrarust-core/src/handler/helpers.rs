@@ -75,7 +75,13 @@ pub(crate) async fn send_login_disconnect(
 
     let packet_id = packet_registry
         .get_packet_id::<CLoginDisconnect>(version)
-        .unwrap_or(0x00);
+        .or_else(|| packet_registry.get_packet_id::<CLoginDisconnect>(ProtocolVersion::V1_7_2))
+        .ok_or_else(|| {
+            CoreError::Protocol(infrarust_protocol::ProtocolError::invalid(format!(
+                "no CLoginDisconnect id for protocol {}",
+                version.0
+            )))
+        })?;
 
     let mut payload = Vec::new();
     packet.encode(&mut payload, version)?;
@@ -111,5 +117,44 @@ pub(crate) fn record_session_end(
     if let Some(m) = metrics {
         m.record_connection_end(duration.as_secs_f64(), config_id, mode);
         m.record_player_leave(config_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use infrarust_protocol::{McBufReadExt, build_default_registry};
+    use tokio::io::AsyncReadExt;
+
+    use super::{ProtocolVersion, send_login_disconnect};
+
+    #[tokio::test]
+    async fn kick_reaches_peers_below_the_first_mapping() {
+        let registry = build_default_registry();
+
+        for version in [
+            ProtocolVersion(3),
+            ProtocolVersion(0),
+            ProtocolVersion(-1),
+            ProtocolVersion::LEGACY,
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+            let (mut server, _) = listener.accept().await.unwrap();
+
+            send_login_disconnect(&mut server, "Banned", version, &registry)
+                .await
+                .unwrap_or_else(|e| panic!("no kick for protocol {}: {e}", version.0));
+            drop(server);
+
+            let mut bytes = Vec::new();
+            client.read_to_end(&mut bytes).await.unwrap();
+
+            let mut frame = bytes.as_slice();
+            let len = frame.read_var_int().unwrap().0 as usize;
+            assert_eq!(len, frame.len());
+            assert_eq!(frame.read_var_int().unwrap().0, 0x00);
+            assert_eq!(frame.read_string().unwrap(), r#"{"text":"Banned"}"#);
+        }
     }
 }

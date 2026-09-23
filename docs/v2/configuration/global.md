@@ -273,16 +273,33 @@ Player IP forwarding passes the real client IP and UUID to backend servers. The 
 | Mode | Description |
 |------|-------------|
 | `none` | No forwarding (default) |
-| `bungeecord` / `legacy` | BungeeCord-style legacy forwarding in the handshake |
-| `bungeeguard` | BungeeCord forwarding with a shared HMAC token |
+| `bungee_cord` / `legacy` | BungeeCord-style legacy forwarding in the handshake |
+| `bungee_guard` | BungeeCord forwarding with a shared HMAC token |
 | `velocity` / `modern` | Velocity modern forwarding (recommended if your backends support it) |
 
-`secret_file` is the path to the shared secret used by `bungeeguard` and `velocity`. The file is created automatically if it does not exist.
+`secret_file` is the path to the shared secret used by `bungee_guard` and `velocity`. The file is created automatically if it does not exist.
 
 `bungeecord_channel` enables the `BungeeCord` plugin messaging channel. The `[forwarding.channel_permissions]` subtable controls which sub-channels are allowed; most are enabled by default, and `connect_other`, `message`, `message_raw`, `kick_player`, and `kick_player_raw` are disabled by default.
 
 ::: warning
-BungeeCord legacy forwarding sends the real IP in plain text in the handshake. Anyone who can reach your backend port can spoof it. Use `bungeeguard` or `velocity` if you need IP forwarding and cannot fully firewall the backend.
+BungeeCord legacy forwarding sends the real IP in plain text in the handshake. Anyone who can reach your backend port can spoof it. Use `bungee_guard` or `velocity` if you need IP forwarding and cannot fully firewall the backend.
+:::
+
+## Authentication
+
+```toml
+[auth]
+session_url = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
+```
+
+`session_url` is the endpoint `client_only` mode calls to verify a joining player. It defaults to Mojang's, so you only set it when your accounts live somewhere else.
+
+Point it at an [authlib-injector](https://github.com/yushijinhun/authlib-injector) deployment or any other Yggdrasil-compatible server to authenticate against that instead. Give the complete endpoint URL rather than just the host, since implementations differ in how they prefix their routes — most authlib-injector servers expose it under `/authlib-injector/sessionserver/session/minecraft/hasJoined`.
+
+The setting has no effect in any other proxy mode: `offline` never authenticates, and the forwarding modes leave authentication to the backend.
+
+::: warning
+Every player who reaches a `client_only` server is verified against this URL. Pointing it at a server you do not control means letting that server decide who may join.
 :::
 
 ## Web admin API

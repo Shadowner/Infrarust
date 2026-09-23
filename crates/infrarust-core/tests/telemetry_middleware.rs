@@ -106,6 +106,7 @@ async fn test_middleware_extracts_login_data() {
     ctx.extensions.insert(LoginData {
         username: "Notch".to_string(),
         player_uuid: None,
+        profile_key: None,
     });
 
     ctx.extensions.insert(RoutingData {
