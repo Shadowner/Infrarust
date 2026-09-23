@@ -263,7 +263,7 @@ impl StatusHandler {
             }
         }
 
-        return self.get_unreachable_motd(config, connection_registry, config_id)
+        self.get_unreachable_motd(config, connection_registry, config_id)
     }
 
     /// Builds a synthetic MOTD for the given server manager state.
@@ -360,20 +360,20 @@ impl StatusHandler {
         config_id: &str,
     ) -> ServerPingResponse {
         if let Some(motd) = &config.motd.unreachable {
-            return ServerPingResponse::synthetic(
+            ServerPingResponse::synthetic(
                 &motd.text,
                 motd.favicon.as_deref(),
                 motd.version_name.as_deref(),
                 motd.max_players.map(u32::cast_signed),
-            );
+            )
         } else if let Some((response, _latency)) = self.cache.get_stale(config_id) {
             tracing::warn!(
                 server = config_id,
                 "serving stale cached status (backend unreachable)"
             );
-            return response;
+            response
         } else {
-            return self.build_unreachable_motd(config, connection_registry, config_id);
+            self.build_unreachable_motd(config, connection_registry, config_id)
         }
     }
 
