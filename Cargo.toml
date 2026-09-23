@@ -68,7 +68,6 @@ clap = { version = "4.6.1", features = ["derive"] }
 comfy-table = { version = "7.2.2", features = ["tty"] }
 console = "0.16.3"
 dialoguer = "0.12.0"
-minus = { version = "5.7.1", features = ["static_output"] }
 
 # Networking
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls","query", "json"] }

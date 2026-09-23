@@ -82,8 +82,10 @@ impl OutputRenderer {
     pub async fn render(&self, output: CommandOutput) {
         match output {
             CommandOutput::Table { table, footer } => {
-                let content = table.to_string();
-                self.print_with_paging(&content, footer.as_deref()).await;
+                println!("{table}");
+                if let Some(f) = footer {
+                    println!(" {f}");
+                }
             }
             CommandOutput::Lines(lines) => {
                 for line in &lines {
@@ -203,44 +205,6 @@ impl OutputRenderer {
             }
         }
     }
-
-    async fn print_with_paging(&self, content: &str, footer: Option<&str>) {
-        let line_count = content.lines().count();
-        let terminal_height = terminal_height();
-
-        if self.is_tty && line_count > terminal_height {
-            let full = match footer {
-                Some(f) => format!("{content}\n {f}"),
-                None => content.to_string(),
-            };
-            let result = tokio::task::spawn_blocking(move || {
-                let pager = minus::Pager::new();
-                pager.set_text(full).ok();
-                minus::page_all(pager)
-            })
-            .await;
-
-            if let Ok(Err(e)) = result {
-                tracing::debug!(error = %e, "pager failed, falling back to direct output");
-                println!("{content}");
-                if let Some(f) = footer {
-                    println!(" {f}");
-                }
-            }
-        } else {
-            println!("{content}");
-            if let Some(f) = footer {
-                println!(" {f}");
-            }
-        }
-    }
-}
-
-fn terminal_height() -> usize {
-    console::Term::stdout()
-        .size_checked()
-        .map(|(h, _)| h as usize)
-        .unwrap_or(24)
 }
 
 #[cfg(test)]
