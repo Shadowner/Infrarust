@@ -345,7 +345,7 @@ Each mode has its own page under [Proxy modes](../configuration/proxy-modes/) wi
 
 MOTD entries for each server state. Each sub-table is optional.
 
-Available states: `online`, `offline`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`.
+Available states: `online`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
