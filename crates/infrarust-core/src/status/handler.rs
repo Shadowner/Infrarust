@@ -263,15 +263,7 @@ impl StatusHandler {
             }
         }
 
-        if let Some((response, _latency)) = self.cache.get_stale(config_id) {
-            tracing::warn!(
-                server = config_id,
-                "serving stale cached status (backend unreachable)"
-            );
-            return response;
-        }
-
-        self.build_unreachable_motd(config, connection_registry, config_id)
+        return self.get_unreachable_motd(config, connection_registry, config_id)
     }
 
     /// Builds a synthetic MOTD for the given server manager state.
@@ -330,15 +322,6 @@ impl StatusHandler {
         connection_registry: &ConnectionRegistry,
         config_id: &str,
     ) -> ServerPingResponse {
-        if let Some(ref entry) = config.motd.unreachable {
-            return ServerPingResponse::synthetic(
-                &entry.text,
-                entry.favicon.as_deref(),
-                entry.version_name.as_deref(),
-                entry.max_players.map(u32::cast_signed),
-            );
-        }
-
         if let Some(entry) = self
             .default_motd
             .as_ref()
@@ -361,6 +344,37 @@ impl StatusHandler {
         let online = connection_registry.count_by_server(config_id) as i32;
         resp.players.online = online;
         resp
+    }
+
+    /// Get motd for unreachable state
+    ///
+    /// Return in order if defined the motd from:
+    /// * Config
+    /// * Stale cache
+    /// * Config default
+    /// * Or a default value
+    fn get_unreachable_motd(
+        &self,
+        config: &ServerConfig,
+        connection_registry: &ConnectionRegistry,
+        config_id: &str,
+    ) -> ServerPingResponse {
+        if let Some(motd) = &config.motd.unreachable {
+            return ServerPingResponse::synthetic(
+                &motd.text,
+                motd.favicon.as_deref(),
+                motd.version_name.as_deref(),
+                motd.max_players.map(u32::cast_signed),
+            );
+        } else if let Some((response, _latency)) = self.cache.get_stale(config_id) {
+            tracing::warn!(
+                server = config_id,
+                "serving stale cached status (backend unreachable)"
+            );
+            return response;
+        } else {
+            return self.build_unreachable_motd(config, connection_registry, config_id);
+        }
     }
 
     /// Reads the `SStatusRequest` frame from the client (with timeout).
