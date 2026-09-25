@@ -398,7 +398,7 @@ Limits that apply to every WASM plugin. Each plugin runs in its own sandbox and 
 | `memory_limit_mb` | Linear memory of one plugin, in MiB. A plugin that grows past it traps. |
 | `cpu_budget` | CPU time one call into a plugin may use before it traps. Time spent waiting on a host call (a ban lookup, a server start) does not count. |
 | `codec_cpu_budget` | The same budget for each codec filter call (`create`, `filter` and the connection hooks). |
-| `host_call_timeout` | How long one ban-service or server-manager call made by a plugin may take. When it runs out the plugin gets a `service-error` and carries on. |
+| `host_call_timeout` | How long one ban-service or server-manager call made by a plugin may take. When it runs out the plugin gets a `service-error` and carries on. A host call also ends early, with the same error, shortly before the deadline of the call it belongs to (`[events] handler_timeout` for an event, `max_call_duration` for a command, a scheduled task or a limbo callback), so the plugin always gets to decide. |
 | `max_call_duration` | Wall-clock limit on one call into a plugin, host calls included. A call still running at this limit is abandoned and the plugin is poisoned. |
 | `queue_capacity` | How many calls may wait for a busy plugin. When the queue is full a new call is refused on the spot: an event gets no answer from that plugin and a command does nothing. The refusal is logged as a warning, at most once every 5 seconds per plugin. |
 
@@ -414,7 +414,7 @@ Startup fails when a value is out of range:
 - `host_call_timeout` and `max_call_duration` must be greater than zero and at most `1h`.
 - `queue_capacity` must be between 1 and 1048576.
 
-The proxy logs a warning, without refusing to start, when `host_call_timeout` or `cpu_budget` is longer than `max_call_duration`: the wall-clock limit then cuts the call off first and poisons the plugin instead of handing it a `service-error` or a CPU trap.
+The proxy logs a warning, without refusing to start, when `cpu_budget` is longer than `max_call_duration`: the wall-clock limit then stops a busy guest call first and poisons the plugin instead of the CPU budget trapping it.
 
 ## Plugins
 

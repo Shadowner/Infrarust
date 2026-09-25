@@ -55,7 +55,7 @@ Native plugins receive every capability. A WASM plugin gets the baseline set plu
 :::
 
 :::warning
-Calls into `server-manage` and `ban` run under a 30-second host timeout. If a call exceeds it, the result is `ServiceError::Unavailable("host call timed out")`.
+Calls into `server-manage` and `ban` wait for the proxy's answer for at most `host_call_timeout` (30 s by default), and return early enough to leave the calling handler time to act before its own deadline. When a limit runs out, the call returns `ServiceError::Unavailable` and your code carries on. See [Slow services and deadlines](#slow-services-and-deadlines).
 :::
 
 ## Players
@@ -112,7 +112,7 @@ player.disconnect(&Component::text("Goodbye").into_json());
 | `send_packet` | `fn send_packet(&self, packet: &RawPacket) -> Result<(), PlayerError>` | `raw-packet` |
 
 :::info
-`disconnect` and `switch_server` are dispatched in the background on the host, so they return immediately. `send_packet` without the `raw-packet` capability returns `PlayerError::SendFailed("missing capability: raw-packet")` rather than trapping.
+`disconnect` is dispatched in the background on the host, so it returns immediately. `switch_server` hands the request to the player's session and waits at most 250 ms for the session to take it, less when the handler's deadline is closer; if it can't, it returns `PlayerError::SwitchFailed`. `send_packet` without the `raw-packet` capability returns `PlayerError::SendFailed("missing capability: raw-packet")` rather than trapping.
 :::
 
 ## Servers
@@ -126,7 +126,7 @@ pub fn stop(&self, server: &str) -> Result<(), ServiceError>;
 pub fn all(&self) -> Vec<(String, ServerState)>;
 ```
 
-`ServerState` is one of `Online`, `Offline`, `Starting`, `Stopping`, `Sleeping`, `Crashed`. `start` and `stop` run under the host timeout. `ServerState` lives in `infrarust_plugin_sdk::services`.
+`ServerState` is one of `Online`, `Offline`, `Starting`, `Stopping`, `Sleeping`, `Crashed`. `start` and `stop` run under the host timeout and the handler's deadline, see [Slow services and deadlines](#slow-services-and-deadlines). `ServerState` lives in `infrarust_plugin_sdk::services`.
 
 ```rust
 use infrarust_plugin_sdk::services::ServerState;
@@ -139,7 +139,7 @@ if servers.state("survival") == Some(ServerState::Sleeping) {
 
 ## Bans
 
-`ctx.ban_service()` returns `Bans`. Every method needs the opt-in `ban` capability and runs under the host timeout. `BanTarget` and `BanEntry` live in `infrarust_plugin_sdk::services`. A `BanTarget` is one of three variants:
+`ctx.ban_service()` returns `Bans`. Every method needs the opt-in `ban` capability and runs under the host timeout and the handler's deadline, see [Slow services and deadlines](#slow-services-and-deadlines). `BanTarget` and `BanEntry` live in `infrarust_plugin_sdk::services`. A `BanTarget` is one of three variants:
 
 ```rust
 pub enum BanTarget {
@@ -175,6 +175,41 @@ let bans = ctx.ban_service();
 let target = BanTarget::Username("Griefer".into());
 bans.ban(&target, Some("griefing"), Some(86_400_000))?; // 24h
 ```
+
+## Slow services and deadlines
+
+`start`, `stop` and every `Bans` method wait for the proxy's answer, and that answer can be slow: a ban list kept in a remote database, a server that takes a while to boot. The host bounds each of these calls so that a slow service becomes an error your code can act on, rather than an answer that arrives after the proxy stopped listening.
+
+Every call into your plugin carries a deadline, set when the proxy makes the call:
+
+| Call into the plugin | Deadline |
+| --- | --- |
+| Event handler | `[events] handler_timeout` (10 s by default): how long the event bus waits for a listener |
+| Command, tab completion, scheduled task, limbo callback | `max_call_duration` in `[wasm]` (60 s by default): nothing in the proxy stops waiting for these earlier |
+| `on_enable`, `on_disable` | none |
+
+A service call made during that call returns at the earliest of:
+
+- the service's answer;
+- `host_call_timeout` after the service call started (`[wasm]`, 30 s by default);
+- a margin before the deadline. The margin is a fifth of the deadline, capped at 250 ms, and leaves your code time to decide after the error. With the default 10 s `handler_timeout`, a ban check inside an event handler returns by 9.75 s.
+
+On expiry the call returns `ServiceError::Unavailable`. The message is `host call timed out` when `host_call_timeout` ran out, and `host call timed out: the plugin call is close to its deadline` when the deadline was the limit. `switch_server` follows the same rule with its own 250 ms limit and returns `PlayerError::SwitchFailed`.
+
+Because the error arrives before the event bus gives up on the handler, whatever the handler decides is applied to the event. Choose on purpose: a ban check that denies on error keeps banned players out while the ban store is down (fail closed), one that ignores the error lets everyone in (fail open).
+
+```rust
+ctx.on(EventPriority::Early, |event: &mut PreLoginEvent| {
+    let target = BanTarget::Username(event.profile.username.clone());
+    match Bans.is_banned(&target) {
+        Ok(false) => {}
+        Ok(true) => event.deny("You are banned"),
+        Err(_) => event.deny("The ban check is unavailable, try again in a moment"),
+    }
+});
+```
+
+A call still waiting in the plugin's queue when its deadline passes is dropped without running: its caller could no longer use the result. See [Lifecycle](./lifecycle#deadlines).
 
 ## Config
 

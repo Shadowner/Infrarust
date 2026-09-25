@@ -14,6 +14,7 @@ members = [
     "codec-stateful",
     "limbo-handler",
     "slow-handler",
+    "deadline-probe",
 ]
 
 [workspace.dependencies]

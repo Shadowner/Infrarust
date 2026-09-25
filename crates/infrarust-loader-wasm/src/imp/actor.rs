@@ -16,6 +16,7 @@ use wasmtime::Store;
 use crate::bindings::Plugin as PluginBindings;
 use crate::config::SandboxLimits;
 use crate::consts::QUEUE_FULL_WARN_INTERVAL;
+use crate::deadline::Deadline;
 use crate::store_state::PluginStoreState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,8 +24,15 @@ pub(crate) enum CallFailure {
     Stopped,
     QueueFull,
     Poisoned,
+    Expired,
     Trapped(String),
     Dropped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CallKind {
+    Event,
+    Callback,
 }
 
 impl fmt::Display for CallFailure {
@@ -33,6 +41,7 @@ impl fmt::Display for CallFailure {
             Self::Stopped => f.write_str("the plugin instance is stopped"),
             Self::QueueFull => f.write_str("the plugin call queue is full"),
             Self::Poisoned => f.write_str("the plugin instance is poisoned"),
+            Self::Expired => f.write_str("the call's deadline passed while it was queued"),
             Self::Trapped(reason) => write!(f, "the guest trapped: {reason}"),
             Self::Dropped => f.write_str("the call was dropped before it completed"),
         }
@@ -99,6 +108,7 @@ where
 struct Job {
     op: &'static str,
     last: bool,
+    deadline: Option<Deadline>,
     call: Box<dyn GuestCall>,
 }
 
@@ -106,6 +116,7 @@ impl Job {
     fn new<T, F>(
         op: &'static str,
         last: bool,
+        deadline: Option<Deadline>,
         call: F,
     ) -> (Self, oneshot::Receiver<Result<T, CallFailure>>)
     where
@@ -121,6 +132,7 @@ impl Job {
         let job = Self {
             op,
             last,
+            deadline,
             call: Box::new(TypedCall { reply, call }),
         };
         (job, answer)
@@ -130,19 +142,30 @@ impl Job {
 struct ActorInfo {
     plugin_id: String,
     capacity: usize,
+    event_budget: Duration,
+    callback_budget: Duration,
     started: Instant,
     next_full_warning_ms: AtomicU64,
     suppressed_full_warnings: AtomicU64,
 }
 
 impl ActorInfo {
-    fn new(plugin_id: String, capacity: usize) -> Self {
+    fn new(plugin_id: String, sandbox: &SandboxLimits) -> Self {
         Self {
             plugin_id,
-            capacity,
+            capacity: sandbox.queue_capacity,
+            event_budget: sandbox.event_budget,
+            callback_budget: sandbox.max_call_duration,
             started: Instant::now(),
             next_full_warning_ms: AtomicU64::new(0),
             suppressed_full_warnings: AtomicU64::new(0),
+        }
+    }
+
+    fn budget(&self, kind: CallKind) -> Duration {
+        match kind {
+            CallKind::Event => self.event_budget,
+            CallKind::Callback => self.callback_budget,
         }
     }
 
@@ -178,6 +201,7 @@ fn millis(duration: Duration) -> u64 {
 pub(crate) struct InstanceRef {
     jobs: mpsc::WeakSender<Job>,
     info: Arc<ActorInfo>,
+    kind: CallKind,
 }
 
 impl InstanceRef {
@@ -185,7 +209,15 @@ impl InstanceRef {
         let (jobs, _) = mpsc::channel(1);
         Self {
             jobs: jobs.downgrade(),
-            info: Arc::new(ActorInfo::new(String::new(), 1)),
+            info: Arc::new(ActorInfo::new(String::new(), &SandboxLimits::default())),
+            kind: CallKind::Callback,
+        }
+    }
+
+    pub(crate) fn for_calls(&self, kind: CallKind) -> Self {
+        Self {
+            kind,
+            ..self.clone()
         }
     }
 
@@ -202,7 +234,8 @@ impl InstanceRef {
         let Some(jobs) = self.jobs.upgrade() else {
             return Err(CallFailure::Stopped);
         };
-        let (job, answer) = Job::new(op, false, call);
+        let deadline = Deadline::after(self.info.budget(self.kind));
+        let (job, answer) = Job::new(op, false, Some(deadline), call);
         match jobs.try_send(job) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
@@ -230,13 +263,11 @@ impl PluginActor {
         sandbox: &SandboxLimits,
     ) -> Arc<Self> {
         let (jobs, queue) = mpsc::channel(sandbox.queue_capacity);
-        let info = Arc::new(ActorInfo::new(
-            store.data().plugin_id.clone(),
-            sandbox.queue_capacity,
-        ));
+        let info = Arc::new(ActorInfo::new(store.data().plugin_id.clone(), sandbox));
         let instance = InstanceRef {
             jobs: jobs.downgrade(),
             info,
+            kind: CallKind::Callback,
         };
         store.data_mut().set_instance_ref(instance.clone());
         let stopping = Arc::new(AtomicBool::new(false));
@@ -285,7 +316,7 @@ impl PluginActor {
         let Some(jobs) = jobs else {
             return Err(CallFailure::Stopped);
         };
-        let (job, answer) = Job::new(op, last, call);
+        let (job, answer) = Job::new(op, last, None, call);
         if jobs.send(job).await.is_err() {
             return Err(CallFailure::Stopped);
         }
@@ -352,7 +383,9 @@ async fn execute(
     job: Job,
     max_call_duration: Duration,
 ) {
-    let Job { op, call, .. } = job;
+    let Job {
+        op, deadline, call, ..
+    } = job;
     if call.caller_gone() {
         tracing::debug!(plugin = %store.data().plugin_id, op,
             "skipping a queued wasm guest call: its caller stopped waiting");
@@ -362,8 +395,14 @@ async fn execute(
         call.refuse(CallFailure::Poisoned);
         return;
     }
+    if deadline.is_some_and(|deadline| deadline.has_passed()) {
+        tracing::warn!(plugin = %store.data().plugin_id, op,
+            "skipping a queued wasm guest call: its deadline passed while it waited");
+        call.refuse(CallFailure::Expired);
+        return;
+    }
     store.data_mut().reset_epoch_budget();
-    store.data_mut().begin_call(op);
+    store.data_mut().begin_call(op, deadline);
     let running = AssertUnwindSafe(call.run(store, bindings)).catch_unwind();
     let outcome = tokio::time::timeout(max_call_duration, running).await;
     let state = store.data_mut();

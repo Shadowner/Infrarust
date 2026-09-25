@@ -62,6 +62,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-deadline-probe"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-host-caller"
 version = "0.0.0"
 dependencies = [

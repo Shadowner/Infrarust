@@ -398,15 +398,6 @@ pub fn wasm_warnings(config: &ProxyConfig) -> Vec<String> {
     }
     let mut warnings = Vec::new();
     for (scope, limits) in scopes {
-        if limits.host_call_timeout > limits.max_call_duration {
-            warnings.push(format!(
-                "{scope}: host_call_timeout ({}) is longer than max_call_duration ({}); \
-                 a slow host call will be cut off by max_call_duration and disable the plugin \
-                 instead of returning a service error to it",
-                humantime::format_duration(limits.host_call_timeout),
-                humantime::format_duration(limits.max_call_duration)
-            ));
-        }
         if limits.cpu_budget > limits.max_call_duration {
             warnings.push(format!(
                 "{scope}: cpu_budget ({}) is longer than max_call_duration ({}); \

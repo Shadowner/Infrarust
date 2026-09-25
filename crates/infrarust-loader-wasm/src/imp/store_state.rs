@@ -10,10 +10,11 @@ use wasmtime::component::ResourceTable;
 use wasmtime::{Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
-use crate::actor::InstanceRef;
+use crate::actor::{CallKind, InstanceRef};
 use crate::codec::CodecInstantiator;
 use crate::config::SandboxLimits;
 use crate::consts::EPOCH_DEADLINE_TICKS;
+use crate::deadline::{Deadline, HostCallLimit};
 use crate::error::WasmLoaderError;
 
 pub(crate) struct PluginStoreState {
@@ -25,6 +26,7 @@ pub(crate) struct PluginStoreState {
     instance: InstanceRef,
     poisoned: bool,
     call_in_flight: Option<&'static str>,
+    deadline: Option<Deadline>,
     pub(crate) plugin_id: String,
     pub(crate) epoch_yields: u32,
     host_call_timeout: Duration,
@@ -62,12 +64,16 @@ impl PluginStoreState {
         self.host_call_timeout
     }
 
+    pub(crate) fn host_call_limit(&self, timeout: Duration) -> HostCallLimit {
+        HostCallLimit::new(timeout, self.deadline)
+    }
+
     pub(crate) fn capabilities(&self) -> &CapabilitySet {
         &self.capabilities
     }
 
-    pub(crate) fn instance_ref(&self) -> InstanceRef {
-        self.instance.clone()
+    pub(crate) fn instance_ref(&self, kind: CallKind) -> InstanceRef {
+        self.instance.for_calls(kind)
     }
 
     pub(crate) fn set_instance_ref(&mut self, instance: InstanceRef) {
@@ -83,12 +89,14 @@ impl PluginStoreState {
         self.poisoned
     }
 
-    pub(crate) fn begin_call(&mut self, op: &'static str) {
+    pub(crate) fn begin_call(&mut self, op: &'static str, deadline: Option<Deadline>) {
         self.call_in_flight = Some(op);
+        self.deadline = deadline;
     }
 
     pub(crate) fn end_call(&mut self) {
         self.call_in_flight = None;
+        self.deadline = None;
     }
 
     pub(crate) fn set_poisoned(&mut self) {
@@ -168,6 +176,7 @@ pub(crate) fn build_load_state(
         instance: InstanceRef::detached(),
         poisoned: false,
         call_in_flight: None,
+        deadline: None,
         plugin_id,
         epoch_yields: 0,
         host_call_timeout: sandbox.host_call_timeout,
@@ -187,6 +196,7 @@ pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> P
         instance: InstanceRef::detached(),
         poisoned: false,
         call_in_flight: None,
+        deadline: None,
         plugin_id,
         epoch_yields: 0,
         host_call_timeout: sandbox.host_call_timeout,

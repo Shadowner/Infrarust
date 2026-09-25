@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use infrarust_config::{ProxyConfig, WasmConfig, WasmLimits};
+use infrarust_config::{EventsConfig, ProxyConfig, WasmConfig, WasmLimits};
 
 #[derive(Debug, Clone)]
 pub struct WasmLoaderConfig {
     epoch_tick: Duration,
+    event_handler_timeout: Duration,
     defaults: WasmLimits,
     plugins: HashMap<String, WasmLimits>,
 }
@@ -25,6 +26,7 @@ impl WasmLoaderConfig {
             .collect();
         Self {
             epoch_tick: config.wasm.epoch_tick,
+            event_handler_timeout: config.events.handler_timeout,
             defaults: config.wasm.limits(),
             plugins,
         }
@@ -44,11 +46,15 @@ impl WasmLoaderConfig {
     }
 
     pub(crate) fn sandbox_for(&self, plugin_id: &str) -> SandboxLimits {
-        SandboxLimits::new(&self.limits_for(plugin_id), self.epoch_tick)
+        SandboxLimits::new(
+            &self.limits_for(plugin_id),
+            self.epoch_tick,
+            self.event_handler_timeout,
+        )
     }
 
     pub(crate) fn default_sandbox(&self) -> SandboxLimits {
-        SandboxLimits::new(&self.defaults, self.epoch_tick)
+        SandboxLimits::new(&self.defaults, self.epoch_tick, self.event_handler_timeout)
     }
 }
 
@@ -57,6 +63,7 @@ impl Default for WasmLoaderConfig {
         let wasm = WasmConfig::default();
         Self {
             epoch_tick: wasm.epoch_tick,
+            event_handler_timeout: EventsConfig::default().handler_timeout,
             defaults: wasm.limits(),
             plugins: HashMap::new(),
         }
@@ -77,10 +84,11 @@ pub(crate) struct SandboxLimits {
     pub(crate) host_call_timeout: Duration,
     pub(crate) max_call_duration: Duration,
     pub(crate) queue_capacity: usize,
+    pub(crate) event_budget: Duration,
 }
 
 impl SandboxLimits {
-    fn new(limits: &WasmLimits, epoch_tick: Duration) -> Self {
+    fn new(limits: &WasmLimits, epoch_tick: Duration, event_budget: Duration) -> Self {
         Self {
             memory_bytes: limits.memory_limit_bytes(),
             max_epoch_yields: u32::try_from(ticks(limits.cpu_budget, epoch_tick))
@@ -91,6 +99,7 @@ impl SandboxLimits {
             queue_capacity: limits
                 .queue_capacity
                 .clamp(1, tokio::sync::Semaphore::MAX_PERMITS),
+            event_budget,
         }
     }
 }
@@ -121,6 +130,34 @@ mod tests {
         assert_eq!(sandbox.host_call_timeout, Duration::from_secs(30));
         assert_eq!(sandbox.max_call_duration, Duration::from_secs(60));
         assert_eq!(sandbox.queue_capacity, 1024);
+        assert_eq!(sandbox.event_budget, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn events_run_under_the_event_bus_handler_timeout() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [events]
+            handler_timeout = "300ms"
+
+            [plugins.small.wasm]
+            max_call_duration = "2s"
+            "#,
+        )
+        .unwrap();
+        let loader = WasmLoaderConfig::from_proxy_config(&config);
+        assert_eq!(
+            loader.default_sandbox().event_budget,
+            Duration::from_millis(300)
+        );
+        assert_eq!(
+            loader.sandbox_for("small").event_budget,
+            Duration::from_millis(300)
+        );
+        assert_eq!(
+            loader.sandbox_for("small").max_call_duration,
+            Duration::from_secs(2)
+        );
     }
 
     #[test]

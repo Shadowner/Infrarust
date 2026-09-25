@@ -474,14 +474,29 @@ fn test_proxy_budget_shorter_than_the_epoch_tick_is_invalid() {
 }
 
 #[test]
-fn test_proxy_host_call_timeout_past_max_call_duration_is_a_warning() {
+fn test_proxy_host_call_timeout_past_max_call_duration_is_not_a_warning() {
     let dir = tempfile::tempdir().unwrap();
     let config = proxy_from_toml("[plugins.p.wasm]\nmax_call_duration = \"5s\"", dir.path());
+    assert!(validate_proxy_config(&config).is_ok());
+    assert!(
+        wasm_warnings(&config).is_empty(),
+        "{:?}",
+        wasm_warnings(&config)
+    );
+}
+
+#[test]
+fn test_proxy_cpu_budget_past_max_call_duration_is_a_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml(
+        "[plugins.p.wasm]\nmax_call_duration = \"2s\"\ncpu_budget = \"3s\"",
+        dir.path(),
+    );
     assert!(validate_proxy_config(&config).is_ok());
     let warnings = wasm_warnings(&config);
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(
-        warnings[0].starts_with("plugins.p.wasm: host_call_timeout"),
+        warnings[0].starts_with("plugins.p.wasm: cpu_budget"),
         "{warnings:?}"
     );
 }

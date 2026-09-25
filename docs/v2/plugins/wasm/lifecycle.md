@@ -177,11 +177,29 @@ Codec filters and limbo handlers are registered through their own registrar hook
 
 ## Dispatch
 
-After enabling, events and registered callbacks re-enter the guest. Each plugin instance is owned by one task that runs calls one at a time, in the order they arrive, from a queue of `queue_capacity` entries (`[wasm]` in `infrarust.toml`, default 1024). A call that finds the queue full is refused immediately and logged as a rate-limited warning. A call that has started runs to the end even if its caller stops waiting; a queued call whose caller has already given up is skipped. See [Capabilities & Sandbox](./capabilities#one-call-at-a-time).
+After enabling, events and registered callbacks re-enter the guest. Each plugin instance is owned by one task that runs calls one at a time, in the order they arrive, from a queue of `queue_capacity` entries (`[wasm]` in `infrarust.toml`, default 1024). A call that finds the queue full is refused immediately and logged as a rate-limited warning. A call that has started runs to the end even if its caller stops waiting; a queued call whose caller has already given up, or whose [deadline](#deadlines) has passed, is skipped. See [Capabilities & Sandbox](./capabilities#one-call-at-a-time).
 
 Each call into the guest resets the epoch budget first, so a single long callback cannot exhaust a budget left over from an earlier call. A dedicated OS thread bumps the engine epoch every `epoch_tick` (50 ms by default). On each deadline the callback either grants another tick (cooperative yield) or, once the call has used `cpu_budget` (3 s by default, 60 ticks), interrupts the guest with a trap. A call that is still running after `max_call_duration` (60 s by default), host calls included, is abandoned and the instance is poisoned.
 
 A synchronous codec `filter` call gets its own budget, `codec_cpu_budget` (800 ms by default, 16 ticks), re-armed before every `create`/`filter`/lifecycle call. See [Events](./events) for the dispatched event kinds and [Limbo](./limbo) for limbo callbacks.
+
+### Deadlines
+
+Each call into the guest carries a deadline, fixed when the call is queued:
+
+| Call | Deadline | Why |
+|------|----------|-----|
+| Event handler | `[events] handler_timeout` (10 s by default) | The event bus stops waiting for the listener at that point |
+| Command, tab completion, scheduled task, limbo callback | `max_call_duration` (60 s by default) | Nothing in the proxy stops waiting earlier, and the call is cut off and poisoned at that limit |
+| `on_enable`, `on_disable` | none | The proxy waits for them, and `on_disable` must run |
+
+The deadline has three effects:
+
+- **Host calls fail in time.** Every host call that waits on the proxy (`start` and `stop` on `server-manager`, every `ban-service` function, `switch-server` on a player) returns before the deadline, minus a margin. The margin is a fifth of the deadline, capped at 250 ms, so a 10 s `handler_timeout` leaves host calls 9.75 s and a 300 ms one leaves them 240 ms. On expiry the guest gets the error value the import already declares, `service-error::unavailable` or `player-error::switch-failed`, and no trap. `host_call_timeout` still caps each host call on its own.
+- **The guest's decision counts.** Because the error arrives inside the margin, the guest still has time to decide and return before the event bus gives up. A PreLogin handler that denies when the ban service errors fails closed, and its denial is applied to the event. If the host call waited out `host_call_timeout` instead, the bus would already have moved on and the login would go through on the default result.
+- **The plugin stays available.** The call ends before its deadline instead of after `host_call_timeout`, so the plugin's next events do not queue behind a stalled service. A call whose deadline passed while it waited in the queue is dropped without running, since its caller can no longer use the result, and a warning names the plugin and the operation.
+
+A running call is not cut at its deadline. Guest code between host calls keeps running until it returns, bounded by `cpu_budget` and, as a last resort, `max_call_duration`. See [Host services](./services#slow-services-and-deadlines) for the plugin-side view.
 
 ## Disable
 
@@ -199,7 +217,7 @@ Any guest trap poisons the instance. The poison flag lives on the store state (`
 - A memory-grow failure (the store traps on grow failure once `memory_limit_mb`, 64 MiB by default, is hit).
 - Use of a dropped or invalid resource handle.
 
-A call that did not finish poisons the instance the same way: one cut off by `max_call_duration`, or one interrupted by a panic in a host function. A caller that stops waiting (for example the event bus after `[events] handler_timeout`) does not: the call keeps running inside the plugin and the instance stays healthy.
+A call that did not finish poisons the instance the same way: one cut off by `max_call_duration`, or one interrupted by a panic in a host function. A caller that stops waiting (for example the event bus after `[events] handler_timeout`) does not: the call keeps running inside the plugin and the instance stays healthy. Host calls inside it return an error before that point anyway, see [Deadlines](#deadlines).
 
 The model is fail-closed: once an instance is poisoned, `on_disable` is skipped and the instance is not asked to run cleanup that could trap again or observe inconsistent state. A poisoned instance is not reused for further dispatch.
 

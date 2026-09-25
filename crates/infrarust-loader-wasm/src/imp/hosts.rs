@@ -9,29 +9,33 @@ use infrarust_api::types::{PlayerId, ServerId};
 use tokio::time::timeout;
 use wasmtime::component::Resource;
 
+use crate::actor::CallKind;
 use crate::bindings::infrarust::plugin::player_registry::Player as PlayerHandle;
 use crate::bindings::infrarust::plugin::{
     ban_service, codec_registry, command_manager, config_service, event_bus, limbo, log,
     player_registry, scheduler, server_manager, types as wt,
 };
 use crate::consts::PLAYER_SWITCH_TIMEOUT;
+use crate::deadline::HostCallLimit;
 use crate::store_state::PluginStoreState;
 use crate::{convert, dispatch, proxies};
 
 async fn await_service<T>(
-    limit: Duration,
+    limit: HostCallLimit,
     fut: impl Future<Output = Result<T, ServiceError>> + Send,
 ) -> Result<T, wt::ServiceError> {
-    match timeout(limit, fut).await {
+    match limit.run(fut).await {
         Ok(Ok(value)) => Ok(value),
         Ok(Err(e)) => Err(convert::service_error_to_wit(e)),
-        Err(_) => Err(wt::ServiceError::Unavailable(
-            "host call timed out".to_string(),
-        )),
+        Err(expired) => Err(wt::ServiceError::Unavailable(expired)),
     }
 }
 
 impl PluginStoreState {
+    fn service_call_limit(&self) -> HostCallLimit {
+        self.host_call_limit(self.host_call_timeout())
+    }
+
     fn deny_player_write(
         &self,
         error: impl FnOnce(String) -> wt::PlayerError,
@@ -72,7 +76,7 @@ impl event_bus::Host for PluginStoreState {
         kind: event_bus::EventKind,
         priority: wt::EventPriority,
     ) -> wasmtime::Result<u64> {
-        let instance = self.instance_ref();
+        let instance = self.instance_ref(CallKind::Event);
         let ctx = self.require_ctx()?;
         let native_priority = dispatch::priority_from_wit(priority);
         let listener_id = self.mint_listener_id();
@@ -309,14 +313,11 @@ impl player_registry::HostPlayer for PluginStoreState {
         }
         let player = self.resolve_player(&self_)?;
         let target = ServerId::from(target);
-        Ok(
-            match timeout(PLAYER_SWITCH_TIMEOUT, player.switch_server(target)).await {
-                Ok(result) => result.map_err(convert::player_error_to_wit),
-                Err(_) => Err(wt::PlayerError::SwitchFailed(
-                    "host call timed out".to_string(),
-                )),
-            },
-        )
+        let limit = self.host_call_limit(PLAYER_SWITCH_TIMEOUT);
+        Ok(match limit.run(player.switch_server(target)).await {
+            Ok(result) => result.map_err(convert::player_error_to_wit),
+            Err(expired) => Err(wt::PlayerError::SwitchFailed(expired)),
+        })
     }
 
     async fn is_online_mode(&mut self, self_: Resource<PlayerHandle>) -> wasmtime::Result<bool> {
@@ -361,13 +362,13 @@ impl server_manager::Host for PluginStoreState {
     async fn start(&mut self, server: String) -> wasmtime::Result<Result<(), wt::ServiceError>> {
         let ctx = self.require_ctx()?;
         let sid = ServerId::from(server);
-        Ok(await_service(self.host_call_timeout(), ctx.server_manager().start(&sid)).await)
+        Ok(await_service(self.service_call_limit(), ctx.server_manager().start(&sid)).await)
     }
 
     async fn stop(&mut self, server: String) -> wasmtime::Result<Result<(), wt::ServiceError>> {
         let ctx = self.require_ctx()?;
         let sid = ServerId::from(server);
-        Ok(await_service(self.host_call_timeout(), ctx.server_manager().stop(&sid)).await)
+        Ok(await_service(self.service_call_limit(), ctx.server_manager().stop(&sid)).await)
     }
 
     async fn get_all_servers(&mut self) -> wasmtime::Result<Vec<(String, wt::ServerState)>> {
@@ -396,7 +397,7 @@ impl ban_service::Host for PluginStoreState {
         };
         let duration = duration_ms.map(Duration::from_millis);
         Ok(await_service(
-            self.host_call_timeout(),
+            self.service_call_limit(),
             ctx.ban_service().ban(native_target, reason, duration),
         )
         .await)
@@ -412,7 +413,7 @@ impl ban_service::Host for PluginStoreState {
                 "invalid ban target".to_string(),
             )));
         };
-        Ok(await_service(self.host_call_timeout(), ctx.ban_service().unban(&t)).await)
+        Ok(await_service(self.service_call_limit(), ctx.ban_service().unban(&t)).await)
     }
 
     async fn is_banned(
@@ -425,7 +426,7 @@ impl ban_service::Host for PluginStoreState {
                 "invalid ban target".to_string(),
             )));
         };
-        Ok(await_service(self.host_call_timeout(), ctx.ban_service().is_banned(&t)).await)
+        Ok(await_service(self.service_call_limit(), ctx.ban_service().is_banned(&t)).await)
     }
 
     async fn get_ban(
@@ -439,7 +440,7 @@ impl ban_service::Host for PluginStoreState {
             )));
         };
         Ok(
-            await_service(self.host_call_timeout(), ctx.ban_service().get_ban(&t))
+            await_service(self.service_call_limit(), ctx.ban_service().get_ban(&t))
                 .await
                 .map(|opt| opt.as_ref().map(convert::ban_entry_to_wit)),
         )
@@ -450,7 +451,7 @@ impl ban_service::Host for PluginStoreState {
     ) -> wasmtime::Result<Result<Vec<wt::BanEntry>, wt::ServiceError>> {
         let ctx = self.require_ctx()?;
         Ok(
-            await_service(self.host_call_timeout(), ctx.ban_service().get_all_bans())
+            await_service(self.service_call_limit(), ctx.ban_service().get_all_bans())
                 .await
                 .map(|bans| bans.iter().map(convert::ban_entry_to_wit).collect()),
         )
@@ -494,7 +495,7 @@ impl command_manager::Host for PluginStoreState {
         description: String,
         callback_id: u64,
     ) -> wasmtime::Result<()> {
-        let instance = self.instance_ref();
+        let instance = self.instance_ref(CallKind::Callback);
         let ctx = self.require_ctx()?;
         let handler = Box::new(proxies::WasmCommandHandler::new(callback_id, instance));
         let alias_refs: Vec<&str> = aliases.iter().map(String::as_str).collect();
@@ -563,7 +564,7 @@ impl codec_registry::Host for PluginStoreState {
 }
 impl scheduler::Host for PluginStoreState {
     async fn delay(&mut self, after_ms: u64, callback_id: u64) -> wasmtime::Result<u64> {
-        let instance = self.instance_ref();
+        let instance = self.instance_ref(CallKind::Callback);
         let ctx = self.require_ctx()?;
         let handle = ctx.scheduler().delay(
             Duration::from_millis(after_ms),
@@ -575,7 +576,7 @@ impl scheduler::Host for PluginStoreState {
     }
 
     async fn interval(&mut self, period_ms: u64, callback_id: u64) -> wasmtime::Result<u64> {
-        let instance = self.instance_ref();
+        let instance = self.instance_ref(CallKind::Callback);
         let ctx = self.require_ctx()?;
         let handle = ctx.scheduler().interval(
             Duration::from_millis(period_ms),
@@ -600,7 +601,7 @@ impl limbo::Host for PluginStoreState {
                 "register_limbo_handler denied: missing Limbo capability");
             return Ok(());
         }
-        let instance = self.instance_ref();
+        let instance = self.instance_ref(CallKind::Callback);
         let ctx = self.require_ctx()?;
         ctx.register_limbo_handler(Box::new(crate::limbo::WasmLimboHandler::new(
             handler, name, instance,
@@ -774,6 +775,7 @@ mod tests {
     use super::*;
     use crate::bindings::infrarust::plugin::player_registry::{Host as _, HostPlayer as _};
     use crate::config::SandboxLimits;
+    use crate::deadline::Deadline;
     use crate::store_state::build_probe_state;
 
     #[tokio::test]
@@ -880,6 +882,26 @@ mod tests {
         assert!(
             elapsed < Duration::from_secs(1),
             "held the instance lock for {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn switch_server_stops_at_the_call_deadline_when_that_comes_first() {
+        let mut state = build_probe_state("test".to_string(), &SandboxLimits::default())
+            .with_capabilities(CapabilitySet::baseline());
+        let handle = state
+            .push_player(Arc::new(StalledPlayer::new()))
+            .expect("the resource table accepts a player");
+        state.begin_call("handle-event", Some(Deadline::after(Duration::ZERO)));
+
+        let result = state
+            .switch_server(handle, "lobby".to_string())
+            .await
+            .expect("a call out of time is a player-error, not a trap");
+
+        assert!(
+            matches!(&result, Err(wt::PlayerError::SwitchFailed(m)) if m.contains("deadline")),
+            "{result:?}"
         );
     }
 
