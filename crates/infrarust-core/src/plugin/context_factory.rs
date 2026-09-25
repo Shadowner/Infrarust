@@ -10,6 +10,7 @@ pub use infrarust_api::loader::PluginContextFactory;
 use super::context::PluginContextImpl;
 use super::manager::PluginServices;
 use crate::ban::BanManager;
+use crate::permissions::PermissionService;
 use crate::services::ban_bridge::PluginBanService;
 
 /// Per-plugin permissions extracted from proxy configuration.
@@ -26,6 +27,7 @@ pub struct PluginContextFactoryImpl {
     plugin_configs: HashMap<String, PluginPermissions>,
     contexts: Mutex<HashMap<String, Weak<PluginContextImpl>>>,
     ban_providers: Option<Arc<BanManager>>,
+    permissions: Option<Arc<PermissionService>>,
 }
 
 impl PluginContextFactoryImpl {
@@ -38,12 +40,19 @@ impl PluginContextFactoryImpl {
             plugin_configs,
             contexts: Mutex::new(HashMap::new()),
             ban_providers: None,
+            permissions: None,
         }
     }
 
     #[must_use]
     pub fn with_ban_providers(mut self, bans: Arc<BanManager>) -> Self {
         self.ban_providers = Some(bans);
+        self
+    }
+
+    #[must_use]
+    pub fn with_permissions(mut self, permissions: Arc<PermissionService>) -> Self {
+        self.permissions = Some(permissions);
         self
     }
 }
@@ -76,7 +85,7 @@ impl PluginContextFactory for PluginContextFactoryImpl {
             );
         }
 
-        let ctx = Arc::new(PluginContextImpl::new(
+        let mut ctx = PluginContextImpl::new(
             plugin_id.to_string(),
             Arc::clone(&self.services.event_bus),
             Arc::clone(&self.services.player_registry),
@@ -98,7 +107,11 @@ impl PluginContextFactory for PluginContextFactoryImpl {
             self.services.proxy_info.clone(),
             self.services.plugins_dir.clone(),
             capabilities,
-        ));
+        );
+        if let Some(permissions) = &self.permissions {
+            ctx = ctx.with_permissions(Arc::clone(permissions));
+        }
+        let ctx = Arc::new(ctx);
 
         cache.insert(plugin_id.to_string(), Arc::downgrade(&ctx));
         ctx

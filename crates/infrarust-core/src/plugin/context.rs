@@ -10,7 +10,10 @@ use infrarust_api::command::CommandManager;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use infrarust_api::limbo::LimboHandler;
-use infrarust_api::permissions::{Capability, CapabilitySet};
+use infrarust_api::permissions::{
+    Capability, CapabilitySet, PermissionNode, PermissionNodeError, PermissionNodeInfo,
+    PermissionProvider, PermissionProviderRejected,
+};
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::provider::PluginConfigProvider;
 use infrarust_api::services::proxy_info::ProxyInfo;
@@ -28,6 +31,7 @@ use crate::ban::BanManager;
 use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
+use crate::permissions::PermissionService;
 use crate::provider::ProviderId;
 use crate::routing::DomainRouter;
 use crate::services::command_manager::CommandManagerImpl;
@@ -47,6 +51,8 @@ pub struct PluginContextImpl {
     ban_service: Arc<dyn BanService>,
     ban_providers: Option<Arc<BanManager>>,
     registered_ban_provider: AtomicBool,
+    permissions: Arc<PermissionService>,
+    registered_permission_provider: AtomicBool,
     config_service: Arc<dyn ConfigService>,
     load_balancer_service: Arc<dyn LoadBalancerService>,
     plugin_registry: Arc<dyn PluginRegistry>,
@@ -118,6 +124,8 @@ impl PluginContextImpl {
             ban_service,
             ban_providers,
             registered_ban_provider: AtomicBool::new(false),
+            permissions: Arc::new(PermissionService::new_sync(&Default::default())),
+            registered_permission_provider: AtomicBool::new(false),
             config_service,
             load_balancer_service,
             plugin_registry,
@@ -137,6 +145,27 @@ impl PluginContextImpl {
             registered_provider_ids: Arc::new(Mutex::new(Vec::new())),
             registered_provider_tokens: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    #[must_use]
+    pub fn with_permissions(mut self, permissions: Arc<PermissionService>) -> Self {
+        self.permissions = permissions;
+        self
+    }
+
+    fn refresh_online_players(&self) {
+        let players = self.player_registry.get_all_players();
+        if players.is_empty() {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        runtime.spawn(async move {
+            for player in players {
+                player.refresh_permissions().await;
+            }
+        });
     }
 
     /// Returns registered limbo handlers (consumed during proxy setup).
@@ -203,6 +232,15 @@ impl PluginContextImpl {
             bans.unregister_provider(&self.plugin_id);
         }
 
+        if self
+            .registered_permission_provider
+            .swap(false, Ordering::SeqCst)
+            && self.permissions.unregister_provider(&self.plugin_id)
+        {
+            self.refresh_online_players();
+        }
+        self.permissions.unregister_nodes(&self.plugin_id);
+
         tracing::debug!(plugin = %self.plugin_id, "Plugin resources cleaned up");
     }
 }
@@ -261,6 +299,33 @@ impl PluginContext for PluginContextImpl {
         bans.register_provider(&self.plugin_id, provider)?;
         self.registered_ban_provider.store(true, Ordering::SeqCst);
         Ok(())
+    }
+
+    fn register_permission_provider(
+        &self,
+        provider: Arc<dyn PermissionProvider>,
+    ) -> Result<(), PermissionProviderRejected> {
+        if !self.capabilities.has(Capability::PermissionProvider) {
+            tracing::warn!(
+                plugin = %self.plugin_id,
+                "register_permission_provider denied: missing permission-provider capability"
+            );
+            return Err(PermissionProviderRejected::MissingCapability);
+        }
+        self.permissions
+            .register_provider(&self.plugin_id, provider)?;
+        self.registered_permission_provider
+            .store(true, Ordering::SeqCst);
+        self.refresh_online_players();
+        Ok(())
+    }
+
+    fn register_permission_node(&self, node: PermissionNode) -> Result<(), PermissionNodeError> {
+        self.permissions.register_node(Some(&self.plugin_id), node)
+    }
+
+    fn permission_nodes(&self) -> Vec<PermissionNodeInfo> {
+        self.permissions.nodes()
     }
 
     fn config_service(&self) -> &dyn ConfigService {

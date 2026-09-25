@@ -143,10 +143,17 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
-    use infrarust_api::event::EventPriority;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use infrarust_api::event::bus::{EventBus, EventBusExt};
-    use infrarust_api::permissions::{PermissionChecker, PermissionLevel};
+    use infrarust_api::event::{BoxFuture, EventPriority, ResultedEvent};
+
+    use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
+    use infrarust_api::permissions::{
+        PermissionChecker, PermissionMap, PermissionProvider, PermissionSubject, Tristate,
+    };
     use infrarust_api::types::{GameProfile, PlayerId, ProtocolVersion, ServerId};
+    use infrarust_config::{PermissionProviderSelection, PermissionsConfig};
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
@@ -342,12 +349,8 @@ mod tests {
     struct Admin;
 
     impl PermissionChecker for Admin {
-        fn permission_level(&self) -> PermissionLevel {
-            PermissionLevel::Admin
-        }
-
-        fn has_permission(&self, _permission: &str) -> bool {
-            true
+        fn value(&self, _node: &str) -> Tristate {
+            Tristate::True
         }
     }
 
@@ -356,12 +359,114 @@ mod tests {
         let services = test_proxy_services();
         let (steve, _rx) = player(&services, 1, "Steve");
         assert!(!steve.has_permission("infrarust.admin"));
-        assert_eq!(steve.permission_level(), PermissionLevel::Player);
 
         steve.set_permission_checker(Arc::new(Admin));
 
         assert!(steve.has_permission("infrarust.admin"));
-        assert_eq!(steve.permission_level(), PermissionLevel::Admin);
+    }
+
+    struct Toggle(Arc<AtomicBool>);
+
+    impl PermissionProvider for Toggle {
+        fn create_checker<'a>(
+            &'a self,
+            _subject: &'a PermissionSubject,
+        ) -> BoxFuture<'a, Arc<dyn PermissionChecker>> {
+            let checker: Arc<dyn PermissionChecker> =
+                Arc::new(PermissionMap::new().with("demo.use", self.0.load(Ordering::SeqCst)));
+            Box::pin(async move { checker })
+        }
+    }
+
+    fn provided_player(
+        services: &ProxyServices,
+        grant: &Arc<AtomicBool>,
+    ) -> (Arc<PlayerSession>, mpsc::Receiver<PlayerCommand>) {
+        let permissions = Arc::new(crate::permissions::PermissionService::new_sync(
+            &PermissionsConfig {
+                provider: PermissionProviderSelection::Plugin("perms".into()),
+                ..PermissionsConfig::default()
+            },
+        ));
+        permissions
+            .register_provider("perms", Arc::new(Toggle(Arc::clone(grant))))
+            .unwrap();
+        let (tx, rx) = PlayerSession::channel();
+        let session = PlayerSession::new(
+            PlayerId::new(1),
+            GameProfile {
+                uuid: offline_uuid("Steve"),
+                username: "Steve".to_string(),
+                properties: vec![],
+            },
+            ProtocolVersion::new(767),
+            "127.0.0.1:40000".parse().unwrap(),
+            None,
+            true,
+            true,
+            tx,
+            CancellationToken::new(),
+            crate::permissions::default_checker(),
+            Arc::clone(&services.backend_load),
+        )
+        .with_permissions(permissions)
+        .with_virtual_host("lobby.example.com");
+        (Arc::new(session), rx)
+    }
+
+    #[tokio::test]
+    async fn setup_asks_the_provider_about_the_real_connection() {
+        let services = test_proxy_services();
+        let grant = Arc::new(AtomicBool::new(true));
+        let (steve, _rx) = provided_player(&services, &grant);
+        assert!(!steve.has_permission("demo.use"));
+
+        steve.setup_permissions(&services.event_bus).await;
+
+        assert!(steve.has_permission("demo.use"));
+        let subject = steve.permission_subject();
+        assert_eq!(subject.virtual_host(), Some("lobby.example.com"));
+        assert!(subject.is_online_mode());
+        assert_eq!(subject.player_id(), Some(PlayerId::new(1)));
+    }
+
+    #[tokio::test]
+    async fn refresh_asks_the_provider_again_and_wakes_the_session_loop() {
+        let services = test_proxy_services();
+        let grant = Arc::new(AtomicBool::new(true));
+        let (steve, _rx) = provided_player(&services, &grant);
+        steve.setup_permissions(&services.event_bus).await;
+        let changes = steve.subscribe_permissions();
+
+        grant.store(false, Ordering::SeqCst);
+        assert!(steve.has_permission("demo.use"));
+        assert!(!changes.has_changed().unwrap());
+
+        steve.refresh_permissions().await;
+
+        assert!(changes.has_changed().unwrap());
+        assert!(!steve.has_permission("demo.use"));
+    }
+
+    #[tokio::test]
+    async fn a_permissions_setup_override_survives_a_refresh() {
+        let services = test_proxy_services();
+        let bus: &dyn EventBus = services.event_bus.as_ref();
+        bus.subscribe::<PermissionsSetupEvent, _>(EventPriority::NORMAL, |event| {
+            event.set_result(PermissionsSetupResult::Custom(Arc::new(
+                PermissionMap::new().with("demo.use", true),
+            )));
+        });
+        let grant = Arc::new(AtomicBool::new(false));
+        let (steve, _rx) = provided_player(&services, &grant);
+        steve.setup_permissions(&services.event_bus).await;
+        assert!(steve.has_permission("demo.use"));
+        let changes = steve.subscribe_permissions();
+
+        steve.refresh_permissions().await;
+
+        assert!(changes.has_changed().unwrap());
+        assert!(steve.has_permission("demo.use"));
     }
 
     fn rust_files(dir: &Path, found: &mut Vec<PathBuf>) {

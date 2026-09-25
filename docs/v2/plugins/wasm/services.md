@@ -86,8 +86,8 @@ A `Player` is a resource owned by the host. Read its state:
 | `is_connected()` | `bool` | TCP connection is live |
 | `is_active()` | `bool` | Player is in an actionable state |
 | `is_online_mode()` | `bool` | Authenticated against Mojang |
-| `permission_level()` | `PermissionLevel` | `Player` or `Admin` |
-| `has_permission(&str)` | `bool` | Single-permission check |
+| `permission_level()` | `PermissionLevel` | `Admin` when the player holds `infrarust.admin`, `Player` otherwise |
+| `has_permission(&str)` | `bool` | Whether the player holds the node, after the provider and the node's default |
 | `connected_at()` | `u64` | Connection time, epoch millis |
 
 Act on the player. `Player` is the binding-generated resource, so the message methods take a `&str` of [component JSON](#building-chat-components). Build it with `Component` and pass `&...into_json()`.

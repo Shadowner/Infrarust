@@ -631,7 +631,7 @@ uuid = "1"
 |---|---|---|
 | `on_enable` / `on_disable` logic | `MockPluginContext` with `unimplemented!` stubs | `Plugin`, `PluginContext` |
 | Event subscription and dispatch | Real `EventBusImpl` + mock services | `EventBusExt::subscribe`, `EventBusImpl::fire` |
-| Command registration and dispatch | Real `CommandManagerImpl` behind `PluginContextFactoryImpl` | `CommandManager::register`, `CommandManagerImpl::dispatch(CommandSource::Console, "name args")` |
+| Command registration and dispatch | Real `CommandManagerImpl` behind `PluginContextFactoryImpl` | `CommandManager::register`, `CommandManagerImpl::dispatch(CommandSource::console(Arc::new(AllPermissionsChecker)), "name args")` |
 | Dependency ordering | `PluginContextFactoryImpl` + `PluginManager` | `PluginMetadata::depends_on` |
 | Cleanup after disable | Real `PluginContextFactoryImpl` with tracking wrappers | `PluginManager::shutdown` |
 | Full lifecycle | `PluginServices` + `StaticPluginLoader` + `PluginManager` | All of the above |

@@ -827,12 +827,12 @@ async fn test_unload_stops_the_plugin_task() {
 }
 
 async fn dispatch_line(commands: &CommandManagerImpl, line: &str) -> bool {
-    commands.dispatch(CommandSource::Console, line).await == DispatchOutcome::Executed
+    commands.dispatch(support::console(), line).await == DispatchOutcome::Executed
 }
 
 async fn complete_line(commands: &CommandManagerImpl, input: &str) -> Vec<String> {
     commands
-        .suggest(CommandSource::Console, input)
+        .suggest(support::console(), input)
         .await
         .unwrap_or_default()
         .into_iter()

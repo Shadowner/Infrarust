@@ -107,6 +107,21 @@ impl PluginContext for MockPluginContext {
     ) -> Result<(), infrarust_api::services::ban_service::BanProviderRejected> {
         unimplemented!("mock")
     }
+    fn register_permission_provider(
+        &self,
+        _provider: Arc<dyn infrarust_api::permissions::PermissionProvider>,
+    ) -> Result<(), infrarust_api::permissions::PermissionProviderRejected> {
+        unimplemented!("mock")
+    }
+    fn register_permission_node(
+        &self,
+        _node: infrarust_api::permissions::PermissionNode,
+    ) -> Result<(), infrarust_api::permissions::PermissionNodeError> {
+        unimplemented!("mock")
+    }
+    fn permission_nodes(&self) -> Vec<infrarust_api::permissions::PermissionNodeInfo> {
+        unimplemented!("mock")
+    }
     fn load_balancer_service(
         &self,
     ) -> &dyn infrarust_api::services::load_balancer::LoadBalancerService {

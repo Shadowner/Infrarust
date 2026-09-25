@@ -59,7 +59,7 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `Limbo` | `limbo` | Provide limbo handlers | No |
 | `TransportFilter` | `transport-filter` | Register transport filters (never grantable via config) | No |
 | `VirtualBackend` | `virtual-backend` | Provide virtual backends (planned, not implemented) | No |
-| `PermissionProvider` | `permission-provider` | Provide a custom permission checker | No |
+| `PermissionProvider` | `permission-provider` | Become the permission provider named by `[permissions] provider` (native plugins only) | No |
 | `FilesystemExtended` | `filesystem-extended` | Filesystem access beyond the per-plugin data directory (deferred) | No |
 | `Network` | `network` | Outbound network access (deferred) | No |
 

@@ -133,7 +133,7 @@ A player's command runs inside that player's session loop, so keep `execute` sho
 ```rust
 pub enum CommandSource {
     Player(Arc<dyn Player>),
-    Console,
+    Console(Arc<dyn PermissionChecker>),
 }
 ```
 
@@ -143,7 +143,7 @@ The enum is `#[non_exhaustive]`, so add a wildcard arm when you match on it. Mos
 |--------|---------|-------------|
 | `name()` | `&str` | The player's username, or `"Console"` |
 | `send_message(component)` | `()` | Chat message to the player; for the console, an `info` log line under the `infrarust::console` target |
-| `has_permission(node)` | `bool` | The player's permission checker; the console holds every permission |
+| `has_permission(node)` | `bool` | Whether the player or the console holds the node, see [Permission nodes](#permission-nodes) |
 | `player()` | `Option<&Arc<dyn Player>>` | The player, or `None` for the console |
 | `player_id()` | `Option<PlayerId>` | The player's id |
 | `is_console()` | `bool` | Whether the console ran the command |
@@ -228,56 +228,55 @@ Give a command a node with `CommandSpec::permission`:
 let spec = CommandSpec::new("forcelogin").permission("auth.forcelogin");
 ```
 
-Before the handler runs, the proxy calls `ctx.source.has_permission(node)`. When that returns `false`, the sender gets `[Infrarust] You don't have permission to use this command.`, the handler does not run, and the command is not forwarded to the backend. The command is also left out of that player's command tree and completions. The console passes every check.
+Before the handler runs, the proxy calls `ctx.source.has_permission(node)`. When that returns `false`, the sender gets `[Infrarust] You don't have permission to use this command.`, the handler does not run, and the command is not forwarded to the backend. The command is also left out of that player's command tree and completions. The console is checked the same way against its own checker, which holds every node with the built-in provider; a denied console command answers `The console may not run '<name>'.`
 
-With the config-based checker, `infrarust.admin` is held by admins, `infrarust.command.<name>` by admins and by everyone when `<name>` is listed in `player_commands`, and any other node by admins only. See the [Permissions configuration](../../configuration/security/permissions.md) page for how operators set up admins.
+`has_permission` asks the active permission provider's checker for the player, then falls back to the default the node was registered with, then denies. Register the nodes your commands use so they get a sensible default:
+
+```rust
+ctx.register_permission_node(
+    PermissionNode::new("auth.forcelogin", PermissionDefault::Admin)
+        .description("Log a player in without a password"),
+)?;
+```
+
+With the built-in provider, admins hold every node, `infrarust.command.<name>` is granted to everyone when `<name>` is listed in `player_commands` (except the admin-only `/ir` subcommands), and any other node follows its registered default (denied when there is none). See [Permissions API](./permissions) for defaults, wildcards, providers and refreshing a player, and the [Permissions configuration](../../configuration/security/permissions.md) page for how operators set up admins.
 
 For finer decisions, check inside the handler:
 
 ```rust
-if !ctx.source.has_permission("infrarust.admin") {
+use infrarust_api::permissions::ADMIN_PERMISSION;
+
+if !ctx.source.has_permission(ADMIN_PERMISSION) {
     ctx.source.send_message(Component::error("No permission."));
     return;
 }
 ```
 
-You can also read a player's level directly:
+There are no permission levels: an admin is a player who holds `infrarust.admin`.
 
-```rust
-use infrarust_api::permissions::PermissionLevel;
+### Custom permissions
 
-if let Some(player) = ctx.source.player() {
-    match player.permission_level() {
-        PermissionLevel::Admin => { /* full access */ }
-        PermissionLevel::Player => { /* restricted */ }
-    }
-}
-```
-
-### Custom permission checker
-
-Plugins can replace the built-in config-based checker by listening to `PermissionsSetupEvent`. This fires after authentication, before the player session is constructed. If no listener provides a custom checker, the proxy uses its config-based default.
+To answer permission questions for every player, as a LuckPerms port or a database-backed group system would, register a `PermissionProvider` and name your plugin in `[permissions] provider`. To change one player's permissions only, listen to `PermissionsSetupEvent`, which fires after the provider built the player's checker:
 
 ```rust
 use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
-use infrarust_api::permissions::PermissionChecker;
+use infrarust_api::permissions::PermissionMap;
 
 ctx.event_bus().subscribe(EventPriority::NORMAL, |event: &mut PermissionsSetupEvent| {
-    let checker = MyDatabaseChecker::new(event.profile.uuid);
+    let checker = PermissionMap::new().with("auth.forcelogin", true);
     event.set_result(PermissionsSetupResult::Custom(Arc::new(checker)));
 });
 ```
 
-Your checker must implement the `PermissionChecker` trait:
+A checker implements one method:
 
 ```rust
 pub trait PermissionChecker: Send + Sync {
-    fn permission_level(&self) -> PermissionLevel;
-    fn has_permission(&self, permission: &str) -> bool;
+    fn value(&self, node: &str) -> Tristate;
 }
 ```
 
-This is how you'd integrate LuckPerms, a database, or any external permission backend. Permission nodes on commands go through the same checker.
+`Tristate::Undefined` lets the node's registered default decide. See [Permissions API](./permissions) for the whole model.
 
 ## The client command tree
 
@@ -287,7 +286,7 @@ Clients from 1.13 on build their command suggestions from a command tree the bac
 - It leaves out commands marked `hidden(true)` and commands whose permission node the player lacks.
 - It removes a backend command with the same name as a proxy command label, because the proxy would intercept it anyway. The player sees each root command once.
 
-The proxy keeps the last tree each backend sent. When any command is registered or unregistered, every connected player in an intercepted mode gets a rebuilt tree right away, without waiting for the backend to send a new one.
+The proxy keeps the last tree each backend sent. When any command is registered or unregistered, every connected player in an intercepted mode gets a rebuilt tree right away, without waiting for the backend to send a new one. When one player's permissions change (`player.refresh_permissions()`, or `op` and `deop` from the console), only that player gets a rebuilt tree.
 
 ## Sharing state with a handler
 

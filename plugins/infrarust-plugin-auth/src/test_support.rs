@@ -9,7 +9,6 @@ use infrarust_api::error::PlayerError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::LimboEntryContext;
 use infrarust_api::limbo::test_util::RecordingLimboSession;
-use infrarust_api::permissions::PermissionLevel;
 use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{
@@ -168,16 +167,12 @@ impl Player for MockPlayer {
         false
     }
 
-    fn permission_level(&self) -> PermissionLevel {
-        if self.admin {
-            PermissionLevel::Admin
-        } else {
-            PermissionLevel::Player
-        }
-    }
-
     fn has_permission(&self, _permission: &str) -> bool {
         self.admin
+    }
+
+    fn refresh_permissions(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
     }
 
     fn connected_at(&self) -> SystemTime {

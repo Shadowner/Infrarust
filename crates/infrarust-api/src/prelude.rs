@@ -39,7 +39,11 @@ pub use crate::services::{
 };
 
 // Permissions and capabilities
-pub use crate::permissions::{Capability, CapabilitySet, PermissionChecker, PermissionLevel};
+pub use crate::permissions::{
+    ADMIN_PERMISSION, Capability, CapabilitySet, PermissionChecker, PermissionDefault,
+    PermissionMap, PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
+    PermissionProviderRejected, PermissionSubject, Tristate,
+};
 
 // Limbo
 pub use crate::limbo::{

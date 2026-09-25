@@ -1,7 +1,6 @@
 use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::message::ProxyMessage;
-use infrarust_api::permissions::PermissionLevel;
 
 use crate::commands::{CommandServices, SubcommandHandler};
 use crate::services::command_manager::DispatchOutcome;
@@ -17,8 +16,8 @@ impl SubcommandHandler for PluginSubcommand {
         "Run a plugin command by namespace"
     }
 
-    fn required_level(&self) -> PermissionLevel {
-        PermissionLevel::Admin
+    fn admin_only(&self) -> bool {
+        true
     }
 
     fn usage(&self) -> &str {

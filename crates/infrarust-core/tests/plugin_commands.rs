@@ -6,6 +6,7 @@ use infrarust_api::command::{
     CommandContext, CommandError, CommandHandler, CommandSource, CommandSpec,
 };
 use infrarust_api::event::BoxFuture;
+use infrarust_api::permissions::AllPermissionsChecker;
 use infrarust_api::plugin::PluginContext;
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::context::PluginContextImpl;
@@ -81,7 +82,8 @@ fn tracked(ctx: &Arc<dyn PluginContext>) -> Vec<String> {
 }
 
 async fn run(commands: &CommandManagerImpl, input: &str) -> bool {
-    commands.dispatch(CommandSource::Console, input).await == DispatchOutcome::Executed
+    let console = CommandSource::console(Arc::new(AllPermissionsChecker));
+    commands.dispatch(console, input).await == DispatchOutcome::Executed
 }
 
 fn with_builtin(calls: &Calls) -> Arc<CommandManagerImpl> {

@@ -5,6 +5,7 @@ use std::pin::Pin;
 
 use comfy_table::Cell;
 use infrarust_api::player::Player;
+use uuid::Uuid;
 
 use crate::console::ConsoleServices;
 use crate::console::dispatcher::ConsoleCommand;
@@ -38,12 +39,20 @@ impl ConsoleCommand for OpCommand {
             let Some(username) = args.first() else {
                 return CommandOutput::Error("Usage: op <username>".to_string());
             };
+            if let Some(refused) = delegated(services) {
+                return refused;
+            }
 
             let uuid = if let Some(player) = services.connection_registry.find_by_username(username)
             {
-                if !player.is_online_mode() {
+                if !player.is_online_mode()
+                    && !services
+                        .permission_service
+                        .builtin()
+                        .trusts_offline_admins()
+                {
                     return CommandOutput::Error(format!(
-                        "Player '{}' is connected in offline mode — only online-mode players can be admin.",
+                        "Player '{}' is connected in offline mode — only online-mode players can be admin unless [permissions] trust_offline_admins is set.",
                         username
                     ));
                 }
@@ -61,6 +70,7 @@ impl ConsoleCommand for OpCommand {
             };
 
             services.permission_service.add_admin(uuid);
+            refresh(services, &uuid).await;
 
             CommandOutput::Success(format!(
                 "Opped {} (UUID: {}). Change is effective until restart — add UUID to [permissions].admins in infrarust.toml to persist.",
@@ -98,6 +108,9 @@ impl ConsoleCommand for DeopCommand {
             let Some(username) = args.first() else {
                 return CommandOutput::Error("Usage: deop <username>".to_string());
             };
+            if let Some(refused) = delegated(services) {
+                return refused;
+            }
 
             let uuid = if let Some(player) = services.connection_registry.find_by_username(username)
             {
@@ -115,6 +128,7 @@ impl ConsoleCommand for DeopCommand {
             };
 
             if services.permission_service.remove_admin(&uuid) {
+                refresh(services, &uuid).await;
                 CommandOutput::Success(format!(
                     "De-opped {} (UUID: {}). Remove UUID from [permissions].admins in infrarust.toml to persist.",
                     username, uuid
@@ -155,6 +169,9 @@ impl ConsoleCommand for OpListCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
+            if let Some(refused) = delegated(services) {
+                return refused;
+            }
             let admins = services.permission_service.admin_list();
 
             if admins.is_empty() {
@@ -179,5 +196,20 @@ impl ConsoleCommand for OpListCommand {
                 footer: Some(format!(" {} admin(s)", admins.len())),
             }
         })
+    }
+}
+
+fn delegated(services: &ConsoleServices) -> Option<CommandOutput> {
+    let selection = services.permission_service.selection();
+    selection.plugin_id().map(|plugin| {
+        CommandOutput::Error(format!(
+            "Permissions come from the '{plugin}' plugin ([permissions] provider); manage admins there."
+        ))
+    })
+}
+
+async fn refresh(services: &ConsoleServices, uuid: &Uuid) {
+    if let Some(player) = services.connection_registry.find_by_uuid(uuid) {
+        player.refresh_permissions().await;
     }
 }

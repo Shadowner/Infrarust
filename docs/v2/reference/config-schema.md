@@ -245,12 +245,14 @@ Do not expose the web API on a non-loopback address without a strong `api_key`. 
 
 ### `[permissions]`
 
-Maps players to the admin permission level and grants Player-level access to specific `/ir` subcommands. The model has two levels only, Player and Admin, with Player < Admin.
+Chooses who answers permission questions and configures the built-in provider: admins hold every permission node, and `player_commands` opens chosen `/ir` subcommands to everyone. Read at startup; changes need a restart. See [Permissions](../configuration/security/permissions).
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `admins` | array of strings | `[]` | Players granted the Admin level (by name or UUID) |
-| `player_commands` | array of strings | `[]` | `/ir` subcommands made available to all players, not just admins |
+| `provider` | string | `"builtin"` | `"builtin"`, or the id of the plugin that provides permissions |
+| `admins` | array of strings | `[]` | Players holding `infrarust.admin` and every other node (by name or UUID) |
+| `player_commands` | array of strings | `[]` | `/ir` subcommands made available to all players, not just admins; `"*"` for every one that may be opened |
+| `trust_offline_admins` | bool | `false` | Let players who did not authenticate with Mojang be admins |
 
 ```toml
 [permissions]

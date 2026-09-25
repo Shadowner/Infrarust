@@ -1,6 +1,6 @@
 ---
 title: In-game command reference
-description: All subcommands for /infrarust (alias /ir), including usage, arguments, and required permission level.
+description: All subcommands for /infrarust (alias /ir), including usage, arguments, and the permission node each one needs.
 outline: [2, 3]
 ---
 
@@ -8,29 +8,29 @@ outline: [2, 3]
 
 The proxy registers one in-game command, `/infrarust`, with the alias `/ir`. Both names work identically. Tab-completion is permission-aware: subcommands the caller cannot use are not suggested.
 
-There are exactly two permission levels, `Player` and `Admin` (`Player < Admin`). Who counts as an admin is configured under `[permissions].admins` in `infrarust.toml`. Plugins may also supply a custom permission checker via `PermissionsSetupEvent`.
+Each subcommand is guarded by the permission node `infrarust.command.<name>`. Admins (players holding `infrarust.admin`) have every node. Other players have a subcommand's node when it is listed in `[permissions].player_commands`, or when a permission plugin grants it. Plugins can also replace who answers these questions entirely; see [Permissions](../configuration/security/permissions).
 
 The table below gives a quick overview. Details for each subcommand follow.
 
-| Subcommand | Usage | Level |
+| Subcommand | Usage | Can be opened to players |
 |---|---|---|
-| `help` | `/ir help [command]` | Player |
-| `version` | `/ir version` | Player |
-| `list` | `/ir list` | Player |
-| `find` | `/ir find <player>` | Player |
-| `server` | `/ir server [name]` | Player |
-| `send` | `/ir send <player> <server>` | Admin |
-| `broadcast` | `/ir broadcast <message> [--server <name>]` | Admin |
-| `kick` | `/ir kick <player> [reason]` | Admin |
-| `plugins` | `/ir plugins` | Admin |
-| `plugin` | `/ir plugin <plugin_id> [command] [args...]` | Admin |
-| `reload` | `/ir reload` | Admin |
+| `help` | `/ir help [command]` | Yes |
+| `version` | `/ir version` | Yes |
+| `list` | `/ir list` | Yes |
+| `find` | `/ir find <player>` | Yes |
+| `server` | `/ir server [name]` | Yes |
+| `send` | `/ir send <player> <server>` | No |
+| `broadcast` | `/ir broadcast <message> [--server <name>]` | No |
+| `kick` | `/ir kick <player> [reason]` | No |
+| `plugins` | `/ir plugins` | No |
+| `plugin` | `/ir plugin <plugin_id> [command] [args...]` | No |
+| `reload` | `/ir reload` | No |
 
 ---
 
 ## Player-level subcommands
 
-These are available to any player whose permission level is `Player` or higher.
+Admins can always use these. Other players can use the ones listed in `[permissions].player_commands`.
 
 ### help
 
@@ -76,7 +76,7 @@ With no argument, shows the server you are currently connected to. With a server
 
 ## Admin-level subcommands
 
-These require `PermissionLevel::Admin`. Players at the `Player` level will receive "You don't have permission." and the subcommands will not appear in tab-completion results.
+`player_commands` never opens these, so with the built-in provider only admins can use them. A permission plugin may still grant one of their nodes, for example `infrarust.command.kick` to moderators. Players without the node receive "You don't have permission." and the subcommands do not appear in tab-completion results.
 
 ### send
 
@@ -145,4 +145,4 @@ admins = ["PlayerOne", "PlayerTwo"]
 
 Names in `admins` may be either Minecraft usernames or UUIDs. Usernames are resolved to UUIDs through the Mojang API at load time, and the check itself always compares UUIDs.
 
-Plugins can provide a custom `PermissionChecker` that overrides per-player permission levels at runtime. They do this by handling the `PermissionsSetupEvent` and returning a checker, which is the integration point for external systems such as a permissions database. See [permissions](../configuration/security/permissions) for the configuration details.
+Admins must have authenticated in online mode unless `trust_offline_admins = true`. A permission plugin selected with `[permissions] provider` replaces this list entirely, which is the integration point for external systems such as LuckPerms or a permissions database. See [permissions](../configuration/security/permissions) for the configuration details.

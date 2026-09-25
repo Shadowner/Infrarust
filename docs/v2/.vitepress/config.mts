@@ -231,6 +231,7 @@ export default
               { text: 'Commands API', link: '/plugins/dev/commands' },
               { text: 'Plugin API', link: '/plugins/dev/api' },
               { text: 'Bans API', link: '/plugins/dev/bans' },
+              { text: 'Permissions API', link: '/plugins/dev/permissions' },
               { text: 'Testing Plugins', link: '/plugins/dev/testing' },
             ],
           },

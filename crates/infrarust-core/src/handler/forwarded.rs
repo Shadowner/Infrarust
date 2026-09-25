@@ -7,8 +7,8 @@ use infrarust_api::events::connection::{
     ServerPreConnectResult,
 };
 use infrarust_api::events::lifecycle::{
-    DisconnectCause, GameProfileRequestEvent, LoginEvent, LoginResult, PermissionsSetupEvent,
-    PermissionsSetupResult, PreLoginEvent, PreLoginResult,
+    DisconnectCause, GameProfileRequestEvent, LoginEvent, LoginResult, PreLoginEvent,
+    PreLoginResult,
 };
 use infrarust_api::player::Player;
 use infrarust_api::services::ban_service::LoginAttempt;
@@ -207,9 +207,10 @@ impl ForwardedLogin<'_> {
             .await;
         let profile = request.profile;
 
+        let domain = arrival.domain;
         let attempt =
             LoginAttempt::post_auth(ctx.client_ip, profile.username.clone(), profile.uuid, false)
-                .virtual_host(arrival.domain)
+                .virtual_host(domain.clone())
                 .server(origin_server);
         if let Some(reason) = services.ban_manager.refusal(&attempt).await {
             self.kick(ctx, &reason).await;
@@ -218,29 +219,25 @@ impl ForwardedLogin<'_> {
 
         let session_token = self.shutdown.child_token();
         let (command_tx, commands) = PlayerSession::channel();
-        let player = Arc::new(PlayerSession::new(
-            crate::player::next_player_id(),
-            profile,
-            arrival.protocol_version,
-            remote_addr,
-            None,
-            false,
-            false,
-            command_tx,
-            session_token.clone(),
-            crate::permissions::default_checker(),
-            Arc::clone(&services.backend_load),
-        ));
-
-        let setup = bus
-            .fire(PermissionsSetupEvent::new(
-                Arc::clone(&player) as Arc<dyn Player>,
+        let player = Arc::new(
+            PlayerSession::new(
+                crate::player::next_player_id(),
+                profile,
+                arrival.protocol_version,
+                remote_addr,
+                None,
                 false,
-            ))
-            .await;
-        if let PermissionsSetupResult::Custom(checker) = setup.result() {
-            player.set_permission_checker(Arc::clone(checker));
-        }
+                false,
+                command_tx,
+                session_token.clone(),
+                crate::permissions::default_checker(),
+                Arc::clone(&services.backend_load),
+            )
+            .with_permissions(Arc::clone(&services.permission_service))
+            .with_virtual_host(domain),
+        );
+
+        player.setup_permissions(bus).await;
 
         let login = bus
             .fire(LoginEvent::new(

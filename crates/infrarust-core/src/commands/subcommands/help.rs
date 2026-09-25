@@ -12,14 +12,13 @@ pub(crate) fn handle_help(
     services: &CommandServices,
 ) {
     let player = &ctx.source;
-    let level = crate::commands::source_level(player);
 
     if let Some(cmd_name) = args.first() {
         let lower = cmd_name.to_lowercase();
         if let Some(sub) = subcommands.get(&lower) {
             if services
                 .permission_service
-                .is_command_allowed(&lower, level)
+                .is_command_allowed(&lower, player)
             {
                 player.send_message(ProxyMessage::info(&format!(
                     "{} — {}",
@@ -42,7 +41,7 @@ pub(crate) fn handle_help(
 
         for name in names {
             if let Some(sub) = subcommands.get(name)
-                && services.permission_service.is_command_allowed(name, level)
+                && services.permission_service.is_command_allowed(name, player)
             {
                 player.send_message(ProxyMessage::detail(&format!(
                     "  {:<12} - {}",

@@ -19,7 +19,7 @@ use infrarust_api::events::proxy::{
     ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent, ProxyShutdownEvent,
     ServerStateChangeEvent,
 };
-use infrarust_api::permissions::{PermissionChecker, PermissionLevel};
+use infrarust_api::permissions::{PermissionChecker, Tristate};
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{Component, PlayerId, ServerId};
@@ -102,15 +102,11 @@ impl CommandHandler for ScriptedCommand {
     }
 }
 
-struct FixedLevel(PermissionLevel);
+struct FixedLevel(bool);
 
 impl PermissionChecker for FixedLevel {
-    fn permission_level(&self) -> PermissionLevel {
-        self.0
-    }
-
-    fn has_permission(&self, _permission: &str) -> bool {
-        self.0 == PermissionLevel::Admin
+    fn value(&self, _permission: &str) -> Tristate {
+        Tristate::from_bool(self.0)
     }
 }
 
@@ -195,12 +191,9 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
             let online = e.online_mode.to_string();
             seen.record(&[&id, &e.profile().username, &online]);
             if let Action::Custom(level) = &seen.action {
-                let level = if level == "admin" {
-                    PermissionLevel::Admin
-                } else {
-                    PermissionLevel::Player
-                };
-                e.set_result(PermissionsSetupResult::Custom(Arc::new(FixedLevel(level))));
+                e.set_result(PermissionsSetupResult::Custom(Arc::new(FixedLevel(
+                    level == "admin",
+                ))));
             }
         }),
         EventName::ServerPreConnect => bus.subscribe(at, move |e: &mut ServerPreConnectEvent| {

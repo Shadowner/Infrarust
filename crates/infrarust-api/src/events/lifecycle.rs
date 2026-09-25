@@ -218,15 +218,16 @@ pub struct OnlineAuthFailed {
 
 impl Event for OnlineAuthFailed {}
 
-/// Fired after authentication, before the player session is fully constructed.
+/// Fired after authentication, once the active permission provider has built
+/// the player's checker.
 ///
-/// Plugins can listen for this event to provide a custom [`PermissionChecker`]
-/// that replaces the default config-based checker for this player. This is the
-/// extension point for integrating LuckPerms, a database, or any external
-/// permission system.
+/// A listener can set a custom [`PermissionChecker`] that replaces the
+/// provider's checker for this player only. To answer for every player, a
+/// plugin registers a [`PermissionProvider`](crate::permissions::PermissionProvider)
+/// instead.
 ///
-/// If no listener sets a custom checker, the proxy uses its built-in
-/// `ConfigPermissionChecker` (admin UUIDs from `[permissions].admins`).
+/// If no listener sets a custom checker, the player keeps the checker built by
+/// the provider selected with `[permissions] provider`.
 pub struct PermissionsSetupEvent {
     pub player: Arc<dyn Player>,
     pub online_mode: bool,
@@ -237,7 +238,7 @@ pub struct PermissionsSetupEvent {
 #[derive(Default)]
 #[non_exhaustive]
 pub enum PermissionsSetupResult {
-    /// Use the proxy's built-in config-based permission checker.
+    /// Keep the checker built by the active permission provider.
     #[default]
     UseDefault,
     /// Use a plugin-provided permission checker.

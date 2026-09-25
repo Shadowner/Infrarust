@@ -327,8 +327,13 @@ mod tests {
     use std::sync::Mutex;
 
     use infrarust_api::event::BoxFuture;
+    use infrarust_api::permissions::{AllPermissionsChecker, PermissionMap};
 
     use super::*;
+
+    fn console() -> CommandSource {
+        CommandSource::console(Arc::new(AllPermissionsChecker))
+    }
 
     type Calls = Arc<Mutex<Vec<String>>>;
 
@@ -399,7 +404,7 @@ mod tests {
         );
 
         assert_eq!(
-            m.dispatch(CommandSource::Console, "hello x").await,
+            m.dispatch(console(), "hello x").await,
             DispatchOutcome::Executed
         );
         assert_eq!(taken(&calls), ["a:hello:x"]);
@@ -427,8 +432,8 @@ mod tests {
             ["ir", "infrarust", "bad name"]
         );
 
-        m.dispatch(CommandSource::Console, "ir").await;
-        m.dispatch(CommandSource::Console, "t").await;
+        m.dispatch(console(), "ir").await;
+        m.dispatch(console(), "t").await;
         assert_eq!(taken(&calls), ["builtin:ir:", "p:t:"]);
     }
 
@@ -451,7 +456,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(registration.rejected_aliases, ["h"]);
-        m.dispatch(CommandSource::Console, "h").await;
+        m.dispatch(console(), "h").await;
         assert_eq!(taken(&calls), ["a:h:"]);
     }
 
@@ -467,11 +472,11 @@ mod tests {
         );
 
         assert_eq!(
-            m.dispatch(CommandSource::Console, "a:cmd 1 2").await,
+            m.dispatch(console(), "a:cmd 1 2").await,
             DispatchOutcome::Executed
         );
         assert_eq!(
-            m.dispatch(CommandSource::Console, "b:cmd").await,
+            m.dispatch(console(), "b:cmd").await,
             DispatchOutcome::Unknown
         );
         assert_eq!(taken(&calls), ["a:a:cmd:1,2"]);
@@ -493,11 +498,11 @@ mod tests {
         assert!(!m.is_plugin_command("ir"));
         assert!(m.contains("ir"));
         assert_eq!(
-            m.suggest(CommandSource::Console, "hi wo").await,
+            m.suggest(console(), "hi wo").await,
             Some(vec![Suggestion::new("p-wo")])
         );
-        assert_eq!(m.suggest(CommandSource::Console, "nope x").await, None);
-        assert_eq!(m.suggest(CommandSource::Console, "hi").await, None);
+        assert_eq!(m.suggest(console(), "nope x").await, None);
+        assert_eq!(m.suggest(console(), "hi").await, None);
     }
 
     #[tokio::test]
@@ -536,7 +541,7 @@ mod tests {
         m.register_owned("p", CommandSpec::new("hello"), handler("new", &calls))
             .unwrap();
 
-        m.dispatch(CommandSource::Console, "hello").await;
+        m.dispatch(console(), "hello").await;
         assert_eq!(taken(&calls), ["new:hello:"]);
         assert!(!m.contains("hi"));
     }
@@ -577,7 +582,7 @@ mod tests {
         )
         .unwrap();
 
-        let console = m.tree_for(Some(&CommandSource::Console));
+        let console = m.tree_for(Some(&console()));
         assert!(m.tree_for(None).commands.is_empty());
         assert_eq!(
             console.commands,
@@ -589,5 +594,30 @@ mod tests {
         for label in ["infrarust", "ir", "secret", "p:secret", "admin", "o"] {
             assert!(console.shadowed.contains(label), "{label}");
         }
+    }
+
+    #[tokio::test]
+    async fn the_console_is_held_to_its_checker() {
+        let calls = Calls::default();
+        let m = manager(&calls);
+        m.register_owned(
+            "p",
+            CommandSpec::new("admin").permission("p.admin"),
+            handler("p", &calls),
+        )
+        .unwrap();
+        let restricted =
+            CommandSource::console(Arc::new(PermissionMap::new().with("p.admin", false)));
+
+        assert_eq!(
+            m.dispatch(restricted.clone(), "admin").await,
+            DispatchOutcome::Denied
+        );
+        assert_eq!(m.suggest(restricted, "admin x").await, Some(Vec::new()));
+        assert_eq!(
+            m.dispatch(console(), "admin").await,
+            DispatchOutcome::Executed
+        );
+        assert_eq!(taken(&calls), ["p:admin:"]);
     }
 }

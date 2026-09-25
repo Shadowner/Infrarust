@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use infrarust_api::command::CommandSource;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::lifecycle::PostLoginEvent;
@@ -243,7 +242,7 @@ async fn a_plugin_denied_events_and_commands_still_runs() {
 }
 
 async fn dispatch_line(commands: &CommandManagerImpl, line: &str) -> bool {
-    commands.dispatch(CommandSource::Console, line).await == DispatchOutcome::Executed
+    commands.dispatch(support::console(), line).await == DispatchOutcome::Executed
 }
 
 fn chat() -> ChatMessageEvent {

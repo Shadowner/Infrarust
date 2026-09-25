@@ -11,6 +11,7 @@ use infrarust_api::command::CommandSource;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, PlayerId, RawPacket, ServerId};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_protocol::io::PacketFrame;
@@ -200,6 +201,13 @@ pub async fn proxy_loop(
 ) -> ProxyLoopOutcome {
     let hot_ids = HotIds::resolve(registry, client.protocol_version);
     let mut tree_updates = services.command_manager.subscribe();
+    let mut permission_updates = services
+        .connection_registry
+        .find_by_id(player_id)
+        .map_or_else(
+            || watch::channel(0).1,
+            |player| player.subscribe_permissions(),
+        );
     let mut backend_tree: Option<CCommands> = None;
     let mut in_game = client.state() == ConnectionState::Play;
     if in_game {
@@ -217,6 +225,7 @@ pub async fn proxy_loop(
             Some(command) = commands.recv() => LoopEvent::Command(command),
             () = shutdown.cancelled() => LoopEvent::Shutdown,
             Ok(()) = tree_updates.changed() => LoopEvent::CommandsChanged,
+            Ok(()) = permission_updates.changed() => LoopEvent::CommandsChanged,
             event = next_frame(client, backend) => event,
         };
         match event {
@@ -460,14 +469,10 @@ fn command_tree_frame(
     let player = services.player_registry.get_player_by_id(player_id);
     let (proxy_tree, visible) = match player {
         Some(player) => {
-            let visible = services
-                .permission_service
-                .visible_subcommands(player.permission_level());
+            let source = CommandSource::Player(player);
             (
-                services
-                    .command_manager
-                    .tree_for(Some(&CommandSource::Player(player))),
-                visible,
+                services.command_manager.tree_for(Some(&source)),
+                services.permission_service.visible_subcommands(&source),
             )
         }
         None => (

@@ -5,7 +5,6 @@ use std::time::SystemTime;
 
 use crate::error::PlayerError;
 use crate::event::BoxFuture;
-use crate::permissions::PermissionLevel;
 use crate::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
 };
@@ -90,9 +89,9 @@ pub trait Player: Send + Sync + private::Sealed {
 
     fn is_online_mode(&self) -> bool;
 
-    fn permission_level(&self) -> PermissionLevel;
-
     fn has_permission(&self, permission: &str) -> bool;
+
+    fn refresh_permissions(&self) -> BoxFuture<'_, ()>;
 
     fn connected_at(&self) -> SystemTime;
 }

@@ -348,15 +348,19 @@ Never expose the admin API on a public interface without a strong `api_key`. The
 
 ```toml
 [permissions]
+provider = "builtin"
 admins = ["PlayerName", "AnotherPlayer"]
 player_commands = []
+trust_offline_admins = false
 ```
 
-`admins` is a list of player names (or UUIDs) granted the Admin permission level. Admin players can run all `/ir` subcommands including `broadcast`, `kick`, `reload`, `send`, `plugin`, and `plugins`.
+`provider` picks who answers permission questions: `"builtin"` (the default) uses the options below, and any other value is the id of the plugin that provides permissions. When that plugin never registers, players only get the node defaults.
 
-`player_commands` overrides which `/ir` subcommands non-admin players can run. By default, players can use `help`, `version`, `list`, `find`, and `server`.
+`admins` is a list of player names (or UUIDs) who hold `infrarust.admin` and every other node. Admins can run all `/ir` subcommands including `broadcast`, `kick`, `reload`, `send`, `plugin`, and `plugins`. An admin must have authenticated in online mode unless `trust_offline_admins` is `true`.
 
-Plugins can register custom permission checkers that extend or replace this list.
+`player_commands` lists the `/ir` subcommands every player can run, among `help`, `version`, `list`, `find`, and `server` (`"*"` for all five). By default, non-admin players cannot run any.
+
+The section is read at startup; changing it needs a restart. See [Permissions](./security/permissions) for nodes, defaults and permission plugins.
 
 ## Plugin event handlers
 

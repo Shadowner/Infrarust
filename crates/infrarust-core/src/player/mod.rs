@@ -13,19 +13,22 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::SystemTime;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::error::PlayerError;
-use infrarust_api::event::BoxFuture;
-use infrarust_api::permissions::{DefaultPermissionChecker, PermissionChecker, PermissionLevel};
+use infrarust_api::event::{BoxFuture, ResultedEvent};
+use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
+use infrarust_api::permissions::{DefaultPermissionChecker, PermissionChecker, PermissionSubject};
 use infrarust_api::player::Player;
 use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
 };
 use infrarust_config::ServerAddress;
 
+use crate::event_bus::EventBusImpl;
 use crate::loadbalancer::BackendLoad;
+use crate::permissions::PermissionService;
 
 /// Channel buffer size for player commands.
 const COMMAND_CHANNEL_SIZE: usize = 32;
@@ -80,6 +83,10 @@ pub struct PlayerSession {
     command_tx: mpsc::Sender<PlayerCommand>,
     shutdown_token: CancellationToken,
     permission_checker: RwLock<Arc<dyn PermissionChecker>>,
+    permission_override: AtomicBool,
+    permissions: Option<Arc<PermissionService>>,
+    permissions_changed: watch::Sender<u64>,
+    virtual_host: Option<String>,
     released: CancellationToken,
 }
 
@@ -128,8 +135,24 @@ impl PlayerSession {
             command_tx,
             shutdown_token,
             permission_checker: RwLock::new(permission_checker),
+            permission_override: AtomicBool::new(false),
+            permissions: None,
+            permissions_changed: watch::Sender::new(0),
+            virtual_host: None,
             released: CancellationToken::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_permissions(mut self, permissions: Arc<PermissionService>) -> Self {
+        self.permissions = Some(permissions);
+        self
+    }
+
+    #[must_use]
+    pub fn with_virtual_host(mut self, host: impl Into<String>) -> Self {
+        self.virtual_host = Some(host.into());
+        self
     }
 
     /// Creates a test session with a new channel and cancellation token.
@@ -227,11 +250,53 @@ impl PlayerSession {
         &self.profile
     }
 
+    pub fn virtual_host(&self) -> Option<&str> {
+        self.virtual_host.as_deref()
+    }
+
+    pub fn permission_subject(&self) -> PermissionSubject {
+        let subject = PermissionSubject::player(
+            self.player_id,
+            self.profile.clone(),
+            self.online_mode,
+            self.remote_addr,
+        );
+        match &self.virtual_host {
+            Some(host) => subject.with_virtual_host(host.clone()),
+            None => subject,
+        }
+    }
+
     pub fn set_permission_checker(&self, checker: Arc<dyn PermissionChecker>) {
         *self
             .permission_checker
             .write()
             .unwrap_or_else(PoisonError::into_inner) = checker;
+    }
+
+    pub fn override_permission_checker(&self, checker: Arc<dyn PermissionChecker>) {
+        self.permission_override.store(true, Ordering::Release);
+        self.set_permission_checker(checker);
+    }
+
+    pub fn subscribe_permissions(&self) -> watch::Receiver<u64> {
+        self.permissions_changed.subscribe()
+    }
+
+    pub(crate) async fn setup_permissions(self: &Arc<Self>, bus: &EventBusImpl) {
+        if let Some(permissions) = &self.permissions {
+            let checker = permissions.create_checker(&self.permission_subject()).await;
+            self.set_permission_checker(checker);
+        }
+        let setup = bus
+            .fire(PermissionsSetupEvent::new(
+                Arc::clone(self) as Arc<dyn Player>,
+                self.online_mode,
+            ))
+            .await;
+        if let PermissionsSetupResult::Custom(checker) = setup.result() {
+            self.override_permission_checker(Arc::clone(checker));
+        }
     }
 
     fn permission_checker(&self) -> Arc<dyn PermissionChecker> {
@@ -361,12 +426,25 @@ impl Player for PlayerSession {
         self.online_mode
     }
 
-    fn permission_level(&self) -> PermissionLevel {
-        self.permission_checker().permission_level()
+    fn has_permission(&self, permission: &str) -> bool {
+        let checker = self.permission_checker();
+        match &self.permissions {
+            Some(permissions) => permissions.value(checker.as_ref(), permission).is_true(),
+            None => checker.has_permission(permission),
+        }
     }
 
-    fn has_permission(&self, permission: &str) -> bool {
-        self.permission_checker().has_permission(permission)
+    fn refresh_permissions(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            if let Some(permissions) = &self.permissions
+                && !self.permission_override.load(Ordering::Acquire)
+            {
+                let checker = permissions.create_checker(&self.permission_subject()).await;
+                self.set_permission_checker(checker);
+            }
+            self.permissions_changed
+                .send_modify(|generation| *generation = generation.wrapping_add(1));
+        })
     }
 
     fn connected_at(&self) -> SystemTime {

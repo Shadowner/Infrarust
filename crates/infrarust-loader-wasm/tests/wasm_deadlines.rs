@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-use infrarust_api::command::CommandSource;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::connection::{
     ConnectCause, ServerPreConnectEvent, ServerPreConnectResult,
@@ -274,5 +273,5 @@ async fn a_limbo_host_call_errors_before_max_call_duration_so_the_handler_decide
 }
 
 async fn dispatch_line(commands: &CommandManagerImpl, line: &str) -> bool {
-    commands.dispatch(CommandSource::Console, line).await == DispatchOutcome::Executed
+    commands.dispatch(support::console(), line).await == DispatchOutcome::Executed
 }

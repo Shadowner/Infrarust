@@ -144,13 +144,15 @@ impl ProxyRuntimeBuilder {
             plugin_services,
             plugin_permissions(plugin_cfgs, trusted),
         )
-        .with_ban_providers(Arc::clone(&services.ban_manager));
+        .with_ban_providers(Arc::clone(&services.ban_manager))
+        .with_permissions(Arc::clone(&services.permission_service));
 
         let errors = plugin_manager.load_and_enable_all(&context_factory).await;
         if !errors.is_empty() {
             tracing::warn!(count = errors.len(), "Some plugins failed to enable");
         }
         services.ban_manager.report_missing_provider();
+        services.permission_service.report_missing_provider();
 
         plugin_registry.update_from(&plugin_manager.list_plugins(), &|id| {
             plugin_manager.plugin_state(id).cloned()

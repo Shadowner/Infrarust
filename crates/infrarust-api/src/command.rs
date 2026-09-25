@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::event::BoxFuture;
+use crate::permissions::PermissionChecker;
 use crate::player::Player;
 use crate::types::{Component, PlayerId};
 
@@ -10,7 +11,7 @@ pub const CONSOLE_NAME: &str = "Console";
 #[non_exhaustive]
 pub enum CommandSource {
     Player(Arc<dyn Player>),
-    Console,
+    Console(Arc<dyn PermissionChecker>),
 }
 
 impl std::fmt::Debug for CommandSource {
@@ -20,16 +21,20 @@ impl std::fmt::Debug for CommandSource {
                 .debug_tuple("Player")
                 .field(&player.profile().username)
                 .finish(),
-            Self::Console => f.write_str("Console"),
+            Self::Console(_) => f.write_str("Console"),
         }
     }
 }
 
 impl CommandSource {
+    pub fn console(permissions: Arc<dyn PermissionChecker>) -> Self {
+        Self::Console(permissions)
+    }
+
     pub fn name(&self) -> &str {
         match self {
             Self::Player(player) => &player.profile().username,
-            Self::Console => CONSOLE_NAME,
+            Self::Console(_) => CONSOLE_NAME,
         }
     }
 
@@ -43,7 +48,7 @@ impl CommandSource {
                     );
                 }
             }
-            Self::Console => {
+            Self::Console(_) => {
                 tracing::info!(target: "infrarust::console", "{}", message.to_plain());
             }
         }
@@ -52,14 +57,14 @@ impl CommandSource {
     pub fn has_permission(&self, node: &str) -> bool {
         match self {
             Self::Player(player) => player.has_permission(node),
-            Self::Console => true,
+            Self::Console(permissions) => permissions.has_permission(node),
         }
     }
 
     pub fn player(&self) -> Option<&Arc<dyn Player>> {
         match self {
             Self::Player(player) => Some(player),
-            Self::Console => None,
+            Self::Console(_) => None,
         }
     }
 
@@ -68,7 +73,7 @@ impl CommandSource {
     }
 
     pub const fn is_console(&self) -> bool {
-        matches!(self, Self::Console)
+        matches!(self, Self::Console(_))
     }
 }
 

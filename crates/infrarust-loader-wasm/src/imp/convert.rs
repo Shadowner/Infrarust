@@ -2,7 +2,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use infrarust_api::error::{PlayerError, ServiceError};
 use infrarust_api::limbo::{HandlerResult, LimboEntryContext, SessionEndReason};
-use infrarust_api::permissions::PermissionLevel;
 use infrarust_api::services::ban_service::{BanEntry, BanTarget, IpNet};
 use infrarust_api::services::config_service::{ProxyMode, ServerConfig};
 use infrarust_api::services::server_manager::ServerState;
@@ -64,10 +63,11 @@ pub(crate) fn proxy_mode_to_wit(m: ProxyMode) -> wit::ProxyMode {
     }
 }
 
-pub(crate) fn permission_level_to_wit(l: PermissionLevel) -> wit::PermissionLevel {
-    match l {
-        PermissionLevel::Player => wit::PermissionLevel::Player,
-        PermissionLevel::Admin => wit::PermissionLevel::Admin,
+pub(crate) fn permission_level_to_wit(admin: bool) -> wit::PermissionLevel {
+    if admin {
+        wit::PermissionLevel::Admin
+    } else {
+        wit::PermissionLevel::Player
     }
 }
 

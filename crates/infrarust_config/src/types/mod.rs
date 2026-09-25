@@ -29,7 +29,7 @@ pub use forwarding::{BungeeCordChannelPermissions, ForwardingConfig, ForwardingM
 pub use health::{ActiveHealthConfig, ProbeKind};
 pub use ip_filter::IpFilterConfig;
 pub use network::{KeepaliveConfig, TimeoutConfig};
-pub use permissions::PermissionsConfig;
+pub use permissions::{PermissionProviderSelection, PermissionsConfig};
 pub use proxy_mode::ProxyMode;
 pub use rate_limit::RateLimitConfig;
 pub use server_manager::{

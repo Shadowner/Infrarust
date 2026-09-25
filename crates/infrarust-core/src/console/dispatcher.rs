@@ -92,11 +92,8 @@ impl CommandDispatcher {
         if let Some(cmd) = command {
             return cmd.execute(&parsed.args, services).await;
         }
-        match services
-            .command_manager
-            .dispatch(CommandSource::Console, line)
-            .await
-        {
+        let console = CommandSource::console(services.permission_service.console_checker().await);
+        match services.command_manager.dispatch(console, line).await {
             DispatchOutcome::Executed => CommandOutput::None,
             DispatchOutcome::Denied => {
                 CommandOutput::Error(format!("The console may not run '{name}'."))

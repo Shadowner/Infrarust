@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use infrarust_api::command::CommandSource;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::connection::{
@@ -19,7 +18,7 @@ use infrarust_api::events::proxy::{
     ServerStateChangeEvent,
 };
 use infrarust_api::loader::PluginContextFactory;
-use infrarust_api::permissions::PermissionLevel;
+use infrarust_api::permissions::ADMIN_PERMISSION;
 use infrarust_api::player::Player;
 use infrarust_api::plugin::Plugin;
 use infrarust_api::services::server_manager::ServerState;
@@ -241,10 +240,10 @@ fn chat(result: &ChatMessageResult) -> Outcome {
 fn permissions(result: &PermissionsSetupResult) -> Outcome {
     match result {
         PermissionsSetupResult::UseDefault => Outcome::same("use-default"),
-        PermissionsSetupResult::Custom(checker) => match checker.permission_level() {
-            PermissionLevel::Admin => Outcome::same("custom:admin"),
-            PermissionLevel::Player => Outcome::same("custom:player"),
-        },
+        PermissionsSetupResult::Custom(checker) if checker.has_permission(ADMIN_PERMISSION) => {
+            Outcome::same("custom:admin")
+        }
+        PermissionsSetupResult::Custom(_) => Outcome::same("custom:player"),
         _ => Outcome::same("unknown"),
     }
 }
@@ -550,10 +549,7 @@ async fn drive(
         let outcome = match step.kind {
             StepKind::Fire(event) => fire(&env.event_bus, event).await,
             StepKind::Command(line) => {
-                let found = env
-                    .command_manager
-                    .dispatch(CommandSource::Console, line)
-                    .await
+                let found = env.command_manager.dispatch(super::console(), line).await
                     == DispatchOutcome::Executed;
                 Outcome::same(if found { "found" } else { "missing" })
             }

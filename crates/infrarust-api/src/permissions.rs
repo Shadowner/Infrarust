@@ -1,54 +1,331 @@
-//! Permission system types.
-//!
-//! Two-level permission model: [`Player`](PermissionLevel::Player) (no access by default)
-//! and [`Admin`](PermissionLevel::Admin) (full access). Plugins can provide custom
-//! [`PermissionChecker`] implementations via the [`PermissionsSetupEvent`](crate::events::lifecycle::PermissionsSetupEvent).
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
-/// Permission level assigned to a player.
-///
-/// `Player < Admin` — used for access control on proxy commands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum PermissionLevel {
-    /// Default level — no proxy command access unless explicitly opened.
-    Player,
-    /// Full proxy command access.
-    Admin,
+use crate::event::BoxFuture;
+use crate::types::{GameProfile, PlayerId};
+
+pub const ADMIN_PERMISSION: &str = "infrarust.admin";
+pub const COMMAND_PERMISSION_PREFIX: &str = "infrarust.command.";
+pub const WILDCARD: &str = "*";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Tristate {
+    True,
+    False,
+    #[default]
+    Undefined,
 }
 
-/// Determines a player's permission level and checks named permissions.
-///
-/// The proxy provides a default implementation based on config (`[permissions].admins`).
-/// Plugins can replace it per-player via
-/// [`PermissionsSetupEvent`](crate::events::lifecycle::PermissionsSetupEvent).
+impl Tristate {
+    #[must_use]
+    pub const fn from_bool(value: bool) -> Self {
+        if value { Self::True } else { Self::False }
+    }
+
+    #[must_use]
+    pub const fn as_bool(self) -> Option<bool> {
+        match self {
+            Self::True => Some(true),
+            Self::False => Some(false),
+            Self::Undefined => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_true(self) -> bool {
+        matches!(self, Self::True)
+    }
+
+    #[must_use]
+    pub const fn is_defined(self) -> bool {
+        !matches!(self, Self::Undefined)
+    }
+
+    #[must_use]
+    pub const fn or(self, fallback: Self) -> Self {
+        match self {
+            Self::Undefined => fallback,
+            defined => defined,
+        }
+    }
+}
+
+impl From<bool> for Tristate {
+    fn from(value: bool) -> Self {
+        Self::from_bool(value)
+    }
+}
+
+impl From<Option<bool>> for Tristate {
+    fn from(value: Option<bool>) -> Self {
+        value.map_or(Self::Undefined, Self::from_bool)
+    }
+}
+
 pub trait PermissionChecker: Send + Sync {
-    /// Returns the player's permission level.
-    fn permission_level(&self) -> PermissionLevel;
+    fn value(&self, node: &str) -> Tristate;
 
-    /// Checks a named permission string (e.g., `"infrarust.admin"`).
-    fn has_permission(&self, permission: &str) -> bool;
+    fn has_permission(&self, node: &str) -> bool {
+        self.value(node).is_true()
+    }
 }
 
-/// Default permission checker — always [`Player`](PermissionLevel::Player), no permissions.
-///
-/// Used for passthrough sessions, offline-mode players, and tests.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct DefaultPermissionChecker;
 
 impl PermissionChecker for DefaultPermissionChecker {
-    fn permission_level(&self) -> PermissionLevel {
-        PermissionLevel::Player
+    fn value(&self, _node: &str) -> Tristate {
+        Tristate::Undefined
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AllPermissionsChecker;
+
+impl PermissionChecker for AllPermissionsChecker {
+    fn value(&self, _node: &str) -> Tristate {
+        Tristate::True
+    }
+}
+
+#[must_use]
+pub fn normalize_node(node: &str) -> Cow<'_, str> {
+    let node = node.trim();
+    if node.chars().any(char::is_uppercase) {
+        Cow::Owned(node.to_lowercase())
+    } else {
+        Cow::Borrowed(node)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PermissionMap {
+    nodes: HashMap<String, bool>,
+}
+
+impl PermissionMap {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    fn has_permission(&self, _permission: &str) -> bool {
-        false
+    #[must_use]
+    pub fn with(mut self, node: &str, value: bool) -> Self {
+        self.set(node, value);
+        self
     }
+
+    pub fn set(&mut self, node: &str, value: bool) {
+        self.nodes.insert(normalize_node(node).into_owned(), value);
+    }
+
+    pub fn unset(&mut self, node: &str) -> Option<bool> {
+        self.nodes.remove(normalize_node(node).as_ref())
+    }
+
+    #[must_use]
+    pub fn get(&self, node: &str) -> Option<bool> {
+        self.nodes.get(normalize_node(node).as_ref()).copied()
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, bool)> {
+        self.nodes
+            .iter()
+            .map(|(node, value)| (node.as_str(), *value))
+    }
+
+    fn lookup(&self, node: &str) -> Option<bool> {
+        let node = normalize_node(node);
+        if let Some(value) = self.nodes.get(node.as_ref()) {
+            return Some(*value);
+        }
+        let mut end = node.len();
+        while let Some(dot) = node[..end].rfind('.') {
+            if let Some(value) = self.nodes.get(&format!("{}.{WILDCARD}", &node[..dot])) {
+                return Some(*value);
+            }
+            end = dot;
+        }
+        self.nodes.get(WILDCARD).copied()
+    }
+}
+
+impl PermissionChecker for PermissionMap {
+    fn value(&self, node: &str) -> Tristate {
+        self.lookup(node).into()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum PermissionDefault {
+    False,
+    True,
+    Admin,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PermissionNode {
+    pub name: String,
+    pub description: String,
+    pub default: PermissionDefault,
+}
+
+impl PermissionNode {
+    pub fn new(name: impl Into<String>, default: PermissionDefault) -> Self {
+        Self {
+            name: name.into(),
+            description: String::new(),
+            default,
+        }
+    }
+
+    #[must_use]
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = description.into();
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PermissionNodeInfo {
+    pub node: PermissionNode,
+    pub plugin_id: Option<String>,
+}
+
+impl PermissionNodeInfo {
+    pub fn new(node: PermissionNode, plugin_id: Option<String>) -> Self {
+        Self { node, plugin_id }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum PermissionNodeError {
+    #[error("'{0}' is not a valid permission node")]
+    InvalidName(String),
+    #[error("'{0}' is reserved by the proxy")]
+    Reserved(String),
+    #[error("'{name}' is already registered by plugin '{plugin}'")]
+    OwnedBy { name: String, plugin: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PermissionSubject {
+    #[non_exhaustive]
+    Player {
+        player_id: PlayerId,
+        profile: GameProfile,
+        online_mode: bool,
+        virtual_host: Option<String>,
+        remote_addr: SocketAddr,
+    },
+    Console,
+}
+
+impl PermissionSubject {
+    pub fn player(
+        player_id: PlayerId,
+        profile: GameProfile,
+        online_mode: bool,
+        remote_addr: SocketAddr,
+    ) -> Self {
+        Self::Player {
+            player_id,
+            profile,
+            online_mode,
+            virtual_host: None,
+            remote_addr,
+        }
+    }
+
+    #[must_use]
+    pub fn with_virtual_host(mut self, host: impl Into<String>) -> Self {
+        if let Self::Player { virtual_host, .. } = &mut self {
+            *virtual_host = Some(host.into());
+        }
+        self
+    }
+
+    pub fn player_id(&self) -> Option<PlayerId> {
+        match self {
+            Self::Player { player_id, .. } => Some(*player_id),
+            Self::Console => None,
+        }
+    }
+
+    pub fn profile(&self) -> Option<&GameProfile> {
+        match self {
+            Self::Player { profile, .. } => Some(profile),
+            Self::Console => None,
+        }
+    }
+
+    pub fn is_online_mode(&self) -> bool {
+        matches!(
+            self,
+            Self::Player {
+                online_mode: true,
+                ..
+            }
+        )
+    }
+
+    pub fn virtual_host(&self) -> Option<&str> {
+        match self {
+            Self::Player { virtual_host, .. } => virtual_host.as_deref(),
+            Self::Console => None,
+        }
+    }
+
+    pub fn remote_addr(&self) -> Option<SocketAddr> {
+        match self {
+            Self::Player { remote_addr, .. } => Some(*remote_addr),
+            Self::Console => None,
+        }
+    }
+
+    pub const fn is_console(&self) -> bool {
+        matches!(self, Self::Console)
+    }
+}
+
+pub trait PermissionProvider: Send + Sync {
+    fn create_checker<'a>(
+        &'a self,
+        subject: &'a PermissionSubject,
+    ) -> BoxFuture<'a, Arc<dyn PermissionChecker>>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum PermissionProviderRejected {
+    #[error("the plugin lacks the permission-provider capability")]
+    MissingCapability,
+    #[error("[permissions] provider selects `{selected}`, not this plugin")]
+    NotSelected { selected: String },
 }
 
 /// A capability granted to a plugin.
 ///
 /// The source of truth is the Infrarust config (`[plugins.<id>] permissions = [...]`);
 /// compiled-in native plugins are trusted and receive [`CapabilitySet::native_trusted`].
-/// This is the plugin-capability model and is unrelated to the player/role
-/// [`PermissionLevel`] above.
+/// This is the plugin-capability model and is unrelated to player permission nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Capability {
@@ -79,7 +356,7 @@ pub enum Capability {
     Limbo,
     /// Provide virtual backends (Tier 3).
     VirtualBackend,
-    /// Provide a custom permission checker.
+    /// Become the proxy's permission provider (`[permissions] provider`).
     PermissionProvider,
     /// Filesystem access beyond the dedicated `data_dir`.
     FilesystemExtended,
@@ -255,16 +532,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn permission_level_ordering() {
-        assert!(PermissionLevel::Player < PermissionLevel::Admin);
+    fn default_checker_leaves_every_node_undefined() {
+        let checker = DefaultPermissionChecker;
+        assert_eq!(checker.value(ADMIN_PERMISSION), Tristate::Undefined);
+        assert!(!checker.has_permission("anything"));
+        assert!(AllPermissionsChecker.has_permission("anything"));
     }
 
     #[test]
-    fn default_checker_is_player() {
-        let checker = DefaultPermissionChecker;
-        assert_eq!(checker.permission_level(), PermissionLevel::Player);
-        assert!(!checker.has_permission("infrarust.admin"));
-        assert!(!checker.has_permission("anything"));
+    fn tristate_falls_back_only_when_undefined() {
+        assert_eq!(Tristate::Undefined.or(Tristate::True), Tristate::True);
+        assert_eq!(Tristate::False.or(Tristate::True), Tristate::False);
+        assert_eq!(Tristate::from(Some(true)), Tristate::True);
+        assert_eq!(Tristate::from(None), Tristate::Undefined);
+        assert_eq!(Tristate::True.as_bool(), Some(true));
+        assert_eq!(Tristate::Undefined.as_bool(), None);
+    }
+
+    #[test]
+    fn a_wildcard_covers_every_child_but_not_its_parent() {
+        let map = PermissionMap::new().with("demo.*", true);
+        assert_eq!(map.value("demo.use"), Tristate::True);
+        assert_eq!(map.value("demo.admin.reload"), Tristate::True);
+        assert_eq!(map.value("demo"), Tristate::Undefined);
+        assert_eq!(map.value("demolition.use"), Tristate::Undefined);
+    }
+
+    #[test]
+    fn the_most_specific_entry_wins() {
+        let map = PermissionMap::new()
+            .with("*", true)
+            .with("demo.*", false)
+            .with("demo.use", true);
+        assert_eq!(map.value("demo.use"), Tristate::True);
+        assert_eq!(map.value("demo.kick"), Tristate::False);
+        assert_eq!(map.value("other.node"), Tristate::True);
+        assert_eq!(map.value("single"), Tristate::True);
+    }
+
+    #[test]
+    fn nodes_are_case_insensitive() {
+        let mut map = PermissionMap::new().with("Demo.Use", true);
+        assert_eq!(map.value("DEMO.USE"), Tristate::True);
+        assert_eq!(map.get("demo.use"), Some(true));
+        assert_eq!(map.unset("demo.USE"), Some(true));
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn a_player_subject_carries_its_connection() {
+        let profile = GameProfile {
+            uuid: uuid::Uuid::nil(),
+            username: "Steve".into(),
+            properties: vec![],
+        };
+        let subject = PermissionSubject::player(
+            PlayerId::new(7),
+            profile.clone(),
+            true,
+            "127.0.0.1:1".parse().unwrap(),
+        )
+        .with_virtual_host("play.example.com");
+        assert_eq!(subject.player_id(), Some(PlayerId::new(7)));
+        assert_eq!(subject.profile(), Some(&profile));
+        assert!(subject.is_online_mode());
+        assert_eq!(subject.virtual_host(), Some("play.example.com"));
+        assert!(!subject.is_console());
+        assert!(PermissionSubject::Console.is_console());
+        assert_eq!(PermissionSubject::Console.virtual_host(), None);
     }
 
     #[test]

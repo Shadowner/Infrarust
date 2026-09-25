@@ -133,6 +133,12 @@ pub fn session_player(
     ))
 }
 
+pub fn console() -> infrarust_api::command::CommandSource {
+    infrarust_api::command::CommandSource::console(Arc::new(
+        infrarust_api::permissions::AllPermissionsChecker,
+    ))
+}
+
 pub fn nil_profile(username: &str) -> GameProfile {
     GameProfile {
         uuid: uuid::Uuid::nil(),

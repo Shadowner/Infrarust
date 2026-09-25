@@ -54,7 +54,7 @@
 //! - [`filter`] — Codec and transport filter system
 //! - [`plugin`] — Plugin trait and lifecycle
 //! - [`player`] — Player trait
-//! - [`permissions`] — Permission levels and plugin capabilities
+//! - [`permissions`] — Permission nodes, providers and plugin capabilities
 //! - [`services`] — Proxy service traits
 //! - [`limbo`] — Limbo handler system (Tier 2)
 //! - [`virtual_backend`] — Virtual backend system (Tier 3, planned)

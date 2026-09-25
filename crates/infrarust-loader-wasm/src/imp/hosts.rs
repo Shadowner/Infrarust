@@ -5,7 +5,7 @@ use std::time::Duration;
 use infrarust_api::command::CommandSpec;
 use infrarust_api::error::ServiceError;
 use infrarust_api::filter::{FilterMetadata, FilterPriority};
-use infrarust_api::permissions::Capability;
+use infrarust_api::permissions::{ADMIN_PERMISSION, Capability};
 use infrarust_api::services::ban_service::{BanRequest, UnbanRequest};
 use infrarust_api::services::scheduler::TaskHandle;
 use infrarust_api::types::{PlayerId, ServerId};
@@ -408,7 +408,9 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
     ) -> wasmtime::Result<wt::PermissionLevel> {
         let p = self.resolve_player(&self_)?;
-        Ok(convert::permission_level_to_wit(p.permission_level()))
+        Ok(convert::permission_level_to_wit(
+            p.has_permission(ADMIN_PERMISSION),
+        ))
     }
 
     async fn has_permission(
@@ -959,7 +961,7 @@ mod tests {
 
     use infrarust_api::error::PlayerError;
     use infrarust_api::event::BoxFuture;
-    use infrarust_api::permissions::{CapabilitySet, PermissionLevel};
+    use infrarust_api::permissions::CapabilitySet;
     use infrarust_api::player::Player;
     use infrarust_api::types::{
         Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, TitleData,
@@ -1043,11 +1045,11 @@ mod tests {
         fn is_online_mode(&self) -> bool {
             true
         }
-        fn permission_level(&self) -> PermissionLevel {
-            PermissionLevel::Player
-        }
         fn has_permission(&self, _permission: &str) -> bool {
             false
+        }
+        fn refresh_permissions(&self) -> BoxFuture<'_, ()> {
+            Box::pin(async {})
         }
         fn connected_at(&self) -> SystemTime {
             SystemTime::UNIX_EPOCH

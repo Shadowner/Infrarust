@@ -7,7 +7,6 @@ use std::time::SystemTime;
 
 use infrarust_api::error::{PlayerError, ServiceError};
 use infrarust_api::event::BoxFuture;
-use infrarust_api::permissions::PermissionLevel;
 use infrarust_api::player::Player;
 use infrarust_api::services::ban_service::{
     BanEntry, BanFeatures, BanPage, BanQuery, BanRequest, BanSource, BanTarget, BanVerdict,
@@ -380,11 +379,11 @@ impl Player for RecordingPlayer {
     fn is_online_mode(&self) -> bool {
         true
     }
-    fn permission_level(&self) -> PermissionLevel {
-        PermissionLevel::Player
-    }
     fn has_permission(&self, _permission: &str) -> bool {
         false
+    }
+    fn refresh_permissions(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
     }
     fn connected_at(&self) -> SystemTime {
         SystemTime::UNIX_EPOCH

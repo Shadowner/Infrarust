@@ -382,9 +382,9 @@ In the forwarding modes the backend runs its own login, so the new profile only 
 
 ### PermissionsSetupEvent
 
-Fired after the ban check, before `LoginEvent`. This is the extension point for replacing the default permission checker with one backed by LuckPerms, a database, or any external permission system. If no listener provides a custom checker, the proxy keeps its built-in `ConfigPermissionChecker`, which reads admin UUIDs from `[permissions].admins`. See [permissions](../../configuration/security/permissions.md) for the two-level model (Player and Admin).
+Fired after the ban check, before `LoginEvent`, once the active permission provider has built the player's checker. A listener can replace that checker for this player only. To answer for every player (LuckPerms, a database), register a permission provider instead, see [Permissions](./permissions). If no listener provides a custom checker, the player keeps the provider's.
 
-The player is built but not registered yet. The checker a listener sets applies to the player from then on, so `has_permission` already answers with it in `LoginEvent` and `PostLoginEvent`.
+The player is built but not registered yet. The checker a listener sets applies to the player for the whole session, so `has_permission` already answers with it in `LoginEvent` and `PostLoginEvent`, and `refresh_permissions()` keeps it.
 
 **Type:** Resulted
 
@@ -399,8 +399,8 @@ The player is built but not registered yet. The checker a listener sets applies 
 
 | Variant | Description |
 |---------|-------------|
-| `UseDefault` (default) | Use the proxy's built-in config-based checker |
-| `Custom(Arc<dyn PermissionChecker>)` | Use a plugin-provided checker |
+| `UseDefault` (default) | Keep the checker built by the active permission provider |
+| `Custom(Arc<dyn PermissionChecker>)` | Use a plugin-provided checker for this player |
 
 ```rust
 use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};

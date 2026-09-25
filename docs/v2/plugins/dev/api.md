@@ -94,6 +94,9 @@ The `PluginContext` trait provides access to every service and registration meth
 | `register_limbo_handler(handler)` | `()` | Register a limbo handler |
 | `register_config_provider(provider)` | `()` | Register a dynamic config provider |
 | `register_ban_provider(provider)` | `Result<(), BanProviderRejected>` | Become the ban provider. Needs `ban-provider` and `[ban] provider` naming this plugin, see [Bans](./bans) |
+| `register_permission_provider(provider)` | `Result<(), PermissionProviderRejected>` | Become the permission provider. Needs `permission-provider` and `[permissions] provider` naming this plugin, see [Permissions](./permissions) |
+| `register_permission_node(node)` | `Result<(), PermissionNodeError>` | Register a node this plugin checks, with its default. Removed when the plugin is disabled |
+| `permission_nodes()` | `Vec<PermissionNodeInfo>` | Every registered node and the plugin that owns it |
 | `proxy_info()` | `&ProxyInfo` | Read-only proxy version and runtime settings |
 | `capabilities()` | `&CapabilitySet` | Capabilities granted to this plugin |
 | `data_dir()` | `PathBuf` | This plugin's data directory, `<plugins_dir>/<plugin_id>`, created if missing |
@@ -186,8 +189,9 @@ let active: bool = player.is_active();
 let online_mode: bool = player.is_online_mode();
 
 // Permissions
-let level: PermissionLevel = player.permission_level();
+let is_admin: bool = player.has_permission(ADMIN_PERMISSION);
 let can_do_it: bool = player.has_permission("my_plugin.feature");
+player.refresh_permissions().await;
 
 // Actions (require an active proxy mode)
 player.send_message(Component::text("Hi").color("green"))?;
@@ -203,7 +207,7 @@ player.switch_server(ServerId::new("survival")).await?;
 player.disconnect(Component::text("Goodbye")).await;
 ```
 
-`permission_level()` returns a `PermissionLevel`, which is either `Player` or `Admin` (there are exactly two levels). `has_permission()` checks a named permission against any custom checkers a plugin has registered.
+`has_permission()` asks the active permission provider's checker for the node, then falls back to the node's registered default, then denies. There are no permission levels: an admin is a player holding `infrarust.admin` (`ADMIN_PERMISSION`). `refresh_permissions()` asks the provider for a new checker and sends this player a rebuilt command tree. See [Permissions](./permissions).
 
 ::: warning
 `send_message`, `send_title`, `send_action_bar`, `send_packet`, and `switch_server` only work when the player is on an active proxy path, which means `ClientOnly` or `Offline` mode. On passive paths (`Passthrough`, `ZeroCopy`, `ServerOnly`) they return `Err(PlayerError::NotActive)`. Check `player.is_active()` first. `disconnect` always works.
@@ -580,4 +584,4 @@ Import everything you need with a single `use` statement:
 use infrarust_api::prelude::*;
 ```
 
-This brings in the common types, traits, events, services, and error types covered on this page, plus `Arc` from the standard library. A few items live outside the prelude: `PermissionLevel` and `CapabilitySet` are in `infrarust_api::permissions`, and `ProxyInfo` and `PluginRegistry` are in `infrarust_api::services`. Import those directly when you need them.
+This brings in the common types, traits, events, services, and error types covered on this page, plus `Arc` from the standard library. A few items live outside the prelude: `DefaultPermissionChecker`, `AllPermissionsChecker` and `normalize_node` are in `infrarust_api::permissions`, and `ProxyInfo` and `PluginRegistry` are in `infrarust_api::services`. Import those directly when you need them.

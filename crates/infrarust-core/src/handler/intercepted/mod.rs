@@ -8,13 +8,11 @@ use std::sync::Arc;
 
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::lifecycle::{
-    DisconnectCause, GameProfileRequestEvent, LoginEvent, LoginResult, PermissionsSetupEvent,
-    PermissionsSetupResult,
+    DisconnectCause, GameProfileRequestEvent, LoginEvent, LoginResult,
 };
-use infrarust_api::permissions::PermissionChecker;
 use infrarust_api::player::Player;
 use infrarust_api::services::ban_service::LoginAttempt;
-use infrarust_api::types::{Component, GameProfile, ServerId};
+use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use tokio_util::sync::CancellationToken;
 
@@ -146,21 +144,25 @@ impl InterceptedHandler {
 
         let session_token = shutdown.child_token();
         let (cmd_tx, cmd_rx) = PlayerSession::channel();
-        let player = Arc::new(PlayerSession::new(
-            crate::player::next_player_id(),
-            profile.clone(),
-            api_version,
-            remote_addr,
-            None,
-            true,
-            online_mode,
-            cmd_tx,
-            session_token.clone(),
-            self.default_permissions(&profile, online_mode),
-            Arc::clone(&self.services.backend_load),
-        ));
+        let player = Arc::new(
+            PlayerSession::new(
+                crate::player::next_player_id(),
+                profile.clone(),
+                api_version,
+                remote_addr,
+                None,
+                true,
+                online_mode,
+                cmd_tx,
+                session_token.clone(),
+                crate::permissions::default_checker(),
+                Arc::clone(&self.services.backend_load),
+            )
+            .with_permissions(Arc::clone(&self.services.permission_service))
+            .with_virtual_host(handshake.domain.clone()),
+        );
 
-        self.setup_permissions(&player, online_mode).await;
+        player.setup_permissions(&self.services.event_bus).await;
 
         let login = self
             .services
@@ -320,32 +322,6 @@ impl InterceptedHandler {
         super::helpers::log_proxy_loop_outcome(&session_id, &outcome);
 
         Ok(())
-    }
-
-    fn default_permissions(
-        &self,
-        profile: &GameProfile,
-        online_mode: bool,
-    ) -> Arc<dyn PermissionChecker> {
-        if online_mode {
-            Arc::new(self.services.permission_service.build_checker(profile.uuid))
-        } else {
-            crate::permissions::default_checker()
-        }
-    }
-
-    async fn setup_permissions(&self, player: &Arc<PlayerSession>, online_mode: bool) {
-        let setup = self
-            .services
-            .event_bus
-            .fire(PermissionsSetupEvent::new(
-                Arc::clone(player) as Arc<dyn Player>,
-                online_mode,
-            ))
-            .await;
-        if let PermissionsSetupResult::Custom(checker) = setup.result() {
-            player.set_permission_checker(Arc::clone(checker));
-        }
     }
 }
 

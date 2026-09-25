@@ -349,7 +349,6 @@ mod tests {
     use super::*;
     use crate::error::PlayerError;
     use crate::event::BoxFuture;
-    use crate::permissions::PermissionLevel;
     use crate::types::{ProtocolVersion, RawPacket, TitleData};
 
     struct Steve(GameProfile);
@@ -399,11 +398,11 @@ mod tests {
         fn is_online_mode(&self) -> bool {
             false
         }
-        fn permission_level(&self) -> PermissionLevel {
-            PermissionLevel::Player
-        }
         fn has_permission(&self, _permission: &str) -> bool {
             false
+        }
+        fn refresh_permissions(&self) -> BoxFuture<'_, ()> {
+            Box::pin(async {})
         }
         fn connected_at(&self) -> SystemTime {
             SystemTime::UNIX_EPOCH

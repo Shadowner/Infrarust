@@ -15,6 +15,10 @@ use crate::event::BoxFuture;
 use crate::event::bus::EventBus;
 use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use crate::limbo::LimboHandler;
+use crate::permissions::{
+    PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
+    PermissionProviderRejected,
+};
 use crate::services::{
     ban_service::{BanProvider, BanProviderRejected, BanService},
     config_service::ConfigService,
@@ -173,6 +177,15 @@ pub trait PluginContext: Send + Sync + private::Sealed {
         &self,
         provider: Arc<dyn BanProvider>,
     ) -> Result<(), BanProviderRejected>;
+
+    fn register_permission_provider(
+        &self,
+        provider: Arc<dyn PermissionProvider>,
+    ) -> Result<(), PermissionProviderRejected>;
+
+    fn register_permission_node(&self, node: PermissionNode) -> Result<(), PermissionNodeError>;
+
+    fn permission_nodes(&self) -> Vec<PermissionNodeInfo>;
 
     fn config_service(&self) -> &dyn ConfigService;
 

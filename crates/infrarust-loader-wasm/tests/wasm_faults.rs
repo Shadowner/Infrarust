@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use infrarust_api::command::CommandSource;
 use infrarust_api::event::{Event, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::lifecycle::{PostLoginEvent, PreLoginEvent, PreLoginResult};
@@ -570,5 +569,5 @@ async fn a_fault_in_the_first_on_enable_fails_the_enable_without_a_restart() {
 }
 
 async fn dispatch_line(commands: &CommandManagerImpl, line: &str) -> bool {
-    commands.dispatch(CommandSource::Console, line).await == DispatchOutcome::Executed
+    commands.dispatch(support::console(), line).await == DispatchOutcome::Executed
 }
