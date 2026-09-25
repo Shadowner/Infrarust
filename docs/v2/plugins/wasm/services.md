@@ -1,12 +1,12 @@
 ---
 title: Host Services
-description: Query players, manage servers and bans, read config, register commands and codec filters, schedule tasks, log, and build chat components from a WASM plugin.
+description: Query and act on players by id, manage servers and bans, read config, schedule tasks, log, build text components, and handle host errors from a WASM plugin.
 outline: [2, 3]
 ---
 
 # Host Services
 
-A WASM plugin reaches the proxy through host services. Each service is a typed accessor on the [`Context`](./api-reference) you receive in `on_enable`, and each one is gated by a [capability](./capabilities). Baseline capabilities are granted to every plugin; opt-in capabilities must be listed in the plugin's TOML `permissions`.
+A WASM plugin reaches the proxy through host services. Each service is a set of associated functions on a unit struct (`Players`, `Servers`, `Bans`, `Config`) or a method on the [`Context`](./api-reference#the-guest-export) you receive in `on_enable`, and each one is gated by a [capability](./capabilities). Baseline capabilities are granted to every plugin; opt-in capabilities must be listed in the plugin's TOML `permissions`.
 
 ```rust
 use infrarust_plugin_sdk::prelude::*;
@@ -16,169 +16,202 @@ struct MyPlugin;
 
 #[plugin(id = "my-plugin", name = "My Plugin")]
 impl Plugin for MyPlugin {
-    fn on_enable(&self, ctx: &Context) -> Result<(), String> {
-        let online = ctx.player_registry().online_count(); // [!code focus]
-        info!("{online} players online");                  // [!code focus]
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
+        let online = Players::count(); // [!code focus]
+        info!("{online} players online"); // [!code focus]
         Ok(())
     }
 }
 ```
 
-The accessors return zero-sized handles, so calling `ctx.player_registry()` is free. Inside a command, scheduled task, or event handler you can also use the unit struct directly (`Players.online_count()`) without holding a `&Context`.
+The service functions need no handle, so you can call them from a command, a scheduled task, an event handler or a limbo callback just as well.
 
 ## Capabilities at a glance
 
-| Service | Accessor | Capability | Grant |
+| Service | Entry point | Capability | Grant |
 | --- | --- | --- | --- |
-| Players (read) | `ctx.player_registry()` | `player-read` | baseline |
-| Players (write) | `ctx.player_registry()` | `player-write` | baseline |
+| Player lookups | `Players::get`, `by_name`, `by_uuid`, `list`, `on_server`, `count` | `player-read` | baseline |
+| Player permission check | `Player::has_permission` | `player-read` | baseline |
+| Player actions | `Player::send_message`, `send_title`, `send_action_bar`, `disconnect`, `switch_server` | `player-write` | baseline |
 | `Player::send_packet` | on the `Player` handle | `raw-packet` | opt-in |
-| Servers | `ctx.server_manager()` | `server-manage` | opt-in |
-| Bans | `ctx.ban_service()` | `ban` | opt-in |
-| Config | `ctx.config_service()` | `config-read` | baseline |
-| Commands | `ctx.command(name, handler)` | `command` | baseline |
+| Servers | `Servers::*` | `server-manage` | opt-in |
+| Bans | `Bans::*` | `ban` | opt-in |
+| Config | `Config::*` | `config-read` | baseline |
+| Commands | `ctx.command(name)` | `command` | baseline |
 | Codec filters | `Plugin::register_codec_filters` | `codec-filter` | opt-in |
-| Scheduler | `ctx.delay` / `ctx.interval` / `ctx.cancel` | `scheduler` | baseline |
+| Scheduler | `ctx.delay` / `ctx.interval` / `ctx.interval_with_delay` | `scheduler` | baseline |
+| Text | `Component::from_json`, `from_legacy`, `to_json` | always available | always |
 | Logging | `info!` family | always available | always |
 
 Opt-in capabilities are listed in the plugin's config block. Capability strings are kebab-case.
 
 ```toml
 [plugins.my-plugin]
-path = "plugins/my_plugin.wasm"
 permissions = ["server-manage", "ban", "raw-packet"]
-enabled = true
 ```
 
-:::tip
-Native plugins receive every capability. A WASM plugin gets the baseline set plus whatever opt-ins you declare, and nothing else. An unknown or non-grantable capability string is logged and ignored.
-:::
+## Errors
 
-:::warning
-Calls into `server-manage` and `ban` wait for the proxy's answer for at most `host_call_timeout` (30 s by default), and return early enough to leave the calling handler time to act before its own deadline. When a limit runs out, the call returns `ServiceError::Unavailable` and your code carries on. See [Slow services and deadlines](#slow-services-and-deadlines).
-:::
+Every host call that can fail returns `Result<T, Error>`. An `Error` has a `kind` to branch on and a `message` for logs:
+
+```rust
+pub struct Error {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+
+pub enum ErrorKind {
+    InvalidArgument,
+    NotFound,
+    PermissionDenied,
+    Unavailable,
+    Timeout,
+    PlayerGone,
+    Conflict,
+    InvalidState,
+    Unsupported,
+    Internal,
+}
+```
+
+`Error` implements `std::error::Error`, and `?` turns it into the `PluginError` that `on_enable` and `on_disable` return. A call the plugin lacks the capability for returns `PermissionDenied` with a message that names it, for example `missing capability: ban`. The host also logs that refusal, at most once a minute per capability. See [the WIT error kinds](./api-reference#errors) for when each kind is raised.
+
+```rust
+match Bans::is_banned(&BanTarget::Username("Griefer".into())) {
+    Ok(banned) => info!("banned: {banned}"),
+    Err(e) if e.kind() == ErrorKind::PermissionDenied => warn!("grant `ban` to use bans"),
+    Err(e) => error!("ban check failed: {e}"),
+}
+```
 
 ## Players
 
-`ctx.player_registry()` returns `Players`. Lookups are baseline (`player-read`); the actions on a `Player` handle are baseline (`player-write`), except `send_packet` which needs `raw-packet`.
+Players are addressed by `PlayerId`. The lookups return a `PlayerInfo` snapshot; the actions go through a `Player` handle, which is just the id.
 
 ```rust
-pub fn online_count(&self) -> u32;
-pub fn online_count_on(&self, server: &str) -> u32;
-pub fn get_by_id(&self, id: u64) -> Option<Player>;
-pub fn get_by_name(&self, username: &str) -> Option<Player>;
-pub fn get_by_uuid(&self, uuid: &str) -> Option<Player>;
-pub fn on_server(&self, server: &str) -> Vec<Player>;
-pub fn all(&self) -> Vec<Player>;
+impl Players {
+    pub fn get(id: PlayerId) -> Option<PlayerInfo>;
+    pub fn by_name(username: &str) -> Option<PlayerInfo>;
+    pub fn by_uuid(uuid: Uuid) -> Option<PlayerInfo>;
+    pub fn list() -> Vec<PlayerInfo>;
+    pub fn on_server(server: &ServerId) -> Vec<PlayerInfo>;
+    pub fn count() -> u32;
+    pub fn count_on(server: &ServerId) -> u32;
+}
 ```
+
+The lookups are the contract's infallible reads: without `player-read` they answer `None`, an empty list or `0`.
+
+`PlayerInfo` carries what the proxy knows about the player when you asked:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `player` | `PlayerRef` | `id`, `uuid` and `username` |
+| `profile` | `GameProfile` | UUID, username, properties |
+| `protocol` | `i32` | Client protocol version |
+| `remote_addr` | `SocketAddr` | Client socket address |
+| `current_server` | `Option<ServerId>` | Backend the player is on |
+| `online_mode` | `bool` | Authenticated against Mojang |
+| `connected` | `bool` | TCP connection is live |
+| `active` | `bool` | Player is in an actionable state |
+| `connected_at` | `SystemTime` | When the player connected |
+| `virtual_host` | `Option<String>` | The address the client connected to |
+| `client_brand` | `Option<String>` | The client brand, once the client sent it |
+| `ping` | `Option<Duration>` | Latest round-trip time |
 
 ### The Player handle
 
-A `Player` is a resource owned by the host. Read its state:
-
-| Method | Returns | Meaning |
-| --- | --- | --- |
-| `id()` | `u64` | Stable per-connection id |
-| `profile()` | `GameProfile` | UUID, username, properties |
-| `protocol_version()` | `i32` | Client protocol version |
-| `remote_addr()` | `String` | Client socket address |
-| `current_server()` | `Option<String>` | Backend the player is on |
-| `is_connected()` | `bool` | TCP connection is live |
-| `is_active()` | `bool` | Player is in an actionable state |
-| `is_online_mode()` | `bool` | Authenticated against Mojang |
-| `permission_level()` | `PermissionLevel` | `Admin` when the player holds `infrarust.admin`, `Player` otherwise |
-| `has_permission(&str)` | `bool` | Whether the player holds the node, after the provider and the node's default |
-| `connected_at()` | `u64` | Connection time, epoch millis |
-
-Act on the player. `Player` is the binding-generated resource, so the message methods take a `&str` of [component JSON](#building-chat-components). Build it with `Component` and pass `&...into_json()`.
+Get one with `PlayerInfo::handle()`, `PlayerRef::handle()` (every player-scoped event carries a `PlayerRef`), or `Player::new(id)`. The handle is `Copy`; it stays valid as a value after the player leaves, and calls on it then return `PlayerGone`.
 
 ```rust
-let player = ctx.player_registry().get_by_name("Notch")
-    .ok_or("player not found")?;
-
-player.send_message(&Component::text("Hello").color("gold").into_json())?;
-player.send_action_bar(&Component::text("Watch out").into_json())?;
-player.switch_server("lobby")?;
-player.disconnect(&Component::text("Goodbye").into_json());
+ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
+    let player = event.player.handle();
+    let _ = player.send_message(Component::text("Welcome").color(NamedColor::Gold));
+    let _ = player.send_title(&TitleData::new("Hello", "have fun").stay(40));
+})?;
 ```
 
 | Action | Signature | Capability |
 | --- | --- | --- |
-| `disconnect` | `fn disconnect(&self, reason: &str)` | `player-write` |
-| `send_message` | `fn send_message(&self, message: &str) -> Result<(), PlayerError>` | `player-write` |
-| `send_title` | `fn send_title(&self, title: &TitleData) -> Result<(), PlayerError>` | `player-write` |
-| `send_action_bar` | `fn send_action_bar(&self, message: &str) -> Result<(), PlayerError>` | `player-write` |
-| `switch_server` | `fn switch_server(&self, target: &str) -> Result<(), PlayerError>` | `player-write` |
-| `send_packet` | `fn send_packet(&self, packet: &RawPacket) -> Result<(), PlayerError>` | `raw-packet` |
+| `info` | `fn info(&self) -> Option<PlayerInfo>` | `player-read` |
+| `has_permission` | `fn has_permission(&self, node: &str) -> Result<bool, Error>` | `player-read` |
+| `send_message` | `fn send_message(&self, message: impl Into<Component>) -> Result<(), Error>` | `player-write` |
+| `send_title` | `fn send_title(&self, title: &TitleData) -> Result<(), Error>` | `player-write` |
+| `send_action_bar` | `fn send_action_bar(&self, message: impl Into<Component>) -> Result<(), Error>` | `player-write` |
+| `disconnect` | `fn disconnect(&self, reason: impl Into<Component>) -> Result<(), Error>` | `player-write` |
+| `switch_server` | `fn switch_server(&self, server: impl Into<ServerId>) -> Result<(), Error>` | `player-write` |
+| `send_packet` | `fn send_packet(&self, packet_id: i32, data: Vec<u8>) -> Result<(), Error>` | `raw-packet` |
 
 :::info
-`disconnect` is dispatched in the background on the host, so it returns immediately. `switch_server` hands the request to the player's session and waits at most 250 ms for the session to take it, less when the handler's deadline is closer; if it can't, it returns `PlayerError::SwitchFailed`. `send_packet` without the `raw-packet` capability returns `PlayerError::SendFailed("missing capability: raw-packet")` rather than trapping.
+`disconnect` queues the kick and returns at once. `switch_server` hands the request to the player's session and waits at most 250 ms for the session to take it, less when the calling handler's deadline is closer; if it can't, it returns `Timeout`. `has_permission` answers after the permission provider and the node's default.
 :::
 
 ## Servers
 
-`ctx.server_manager()` returns `Servers`. Every method needs the opt-in `server-manage` capability.
+Every `Servers` function needs the opt-in `server-manage` capability.
 
 ```rust
-pub fn state(&self, server: &str) -> Option<ServerState>;
-pub fn start(&self, server: &str) -> Result<(), ServiceError>;
-pub fn stop(&self, server: &str) -> Result<(), ServiceError>;
-pub fn all(&self) -> Vec<(String, ServerState)>;
+impl Servers {
+    pub fn state(server: &ServerId) -> Result<Option<ServerState>, Error>;
+    pub fn start(server: &ServerId) -> Result<(), Error>;
+    pub fn stop(server: &ServerId) -> Result<(), Error>;
+    pub fn list() -> Result<Vec<ServerStatus>, Error>;
+}
 ```
 
-`ServerState` is one of `Online`, `Offline`, `Starting`, `Stopping`, `Sleeping`, `Crashed`. `start` and `stop` run under the host timeout and the handler's deadline, see [Slow services and deadlines](#slow-services-and-deadlines). `ServerState` lives in `infrarust_plugin_sdk::services`.
+`ServerState` is one of `Online`, `Offline`, `Starting`, `Stopping`, `Sleeping`, `Crashed`. `ServerStatus` pairs a `server` with its `state`. `start` and `stop` run under the host timeout and the handler's deadline, see [Slow services and deadlines](#slow-services-and-deadlines).
 
 ```rust
-use infrarust_plugin_sdk::services::ServerState;
-
-let servers = ctx.server_manager();
-if servers.state("survival") == Some(ServerState::Sleeping) {
-    servers.start("survival")?;
+let survival = ServerId::from("survival");
+if Servers::state(&survival)? == Some(ServerState::Sleeping) {
+    Servers::start(&survival)?;
 }
 ```
 
 ## Bans
 
-`ctx.ban_service()` returns `Bans`. Every method needs the opt-in `ban` capability and runs under the host timeout and the handler's deadline, see [Slow services and deadlines](#slow-services-and-deadlines). `BanTarget` and `BanEntry` live in `infrarust_plugin_sdk::services`. A `BanTarget` is one of three variants:
+Every `Bans` function needs the opt-in `ban` capability and runs under the host timeout and the handler's deadline, see [Slow services and deadlines](#slow-services-and-deadlines).
 
 ```rust
 pub enum BanTarget {
-    Ip(String),
+    Ip(IpAddr),
+    IpRange(String),
     Username(String),
-    Uuid(String),
+    Uuid(Uuid),
+}
+
+impl Bans {
+    pub fn ban(request: BanRequest) -> Result<BanEntry, Error>;
+    pub fn unban(target: &BanTarget) -> Result<Option<BanEntry>, Error>;
+    pub fn get(target: &BanTarget) -> Result<Option<BanEntry>, Error>;
+    pub fn is_banned(target: &BanTarget) -> Result<bool, Error>;
+    pub fn list(cursor: Option<&str>, limit: u32) -> Result<BanPage, Error>;
 }
 ```
 
-```rust
-pub fn ban(&self, target: &BanTarget, reason: Option<&str>, duration_ms: Option<u64>)
-    -> Result<(), ServiceError>;
-pub fn unban(&self, target: &BanTarget) -> Result<bool, ServiceError>;
-pub fn is_banned(&self, target: &BanTarget) -> Result<bool, ServiceError>;
-pub fn get(&self, target: &BanTarget) -> Result<Option<BanEntry>, ServiceError>;
-pub fn all(&self) -> Result<Vec<BanEntry>, ServiceError>;
-```
+`BanRequest::new(target)` builds a request that kicks the target and announces the ban; chain `reason`, `duration`, `kick(false)` or `silent(true)`. A request without a duration is permanent. `IpRange` takes CIDR notation such as `"203.0.113.0/24"` and bans every address inside it; a range that does not parse returns `InvalidArgument`. `unban` answers the entry it removed, `list` pages through the bans with the `next_cursor` of the previous page.
 
-`duration_ms` of `None` is a permanent ban. `BanTarget::Ip` also accepts a CIDR range such as `"203.0.113.0/24"`, which bans every address inside it. The calls go to whichever ban provider the operator selected, and a ban your plugin issues is attributed to it (`source` reads `plugin:<your id>`). With `[ban] provider = "none"` every call returns `service-error::unavailable`. A `BanEntry` has these fields:
+The calls go to whichever ban provider the operator selected, and a ban your plugin issues is attributed to it (`source` reads `plugin:<your id>`). With `[ban] provider = "none"` every call returns `Unavailable`. A `BanEntry` has these fields:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
+| `id` | `String` | The provider's id for the ban |
 | `target` | `BanTarget` | Who is banned |
 | `reason` | `Option<String>` | Optional reason text |
-| `expires_at` | `Option<u64>` | Epoch millis, `None` for permanent |
-| `created_at` | `u64` | When the ban was issued, epoch millis |
 | `source` | `String` | Who issued the ban: `console`, `web-api`, `plugin:<id>`, `player:<name>` or `system` |
+| `created_at` | `SystemTime` | When the ban was issued |
+| `expires_at` | `Option<SystemTime>` | `None` for permanent |
 
 ```rust
-use infrarust_plugin_sdk::services::BanTarget;
+use std::time::Duration;
 
-let bans = ctx.ban_service();
 let target = BanTarget::Username("Griefer".into());
-bans.ban(&target, Some("griefing"), Some(86_400_000))?; // 24h
+Bans::ban(BanRequest::new(target).reason("griefing").duration(Duration::from_secs(86_400)))?;
 ```
 
 ## Slow services and deadlines
 
-`start`, `stop` and every `Bans` method wait for the proxy's answer, and that answer can be slow: a ban list kept in a remote database, a server that takes a while to boot. The host bounds each of these calls so that a slow service becomes an error your code can act on, rather than an answer that arrives after the proxy stopped listening.
+`start`, `stop` and every `Bans` function wait for the proxy's answer, and that answer can be slow: a ban list kept in a remote database, a server that takes a while to boot. The host bounds each of these calls so that a slow service becomes an error your code can act on, rather than an answer that arrives after the proxy stopped listening.
 
 Every call into your plugin carries a deadline, set when the proxy makes the call:
 
@@ -194,65 +227,70 @@ A service call made during that call returns at the earliest of:
 - `host_call_timeout` after the service call started (`[wasm]`, 30 s by default);
 - a margin before the deadline. The margin is a fifth of the deadline, capped at 250 ms, and leaves your code time to decide after the error. With the default 10 s `handler_timeout`, a ban check inside an event handler returns by 9.75 s.
 
-On expiry the call returns `ServiceError::Unavailable`. The message is `host call timed out` when `host_call_timeout` ran out, and `host call timed out: the plugin call is close to its deadline` when the deadline was the limit. `switch_server` follows the same rule with its own 250 ms limit and returns `PlayerError::SwitchFailed`.
+On expiry the call returns an `Error` of kind `Timeout`. The message is `host call timed out` when `host_call_timeout` ran out, and `host call timed out: the plugin call is close to its deadline` when the deadline was the limit. `switch_server` follows the same rule with its own 250 ms limit.
 
 Because the error arrives before the event bus gives up on the handler, whatever the handler decides is applied to the event. Choose on purpose: a ban check that denies on error keeps banned players out while the ban store is down (fail closed), one that ignores the error lets everyone in (fail open).
 
 ```rust
-ctx.on(EventPriority::Early, |event: &mut PreLoginEvent| {
+ctx.on::<PreLoginEvent>(EventPriority::Early, |event| {
     let target = BanTarget::Username(event.profile.username.clone());
-    match Bans.is_banned(&target) {
+    match Bans::is_banned(&target) {
         Ok(false) => {}
         Ok(true) => event.deny("You are banned"),
         Err(_) => event.deny("The ban check is unavailable, try again in a moment"),
     }
-});
+})?;
 ```
 
 A call still waiting in the plugin's queue when its deadline passes is dropped without running: its caller could no longer use the result. See [Lifecycle](./lifecycle#deadlines).
 
 ## Config
 
-`ctx.config_service()` returns `Config`. Reads are baseline (`config-read`).
+Reads need the baseline `config-read` capability.
 
 ```rust
-pub fn get(&self, key: &str) -> Option<String>;
-pub fn server(&self, server: &str) -> Option<ServerConfig>;
-pub fn servers(&self) -> Vec<ServerConfig>;
+impl Config {
+    pub fn get(key: &str) -> Result<Option<String>, Error>;
+    pub fn server(server: &ServerId) -> Result<Option<ServerConfig>, Error>;
+    pub fn servers() -> Result<Vec<ServerConfig>, Error>;
+}
 ```
 
-`get` reads a single string value by key. `server` and `servers` return `ServerConfig` records with the proxy's view of each backend (id, addresses, domains, proxy mode, limbo handlers, max players, and more).
+`get` reads a single string value by key. `server` and `servers` return `ServerConfig` records with the proxy's view of each backend (id, network, addresses, domains, proxy mode, limbo handlers, max players, disconnect message, proxy protocol, server manager).
 
 ```rust
-let greeting = ctx.config_service()
-    .get("greeting")
-    .unwrap_or_else(|| "Welcome".to_string());
+let greeting = Config::get("greeting")?.unwrap_or_else(|| "Welcome".to_string());
 ```
 
 ## Commands and codec filters
 
-Two more host services register guest callbacks rather than reading state, and each has its own page. Command registration is baseline (`command`): call `ctx.command(name, handler)` to get a `CommandBuilder`, chain `alias`, `aliases`, `description`, and `completer`, then `register()`. Codec-filter registration is the opt-in `codec-filter` capability and goes through the `Plugin::register_codec_filters(reg: &mut CodecRegistrar)` method, where `reg.add(id, priority, constructor)` declares one filter. See [Commands](./commands) and [Codec filters](./codec-filters) for the full contracts.
+Two more host services register guest callbacks rather than reading state, and each has its own page. Command registration is baseline (`command`): `ctx.command(name)` returns a builder; chain `aliases`, `description`, `usage`, `permission`, `hidden`, `handler` and `completer`, then `register()`, which answers what the host registered. Codec-filter registration is the opt-in `codec-filter` capability and goes through `Plugin::register_codec_filters(reg: &mut CodecRegistrar)`, where `reg.add(id, priority, constructor)` declares one filter. See [Commands](./commands) and [Codec filters](./codec-filters).
 
 ## Scheduler
 
-Scheduling is baseline (`scheduler`). The methods are on `Context` and return a `TaskHandle` (a `u64`).
+Scheduling is baseline (`scheduler`). The methods are on `Context` and return a `TaskHandle`.
 
 ```rust
-pub fn delay(&self, after: Duration, task: impl FnOnce() + 'static) -> TaskHandle;
-pub fn interval(&self, period: Duration, task: impl FnMut() + 'static) -> TaskHandle;
+pub fn delay(&self, after: Duration, task: impl FnOnce() + 'static) -> Result<TaskHandle, Error>;
+pub fn interval(&self, period: Duration, task: impl FnMut() + 'static) -> Result<TaskHandle, Error>;
+pub fn interval_with_delay(
+    &self,
+    period: Duration,
+    initial_delay: Duration,
+    task: impl FnMut() + 'static,
+) -> Result<TaskHandle, Error>;
 pub fn cancel(&self, handle: TaskHandle);
 ```
 
-`delay` runs the closure once after the duration and drops it right after. `interval` runs it repeatedly. Both fire through the host's `on-scheduled-task` dispatch back into the plugin. `cancel` stops the task on the host and drops the closure in the guest; calling it from inside the task's own callback is fine, and the closure is dropped once that call returns.
+`delay` runs the closure once after the duration and drops it right after. `interval` runs it every period, the first time one period from now; `interval_with_delay` sets the first run separately. Both fire through the host's `on-scheduled-task` dispatch back into the plugin. `cancel` (or `TaskHandle::cancel`) stops the task on the host and drops the closure in the guest; calling it from inside the task's own callback is fine, and the closure is dropped once that call returns.
 
 ```rust
 use std::time::Duration;
 
 let handle = ctx.interval(Duration::from_secs(60), || {
-    info!("{} players online", Players.online_count());
-});
-// later, stop it:
-ctx.cancel(handle);
+    info!("{} players online", Players::count());
+})?;
+handle.cancel();
 ```
 
 ## Logging
@@ -267,52 +305,47 @@ warn!("retrying {attempt}/{max}");
 error!("failed: {err}");
 ```
 
-## Building chat components
+## Text components
 
-`Component` builds the text-component JSON the host expects for messages, titles, and action bars. Chain styling, append children, then serialize with `into_json` (or `From<Component> for String`) and pass the JSON to a host method.
+`Component` is the SDK's text component, at parity with the native one: text, translatable and keybind content, named and hex colors, every decoration, font, insertion, shadow color, click and hover events, and children. It crosses the boundary as a validated arena the SDK builds for you.
 
 ```rust
-let msg = Component::text("Server: ")
-    .color("gray")
-    .append(Component::text("survival").color("green").bold());
-
-player.send_message(&msg.into_json())?;
+let message = Component::text("Server: ")
+    .color(NamedColor::Gray)
+    .append(
+        Component::text("survival")
+            .color("#55ff55")
+            .bold()
+            .click(ClickEvent::RunCommand("/server survival".into()))
+            .hover(HoverEvent::show_text("Click to join")),
+    );
+player.send_message(message)?;
 ```
 
-| Method | Effect |
+| Builder | Effect |
 | --- | --- |
-| `Component::text(impl Into<String>)` | Start a component with text |
-| `.color(impl Into<String>)` | Set the color |
-| `.bold()` | Mark bold |
-| `.italic()` | Mark italic |
-| `.append(Component)` | Add a child to `extra` |
-| `.into_json()` | Serialize to the component JSON string |
+| `Component::text(s)`, `translatable(key)`, `translatable_with(key, args)`, `keybind(key)` | Start a component |
+| `.fallback(text)` | Fallback text for a translatable component |
+| `.color(c)` | A `NamedColor`, a `TextColor`, or a string such as `"gold"` or `"#ff8800"`; an unknown string leaves the color unset |
+| `.bold()`, `.italic()`, `.underlined()`, `.strikethrough()`, `.obfuscated()`, `.decoration(d, value)` | Decorations |
+| `.font(id)`, `.insertion(text)`, `.shadow_color(argb)` | Other style |
+| `.click(ClickEvent)`, `.hover(HoverEvent)` | Events |
+| `.append(child)` | Add a child |
+| `.to_plain()` | The text without styling, computed in the guest |
 
-## Errors
-
-Two error types surface from host services.
+A `&str` or `String` converts into a plain-text component, never into JSON. To use JSON or legacy `&` codes, parse them with the host, which uses the proxy's own parser:
 
 ```rust
-pub enum PlayerError {
-    NotActive,
-    Disconnected,
-    SendFailed(String),
-    ServerNotFound(String),
-    SwitchFailed(String),
-}
-
-pub enum ServiceError {
-    NotFound(String),
-    OperationFailed(String),
-    Unavailable(String),
-}
+let motd = Component::from_json(r#"{"text":"Hello","color":"gold"}"#)?;
+let legacy = Component::from_legacy("&aGreen &lbold");
+let json: String = motd.to_json()?;
 ```
 
-`PlayerError` comes from `Player` actions. `ServiceError` comes from `Servers` and `Bans`; a timed-out call yields `ServiceError::Unavailable`.
+A component deeper than 64 levels, larger than 4096 nodes or 256 KiB of text is refused by the host with `InvalidArgument`.
 
 ## A full example
 
-The `host-caller` fixture reads two baseline services in `on_enable`:
+The `host-caller` test fixture reads two baseline services in `on_enable`:
 
 ```rust
 use infrarust_plugin_sdk::prelude::*;
@@ -322,11 +355,10 @@ struct HostCaller;
 
 #[plugin(id = "host-caller", name = "Host Caller Fixture")]
 impl Plugin for HostCaller {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
-        std::fs::write("count.txt", Players.online_count().to_string().as_bytes())
-            .map_err(|e| e.to_string())?;
-        if let Some(greeting) = Config.get("greeting") {
-            std::fs::write("greeting.txt", greeting.as_bytes()).map_err(|e| e.to_string())?;
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
+        std::fs::write("count.txt", Players::count().to_string())?;
+        if let Ok(Some(greeting)) = Config::get("greeting") {
+            std::fs::write("greeting.txt", greeting)?;
         }
         Ok(())
     }
@@ -340,6 +372,6 @@ impl Plugin for HostCaller {
 - [Commands](./commands): register commands that call these services
 - [Codec filters](./codec-filters): register codec filters and the per-call budget
 - [Limbo](./limbo): hold players in a virtual world from a handler
-- [API reference](./api-reference): the complete SDK surface
+- [API reference](./api-reference): the WIT contract behind these wrappers
 - [Examples](./examples): runnable plugins
 - [Configuration](../../configuration/): proxy config and the `[plugins]` table

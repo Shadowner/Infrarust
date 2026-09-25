@@ -1,0 +1,60 @@
+interface limbo {
+    use types.{player-id, server-id, component, game-profile, title-data, player-error, handler-id};
+
+    variant limbo-entry-context {
+        initial-connection(server-id),
+        kicked-from-server(tuple<server-id, component>),
+        plugin-redirect(option<server-id>),
+    }
+
+    variant timeout-outcome {
+        accept,
+        deny(component),
+        redirect(server-id),
+        send-to-limbo(list<string>),
+    }
+
+    record hold-timeout {
+        after-ms: u64,
+        on-timeout: timeout-outcome,
+    }
+
+    variant handler-result {
+        accept,
+        deny(component),
+        hold,
+        hold-with-timeout(hold-timeout),
+        redirect(server-id),
+        send-to-limbo(list<string>),
+    }
+
+    enum session-end-reason {
+        disconnected,
+        released,
+        kicked,
+        redirected,
+        timed-out,
+        shutdown,
+    }
+
+    resource limbo-session {
+        player-id: func() -> player-id;
+        profile: func() -> game-profile;
+        entry-context: func() -> limbo-entry-context;
+        send-message: func(message: component) -> result<_, player-error>;
+        send-title: func(title: title-data) -> result<_, player-error>;
+        send-action-bar: func(message: component) -> result<_, player-error>;
+        complete: func(outcome: handler-result);
+        acquire-handle: func() -> limbo-session-handle;
+    }
+
+    resource limbo-session-handle {
+        player-id: func() -> player-id;
+        send-message: func(message: component) -> result<_, player-error>;
+        send-title: func(title: title-data) -> result<_, player-error>;
+        send-action-bar: func(message: component) -> result<_, player-error>;
+        complete: func(outcome: handler-result);
+        cancelled: func() -> bool;
+    }
+    register-limbo-handler: func(name: string, handler: handler-id);
+}

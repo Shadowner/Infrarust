@@ -16,15 +16,15 @@ use infrarust_api::events::lifecycle::{
     PostLoginEvent, PreLoginEvent, PreLoginResult,
 };
 use infrarust_api::events::proxy::{
-    ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent, ProxyShutdownEvent,
-    ServerStateChangeEvent,
+    BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
+    ProxyShutdownEvent, ServerStateChangeEvent,
 };
 use infrarust_api::permissions::{PermissionChecker, Tristate};
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{Component, PlayerId, ServerId};
 
-use super::script::{self, Action, Directive, EventName};
+use super::script::{self, Action, Directive, EventName, joined, or_dash};
 
 pub struct ScriptedPlugin {
     id: String,
@@ -140,6 +140,10 @@ impl Seen {
     }
 }
 
+fn previous(server: Option<&ServerId>) -> &str {
+    or_dash(server.map(ServerId::as_str))
+}
+
 fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, action: Action) {
     let cancel = action == Action::Cancelled;
     let at = EventPriority::custom(priority);
@@ -180,8 +184,12 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
         }),
         EventName::Disconnect => bus.subscribe(at, move |e: &mut DisconnectEvent| {
             let id = e.player_id().as_u64().to_string();
-            let last = e.last_server.as_ref().map_or("-", ServerId::as_str);
-            seen.record(&[&id, e.username(), last]);
+            seen.record(&[
+                &id,
+                e.username(),
+                previous(e.last_server.as_ref()),
+                e.cause.as_str(),
+            ]);
         }),
         EventName::OnlineAuthFailed => bus.subscribe(at, move |e: &mut OnlineAuthFailed| {
             seen.record(&[&e.username]);
@@ -198,7 +206,13 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
         }),
         EventName::ServerPreConnect => bus.subscribe(at, move |e: &mut ServerPreConnectEvent| {
             let id = e.player_id().as_u64().to_string();
-            seen.record(&[&id, &e.profile().username, e.server.as_str()]);
+            seen.record(&[
+                &id,
+                &e.profile().username,
+                e.server.as_str(),
+                previous(e.previous_server.as_ref()),
+                e.cause.as_str(),
+            ]);
             let result = match &seen.action {
                 Action::Allow => ServerPreConnectResult::Allowed,
                 Action::ConnectTo(server) => {
@@ -216,21 +230,27 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
         }),
         EventName::ServerConnected => bus.subscribe(at, move |e: &mut ServerConnectedEvent| {
             let id = e.player_id().as_u64().to_string();
-            seen.record(&[&id, e.server.as_str()]);
+            seen.record(&[&id, e.server.as_str(), previous(e.previous_server.as_ref())]);
         }),
-        EventName::ServerSwitch => bus.subscribe(at, move |e: &mut ServerPostConnectEvent| {
-            if let Some(previous) = e.switched_from() {
-                let id = e.player_id().as_u64().to_string();
-                seen.record(&[&id, previous.as_str(), e.server.as_str()]);
-            }
+        EventName::ServerPostConnect => bus.subscribe(at, move |e: &mut ServerPostConnectEvent| {
+            let id = e.player_id().as_u64().to_string();
+            seen.record(&[&id, e.server.as_str(), previous(e.previous_server.as_ref())]);
         }),
         EventName::KickedFromServer => bus.subscribe(at, move |e: &mut KickedFromServerEvent| {
             let id = e.player_id().as_u64().to_string();
             let reason = e
                 .reason
                 .as_ref()
-                .map_or_else(|| Component::text("").to_json(), Component::to_json);
-            seen.record(&[&id, e.server.as_str(), &reason]);
+                .map_or_else(|| "-".to_owned(), Component::to_json);
+            let during = e.during_connect.to_string();
+            seen.record(&[
+                &id,
+                e.server.as_str(),
+                &reason,
+                e.cause.as_str(),
+                &during,
+                previous(e.previous_server.as_ref()),
+            ]);
             let result = match &seen.action {
                 Action::Redirect(server) => {
                     KickedFromServerResult::RedirectTo(ServerId::new(server.as_str()))
@@ -267,20 +287,25 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
         }
         EventName::ProxyPing => bus.subscribe(at, move |e: &mut ProxyPingEvent| {
             let addr = e.remote_addr.to_string();
+            let protocol = e.protocol_version.raw().to_string();
+            let legacy = e.legacy.to_string();
             let response = &e.response;
             let description = response.description.to_json();
             let max = response.max_players.to_string();
             let online = response.online_players.to_string();
-            let protocol = response.protocol_version.raw().to_string();
-            let favicon = response.favicon.as_deref().unwrap_or("-");
+            let answered = response.protocol_version.raw().to_string();
             seen.record(&[
                 &addr,
+                previous(e.server.as_ref()),
+                or_dash(e.virtual_host.as_deref()),
+                &protocol,
+                &legacy,
                 &description,
                 &max,
                 &online,
-                &protocol,
+                &answered,
                 &response.version_name,
-                favicon,
+                or_dash(response.favicon.as_deref()),
             ]);
             if let Action::Description(description) = &seen.action {
                 e.response.description = text(description);
@@ -292,15 +317,21 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
         EventName::ProxyShutdown => {
             bus.subscribe(at, move |_: &mut ProxyShutdownEvent| seen.record(&[]))
         }
-        EventName::ConfigReload => {
-            bus.subscribe(at, move |_: &mut ConfigReloadEvent| seen.record(&[]))
-        }
+        EventName::ConfigReload => bus.subscribe(at, move |e: &mut ConfigReloadEvent| {
+            seen.record(&[
+                &e.provider,
+                &joined(e.added.iter().map(ServerId::as_str)),
+                &joined(e.removed.iter().map(ServerId::as_str)),
+                &joined(e.updated.iter().map(ServerId::as_str)),
+            ]);
+        }),
         EventName::ServerStateChange => bus.subscribe(at, move |e: &mut ServerStateChangeEvent| {
             seen.record(&[e.server.as_str(), state(e.old_state), state(e.new_state)]);
         }),
         EventName::ChatMessage => bus.subscribe(at, move |e: &mut ChatMessageEvent| {
             let id = e.player_id().as_u64().to_string();
-            seen.record(&[&id, &e.message]);
+            let signed = e.signed.to_string();
+            seen.record(&[&id, &e.message, &signed, previous(e.server.as_ref())]);
             let result = match &seen.action {
                 Action::Allow => ChatMessageResult::Allow,
                 Action::Deny(reason) => ChatMessageResult::Deny {
@@ -312,6 +343,14 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
                 _ => return,
             };
             e.set_result(result);
+        }),
+        EventName::BackendHealth => bus.subscribe(at, move |e: &mut BackendHealthEvent| {
+            let address = format!("{}:{}", e.address.host, e.address.port);
+            seen.record(&[
+                &address,
+                &joined(e.servers.iter().map(ServerId::as_str)),
+                e.state.as_str(),
+            ]);
         }),
     };
     if cancel {

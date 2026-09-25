@@ -4,17 +4,30 @@ wit_bindgen::generate!({
     generate_all,
 });
 
-use crate::infrarust::plugin::ban_service;
-use crate::infrarust::plugin::types::{BanTarget, ServiceError};
+use crate::infrarust::plugin::ban_service::{self, BanTarget};
+use crate::infrarust::plugin::types::ErrorKind;
 
 struct Component;
 
+fn kind(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::InvalidArgument => "invalid-argument",
+        ErrorKind::NotFound => "not-found",
+        ErrorKind::PermissionDenied => "permission-denied",
+        ErrorKind::Unavailable => "unavailable",
+        ErrorKind::Timeout => "timeout",
+        ErrorKind::PlayerGone => "player-gone",
+        ErrorKind::Conflict => "conflict",
+        ErrorKind::InvalidState => "invalid-state",
+        ErrorKind::Unsupported => "unsupported",
+        ErrorKind::Internal => "internal",
+    }
+}
+
 fn outcome() -> String {
-    match ban_service::is_banned(&BanTarget::Username("nobody".to_string())) {
-        Ok(banned) => format!("ok: {banned}"),
-        Err(ServiceError::NotFound(message)) => format!("not-found: {message}"),
-        Err(ServiceError::OperationFailed(message)) => format!("operation-failed: {message}"),
-        Err(ServiceError::Unavailable(message)) => format!("unavailable: {message}"),
+    match ban_service::get(&BanTarget::Username("nobody".to_string())) {
+        Ok(entry) => format!("ok: {}", entry.is_some()),
+        Err(error) => format!("{}: {}", kind(error.kind), error.message),
     }
 }
 

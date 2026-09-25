@@ -82,7 +82,7 @@ impl CodecInstantiator {
             .map_err(|e| instantiate_err(&self.plugin_id, "guest-load", &e))?;
         let wit_init = convert::session_init_to_wit(init);
         let handle = guest
-            .call_create(&mut store, factory_id, &wit_init)
+            .call_create(&mut store, factory_id, wit_init)
             .map_err(|e| instantiate_err(&self.plugin_id, "create", &e))?;
         Ok(WasmCodecFilterInstance::new(
             store,

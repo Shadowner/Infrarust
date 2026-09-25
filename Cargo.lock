@@ -2087,6 +2087,8 @@ name = "infrarust-plugin-sdk"
 version = "2.0.0-beta.3"
 dependencies = [
  "infrarust-plugin-macros",
+ "infrarust-plugin-wit",
+ "uuid",
  "wit-bindgen 0.58.0",
 ]
 
@@ -2118,6 +2120,9 @@ dependencies = [
 [[package]]
 name = "infrarust-plugin-wit"
 version = "2.0.0-beta.3"
+dependencies = [
+ "wit-parser 0.251.0",
+]
 
 [[package]]
 name = "infrarust-stress-test"

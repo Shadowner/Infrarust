@@ -14,16 +14,17 @@ use infrarust_api::events::lifecycle::{
     PermissionsSetupResult, PostLoginEvent, PreLoginEvent, PreLoginResult,
 };
 use infrarust_api::events::proxy::{
-    ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent, ProxyShutdownEvent,
-    ServerStateChangeEvent,
+    BackendHealthEvent, ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent,
+    ProxyShutdownEvent, ServerStateChangeEvent,
 };
 use infrarust_api::loader::PluginContextFactory;
 use infrarust_api::permissions::ADMIN_PERMISSION;
 use infrarust_api::player::Player;
 use infrarust_api::plugin::Plugin;
+use infrarust_api::services::load_balancer::BackendState;
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{
-    Component, GameProfile, HoverEvent, NamedColor, ProtocolVersion, ServerId,
+    Component, GameProfile, HoverEvent, NamedColor, ProtocolVersion, ServerAddress, ServerId,
 };
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::services::command_manager::DispatchOutcome;
@@ -106,22 +107,27 @@ pub fn fields(event: EventName) -> Vec<String> {
     match event {
         EventName::PreLogin => owned(&[USERNAME, UUID, REMOTE, "767", DOMAIN]),
         EventName::PostLogin => owned(&[id, USERNAME, UUID, "767"]),
-        EventName::Disconnect => owned(&[id, USERNAME, "lobby"]),
+        EventName::Disconnect => owned(&[id, USERNAME, "lobby", "client_quit"]),
         EventName::OnlineAuthFailed => owned(&[USERNAME]),
         EventName::PermissionsSetup => owned(&[id, USERNAME, "true"]),
-        EventName::ServerPreConnect => owned(&[id, USERNAME, "lobby"]),
-        EventName::ServerConnected => owned(&[id, "lobby"]),
-        EventName::ServerSwitch => owned(&[id, "lobby", "survival"]),
-        EventName::KickedFromServer => {
-            owned(&[id, "survival", &Component::text(KICK_REASON).to_json()])
-        }
+        EventName::ServerPreConnect => owned(&[id, USERNAME, "lobby", "hub", "switch"]),
+        EventName::ServerConnected => owned(&[id, "lobby", "-"]),
+        EventName::ServerPostConnect => owned(&[id, "survival", "lobby"]),
+        EventName::KickedFromServer => owned(&[
+            id,
+            "survival",
+            &Component::text(KICK_REASON).to_json(),
+            "play_disconnect",
+            "false",
+            "lobby",
+        ]),
         EventName::PlayerChooseInitialServer => owned(&[id, USERNAME, "hub"]),
         EventName::ProxyPing => ping_fields(&motd().to_json()),
-        EventName::ProxyInitialize | EventName::ProxyShutdown | EventName::ConfigReload => {
-            Vec::new()
-        }
+        EventName::ProxyInitialize | EventName::ProxyShutdown => Vec::new(),
+        EventName::ConfigReload => owned(&["file", "survival", "-", "lobby"]),
         EventName::ServerStateChange => owned(&["survival", "starting", "online"]),
-        EventName::ChatMessage => owned(&[id, CHAT]),
+        EventName::ChatMessage => owned(&[id, CHAT, "false", "lobby"]),
+        EventName::BackendHealth => owned(&["10.0.0.2:25565", "lobby,survival", "draining"]),
     }
 }
 
@@ -132,6 +138,10 @@ fn owned(items: &[&str]) -> Vec<String> {
 pub fn ping_fields(description_json: &str) -> Vec<String> {
     owned(&[
         REMOTE,
+        "lobby",
+        DOMAIN,
+        "767",
+        "false",
         description_json,
         "100",
         "7",
@@ -298,8 +308,8 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             let event = ServerPreConnectEvent::new(
                 session(),
                 ServerId::new("lobby"),
-                None,
-                ConnectCause::Initial,
+                Some(ServerId::new("hub")),
+                ConnectCause::Switch,
             );
             server_pre_connect(bus.fire(event).await.result())
         }
@@ -312,7 +322,7 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             .await;
             Outcome::same("none")
         }
-        EventName::ServerSwitch => {
+        EventName::ServerPostConnect => {
             bus.fire(ServerPostConnectEvent::new(
                 session(),
                 ServerId::new("survival"),
@@ -341,7 +351,7 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             let event = ProxyPingEvent::new(
                 remote(),
                 Some(ServerId::new("lobby")),
-                Some("play.example.com".to_owned()),
+                Some(DOMAIN.to_owned()),
                 protocol,
                 false,
                 PingResponse::new(motd(), 100, 7, protocol, "Infrarust".to_owned(), None),
@@ -359,9 +369,9 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
         EventName::ConfigReload => {
             bus.fire(ConfigReloadEvent::new(
                 "file",
+                vec![ServerId::new("survival")],
                 Vec::new(),
-                Vec::new(),
-                Vec::new(),
+                vec![ServerId::new("lobby")],
             ))
             .await;
             Outcome::same("none")
@@ -383,6 +393,18 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
                 Some(ServerId::new("lobby")),
             );
             chat(bus.fire(event).await.result())
+        }
+        EventName::BackendHealth => {
+            bus.fire(BackendHealthEvent {
+                address: ServerAddress {
+                    host: "10.0.0.2".to_owned(),
+                    port: 25565,
+                },
+                servers: vec![ServerId::new("lobby"), ServerId::new("survival")],
+                state: BackendState::Draining,
+            })
+            .await;
+            Outcome::same("none")
         }
     }
 }

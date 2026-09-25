@@ -1,28 +1,31 @@
-//! Dispatch glue and the per-instance registries the macro-generated `Guest`
-//! impl delegates to. The guest is single-threaded, so `thread_local!` +
-//! `RefCell` is the cheapest correct storage.
-
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::thread::LocalKey;
 
 use crate::bindings::codec_filter::{
-    CodecSessionInit, ConnectionState, FilterOutput, GuestFilterInstance,
+    CodecSessionInit as WitSessionInit, ConnectionState, FilterOutput, GuestFilterInstance,
 };
-use crate::bindings::guest::{Event, EventOutcome};
+use crate::bindings::codec_registry::CodecFilterMetadata;
+use crate::bindings::command_manager::CommandSpec;
+use crate::bindings::events::{Event, EventOutcome};
+use crate::bindings::guest as wg;
 use crate::codec::{
-    CodecContext, CodecFilter, CodecRegistrar, FilterConstructor, Injections, Packet, Verdict,
-    build_filter_output,
+    CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, FilterConstructor, Injections,
+    Packet, Verdict, build_filter_output,
 };
-use crate::context::{CommandInvocation, Context};
+use crate::command::{
+    CommandClosure, CommandInvocation, CommandRegistration, CommandSender, Completion,
+    CompletionClosure,
+};
+use crate::context::{Context, DisableReason, EnableReason};
+use crate::error::Error;
 use crate::event::{EventPriority, GuestEvent};
-use crate::limbo::{HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession};
+use crate::limbo::{HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason};
 use crate::plugin::Plugin;
 use crate::registry::Registry;
+use crate::types::PlayerId;
 
 type EventEntry = RefCell<dyn FnMut(Event) -> EventOutcome>;
-type CommandClosure = Box<dyn FnMut(CommandInvocation)>;
-type CompletionClosure = Box<dyn Fn(&[String], u32) -> Vec<String>>;
 type OnceTask = Box<dyn FnOnce()>;
 type RepeatingTask = Box<dyn FnMut()>;
 type CodecConstructor = dyn Fn(&CodecSessionInit) -> Box<dyn CodecFilter>;
@@ -68,51 +71,46 @@ fn next_id() -> u64 {
     take_id(&NEXT_ID)
 }
 
-/// Subscribe a typed handler for `E`, returning its `listener_id`. Each call adds
-/// an independent native listener, so multiple handlers may share a kind and the
-/// host routes every fire to the exact closure by its id.
 pub fn register_event<E: GuestEvent>(
     priority: EventPriority,
     mut handler: impl FnMut(&mut E) + 'static,
-) -> u64 {
+) -> Result<u64, Error> {
+    let listener = crate::host::subscribe(E::KIND, priority.value())?;
     let entry: Rc<EventEntry> = Rc::new(RefCell::new(move |ev: Event| match E::from_event(ev) {
         Some(mut typed) => {
             handler(&mut typed);
             typed.into_outcome()
         }
-        None => EventOutcome::None,
+        None => EventOutcome::Unchanged,
     }));
-    let listener = crate::host::subscribe(E::KIND, priority.value());
     EVENTS.with(|events| events.insert(listener, entry));
-    listener
+    Ok(listener)
 }
 
-/// Drop a single event handler by its `listener_id` (see [`register_event`]).
 pub fn unsubscribe_event(listener: u64) {
     let removed = EVENTS.with(|events| events.remove(listener));
-    crate::host::unsubscribe(listener);
+    let _ = crate::host::unsubscribe(listener);
     drop(removed);
 }
 
 pub fn handle_event(listener: u64, ev: Event) -> EventOutcome {
     let Some(entry) = EVENTS.with(|events| events.get(listener)) else {
-        return EventOutcome::None;
+        return EventOutcome::Unchanged;
     };
     let Ok(mut handler) = entry.try_borrow_mut() else {
-        return EventOutcome::None;
+        return EventOutcome::Unchanged;
     };
     handler(ev)
 }
 
-pub fn register_command(
-    name: &str,
-    aliases: &[String],
-    description: &str,
+pub(crate) fn register_command(
+    spec: CommandSpec,
     handler: CommandClosure,
     completer: Option<CompletionClosure>,
-) {
-    let key = name.to_lowercase();
+) -> Result<CommandRegistration, Error> {
+    let key = spec.name.to_lowercase();
     let id = next_id();
+    let registration = crate::host::register_command(&spec, id)?;
     let replaced = COMMANDS.with(|commands| {
         let previous = commands.find(|entry| entry.name == key);
         commands.insert(
@@ -125,11 +123,11 @@ pub fn register_command(
         );
         previous.and_then(|previous| commands.remove(previous))
     });
-    crate::host::register_command(name, aliases, description, id);
     drop(replaced);
+    Ok(CommandRegistration::from_wit(registration))
 }
 
-pub fn unregister_command(name: &str) -> bool {
+pub(crate) fn unregister_command(name: &str) -> Result<bool, Error> {
     let key = name.to_lowercase();
     let removed = COMMANDS.with(|commands| {
         commands
@@ -137,65 +135,86 @@ pub fn unregister_command(name: &str) -> bool {
             .and_then(|id| commands.remove(id))
     });
     let Some(removed) = removed else {
-        return false;
+        return Ok(false);
     };
-    crate::host::unregister_command(&key);
+    let answer = crate::host::unregister_command(&key);
     drop(removed);
-    true
+    answer?;
+    Ok(true)
 }
 
-pub fn handle_command(callback_id: u64, args: Vec<String>, player: Option<u64>) {
-    let Some(entry) = COMMANDS.with(|commands| commands.get(callback_id)) else {
+pub fn handle_command(handler: u64, invocation: wg::CommandInvocation) {
+    let Some(entry) = COMMANDS.with(|commands| commands.get(handler)) else {
         return;
     };
-    if let Ok(mut handler) = entry.handler.try_borrow_mut() {
-        handler(CommandInvocation { args, player });
+    if let Ok(mut run) = entry.handler.try_borrow_mut() {
+        run(CommandInvocation::from_wit(invocation));
     }
 }
 
-pub fn tab_complete(callback_id: u64, partial: Vec<String>, cursor: u32) -> Vec<String> {
-    let Some(entry) = COMMANDS.with(|commands| commands.get(callback_id)) else {
+pub fn tab_complete(
+    handler: u64,
+    sender: wg::CommandSender,
+    args: Vec<String>,
+    cursor: u32,
+) -> Vec<wg::Suggestion> {
+    let Some(entry) = COMMANDS.with(|commands| commands.get(handler)) else {
         return Vec::new();
     };
-    entry
-        .completer
-        .as_ref()
-        .map_or_else(Vec::new, |complete| complete(&partial, cursor))
+    let Some(complete) = entry.completer.as_ref() else {
+        return Vec::new();
+    };
+    let completion = Completion {
+        sender: CommandSender::from_wit(sender),
+        args,
+        cursor,
+    };
+    complete(&completion)
+        .iter()
+        .map(crate::command::Suggestion::to_wit)
+        .collect()
 }
 
-pub fn schedule_delay(after_ms: u64, task: OnceTask) -> u64 {
+pub(crate) fn schedule_delay(after_ms: u64, task: OnceTask) -> Result<u64, Error> {
     schedule(Task::Once(Cell::new(Some(task))), |id| {
         crate::host::delay(after_ms, id)
     })
 }
 
-pub fn schedule_interval(period_ms: u64, task: RepeatingTask) -> u64 {
+pub(crate) fn schedule_interval(
+    period_ms: u64,
+    initial_delay_ms: Option<u64>,
+    task: RepeatingTask,
+) -> Result<u64, Error> {
     schedule(Task::Repeating(RefCell::new(task)), |id| {
-        crate::host::interval(period_ms, id)
+        crate::host::interval(period_ms, initial_delay_ms, id)
     })
 }
 
-fn schedule(task: Task, start_on_host: impl FnOnce(u64) -> u64) -> u64 {
+fn schedule(
+    task: Task,
+    start_on_host: impl FnOnce(u64) -> Result<u64, crate::bindings::types::HostError>,
+) -> Result<u64, Error> {
     let id = next_id();
-    let host_handle = start_on_host(id);
+    let host_handle = start_on_host(id)?;
     TASKS.with(|tasks| tasks.insert(id, Rc::new(TaskEntry { host_handle, task })));
-    id
+    Ok(id)
 }
 
-pub fn cancel_task(id: u64) {
+pub(crate) fn cancel_task(id: u64) {
     let Some(removed) = TASKS.with(|tasks| tasks.remove(id)) else {
         return;
     };
-    crate::host::cancel(removed.host_handle);
+    let _ = crate::host::cancel(removed.host_handle);
 }
 
-pub fn on_scheduled_task(callback_id: u64) {
-    let Some(entry) = TASKS.with(|tasks| tasks.get(callback_id)) else {
+pub fn on_scheduled_task(handler: u64) {
+    let Some(entry) = TASKS.with(|tasks| tasks.get(handler)) else {
         return;
     };
     match &entry.task {
         Task::Once(slot) => {
-            TASKS.with(|tasks| tasks.remove(callback_id));
+            TASKS.with(|tasks| tasks.remove(handler));
             if let Some(task) = slot.take() {
                 task();
             }
@@ -208,36 +227,39 @@ pub fn on_scheduled_task(callback_id: u64) {
     }
 }
 
-pub fn on_enable<P: Plugin + Default>() -> Result<(), String> {
+pub fn on_enable<P: Plugin + Default>(reason: wg::EnableReason) -> Result<(), String> {
     let plugin = P::default();
-    let result = plugin.on_enable(&Context::new());
+    let result = plugin.on_enable(&Context::enabling(EnableReason::from_wit(reason)));
     if result.is_ok() {
         declare_codec_filters::<P>(true);
         declare_limbo_handlers::<P>();
     }
     PLUGIN.with(|p| *p.borrow_mut() = Some(Box::new(plugin)));
-    result
+    result.map_err(String::from)
 }
 
-pub fn on_disable() -> Result<(), String> {
+pub fn on_disable(reason: wg::DisableReason) -> Result<(), String> {
     let plugin = PLUGIN.with(|p| p.borrow_mut().take());
     match plugin {
-        Some(plugin) => plugin.on_disable(&Context::new()),
+        Some(plugin) => plugin
+            .on_disable(&Context::disabling(DisableReason::from_wit(reason)))
+            .map_err(String::from),
         None => Ok(()),
     }
 }
 
-pub fn register_codec_factory(
+pub(crate) fn register_codec_factory(
     notify: bool,
-    metadata: crate::bindings::codec_registry::CodecFilterMetadata,
+    metadata: CodecFilterMetadata,
     constructor: FilterConstructor,
 ) {
     let id = take_id(&NEXT_CODEC_FACTORY);
     CODEC_FACTORIES.with(|factories| factories.insert(id, Rc::from(constructor)));
     if notify {
-        crate::host::register_codec_filter(&metadata, id);
+        let _ = crate::host::register_codec_filter(&metadata, id);
     }
 }
+
 fn declare_codec_filters<P: Plugin>(notify: bool) {
     if CODEC_DECLARED.with(Cell::get) {
         return;
@@ -247,10 +269,13 @@ fn declare_codec_filters<P: Plugin>(notify: bool) {
     CODEC_DECLARED.with(|c| c.set(true));
 }
 
-pub fn register_limbo_handler(name: &str, handler: Box<dyn LimboHandler>) {
+pub(crate) fn register_limbo_handler(name: &str, handler: Box<dyn LimboHandler>) {
     let id = next_id();
     LIMBO_HANDLERS.with(|handlers| handlers.insert(id, Rc::from(handler)));
-    crate::host::register_limbo_handler(name, id);
+    if crate::host::register_limbo_handler(name, id).is_err() {
+        let refused = LIMBO_HANDLERS.with(|handlers| handlers.remove(id));
+        drop(refused);
+    }
 }
 
 fn with_limbo_handler<R>(
@@ -273,10 +298,7 @@ fn declare_limbo_handlers<P: Plugin>() {
     LIMBO_DECLARED.with(|c| c.set(true));
 }
 
-pub fn limbo_on_player_enter(
-    handler: u64,
-    session: &crate::bindings::guest::LimboSession,
-) -> crate::bindings::guest::HandlerResult {
+pub fn limbo_on_player_enter(handler: u64, session: &wg::LimboSession) -> wg::HandlerResult {
     with_limbo_handler(
         handler,
         || HandlerOutcome::Accept.into_wit(),
@@ -286,7 +308,7 @@ pub fn limbo_on_player_enter(
 
 pub fn limbo_on_command(
     handler: u64,
-    session: &crate::bindings::guest::LimboSession,
+    session: &wg::LimboSession,
     command: String,
     args: Vec<String>,
 ) {
@@ -297,11 +319,7 @@ pub fn limbo_on_command(
     );
 }
 
-pub fn limbo_on_chat(
-    handler: u64,
-    session: &crate::bindings::guest::LimboSession,
-    message: String,
-) {
+pub fn limbo_on_chat(handler: u64, session: &wg::LimboSession, message: String) {
     with_limbo_handler(
         handler,
         || (),
@@ -310,22 +328,24 @@ pub fn limbo_on_chat(
 }
 
 pub fn limbo_on_disconnect(handler: u64, player: u64) {
-    with_limbo_handler(handler, || (), |hdlr| hdlr.on_disconnect(player));
-}
-
-pub fn limbo_on_session_end(
-    handler: u64,
-    player: u64,
-    reason: crate::bindings::guest::SessionEndReason,
-) {
     with_limbo_handler(
         handler,
         || (),
-        |hdlr| hdlr.on_session_end(player, crate::limbo::SessionEndReason::from_wit(reason)),
+        |hdlr| hdlr.on_disconnect(PlayerId::new(player)),
     );
 }
-pub fn create_codec_filter<P: Plugin>(factory: u64, init: CodecSessionInit) -> FilterInstanceProxy {
+
+pub fn limbo_on_session_end(handler: u64, player: u64, reason: wg::SessionEndReason) {
+    with_limbo_handler(
+        handler,
+        || (),
+        |hdlr| hdlr.on_session_end(PlayerId::new(player), SessionEndReason::from_wit(reason)),
+    );
+}
+
+pub fn create_codec_filter<P: Plugin>(factory: u64, init: WitSessionInit) -> FilterInstanceProxy {
     declare_codec_filters::<P>(false);
+    let init = CodecSessionInit::from_wit(init);
     let inner = CODEC_FACTORIES
         .with(|factories| factories.get(factory))
         .map(|construct| construct(&init));

@@ -6,7 +6,7 @@ outline: [2, 3]
 
 # Getting Started with WASM Plugins
 
-This tutorial builds a sandboxed WASM plugin that logs when players join and registers a `/hello` command. By the end you have a `.wasm` component that Infrarust loads at startup. The plugin runs in a wasmtime sandbox against the `infrarust:plugin@0.2.3` contract, separate from the proxy binary.
+This tutorial builds a sandboxed WASM plugin that logs when players join and registers a `/hello` command. By the end you have a `.wasm` component that Infrarust loads at startup. The plugin runs in a wasmtime sandbox against the `infrarust:plugin@0.3.0` contract, separate from the proxy binary.
 
 ::: info Native plugins are different
 The native plugin API (`infrarust-api`, `BoxFuture`, statically compiled into the proxy) is a separate system. The WASM guest `Plugin` trait is synchronous and the build, packaging, and capability model differ. For the native path see [Getting Started with Plugin Development](../dev/getting-started).
@@ -54,6 +54,8 @@ cargo generate --git https://github.com/Shadowner/Infrarust.git templates/plugin
 The template's `src/lib.rs` is the plugin in full:
 
 ```rust
+#![forbid(unsafe_code)]
+
 use infrarust_plugin_sdk::prelude::*;
 
 #[derive(Default)] // [!code focus]
@@ -61,24 +63,25 @@ struct MyPlugin;
 
 #[plugin] // [!code focus]
 impl Plugin for MyPlugin {
-    fn on_enable(&self, ctx: &Context) -> Result<(), String> { // [!code focus]
-        // React to players joining.
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> { // [!code focus]
         ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
-            info!("{} joined", event.profile.username);
-        });
+            info!("{} joined", event.player.username);
+        })?;
 
-        // Register a "/hello [name]" command.
-        ctx.command("hello", |invocation| {
-            let who = invocation.args.first().map_or("world", String::as_str);
-            info!("hello, {who}!");
-        })
-        .description("Say hello")
-        .register();
+        ctx.command("hello")
+            .description("Say hello")
+            .handler(|invocation| {
+                let who = invocation.args.first().map_or("world", String::as_str);
+                let _ = invocation.reply(Component::text(format!("hello, {who}!")));
+            })
+            .register()?;
 
         Ok(())
     }
 }
 ```
+
+`#![forbid(unsafe_code)]` holds for the whole crate: the SDK needs no `unsafe` from you, the generated export glue included.
 
 Four pieces do the work.
 
@@ -88,54 +91,61 @@ The struct holds plugin state and must implement `Default`; the `#[plugin]` macr
 
 ### The `#[plugin]` attribute
 
-`#[plugin]` turns the `impl Plugin` block into a loadable component: it generates the WIT `Guest` glue and the component `export!`. It also derives `metadata()` from `Cargo.toml` (`CARGO_PKG_NAME`, `CARGO_PKG_VERSION`, `CARGO_PKG_AUTHORS`, `CARGO_PKG_DESCRIPTION`). Override individual fields inline when the crate name is not the id you want:
+`#[plugin]` turns the `impl Plugin` block into a loadable component: it generates the WIT `Guest` glue and the component `export!`. It also derives `metadata()` from `Cargo.toml` (`CARGO_PKG_NAME`, `CARGO_PKG_VERSION`, `CARGO_PKG_AUTHORS`, `CARGO_PKG_DESCRIPTION`). Override individual fields inline when the crate name is not the id you want, and declare the plugins yours depends on:
 
 ```rust
-#[plugin(id = "hello", name = "Hello", description = "Logs joins, adds /hello")]
+#[plugin(
+    id = "hello",
+    name = "Hello",
+    description = "Logs joins, adds /hello",
+    depends = ["auth"],
+    soft_depends = ["stats"],
+)]
 impl Plugin for MyPlugin { /* ... */ }
 ```
 
-The `id` is what you reference in config. It defaults to `CARGO_PKG_NAME`, not the `.wasm` file name.
+The `id` is what you reference in config. It defaults to `CARGO_PKG_NAME`, not the `.wasm` file name. The macro checks every id at compile time: lowercase letters, digits, `-` and `_`, starting with a letter or a digit, at most 64 characters. `depends` names plugins that must be enabled first; `soft_depends` names plugins to enable first when they are present.
 
 ### `on_enable`
 
-The guest `Plugin` trait is synchronous and reports errors as `String`:
+The guest `Plugin` trait is synchronous and reports errors as `PluginError`:
 
 ```rust
-fn on_enable(&self, ctx: &Context) -> Result<(), String>;
+fn on_enable(&self, ctx: &Context) -> Result<(), PluginError>;
 ```
 
-Returning `Err(message)` aborts enabling the plugin. Register every event handler, command, and scheduled task here. The optional `on_disable(&self, ctx: &Context) -> Result<(), String>` runs at shutdown and defaults to `Ok(())`.
+`PluginError` converts from `String`, `&str`, `std::io::Error` and the SDK's `Error`, so `?` works on every host call. Returning an error aborts enabling the plugin. Register every event handler, command, and scheduled task here. The optional `on_disable(&self, ctx: &Context) -> Result<(), PluginError>` runs at shutdown and defaults to `Ok(())`. `ctx.enable_reason()` and `ctx.disable_reason()` tell why each one runs.
 
 ### Subscribing to an event
 
-`ctx.on::<E>` subscribes a handler for a typed event. `PostLoginEvent` fires after a player authenticates; its `profile.username` field is the player name. The handler is `FnMut(&mut E)`. `EventPriority` orders handlers when several listen to the same kind (`First`, `Early`, `Normal`, `Late`, `Last`, or `Custom(u8)`).
+`ctx.on::<E>` subscribes a handler for a typed event. `PostLoginEvent` fires after a player authenticates; its `player` field is a `PlayerRef` with the player's `id`, `uuid` and `username`. The handler is `FnMut(&mut E)`. `EventPriority` orders handlers when several listen to the same kind (`First`, `Early`, `Normal`, `Late`, `Last`, or `Custom(u8)`). `on` returns an error when the host refuses the subscription, and the `?` turns that into a failed enable.
 
 ```rust
 ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
-    info!("{} joined", event.profile.username);
-});
+    info!("{} joined", event.player.username);
+})?;
 ```
 
-The SDK exposes a subset of the event kinds in the WIT contract. See [Events](./events) for the full list of what the SDK exposes.
+See [Events](./events) for every event the SDK exposes.
 
 ### Registering a command
 
-`ctx.command` returns a builder. Chain `.description(...)` and finish with `.register()`. The handler receives a `CommandInvocation { args: Vec<String>, player: Option<u64> }`, where `player` is `None` for console.
+`ctx.command` returns a builder. Chain `.description(...)` and `.handler(...)`, and finish with `.register()`, which answers what the host registered or an error. The handler receives a `CommandInvocation` with the `label`, the `args`, the `raw` line and the `sender`, a player or the console. `invocation.reply(...)` answers the sender.
 
 ```rust
-ctx.command("hello", |invocation| {
-    let who = invocation.args.first().map_or("world", String::as_str);
-    info!("hello, {who}!");
-})
-.description("Say hello")
-.register();
+ctx.command("hello")
+    .description("Say hello")
+    .handler(|invocation| {
+        let who = invocation.args.first().map_or("world", String::as_str);
+        let _ = invocation.reply(Component::text(format!("hello, {who}!")));
+    })
+    .register()?;
 ```
 
 See [Commands](./commands) for aliases and tab completion.
 
 :::details Getting a Context inside a callback
-`Context` is a zero-sized handle to the guest runtime. Callbacks that do not receive a `&Context` (for example a limbo handler that wants to schedule a task) can construct one for free with `Context::new()`.
+`Context` is a cheap handle to the guest runtime. Callbacks that do not receive a `&Context` (for example a limbo handler that wants to schedule a task) can construct one with `Context::new()`.
 :::
 
 The `info!`, `warn!`, `error!`, `debug!`, and `trace!` macros forward formatted messages to the host log.

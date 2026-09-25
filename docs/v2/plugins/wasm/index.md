@@ -12,7 +12,7 @@ Infrarust is in beta, and the plugin API is not stable yet. The `infrarust:plugi
 
 A WASM plugin is a WebAssembly Component, built for the `wasm32-wasip2` target, that Infrarust loads at runtime from its plugins directory. The host runs each plugin inside a sandbox and grants it only the capabilities its config declares. You write the plugin against [`infrarust-plugin-sdk`](./api-reference), which generates the host/guest glue so you never touch the raw `wit-bindgen` surface.
 
-The host/guest contract is the WIT world `infrarust:plugin@0.2.3`. The SDK implements the guest side of that contract and exposes a small, typed API: implement the `Plugin` trait, subscribe to events, register commands and scheduled tasks, and call host services.
+The host/guest contract is the WIT world `infrarust:plugin@0.3.0`. The SDK implements the guest side of that contract and exposes a typed API that mirrors the native one: implement the `Plugin` trait, subscribe to events, register commands and scheduled tasks, and call host services. Players are addressed by `PlayerId`, text is a `Component` tree, and every host call that can fail returns `Result<_, Error>`.
 
 ```rust
 use infrarust_plugin_sdk::prelude::*;
@@ -20,20 +20,20 @@ use infrarust_plugin_sdk::prelude::*;
 #[derive(Default)]
 struct MyPlugin;
 
-#[plugin]
+#[plugin(id = "my-plugin", name = "My Plugin")]
 impl Plugin for MyPlugin {
-    fn metadata(&self) -> PluginMetadata {
-        PluginMetadata::new("my-plugin", "My Plugin", "0.1.0")
-    }
-
-    fn on_enable(&self, ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
         ctx.on::<PostLoginEvent>(EventPriority::Normal, |e| {
-            info!("{} joined", e.profile.username);
-        });
+            info!("{} joined", e.player.username);
+        })?;
         Ok(())
     }
 }
 ```
+
+:::warning Upgrading from 0.2.3
+The proxy refuses components built for `infrarust:plugin@0.2.3` with a message asking for a rebuild. See [Migrating to 0.3](./migration-0.3) for every change.
+:::
 
 :::tip New here?
 Start with [Getting Started](./getting-started) for a full build-and-run walkthrough, then come back to this page to pick the feature you need.
@@ -73,29 +73,29 @@ See [Capabilities](./capabilities) for the full table and what each one unlocks.
 
 ### React to events
 
-Subscribe to lifecycle, connection, and chat events with a priority and a closure. Observe-only events let you read what happened; the modifiable events let a handler deny, redirect, or rewrite the outcome.
+Subscribe to lifecycle, connection, chat and proxy events with a priority and a closure. Observe-only events let you read what happened; the resulted events carry the current result, set by earlier handlers, and let a handler deny, redirect, rewrite or reset it.
 
 ```rust
 ctx.on::<ChatMessageEvent>(EventPriority::Normal, |e| {
     if e.message.contains("spam") {
-        e.deny("blocked");
+        e.deny(Component::text("blocked").color(NamedColor::Red));
     }
-});
+})?;
 ```
 
 The `event-bus` capability is part of the baseline, so any plugin can react to events. Chat is the exception: a `ChatMessageEvent` handler like the one above needs the opt-in `chat-intercept` capability. See [Events](./events) for the kinds the SDK exposes.
 
 ### Add commands
 
-Register proxy-level chat commands. A command handler receives the parsed arguments and the player who ran it.
+Register proxy-level chat commands. A command handler receives the parsed arguments and who ran it, and can reply.
 
 ```rust
-ctx.command("greet", |inv: CommandInvocation| {
-    if let Some(id) = inv.player {
-        info!("greet from player {id} with args {:?}", inv.args);
-    }
-})
-.register();
+ctx.command("greet")
+    .description("Say hello")
+    .handler(|inv| {
+        let _ = inv.reply(format!("hello, {}!", inv.sender.name()));
+    })
+    .register()?;
 ```
 
 The `command` capability is baseline. See [Commands](./commands).
@@ -114,12 +114,12 @@ See [Limbo](./limbo).
 
 ### Call host services
 
-Read the player registry, manage servers, query config, and use the ban service through typed accessors. Each accessor maps to a host import gated by a capability. `Players` and `Config` reads are baseline, while `Servers` start/stop needs `server-manage` and `Bans` needs `ban`.
+Read the player registry, manage servers, query config, and use the ban service through typed accessors. Each accessor maps to a host import gated by a capability. `Players` and `Config` reads are baseline, while `Servers` needs `server-manage` and `Bans` needs `ban`. A call the plugin lacks the capability for returns an `Error` of kind `PermissionDenied`.
 
 ```rust
-let online = Players.online_count();
-if let Some(player) = Players.get_by_name("Notch") {
-    // act on the player
+let online = Players::count();
+if let Some(notch) = Players::by_name("Notch") {
+    notch.handle().send_message("hi")?;
 }
 ```
 
@@ -138,7 +138,7 @@ flowchart LR
 
 The plugin runs single-threaded with no async runtime. Keep mutable state in `Cell` or `RefCell` fields rather than across threads. Read the [Architecture](./architecture) page for how the host instances, the sync codec path, and the async limbo instance fit together.
 
-If the plugin traps or runs past its limits, the host replaces its instance with a fresh one and runs `on_enable` again, so anything kept only in memory is lost. Persist what matters to the data directory. See the [Fault Model](./fault-model).
+If the plugin traps or runs past its limits, the host replaces its instance with a fresh one and runs `on_enable` again, with `ctx.enable_reason()` reporting the recovery, so anything kept only in memory is lost. Persist what matters to the data directory. See the [Fault Model](./fault-model).
 
 ## Section map
 
@@ -158,6 +158,7 @@ If the plugin traps or runs past its limits, the host replaces its instance with
 | [Virtual Backend](./virtual-backend) | Serving a backend from a plugin (planned). |
 | [API Reference](./api-reference) | The full SDK surface. |
 | [Examples](./examples) | Complete sample plugins. |
+| [Migrating to 0.3](./migration-0.3) | What changed from the 0.2.3 contract and how to port a plugin. |
 
 :::warning Planned, not implemented
 Virtual Backend is not implemented. The native traits and the `virtual-backend` capability exist, but the capability is unenforced and there is no WASM bridge. Treat [Virtual Backend](./virtual-backend) as a design preview.

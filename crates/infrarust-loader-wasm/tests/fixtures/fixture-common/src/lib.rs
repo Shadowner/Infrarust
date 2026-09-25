@@ -1,4 +1,3 @@
-//! Shared boilerplate for the raw-`wit_bindgen` sandbox fixtures.
 #[allow(clippy::crate_in_macro_def)]
 #[macro_export]
 macro_rules! raw_fixture {
@@ -20,30 +19,34 @@ macro_rules! raw_fixture {
                     dependencies: ::std::vec::Vec::new(),
                 }
             }
-            fn on_enable() -> ::core::result::Result<(), ::std::string::String> $on_enable
-            fn on_disable() -> ::core::result::Result<(), ::std::string::String> {
+            fn on_enable(
+                _reason: crate::exports::infrarust::plugin::guest::EnableReason,
+            ) -> ::core::result::Result<(), ::std::string::String> $on_enable
+            fn on_disable(
+                _reason: crate::exports::infrarust::plugin::guest::DisableReason,
+            ) -> ::core::result::Result<(), ::std::string::String> {
                 ::core::result::Result::Ok(())
             }
             fn handle_event(
                 _listener: u64,
                 _ev: crate::exports::infrarust::plugin::guest::Event,
             ) -> crate::exports::infrarust::plugin::guest::EventOutcome {
-                crate::exports::infrarust::plugin::guest::EventOutcome::None
+                crate::exports::infrarust::plugin::guest::EventOutcome::Unchanged
             }
             fn handle_command(
-                _callback_id: u64,
-                _args: ::std::vec::Vec<::std::string::String>,
-                _player: ::core::option::Option<u64>,
+                _handler: u64,
+                _invocation: crate::exports::infrarust::plugin::guest::CommandInvocation,
             ) {
             }
             fn tab_complete(
-                _callback_id: u64,
-                _partial: ::std::vec::Vec<::std::string::String>,
+                _handler: u64,
+                _sender: crate::exports::infrarust::plugin::guest::CommandSender,
+                _args: ::std::vec::Vec<::std::string::String>,
                 _cursor: u32,
-            ) -> ::std::vec::Vec<::std::string::String> {
+            ) -> ::std::vec::Vec<crate::exports::infrarust::plugin::guest::Suggestion> {
                 ::std::vec::Vec::new()
             }
-            fn on_scheduled_task(_callback_id: u64) {}
+            fn on_scheduled_task(_handler: u64) {}
             fn limbo_on_player_enter(
                 _handler: u64,
                 _session: &crate::exports::infrarust::plugin::guest::LimboSession,
@@ -69,14 +72,6 @@ macro_rules! raw_fixture {
                 _player: u64,
                 _reason: crate::exports::infrarust::plugin::guest::SessionEndReason,
             ) {
-            }
-            fn permission_level_of(
-                _handler: u64,
-            ) -> crate::exports::infrarust::plugin::guest::PermissionLevel {
-                crate::exports::infrarust::plugin::guest::PermissionLevel::Player
-            }
-            fn check_permission(_handler: u64, _permission: ::std::string::String) -> bool {
-                false
             }
         }
 

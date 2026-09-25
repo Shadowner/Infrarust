@@ -13,7 +13,7 @@ pub enum EventName {
     PermissionsSetup,
     ServerPreConnect,
     ServerConnected,
-    ServerSwitch,
+    ServerPostConnect,
     KickedFromServer,
     PlayerChooseInitialServer,
     ProxyPing,
@@ -22,10 +22,11 @@ pub enum EventName {
     ConfigReload,
     ServerStateChange,
     ChatMessage,
+    BackendHealth,
 }
 
 impl EventName {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::PreLogin,
         Self::PostLogin,
         Self::Disconnect,
@@ -33,7 +34,7 @@ impl EventName {
         Self::PermissionsSetup,
         Self::ServerPreConnect,
         Self::ServerConnected,
-        Self::ServerSwitch,
+        Self::ServerPostConnect,
         Self::KickedFromServer,
         Self::PlayerChooseInitialServer,
         Self::ProxyPing,
@@ -42,6 +43,7 @@ impl EventName {
         Self::ConfigReload,
         Self::ServerStateChange,
         Self::ChatMessage,
+        Self::BackendHealth,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -53,7 +55,7 @@ impl EventName {
             Self::PermissionsSetup => "permissions-setup",
             Self::ServerPreConnect => "server-pre-connect",
             Self::ServerConnected => "server-connected",
-            Self::ServerSwitch => "server-switch",
+            Self::ServerPostConnect => "server-post-connect",
             Self::KickedFromServer => "kicked-from-server",
             Self::PlayerChooseInitialServer => "player-choose-initial-server",
             Self::ProxyPing => "proxy-ping",
@@ -62,6 +64,7 @@ impl EventName {
             Self::ConfigReload => "config-reload",
             Self::ServerStateChange => "server-state-change",
             Self::ChatMessage => "chat-message",
+            Self::BackendHealth => "backend-health",
         }
     }
 
@@ -239,6 +242,26 @@ pub fn event_line(event: EventName, priority: u8, fields: &[&str]) -> String {
         line.push_str(field);
     }
     line
+}
+
+pub fn or_dash(value: Option<&str>) -> &str {
+    value.unwrap_or("-")
+}
+
+pub fn joined<I, S>(items: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let items: Vec<String> = items
+        .into_iter()
+        .map(|item| item.as_ref().to_owned())
+        .collect();
+    if items.is_empty() {
+        "-".to_owned()
+    } else {
+        items.join(",")
+    }
 }
 
 pub fn command_line(name: &str, args: &[String], player: Option<u64>) -> String {

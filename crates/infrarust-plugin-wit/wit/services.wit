@@ -1,101 +1,127 @@
-// Host service interfaces. "host-async": bound async on the host so the guest
-// fiber suspends during I/O. "gated: X": only linked when the plugin holds
-// capability X.
-
-interface player-registry {
-    use types.{player-id, server-id, uuid, game-profile, protocol-version,
-               component, title-data, raw-packet, permission-level, player-error};
-
-    resource player {
-        id: func() -> player-id;
-        profile: func() -> game-profile;
-        protocol-version: func() -> protocol-version;
-        remote-addr: func() -> string;
-        current-server: func() -> option<server-id>;
-        is-connected: func() -> bool;
-        is-active: func() -> bool;
-
-        disconnect: func(reason: component);                                  // host-async
-        send-message: func(message: component) -> result<_, player-error>;
-        send-title: func(title: title-data) -> result<_, player-error>;
-        send-action-bar: func(message: component) -> result<_, player-error>;
-        send-packet: func(packet: raw-packet) -> result<_, player-error>;     // gated: raw-packet
-        switch-server: func(target: server-id) -> result<_, player-error>;    // host-async
-
-        is-online-mode: func() -> bool;
-        permission-level: func() -> permission-level;
-        has-permission: func(permission: string) -> bool;
-        connected-at: func() -> u64;
-    }
-
-    get-player: func(username: string) -> option<player>;
-    get-player-by-uuid: func(player-uuid: uuid) -> option<player>;
-    get-player-by-id: func(id: player-id) -> option<player>;
-    get-players-on-server: func(server: server-id) -> list<player>;
-    get-all-players: func() -> list<player>;
-    online-count: func() -> u32;
-    online-count-on: func(server: server-id) -> u32;
-}
-
-interface server-manager {                                                    // gated: server-manage
-    use types.{server-id, server-state, service-error};
-
-    get-state: func(server: server-id) -> option<server-state>;
-    start: func(server: server-id) -> result<_, service-error>;              // host-async
-    stop: func(server: server-id) -> result<_, service-error>;               // host-async
-    get-all-servers: func() -> list<tuple<server-id, server-state>>;
-}
-
-interface ban-service {                                                       // gated: ban
-    use types.{ban-target, ban-entry, service-error};
-
-    ban: func(target: ban-target, reason: option<string>, duration-ms: option<u64>) -> result<_, service-error>;  // host-async
-    unban: func(target: ban-target) -> result<bool, service-error>;          // host-async
-    is-banned: func(target: ban-target) -> result<bool, service-error>;      // host-async
-    get-ban: func(target: ban-target) -> result<option<ban-entry>, service-error>;  // host-async
-    get-all-bans: func() -> result<list<ban-entry>, service-error>;          // host-async
-}
-
-interface config-service {                                                    // gated: config-read
-    use types.{server-id, server-config};
-
-    get-server-config: func(server: server-id) -> option<server-config>;
-    get-all-server-configs: func() -> list<server-config>;
-    get-value: func(key: string) -> option<string>;
-}
-
-interface command-manager {                                                   // gated: command
-    register: func(name: string, aliases: list<string>, description: string, callback-id: u64);
-    unregister: func(name: string);
-}
-
-interface codec-registry {                                                    // gated: codec-filter
-    use types.{handler-id};
-
-    // Flat metadata (no &'static str on the wire). priority: 0=first .. 4=last.
-    record codec-filter-metadata {
-        id: string,
-        priority: u8,
-        after: list<string>,
-        before: list<string>,
-    }
-
-    register-codec-filter: func(metadata: codec-filter-metadata, factory: handler-id);
-    unregister-codec-filter: func(id: string);
-}
-
-interface scheduler {                                                         // gated: scheduler
-    use types.{task-handle};
-
-    delay: func(after-ms: u64, callback-id: u64) -> task-handle;
-    interval: func(period-ms: u64, callback-id: u64) -> task-handle;
-    cancel: func(handle: task-handle);
-}
-
 interface log {
     trace: func(message: string);
     debug: func(message: string);
     info: func(message: string);
     warn: func(message: string);
     error: func(message: string);
+}
+
+interface server-manager {
+    use types.{server-id, server-state, host-error};
+
+    record server-status {
+        server: server-id,
+        state: server-state,
+    }
+
+    get-state: func(server: server-id) -> result<option<server-state>, host-error>;
+    start: func(server: server-id) -> result<_, host-error>;
+    stop: func(server: server-id) -> result<_, host-error>;
+    %list: func() -> result<list<server-status>, host-error>;
+}
+
+interface ban-service {
+    use types.{uuid, ip-address, duration-ms, timestamp-ms, host-error};
+
+    variant ban-target {
+        ip(ip-address),
+        ip-range(string),
+        username(string),
+        uuid(uuid),
+    }
+
+    record ban-request {
+        target: ban-target,
+        reason: option<string>,
+        duration-ms: option<duration-ms>,
+        kick: bool,
+        silent: bool,
+    }
+
+    record ban-entry {
+        id: string,
+        target: ban-target,
+        reason: option<string>,
+        source: string,
+        created-at: timestamp-ms,
+        expires-at: option<timestamp-ms>,
+    }
+
+    record ban-page {
+        entries: list<ban-entry>,
+        next-cursor: option<string>,
+    }
+
+    ban: func(request: ban-request) -> result<ban-entry, host-error>;
+    unban: func(target: ban-target) -> result<option<ban-entry>, host-error>;
+    get: func(target: ban-target) -> result<option<ban-entry>, host-error>;
+    %list: func(cursor: option<string>, limit: u32) -> result<ban-page, host-error>;
+}
+
+interface config-service {
+    use types.{server-id, server-address, proxy-mode, host-error};
+
+    record server-config {
+        id: server-id,
+        network: option<string>,
+        addresses: list<server-address>,
+        domains: list<string>,
+        proxy-mode: proxy-mode,
+        limbo-handlers: list<string>,
+        max-players: u32,
+        disconnect-message: option<string>,
+        send-proxy-protocol: bool,
+        has-server-manager: bool,
+    }
+
+    get-value: func(key: string) -> result<option<string>, host-error>;
+    get-server: func(server: server-id) -> result<option<server-config>, host-error>;
+    list-servers: func() -> result<list<server-config>, host-error>;
+}
+
+interface command-manager {
+    use types.{handler-id, host-error};
+
+    record command-spec {
+        name: string,
+        aliases: list<string>,
+        description: string,
+        usage: option<string>,
+        permission: option<string>,
+        hidden: bool,
+    }
+
+    record command-registration {
+        name: string,
+        namespaced: string,
+        aliases: list<string>,
+        rejected-aliases: list<string>,
+    }
+
+    register: func(spec: command-spec, handler: handler-id) -> result<command-registration, host-error>;
+    unregister: func(name: string) -> result<_, host-error>;
+}
+
+interface scheduler {
+    use types.{task-handle, handler-id, duration-ms, host-error};
+
+    delay: func(after: duration-ms, handler: handler-id) -> result<task-handle, host-error>;
+    interval: func(period: duration-ms, initial-delay: option<duration-ms>, handler: handler-id) -> result<task-handle, host-error>;
+    cancel: func(handle: task-handle) -> result<_, host-error>;
+}
+
+interface codec-registry {
+    use types.{handler-id, host-error};
+
+    enum filter-priority { first, early, normal, late, last }
+
+    record codec-filter-metadata {
+        id: string,
+        priority: filter-priority,
+        after: list<string>,
+        before: list<string>,
+    }
+
+    register-codec-filter: func(metadata: codec-filter-metadata, factory: handler-id) -> result<_, host-error>;
+    unregister-codec-filter: func(id: string) -> result<_, host-error>;
 }

@@ -6,7 +6,7 @@ outline: [2, 3]
 
 # WASM Plugin Lifecycle
 
-A WASM plugin passes through five stages: discovery, ahead-of-time compilation, metadata probing, load, and enable. After enabling, the host dispatches events and callbacks into the guest until the plugin is disabled. A fault after enabling replaces the instance with a fresh one; see [Fault model](./fault-model). This page describes each stage against the loader source.
+A WASM plugin passes through six stages: discovery, ahead-of-time compilation, the contract check, metadata probing, load, and enable. After enabling, the host dispatches events and callbacks into the guest until the plugin is disabled. A fault after enabling replaces the instance with a fresh one; see [Fault model](./fault-model). This page describes each stage against the loader source.
 
 ## State diagram
 
@@ -14,7 +14,9 @@ A WASM plugin passes through five stages: discovery, ahead-of-time compilation, 
 stateDiagram-v2
     [*] --> Discovered: scan *.wasm
     Discovered --> Compiled: AOT compile / cache hit
-    Compiled --> Probed: metadata() in probe context
+    Compiled --> Checked: guest export is infrarust:plugin@0.3.x
+    Compiled --> Refused: older or unknown contract
+    Checked --> Probed: metadata() in probe context
     Probed --> Loaded: check imports, instantiate
     Loaded --> Enabled: on_enable() (guest registers handlers)
     Enabled --> Enabled: dispatch events / callbacks
@@ -27,6 +29,7 @@ stateDiagram-v2
     Loaded --> Failed: fault in the first on_enable()
     Disabled --> [*]
     Failed --> [*]
+    Refused --> [*]
 ```
 
 ## Discovery
@@ -56,7 +59,7 @@ The cache key is a SHA-256 hash of the component bytes mixed with two version ta
 |-----|----------|-------|
 | Cache subdirectory | `CACHE_SUBDIR` | `.cache` |
 | wasmtime line marker | `WASMTIME_CACHE_TAG` | `wasmtime-45` |
-| WIT world version | `WORLD_VERSION` | `0.2.3` |
+| WIT world version | `WORLD_VERSION` | `0.3.0` |
 
 ```rust
 // AotCache::cache_key in cache.rs
@@ -64,22 +67,34 @@ hasher.update(wasm);
 hasher.update(b"\0");
 hasher.update(WASMTIME_CACHE_TAG.as_bytes()); // wasmtime-45
 hasher.update(b"\0");
-hasher.update(WORLD_VERSION.as_bytes());      // 0.2.3
+hasher.update(WORLD_VERSION.as_bytes());      // 0.3.0
 ```
 
 A change to the component bytes, the wasmtime tag, or the world version produces a different key, so the artifact is recompiled. A stale or corrupt `.cwasm` is removed and rebuilt on the next load.
 
 :::info
-The frozen WIT contract is `infrarust:plugin@0.2.3`. The `WORLD_VERSION` constant in `plugin-wit/src/lib.rs` still reads `0.2.0` and is stale; the cache key in `consts.rs` carries the current `0.2.3`.
+The WIT contract is `infrarust:plugin@0.3.0`. `WORLD_VERSION` in `infrarust-plugin-wit` is the single source for that version: the loader's cache key and contract check both read it, and a test keeps it equal to the package declaration in `wit/world.wit`.
 :::
 
 :::warning
 The loader writes `.cwasm` files atomically into its own cache directory and deserializes only artifacts it produced. Never place a hand-written `.cwasm` in `.cache`; deposit `*.wasm` and let the loader compile it.
 :::
 
+## Contract check
+
+Before anything runs, the loader reads which contract the component was built for: the version in the name of its `infrarust:plugin/guest@X.Y.Z` export. It accepts `0.3.M` when `M` is at most the host's patch version, so a host at `0.3.0` loads `0.3.0` plugins only.
+
+| Component | Result |
+|-----------|--------|
+| Exports `infrarust:plugin/guest@0.3.0` | Continues to the metadata probe |
+| Exports `infrarust:plugin/guest@0.2.3`, or any other version | Refused: `plugin built for infrarust:plugin@0.2.3; this host supports infrarust:plugin@0.3.x, rebuild it with an infrarust-plugin-sdk that targets infrarust:plugin@0.3.x` |
+| Exports no `infrarust:plugin/guest` interface | Refused: `not an Infrarust plugin component` |
+
+Both refusals are `LoaderError::InvalidFormat` and name the file. See [Migrating to 0.3](./migration-0.3).
+
 ## Metadata probe
 
-Before a plugin is loaded with capabilities, the loader instantiates the compiled component in a minimal probe context and calls the guest `metadata()` export. The probe context grants no capabilities (`CapabilitySet::default()`) and no plugin context.
+Before a plugin is loaded with capabilities, the loader instantiates the compiled component in a minimal probe context and calls the guest `metadata()` export. The probe context grants no capabilities (`CapabilitySet::default()`) and no plugin context: a host call made from `metadata()` returns `Unavailable` or a neutral value.
 
 ```rust
 // extract_metadata in metadata.rs
@@ -98,7 +113,7 @@ The returned record populates the native `PluginMetadata`:
 | `version` | `wit_md.version` | |
 | `authors` | `wit_md.authors` | Each appended via `.author(...)` |
 | `description` | `wit_md.description` | Optional |
-| `dependencies` | `wit_md.dependencies` | `optional: true` becomes an optional dependency, otherwise a hard dependency |
+| `dependencies` | `wit_md.dependencies` | `optional: true` becomes an optional dependency, otherwise a hard dependency. The `#[plugin]` macro fills them from `depends` and `soft_depends` |
 
 A trap in `metadata()` fails the probe with a `Metadata` error and the plugin is not registered.
 
@@ -139,40 +154,43 @@ See [Capabilities](./capabilities) for which capabilities are granted by default
 
 ## Enable
 
-`on_enable` is the synchronous guest entry point where the plugin registers everything it needs. The guest `Plugin` trait is synchronous and returns `Result<(), String>`:
+`on_enable` is the synchronous guest entry point where the plugin registers everything it needs. The guest `Plugin` trait is synchronous and returns `Result<(), PluginError>`:
 
 ```rust
 // SDK guest trait (infrarust-plugin-sdk)
 pub trait Plugin: 'static {
     fn metadata(&self) -> PluginMetadata;
-    fn on_enable(&self, ctx: &Context) -> Result<(), String>;
-    fn on_disable(&self, _ctx: &Context) -> Result<(), String> { Ok(()) }
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError>;
+    fn on_disable(&self, _ctx: &Context) -> Result<(), PluginError> { Ok(()) }
     fn register_codec_filters(_reg: &mut CodecRegistrar) where Self: Sized {}
     fn register_limbo_handlers(_reg: &mut LimboRegistrar) where Self: Sized {}
 }
 ```
 
-Inside `on_enable` the plugin uses the `Context` to subscribe to events, register commands, and schedule tasks:
+`PluginError` converts from `String`, `&str`, `std::io::Error` and the SDK's `Error`, so `?` works on every host call. Inside `on_enable` the plugin uses the `Context` to subscribe to events, register commands, and schedule tasks:
 
 ```rust
-fn on_enable(&self, ctx: &Context) -> Result<(), String> {
-    ctx.on(EventPriority::Normal, |e: &mut PostLoginEvent| {
+fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
+    ctx.on::<PostLoginEvent>(EventPriority::Normal, |e| {
         // observe a login
-    });
+    })?;
 
-    ctx.command("greet", |inv: CommandInvocation| {
-        // handle /greet
-    })
-    .description("Send a greeting")
-    .register();
+    ctx.command("greet")
+        .description("Send a greeting")
+        .handler(|inv| {
+            // handle /greet
+        })
+        .register()?;
 
     ctx.interval(Duration::from_secs(30), || {
         // periodic task
-    });
+    })?;
 
     Ok(())
 }
 ```
+
+`ctx.enable_reason()` tells why `on_enable` runs: `EnableReason::Initial` the first time, `EnableReason::Recovered(RecoveryInfo { attempt, cause })` in a fresh instance after a [fault](#faults-and-recovery). `attempt` counts the recoveries so far and `cause` describes the fault that ended the previous instance.
 
 Codec filters and limbo handlers are registered through their own registrar hooks (`register_codec_filters`, `register_limbo_handlers`), each gated by the matching opt-in capability.
 
@@ -181,7 +199,7 @@ Codec filters and limbo handlers are registered through their own registrar hook
 | Guest result | Host action |
 |--------------|-------------|
 | `Ok(())` | Plugin is enabled |
-| `Err(message)` | Returned as `PluginError::InitFailed(message)`; plugin not enabled |
+| `Err(error)` | Returned as `PluginError::InitFailed(message)`; plugin not enabled |
 | Trap or cut-off | Returned as an error; the plugin is not enabled and no fresh instance is tried |
 
 ## Dispatch
@@ -204,7 +222,7 @@ Each call into the guest carries a deadline, fixed when the call is queued:
 
 The deadline has three effects:
 
-- **Host calls fail in time.** Every host call that waits on the proxy (`start` and `stop` on `server-manager`, every `ban-service` function, `switch-server` on a player) returns before the deadline, minus a margin. The margin is a fifth of the deadline, capped at 250 ms, so a 10 s `handler_timeout` leaves host calls 9.75 s and a 300 ms one leaves them 240 ms. On expiry the guest gets the error value the import already declares, `service-error::unavailable` or `player-error::switch-failed`, and no trap. `host_call_timeout` still caps each host call on its own.
+- **Host calls fail in time.** Every host call that waits on the proxy (`start` and `stop` on `server-manager`, every `ban-service` function, `switch-server` on `players`) returns before the deadline, minus a margin. The margin is a fifth of the deadline, capped at 250 ms, so a 10 s `handler_timeout` leaves host calls 9.75 s and a 300 ms one leaves them 240 ms. On expiry the guest gets a `host-error` of kind `timeout`, and no trap. `host_call_timeout` still caps each host call on its own.
 - **The guest's decision counts.** Because the error arrives inside the margin, the guest still has time to decide and return before the event bus gives up. A PreLogin handler that denies when the ban service errors fails closed, and its denial is applied to the event. If the host call waited out `host_call_timeout` instead, the bus would already have moved on and the login would go through on the default result.
 - **The plugin stays available.** The call ends before its deadline instead of after `host_call_timeout`, so the plugin's next events do not queue behind a stalled service. A call whose deadline passed while it waited in the queue is dropped without running, since its caller can no longer use the result, and a warning names the plugin and the operation.
 
@@ -212,9 +230,9 @@ A running call is not cut at its deadline. Guest code between host calls keeps r
 
 ## Disable
 
-`on_disable` is called on proxy shutdown. It is queued behind any call still running, and it is the last job of the plugin's task: calls queued behind it are dropped and the task stops once it has run, dropping the instance.
+`on_disable` is called on proxy shutdown and when the plugin alone is disabled. `ctx.disable_reason()` reports which: `DisableReason::Shutdown` when the proxy is stopping, `DisableReason::Unload` otherwise. It is queued behind any call still running, and it is the last job of the plugin's task: calls queued behind it are dropped and the task stops once it has run, dropping the instance.
 
-If the plugin is quarantined, or its first `on_enable` failed, there is no live instance: the guest call is skipped and `on_disable` returns `Ok(())` with a warning. For a live instance the budget is reset and the guest `on_disable` runs. An `Err(message)` is surfaced as `PluginError::Custom(message)`; a trap during `on_disable` is logged and returned as a `Custom` error, and no fresh instance is started. In every case the host then removes the instance's event listeners and scheduled tasks, releases the players it holds in limbo, and stops the task. `unload` does the same without running the guest.
+If the plugin is quarantined, or its first `on_enable` failed, there is no live instance: the guest call is skipped and `on_disable` returns `Ok(())` with a warning. That is why the contract's `DisableReason::Quarantine` is never sent today. For a live instance the budget is reset and the guest `on_disable` runs. An `Err(message)` is surfaced as `PluginError::Custom(message)`; a trap during `on_disable` is logged and returned as a `Custom` error, and no fresh instance is started. In every case the host then removes the instance's event listeners and scheduled tasks, releases the players it holds in limbo, and stops the task. `unload` does the same without running the guest.
 
 ## Faults and recovery
 
@@ -228,7 +246,7 @@ A fault is a guest trap, a call cut off by `max_call_duration`, or a panic in a 
 
 A caller that stops waiting (for example the event bus after `[events] handler_timeout`) is not a fault: the call keeps running inside the plugin and the instance stays healthy. Host calls inside it return an error before that point anyway, see [Deadlines](#deadlines).
 
-wasmtime cannot re-enter an instance whose call trapped or was cut off, so the host never reuses it. After a fault in an enabled plugin, the plugin's task discards the instance and its host-side registrations, creates a fresh instance from the compiled component and runs `on_enable` in it. Restarts are budgeted: past `[wasm.recovery] max_restarts` within `window`, the plugin is quarantined with an exponential backoff and every call to it is answered at once without running guest code.
+wasmtime cannot re-enter an instance whose call trapped or was cut off, so the host never reuses it. After a fault in an enabled plugin, the plugin's task discards the instance and its host-side registrations, creates a fresh instance from the compiled component and runs `on_enable` in it with `EnableReason::Recovered`. Restarts are budgeted: past `[wasm.recovery] max_restarts` within `window`, the plugin is quarantined with an exponential backoff and every call to it is answered at once without running guest code.
 
 ```mermaid
 flowchart LR

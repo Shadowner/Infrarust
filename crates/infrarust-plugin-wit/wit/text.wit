@@ -1,0 +1,8 @@
+interface text {
+    use types.{component, host-error};
+
+    parse-json: func(json: string) -> result<component, host-error>;
+    parse-legacy: func(legacy: string) -> component;
+    to-json: func(value: component) -> result<string, host-error>;
+    to-plain: func(value: component) -> result<string, host-error>;
+}

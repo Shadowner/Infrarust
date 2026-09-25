@@ -1,0 +1,35 @@
+interface players {
+    use types.{
+        player-id, server-id, uuid, player-ref, game-profile, protocol-version, socket-address,
+        timestamp-ms, component, title-data, raw-packet, host-error,
+    };
+
+    record player-info {
+        player: player-ref,
+        profile: game-profile,
+        protocol: protocol-version,
+        remote-addr: socket-address,
+        current-server: option<server-id>,
+        online-mode: bool,
+        connected: bool,
+        active: bool,
+        connected-at: timestamp-ms,
+        virtual-host: option<string>,
+        client-brand: option<string>,
+        ping-ms: option<u32>,
+    }
+
+    get: func(id: player-id) -> option<player-info>;
+    get-by-name: func(username: string) -> option<player-info>;
+    get-by-uuid: func(id: uuid) -> option<player-info>;
+    %list: func(server: option<server-id>) -> list<player-info>;
+    count: func(server: option<server-id>) -> u32;
+
+    send-message: func(player: player-id, message: component) -> result<_, host-error>;
+    send-title: func(player: player-id, title: title-data) -> result<_, host-error>;
+    send-action-bar: func(player: player-id, message: component) -> result<_, host-error>;
+    send-packet: func(player: player-id, packet: raw-packet) -> result<_, host-error>;
+    disconnect: func(player: player-id, reason: component) -> result<_, host-error>;
+    switch-server: func(player: player-id, server: server-id) -> result<_, host-error>;
+    has-permission: func(player: player-id, permission: string) -> result<bool, host-error>;
+}

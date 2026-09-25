@@ -1,12 +1,9 @@
-//! Builds the per-plugin host linker.
-//! `types` defines no functions, so it has no linker entry.
-
 use wasmtime::Engine;
 use wasmtime::component::{HasSelf, Linker};
 
 use crate::bindings::infrarust::plugin::{
-    ban_service, codec_registry, command_manager, config_service, event_bus, limbo, log,
-    player_registry, scheduler, server_manager,
+    ban_service, codec_registry, command_manager, config_service, event_bus, limbo, log, players,
+    scheduler, server_manager, text,
 };
 use crate::error::WasmLoaderError;
 use crate::store_state::PluginStoreState;
@@ -47,9 +44,10 @@ pub(crate) fn build_linker(
     let mut linker = new_linker_with_wasi(engine, plugin_id)?;
 
     link!(linker, plugin_id, log);
+    link!(linker, plugin_id, text);
     link!(linker, plugin_id, limbo);
     link!(linker, plugin_id, event_bus);
-    link!(linker, plugin_id, player_registry);
+    link!(linker, plugin_id, players);
     link!(linker, plugin_id, command_manager);
     link!(linker, plugin_id, scheduler);
     link!(linker, plugin_id, config_service);

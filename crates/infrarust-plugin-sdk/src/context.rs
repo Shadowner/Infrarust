@@ -1,175 +1,200 @@
-//! The `Context` handed to `on_enable`/`on_disable`.
-
 use std::time::Duration;
 
+use crate::bindings::guest as wg;
+use crate::command::CommandBuilder;
+use crate::error::Error;
 use crate::event::{EventPriority, GuestEvent};
 use crate::runtime;
-use crate::services;
+use crate::types::millis;
 
-/// What a command handler receives when its command is invoked.
-pub struct CommandInvocation {
-    pub args: Vec<String>,
-    pub player: Option<u64>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RecoveryInfo {
+    pub attempt: u32,
+    pub cause: String,
 }
 
-/// A scheduled-task handle, usable with [`Context::cancel`].
-pub type TaskHandle = u64;
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EnableReason {
+    Initial,
+    Recovered(RecoveryInfo),
+}
 
+impl EnableReason {
+    pub(crate) fn from_wit(reason: wg::EnableReason) -> Self {
+        match reason {
+            wg::EnableReason::Initial => Self::Initial,
+            wg::EnableReason::Recovered(info) => Self::Recovered(RecoveryInfo {
+                attempt: info.attempt,
+                cause: info.cause,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DisableReason {
+    Shutdown,
+    Unload,
+    Quarantine,
+}
+
+impl DisableReason {
+    pub(crate) const fn from_wit(reason: wg::DisableReason) -> Self {
+        match reason {
+            wg::DisableReason::Shutdown => Self::Shutdown,
+            wg::DisableReason::Unload => Self::Unload,
+            wg::DisableReason::Quarantine => Self::Quarantine,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TaskHandle(u64);
+
+impl TaskHandle {
+    pub(crate) const fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    #[must_use]
+    pub const fn id(self) -> u64 {
+        self.0
+    }
+
+    pub fn cancel(self) {
+        runtime::cancel_task(self.0);
+    }
+}
+
+#[derive(Debug)]
 pub struct EventSubscription {
     id: u64,
 }
 
 impl EventSubscription {
+    #[must_use]
+    pub const fn id(&self) -> u64 {
+        self.id
+    }
+
     pub fn cancel(self) {
         runtime::unsubscribe_event(self.id);
     }
 }
 
-/// The plugin's entry point into the host: event subscription, command and task
-/// registration, and service accessors.
-pub struct Context {
-    _priv: (),
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum Phase {
+    #[default]
+    Ambient,
+    Enabling(EnableReason),
+    Disabling(DisableReason),
 }
 
-impl Default for Context {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Debug, Clone, Default)]
+pub struct Context {
+    phase: Phase,
 }
 
 impl Context {
-    /// Obtain the ambient host gateway. `Context` is a zero-sized handle to the
-    /// guest runtime, so this is free — use it from callbacks that don't receive
-    /// a `&Context` (e.g. a [`LimboHandler`](crate::limbo::LimboHandler) wanting
-    /// to schedule a task or subscribe to an event).
     #[must_use]
     pub fn new() -> Self {
-        Self { _priv: () }
+        Self::default()
     }
 
-    /// Subscribe a handler for event `E`, returning a handle to this one
-    /// subscription. Multiple handlers may share a kind and fire in priority
-    /// order. Drop the handle to keep the subscription, or call
-    /// [`cancel`](EventSubscription::cancel) to remove just this handler.
+    pub(crate) fn enabling(reason: EnableReason) -> Self {
+        Self {
+            phase: Phase::Enabling(reason),
+        }
+    }
+
+    pub(crate) fn disabling(reason: DisableReason) -> Self {
+        Self {
+            phase: Phase::Disabling(reason),
+        }
+    }
+
+    #[must_use]
+    pub const fn enable_reason(&self) -> Option<&EnableReason> {
+        match &self.phase {
+            Phase::Enabling(reason) => Some(reason),
+            Phase::Ambient | Phase::Disabling(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn disable_reason(&self) -> Option<DisableReason> {
+        match &self.phase {
+            Phase::Disabling(reason) => Some(*reason),
+            Phase::Ambient | Phase::Enabling(_) => None,
+        }
+    }
+
     pub fn on<E: GuestEvent>(
         &self,
         priority: EventPriority,
         handler: impl FnMut(&mut E) + 'static,
-    ) -> EventSubscription {
-        EventSubscription {
-            id: runtime::register_event::<E>(priority, handler),
-        }
+    ) -> Result<EventSubscription, Error> {
+        runtime::register_event::<E>(priority, handler).map(|id| EventSubscription { id })
     }
 
-    /// Register a command, returning a builder for aliases/description.
-    pub fn command<'a>(
-        &self,
-        name: &'a str,
-        handler: impl FnMut(CommandInvocation) + 'static,
-    ) -> CommandBuilder<'a> {
-        CommandBuilder {
-            name,
-            aliases: Vec::new(),
-            description: String::new(),
-            handler: Box::new(handler),
-            completer: None,
-        }
+    pub fn command(&self, name: impl Into<String>) -> CommandBuilder {
+        CommandBuilder::new(name.into())
     }
 
-    /// Run `task` once after `after`. Returns a handle for [`cancel`](Self::cancel).
-    pub fn delay(&self, after: Duration, task: impl FnOnce() + 'static) -> TaskHandle {
-        runtime::schedule_delay(millis(after), Box::new(task))
-    }
-
-    /// Run `task` every `period`. Returns a handle for [`cancel`](Self::cancel).
-    pub fn interval(&self, period: Duration, task: impl FnMut() + 'static) -> TaskHandle {
-        runtime::schedule_interval(millis(period), Box::new(task))
-    }
-
-    pub fn cancel(&self, handle: TaskHandle) {
-        runtime::cancel_task(handle);
-    }
-
-    pub fn unregister_command(&self, name: &str) -> bool {
+    pub fn unregister_command(&self, name: &str) -> Result<bool, Error> {
         runtime::unregister_command(name)
     }
 
-    #[must_use]
-    pub fn player_registry(&self) -> services::Players {
-        services::Players
+    pub fn delay(
+        &self,
+        after: Duration,
+        task: impl FnOnce() + 'static,
+    ) -> Result<TaskHandle, Error> {
+        runtime::schedule_delay(millis(after), Box::new(task)).map(TaskHandle::new)
     }
 
-    #[must_use]
-    pub fn server_manager(&self) -> services::Servers {
-        services::Servers
+    pub fn interval(
+        &self,
+        period: Duration,
+        task: impl FnMut() + 'static,
+    ) -> Result<TaskHandle, Error> {
+        runtime::schedule_interval(millis(period), None, Box::new(task)).map(TaskHandle::new)
     }
 
-    #[must_use]
-    pub fn ban_service(&self) -> services::Bans {
-        services::Bans
+    pub fn interval_with_delay(
+        &self,
+        period: Duration,
+        initial_delay: Duration,
+        task: impl FnMut() + 'static,
+    ) -> Result<TaskHandle, Error> {
+        runtime::schedule_interval(millis(period), Some(millis(initial_delay)), Box::new(task))
+            .map(TaskHandle::new)
     }
 
-    #[must_use]
-    pub fn config_service(&self) -> services::Config {
-        services::Config
-    }
-}
-
-type CompletionFn = Box<dyn Fn(&[String], u32) -> Vec<String>>;
-
-/// Fluent builder returned by [`Context::command`]; call [`register`](Self::register) to finish.
-pub struct CommandBuilder<'a> {
-    name: &'a str,
-    aliases: Vec<String>,
-    description: String,
-    handler: Box<dyn FnMut(CommandInvocation)>,
-    completer: Option<CompletionFn>,
-}
-
-impl CommandBuilder<'_> {
-    #[must_use]
-    pub fn alias(mut self, alias: impl Into<String>) -> Self {
-        self.aliases.push(alias.into());
-        self
-    }
-
-    #[must_use]
-    pub fn aliases<I, S>(mut self, aliases: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.aliases.extend(aliases.into_iter().map(Into::into));
-        self
-    }
-
-    #[must_use]
-    pub fn description(mut self, description: impl Into<String>) -> Self {
-        self.description = description.into();
-        self
-    }
-
-    #[must_use]
-    pub fn completer(
-        mut self,
-        completer: impl Fn(&[String], u32) -> Vec<String> + 'static,
-    ) -> Self {
-        self.completer = Some(Box::new(completer));
-        self
-    }
-
-    pub fn register(self) {
-        runtime::register_command(
-            self.name,
-            &self.aliases,
-            &self.description,
-            self.handler,
-            self.completer,
-        );
+    pub fn cancel(&self, handle: TaskHandle) {
+        handle.cancel();
     }
 }
 
-#[allow(clippy::cast_possible_truncation)]
-fn millis(d: Duration) -> u64 {
-    d.as_millis().min(u128::from(u64::MAX)) as u64
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_context_knows_why_the_plugin_is_enabled_or_disabled() {
+        let recovered = EnableReason::from_wit(wg::EnableReason::Recovered(wg::RecoveryInfo {
+            attempt: 2,
+            cause: "the guest trapped".into(),
+        }));
+        let ctx = Context::enabling(recovered.clone());
+        assert_eq!(ctx.enable_reason(), Some(&recovered));
+        assert_eq!(ctx.disable_reason(), None);
+
+        let ctx = Context::disabling(DisableReason::from_wit(wg::DisableReason::Unload));
+        assert_eq!(ctx.disable_reason(), Some(DisableReason::Unload));
+        assert_eq!(Context::new().enable_reason(), None);
+    }
 }

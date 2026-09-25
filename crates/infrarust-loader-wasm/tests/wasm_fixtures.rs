@@ -18,7 +18,7 @@ use infrarust_api::events::connection::{
     ConnectCause, ServerPreConnectEvent, ServerPreConnectResult,
 };
 use infrarust_api::events::lifecycle::PostLoginEvent;
-use infrarust_api::loader::{PluginContextFactory, PluginLoader};
+use infrarust_api::loader::{LoaderError, PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
@@ -66,6 +66,28 @@ async fn test_scripted_sdk_plugin_lifecycle() {
     plugin.on_disable().await.expect("on_disable ok");
     assert_eq!(read_log(&data_dir), ["enable", "disable"]);
     loader.unload("scripted").await.expect("unload ok");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_built_for_the_old_contract_is_refused_with_a_rebuild_hint() {
+    let (_tmp, plugins_dir) = stage("old-world");
+    let err = fresh_loader()
+        .discover(&plugins_dir)
+        .await
+        .expect_err("infrarust:plugin@0.2.3 components are not loaded");
+    assert!(matches!(err, LoaderError::InvalidFormat { .. }), "{err:?}");
+    let message = err.to_string();
+    for needle in [
+        "infrarust:plugin@0.2.3",
+        "infrarust:plugin@0.3.x",
+        "rebuild",
+        "infrarust-plugin-sdk",
+    ] {
+        assert!(
+            message.contains(needle),
+            "{needle:?} missing from {message}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -349,8 +371,8 @@ async fn test_guest_cannot_unregister_a_command_it_does_not_own() {
     assert_eq!(
         std::fs::read_to_string(fx.plugins_dir.join("command-plugin").join("unnest.marker"))
             .expect("unnest ran"),
-        "true",
-        "the guest believes it registered `nested` and asked the host to remove it"
+        "false",
+        "the host refused `nested`, so the guest knows it owns nothing to remove"
     );
 
     assert!(

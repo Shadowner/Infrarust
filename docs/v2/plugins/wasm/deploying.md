@@ -104,7 +104,7 @@ deny = ["player-write"]
 
 With this, the plugin can look players up but cannot message, move or kick them.
 
-A denied capability behaves as if it had never been granted: the plugin loads, and the calls that need it are refused. A denied `config-read` makes config lookups answer `none`, and a denied `player-write` makes the player-acting calls return a `player-error`. Details in [Capabilities](./capabilities#refused-calls).
+A denied capability behaves as if it had never been granted: the plugin loads, and the calls that need it are refused. A denied `config-read` makes config lookups return a `permission-denied` error, and a denied `player-write` makes the player-acting calls return the same error. Details in [Capabilities](./capabilities#refused-calls).
 
 ::: info
 Native (compiled-in) plugins are trusted and receive every capability. WASM plugins receive the baseline plus whatever opt-ins you declare. The full table of capabilities, what each unlocks, and which host interfaces they map to is in [Capabilities](./capabilities).
@@ -153,6 +153,10 @@ strict_capabilities = true
 
 The full list of what each refused call returns is in [Capabilities](./capabilities#what-a-missing-capability-does).
 
+### A plugin built for another contract is refused
+
+The proxy reads which contract each component was built for before running any of its code. A plugin built for `infrarust:plugin@0.2.3` is refused at discovery with `plugin built for infrarust:plugin@0.2.3; this host supports infrarust:plugin@0.3.x, rebuild it with an infrarust-plugin-sdk that targets infrarust:plugin@0.3.x`. Rebuild it against the current SDK; [Migrating to 0.3](./migration-0.3) lists the source changes. A `.wasm` that is not an Infrarust plugin at all is refused as `not an Infrarust plugin component`.
+
 ### A trap during `on_enable` fails the plugin
 
 If the guest traps during its first `on_enable` (a panic, an out-of-bounds access, or a CPU-time overrun), the host reports the failure and the plugin is not enabled. Once a plugin is enabled, a trap or a call past `max_call_duration` does not disable it: the host starts a fresh instance and runs `on_enable` again, and quarantines a plugin that keeps failing. See [Fault model](./fault-model) and the `[wasm.recovery]` settings.
@@ -161,7 +165,7 @@ If the guest traps during its first `on_enable` (a panic, an out-of-bounds acces
 
 The proxy precompiles each `.wasm` to a native `.cwasm` artifact under a `.cache` subdirectory inside `plugins_dir`. Subsequent startups load the cached artifact and skip compilation.
 
-The cache key is the content hash of the `.wasm` plus a wasmtime version tag plus the WIT contract version (`infrarust:plugin@0.2.3`). Changing the plugin, upgrading wasmtime, or bumping the contract produces a new key, so stale artifacts are never reused. A `.cwasm` that fails to load is detected, removed, and recompiled automatically.
+The cache key is the content hash of the `.wasm` plus a wasmtime version tag plus the WIT contract version (`infrarust:plugin@0.3.0`). Changing the plugin, upgrading wasmtime, or bumping the contract produces a new key, so stale artifacts are never reused. A `.cwasm` that fails to load is detected, removed, and recompiled automatically.
 
 ::: tip
 The `.cache` directory is safe to delete. The proxy recreates it on the next startup by recompiling from the `.wasm` files. You never place a `.cwasm` there by hand.

@@ -1,7 +1,8 @@
-// The guest subscribes (in on-enable) to the kinds it wants; the host registers
-// a native handler per subscribed kind that marshals to handle-event.
-interface event-bus {                                                         // gated: event-bus
-    use types.{event-priority, listener-handle};
+interface events {
+    use types.{
+        server-id, uuid, protocol-version, socket-address, game-profile, player-ref,
+        component, server-state, server-address,
+    };
 
     enum event-kind {
         pre-login,
@@ -9,20 +10,233 @@ interface event-bus {                                                         //
         disconnect,
         online-auth-failed,
         permissions-setup,
+        player-choose-initial-server,
         server-pre-connect,
         server-connected,
-        server-switch,
+        server-post-connect,
         kicked-from-server,
-        player-choose-initial-server,
+        chat-message,
         proxy-ping,
         proxy-initialize,
         proxy-shutdown,
         config-reload,
         server-state-change,
-        chat-message,
-        raw-packet,
+        backend-health,
     }
 
-    subscribe: func(kind: event-kind, priority: event-priority) -> listener-handle;
-    unsubscribe: func(handle: listener-handle);
+    record pre-login-event {
+        profile: game-profile,
+        remote-addr: socket-address,
+        protocol: protocol-version,
+        server-domain: string,
+        %result: pre-login-result,
+    }
+
+    variant pre-login-result {
+        allowed,
+        denied(component),
+        force-offline,
+        force-online,
+    }
+
+    record post-login-event {
+        player: player-ref,
+        profile: game-profile,
+        protocol: protocol-version,
+    }
+
+    variant disconnect-cause {
+        client-quit,
+        kicked(option<component>),
+        backend-closed(option<component>),
+        shutdown,
+        error,
+    }
+
+    record disconnect-event {
+        player: player-ref,
+        last-server: option<server-id>,
+        cause: disconnect-cause,
+    }
+
+    record online-auth-failed-event {
+        username: string,
+    }
+
+    record permissions-setup-event {
+        player: player-ref,
+        online-mode: bool,
+        %result: permissions-setup-result,
+    }
+
+    variant permissions-setup-result {
+        use-default,
+    }
+
+    record player-choose-initial-server-event {
+        player: player-ref,
+        initial-server: server-id,
+        %result: player-choose-initial-server-result,
+    }
+
+    variant player-choose-initial-server-result {
+        allowed,
+        redirect(server-id),
+        send-to-limbo(list<string>),
+    }
+
+    enum connect-cause {
+        initial,
+        switch,
+        limbo-exit,
+        kick-redirect,
+        plugin-message,
+    }
+
+    record server-pre-connect-event {
+        player: player-ref,
+        server: server-id,
+        previous-server: option<server-id>,
+        cause: connect-cause,
+        %result: server-pre-connect-result,
+    }
+
+    variant server-pre-connect-result {
+        allowed,
+        connect-to(server-id),
+        send-to-limbo(list<string>),
+        denied(component),
+    }
+
+    record server-connected-event {
+        player: player-ref,
+        server: server-id,
+        previous-server: option<server-id>,
+    }
+
+    record server-post-connect-event {
+        player: player-ref,
+        server: server-id,
+        previous-server: option<server-id>,
+    }
+
+    variant kick-cause {
+        unreachable(string),
+        login-refused,
+        config-disconnect,
+        play-disconnect,
+        connection-lost,
+    }
+
+    record kicked-from-server-event {
+        player: player-ref,
+        server: server-id,
+        reason: option<component>,
+        cause: kick-cause,
+        during-connect: bool,
+        previous-server: option<server-id>,
+        %result: kicked-from-server-result,
+    }
+
+    variant kicked-from-server-result {
+        disconnect-player(option<component>),
+        redirect-to(server-id),
+        send-to-limbo(list<string>),
+        notify(component),
+    }
+
+    record chat-message-event {
+        player: player-ref,
+        message: string,
+        signed: bool,
+        server: option<server-id>,
+        %result: chat-message-result,
+    }
+
+    variant chat-message-result {
+        allow,
+        deny(option<component>),
+        modify(string),
+    }
+
+    record ping-player {
+        name: string,
+        uuid: uuid,
+    }
+
+    record proxy-ping-event {
+        remote-addr: socket-address,
+        server: option<server-id>,
+        virtual-host: option<string>,
+        protocol: protocol-version,
+        legacy: bool,
+        %result: proxy-ping-result,
+    }
+
+    record proxy-ping-result {
+        description: component,
+        max-players: s32,
+        online-players: s32,
+        protocol: protocol-version,
+        version-name: string,
+        favicon: option<string>,
+        player-sample: list<ping-player>,
+    }
+
+    record config-reload-event {
+        provider: string,
+        added: list<server-id>,
+        removed: list<server-id>,
+        updated: list<server-id>,
+    }
+
+    record server-state-change-event {
+        server: server-id,
+        old-state: server-state,
+        new-state: server-state,
+    }
+
+    enum backend-state {
+        healthy,
+        probing,
+        unhealthy,
+        draining,
+    }
+
+    record backend-health-event {
+        address: server-address,
+        servers: list<server-id>,
+        state: backend-state,
+    }
+
+    variant event {
+        pre-login(pre-login-event),
+        post-login(post-login-event),
+        disconnect(disconnect-event),
+        online-auth-failed(online-auth-failed-event),
+        permissions-setup(permissions-setup-event),
+        player-choose-initial-server(player-choose-initial-server-event),
+        server-pre-connect(server-pre-connect-event),
+        server-connected(server-connected-event),
+        server-post-connect(server-post-connect-event),
+        kicked-from-server(kicked-from-server-event),
+        chat-message(chat-message-event),
+        proxy-ping(proxy-ping-event),
+        proxy-initialize,
+        proxy-shutdown,
+        config-reload(config-reload-event),
+        server-state-change(server-state-change-event),
+        backend-health(backend-health-event),
+    }
+
+    variant event-outcome {
+        unchanged,
+        pre-login(pre-login-result),
+        permissions-setup(permissions-setup-result),
+        player-choose-initial-server(player-choose-initial-server-result),
+        server-pre-connect(server-pre-connect-result),
+        kicked-from-server(kicked-from-server-result),
+        chat-message(chat-message-result),
+        proxy-ping(proxy-ping-result),
+    }
 }

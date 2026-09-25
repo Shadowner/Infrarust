@@ -64,14 +64,6 @@ impl PluginStoreState {
         self.ctx.as_ref()
     }
 
-    pub(crate) fn require_ctx(&self) -> wasmtime::Result<Arc<dyn PluginContext>> {
-        self.ctx.clone().ok_or_else(|| {
-            wasmtime::Error::msg(
-                "plugin context unavailable (host function called off the load path)",
-            )
-        })
-    }
-
     pub(crate) fn host_call_timeout(&self) -> Duration {
         self.host_call_timeout
     }
@@ -175,6 +167,12 @@ impl PluginStoreState {
     #[cfg(test)]
     pub(crate) fn with_capabilities(mut self, capabilities: CapabilitySet) -> Self {
         self.capabilities = capabilities;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_ctx(mut self, ctx: Arc<dyn PluginContext>) -> Self {
+        self.ctx = Some(ctx);
         self
     }
 }

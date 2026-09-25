@@ -13,10 +13,11 @@ use wasmtime::Store;
 
 use crate::bindings::Plugin as PluginBindings;
 use crate::config::SandboxLimits;
-use crate::consts::QUEUE_FULL_WARN_INTERVAL;
+use crate::consts::{GUEST_WARNING_BURST, GUEST_WARNING_INTERVAL, QUEUE_FULL_WARN_INTERVAL};
 use crate::deadline::Deadline;
 use crate::error::WasmLoaderError;
 use crate::instance::InstanceFactory;
+use crate::rate_limit::SharedRateLimit;
 use crate::store_state::PluginStoreState;
 use crate::supervisor::Supervisor;
 
@@ -172,6 +173,7 @@ struct ActorInfo {
     started: Instant,
     next_full_warning_ms: AtomicU64,
     suppressed_full_warnings: AtomicU64,
+    guest_warnings: SharedRateLimit,
 }
 
 impl ActorInfo {
@@ -184,6 +186,7 @@ impl ActorInfo {
             started: Instant::now(),
             next_full_warning_ms: AtomicU64::new(0),
             suppressed_full_warnings: AtomicU64::new(0),
+            guest_warnings: SharedRateLimit::new(GUEST_WARNING_INTERVAL, GUEST_WARNING_BURST),
         }
     }
 
@@ -239,6 +242,14 @@ impl InstanceRef {
             kind: CallKind::Callback,
             generation: None,
         }
+    }
+
+    pub(crate) fn plugin_id(&self) -> &str {
+        &self.info.plugin_id
+    }
+
+    pub(crate) fn admit_warning(&self) -> Option<u64> {
+        self.info.guest_warnings.admit(Instant::now())
     }
 
     pub(crate) fn for_calls(&self, kind: CallKind) -> Self {

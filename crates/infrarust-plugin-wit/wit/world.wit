@@ -1,18 +1,12 @@
-// The Infrarust plugin world: the host/guest contract.
-// Versioned and frozen. v0.2 adds raw-packet events, codec filters, limbo, and
-// custom permission checkers; virtual backend stays deferred to a later minor.
-// @0.2.2 mirrors the native limbo completion model to guests: hold-with-timeout,
-// on-session-end, and the own-able limbo-session-handle resource.
-// @0.2.3 slims the codec hot path: `filter` takes (packet-id, data) only — the
-// codec-context is reconstructed guest-side from session-init + lifecycle calls
-// instead of being re-marshalled per packet.
-package infrarust:plugin@0.2.3;
+package infrarust:plugin@0.3.0;
 
 world plugin {
     import types;
+    import events;
     import log;
+    import text;
     import event-bus;
-    import player-registry;
+    import players;
     import server-manager;
     import ban-service;
     import config-service;

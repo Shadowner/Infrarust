@@ -7,6 +7,7 @@ use wasmtime::Store;
 
 use crate::actor::{CallFailure, InstanceRef, JobKind, PluginActor};
 use crate::bindings::Plugin as PluginBindings;
+use crate::bindings::exports::infrarust::plugin::guest::{DisableReason, EnableReason};
 use crate::error::WasmLoaderError;
 use crate::store_state::PluginStoreState;
 
@@ -27,15 +28,29 @@ pub(crate) struct WasmPlugin {
     metadata: PluginMetadata,
     plugin_id: String,
     actor: Arc<PluginActor>,
+    shutting_down: Box<dyn Fn() -> bool + Send + Sync>,
 }
 
 impl WasmPlugin {
-    pub(crate) fn new(metadata: PluginMetadata, actor: Arc<PluginActor>) -> Self {
+    pub(crate) fn new(
+        metadata: PluginMetadata,
+        actor: Arc<PluginActor>,
+        shutting_down: Box<dyn Fn() -> bool + Send + Sync>,
+    ) -> Self {
         let plugin_id = metadata.id.clone();
         Self {
             metadata,
             plugin_id,
             actor,
+            shutting_down,
+        }
+    }
+
+    fn disable_reason(&self) -> DisableReason {
+        if (self.shutting_down)() {
+            DisableReason::Shutdown
+        } else {
+            DisableReason::Unload
         }
     }
 
@@ -72,7 +87,7 @@ impl Plugin for WasmPlugin {
                     Box::pin(async move {
                         bindings
                             .infrarust_plugin_guest()
-                            .call_on_enable(&mut *store)
+                            .call_on_enable(&mut *store, &EnableReason::Initial)
                             .await
                     })
                 })
@@ -92,14 +107,15 @@ impl Plugin for WasmPlugin {
     }
 
     fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
+        let reason = self.disable_reason();
         Box::pin(async move {
             let result = self
                 .actor
-                .call_lifecycle("on-disable", JobKind::Disable, |store, bindings| {
+                .call_lifecycle("on-disable", JobKind::Disable, move |store, bindings| {
                     Box::pin(async move {
                         bindings
                             .infrarust_plugin_guest()
-                            .call_on_disable(&mut *store)
+                            .call_on_disable(&mut *store, reason)
                             .await
                     })
                 })

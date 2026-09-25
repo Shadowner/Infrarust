@@ -15,3 +15,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+wit-parser = { version = "0.251", default-features = false, features = ["std"] }

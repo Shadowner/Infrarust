@@ -6,6 +6,7 @@ use infrarust_api::types::PlayerId;
 use wasmtime::component::Resource;
 
 use crate::actor::InstanceRef;
+use crate::component;
 use crate::convert;
 use crate::plugin::call_guest;
 use crate::registrations::{Binding, Registrations};
@@ -72,7 +73,11 @@ impl LimboHandler for WasmLimboHandler {
                         .call_limbo_on_player_enter(&mut *store, handler_id, res)
                         .await;
                     let _ = store.data_mut().drop_limbo_session(Resource::new_own(rep));
-                    let result = outcome.map(convert::handler_result_from_wit)?;
+                    let plugin = store.data().plugin_id.clone();
+                    let result = convert::handler_result_with(&outcome?, &mut |text| {
+                        Ok(component::from_wit_or_fallback(text, &plugin, "limbo handler result"))
+                    })
+                    .unwrap_or_else(|_| deny_unavailable());
                     if matches!(
                         result,
                         HandlerResult::Hold | HandlerResult::HoldWithTimeout { .. }

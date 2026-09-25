@@ -1,11 +1,11 @@
 //! Proc-macros for `infrarust-plugin-sdk`.
 
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::parse::Parser;
 use syn::punctuated::Punctuated;
-use syn::{Expr, ImplItem, ItemImpl, Lit, MetaNameValue, Token};
+use syn::{Expr, ImplItem, ItemImpl, Lit, LitStr, MetaNameValue, Token};
 
 /// Turn an `impl Plugin for MyPlugin` block into a loadable WASM component.
 ///
@@ -41,7 +41,7 @@ fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
             ));
         }
     } else {
-        let metadata_fn = generate_metadata_fn(&Overrides::from_args(&args)?);
+        let metadata_fn = generate_metadata_fn(&Overrides::from_args(&args)?)?;
         item_impl.items.push(syn::parse_quote!(#metadata_fn));
     }
 
@@ -74,60 +74,128 @@ fn validate_impl(item_impl: &ItemImpl) -> syn::Result<()> {
 
 #[derive(Default)]
 struct Overrides {
-    id: Option<String>,
+    id: Option<LitStr>,
     name: Option<String>,
     version: Option<String>,
     description: Option<String>,
     authors: Option<String>,
+    depends: Vec<LitStr>,
+    soft_depends: Vec<LitStr>,
 }
 
 impl Overrides {
     fn from_args(args: &Punctuated<MetaNameValue, Token![,]>) -> syn::Result<Self> {
         let mut out = Self::default();
+        let mut seen = Vec::new();
         for arg in args {
             let key = arg
                 .path
                 .get_ident()
                 .ok_or_else(|| syn::Error::new_spanned(&arg.path, "expected an identifier"))?
                 .to_string();
-            let value = string_lit(&arg.value)?;
-            let slot = match key.as_str() {
-                "id" => &mut out.id,
-                "name" => &mut out.name,
-                "version" => &mut out.version,
-                "description" => &mut out.description,
-                "authors" => &mut out.authors,
-                _ => {
-                    return Err(syn::Error::new_spanned(
-                        &arg.path,
-                        "unknown key (expected id, name, version, description, authors)",
-                    ));
-                }
-            };
-            if slot.replace(value).is_some() {
+            if seen.contains(&key) {
                 return Err(syn::Error::new_spanned(
                     arg,
                     format!("duplicate key `{key}`"),
                 ));
             }
+            match key.as_str() {
+                "id" => {
+                    let id = string_lit(&arg.value)?;
+                    validate_id(&id.value())
+                        .map_err(|reason| syn::Error::new_spanned(&id, reason))?;
+                    out.id = Some(id);
+                }
+                "name" => out.name = Some(string_lit(&arg.value)?.value()),
+                "version" => out.version = Some(string_lit(&arg.value)?.value()),
+                "description" => out.description = Some(string_lit(&arg.value)?.value()),
+                "authors" => out.authors = Some(string_lit(&arg.value)?.value()),
+                "depends" => out.depends = id_list(&arg.value)?,
+                "soft_depends" => out.soft_depends = id_list(&arg.value)?,
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        &arg.path,
+                        "unknown key (expected id, name, version, description, authors, depends, soft_depends)",
+                    ));
+                }
+            }
+            seen.push(key);
         }
         Ok(out)
     }
 }
 
-fn string_lit(expr: &Expr) -> syn::Result<String> {
+fn string_lit(expr: &Expr) -> syn::Result<LitStr> {
     if let Expr::Lit(lit) = expr
         && let Lit::Str(s) = &lit.lit
     {
-        return Ok(s.value());
+        return Ok(s.clone());
     }
     Err(syn::Error::new_spanned(expr, "expected a string literal"))
 }
 
-fn generate_metadata_fn(o: &Overrides) -> TokenStream2 {
-    let id =
-        o.id.as_ref()
-            .map_or_else(|| quote!(env!("CARGO_PKG_NAME")), |s| quote!(#s));
+fn id_list(expr: &Expr) -> syn::Result<Vec<LitStr>> {
+    let Expr::Array(array) = expr else {
+        return Err(syn::Error::new_spanned(
+            expr,
+            "expected a list of plugin ids, like [\"auth\", \"stats\"]",
+        ));
+    };
+    array
+        .elems
+        .iter()
+        .map(|elem| {
+            let id = string_lit(elem)?;
+            validate_id(&id.value()).map_err(|reason| syn::Error::new_spanned(&id, reason))?;
+            Ok(id)
+        })
+        .collect()
+}
+
+const MAX_ID_LEN: usize = 64;
+
+fn validate_id(id: &str) -> Result<(), String> {
+    let Some(first) = id.chars().next() else {
+        return Err("a plugin id cannot be empty".to_owned());
+    };
+    if id.len() > MAX_ID_LEN {
+        return Err(format!(
+            "plugin id `{id}` is longer than {MAX_ID_LEN} characters"
+        ));
+    }
+    if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
+        return Err(format!(
+            "plugin id `{id}` must start with a lowercase letter or a digit"
+        ));
+    }
+    if let Some(bad) = id
+        .chars()
+        .find(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-' || *c == '_'))
+    {
+        return Err(format!(
+            "plugin id `{id}` contains `{bad}`; use lowercase letters, digits, `-` and `_`"
+        ));
+    }
+    Ok(())
+}
+
+fn generate_metadata_fn(o: &Overrides) -> syn::Result<TokenStream2> {
+    let id = match &o.id {
+        Some(id) => quote!(#id),
+        None => {
+            if let Ok(package) = std::env::var("CARGO_PKG_NAME") {
+                validate_id(&package).map_err(|reason| {
+                    syn::Error::new(
+                        Span::call_site(),
+                        format!(
+                            "{reason}; the id defaults to the package name, set one with #[plugin(id = \"...\")]"
+                        ),
+                    )
+                })?;
+            }
+            quote!(env!("CARGO_PKG_NAME"))
+        }
+    };
     let name = o
         .name
         .as_ref()
@@ -149,8 +217,10 @@ fn generate_metadata_fn(o: &Overrides) -> TokenStream2 {
             _ => ::core::option::Option::None,
         }),
     };
+    let hard = o.depends.iter();
+    let soft = o.soft_depends.iter();
 
-    quote! {
+    Ok(quote! {
         fn metadata(&self) -> ::infrarust_plugin_sdk::PluginMetadata {
             ::infrarust_plugin_sdk::PluginMetadata {
                 id: (#id).to_string(),
@@ -162,10 +232,19 @@ fn generate_metadata_fn(o: &Overrides) -> TokenStream2 {
                     .map(::std::string::String::from)
                     .collect(),
                 description: #description,
-                dependencies: ::std::vec::Vec::new(),
+                dependencies: ::std::vec![
+                    #(::infrarust_plugin_sdk::PluginDependency {
+                        id: (#hard).to_string(),
+                        optional: false,
+                    },)*
+                    #(::infrarust_plugin_sdk::PluginDependency {
+                        id: (#soft).to_string(),
+                        optional: true,
+                    },)*
+                ],
             }
         }
-    }
+    })
 }
 
 fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
@@ -179,11 +258,15 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
                     &<#ty as ::core::default::Default>::default(),
                 )
             }
-            fn on_enable() -> ::core::result::Result<(), ::std::string::String> {
-                ::infrarust_plugin_sdk::runtime::on_enable::<#ty>()
+            fn on_enable(
+                reason: ::infrarust_plugin_sdk::bindings::guest::EnableReason,
+            ) -> ::core::result::Result<(), ::std::string::String> {
+                ::infrarust_plugin_sdk::runtime::on_enable::<#ty>(reason)
             }
-            fn on_disable() -> ::core::result::Result<(), ::std::string::String> {
-                ::infrarust_plugin_sdk::runtime::on_disable()
+            fn on_disable(
+                reason: ::infrarust_plugin_sdk::bindings::guest::DisableReason,
+            ) -> ::core::result::Result<(), ::std::string::String> {
+                ::infrarust_plugin_sdk::runtime::on_disable(reason)
             }
             fn handle_event(
                 listener: u64,
@@ -192,21 +275,21 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
                 ::infrarust_plugin_sdk::runtime::handle_event(listener, ev)
             }
             fn handle_command(
-                callback_id: u64,
-                args: ::std::vec::Vec<::std::string::String>,
-                player: ::core::option::Option<u64>,
+                handler: u64,
+                invocation: ::infrarust_plugin_sdk::bindings::guest::CommandInvocation,
             ) {
-                ::infrarust_plugin_sdk::runtime::handle_command(callback_id, args, player)
+                ::infrarust_plugin_sdk::runtime::handle_command(handler, invocation)
             }
             fn tab_complete(
-                callback_id: u64,
-                partial: ::std::vec::Vec<::std::string::String>,
+                handler: u64,
+                sender: ::infrarust_plugin_sdk::bindings::guest::CommandSender,
+                args: ::std::vec::Vec<::std::string::String>,
                 cursor: u32,
-            ) -> ::std::vec::Vec<::std::string::String> {
-                ::infrarust_plugin_sdk::runtime::tab_complete(callback_id, partial, cursor)
+            ) -> ::std::vec::Vec<::infrarust_plugin_sdk::bindings::guest::Suggestion> {
+                ::infrarust_plugin_sdk::runtime::tab_complete(handler, sender, args, cursor)
             }
-            fn on_scheduled_task(callback_id: u64) {
-                ::infrarust_plugin_sdk::runtime::on_scheduled_task(callback_id)
+            fn on_scheduled_task(handler: u64) {
+                ::infrarust_plugin_sdk::runtime::on_scheduled_task(handler)
             }
 
             fn limbo_on_player_enter(
@@ -239,14 +322,6 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
                 reason: ::infrarust_plugin_sdk::bindings::guest::SessionEndReason,
             ) {
                 ::infrarust_plugin_sdk::runtime::limbo_on_session_end(handler, player, reason)
-            }
-            fn permission_level_of(
-                _handler: u64,
-            ) -> ::infrarust_plugin_sdk::bindings::guest::PermissionLevel {
-                ::infrarust_plugin_sdk::bindings::guest::PermissionLevel::Player
-            }
-            fn check_permission(_handler: u64, _permission: ::std::string::String) -> bool {
-                false
             }
         }
 
@@ -326,5 +401,62 @@ mod tests {
     fn duplicate_key_rejected() {
         let err = expand_err(quote!(id = "a", id = "b"), quote!(impl Plugin for Foo {}));
         assert!(err.contains("duplicate key `id`"), "{err}");
+    }
+
+    #[test]
+    fn an_invalid_id_is_a_compile_error() {
+        let err = expand_err(quote!(id = "My Plugin"), quote!(impl Plugin for Foo {}));
+        assert!(err.contains("must start with a lowercase letter"), "{err}");
+        let err = expand_err(quote!(id = "auth!"), quote!(impl Plugin for Foo {}));
+        assert!(err.contains("contains `!`"), "{err}");
+        let err = expand_err(quote!(id = ""), quote!(impl Plugin for Foo {}));
+        assert!(err.contains("cannot be empty"), "{err}");
+    }
+
+    #[test]
+    fn dependencies_are_validated_and_generated() {
+        let expanded = expand(
+            quote!(
+                id = "stats",
+                depends = ["auth"],
+                soft_depends = ["admin-api"]
+            ),
+            quote!(impl Plugin for Foo {}),
+        )
+        .unwrap()
+        .to_string();
+        assert!(expanded.contains("\"auth\""), "{expanded}");
+        assert!(expanded.contains("optional : true"), "{expanded}");
+        let err = expand_err(quote!(depends = ["Auth"]), quote!(impl Plugin for Foo {}));
+        assert!(err.contains("plugin id `Auth`"), "{err}");
+        let err = expand_err(quote!(depends = "auth"), quote!(impl Plugin for Foo {}));
+        assert!(err.contains("expected a list of plugin ids"), "{err}");
+    }
+
+    #[test]
+    fn id_rules() {
+        for good in ["stats", "admin-api", "a1_b2", "0day"] {
+            assert_eq!(validate_id(good), Ok(()), "{good}");
+        }
+        for bad in ["-lead", "Upper", "sp ace", "dot.ted", &"x".repeat(65)] {
+            assert!(validate_id(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_glue_targets_the_contract_exports() {
+        let expanded = expand(quote!(id = "x"), quote!(impl Plugin for Foo {}))
+            .unwrap()
+            .to_string();
+        for export in [
+            "on_enable",
+            "EnableReason",
+            "DisableReason",
+            "CommandInvocation",
+            "Suggestion",
+        ] {
+            assert!(expanded.contains(export), "{export} missing");
+        }
+        assert!(!expanded.contains("check_permission"));
     }
 }

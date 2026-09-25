@@ -12,7 +12,12 @@ struct Tally {
 }
 
 impl CodecFilter for Tally {
-    fn filter(&mut self, _ctx: &CodecContext, packet: &mut Packet, _out: &mut Injections) -> Verdict {
+    fn filter(
+        &mut self,
+        _ctx: &CodecContext,
+        packet: &mut Packet,
+        _out: &mut Injections,
+    ) -> Verdict {
         let count = self.seen.entry(packet.id()).or_insert(0);
         *count += 1;
         let count = *count;
@@ -28,13 +33,16 @@ impl CodecFilter for Tally {
 
 #[plugin(id = "codec-std", name = "Codec Std Fixture")]
 impl Plugin for CodecStd {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
         Ok(())
     }
 
     fn register_codec_filters(reg: &mut CodecRegistrar) {
         reg.add("tally", FilterPriority::Normal, |init| {
-            info!("codec-std filter created for connection {}", init.connection_id);
+            info!(
+                "codec-std filter created for connection {}",
+                init.connection_id
+            );
             println!("codec-std stdout for connection {}", init.connection_id);
             eprintln!("codec-std stderr for connection {}", init.connection_id);
             Box::new(Tally {

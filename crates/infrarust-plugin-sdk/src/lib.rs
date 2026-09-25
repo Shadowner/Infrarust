@@ -1,9 +1,7 @@
-//! Ergonomic guest SDK for Infrarust WASM plugins.
+//! Ergonomic guest SDK for Infrarust WASM plugins (`infrarust:plugin@0.3.0`).
 //!
 //! Implement [`Plugin`] and tag the impl with [`#[plugin]`](plugin); the macro
-//! generates the WIT component glue. Subscribe to events with
-//! `ctx.on::<E>(priority, |ev| { .. })`, register commands and scheduled tasks,
-//! and call host services — all without touching the raw `wit-bindgen` surface.
+//! generates the WIT component glue.
 //!
 //! ```ignore
 //! use infrarust_plugin_sdk::prelude::*;
@@ -11,12 +9,12 @@
 //! #[derive(Default)]
 //! struct MyPlugin;
 //!
-//! #[plugin]
+//! #[plugin(id = "my-plugin")]
 //! impl Plugin for MyPlugin {
-//!     fn on_enable(&self, ctx: &Context) -> Result<(), String> {
+//!     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
 //!         ctx.on::<PostLoginEvent>(EventPriority::Normal, |e| {
-//!             info!("{} joined", e.profile.username);
-//!         });
+//!             info!("{} joined", e.player.username);
+//!         })?;
 //!         Ok(())
 //!     }
 //! }
@@ -24,32 +22,55 @@
 
 pub mod bindings;
 pub mod codec;
+pub mod command;
 pub mod component;
 pub mod context;
+pub mod error;
 pub mod event;
 mod host;
 pub mod limbo;
 pub mod log;
+pub mod player;
 pub mod plugin;
 mod registry;
 #[doc(hidden)]
 pub mod runtime;
 pub mod services;
+pub mod types;
 
 pub use bindings::export;
 pub use codec::{
     CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionSide, ConnectionState,
     FilterPriority, Injections, Packet, Verdict,
 };
-pub use component::Component;
-pub use context::{CommandBuilder, CommandInvocation, Context, EventSubscription, TaskHandle};
-pub use event::{EventPriority, GuestEvent};
+pub use command::{
+    CommandBuilder, CommandInvocation, CommandRegistration, CommandSender, Completion, Suggestion,
+};
+pub use component::{
+    ClickEvent, Component, Content, Decoration, HoverEvent, IntoTextColor, NamedColor, Style,
+    TextColor,
+};
+pub use context::{
+    Context, DisableReason, EnableReason, EventSubscription, RecoveryInfo, TaskHandle,
+};
+pub use error::{Error, ErrorKind, PluginError};
+pub use event::{EventPriority, GuestEvent, ResultCell};
 pub use infrarust_plugin_macros::plugin;
+pub use infrarust_plugin_wit::WORLD_VERSION;
 pub use limbo::{
     EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason,
     SessionHandle, TimeoutOutcome,
 };
+pub use player::{Player, PlayerInfo, Players, TitleData};
 pub use plugin::{Plugin, PluginDependency, PluginMetadata};
+pub use services::{
+    BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, ServerConfig, ServerStatus, Servers,
+};
+pub use types::{
+    GameProfile, PlayerId, PlayerRef, ProfileProperty, ProxyMode, ServerAddress, ServerId,
+    ServerState,
+};
+pub use uuid::Uuid;
 
 #[macro_export]
 macro_rules! trace {
@@ -77,17 +98,28 @@ pub mod prelude {
         CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionSide,
         ConnectionState, FilterPriority, Injections, Packet, Verdict,
     };
-    pub use crate::component::Component;
-    pub use crate::context::{CommandInvocation, Context, EventSubscription, TaskHandle};
+    pub use crate::command::{
+        CommandInvocation, CommandRegistration, CommandSender, Completion, Suggestion,
+    };
+    pub use crate::component::{
+        ClickEvent, Component, Decoration, HoverEvent, NamedColor, TextColor,
+    };
+    pub use crate::context::{
+        Context, DisableReason, EnableReason, EventSubscription, RecoveryInfo, TaskHandle,
+    };
+    pub use crate::error::{Error, ErrorKind, PluginError};
     pub use crate::event::*;
     pub use crate::limbo::{
         EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason,
         SessionHandle, TimeoutOutcome,
     };
+    pub use crate::player::{Player, PlayerInfo, Players, TitleData};
     pub use crate::plugin::{Plugin, PluginDependency, PluginMetadata};
     pub use crate::services::{
-        BanEntry, BanTarget, Bans, Config, PermissionLevel, Player, PlayerError, Players,
-        ServerConfig, ServerState, Servers, ServiceError,
+        BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, ServerConfig, ServerStatus, Servers,
     };
-    pub use crate::{debug, error, info, plugin, trace, warn};
+    pub use crate::types::{
+        GameProfile, PlayerId, PlayerRef, ProxyMode, ServerAddress, ServerId, ServerState,
+    };
+    pub use crate::{Uuid, debug, error, info, plugin, trace, warn};
 }

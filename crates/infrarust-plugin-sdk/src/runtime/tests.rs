@@ -3,10 +3,15 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use super::*;
+use crate::bindings::types as wt;
+use crate::command::Suggestion;
+use crate::component::Component;
 use crate::context::{EventSubscription, TaskHandle};
+use crate::error::{ErrorKind, PluginError};
 use crate::event::ProxyShutdownEvent;
 use crate::host;
 use crate::limbo::{HandlerOutcome, LimboHandler, LimboSession};
+use crate::plugin::PluginMetadata;
 
 type Invocation = (Vec<String>, Option<u64>);
 
@@ -66,6 +71,51 @@ fn is_subscribed(listener: u64) -> bool {
     host::with_fake(|h| h.listeners.contains_key(&listener))
 }
 
+fn refuse(name: &str) {
+    host::with_fake(|h| h.refused.insert(name.to_owned()));
+}
+
+fn steve(id: u64) -> wt::PlayerRef {
+    wt::PlayerRef {
+        id,
+        uuid: wt::Uuid { hi: 0, lo: id },
+        username: "Steve".into(),
+    }
+}
+
+fn sender(player: Option<u64>) -> wg::CommandSender {
+    player.map_or(wg::CommandSender::Console, |id| {
+        wg::CommandSender::Player(steve(id))
+    })
+}
+
+fn invoke(handler: u64, args: Vec<String>, player: Option<u64>) {
+    handle_command(
+        handler,
+        wg::CommandInvocation {
+            label: "cmd".into(),
+            raw: args.join(" "),
+            args,
+            sender: sender(player),
+        },
+    );
+}
+
+fn complete(handler: u64, args: Vec<String>) -> Vec<String> {
+    tab_complete(handler, sender(None), args, 0)
+        .into_iter()
+        .map(|suggestion| suggestion.text)
+        .collect()
+}
+
+fn register(name: &str, handler: impl FnMut(CommandInvocation) + 'static) {
+    Context::new()
+        .command(name)
+        .handler(handler)
+        .register()
+        .expect("the host accepts the command");
+}
+
 #[test]
 fn delay_closure_is_dropped_after_firing() {
     let ctx = Context::new();
@@ -75,7 +125,8 @@ fn delay_closure_is_dropped_after_firing() {
     ctx.delay(Duration::from_millis(5), move || {
         let _ = &token;
         bump(&seen);
-    });
+    })
+    .unwrap();
     let (_, callback) = last_task();
     assert!(!dropped.get(), "pending delay keeps its closure");
 
@@ -93,10 +144,12 @@ fn cancel_drops_a_pending_delay_and_tells_the_host() {
     let (token, dropped) = probe();
     let runs = counter();
     let seen = Rc::clone(&runs);
-    let handle = ctx.delay(Duration::from_secs(60), move || {
-        let _ = &token;
-        bump(&seen);
-    });
+    let handle = ctx
+        .delay(Duration::from_secs(60), move || {
+            let _ = &token;
+            bump(&seen);
+        })
+        .unwrap();
     let (host_handle, callback) = last_task();
 
     ctx.cancel(handle);
@@ -113,17 +166,19 @@ fn cancel_drops_an_interval_closure() {
     let (token, dropped) = probe();
     let runs = counter();
     let seen = Rc::clone(&runs);
-    let handle = ctx.interval(Duration::from_millis(10), move || {
-        let _ = &token;
-        bump(&seen);
-    });
+    let handle = ctx
+        .interval(Duration::from_millis(10), move || {
+            let _ = &token;
+            bump(&seen);
+        })
+        .unwrap();
     let (host_handle, callback) = last_task();
     fire(callback);
     fire(callback);
     assert_eq!(runs.get(), 2, "interval keeps firing");
     assert!(!dropped.get());
 
-    ctx.cancel(handle);
+    handle.cancel();
     assert!(dropped.get());
     assert!(host_cancelled(host_handle));
     fire(callback);
@@ -138,13 +193,19 @@ fn interval_cancelled_from_its_own_callback() {
     let own: Rc<Cell<Option<TaskHandle>>> = Rc::new(Cell::new(None));
     let seen = Rc::clone(&runs);
     let slot = Rc::clone(&own);
-    let handle = ctx.interval(Duration::from_millis(10), move || {
-        let _ = &token;
-        bump(&seen);
-        if let Some(handle) = slot.get() {
-            Context::new().cancel(handle);
-        }
-    });
+    let handle = ctx
+        .interval_with_delay(
+            Duration::from_millis(10),
+            Duration::from_millis(1),
+            move || {
+                let _ = &token;
+                bump(&seen);
+                if let Some(handle) = slot.get() {
+                    Context::new().cancel(handle);
+                }
+            },
+        )
+        .unwrap();
     own.set(Some(handle));
     let (host_handle, callback) = last_task();
 
@@ -171,8 +232,11 @@ fn delay_can_schedule_another_delay_while_firing() {
     ctx.delay(Duration::from_millis(1), move || {
         bump(&seen);
         let again = Rc::clone(&seen);
-        Context::new().delay(Duration::from_millis(1), move || bump(&again));
-    });
+        Context::new()
+            .delay(Duration::from_millis(1), move || bump(&again))
+            .unwrap();
+    })
+    .unwrap();
     let (_, first) = last_task();
     fire(first);
     let (_, second) = last_task();
@@ -182,44 +246,86 @@ fn delay_can_schedule_another_delay_while_firing() {
 }
 
 #[test]
+fn a_refused_schedule_keeps_no_closure() {
+    refuse("scheduler");
+    let (token, dropped) = probe();
+    let refused = Context::new().delay(Duration::from_millis(1), move || {
+        let _ = &token;
+    });
+    assert_eq!(refused.unwrap_err().kind(), ErrorKind::Conflict);
+    assert!(dropped.get(), "the refused task is dropped at once");
+}
+
+#[test]
 fn completer_can_register_a_command_with_a_completer() {
     let ctx = Context::new();
-    ctx.command("outer", |_| {})
-        .completer(|_, _| {
+    ctx.command("outer")
+        .completer(|_| {
             Context::new()
-                .command("inner", |_| {})
-                .completer(|_, _| vec!["deep".to_owned()])
-                .register();
-            vec!["registered".to_owned()]
+                .command("inner")
+                .completer(|_| vec!["deep"])
+                .register()
+                .unwrap();
+            vec!["registered"]
         })
-        .register();
+        .register()
+        .unwrap();
 
     let outer = command_callback("outer");
-    assert_eq!(tab_complete(outer, Vec::new(), 0), ["registered"]);
+    assert_eq!(complete(outer, Vec::new()), ["registered"]);
     let inner = command_callback("inner");
-    assert_eq!(tab_complete(inner, Vec::new(), 0), ["deep"]);
-    assert_eq!(tab_complete(outer, Vec::new(), 0), ["registered"]);
+    assert_eq!(complete(inner, Vec::new()), ["deep"]);
+    assert_eq!(complete(outer, Vec::new()), ["registered"]);
 }
 
 #[test]
 fn tab_complete_without_a_completer_is_empty() {
-    Context::new().command("bare", |_| {}).register();
-    assert!(tab_complete(command_callback("bare"), vec!["x".to_owned()], 1).is_empty());
-    assert!(tab_complete(u64::MAX, Vec::new(), 0).is_empty());
+    Context::new().command("bare").register().unwrap();
+    assert!(complete(command_callback("bare"), vec!["x".to_owned()]).is_empty());
+    assert!(complete(u64::MAX, Vec::new()).is_empty());
+}
+
+#[test]
+fn a_completion_sees_the_sender_and_the_partial_argument() {
+    Context::new()
+        .command("who")
+        .completer(|completion| {
+            vec![
+                Suggestion::new(format!(
+                    "{}:{}",
+                    completion.sender.name(),
+                    completion.partial()
+                ))
+                .with_tooltip(Component::text("tip")),
+            ]
+        })
+        .register()
+        .unwrap();
+    let suggestions = tab_complete(
+        command_callback("who"),
+        sender(Some(3)),
+        vec!["a".into(), "b".into()],
+        3,
+    );
+    assert_eq!(suggestions.len(), 1);
+    assert_eq!(suggestions[0].text, "Steve:b");
+    assert_eq!(
+        suggestions[0].tooltip,
+        Some(Component::text("tip").to_arena())
+    );
 }
 
 #[test]
 fn command_handler_receives_the_invocation() {
     let seen: Rc<RefCell<Vec<Invocation>>> = Rc::default();
     let sink = Rc::clone(&seen);
-    Context::new()
-        .command("echo", move |inv| {
-            sink.borrow_mut().push((inv.args, inv.player))
-        })
-        .register();
+    register("echo", move |inv| {
+        let player = inv.player().map(|p| p.id.as_u64());
+        sink.borrow_mut().push((inv.args, player));
+    });
     let callback = command_callback("echo");
-    handle_command(callback, vec!["a".to_owned(), "b".to_owned()], Some(4));
-    handle_command(callback, Vec::new(), None);
+    invoke(callback, vec!["a".to_owned(), "b".to_owned()], Some(4));
+    invoke(callback, Vec::new(), None);
     assert_eq!(
         *seen.borrow(),
         [
@@ -233,47 +339,84 @@ fn command_handler_receives_the_invocation() {
 fn command_handler_can_register_a_command_while_dispatching() {
     let runs = counter();
     let seen = Rc::clone(&runs);
-    Context::new()
-        .command("spawn", move |_| {
-            let inner = Rc::clone(&seen);
-            Context::new()
-                .command("spawned", move |_| bump(&inner))
-                .register();
-        })
-        .register();
-    handle_command(command_callback("spawn"), Vec::new(), None);
-    handle_command(command_callback("spawned"), Vec::new(), None);
+    register("spawn", move |_| {
+        let inner = Rc::clone(&seen);
+        register("spawned", move |_| bump(&inner));
+    });
+    invoke(command_callback("spawn"), Vec::new(), None);
+    invoke(command_callback("spawned"), Vec::new(), None);
     assert_eq!(runs.get(), 1);
 }
 
 #[test]
 fn reregistering_a_command_name_drops_the_replaced_closure() {
-    let ctx = Context::new();
     let (first_token, first_dropped) = probe();
     let first_runs = counter();
     let second_runs = counter();
     let seen = Rc::clone(&first_runs);
-    ctx.command("dup", move |_| {
+    register("dup", move |_| {
         let _ = &first_token;
         bump(&seen);
-    })
-    .register();
+    });
     let first = command_callback("dup");
     let seen = Rc::clone(&second_runs);
-    ctx.command("DUP", move |_| bump(&seen)).register();
+    register("DUP", move |_| bump(&seen));
     let second = command_callback("dup");
 
     assert_ne!(first, second);
     assert!(first_dropped.get(), "replaced command closure dropped");
-    handle_command(first, Vec::new(), None);
-    handle_command(second, Vec::new(), None);
+    invoke(first, Vec::new(), None);
+    invoke(second, Vec::new(), None);
     assert_eq!((first_runs.get(), second_runs.get()), (0, 1));
+}
+
+#[test]
+fn a_refused_registration_keeps_the_previous_handler() {
+    let runs = counter();
+    let seen = Rc::clone(&runs);
+    register("kept", move |_| bump(&seen));
+    let first = command_callback("kept");
+    refuse("kept");
+    let (token, dropped) = probe();
+    let refused = Context::new()
+        .command("kept")
+        .handler(move |_| {
+            let _ = &token;
+        })
+        .register();
+
+    assert_eq!(refused.unwrap_err().kind(), ErrorKind::Conflict);
+    assert!(dropped.get(), "the refused handler is dropped");
+    invoke(first, Vec::new(), None);
+    assert_eq!(runs.get(), 1, "the handler the host kept still runs");
+    assert_eq!(
+        Context::new().unregister_command("kept"),
+        Ok(true),
+        "the guest still owns the command the host kept"
+    );
+}
+
+#[test]
+fn a_registration_reports_what_the_host_registered() {
+    let registration = Context::new()
+        .command("report")
+        .aliases(["rep", "r"])
+        .description("reports")
+        .usage("/report <player>")
+        .permission("example.report")
+        .hidden(true)
+        .register()
+        .unwrap();
+    assert_eq!(registration.name, "report");
+    assert_eq!(registration.aliases, ["rep", "r"]);
+    assert!(registration.unregister().unwrap());
+    assert!(host::with_fake(|h| !h.commands.contains_key("report")));
 }
 
 #[test]
 fn cancel_after_a_delay_fired_is_a_guest_side_no_op() {
     let ctx = Context::new();
-    let handle = ctx.delay(Duration::from_millis(1), || {});
+    let handle = ctx.delay(Duration::from_millis(1), || {}).unwrap();
     let (host_handle, callback) = last_task();
     fire(callback);
     ctx.cancel(handle);
@@ -289,22 +432,25 @@ fn unregister_command_drops_the_closure_and_tells_the_host() {
     let (token, dropped) = probe();
     let runs = counter();
     let seen = Rc::clone(&runs);
-    ctx.command("bye", move |_| {
-        let _ = &token;
-        bump(&seen);
-    })
-    .completer(|_, _| vec!["now".to_owned()])
-    .register();
+    ctx.command("bye")
+        .handler(move |_| {
+            let _ = &token;
+            bump(&seen);
+        })
+        .completer(|_| vec!["now"])
+        .register()
+        .unwrap();
     let callback = command_callback("bye");
 
-    assert!(ctx.unregister_command("Bye"));
+    assert_eq!(ctx.unregister_command("Bye"), Ok(true));
     assert!(dropped.get(), "unregistered command closure dropped");
     assert!(host::with_fake(|h| !h.commands.contains_key("bye")));
-    handle_command(callback, Vec::new(), None);
+    invoke(callback, Vec::new(), None);
     assert_eq!(runs.get(), 0);
-    assert!(tab_complete(callback, Vec::new(), 0).is_empty());
-    assert!(
-        !ctx.unregister_command("bye"),
+    assert!(complete(callback, Vec::new()).is_empty());
+    assert_eq!(
+        ctx.unregister_command("bye"),
+        Ok(false),
         "second unregister finds nothing"
     );
 }
@@ -312,7 +458,7 @@ fn unregister_command_drops_the_closure_and_tells_the_host() {
 #[test]
 fn unregister_leaves_commands_this_plugin_does_not_own_alone() {
     host::with_fake(|h| h.commands.insert("foreign".to_owned(), 77));
-    assert!(!Context::new().unregister_command("foreign"));
+    assert_eq!(Context::new().unregister_command("foreign"), Ok(false));
     assert!(host::with_fake(|h| h.commands.contains_key("foreign")));
 }
 
@@ -322,46 +468,41 @@ fn command_unregistering_itself_is_dropped_after_its_call() {
     let outcome: Rc<Cell<Option<(bool, bool)>>> = Rc::default();
     let seen = Rc::clone(&outcome);
     let flag = Rc::clone(&dropped);
-    Context::new()
-        .command("once", move |_| {
-            let _ = &token;
-            let removed = Context::new().unregister_command("once");
-            seen.set(Some((removed, flag.get())));
-        })
-        .register();
+    register("once", move |_| {
+        let _ = &token;
+        let removed = Context::new().unregister_command("once") == Ok(true);
+        seen.set(Some((removed, flag.get())));
+    });
     let callback = command_callback("once");
 
-    handle_command(callback, Vec::new(), None);
+    invoke(callback, Vec::new(), None);
     assert_eq!(
         outcome.get(),
         Some((true, false)),
         "unregistered from inside, still alive while running"
     );
     assert!(dropped.get(), "dropped once the in-flight call returned");
-    handle_command(callback, Vec::new(), None);
+    invoke(callback, Vec::new(), None);
     assert_eq!(outcome.get(), Some((true, false)));
 }
 
 #[test]
 fn command_can_unregister_another_command_mid_dispatch() {
-    let ctx = Context::new();
     let (token, dropped) = probe();
     let victim_runs = counter();
     let seen = Rc::clone(&victim_runs);
-    ctx.command("victim", move |_| {
+    register("victim", move |_| {
         let _ = &token;
         bump(&seen);
-    })
-    .register();
-    ctx.command("reaper", |_| {
-        assert!(Context::new().unregister_command("victim"));
-    })
-    .register();
+    });
+    register("reaper", |_| {
+        assert_eq!(Context::new().unregister_command("victim"), Ok(true));
+    });
     let victim = command_callback("victim");
 
-    handle_command(command_callback("reaper"), Vec::new(), None);
+    invoke(command_callback("reaper"), Vec::new(), None);
     assert!(dropped.get());
-    handle_command(victim, Vec::new(), None);
+    invoke(victim, Vec::new(), None);
     assert_eq!(victim_runs.get(), 0);
 }
 
@@ -369,18 +510,19 @@ fn command_can_unregister_another_command_mid_dispatch() {
 fn completer_can_unregister_its_own_command() {
     let (token, dropped) = probe();
     Context::new()
-        .command("fleeting", |_| {})
-        .completer(move |_, _| {
+        .command("fleeting")
+        .completer(move |_| {
             let _ = &token;
-            let removed = Context::new().unregister_command("fleeting");
+            let removed = Context::new().unregister_command("fleeting") == Ok(true);
             vec![removed.to_string()]
         })
-        .register();
+        .register()
+        .unwrap();
     let callback = command_callback("fleeting");
 
-    assert_eq!(tab_complete(callback, Vec::new(), 0), ["true"]);
+    assert_eq!(complete(callback, Vec::new()), ["true"]);
     assert!(dropped.get());
-    assert!(tab_complete(callback, Vec::new(), 0).is_empty());
+    assert!(complete(callback, Vec::new()).is_empty());
 }
 
 #[test]
@@ -388,22 +530,18 @@ fn command_reregistering_its_own_name_mid_dispatch_swaps_the_handler() {
     let (token, dropped) = probe();
     let second_runs = counter();
     let seen = Rc::clone(&second_runs);
-    Context::new()
-        .command("phoenix", move |_| {
-            let _ = &token;
-            let again = Rc::clone(&seen);
-            Context::new()
-                .command("phoenix", move |_| bump(&again))
-                .register();
-        })
-        .register();
+    register("phoenix", move |_| {
+        let _ = &token;
+        let again = Rc::clone(&seen);
+        register("phoenix", move |_| bump(&again));
+    });
     let first = command_callback("phoenix");
 
-    handle_command(first, Vec::new(), None);
+    invoke(first, Vec::new(), None);
     assert!(dropped.get(), "replaced handler dropped after its call");
     let second = command_callback("phoenix");
     assert_ne!(first, second);
-    handle_command(second, Vec::new(), None);
+    invoke(second, Vec::new(), None);
     assert_eq!(second_runs.get(), 1);
 }
 
@@ -413,11 +551,13 @@ fn reentrant_dispatch_of_a_running_event_handler_is_skipped() {
     let own = Rc::new(Cell::new(0));
     let seen = Rc::clone(&runs);
     let listener_slot = Rc::clone(&own);
-    Context::new().on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| {
-        bump(&seen);
-        let nested = handle_event(listener_slot.get(), Event::ProxyShutdown);
-        assert!(matches!(nested, EventOutcome::None));
-    });
+    Context::new()
+        .on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| {
+            bump(&seen);
+            let nested = handle_event(listener_slot.get(), Event::ProxyShutdown);
+            assert_eq!(nested, EventOutcome::Unchanged);
+        })
+        .unwrap();
     own.set(last_listener());
     handle_event(own.get(), Event::ProxyShutdown);
     assert_eq!(runs.get(), 1);
@@ -430,18 +570,20 @@ fn event_handler_unsubscribing_itself_is_dropped_after_the_call() {
     let own: Rc<RefCell<Option<EventSubscription>>> = Rc::default();
     let seen = Rc::clone(&runs);
     let slot = Rc::clone(&own);
-    let sub = Context::new().on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| {
-        let _ = &token;
-        bump(&seen);
-        if let Some(sub) = slot.borrow_mut().take() {
-            sub.cancel();
-        }
-    });
+    let sub = Context::new()
+        .on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| {
+            let _ = &token;
+            bump(&seen);
+            if let Some(sub) = slot.borrow_mut().take() {
+                sub.cancel();
+            }
+        })
+        .unwrap();
     *own.borrow_mut() = Some(sub);
     let listener = last_listener();
 
     let outcome = handle_event(listener, Event::ProxyShutdown);
-    assert!(matches!(outcome, EventOutcome::None));
+    assert_eq!(outcome, EventOutcome::Unchanged);
     assert_eq!(runs.get(), 1);
     assert!(
         dropped.get(),
@@ -468,13 +610,17 @@ fn event_handler_can_unsubscribe_another_handler_mid_dispatch() {
         if let Some(sub) = victim.borrow_mut().take() {
             sub.cancel();
         }
-    });
+    })
+    .unwrap();
     let a = last_listener();
     let seen = Rc::clone(&b_runs);
-    *b_sub.borrow_mut() = Some(ctx.on::<ProxyShutdownEvent>(EventPriority::Last, move |_| {
-        let _ = &b_token;
-        bump(&seen);
-    }));
+    *b_sub.borrow_mut() = Some(
+        ctx.on::<ProxyShutdownEvent>(EventPriority::Last, move |_| {
+            let _ = &b_token;
+            bump(&seen);
+        })
+        .unwrap(),
+    );
     let b = last_listener();
 
     handle_event(a, Event::ProxyShutdown);
@@ -489,10 +635,14 @@ fn event_handler_can_unsubscribe_another_handler_mid_dispatch() {
 fn event_handler_can_subscribe_while_dispatching() {
     let runs = counter();
     let seen = Rc::clone(&runs);
-    Context::new().on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| {
-        let inner = Rc::clone(&seen);
-        Context::new().on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| bump(&inner));
-    });
+    Context::new()
+        .on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| {
+            let inner = Rc::clone(&seen);
+            Context::new()
+                .on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| bump(&inner))
+                .unwrap();
+        })
+        .unwrap();
     let outer = last_listener();
     handle_event(outer, Event::ProxyShutdown);
     let inner = last_listener();
@@ -505,10 +655,23 @@ fn event_handler_can_subscribe_while_dispatching() {
 fn event_of_another_kind_is_ignored() {
     let runs = counter();
     let seen = Rc::clone(&runs);
-    Context::new().on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| bump(&seen));
-    let outcome = handle_event(last_listener(), Event::ConfigReload);
-    assert!(matches!(outcome, EventOutcome::None));
+    Context::new()
+        .on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| bump(&seen))
+        .unwrap();
+    let outcome = handle_event(last_listener(), Event::ProxyInitialize);
+    assert_eq!(outcome, EventOutcome::Unchanged);
     assert_eq!(runs.get(), 0);
+}
+
+#[test]
+fn a_refused_subscription_keeps_no_handler() {
+    refuse("subscribe");
+    let (token, dropped) = probe();
+    let refused = Context::new().on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| {
+        let _ = &token;
+    });
+    assert!(refused.is_err());
+    assert!(dropped.get(), "the refused handler is dropped at once");
 }
 
 struct Noop;
@@ -526,7 +689,7 @@ impl LimboHandler for Reregistering {
     fn on_player_enter(&self, _session: &LimboSession) -> HandlerOutcome {
         HandlerOutcome::Accept
     }
-    fn on_disconnect(&self, _player_id: u64) {
+    fn on_disconnect(&self, _player: PlayerId) {
         bump(&self.calls);
         register_limbo_handler("again", Box::new(Noop));
         let id = host::with_fake(|h| h.limbo_handlers.last().map(|(_, id)| *id));
@@ -562,6 +725,14 @@ fn limbo_callback_can_register_a_handler() {
 }
 
 #[test]
+fn a_refused_limbo_handler_is_dropped() {
+    refuse("refused-gate");
+    register_limbo_handler("refused-gate", Box::new(Noop));
+    assert!(host::with_fake(|h| h.limbo_handlers.is_empty()));
+    assert_eq!(LIMBO_HANDLERS.with(|handlers| handlers.len()), 0);
+}
+
+#[test]
 fn codec_factories_get_sequential_ids_from_zero() {
     let mut registrar = CodecRegistrar { notify: true };
     registrar.add("first", crate::codec::FilterPriority::Normal, |_| {
@@ -575,4 +746,51 @@ fn codec_factories_get_sequential_ids_from_zero() {
         declared,
         [("first".to_owned(), 0), ("second".to_owned(), 1)]
     );
+}
+
+#[derive(Default)]
+struct Lifecycle;
+
+thread_local! {
+    static SEEN: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+impl Plugin for Lifecycle {
+    fn metadata(&self) -> PluginMetadata {
+        PluginMetadata::new("lifecycle", "Lifecycle", "0.0.0")
+    }
+
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
+        let seen = format!("{:?}", ctx.enable_reason());
+        SEEN.with(|s| s.borrow_mut().push(seen));
+        Err(Error::new(ErrorKind::PermissionDenied, "missing capability: ban").into())
+    }
+
+    fn on_disable(&self, ctx: &Context) -> Result<(), PluginError> {
+        let seen = format!("{:?}", ctx.disable_reason());
+        SEEN.with(|s| s.borrow_mut().push(seen));
+        Ok(())
+    }
+}
+
+#[test]
+fn lifecycle_reasons_reach_the_plugin_and_errors_become_strings() {
+    let failed = on_enable::<Lifecycle>(wg::EnableReason::Recovered(wg::RecoveryInfo {
+        attempt: 1,
+        cause: "trap".into(),
+    }));
+    assert_eq!(
+        failed,
+        Err("permission-denied: missing capability: ban".to_owned())
+    );
+    assert_eq!(on_disable(wg::DisableReason::Shutdown), Ok(()));
+    SEEN.with(|seen| {
+        assert_eq!(
+            *seen.borrow(),
+            [
+                "Some(Recovered(RecoveryInfo { attempt: 1, cause: \"trap\" }))",
+                "Some(Shutdown)"
+            ]
+        );
+    });
 }

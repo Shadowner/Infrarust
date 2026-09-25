@@ -98,6 +98,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-old-world"
+version = "0.0.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "fixture-scripted"
 version = "0.0.0"
 dependencies = [
@@ -179,8 +186,14 @@ name = "infrarust-plugin-sdk"
 version = "2.0.0-beta.3"
 dependencies = [
  "infrarust-plugin-macros",
+ "infrarust-plugin-wit",
+ "uuid",
  "wit-bindgen",
 ]
+
+[[package]]
+name = "infrarust-plugin-wit"
+version = "2.0.0-beta.3"
 
 [[package]]
 name = "itoa"
@@ -315,6 +328,12 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "uuid"
+version = "1.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
 
 [[package]]
 name = "wasm-encoder"

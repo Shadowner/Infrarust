@@ -48,14 +48,14 @@ impl LimboHandler for Gate {
 
     fn on_command(&self, session: &LimboSession, command: &str, _args: &[String]) {
         if command == "continue" {
-            session.complete(HandlerOutcome::Accept);
+            session.complete(HandlerOutcome::Accept).ok();
         }
     }
 }
 
 #[plugin(id = "my-gate", name = "My Gate")]
 impl Plugin for MyPlugin {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
         Ok(())
     }
 
@@ -82,8 +82,8 @@ pub trait LimboHandler {
     fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome;
     fn on_command(&self, session: &LimboSession, command: &str, args: &[String]) {}
     fn on_chat(&self, session: &LimboSession, message: &str) {}
-    fn on_disconnect(&self, player_id: u64) {}
-    fn on_session_end(&self, player_id: u64, reason: SessionEndReason) {}
+    fn on_disconnect(&self, player: PlayerId) {}
+    fn on_session_end(&self, player: PlayerId, reason: SessionEndReason) {}
 }
 ```
 
@@ -92,11 +92,11 @@ pub trait LimboHandler {
 | `on_player_enter` | Player enters limbo | `&LimboSession`, returns `HandlerOutcome` |
 | `on_command` | Player runs a command while held | `&LimboSession`, command name, args |
 | `on_chat` | Player sends a chat message while held | `&LimboSession`, message text |
-| `on_disconnect` | Player's connection drops | `player_id` |
-| `on_session_end` | Session ends for any reason | `player_id`, `SessionEndReason` |
+| `on_disconnect` | Player's connection drops | `PlayerId` |
+| `on_session_end` | Session ends for any reason | `PlayerId`, `SessionEndReason` |
 
 :::tip
-The plugin state is single-threaded with no async runtime. Keep mutable handler state in `Cell`/`RefCell` fields, as the fixture's `Gate` does with a `RefCell<HashSet<u64>>` of waiting player IDs.
+The plugin state is single-threaded with no async runtime. Keep mutable handler state in `Cell`/`RefCell` fields, as the fixture's `Gate` does with a `RefCell<HashSet<PlayerId>>` of waiting players.
 :::
 
 ## HandlerOutcome
@@ -109,7 +109,7 @@ The value `on_player_enter` returns, and the value you pass to `complete` to end
 | `Deny(Component)` | Disconnect the player with the given message |
 | `Hold` | Keep the player in limbo; release later via `complete` |
 | `HoldWithTimeout { after, on_timeout }` | Hold, then resolve with `on_timeout` if `complete` is not called within `after` |
-| `Redirect(String)` | Send the player to the named server |
+| `Redirect(ServerId)` | Send the player to the named server |
 | `SendToLimbo(Vec<String>)` | Route the player through another limbo-handler chain |
 
 ```rust
@@ -118,7 +118,7 @@ pub enum HandlerOutcome {
     Deny(Component),
     Hold,
     HoldWithTimeout { after: Duration, on_timeout: TimeoutOutcome },
-    Redirect(String),
+    Redirect(ServerId),
     SendToLimbo(Vec<String>),
 }
 ```
@@ -131,7 +131,7 @@ pub enum HandlerOutcome {
 pub enum TimeoutOutcome {
     Accept,
     Deny(Component),
-    Redirect(String),
+    Redirect(ServerId),
     SendToLimbo(Vec<String>),
 }
 ```
@@ -156,13 +156,13 @@ fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
-| `player_id()` | `u64` | The held player's session id |
+| `player_id()` | `PlayerId` | The held player's id |
 | `profile()` | `GameProfile` | The player's game profile |
 | `entry_context()` | `EntryContext` | Why the player entered limbo |
-| `send_message(Component)` | `Result<(), PlayerError>` | Send a chat message |
-| `send_title(TitleData)` | `Result<(), PlayerError>` | Send a title |
-| `send_action_bar(Component)` | `Result<(), PlayerError>` | Send an action-bar message |
-| `complete(HandlerOutcome)` | `()` | Release, deny, or redirect a held player |
+| `send_message(impl Into<Component>)` | `Result<(), Error>` | Send a chat message |
+| `send_title(&TitleData)` | `Result<(), Error>` | Send a title |
+| `send_action_bar(impl Into<Component>)` | `Result<(), Error>` | Send an action-bar message |
+| `complete(HandlerOutcome)` | `Result<(), Error>` | Release, deny, or redirect a held player; `InvalidArgument` when the outcome's text is invalid |
 | `handle()` | `SessionHandle` | Mint a storable handle for later completion |
 
 ### EntryContext
@@ -171,9 +171,9 @@ fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
 
 ```rust
 pub enum EntryContext {
-    InitialConnection(String),                          // server id
-    KickedFromServer { server: String, reason: String },
-    PluginRedirect(Option<String>),                     // optional server id
+    InitialConnection(ServerId),
+    KickedFromServer { server: ServerId, reason: Component },
+    PluginRedirect(Option<ServerId>),
 }
 ```
 
@@ -185,11 +185,11 @@ Branch on this to vary the gate, for example a maintenance message for `InitialC
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
-| `player_id()` | `u64` | The held player's session id |
-| `send_message(Component)` | `Result<(), PlayerError>` | Send a chat message |
-| `send_title(TitleData)` | `Result<(), PlayerError>` | Send a title |
-| `send_action_bar(Component)` | `Result<(), PlayerError>` | Send an action-bar message |
-| `complete(HandlerOutcome)` | `()` | Release, deny, or redirect the held player |
+| `player_id()` | `PlayerId` | The held player's id |
+| `send_message(impl Into<Component>)` | `Result<(), Error>` | Send a chat message |
+| `send_title(&TitleData)` | `Result<(), Error>` | Send a title |
+| `send_action_bar(impl Into<Component>)` | `Result<(), Error>` | Send an action-bar message |
+| `complete(HandlerOutcome)` | `Result<(), Error>` | Release, deny, or redirect the held player |
 | `cancelled()` | `bool` | True once the session has ended |
 
 `complete` on a stale handle is a safe no-op: the host captures the hold generation when the handle is minted, so a completion that arrives after the session advanced or ended does nothing. `cancelled()` returns `true` once the engine has ended the session, which lets a repeating task know to stop.
@@ -203,18 +203,21 @@ struct DelayedGate;
 
 impl LimboHandler for DelayedGate {
     fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
-        let handle = session.handle();                  // [!code focus]
-        Context::new().delay(Duration::from_millis(50), move || {
-            if !handle.cancelled() {                     // [!code focus]
-                handle.complete(HandlerOutcome::Accept); // [!code focus]
+        let handle = session.handle();                        // [!code focus]
+        let scheduled = Context::new().delay(Duration::from_millis(50), move || {
+            if !handle.cancelled() {                           // [!code focus]
+                handle.complete(HandlerOutcome::Accept).ok();  // [!code focus]
             }
         });
-        HandlerOutcome::Hold                             // [!code focus]
+        match scheduled {
+            Ok(_) => HandlerOutcome::Hold,                     // [!code focus]
+            Err(_) => HandlerOutcome::Accept,
+        }
     }
 }
 ```
 
-`Context::new()` is a zero-sized handle to the runtime, so a `LimboHandler` that does not receive a `&Context` can still schedule tasks and subscribe to events. `delay` runs the task once after the duration; `interval` runs it repeatedly. Both return a `TaskHandle` you can pass to `ctx.cancel`.
+`Context::new()` is a cheap handle to the runtime, so a `LimboHandler` that does not receive a `&Context` can still schedule tasks and subscribe to events. `delay` runs the task once after the duration; `interval` runs it repeatedly. Both return `Result<TaskHandle, Error>`; the example accepts the player at once when the task could not be scheduled, rather than holding them with nothing to release them.
 
 ## Session lifecycle
 
@@ -288,7 +291,7 @@ impl LimboHandler for Boom {
 }
 ```
 
-The host also denies the session if it cannot upgrade the instance reference or cannot lend the native session to the guest.
+The host also denies the session if it cannot upgrade the instance reference or cannot lend the native session to the guest. An outcome returned from `on_player_enter` whose text the host cannot accept, such as a `Deny` component nested deeper than 64 levels, still applies, with a placeholder text and a warning in the log.
 
 ## See also
 

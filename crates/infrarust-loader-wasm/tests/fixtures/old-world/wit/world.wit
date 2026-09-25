@@ -1,0 +1,18 @@
+package infrarust:plugin@0.2.3;
+
+world plugin {
+    import types;
+    import log;
+    import event-bus;
+    import player-registry;
+    import server-manager;
+    import ban-service;
+    import config-service;
+    import command-manager;
+    import scheduler;
+    import limbo;
+    import codec-registry;
+
+    export guest;
+    export codec-filter;
+}

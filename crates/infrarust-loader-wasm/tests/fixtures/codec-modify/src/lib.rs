@@ -6,7 +6,12 @@ struct CodecModify;
 struct OpFilter;
 
 impl CodecFilter for OpFilter {
-    fn filter(&mut self, _ctx: &CodecContext, packet: &mut Packet, out: &mut Injections) -> Verdict {
+    fn filter(
+        &mut self,
+        _ctx: &CodecContext,
+        packet: &mut Packet,
+        out: &mut Injections,
+    ) -> Verdict {
         match packet.id() {
             0x01 => Verdict::Drop,
             0x02 => {
@@ -25,7 +30,7 @@ impl CodecFilter for OpFilter {
 
 #[plugin(id = "codec-modify", name = "Codec Modify Fixture")]
 impl Plugin for CodecModify {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
         Ok(())
     }
 

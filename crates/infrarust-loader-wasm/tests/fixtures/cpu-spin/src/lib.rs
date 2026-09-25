@@ -1,6 +1,3 @@
-//! WASM-1 `cpu-spin` fixture: spins forever in `on_enable` with no host calls, so only
-//! epoch interruption can stop it. The host's escalating epoch deadline must trap it.
-
 wit_bindgen::generate!({
     world: "plugin",
     path: "../../../../infrarust-plugin-wit/wit",

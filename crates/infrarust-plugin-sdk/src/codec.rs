@@ -1,28 +1,30 @@
-//! Ergonomic guest-side codec-filter authoring.
-//!
-//! ```ignore
-//! struct Flip;
-//! impl CodecFilter for Flip {
-//!     fn filter(&mut self, _c: &CodecContext, p: &mut Packet, _o: &mut Injections) -> Verdict {
-//!         if let Some(b) = p.data_mut().first_mut() { *b ^= 0xff; }
-//!         Verdict::Pass
-//!     }
-//! }
-//!
-//! #[plugin]
-//! impl Plugin for MyPlugin {
-//!     fn register_codec_filters(reg: &mut CodecRegistrar) {
-//!         reg.add("flip", FilterPriority::Normal, |_init| Box::new(Flip));
-//!     }
-//! }
-//! ```
-//!
-//! The constructor is an associated-fn context (no plugin `self`): codec filters
-//! are per-connection and stateless across connections, so each one builds its own
-//! state from the [`CodecSessionInit`].
+use std::net::{IpAddr, SocketAddr};
 
-use crate::bindings::codec_filter::RawPacket;
-pub use crate::bindings::codec_filter::{CodecSessionInit, ConnectionSide, ConnectionState};
+use crate::bindings::codec_filter::{CodecSessionInit as WitSessionInit, RawPacket};
+pub use crate::bindings::codec_filter::{ConnectionSide, ConnectionState};
+use crate::bindings::codec_registry::FilterPriority as WitFilterPriority;
+use crate::types::{ip_from_wit, socket_from_wit};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CodecSessionInit {
+    pub client_version: i32,
+    pub connection_id: u64,
+    pub remote_addr: SocketAddr,
+    pub real_ip: Option<IpAddr>,
+    pub side: ConnectionSide,
+}
+
+impl CodecSessionInit {
+    pub(crate) fn from_wit(init: WitSessionInit) -> Self {
+        Self {
+            client_version: init.client_version,
+            connection_id: init.connection_id,
+            remote_addr: socket_from_wit(init.remote_addr),
+            real_ip: init.real_ip.map(ip_from_wit),
+            side: init.side,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct CodecContext {
@@ -135,13 +137,13 @@ pub enum FilterPriority {
 }
 
 impl FilterPriority {
-    fn to_u8(self) -> u8 {
+    const fn to_wit(self) -> WitFilterPriority {
         match self {
-            FilterPriority::First => 0,
-            FilterPriority::Early => 1,
-            FilterPriority::Normal => 2,
-            FilterPriority::Late => 3,
-            FilterPriority::Last => 4,
+            Self::First => WitFilterPriority::First,
+            Self::Early => WitFilterPriority::Early,
+            Self::Normal => WitFilterPriority::Normal,
+            Self::Late => WitFilterPriority::Late,
+            Self::Last => WitFilterPriority::Last,
         }
     }
 }
@@ -182,7 +184,7 @@ impl CodecRegistrar {
     ) {
         let metadata = crate::bindings::codec_registry::CodecFilterMetadata {
             id: id.to_string(),
-            priority: priority.to_u8(),
+            priority: priority.to_wit(),
             after: Vec::new(),
             before: Vec::new(),
         };

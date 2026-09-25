@@ -1,20 +1,15 @@
-// Codec filters (hot path) as a guest-owned per-session resource. The host calls
-// `create` per connection/side, then `filter` for every frame, then drops the
-// instance. The filter is shaped to run synchronously (§16); its execution model
-// (a sync engine vs a single-poll future) is a host-side, later-phase choice.
-interface codec-filter {                                                      // gated: codec-filter
-    use types.{raw-packet, protocol-version, connection-state, uuid, handler-id};
+interface codec-filter {
+    use types.{raw-packet, protocol-version, connection-state, handler-id, socket-address, ip-address};
 
     enum connection-side { client-side, server-side }
 
     record codec-session-init {
         client-version: protocol-version,
         connection-id: u64,
-        remote-addr: string,
-        real-ip: option<string>,
+        remote-addr: socket-address,
+        real-ip: option<ip-address>,
         side: connection-side,
     }
-
 
     variant codec-filter-error {
         translation-failed(string),
@@ -23,9 +18,6 @@ interface codec-filter {                                                      //
         internal(string),
     }
 
-    // Extra payload for the uncommon outcomes (a modified/replacement packet
-    // and/or injected frames). The boundary has no &mut, so a changed packet is
-    // returned here; `packet none` = unchanged.
     record filter-extras {
         packet: option<raw-packet>,
         inject-before: list<raw-packet>,

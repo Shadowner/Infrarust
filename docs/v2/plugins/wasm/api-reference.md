@@ -1,6 +1,6 @@
 ---
 title: WIT API Reference
-description: "The infrarust:plugin@0.2.3 WIT contract: package, world, types, and guest exports."
+description: "The infrarust:plugin@0.3.0 WIT contract: package, world, types, events, host imports, and guest exports."
 outline: [2, 3]
 ---
 
@@ -8,24 +8,26 @@ outline: [2, 3]
 
 This page documents the low-level WIT contract that defines the host/guest boundary for Infrarust WASM plugins. It lists every interface, type, and signature in the contract.
 
-You rarely call these signatures directly. The SDK generates bindings from this contract and presents Rust wrappers on top of them, so the author-facing API lives on the per-capability pages: [Events](./events), [Services](./services), [Limbo](./limbo), and [Codec Filters](./codec-filters). Read this page when you need the exact wire shape behind a wrapper.
+You rarely call these signatures directly. The SDK generates bindings from this contract and presents typed Rust wrappers on top of them, so the author-facing API lives on the per-feature pages: [Events](./events), [Services](./services), [Commands](./commands), [Limbo](./limbo), and [Codec Filters](./codec-filters). Read this page when you need the exact wire shape behind a wrapper.
 
 ::: info
-The contract is `infrarust:plugin@0.2.3`. The `WORLD_VERSION` constant in `infrarust-plugin-wit/src/lib.rs` still reads `0.2.0` and is stale; the authoritative version is the package declaration in `wit/world.wit`.
+The contract is `infrarust:plugin@0.3.0`. `WORLD_VERSION` in `infrarust-plugin-wit` matches the package declaration in `wit/world.wit`, and a test keeps the two in step. Components built for `infrarust:plugin@0.2.3` are refused at discovery; see [Migrating to 0.3](./migration-0.3).
 :::
 
 ## Package and world
 
-The contract is one package split across files under `crates/infrarust-plugin-wit/wit/`. The `plugin` world lists 11 imports (host capabilities) and 2 exports (the guest surface).
+The contract is one package split across files under `crates/infrarust-plugin-wit/wit/`: `world.wit`, `types.wit`, `events.wit` (types only), `event-bus.wit`, `players.wit`, `text.wit`, `services.wit`, `limbo.wit`, `codec-filter.wit` and `guest.wit`.
 
 ```wit
-package infrarust:plugin@0.2.3;
+package infrarust:plugin@0.3.0;
 
 world plugin {
     import types;
+    import events;
     import log;
+    import text;
     import event-bus;
-    import player-registry;
+    import players;
     import server-manager;
     import ban-service;
     import config-service;
@@ -43,420 +45,592 @@ world plugin {
 
 | Import | Capability gate | Purpose |
 |--------|-----------------|---------|
-| `types` | none | Shared aliases, enums, records, and variants. |
+| `types` | none | Shared ids, errors, profiles, addresses and the text-component arena. |
+| `events` | none | The event records, results and the `event` / `event-outcome` variants. Types only. |
 | `log` | none | `trace`/`debug`/`info`/`warn`/`error` to the host log. |
-| `event-bus` | `event-bus` | Subscribe and unsubscribe to event kinds by priority. |
-| `player-registry` | `player-read` (some methods `player-write` / `raw-packet`) | Look up players and act on the `player` resource. |
+| `text` | none | Parse and serialize text components with the proxy's own parser. |
+| `event-bus` | `event-bus` (`chat-intercept` for `chat-message`) | Subscribe and unsubscribe to event kinds by priority. |
+| `players` | `player-read`, `player-write` for actions, `raw-packet` for `send-packet` | Look up players by id, name or UUID, and act on them by id. |
 | `server-manager` | `server-manage` | Read server state, start and stop backends. |
-| `ban-service` | `ban` | Create, remove, and query bans. |
-| `config-service` | `config-read` | Read server configs and config values. |
+| `ban-service` | `ban` | Create, remove, look up and page bans. |
+| `config-service` | `config-read` | Read config values and server configs. |
 | `command-manager` | `command` | Register and unregister proxy commands. |
-| `scheduler` | `scheduler` | Schedule one-shot and interval callbacks. |
-| `limbo` | `limbo` | Register limbo handlers and act on the session resources. |
+| `scheduler` | `scheduler` | Schedule one-shot and repeating callbacks. |
+| `limbo` | `limbo` for `register-limbo-handler` | Register limbo handlers and act on the session resources. |
 | `codec-registry` | `codec-filter` | Register and unregister codec filters. |
+
+Every interface is linked for every plugin. A call the plugin lacks the capability for is refused when it is made: it returns a `host-error` of kind `permission-denied`, or a neutral value for the few infallible reads listed under [Players](#players). See [Capabilities](./capabilities).
 
 ### Exports
 
 | Export | Purpose |
 |--------|---------|
-| `guest` | Lifecycle, the unified event dispatch, and every marker+proxy callback entry point. |
+| `guest` | Metadata, lifecycle, the unified event dispatch, and every callback entry point. |
 | `codec-filter` | The per-session `filter-instance` resource and its `create` factory. |
 
-::: tip Baseline vs opt-in capabilities
-Every WASM plugin gets the baseline capabilities (`event-bus`, `player-read`, `player-write`, `command`, `scheduler`, `config-read`). The rest (`ban`, `server-manage`, `codec-filter`, `limbo`, `raw-packet`, `chat-intercept`) are opt-in: list them in your plugin's TOML permissions. See [Capabilities](./capabilities) for the full model.
-:::
+### Version check
+
+Before it instantiates a component, the loader reads the name of its `infrarust:plugin/guest@X.Y.Z` export. It accepts `0.3.M` when `M` is at most the host's patch version. Anything else is refused with a message such as:
+
+```text
+plugin built for infrarust:plugin@0.2.3; this host supports infrarust:plugin@0.3.x, rebuild it with an infrarust-plugin-sdk that targets infrarust:plugin@0.3.x
+```
+
+A component that exports no `guest` interface of this package is refused as "not an Infrarust plugin component". The AOT compile cache key includes the contract version, so a cached artifact never outlives a contract change.
 
 ## Core types
 
-All shared types live in `types.wit` and are used across every other interface.
+`types.wit` holds everything the other interfaces share.
 
-### Primitive aliases
+```wit
+interface types {
+    type player-id = u64;
+    type server-id = string;
+    type handler-id = u64;
+    type listener-handle = u64;
+    type task-handle = u64;
+    type duration-ms = u64;
+    type timestamp-ms = u64;
+    type protocol-version = s32;
+    type event-priority = u8;
 
-| Alias | Underlying type | Notes |
-|-------|-----------------|-------|
-| `player-id` | `u64` | Identifies a connected player. |
-| `server-id` | `string` | Backend server config id. |
-| `protocol-version` | `s32` | Minecraft protocol version number. |
-| `task-handle` | `u64` | Returned by `scheduler.delay` / `scheduler.interval`. |
+    record uuid {
+        hi: u64,
+        lo: u64,
+    }
+
+    variant ip-address {
+        ipv4(tuple<u8, u8, u8, u8>),
+        ipv6(tuple<u16, u16, u16, u16, u16, u16, u16, u16>),
+    }
+
+    record socket-address {
+        ip: ip-address,
+        port: u16,
+    }
+
+    enum error-kind {
+        invalid-argument,
+        not-found,
+        permission-denied,
+        unavailable,
+        timeout,
+        player-gone,
+        conflict,
+        invalid-state,
+        unsupported,
+        internal,
+    }
+
+    record host-error {
+        kind: error-kind,
+        message: string,
+    }
+
+    enum capability {
+        event-bus,
+        player-read,
+        player-write,
+        raw-packet,
+        server-manage,
+        ban,
+        command,
+        scheduler,
+        config-read,
+        config-write,
+        codec-filter,
+        transport-filter,
+        limbo,
+        virtual-backend,
+        permission-provider,
+        filesystem-extended,
+        network,
+        chat-intercept,
+        ban-provider,
+    }
+
+    enum connection-state { handshake, status, login, configuration, play }
+    enum server-state { online, offline, starting, stopping, sleeping, crashed }
+    enum proxy-mode { passthrough, zero-copy, client-only, offline, server-only }
+
+    record profile-property {
+        name: string,
+        value: string,
+        signature: option<string>,
+    }
+
+    record game-profile {
+        uuid: uuid,
+        username: string,
+        properties: list<profile-property>,
+    }
+
+    record player-ref {
+        id: player-id,
+        uuid: uuid,
+        username: string,
+    }
+
+    record server-address {
+        host: string,
+        port: u16,
+    }
+
+    record style {
+        color: option<string>,
+        bold: option<bool>,
+        italic: option<bool>,
+        underlined: option<bool>,
+        strikethrough: option<bool>,
+        obfuscated: option<bool>,
+        font: option<string>,
+        insertion: option<string>,
+        shadow-color: option<u32>,
+    }
+
+    variant click-event {
+        open-url(string),
+        run-command(string),
+        suggest-command(string),
+        copy-to-clipboard(string),
+        change-page(s32),
+    }
+
+    variant hover-event {
+        show-text(u32),
+    }
+
+    variant node-content {
+        text(string),
+        translatable(tuple<string, list<u32>, option<string>>),
+        keybind(string),
+    }
+
+    record component-node {
+        content: node-content,
+        style: style,
+        click: option<click-event>,
+        hover: option<hover-event>,
+        children: list<u32>,
+    }
+
+    record component {
+        nodes: list<component-node>,
+    }
+
+    record title-data {
+        title: component,
+        subtitle: component,
+        fade-in-ticks: s32,
+        stay-ticks: s32,
+        fade-out-ticks: s32,
+    }
+
+    record raw-packet {
+        packet-id: s32,
+        data: list<u8>,
+    }
+
+    record plugin-dependency {
+        id: string,
+        optional: bool,
+    }
+
+    record plugin-metadata {
+        id: string,
+        name: string,
+        version: string,
+        authors: list<string>,
+        description: option<string>,
+        dependencies: list<plugin-dependency>,
+    }
+}
+```
+
+### Ids, time and addresses
+
+| Type | Shape | Notes |
+|------|-------|-------|
+| `player-id` | `u64` | The proxy's id for a connected player. Every player call takes one. |
+| `server-id` | `string` | A backend server config id. |
+| `handler-id` | `u64` | A guest-owned id behind a command, task, limbo handler or codec factory. |
 | `listener-handle` | `u64` | Returned by `event-bus.subscribe`. |
-| `handler-id` | `u64` | A guest-owned id behind a registered handler (limbo handler, permission checker, or codec factory). The host wraps it in a native marker+proxy. |
-| `uuid` | `string` | Player UUID as a string. |
-| `event-priority` | `u8` | 1:1 with native `EventPriority(u8)`. The SDK exposes the named levels (first=0, early=64, normal=128, late=192, last=255). |
-| `component` | `string` | A pre-serialized Minecraft text-component JSON string (see below). |
+| `task-handle` | `u64` | Returned by `scheduler.delay` and `scheduler.interval`. |
+| `duration-ms`, `timestamp-ms` | `u64` | Milliseconds; timestamps count from the Unix epoch. |
+| `uuid` | `record { hi, lo }` | The big-endian halves of the UUID, so a malformed UUID cannot exist. |
+| `ip-address`, `socket-address` | variant / record | Octets for IPv4, segments for IPv6. |
 
-::: info `component` is JSON, not a record
-WIT has no recursive types, so the recursive native `Component` cannot be a WIT record. Rich text crosses the boundary as a JSON string already serialized to the Minecraft text-component format. The SDK's `Component` builder produces this string for you.
-:::
+### Errors
 
-### Enums
+Every fallible host function returns `result<T, host-error>`. The `kind` is the part to branch on; the `message` is for logs.
 
-| Enum | Variants |
-|------|----------|
-| `connection-state` | `handshake`, `status`, `login`, `configuration`, `play` |
-| `packet-direction` | `serverbound`, `clientbound` |
-| `server-state` | `online`, `offline`, `starting`, `stopping`, `sleeping`, `crashed` |
-| `proxy-mode` | `passthrough`, `zero-copy`, `client-only`, `offline`, `server-only` |
-| `permission-level` | `player`, `admin` |
-| `connection-side` | `client-side`, `server-side` (defined in `codec-filter`) |
+| Kind | Raised when |
+|------|-------------|
+| `invalid-argument` | An argument is malformed: an invalid text component, an unparsable IP range, a bad command name. |
+| `not-found` | The thing named does not exist, or the plugin does not own the command it unregisters. |
+| `permission-denied` | The plugin lacks the capability the call needs. The message names it: `missing capability: ban`. |
+| `unavailable` | The service could not do it right now, or host services are not available yet (during `metadata()`). |
+| `timeout` | The host call ran out of time, either its own timeout or the deadline of the guest call around it. |
+| `player-gone` | The player id is not online any more. |
+| `conflict` | The name is taken: a command owned by another plugin, a limbo handler name already registered. |
+| `invalid-state` | The player is not in a state that allows the action, such as no backend yet. |
+| `unsupported` | The proxy does not offer the service. |
+| `internal` | Anything else. |
 
-### Records
+A host function traps the guest only on a host invariant bug, such as a stale resource handle.
 
-```wit
-record profile-property {
-    name: string,
-    value: string,
-    signature: option<string>,
-}
-record game-profile {
-    uuid: uuid,
-    username: string,
-    properties: list<profile-property>,
-}
-record server-address {
-    host: string,
-    port: u16,
-}
-record server-config {
-    id: server-id,
-    network: option<string>,
-    addresses: list<server-address>,
-    domains: list<string>,
-    proxy-mode: proxy-mode,
-    limbo-handlers: list<string>,
-    max-players: u32,
-    disconnect-message: option<string>,
-    send-proxy-protocol: bool,
-    has-server-manager: bool,
-}
-record title-data {
-    title: component,
-    subtitle: component,
-    fade-in-ticks: s32,
-    stay-ticks: s32,
-    fade-out-ticks: s32,
-}
-record raw-packet {
-    packet-id: s32,
-    data: list<u8>,
-}
-record ban-entry {
-    target: ban-target,
-    reason: option<string>,
-    expires-at: option<u64>,
-    created-at: u64,
-    source: string,
-}
-record plugin-dependency {
-    id: string,
-    optional: bool,
-}
-record plugin-metadata {
-    id: string,
-    name: string,
-    version: string,
-    authors: list<string>,
-    description: option<string>,
-    dependencies: list<plugin-dependency>,
-}
-```
+### Text components
 
-`raw-packet` is kept for `player.send-packet` (gated by the `raw-packet` capability). The `raw-packet` *event* is contract-only; see [Events](./events).
+WIT has no recursive types, so a text component crosses the boundary as a flat arena: `nodes[0]` is the root and nodes point at each other by index. A node carries its content (`text`, `translatable` with argument indices and an optional fallback, or `keybind`), its style, an optional click and hover event, and the indices of its children. `hover-event::show-text` holds the index of the tooltip's root.
 
-### Variants
+The receiver validates every arena:
+
+- every index a node references is greater than the node's own index, so there are no cycles;
+- every node but the root is referenced exactly once, so a tree cannot fan out exponentially;
+- at most 4096 nodes, at most 64 levels deep, at most 256 KiB of text across all strings;
+- every `color` is a named color (`gold`, `dark_red`, ...) or `#RRGGBB`.
+
+An invalid component passed to a host function is refused with `invalid-argument`. An invalid component inside an event result still applies the decision, with the text replaced by a fallback, and the host logs a warning. The SDK builds valid arenas for you; see [`Component`](./services#text-components).
+
+Contents the contract does not model (score, selector, NBT, object) reach the guest as plain text, and click events of kind `custom` and hover events that show an item or entity are dropped on the way in.
+
+## Events
+
+`events.wit` declares one record per event and, when the event has a result, the result type. Every event follows the same pattern:
+
+- the record is named `<event>-event`;
+- a resulted event's record ends with `result: <event>-result`, which holds the **current** result, as set by earlier handlers;
+- `event-kind` has one case per event, `event` has one case per event carrying the record, and `event-outcome` has one case per resulted event carrying its result.
+
+`event-outcome` starts with `unchanged`. Returning it leaves the result as it is. Returning any other case sets the result, even when it equals the current one, so a later handler can reset an earlier deny to allowed. A test in `infrarust-plugin-wit` checks this pattern on every build.
 
 ```wit
-variant ban-target {
-    ip(string),
-    username(string),
-    uuid(uuid),
-}
-variant player-error {
-    not-active,
-    disconnected,
-    send-failed(string),
-    server-not-found(string),
-    switch-failed(string),
-}
-variant service-error {
-    not-found(string),
-    operation-failed(string),
-    unavailable(string),
+interface events {
+    use types.{
+        server-id, uuid, protocol-version, socket-address, game-profile, player-ref,
+        component, server-state, server-address,
+    };
+
+    enum event-kind {
+        pre-login,
+        post-login,
+        disconnect,
+        online-auth-failed,
+        permissions-setup,
+        player-choose-initial-server,
+        server-pre-connect,
+        server-connected,
+        server-post-connect,
+        kicked-from-server,
+        chat-message,
+        proxy-ping,
+        proxy-initialize,
+        proxy-shutdown,
+        config-reload,
+        server-state-change,
+        backend-health,
+    }
+
+    record pre-login-event {
+        profile: game-profile,
+        remote-addr: socket-address,
+        protocol: protocol-version,
+        server-domain: string,
+        %result: pre-login-result,
+    }
+
+    variant pre-login-result {
+        allowed,
+        denied(component),
+        force-offline,
+        force-online,
+    }
+
+    record post-login-event {
+        player: player-ref,
+        profile: game-profile,
+        protocol: protocol-version,
+    }
+
+    variant disconnect-cause {
+        client-quit,
+        kicked(option<component>),
+        backend-closed(option<component>),
+        shutdown,
+        error,
+    }
+
+    record disconnect-event {
+        player: player-ref,
+        last-server: option<server-id>,
+        cause: disconnect-cause,
+    }
+
+    record online-auth-failed-event {
+        username: string,
+    }
+
+    record permissions-setup-event {
+        player: player-ref,
+        online-mode: bool,
+        %result: permissions-setup-result,
+    }
+
+    variant permissions-setup-result {
+        use-default,
+    }
+
+    record player-choose-initial-server-event {
+        player: player-ref,
+        initial-server: server-id,
+        %result: player-choose-initial-server-result,
+    }
+
+    variant player-choose-initial-server-result {
+        allowed,
+        redirect(server-id),
+        send-to-limbo(list<string>),
+    }
+
+    enum connect-cause {
+        initial,
+        switch,
+        limbo-exit,
+        kick-redirect,
+        plugin-message,
+    }
+
+    record server-pre-connect-event {
+        player: player-ref,
+        server: server-id,
+        previous-server: option<server-id>,
+        cause: connect-cause,
+        %result: server-pre-connect-result,
+    }
+
+    variant server-pre-connect-result {
+        allowed,
+        connect-to(server-id),
+        send-to-limbo(list<string>),
+        denied(component),
+    }
+
+    record server-connected-event {
+        player: player-ref,
+        server: server-id,
+        previous-server: option<server-id>,
+    }
+
+    record server-post-connect-event {
+        player: player-ref,
+        server: server-id,
+        previous-server: option<server-id>,
+    }
+
+    variant kick-cause {
+        unreachable(string),
+        login-refused,
+        config-disconnect,
+        play-disconnect,
+        connection-lost,
+    }
+
+    record kicked-from-server-event {
+        player: player-ref,
+        server: server-id,
+        reason: option<component>,
+        cause: kick-cause,
+        during-connect: bool,
+        previous-server: option<server-id>,
+        %result: kicked-from-server-result,
+    }
+
+    variant kicked-from-server-result {
+        disconnect-player(option<component>),
+        redirect-to(server-id),
+        send-to-limbo(list<string>),
+        notify(component),
+    }
+
+    record chat-message-event {
+        player: player-ref,
+        message: string,
+        signed: bool,
+        server: option<server-id>,
+        %result: chat-message-result,
+    }
+
+    variant chat-message-result {
+        allow,
+        deny(option<component>),
+        modify(string),
+    }
+
+    record ping-player {
+        name: string,
+        uuid: uuid,
+    }
+
+    record proxy-ping-event {
+        remote-addr: socket-address,
+        server: option<server-id>,
+        virtual-host: option<string>,
+        protocol: protocol-version,
+        legacy: bool,
+        %result: proxy-ping-result,
+    }
+
+    record proxy-ping-result {
+        description: component,
+        max-players: s32,
+        online-players: s32,
+        protocol: protocol-version,
+        version-name: string,
+        favicon: option<string>,
+        player-sample: list<ping-player>,
+    }
+
+    record config-reload-event {
+        provider: string,
+        added: list<server-id>,
+        removed: list<server-id>,
+        updated: list<server-id>,
+    }
+
+    record server-state-change-event {
+        server: server-id,
+        old-state: server-state,
+        new-state: server-state,
+    }
+
+    enum backend-state {
+        healthy,
+        probing,
+        unhealthy,
+        draining,
+    }
+
+    record backend-health-event {
+        address: server-address,
+        servers: list<server-id>,
+        state: backend-state,
+    }
+
+    variant event {
+        pre-login(pre-login-event),
+        post-login(post-login-event),
+        disconnect(disconnect-event),
+        online-auth-failed(online-auth-failed-event),
+        permissions-setup(permissions-setup-event),
+        player-choose-initial-server(player-choose-initial-server-event),
+        server-pre-connect(server-pre-connect-event),
+        server-connected(server-connected-event),
+        server-post-connect(server-post-connect-event),
+        kicked-from-server(kicked-from-server-event),
+        chat-message(chat-message-event),
+        proxy-ping(proxy-ping-event),
+        proxy-initialize,
+        proxy-shutdown,
+        config-reload(config-reload-event),
+        server-state-change(server-state-change-event),
+        backend-health(backend-health-event),
+    }
+
+    variant event-outcome {
+        unchanged,
+        pre-login(pre-login-result),
+        permissions-setup(permissions-setup-result),
+        player-choose-initial-server(player-choose-initial-server-result),
+        server-pre-connect(server-pre-connect-result),
+        kicked-from-server(kicked-from-server-result),
+        chat-message(chat-message-result),
+        proxy-ping(proxy-ping-result),
+    }
 }
 ```
 
-The codec variants (`codec-filter-error`, `filter-output`) live in `codec-filter`; see [The codec-filter export](#the-codec-filter-export).
+`permissions-setup-result` carries only `use-default` in 0.3.0. `proxy-ping-result` is the whole response: returning it replaces the response, and a description that comes back unchanged keeps the native component untouched.
 
-## The guest export
-
-`guest.wit` defines the lifecycle functions, the unified event dispatch, and the marker+proxy callback entry points. Per-event records and result variants are declared here and feed two umbrella variants: `event` (host to guest) and `event-outcome` (guest to host).
-
-### Lifecycle
+### event-bus
 
 ```wit
-metadata: func() -> plugin-metadata;
-on-enable: func() -> result<_, string>;
-on-disable: func() -> result<_, string>;
-```
+interface event-bus {
+    use types.{event-priority, listener-handle, host-error};
+    use events.{event-kind};
 
-::: tip The SDK trait is synchronous
-The generated guest entry points map to the SDK's `Plugin` trait, which is synchronous:
-
-```rust
-pub trait Plugin: 'static {
-    fn metadata(&self) -> PluginMetadata;
-    fn on_enable(&self, ctx: &Context) -> Result<(), String>;
-    fn on_disable(&self, _ctx: &Context) -> Result<(), String> { Ok(()) }
+    subscribe: func(kind: event-kind, priority: event-priority) -> result<listener-handle, host-error>;
+    unsubscribe: func(handle: listener-handle) -> result<bool, host-error>;
 }
 ```
 
-This differs from the native `BoxFuture`-based trait. See [native getting-started](../dev/getting-started) for the native API.
-:::
+`subscribe` refuses with `permission-denied` when the plugin lacks `event-bus`, and for `chat-message` when it lacks `chat-intercept`. `unsubscribe` answers whether the handle was subscribed.
 
-### Event dispatch
+## Players
 
-The host calls `handle-event` once per subscribed kind, passing the `listener-handle` returned by `event-bus.subscribe` and the `event` payload. The guest returns an `event-outcome`; `none` keeps native behavior.
+Players are addressed by id; there is no player resource. The five reads are the infallible reads of the contract: without `player-read` they answer `none`, an empty list or `0`, and the host logs the refusal. Every other function returns a `host-error`.
 
 ```wit
-handle-event: func(listener: listener-handle, ev: event) -> event-outcome;
+interface players {
+    use types.{
+        player-id, server-id, uuid, player-ref, game-profile, protocol-version, socket-address,
+        timestamp-ms, component, title-data, raw-packet, host-error,
+    };
+
+    record player-info {
+        player: player-ref,
+        profile: game-profile,
+        protocol: protocol-version,
+        remote-addr: socket-address,
+        current-server: option<server-id>,
+        online-mode: bool,
+        connected: bool,
+        active: bool,
+        connected-at: timestamp-ms,
+        virtual-host: option<string>,
+        client-brand: option<string>,
+        ping-ms: option<u32>,
+    }
+
+    get: func(id: player-id) -> option<player-info>;
+    get-by-name: func(username: string) -> option<player-info>;
+    get-by-uuid: func(id: uuid) -> option<player-info>;
+    %list: func(server: option<server-id>) -> list<player-info>;
+    count: func(server: option<server-id>) -> u32;
+
+    send-message: func(player: player-id, message: component) -> result<_, host-error>;
+    send-title: func(player: player-id, title: title-data) -> result<_, host-error>;
+    send-action-bar: func(player: player-id, message: component) -> result<_, host-error>;
+    send-packet: func(player: player-id, packet: raw-packet) -> result<_, host-error>;
+    disconnect: func(player: player-id, reason: component) -> result<_, host-error>;
+    switch-server: func(player: player-id, server: server-id) -> result<_, host-error>;
+    has-permission: func(player: player-id, permission: string) -> result<bool, host-error>;
+}
 ```
 
-The `event` variant carries 17 arms. Each maps to a `record` (or a unit arm for the data-less kinds):
+| Function | Capability |
+|----------|------------|
+| `get`, `get-by-name`, `get-by-uuid`, `list`, `count`, `has-permission` | `player-read` |
+| `send-message`, `send-title`, `send-action-bar`, `disconnect`, `switch-server` | `player-write` |
+| `send-packet` | `raw-packet` |
+
+`disconnect` returns once the kick is queued. `switch-server` waits for the switch, bounded by a short host timeout and by the guest call's deadline.
+
+## Text
+
+Always linked. The host uses the proxy's own parser and serializer, so a component the plugin builds serializes exactly like one built natively.
 
 ```wit
-variant event {
-    pre-login(pre-login-event),
-    post-login(post-login-event),
-    disconnect(disconnect-event),
-    online-auth-failed(online-auth-failed-event),
-    permissions-setup(permissions-setup-event),
-    server-pre-connect(server-pre-connect-event),
-    server-connected(server-connected-event),
-    server-switch(server-switch-event),
-    kicked-from-server(kicked-from-server-event),
-    player-choose-initial-server(player-choose-initial-server-event),
-    proxy-ping(proxy-ping-event),
-    proxy-initialize,
-    proxy-shutdown,
-    config-reload,
-    server-state-change(server-state-change-event),
-    chat-message(chat-message-event),
-    raw-packet(raw-packet-event),
+interface text {
+    use types.{component, host-error};
+
+    parse-json: func(json: string) -> result<component, host-error>;
+    parse-legacy: func(legacy: string) -> component;
+    to-json: func(value: component) -> result<string, host-error>;
+    to-plain: func(value: component) -> result<string, host-error>;
 }
 ```
 
-Eight of those kinds can change the outcome (`none` keeps native behavior):
-
-```wit
-variant event-outcome {
-    none,
-    pre-login(pre-login-result),
-    server-pre-connect(server-pre-connect-result),
-    kicked-from-server(kicked-from-server-result),
-    player-choose-initial-server(player-choose-initial-server-result),
-    chat-message(chat-message-result),
-    proxy-ping(ping-response),
-    permissions-setup(permissions-setup-result),
-    raw-packet(raw-packet-result),
-}
-```
-
-::: warning Not every contract kind is exposed by the SDK
-`raw-packet` is defined in the WIT contract but not yet exposed by the SDK. The SDK exposes the observe-only kinds (`post-login`, `disconnect`, `online-auth-failed`, `permissions-setup`, `server-connected`, `server-switch`, `server-state-change`, plus the data-less `proxy-initialize`, `proxy-shutdown`, `config-reload`) and the modifiable kinds (`pre-login`, `server-pre-connect`, `kicked-from-server`, `player-choose-initial-server`, `proxy-ping`, `chat-message`). `permissions-setup` is an observe record whose `permissions-setup-result::custom(handler-id)` outcome registers a guest permission checker. See [Events](./events) for the typed surface.
-:::
-
-### Event records and results
-
-The full set of per-event records and their result variants:
-
-```wit
-record pre-login-event {
-    profile: game-profile,
-    remote-addr: string,
-    protocol-version: protocol-version,
-    server-domain: string,
-}
-variant pre-login-result { allowed, denied(component), force-offline, force-online }
-
-record post-login-event {
-    profile: game-profile,
-    player-id: player-id,
-    protocol-version: protocol-version,
-}
-
-record disconnect-event {
-    player-id: player-id,
-    username: string,
-    last-server: option<server-id>,
-}
-
-record online-auth-failed-event { username: string }
-
-record permissions-setup-event {
-    player-id: player-id,
-    profile: game-profile,
-    online-mode: bool,
-}
-variant permissions-setup-result { use-default, custom(handler-id) }
-
-record server-pre-connect-event {
-    player-id: player-id,
-    profile: game-profile,
-    original-server: server-id,
-}
-variant server-pre-connect-result {
-    allowed,
-    connect-to(server-id),
-    send-to-limbo(list<string>),
-    denied(component),
-}
-
-record server-connected-event { player-id: player-id, server: server-id }
-
-record server-switch-event {
-    player-id: player-id,
-    previous-server: server-id,
-    new-server: server-id,
-}
-
-record kicked-from-server-event {
-    player-id: player-id,
-    server: server-id,
-    reason: component,
-}
-variant kicked-from-server-result {
-    disconnect-player(component),
-    redirect-to(server-id),
-    send-to-limbo(list<string>),
-    notify(component),
-}
-
-record player-choose-initial-server-event {
-    player-id: player-id,
-    profile: game-profile,
-    initial-server: server-id,
-}
-variant player-choose-initial-server-result {
-    allowed,
-    redirect(server-id),
-    send-to-limbo(list<string>),
-}
-
-record ping-response {
-    description: component,
-    max-players: s32,
-    online-players: s32,
-    protocol-version: protocol-version,
-    version-name: string,
-    favicon: option<string>,
-}
-record proxy-ping-event { remote-addr: string, response: ping-response }
-
-record server-state-change-event {
-    server: server-id,
-    old-state: server-state,
-    new-state: server-state,
-}
-
-record chat-message-event { player-id: player-id, message: string }
-variant chat-message-result { allow, deny(component), modify(string) }
-
-record raw-packet-event {
-    player-id: player-id,
-    direction: packet-direction,
-    packet: raw-packet,
-}
-variant raw-packet-result { pass, modify(raw-packet), drop }
-```
-
-::: info Virtual Backend is not in the contract
-`server-pre-connect-result` has no `virtual-backend` arm. Virtual Backend is planned and stays deferred to a later minor; the native traits exist but no WASM bridge does. See [Virtual Backend](./virtual-backend).
-:::
-
-### Command and scheduler callbacks
-
-Commands and scheduled tasks dispatch by a `callback-id` you supply at registration time (`command-manager.register` and `scheduler.delay` / `scheduler.interval`).
-
-```wit
-handle-command: func(callback-id: u64, args: list<string>, player: option<player-id>);
-tab-complete: func(callback-id: u64, partial: list<string>, cursor: u32) -> list<string>;
-on-scheduled-task: func(callback-id: u64);
-```
-
-### Marker+proxy callbacks
-
-A `handler-id` is a guest-owned id. When you register a limbo handler, a permission checker, or a codec factory, the host wraps that id in a native marker+proxy object and calls back into the guest through these functions, keying on the id.
-
-```wit
-// Limbo handler dispatch: the session is lent by borrow for the call's duration.
-limbo-on-player-enter: func(handler: handler-id, session: borrow<limbo-session>) -> handler-result;
-limbo-on-command: func(handler: handler-id, session: borrow<limbo-session>, command: string, args: list<string>);
-limbo-on-chat: func(handler: handler-id, session: borrow<limbo-session>, message: string);
-limbo-on-disconnect: func(handler: handler-id, player: player-id);
-limbo-on-session-end: func(handler: handler-id, player: player-id, reason: session-end-reason);
-
-// Custom permission checker dispatch.
-permission-level-of: func(handler: handler-id) -> permission-level;
-check-permission: func(handler: handler-id, permission: string) -> bool;
-```
-
-The `permissions-setup-result::custom(handler-id)` returned from an event tells the host which guest checker to invoke for that player. See [Limbo](./limbo) for the session resources used by the limbo callbacks.
-
-## The codec-filter export
-
-`codec-filter.wit` exports a per-session resource on the hot path. The host calls `create` once per connection and side, then `filter` for every frame, then drops the instance. The `filter` signature takes `(packet-id, data)` only; the codec context is reconstructed guest-side from `codec-session-init` plus the lifecycle calls.
-
-```wit
-enum connection-side { client-side, server-side }
-
-record codec-session-init {
-    client-version: protocol-version,
-    connection-id: u64,
-    remote-addr: string,
-    real-ip: option<string>,
-    side: connection-side,
-}
-
-variant codec-filter-error {
-    translation-failed(string),
-    malformed-payload,
-    unsupported-version(s32),
-    internal(string),
-}
-
-record filter-extras {
-    packet: option<raw-packet>,
-    inject-before: list<raw-packet>,
-    inject-after: list<raw-packet>,
-}
-
-variant filter-output {
-    pass,
-    drop,
-    pass-modified(filter-extras),
-    replace(filter-extras),
-    error(codec-filter-error),
-}
-
-resource filter-instance {
-    filter: func(packet-id: s32, data: list<u8>) -> filter-output;
-    on-state-change: func(new-state: connection-state);
-    on-compression-change: func(threshold: s32);
-    on-encryption-enabled: func();
-    on-close: func();
-}
-
-create: func(factory: handler-id, init: codec-session-init) -> filter-instance;
-```
-
-The boundary has no `&mut`, so a changed frame is returned in `filter-extras`; `packet none` means unchanged. See [Codec Filters](./codec-filters) for the SDK trait and the chain ordering controlled by `codec-registry`.
-
-## Host service imports
-
-These imports are the host side of the boundary. Methods tagged `host-async` suspend the guest fiber during I/O. Methods tagged `gated: X` are linked for every plugin but refused at call time when the plugin lacks capability `X` (the comments in the WIT files still describe the older link-time gating); [Capabilities](./capabilities#refused-calls) lists what each refused call returns. The author-facing wrappers are on [Services](./services).
-
-### log
-
-Always linked.
+## Host services
 
 ```wit
 interface log {
@@ -466,147 +640,159 @@ interface log {
     warn: func(message: string);
     error: func(message: string);
 }
-```
 
-### event-bus
+interface server-manager {
+    use types.{server-id, server-state, host-error};
 
-```wit
-interface event-bus {                                                         // gated: event-bus
-    enum event-kind { /* the 17 kinds, matching the event variant arms */ }
-    subscribe: func(kind: event-kind, priority: event-priority) -> listener-handle;
-    unsubscribe: func(handle: listener-handle);
-}
-```
+    record server-status {
+        server: server-id,
+        state: server-state,
+    }
 
-`subscribe` with kind `raw-packet` also needs `raw-packet`, and with kind `chat-message` also needs `chat-intercept`. Refused, it returns a handle with no listener behind it.
-
-### player-registry
-
-The `player` resource holds the per-player methods. `send-packet` is gated by `raw-packet`; `disconnect` and `switch-server` are `host-async`.
-
-```wit
-resource player {
-    id: func() -> player-id;
-    profile: func() -> game-profile;
-    protocol-version: func() -> protocol-version;
-    remote-addr: func() -> string;
-    current-server: func() -> option<server-id>;
-    is-connected: func() -> bool;
-    is-active: func() -> bool;
-
-    disconnect: func(reason: component);                                  // host-async
-    send-message: func(message: component) -> result<_, player-error>;
-    send-title: func(title: title-data) -> result<_, player-error>;
-    send-action-bar: func(message: component) -> result<_, player-error>;
-    send-packet: func(packet: raw-packet) -> result<_, player-error>;     // gated: raw-packet
-    switch-server: func(target: server-id) -> result<_, player-error>;    // host-async
-
-    is-online-mode: func() -> bool;
-    permission-level: func() -> permission-level;
-    has-permission: func(permission: string) -> bool;
-    connected-at: func() -> u64;
+    get-state: func(server: server-id) -> result<option<server-state>, host-error>;
+    start: func(server: server-id) -> result<_, host-error>;
+    stop: func(server: server-id) -> result<_, host-error>;
+    %list: func() -> result<list<server-status>, host-error>;
 }
 
-get-player: func(username: string) -> option<player>;
-get-player-by-uuid: func(player-uuid: uuid) -> option<player>;
-get-player-by-id: func(id: player-id) -> option<player>;
-get-players-on-server: func(server: server-id) -> list<player>;
-get-all-players: func() -> list<player>;
-online-count: func() -> u32;
-online-count-on: func(server: server-id) -> u32;
-```
+interface ban-service {
+    use types.{uuid, ip-address, duration-ms, timestamp-ms, host-error};
 
-### server-manager
+    variant ban-target {
+        ip(ip-address),
+        ip-range(string),
+        username(string),
+        uuid(uuid),
+    }
 
-```wit
-interface server-manager {                                                    // gated: server-manage
-    get-state: func(server: server-id) -> option<server-state>;
-    start: func(server: server-id) -> result<_, service-error>;              // host-async
-    stop: func(server: server-id) -> result<_, service-error>;               // host-async
-    get-all-servers: func() -> list<tuple<server-id, server-state>>;
+    record ban-request {
+        target: ban-target,
+        reason: option<string>,
+        duration-ms: option<duration-ms>,
+        kick: bool,
+        silent: bool,
+    }
+
+    record ban-entry {
+        id: string,
+        target: ban-target,
+        reason: option<string>,
+        source: string,
+        created-at: timestamp-ms,
+        expires-at: option<timestamp-ms>,
+    }
+
+    record ban-page {
+        entries: list<ban-entry>,
+        next-cursor: option<string>,
+    }
+
+    ban: func(request: ban-request) -> result<ban-entry, host-error>;
+    unban: func(target: ban-target) -> result<option<ban-entry>, host-error>;
+    get: func(target: ban-target) -> result<option<ban-entry>, host-error>;
+    %list: func(cursor: option<string>, limit: u32) -> result<ban-page, host-error>;
 }
-```
 
-### ban-service
+interface config-service {
+    use types.{server-id, server-address, proxy-mode, host-error};
 
-Every method is `host-async`.
+    record server-config {
+        id: server-id,
+        network: option<string>,
+        addresses: list<server-address>,
+        domains: list<string>,
+        proxy-mode: proxy-mode,
+        limbo-handlers: list<string>,
+        max-players: u32,
+        disconnect-message: option<string>,
+        send-proxy-protocol: bool,
+        has-server-manager: bool,
+    }
 
-```wit
-interface ban-service {                                                       // gated: ban
-    ban: func(target: ban-target, reason: option<string>, duration-ms: option<u64>) -> result<_, service-error>;
-    unban: func(target: ban-target) -> result<bool, service-error>;
-    is-banned: func(target: ban-target) -> result<bool, service-error>;
-    get-ban: func(target: ban-target) -> result<option<ban-entry>, service-error>;
-    get-all-bans: func() -> result<list<ban-entry>, service-error>;
+    get-value: func(key: string) -> result<option<string>, host-error>;
+    get-server: func(server: server-id) -> result<option<server-config>, host-error>;
+    list-servers: func() -> result<list<server-config>, host-error>;
 }
-```
 
-### config-service
+interface command-manager {
+    use types.{handler-id, host-error};
 
-```wit
-interface config-service {                                                    // gated: config-read
-    get-server-config: func(server: server-id) -> option<server-config>;
-    get-all-server-configs: func() -> list<server-config>;
-    get-value: func(key: string) -> option<string>;
+    record command-spec {
+        name: string,
+        aliases: list<string>,
+        description: string,
+        usage: option<string>,
+        permission: option<string>,
+        hidden: bool,
+    }
+
+    record command-registration {
+        name: string,
+        namespaced: string,
+        aliases: list<string>,
+        rejected-aliases: list<string>,
+    }
+
+    register: func(spec: command-spec, handler: handler-id) -> result<command-registration, host-error>;
+    unregister: func(name: string) -> result<_, host-error>;
 }
-```
 
-### command-manager
+interface scheduler {
+    use types.{task-handle, handler-id, duration-ms, host-error};
 
-The `callback-id` you pass routes back into `handle-command` and `tab-complete`.
-
-```wit
-interface command-manager {                                                   // gated: command
-    register: func(name: string, aliases: list<string>, description: string, callback-id: u64);
-    unregister: func(name: string);
+    delay: func(after: duration-ms, handler: handler-id) -> result<task-handle, host-error>;
+    interval: func(period: duration-ms, initial-delay: option<duration-ms>, handler: handler-id) -> result<task-handle, host-error>;
+    cancel: func(handle: task-handle) -> result<_, host-error>;
 }
-```
 
-### codec-registry
+interface codec-registry {
+    use types.{handler-id, host-error};
 
-```wit
-interface codec-registry {                                                    // gated: codec-filter
+    enum filter-priority { first, early, normal, late, last }
+
     record codec-filter-metadata {
         id: string,
-        priority: u8,    // 0=first .. 4=last
+        priority: filter-priority,
         after: list<string>,
         before: list<string>,
     }
-    register-codec-filter: func(metadata: codec-filter-metadata, factory: handler-id);
-    unregister-codec-filter: func(id: string);
+
+    register-codec-filter: func(metadata: codec-filter-metadata, factory: handler-id) -> result<_, host-error>;
+    unregister-codec-filter: func(id: string) -> result<_, host-error>;
 }
 ```
 
-### scheduler
+- `ban-service.ban` records the plugin as the ban's source. `unban` answers the removed entry. `list` pages through bans with the cursor from the previous page.
+- `command-manager.register` answers what the host registered, including the aliases it rejected because they are taken. The `handler-id` routes invocations and completions back into `handle-command` and `tab-complete`.
+- `scheduler.interval` takes an optional initial delay; without one the first run waits one period. The `handler-id` routes back into `on-scheduled-task`.
+- `codec-registry` filter priorities run from `first` to `last`; see [Codec Filters](./codec-filters).
 
-The `callback-id` routes back into `on-scheduled-task`.
+## Limbo
 
-```wit
-interface scheduler {                                                         // gated: scheduler
-    delay: func(after-ms: u64, callback-id: u64) -> task-handle;
-    interval: func(period-ms: u64, callback-id: u64) -> task-handle;
-    cancel: func(handle: task-handle);
-}
-```
-
-### limbo
-
-The host owns the native session and lends it by borrow to the `limbo-on-*` guest callbacks. `register-limbo-handler` is refused at call time for a plugin without the `limbo` capability, so no session is ever minted for it.
+The host owns the native session and lends it by borrow to the `limbo-on-*` guest callbacks. `register-limbo-handler` is refused with `permission-denied` for a plugin without the `limbo` capability, so no session is ever minted for it.
 
 ```wit
 interface limbo {
+    use types.{player-id, server-id, component, game-profile, title-data, handler-id, duration-ms, host-error};
+
     variant limbo-entry-context {
         initial-connection(server-id),
         kicked-from-server(tuple<server-id, component>),
         plugin-redirect(option<server-id>),
     }
+
     variant timeout-outcome {
         accept,
         deny(component),
         redirect(server-id),
         send-to-limbo(list<string>),
     }
-    record hold-timeout { after-ms: u64, on-timeout: timeout-outcome }
+
+    record hold-timeout {
+        after-ms: duration-ms,
+        on-timeout: timeout-outcome,
+    }
+
     variant handler-result {
         accept,
         deny(component),
@@ -615,36 +801,158 @@ interface limbo {
         redirect(server-id),
         send-to-limbo(list<string>),
     }
+
     enum session-end-reason {
-        disconnected, released, kicked, redirected, timed-out, shutdown,
+        disconnected,
+        released,
+        kicked,
+        redirected,
+        timed-out,
+        shutdown,
     }
 
-    // Host resource: lent by borrow for the duration of each dispatch call.
     resource limbo-session {
         player-id: func() -> player-id;
         profile: func() -> game-profile;
         entry-context: func() -> limbo-entry-context;
-        send-message: func(message: component) -> result<_, player-error>;
-        send-title: func(title: title-data) -> result<_, player-error>;
-        send-action-bar: func(message: component) -> result<_, player-error>;
-        complete: func(outcome: handler-result);
+        send-message: func(message: component) -> result<_, host-error>;
+        send-title: func(title: title-data) -> result<_, host-error>;
+        send-action-bar: func(message: component) -> result<_, host-error>;
+        complete: func(outcome: handler-result) -> result<_, host-error>;
         acquire-handle: func() -> limbo-session-handle;
     }
 
-    // Guest-owned handle: storable across calls, completes a Hold from a callback.
     resource limbo-session-handle {
         player-id: func() -> player-id;
-        send-message: func(message: component) -> result<_, player-error>;
-        send-title: func(title: title-data) -> result<_, player-error>;
-        send-action-bar: func(message: component) -> result<_, player-error>;
-        complete: func(outcome: handler-result);
+        send-message: func(message: component) -> result<_, host-error>;
+        send-title: func(title: title-data) -> result<_, host-error>;
+        send-action-bar: func(message: component) -> result<_, host-error>;
+        complete: func(outcome: handler-result) -> result<_, host-error>;
         cancelled: func() -> bool;
     }
-    register-limbo-handler: func(name: string, handler: handler-id);
+
+    register-limbo-handler: func(name: string, handler: handler-id) -> result<_, host-error>;
 }
 ```
 
-`acquire-handle` mints an own-able `limbo-session-handle` the guest can store across dispatches and complete later (from `on-scheduled-task` or an event). `cancelled` reports `true` once the engine has ended the session, so a stored handle's scheduled task knows to stop. A `timeout-outcome` is a terminal-only subset of `handler-result`, so a timed-out hold can never re-arm another hold. See [Limbo](./limbo) for the completion model.
+`acquire-handle` mints an own-able `limbo-session-handle` the guest can store across dispatches and complete later, from `on-scheduled-task` or an event. `cancelled` reports `true` once the engine has ended the session, so a stored handle's scheduled task knows to stop. A `timeout-outcome` is a terminal-only subset of `handler-result`, so a timed-out hold can never re-arm another hold. `complete` refuses an outcome whose text is invalid. See [Limbo](./limbo).
+
+## The guest export
+
+```wit
+interface guest {
+    use types.{plugin-metadata, player-id, player-ref, handler-id, listener-handle, component};
+    use events.{event, event-outcome};
+    use limbo.{limbo-session, handler-result, session-end-reason};
+
+    record recovery-info {
+        attempt: u32,
+        cause: string,
+    }
+
+    variant enable-reason {
+        initial,
+        recovered(recovery-info),
+    }
+
+    enum disable-reason {
+        shutdown,
+        unload,
+        quarantine,
+    }
+
+    variant command-sender {
+        console,
+        player(player-ref),
+    }
+
+    record command-invocation {
+        label: string,
+        args: list<string>,
+        raw: string,
+        sender: command-sender,
+    }
+
+    record suggestion {
+        text: string,
+        tooltip: option<component>,
+    }
+
+    metadata: func() -> plugin-metadata;
+    on-enable: func(reason: enable-reason) -> result<_, string>;
+    on-disable: func(reason: disable-reason) -> result<_, string>;
+
+    handle-event: func(listener: listener-handle, ev: event) -> event-outcome;
+
+    handle-command: func(handler: handler-id, invocation: command-invocation);
+    tab-complete: func(handler: handler-id, sender: command-sender, args: list<string>, cursor: u32) -> list<suggestion>;
+    on-scheduled-task: func(handler: handler-id);
+
+    limbo-on-player-enter: func(handler: handler-id, session: borrow<limbo-session>) -> handler-result;
+    limbo-on-command: func(handler: handler-id, session: borrow<limbo-session>, command: string, args: list<string>);
+    limbo-on-chat: func(handler: handler-id, session: borrow<limbo-session>, message: string);
+    limbo-on-disconnect: func(handler: handler-id, player: player-id);
+    limbo-on-session-end: func(handler: handler-id, player: player-id, reason: session-end-reason);
+}
+```
+
+- `on-enable` receives `initial` the first time and `recovered` when the host replaced a faulted instance; `attempt` counts the recoveries and `cause` describes the fault. Returning `err` fails the enable.
+- `on-disable` receives `shutdown` when the proxy stops and `unload` when the plugin alone is disabled. `quarantine` is reserved: a quarantined plugin has no live instance, so the host skips `on-disable` for it.
+- `handle-event` receives the `listener-handle` from `subscribe` and answers an `event-outcome`.
+- `handle-command` and `tab-complete` receive the command `handler-id` given to `register`; `tab-complete` answers suggestions with optional tooltips.
+
+## The codec-filter export
+
+`codec-filter.wit` exports a per-session resource on the hot path. The host calls `create` once per connection and side, then `filter` for every frame, then drops the instance. The `filter` signature takes `(packet-id, data)` only; the codec context is reconstructed guest-side from `codec-session-init` plus the lifecycle calls.
+
+```wit
+interface codec-filter {
+    use types.{raw-packet, protocol-version, connection-state, handler-id, socket-address, ip-address};
+
+    enum connection-side { client-side, server-side }
+
+    record codec-session-init {
+        client-version: protocol-version,
+        connection-id: u64,
+        remote-addr: socket-address,
+        real-ip: option<ip-address>,
+        side: connection-side,
+    }
+
+    variant codec-filter-error {
+        translation-failed(string),
+        malformed-payload,
+        unsupported-version(s32),
+        internal(string),
+    }
+
+    record filter-extras {
+        packet: option<raw-packet>,
+        inject-before: list<raw-packet>,
+        inject-after: list<raw-packet>,
+    }
+
+    variant filter-output {
+        pass,
+        drop,
+        pass-modified(filter-extras),
+        replace(filter-extras),
+        error(codec-filter-error),
+    }
+
+    resource filter-instance {
+        filter: func(packet-id: s32, data: list<u8>) -> filter-output;
+        on-state-change: func(new-state: connection-state);
+        on-compression-change: func(threshold: s32);
+        on-encryption-enabled: func();
+        on-close: func();
+    }
+
+    create: func(factory: handler-id, init: codec-session-init) -> filter-instance;
+}
+```
+
+The boundary has no `&mut`, so a changed frame is returned in `filter-extras`; `packet none` means unchanged. Codec instances run in a separate synchronous store: `log` works there, the other host imports trap. See [Codec Filters](./codec-filters).
 
 ## Building against the contract
 
@@ -662,10 +970,9 @@ crate-type = ["cdylib"]
 
 ## See also
 
-- [Events](./events): the typed SDK event surface and which kinds it exposes.
-- [Services](./services): wrappers over `player-registry`, `ban-service`, and the other host imports.
+- [Migrating to 0.3](./migration-0.3): what changed from `infrarust:plugin@0.2.3`.
+- [Events](./events): the typed SDK event surface.
+- [Services](./services): wrappers over `players`, `ban-service`, `text` and the other host imports.
 - [Limbo](./limbo): the limbo handler and session-completion model.
 - [Codec Filters](./codec-filters): the `filter-instance` trait and chain ordering.
-- [Capabilities](./capabilities): baseline vs opt-in capability strings and the TOML permissions block.
-- [Virtual Backend](./virtual-backend): the planned `virtual-backend` capability, deferred to a later minor.
-- [Overview](./): the WASM plugin section landing page.
+- [Capabilities](./capabilities): baseline and opt-in capability strings.

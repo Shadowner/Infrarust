@@ -48,7 +48,7 @@ impl CodecFilter for Flip {
 
 #[plugin(id = "my-plugin", name = "My Plugin")]
 impl Plugin for MyPlugin {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
         Ok(())
     }
 
@@ -66,7 +66,7 @@ impl Plugin for MyPlugin {
 | `priority` | `FilterPriority` | Ordering bucket across all registered filters. |
 | `constructor` | `impl Fn(&CodecSessionInit) -> Box<dyn CodecFilter> + 'static` | Per-connection factory. |
 
-`FilterPriority` is `First`, `Early`, `Normal` (the default), `Late`, or `Last`, mapping to `0..=4`.
+`FilterPriority` is `First`, `Early`, `Normal` (the default), `Late`, or `Last`, the same names as the WIT `filter-priority` enum. When the host refuses the registration (no `codec-filter` capability, or no codec registry), the filter is simply not part of the chain and the host logs why.
 
 ## Per-connection state
 
@@ -103,8 +103,8 @@ The constructor receives the session init by reference. Read it to set up per-co
 | `client_version` | `i32` | The client's protocol version number. |
 | `connection_id` | `u64` | Stable id for the connection. |
 | `side` | `ConnectionSide` | `ClientSide` or `ServerSide`. |
-| `remote_addr` | `String` | The peer address. |
-| `real_ip` | `Option<String>` | The resolved real IP, when proxy-protocol or a similar source provided one. |
+| `remote_addr` | `SocketAddr` | The peer address. |
+| `real_ip` | `Option<IpAddr>` | The resolved real IP, when proxy-protocol or a similar source provided one. |
 
 ## The CodecFilter trait
 
@@ -130,19 +130,18 @@ pub trait CodecFilter {
 
 ### Why context comes from session-init and hooks
 
-At the WIT boundary (`infrarust:plugin@0.2.3`), the host calls `filter` with `(packet-id, data)` only. The richer `CodecContext` is reconstructed on the guest side from the `CodecSessionInit` plus the lifecycle hooks, instead of being re-marshalled for every packet.
+At the WIT boundary (`infrarust:plugin@0.3.0`), the host calls `filter` with `(packet-id, data)` only. The richer `CodecContext` is reconstructed on the guest side from the `CodecSessionInit` plus the lifecycle hooks, instead of being re-marshalled for every packet.
 
 `CodecContext` exposes:
 
 | Field | Type |
 |-------|------|
 | `client_version` | `i32` |
-| `server_version` | `Option<i32>` |
 | `state` | `ConnectionState` |
 | `connection_id` | `u64` |
 | `side` | `ConnectionSide` |
-| `player_info` | `Option<PlayerInfo>` |
-| `is_proxy_consumed` | `bool` |
+
+`state` starts at `Handshake` and follows `on_state_change`.
 
 The lifecycle hooks are how connection-level changes reach your filter without per-packet overhead. Track state you care about (compression threshold, current `ConnectionState`) in your filter struct from the hooks, and read it in `filter`.
 

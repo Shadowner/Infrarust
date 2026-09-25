@@ -71,12 +71,19 @@ pub enum WasmLoaderError {
     Metadata { path: PathBuf, reason: String },
 
     /// The component targets an incompatible world / major version.
-    #[error("plugin at {path} targets incompatible world '{found}', expected '{expected}'")]
+    #[error(
+        "plugin at {path} was built for {found}; this host supports {expected}, rebuild it with an infrarust-plugin-sdk that targets {expected}"
+    )]
     WorldIncompatible {
         path: PathBuf,
         expected: String,
         found: String,
     },
+
+    #[error(
+        "{path} is not an Infrarust plugin component: it exports no infrarust:plugin/guest interface"
+    )]
+    NotAPlugin { path: PathBuf },
 
     #[error("plugin '{plugin_id}' imports a host interface it lacks the capability for: {reason}")]
     CapabilityDenied { plugin_id: String, reason: String },
@@ -102,7 +109,13 @@ impl WasmLoaderError {
                 expected,
             } => LoaderError::InvalidFormat {
                 path,
-                reason: format!("incompatible world '{found}', expected '{expected}'"),
+                reason: format!(
+                    "plugin built for {found}; this host supports {expected}, rebuild it with an infrarust-plugin-sdk that targets {expected}"
+                ),
+            },
+            WasmLoaderError::NotAPlugin { path } => LoaderError::InvalidFormat {
+                path,
+                reason: "not an Infrarust plugin component".to_owned(),
             },
             other => LoaderError::LoadFailed {
                 plugin_id: plugin_id.to_owned(),

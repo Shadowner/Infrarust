@@ -1,54 +1,136 @@
 interface types {
     type player-id = u64;
     type server-id = string;
-    type protocol-version = s32;
-    type task-handle = u64;
-    type listener-handle = u64;
-    // Guest-owned id behind a registered handler (limbo / permission checker /
-    // codec factory), wrapped by the host in a native marker+proxy.
     type handler-id = u64;
-    type uuid = string;
-
-    // u8, 1:1 with native EventPriority(u8); the SDK exposes the named levels
-    // (first=0, early=64, normal=128, late=192, last=255) as constants.
+    type listener-handle = u64;
+    type task-handle = u64;
+    type duration-ms = u64;
+    type timestamp-ms = u64;
+    type protocol-version = s32;
     type event-priority = u8;
+
+    record uuid {
+        hi: u64,
+        lo: u64,
+    }
+
+    variant ip-address {
+        ipv4(tuple<u8, u8, u8, u8>),
+        ipv6(tuple<u16, u16, u16, u16, u16, u16, u16, u16>),
+    }
+
+    record socket-address {
+        ip: ip-address,
+        port: u16,
+    }
+
+    enum error-kind {
+        invalid-argument,
+        not-found,
+        permission-denied,
+        unavailable,
+        timeout,
+        player-gone,
+        conflict,
+        invalid-state,
+        unsupported,
+        internal,
+    }
+
+    record host-error {
+        kind: error-kind,
+        message: string,
+    }
+
+    enum capability {
+        event-bus,
+        player-read,
+        player-write,
+        raw-packet,
+        server-manage,
+        ban,
+        command,
+        scheduler,
+        config-read,
+        config-write,
+        codec-filter,
+        transport-filter,
+        limbo,
+        virtual-backend,
+        permission-provider,
+        filesystem-extended,
+        network,
+        chat-intercept,
+        ban-provider,
+    }
+
     enum connection-state { handshake, status, login, configuration, play }
-    enum packet-direction { serverbound, clientbound }
     enum server-state { online, offline, starting, stopping, sleeping, crashed }
     enum proxy-mode { passthrough, zero-copy, client-only, offline, server-only }
-    enum permission-level { player, admin }
-
-    // Minecraft rich text as the canonical text-component JSON string. WIT has
-    // no recursive types, so the native recursive Component cannot be a record
-    // (spec decision §18); it is pre-serialized to JSON at the boundary.
-    type component = string;
 
     record profile-property {
         name: string,
         value: string,
         signature: option<string>,
     }
+
     record game-profile {
         uuid: uuid,
         username: string,
         properties: list<profile-property>,
     }
 
+    record player-ref {
+        id: player-id,
+        uuid: uuid,
+        username: string,
+    }
+
     record server-address {
         host: string,
         port: u16,
     }
-    record server-config {
-        id: server-id,
-        network: option<string>,
-        addresses: list<server-address>,
-        domains: list<string>,
-        proxy-mode: proxy-mode,
-        limbo-handlers: list<string>,
-        max-players: u32,
-        disconnect-message: option<string>,
-        send-proxy-protocol: bool,
-        has-server-manager: bool,
+
+    record style {
+        color: option<string>,
+        bold: option<bool>,
+        italic: option<bool>,
+        underlined: option<bool>,
+        strikethrough: option<bool>,
+        obfuscated: option<bool>,
+        font: option<string>,
+        insertion: option<string>,
+        shadow-color: option<u32>,
+    }
+
+    variant click-event {
+        open-url(string),
+        run-command(string),
+        suggest-command(string),
+        copy-to-clipboard(string),
+        change-page(s32),
+    }
+
+    variant hover-event {
+        show-text(u32),
+    }
+
+    variant node-content {
+        text(string),
+        translatable(tuple<string, list<u32>, option<string>>),
+        keybind(string),
+    }
+
+    record component-node {
+        content: node-content,
+        style: style,
+        click: option<click-event>,
+        hover: option<hover-event>,
+        children: list<u32>,
+    }
+
+    record component {
+        nodes: list<component-node>,
     }
 
     record title-data {
@@ -59,30 +141,16 @@ interface types {
         fade-out-ticks: s32,
     }
 
-    // Kept for player.send-packet (gated raw-packet); the RawPacketEvent itself
-    // is deferred to the packets phase.
     record raw-packet {
         packet-id: s32,
         data: list<u8>,
-    }
-
-    variant ban-target {
-        ip(string),
-        username(string),
-        uuid(uuid),
-    }
-    record ban-entry {
-        target: ban-target,
-        reason: option<string>,
-        expires-at: option<u64>,
-        created-at: u64,
-        source: string,
     }
 
     record plugin-dependency {
         id: string,
         optional: bool,
     }
+
     record plugin-metadata {
         id: string,
         name: string,
@@ -90,18 +158,5 @@ interface types {
         authors: list<string>,
         description: option<string>,
         dependencies: list<plugin-dependency>,
-    }
-
-    variant player-error {
-        not-active,
-        disconnected,
-        send-failed(string),
-        server-not-found(string),
-        switch-failed(string),
-    }
-    variant service-error {
-        not-found(string),
-        operation-failed(string),
-        unavailable(string),
     }
 }

@@ -198,8 +198,8 @@ conformance!(
         .fire_diverging(E::PermissionsSetup, "custom:admin", "use-default")
         .log("scripted", [seen(E::PermissionsSetup, NORMAL)])
         .expect_divergence(
-            "the SDK exposes permissions-setup as observe-only and the loader drops any \
-             permissions-setup outcome, so a WASM guest cannot install a custom checker"
+            "permissions-setup carries only use-default in infrarust:plugin@0.3.0, so a WASM \
+             guest cannot install a custom checker until permission snapshots land"
         ),
 );
 
@@ -239,9 +239,9 @@ conformance!(
     record_only(E::ServerConnected)
 );
 conformance!(
-    server_switch_record_native,
-    server_switch_record_wasm,
-    record_only(E::ServerSwitch)
+    server_post_connect_record_native,
+    server_post_connect_record_wasm,
+    record_only(E::ServerPostConnect)
 );
 conformance!(
     kicked_from_server_record_native,
@@ -282,6 +282,11 @@ conformance!(
     chat_message_record_native,
     chat_message_record_wasm,
     record_only(E::ChatMessage)
+);
+conformance!(
+    backend_health_record_native,
+    backend_health_record_wasm,
+    record_only(E::BackendHealth)
 );
 
 conformance!(
@@ -375,10 +380,10 @@ conformance!(
         )
         .grant("scripted", CHAT_INTERCEPT)
         .grant("scripted-peer", CHAT_INTERCEPT)
-        .fire_diverging(E::PreLogin, "allowed", "denied:Banned")
-        .fire_diverging(E::ServerPreConnect, "allowed", "connect-to:backend-2")
-        .fire_diverging(E::PlayerChooseInitialServer, "allowed", "redirect:lobby")
-        .fire_diverging(E::ChatMessage, "allow", "deny:muted")
+        .fire(E::PreLogin, "allowed")
+        .fire(E::ServerPreConnect, "allowed")
+        .fire(E::PlayerChooseInitialServer, "allowed")
+        .fire(E::ChatMessage, "allow")
         .log(
             "scripted",
             [
@@ -396,10 +401,6 @@ conformance!(
                 seen(E::PlayerChooseInitialServer, LATE),
                 seen(E::ChatMessage, LATE),
             ],
-        )
-        .expect_divergence(
-            "the SDK's allow() clears the guest's own result to EventOutcome::None, which the \
-             host reads as no change, so a later WASM handler cannot reset an earlier result"
         ),
 );
 
@@ -432,7 +433,7 @@ conformance!(
             "scripted",
             [
                 seen(E::PreLogin, NORMAL),
-                "enable".to_owned(),
+                "enable recovered 1".to_owned(),
                 seen(E::ChatMessage, NORMAL),
                 "disable".to_owned(),
             ],
@@ -443,8 +444,8 @@ conformance!(
         )
         .expect_divergence(
             "a native panic is contained to the one handler call, but a WASM trap discards the \
-             instance: a fresh one runs on_enable again before it handles the later events, so \
-             the WASM log shows a second enable"
+             instance: a fresh one runs on_enable again, told it is a recovery, before it \
+             handles the later events, so the WASM log shows a second enable"
         ),
 );
 

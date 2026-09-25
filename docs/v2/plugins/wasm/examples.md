@@ -1,37 +1,34 @@
 ---
 title: Examples & Cookbook
-description: WASM plugin examples for each capability, taken verbatim from the SDK test fixtures.
+description: WASM plugin examples for each capability, most of them taken verbatim from the SDK test fixtures.
 outline: [2, 3]
 ---
 
 # Examples & Cookbook
 
-Every example on this page is the real source of an SDK test fixture, copied without changes. The fixtures live under `crates/infrarust-loader-wasm/tests/fixtures/` and compile against the same SDK you depend on, so each one is a working reference for one capability. For a from-scratch starter project, use the template in [Getting Started](./getting-started).
+The first examples on this page are short, self-contained plugins. The rest are the real source of SDK test fixtures, copied without changes. The fixtures live under `crates/infrarust-loader-wasm/tests/fixtures/` and compile against the same SDK you depend on, so each one is a working reference for one capability. For a from-scratch starter project, use the template in [Getting Started](./getting-started).
 
 :::info Fixtures, not templates
-These crates are part of the loader's test suite. They are not yet published as standalone, copy-and-go templates. Read them for the patterns; build new plugins from the [Getting Started](./getting-started) layout.
+The fixture crates are part of the loader's test suite. They are not published as standalone, copy-and-go templates. Read them for the patterns; build new plugins from the [Getting Started](./getting-started) layout.
 :::
 
-Each fixture imports `infrarust_plugin_sdk::prelude::*` and tags one impl block with `#[plugin(...)]`. The guest `Plugin` trait is synchronous: `on_enable(&self, ctx: &Context) -> Result<(), String>`.
+Each example imports `infrarust_plugin_sdk::prelude::*` and tags one impl block with `#[plugin(...)]`. The guest `Plugin` trait is synchronous: `on_enable(&self, ctx: &Context) -> Result<(), PluginError>`, and `?` works on every host call.
 
 ## hello
 
 What it shows: the smallest valid plugin. `on_enable` runs once at load and writes a marker into the plugin's WASI-scoped data directory.
 
 ```rust
-//! WASM-1 `hello` fixture, migrated to the SDK. Writes a marker into its
-//! WASI-scoped data_dir so the host test can confirm `on_enable` ran.
-
 use infrarust_plugin_sdk::prelude::*;
 
 #[derive(Default)]
 struct Hello;
 
-#[plugin(id = "hello", name = "Hello Fixture", description = "WASM-1 hello fixture")]
+#[plugin(id = "hello", name = "Hello", description = "The smallest plugin")]
 impl Plugin for Hello {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
-        // The host preopens data_dir as the guest root; this lands in plugins/hello/.
-        std::fs::write("enabled.marker", b"on_enable ran").map_err(|e| e.to_string())
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
+        std::fs::write("enabled.marker", "on_enable ran")?;
+        Ok(())
     }
 }
 ```
@@ -40,108 +37,96 @@ The path `enabled.marker` is relative to the preopened data directory, which the
 
 ## event-subscriber
 
-What it shows: observing an event. The handler reads `PostLoginEvent` fields and never changes the outcome.
+What it shows: observing an event. The handler reads `PostLoginEvent` fields and never changes an outcome.
 
 ```rust
-//! WASM-2 `event-subscriber` fixture, migrated to the SDK. Records the joining
-//! player's username on `PostLogin` so the host test can confirm delivery.
-
 use infrarust_plugin_sdk::prelude::*;
 
 #[derive(Default)]
 struct EventSubscriber;
 
-#[plugin(id = "event-subscriber", name = "Event Subscriber Fixture")]
+#[plugin(id = "event-subscriber", name = "Event Subscriber")]
 impl Plugin for EventSubscriber {
-    fn on_enable(&self, ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
         ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
-            let _ = std::fs::write("post-login.marker", event.profile.username.as_bytes());
-        });
+            info!(
+                "{} ({}) joined with protocol {}",
+                event.player.username, event.player.uuid, event.protocol
+            );
+        })?;
         Ok(())
     }
 }
 ```
 
-`ctx.on::<E>(priority, closure)` registers the handler. The closure parameter type picks the event. The [Events](./events) page lists every event the SDK exposes.
-
 ## event-modifier
 
-What it shows: changing an event outcome. The handler calls `redirect_to` on `ServerPreConnectEvent` to send every connection to a chosen backend.
+What it shows: reading and changing an event result. The first handler sends every connection to a chosen backend; the second, later one lets staff through to the server they asked for, undoing the redirect.
 
 ```rust
-//! WASM-2 `event-modifier` fixture, migrated to the SDK. Redirects every
-//! connection to "backend-1" so the host test can confirm the outcome applies.
-
 use infrarust_plugin_sdk::prelude::*;
 
 #[derive(Default)]
 struct EventModifier;
 
-#[plugin(id = "event-modifier", name = "Event Modifier Fixture")]
+#[plugin(id = "event-modifier", name = "Event Modifier")]
 impl Plugin for EventModifier {
-    fn on_enable(&self, ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
         ctx.on::<ServerPreConnectEvent>(EventPriority::Normal, |event| {
             event.redirect_to("backend-1");
-        });
+        })?;
+        ctx.on::<ServerPreConnectEvent>(EventPriority::Late, |event| {
+            let staff = event.player.handle().has_permission("example.staff").unwrap_or(false);
+            if staff && matches!(event.result(), ServerPreConnectResult::ConnectTo(_)) {
+                event.allow();
+            }
+        })?;
         Ok(())
     }
 }
 ```
-
-`redirect_to` takes the target server id. Which events carry an outcome, and which methods set it, is in [Events](./events).
 
 ## multi-handler
 
 What it shows: priority ordering and per-handler cancellation. Five handlers register for the same event at different priorities; one is cancelled before any event fires.
 
 ```rust
-//! v0.2-B `multi-handler` fixture. Registers several `PostLogin` handlers at
-//! different priorities cancels one before any event
-//! fires, and appends each handler's tag to a marker file. The host test asserts
-//! priority ordering, multi-handler delivery, and independent cancellation.
-
-use std::io::Write;
+use std::cell::RefCell;
 
 use infrarust_plugin_sdk::prelude::*;
+
+thread_local! {
+    static ORDER: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+fn append(tag: &str) {
+    ORDER.with(|order| order.borrow_mut().push_str(tag));
+}
 
 #[derive(Default)]
 struct MultiHandler;
 
-#[plugin(id = "multi-handler", name = "Multi Handler Fixture")]
+#[plugin(id = "multi-handler", name = "Multi Handler")]
 impl Plugin for MultiHandler {
-    fn on_enable(&self, ctx: &Context) -> Result<(), String> {
-        ctx.on::<PostLoginEvent>(EventPriority::First, |_| append("A"));
-        ctx.on::<PostLoginEvent>(EventPriority::Custom(32), |_| append("B"));
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |_| append("C"));
-        let leaked = ctx.on::<PostLoginEvent>(EventPriority::Normal, |_| append("L"));
-        ctx.on::<PostLoginEvent>(EventPriority::Last, |_| append("D"));
-        leaked.cancel();
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
+        ctx.on::<PostLoginEvent>(EventPriority::First, |_| append("A"))?;
+        ctx.on::<PostLoginEvent>(EventPriority::Custom(32), |_| append("B"))?;
+        ctx.on::<PostLoginEvent>(EventPriority::Normal, |_| append("C"))?;
+        let cancelled = ctx.on::<PostLoginEvent>(EventPriority::Normal, |_| append("L"))?;
+        ctx.on::<PostLoginEvent>(EventPriority::Last, |_| append("D"))?;
+        cancelled.cancel();
         Ok(())
-    }
-}
-
-fn append(tag: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("multi.marker")
-    {
-        let _ = f.write_all(tag.as_bytes());
     }
 }
 ```
 
-`ctx.on` returns an `EventSubscription`. Calling `.cancel()` on the handle removes that one handler; the others keep running. `EventPriority::Custom(u8)` sets an arbitrary priority between the named ones. The [Events](./events) page documents the priority scale.
+Each login appends `ABCD`: the cancelled `L` handler never runs.
 
 ## command-plugin
 
-What it shows: a registered command with a description and a tab-completer.
+What it shows: registered commands with a description and a tab-completer, a command registered from inside a completer, and unregistering through the SDK. This is the `command-plugin` fixture.
 
 ```rust
-//! WASM-2 `command-plugin` fixture, migrated to the SDK. Registers `greet` and
-//! writes its args to the data_dir on invocation so the host test can confirm
-//! the command dispatch reaches the guest.
-
 use infrarust_plugin_sdk::prelude::*;
 
 #[derive(Default)]
@@ -149,30 +134,50 @@ struct CommandPlugin;
 
 #[plugin(id = "command-plugin", name = "Command Plugin Fixture")]
 impl Plugin for CommandPlugin {
-    fn on_enable(&self, ctx: &Context) -> Result<(), String> {
-        ctx.command("greet", |invocation| {
-            let _ = std::fs::write("command.marker", invocation.args.join(",").as_bytes());
-        })
-        .description("Greets the caller")
-        .completer(|partial, _cursor| {
-            let p = partial.last().map(String::as_str).unwrap_or("");
-            ["world", "everyone", "friend"]
-                .iter()
-                .filter(|c| c.starts_with(p))
-                .map(|c| (*c).to_string())
-                .collect()
-        })
-        .register();
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
+        ctx.command("greet")
+            .description("Greets the caller")
+            .handler(|invocation| {
+                let _ = std::fs::write("command.marker", invocation.args.join(","));
+            })
+            .completer(|completion| {
+                let partial = completion.partial();
+                ["world", "everyone", "friend"]
+                    .into_iter()
+                    .filter(|candidate| candidate.starts_with(partial))
+                    .collect::<Vec<_>>()
+            })
+            .register()?;
+        ctx.command("nest")
+            .description("Registers `nested` from inside its own completer")
+            .completer(|_| {
+                let _ = Context::new()
+                    .command("nested")
+                    .handler(|_| {
+                        let _ = std::fs::write("nested.marker", "ran");
+                    })
+                    .completer(|_| vec!["inner"])
+                    .register();
+                vec!["registered"]
+            })
+            .register()?;
+        ctx.command("unnest")
+            .description("Unregisters `nested` through the SDK")
+            .handler(|_| {
+                let removed = Context::new().unregister_command("nested").unwrap_or(false);
+                let _ = std::fs::write("unnest.marker", removed.to_string());
+            })
+            .register()?;
         Ok(())
     }
 }
 ```
 
-`ctx.command(name, handler)` returns a builder. Chain `.description(...)` and `.completer(...)`, then call `.register()` to install it. The handler receives a `CommandInvocation` whose `args` field holds the parsed arguments. The completer gets the partial argument list plus a cursor and returns the matching suggestions. Aliases and the full builder surface are in [Commands](./commands).
+When another plugin already owns `nested`, the registration from the completer is refused and the guest keeps no handler for it, so `unnest` records `false`.
 
 ## codec-modify
 
-What it shows: the three packet verdicts in one filter. Drop a packet, mutate its payload, or inject extra packets around it.
+What it shows: the three packet verdicts in one filter. Drop a packet, mutate its payload, or inject extra packets around it. This is the `codec-modify` fixture; it needs the `codec-filter` capability.
 
 ```rust
 use infrarust_plugin_sdk::prelude::*;
@@ -183,7 +188,12 @@ struct CodecModify;
 struct OpFilter;
 
 impl CodecFilter for OpFilter {
-    fn filter(&mut self, _ctx: &CodecContext, packet: &mut Packet, out: &mut Injections) -> Verdict {
+    fn filter(
+        &mut self,
+        _ctx: &CodecContext,
+        packet: &mut Packet,
+        out: &mut Injections,
+    ) -> Verdict {
         match packet.id() {
             0x01 => Verdict::Drop,
             0x02 => {
@@ -202,7 +212,7 @@ impl CodecFilter for OpFilter {
 
 #[plugin(id = "codec-modify", name = "Codec Modify Fixture")]
 impl Plugin for CodecModify {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
         Ok(())
     }
 
@@ -212,17 +222,11 @@ impl Plugin for CodecModify {
 }
 ```
 
-Codec filters are registered from the `register_codec_filters` associated function, not from `on_enable`. `reg.add(name, priority, factory)` installs a factory that builds one filter per connection. `Verdict::Drop` removes the packet, `packet.set_data(...)` rewrites its payload, and `out.before` / `out.after` queue injected packets on either side. The `codec-filter` capability is opt-in, so the operator has to list it in the plugin's `permissions` in config; see [Capabilities](./capabilities). The filter model itself is in [Codec Filters](./codec-filters).
-
 ## codec-stateful
 
-What it shows: per-connection filter state. Each filter instance owns a counter; the host drives the client-side and server-side instances separately to prove their state is independent.
+What it shows: per-connection filter state. Each filter instance owns a counter; the host drives the client-side and server-side instances separately to prove their state is independent. This is the `codec-stateful` fixture.
 
 ```rust
-//! Codec fixture with per-connection state: counts the packets it sees and writes
-//! the running count into each payload. The host test drives the client-side and
-//! server-side instances separately to prove their state is independent.
-
 use infrarust_plugin_sdk::prelude::*;
 
 #[derive(Default)]
@@ -247,7 +251,7 @@ impl CodecFilter for Counter {
 
 #[plugin(id = "codec-stateful", name = "Codec Stateful Fixture")]
 impl Plugin for CodecStateful {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
         Ok(())
     }
 
@@ -259,15 +263,10 @@ impl Plugin for CodecStateful {
 }
 ```
 
-The factory closure builds a fresh `Counter` per connection, so `&mut self` inside `filter` mutates only that connection's state. State on a filter never leaks across connections. More on the connection model is in [Codec Filters](./codec-filters).
-
 ## limbo-handler
 
-What it shows: holding a player in limbo, completing on a command, timing out, and completing from a scheduled closure after the dispatch returns. This fixture registers four handlers to cover each case.
+What it shows: holding a player in limbo, completing on a command, timing out, and completing from a scheduled closure after the dispatch returns. This is the `limbo-handler` fixture; it registers four handlers to cover each case and needs the `limbo` capability.
 
-The `limbo` capability is opt-in, so the operator has to list it in the plugin's `permissions` in config; see [Capabilities](./capabilities). The session model and outcomes are in [Limbo](./limbo).
-
-:::details Full limbo-handler source
 ```rust
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -279,15 +278,13 @@ use infrarust_plugin_sdk::prelude::*;
 struct LimboPlugin;
 
 struct Gate {
-    waiting: RefCell<HashSet<u64>>,
+    waiting: RefCell<HashSet<PlayerId>>,
 }
 
 impl LimboHandler for Gate {
     fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
         self.waiting.borrow_mut().insert(session.player_id());
-        session
-            .send_message(Component::text("Type /continue to proceed"))
-            .ok();
+        session.send_message("Type /continue to proceed").ok();
         HandlerOutcome::Hold
     }
 
@@ -295,26 +292,26 @@ impl LimboHandler for Gate {
         match command {
             "continue" => {
                 self.waiting.borrow_mut().remove(&session.player_id());
-                session.complete(HandlerOutcome::Accept);
+                session.complete(HandlerOutcome::Accept).ok();
             }
             "redirect" => {
                 self.waiting.borrow_mut().remove(&session.player_id());
-                session.complete(HandlerOutcome::Redirect("hub".to_string()));
+                session
+                    .complete(HandlerOutcome::Redirect("hub".into()))
+                    .ok();
             }
             _ => {
-                session.send_message(Component::text("Unknown command")).ok();
+                session.send_message("Unknown command").ok();
             }
         }
     }
 
     fn on_chat(&self, session: &LimboSession, _message: &str) {
-        session
-            .send_message(Component::text("Please use /continue"))
-            .ok();
+        session.send_message("Please use /continue").ok();
     }
 
-    fn on_disconnect(&self, player_id: u64) {
-        self.waiting.borrow_mut().remove(&player_id);
+    fn on_disconnect(&self, player: PlayerId) {
+        self.waiting.borrow_mut().remove(&player);
     }
 }
 
@@ -330,9 +327,7 @@ struct TimedGate;
 
 impl LimboHandler for TimedGate {
     fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
-        session
-            .send_message(Component::text("Type /continue within 5s"))
-            .ok();
+        session.send_message("Type /continue within 5s").ok();
         HandlerOutcome::HoldWithTimeout {
             after: Duration::from_secs(5),
             on_timeout: TimeoutOutcome::Deny(Component::text("Timed out")),
@@ -341,33 +336,33 @@ impl LimboHandler for TimedGate {
 
     fn on_command(&self, session: &LimboSession, command: &str, _args: &[String]) {
         if command == "continue" {
-            session.complete(HandlerOutcome::Accept);
+            session.complete(HandlerOutcome::Accept).ok();
         }
     }
 
-    fn on_session_end(&self, _player_id: u64, _reason: SessionEndReason) {
-        // Engine owns the timeout; nothing to tear down here (demo of the hook).
-    }
+    fn on_session_end(&self, _player: PlayerId, _reason: SessionEndReason) {}
 }
 
 struct DelayedGate;
 
 impl LimboHandler for DelayedGate {
     fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
-        // The handle outlives this dispatch (moved into the scheduled closure).
         let handle = session.handle();
-        Context::new().delay(Duration::from_millis(50), move || {
+        let scheduled = Context::new().delay(Duration::from_millis(50), move || {
             if !handle.cancelled() {
-                handle.complete(HandlerOutcome::Accept);
+                handle.complete(HandlerOutcome::Accept).ok();
             }
         });
-        HandlerOutcome::Hold
+        match scheduled {
+            Ok(_) => HandlerOutcome::Hold,
+            Err(_) => HandlerOutcome::Accept,
+        }
     }
 }
 
 #[plugin(id = "limbo-handler", name = "Limbo Handler Fixture")]
 impl Plugin for LimboPlugin {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
         Ok(())
     }
 
@@ -384,27 +379,14 @@ impl Plugin for LimboPlugin {
     }
 }
 ```
-:::
 
-The four handlers map to four patterns:
-
-| Handler | Pattern |
-|---------|---------|
-| `Gate` | `on_player_enter` returns `HandlerOutcome::Hold`; a later `on_command` calls `session.complete(...)` with `Accept` or `Redirect`. |
-| `Boom` | The handler panics. The host fails the session closed when a limbo handler traps. |
-| `TimedGate` | `on_player_enter` returns `HandlerOutcome::HoldWithTimeout`; the engine denies with `TimeoutOutcome::Deny` if no `complete` arrives in time. |
-| `DelayedGate` | `session.handle()` produces a `SessionHandle` that outlives the dispatch. A scheduled closure checks `handle.cancelled()` before calling `handle.complete(...)`. |
-
-`register_limbo_handlers` installs the handlers by name. Outcomes, the timeout model, and the session handle lifecycle are documented in [Limbo](./limbo).
+`DelayedGate` accepts the player at once when the task cannot be scheduled, so nobody is held with nothing to release them.
 
 ## host-caller
 
-What it shows: calling read-only host services from `on_enable`. This fixture queries the player count and a config value.
+What it shows: calling read-only host services from `on_enable`. This is the `host-caller` fixture; it queries the player count and a config value.
 
 ```rust
-//! WASM-2 `host-caller` fixture, migrated to the SDK. Calls read-only host
-//! services in `on_enable` and records the results so the host test can assert.
-
 use infrarust_plugin_sdk::prelude::*;
 
 #[derive(Default)]
@@ -412,25 +394,20 @@ struct HostCaller;
 
 #[plugin(id = "host-caller", name = "Host Caller Fixture")]
 impl Plugin for HostCaller {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
-        std::fs::write("count.txt", Players.online_count().to_string().as_bytes())
-            .map_err(|e| e.to_string())?;
-        if let Some(greeting) = Config.get("greeting") {
-            std::fs::write("greeting.txt", greeting.as_bytes()).map_err(|e| e.to_string())?;
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
+        std::fs::write("count.txt", Players::count().to_string())?;
+        if let Ok(Some(greeting)) = Config::get("greeting") {
+            std::fs::write("greeting.txt", greeting)?;
         }
         Ok(())
     }
 }
 ```
 
-`Players` and `Config` are zero-sized service handles from the prelude. `Players.online_count()` returns the current player count, and `Config.get(key)` returns an `Option<String>` for a config value. The full set of host services is in [Services](./services).
+`Players::count()` answers `0` when the plugin lacks `player-read`; `Config::get` returns an error of kind `PermissionDenied` when it lacks `config-read`, which the fixture treats like a missing value. The full set of host services is in [Services](./services).
 
 ## See also
 
-- [Getting Started](./getting-started): the from-scratch project template and build steps.
-- [Events](./events): every event the SDK exposes, priorities, and outcomes.
-- [Commands](./commands): the command builder, aliases, and tab-complete.
-- [Codec Filters](./codec-filters): the per-connection filter model and verdicts.
-- [Limbo](./limbo): session handling, outcomes, and timeouts.
-- [Services](./services): read and write host services available to plugins.
-- [Capabilities](./capabilities): the baseline grants and the opt-ins like `codec-filter` and `limbo`.
+- [Getting Started](./getting-started): the project layout and build steps.
+- [Events](./events), [Commands](./commands), [Codec Filters](./codec-filters), [Limbo](./limbo), [Services](./services): the features these examples exercise.
+- [Migrating to 0.3](./migration-0.3): how the 0.2.3 versions of these examples changed.

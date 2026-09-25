@@ -1,29 +1,3 @@
-//! Ergonomic guest-side limbo-handler authoring.
-//!
-//! A limbo handler gates a player in a proxy-hosted waiting room (auth, queue,
-//! maintenance). Implement [`LimboHandler`] and register it from
-//! [`Plugin::register_limbo_handlers`](crate::Plugin::register_limbo_handlers):
-//!
-//! ```ignore
-//! struct Gate;
-//! impl LimboHandler for Gate {
-//!     fn on_player_enter(&self, s: &LimboSession) -> HandlerOutcome {
-//!         s.send_message(Component::text("Type /continue to proceed")).ok();
-//!         HandlerOutcome::Hold
-//!     }
-//!     fn on_command(&self, s: &LimboSession, command: &str, _args: &[String]) {
-//!         if command == "continue" { s.complete(HandlerOutcome::Accept); }
-//!     }
-//! }
-//!
-//! #[plugin]
-//! impl Plugin for MyPlugin {
-//!     fn register_limbo_handlers(reg: &mut LimboRegistrar) {
-//!         reg.add("gate", Gate);
-//!     }
-//! }
-//! ```
-
 use std::time::Duration;
 
 use crate::bindings::guest::{
@@ -34,30 +8,33 @@ use crate::bindings::limbo::{
     HoldTimeout as WitHoldTimeout, LimboEntryContext as WitEntryContext,
     LimboSessionHandle as RawSessionHandle, TimeoutOutcome as WitTimeoutOutcome,
 };
-use crate::component::Component;
+use crate::component::{Component, from_host};
+use crate::error::Error;
+use crate::player::TitleData;
+use crate::types::{GameProfile, PlayerId, ServerId, millis};
 
-pub use crate::bindings::types::{GameProfile, PlayerError, TitleData};
-
-/// A terminal Hold outcome — what a [`HandlerOutcome::HoldWithTimeout`] resolves to
-/// when its deadline elapses. Cannot itself be a Hold (the type forbids re-arming).
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum TimeoutOutcome {
     Accept,
     Deny(Component),
-    Redirect(String),
+    Redirect(ServerId),
     SendToLimbo(Vec<String>),
 }
 
 impl TimeoutOutcome {
     pub(crate) fn into_wit(self) -> WitTimeoutOutcome {
         match self {
-            TimeoutOutcome::Accept => WitTimeoutOutcome::Accept,
-            TimeoutOutcome::Deny(reason) => WitTimeoutOutcome::Deny(reason.into_json()),
-            TimeoutOutcome::Redirect(server) => WitTimeoutOutcome::Redirect(server),
-            TimeoutOutcome::SendToLimbo(names) => WitTimeoutOutcome::SendToLimbo(names),
+            Self::Accept => WitTimeoutOutcome::Accept,
+            Self::Deny(reason) => WitTimeoutOutcome::Deny(reason.to_arena()),
+            Self::Redirect(server) => WitTimeoutOutcome::Redirect(server.into_string()),
+            Self::SendToLimbo(names) => WitTimeoutOutcome::SendToLimbo(names),
         }
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum HandlerOutcome {
     Accept,
     Deny(Component),
@@ -66,30 +43,30 @@ pub enum HandlerOutcome {
         after: Duration,
         on_timeout: TimeoutOutcome,
     },
-    Redirect(String),
+    Redirect(ServerId),
     SendToLimbo(Vec<String>),
 }
 
 impl HandlerOutcome {
     pub(crate) fn into_wit(self) -> WitHandlerResult {
         match self {
-            HandlerOutcome::Accept => WitHandlerResult::Accept,
-            HandlerOutcome::Deny(reason) => WitHandlerResult::Deny(reason.into_json()),
-            HandlerOutcome::Hold => WitHandlerResult::Hold,
-            HandlerOutcome::HoldWithTimeout { after, on_timeout } => {
-                let after_ms = u64::try_from(after.as_millis()).unwrap_or(u64::MAX);
+            Self::Accept => WitHandlerResult::Accept,
+            Self::Deny(reason) => WitHandlerResult::Deny(reason.to_arena()),
+            Self::Hold => WitHandlerResult::Hold,
+            Self::HoldWithTimeout { after, on_timeout } => {
                 WitHandlerResult::HoldWithTimeout(WitHoldTimeout {
-                    after_ms,
+                    after_ms: millis(after),
                     on_timeout: on_timeout.into_wit(),
                 })
             }
-            HandlerOutcome::Redirect(server) => WitHandlerResult::Redirect(server),
-            HandlerOutcome::SendToLimbo(names) => WitHandlerResult::SendToLimbo(names),
+            Self::Redirect(server) => WitHandlerResult::Redirect(server.into_string()),
+            Self::SendToLimbo(names) => WitHandlerResult::SendToLimbo(names),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum SessionEndReason {
     Disconnected,
     Released,
@@ -100,32 +77,39 @@ pub enum SessionEndReason {
 }
 
 impl SessionEndReason {
-    pub(crate) fn from_wit(r: WitSessionEndReason) -> Self {
+    pub(crate) const fn from_wit(r: WitSessionEndReason) -> Self {
         match r {
-            WitSessionEndReason::Disconnected => SessionEndReason::Disconnected,
-            WitSessionEndReason::Released => SessionEndReason::Released,
-            WitSessionEndReason::Kicked => SessionEndReason::Kicked,
-            WitSessionEndReason::Redirected => SessionEndReason::Redirected,
-            WitSessionEndReason::TimedOut => SessionEndReason::TimedOut,
-            WitSessionEndReason::Shutdown => SessionEndReason::Shutdown,
+            WitSessionEndReason::Disconnected => Self::Disconnected,
+            WitSessionEndReason::Released => Self::Released,
+            WitSessionEndReason::Kicked => Self::Kicked,
+            WitSessionEndReason::Redirected => Self::Redirected,
+            WitSessionEndReason::TimedOut => Self::TimedOut,
+            WitSessionEndReason::Shutdown => Self::Shutdown,
         }
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum EntryContext {
-    InitialConnection(String),
-    KickedFromServer { server: String, reason: String },
-    PluginRedirect(Option<String>),
+    InitialConnection(ServerId),
+    KickedFromServer { server: ServerId, reason: Component },
+    PluginRedirect(Option<ServerId>),
 }
 
 impl EntryContext {
     fn from_wit(c: WitEntryContext) -> Self {
         match c {
-            WitEntryContext::InitialConnection(server) => EntryContext::InitialConnection(server),
-            WitEntryContext::KickedFromServer((server, reason)) => {
-                EntryContext::KickedFromServer { server, reason }
+            WitEntryContext::InitialConnection(server) => {
+                Self::InitialConnection(ServerId::from(server))
             }
-            WitEntryContext::PluginRedirect(server) => EntryContext::PluginRedirect(server),
+            WitEntryContext::KickedFromServer((server, reason)) => Self::KickedFromServer {
+                server: ServerId::from(server),
+                reason: from_host(reason),
+            },
+            WitEntryContext::PluginRedirect(server) => {
+                Self::PluginRedirect(server.map(ServerId::from))
+            }
         }
     }
 }
@@ -135,18 +119,18 @@ pub struct LimboSession<'a> {
 }
 
 impl<'a> LimboSession<'a> {
-    pub(crate) fn new(raw: &'a RawSession) -> Self {
+    pub(crate) const fn new(raw: &'a RawSession) -> Self {
         Self { raw }
     }
 
     #[must_use]
-    pub fn player_id(&self) -> u64 {
-        self.raw.player_id()
+    pub fn player_id(&self) -> PlayerId {
+        PlayerId::new(self.raw.player_id())
     }
 
     #[must_use]
     pub fn profile(&self) -> GameProfile {
-        self.raw.profile()
+        GameProfile::from_wit(self.raw.profile())
     }
 
     #[must_use]
@@ -154,28 +138,20 @@ impl<'a> LimboSession<'a> {
         EntryContext::from_wit(self.raw.entry_context())
     }
 
-    /// # Errors
-    /// Returns [`PlayerError`] if the message could not be delivered.
-    pub fn send_message(&self, message: Component) -> Result<(), PlayerError> {
-        self.raw.send_message(&message.into_json())
+    pub fn send_message(&self, message: impl Into<Component>) -> Result<(), Error> {
+        Ok(self.raw.send_message(&message.into().to_arena())?)
     }
 
-    /// # Errors
-    /// Returns [`PlayerError`] if the title could not be delivered.
-    pub fn send_title(&self, title: TitleData) -> Result<(), PlayerError> {
-        self.raw.send_title(&title)
+    pub fn send_title(&self, title: &TitleData) -> Result<(), Error> {
+        Ok(self.raw.send_title(&title.to_wit())?)
     }
 
-    /// # Errors
-    /// Returns [`PlayerError`] if the message could not be delivered.
-    pub fn send_action_bar(&self, message: Component) -> Result<(), PlayerError> {
-        self.raw.send_action_bar(&message.into_json())
+    pub fn send_action_bar(&self, message: impl Into<Component>) -> Result<(), Error> {
+        Ok(self.raw.send_action_bar(&message.into().to_arena())?)
     }
 
-    /// Releases (or redirects/denies) a held player. Call after returning
-    /// [`HandlerOutcome::Hold`] from `on_player_enter`.
-    pub fn complete(&self, outcome: HandlerOutcome) {
-        self.raw.complete(&outcome.into_wit());
+    pub fn complete(&self, outcome: HandlerOutcome) -> Result<(), Error> {
+        Ok(self.raw.complete(&outcome.into_wit())?)
     }
 
     #[must_use]
@@ -192,36 +168,26 @@ pub struct SessionHandle {
 
 impl SessionHandle {
     #[must_use]
-    pub fn player_id(&self) -> u64 {
-        self.raw.player_id()
+    pub fn player_id(&self) -> PlayerId {
+        PlayerId::new(self.raw.player_id())
     }
 
-    /// # Errors
-    /// Returns [`PlayerError`] if the message could not be delivered.
-    pub fn send_message(&self, message: Component) -> Result<(), PlayerError> {
-        self.raw.send_message(&message.into_json())
+    pub fn send_message(&self, message: impl Into<Component>) -> Result<(), Error> {
+        Ok(self.raw.send_message(&message.into().to_arena())?)
     }
 
-    /// # Errors
-    /// Returns [`PlayerError`] if the title could not be delivered.
-    pub fn send_title(&self, title: TitleData) -> Result<(), PlayerError> {
-        self.raw.send_title(&title)
+    pub fn send_title(&self, title: &TitleData) -> Result<(), Error> {
+        Ok(self.raw.send_title(&title.to_wit())?)
     }
 
-    /// # Errors
-    /// Returns [`PlayerError`] if the message could not be delivered.
-    pub fn send_action_bar(&self, message: Component) -> Result<(), PlayerError> {
-        self.raw.send_action_bar(&message.into_json())
+    pub fn send_action_bar(&self, message: impl Into<Component>) -> Result<(), Error> {
+        Ok(self.raw.send_action_bar(&message.into().to_arena())?)
     }
 
-    /// Releases (or redirects/denies) the held player. A no-op if the session has
-    /// already ended or advanced past the Hold this handle was minted for.
-    pub fn complete(&self, outcome: HandlerOutcome) {
-        self.raw.complete(&outcome.into_wit());
+    pub fn complete(&self, outcome: HandlerOutcome) -> Result<(), Error> {
+        Ok(self.raw.complete(&outcome.into_wit())?)
     }
 
-    /// True once the session has ended (the engine cancelled it). Poll this in a
-    /// repeating scheduled task to know when to stop.
     #[must_use]
     pub fn cancelled(&self) -> bool {
         self.raw.cancelled()
@@ -235,28 +201,50 @@ pub trait LimboHandler {
 
     fn on_chat(&self, _session: &LimboSession, _message: &str) {}
 
-    fn on_disconnect(&self, _player_id: u64) {}
+    fn on_disconnect(&self, _player: PlayerId) {}
 
-    /// Called when the player's limbo session ends, for ANY reason (released,
-    /// kicked, timed out, disconnected, …). The place to drop a stored
-    /// [`SessionHandle`] and cancel any scheduled tasks.
-    fn on_session_end(&self, _player_id: u64, _reason: SessionEndReason) {}
+    fn on_session_end(&self, _player: PlayerId, _reason: SessionEndReason) {}
 }
 
-/// Collects a plugin's limbo-handler declarations. Passed to
-/// [`Plugin::register_limbo_handlers`](crate::Plugin::register_limbo_handlers).
 pub struct LimboRegistrar {
     _private: (),
 }
 
 impl LimboRegistrar {
-    pub(crate) fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self { _private: () }
     }
 
-    /// Registers `handler` under `name` — the name a server's `limbo_handlers`
-    /// config references.
     pub fn add(&mut self, name: &str, handler: impl LimboHandler + 'static) {
         crate::runtime::register_limbo_handler(name, Box::new(handler));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hold_with_timeout_crosses_as_milliseconds() {
+        let outcome = HandlerOutcome::HoldWithTimeout {
+            after: Duration::from_secs(5),
+            on_timeout: TimeoutOutcome::Deny(Component::text("Timed out")),
+        };
+        let WitHandlerResult::HoldWithTimeout(hold) = outcome.into_wit() else {
+            panic!("a timed hold stays a timed hold");
+        };
+        assert_eq!(hold.after_ms, 5_000);
+        assert_eq!(
+            hold.on_timeout,
+            WitTimeoutOutcome::Deny(Component::text("Timed out").to_arena())
+        );
+    }
+
+    #[test]
+    fn a_redirect_names_its_server() {
+        assert_eq!(
+            HandlerOutcome::Redirect("hub".into()).into_wit(),
+            WitHandlerResult::Redirect("hub".into())
+        );
     }
 }

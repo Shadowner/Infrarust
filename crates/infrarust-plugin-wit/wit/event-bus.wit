@@ -1,0 +1,7 @@
+interface event-bus {
+    use types.{event-priority, listener-handle, host-error};
+    use events.{event-kind};
+
+    subscribe: func(kind: event-kind, priority: event-priority) -> result<listener-handle, host-error>;
+    unsubscribe: func(handle: listener-handle) -> result<bool, host-error>;
+}

@@ -47,7 +47,7 @@ When a call faults, the proxy:
 1. Logs one error naming the plugin, the call and the cause.
 2. Discards the instance and everything it registered with the proxy: its event listeners are removed, its scheduled tasks are cancelled, and every player it still holds in limbo is released with a deny ("Limbo handler unavailable") so nobody is stuck. Calls already queued for the old instance's listeners and tasks are dropped.
 3. Creates a fresh instance from the compiled component, with the same plugin context, capabilities, data directory and limits.
-4. Runs the guest's `on_enable` in it. A trap, a cut-off or an `Err` from this `on_enable` counts as one more fault.
+4. Runs the guest's `on_enable` in it, with `ctx.enable_reason()` set to `EnableReason::Recovered(RecoveryInfo { attempt, cause })`: `attempt` counts the recoveries so far and `cause` describes the fault. A trap, a cut-off or an `Err` from this `on_enable` counts as one more fault.
 5. Logs one info line with the new instance's generation (the first instance is generation 1, each fresh one adds 1).
 
 Commands and limbo handlers are known to the proxy by name, so they are not registered twice. When the fresh instance registers a command or a limbo handler under a name the plugin already used, the existing registration is pointed at the fresh instance. A name that the fresh instance does not register again during its `on_enable` is removed: the command is unregistered, and the limbo handler denies players who reach it.

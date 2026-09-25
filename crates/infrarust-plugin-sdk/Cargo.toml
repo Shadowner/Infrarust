@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
-description = "Guest SDK for authoring Infrarust WASM plugins (infrarust:plugin@0.2.3)"
+description = "Guest SDK for authoring Infrarust WASM plugins (infrarust:plugin@0.3.0)"
 keywords = ["minecraft", "proxy", "plugin", "wasm", "wit"]
 categories = ["game-development", "wasm"]
 
@@ -19,3 +19,5 @@ workspace = true
 [dependencies]
 wit-bindgen = { workspace = true }
 infrarust-plugin-macros = { workspace = true }
+infrarust-plugin-wit = { workspace = true }
+uuid = { version = "1.23.3", default-features = false }

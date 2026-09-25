@@ -24,3 +24,7 @@ pub(crate) const COMMAND_REFUSAL_BURST: u32 = 5;
 pub(crate) const CODEC_LOG_INTERVAL: Duration = Duration::from_secs(1);
 
 pub(crate) const CODEC_LOG_BURST: u32 = 20;
+
+pub(crate) const GUEST_WARNING_INTERVAL: Duration = Duration::from_secs(60);
+
+pub(crate) const GUEST_WARNING_BURST: u32 = 5;

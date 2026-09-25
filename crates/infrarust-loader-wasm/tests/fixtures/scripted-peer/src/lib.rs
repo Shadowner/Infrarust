@@ -10,11 +10,11 @@ struct ScriptedPeer;
 
 #[plugin(id = "scripted-peer", name = "Scripted Peer Fixture")]
 impl Plugin for ScriptedPeer {
-    fn on_enable(&self, ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
         guest::enable(ctx)
     }
 
-    fn on_disable(&self, _ctx: &Context) -> Result<(), String> {
+    fn on_disable(&self, _ctx: &Context) -> Result<(), PluginError> {
         guest::disable()
     }
 }

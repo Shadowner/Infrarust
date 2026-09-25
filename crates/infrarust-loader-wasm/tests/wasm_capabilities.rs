@@ -83,7 +83,7 @@ async fn an_ungranted_import_loads_and_its_calls_are_refused() {
 
     assert_eq!(
         ban_outcome(&plugins_dir),
-        "operation-failed: missing capability: ban",
+        "permission-denied: missing capability: ban",
         "the call reached the host and was refused there"
     );
     let lines = logs.lines();

@@ -207,6 +207,8 @@ panic = "abort"
 The wasm crate's `lib.rs` is a thin adapter: it implements the synchronous SDK `Plugin` trait, tags the impl with `#[plugin]`, and forwards to the core crate so behavior matches the native build.
 
 ```rust
+#![forbid(unsafe_code)]
+
 use infrarust_plugin_sdk::prelude::*;
 use infrarust_plugin_stats as core;
 
@@ -215,18 +217,24 @@ struct StatsPlugin;
 
 #[plugin(id = "stats", name = "Stats Plugin")] // [!code focus]
 impl Plugin for StatsPlugin {
-    fn on_enable(&self, ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
         ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
             info!("[stats] {}", core::join_log(&event.profile.username));
-        });
-        // ... commands and other listeners ...
+        })?;
+        ctx.command(core::COMMAND_NAME)
+            .aliases(core::COMMAND_ALIASES.iter().copied())
+            .description(core::COMMAND_DESCRIPTION)
+            .handler(|invocation| {
+                let _ = invocation.reply(Component::text(core::format_count(Players::count())));
+            })
+            .register()?;
         Ok(())
     }
 }
 ```
 
 ::: info
-The guest `Plugin` trait is synchronous: `on_enable(&self, ctx: &Context) -> Result<(), String>`. There is no `async`/`BoxFuture` in the WASM API. That signature belongs to the native `Plugin` trait. The guest is single-threaded with no async runtime, so keep mutable plugin state in `Cell`/`RefCell` fields. See [Getting Started](./getting-started).
+The guest `Plugin` trait is synchronous: `on_enable(&self, ctx: &Context) -> Result<(), PluginError>`. There is no `async`/`BoxFuture` in the WASM API. That signature belongs to the native `Plugin` trait. The guest is single-threaded with no async runtime, so keep mutable plugin state in `Cell`/`RefCell` fields. See [Getting Started](./getting-started).
 :::
 
 ## How the test fixtures are built

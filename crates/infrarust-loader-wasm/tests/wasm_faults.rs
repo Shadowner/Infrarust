@@ -220,6 +220,11 @@ async fn a_trapped_handler_leaves_its_event_unchanged_and_a_fresh_instance_handl
             ["enable", "pre-login", "enable", "chat-message"],
             "the fresh instance ran on_enable again before handling the next event"
         );
+        assert_eq!(
+            read_log(&fx.data)[2],
+            "enable recovered 1",
+            "the fresh instance is told it is the first recovery"
+        );
         assert_eq!(listeners::<PreLoginEvent>(&fx.env.event_bus, SCRIPTED), 1);
         assert_eq!(
             listeners::<ChatMessageEvent>(&fx.env.event_bus, SCRIPTED),
@@ -378,6 +383,7 @@ async fn repeated_traps_quarantine_the_plugin_until_its_backoff_passes() {
             ["enable", "cmd"],
             "after the backoff a fresh instance is enabled and takes the command"
         );
+        assert_eq!(read_log(&fx.data)[6], "enable recovered 3");
         assert_eq!(listeners::<PreLoginEvent>(&fx.env.event_bus, SCRIPTED), 1);
     }
     .with_subscriber(logs.clone())

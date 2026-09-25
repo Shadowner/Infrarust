@@ -13,6 +13,7 @@ use crate::actor::PluginActor;
 use crate::cache::AotCache;
 use crate::config::WasmLoaderConfig;
 use crate::consts::CACHE_SUBDIR;
+use crate::contract::check as check_contract;
 use crate::epoch::EpochTicker;
 use crate::gates::check_imports;
 use crate::instance::InstanceFactory;
@@ -85,6 +86,9 @@ impl PluginLoader for WasmPluginLoader {
                         .map_err(|e| e.into_loader_error(&label))?
                 };
 
+                check_contract(&self.engine, &component, &path)
+                    .map_err(|e| e.into_loader_error(&label))?;
+
                 let metadata = extract_metadata(
                     &self.engine,
                     &component,
@@ -154,6 +158,8 @@ impl PluginLoader for WasmPluginLoader {
                 None
             };
 
+            let shutdown = ctx.proxy_shutdown();
+            let shutting_down = Box::new(move || shutdown.is_cancelled());
             let setup = PluginSetup {
                 plugin_id: plugin_id.to_owned(),
                 ctx,
@@ -173,7 +179,7 @@ impl PluginLoader for WasmPluginLoader {
                 .lock()
                 .expect("actors lock poisoned")
                 .insert(plugin_id.to_owned(), Arc::downgrade(&actor));
-            Ok(Box::new(WasmPlugin::new(entry.metadata, actor)) as Box<dyn Plugin>)
+            Ok(Box::new(WasmPlugin::new(entry.metadata, actor, shutting_down)) as Box<dyn Plugin>)
         })
     }
 

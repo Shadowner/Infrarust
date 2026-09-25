@@ -6,14 +6,14 @@ use infrarust_api::types::RawPacket;
 
 use super::bindings::exports::infrarust::plugin::codec_filter as wit_codec;
 use crate::bindings::infrarust::plugin::types as wit_types;
-use crate::convert::raw_packet_from_wit;
+use crate::convert::{ip_to_wit, raw_packet_from_wit, socket_to_wit};
 
 pub(crate) fn session_init_to_wit(init: &CodecSessionInit) -> wit_codec::CodecSessionInit {
     wit_codec::CodecSessionInit {
         client_version: init.client_version.raw(),
         connection_id: init.connection_id,
-        remote_addr: init.remote_addr.to_string(),
-        real_ip: init.real_ip.map(|ip| ip.to_string()),
+        remote_addr: socket_to_wit(init.remote_addr),
+        real_ip: init.real_ip.map(ip_to_wit),
         side: connection_side_to_wit(init.side),
     }
 }

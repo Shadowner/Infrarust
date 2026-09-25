@@ -17,7 +17,7 @@ pub(crate) struct MissingGrant {
 pub(crate) fn gate(interface: &str, function: &str) -> Option<Capability> {
     match interface {
         "event-bus" => Some(Capability::EventBus),
-        "player-registry" => Some(player_gate(function)),
+        "players" => Some(player_gate(function)),
         "server-manager" => Some(Capability::ServerManage),
         "ban-service" => Some(Capability::Ban),
         "config-service" => Some(Capability::ConfigRead),
@@ -31,12 +31,10 @@ pub(crate) fn gate(interface: &str, function: &str) -> Option<Capability> {
 
 fn player_gate(function: &str) -> Capability {
     match function {
-        "[method]player.send-message"
-        | "[method]player.send-title"
-        | "[method]player.send-action-bar"
-        | "[method]player.switch-server"
-        | "[method]player.disconnect" => Capability::PlayerWrite,
-        "[method]player.send-packet" => Capability::RawPacket,
+        "send-message" | "send-title" | "send-action-bar" | "switch-server" | "disconnect" => {
+            Capability::PlayerWrite
+        }
+        "send-packet" => Capability::RawPacket,
         _ => Capability::PlayerRead,
     }
 }
@@ -137,20 +135,22 @@ mod tests {
 
     const IMPORTS: &str = r#"
         (component
-            (import "infrarust:plugin/ban-service@0.2.3" (instance
-                (export "is-banned" (func))
-                (export "get-all-bans" (func))
+            (import "infrarust:plugin/ban-service@0.3.0" (instance
+                (export "get" (func))
+                (export "list" (func))
             ))
-            (import "infrarust:plugin/limbo@0.2.3" (instance
+            (import "infrarust:plugin/limbo@0.3.0" (instance
                 (export "limbo-session" (type (sub resource)))
             ))
-            (import "infrarust:plugin/player-registry@0.2.3" (instance
-                (export "player" (type (sub resource)))
-                (export "get-all-players" (func))
-                (export "[method]player.send-message" (func (param "self" (borrow 0))))
-                (export "[method]player.send-packet" (func (param "self" (borrow 0))))
+            (import "infrarust:plugin/players@0.3.0" (instance
+                (export "list" (func))
+                (export "send-message" (func))
+                (export "send-packet" (func))
             ))
-            (import "infrarust:plugin/log@0.2.3" (instance
+            (import "infrarust:plugin/text@0.3.0" (instance
+                (export "to-json" (func))
+            ))
+            (import "infrarust:plugin/log@0.3.0" (instance
                 (export "info" (func))
             ))
             (import "wasi:random/insecure-seed@0.2.0" (instance
@@ -177,22 +177,22 @@ mod tests {
                 (
                     "ban-service".to_string(),
                     Capability::Ban,
-                    vec!["is-banned".to_string(), "get-all-bans".to_string()]
+                    vec!["get".to_string(), "list".to_string()]
                 ),
                 (
-                    "player-registry".to_string(),
+                    "players".to_string(),
                     Capability::PlayerRead,
-                    vec!["get-all-players".to_string()]
+                    vec!["list".to_string()]
                 ),
                 (
-                    "player-registry".to_string(),
+                    "players".to_string(),
                     Capability::PlayerWrite,
-                    vec!["[method]player.send-message".to_string()]
+                    vec!["send-message".to_string()]
                 ),
                 (
-                    "player-registry".to_string(),
+                    "players".to_string(),
                     Capability::RawPacket,
-                    vec!["[method]player.send-packet".to_string()]
+                    vec!["send-packet".to_string()]
                 ),
             ]
         );
@@ -225,7 +225,7 @@ mod tests {
             "{err}"
         );
         assert!(
-            err.contains("infrarust:plugin/player-registry needs `raw-packet`"),
+            err.contains("infrarust:plugin/players needs `raw-packet`"),
             "{err}"
         );
         assert!(err.contains("strict_capabilities"), "{err}");
@@ -242,15 +242,16 @@ mod tests {
             Some(Capability::Limbo)
         );
         assert_eq!(gate("log", "info"), None);
+        assert_eq!(gate("text", "parse-json"), None);
         assert_eq!(gate("types", "anything"), None);
+        assert_eq!(gate("events", "anything"), None);
+        assert_eq!(gate("players", "get"), Some(Capability::PlayerRead));
         assert_eq!(
-            gate("player-registry", "[method]player.profile"),
+            gate("players", "has-permission"),
             Some(Capability::PlayerRead)
         );
-        assert_eq!(
-            gate("player-registry", "[method]player.disconnect"),
-            Some(Capability::PlayerWrite)
-        );
+        assert_eq!(gate("players", "disconnect"), Some(Capability::PlayerWrite));
+        assert_eq!(gate("players", "send-packet"), Some(Capability::RawPacket));
         assert_eq!(gate("event-bus", "unsubscribe"), Some(Capability::EventBus));
     }
 }

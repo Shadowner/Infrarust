@@ -9,6 +9,7 @@ use futures_util::FutureExt;
 use tokio::time::Instant;
 
 use crate::actor::{CallFailure, GuestCall, InstanceRef, Job, JobKind};
+use crate::bindings::exports::infrarust::plugin::guest::{EnableReason, RecoveryInfo};
 use crate::deadline::Deadline;
 use crate::error::WasmLoaderError;
 use crate::instance::{InstanceFactory, LiveInstance};
@@ -59,6 +60,7 @@ pub(crate) struct Supervisor {
     generation: u64,
     health: Health,
     budget: RestartBudget,
+    last_fault: String,
 }
 
 impl Supervisor {
@@ -76,6 +78,7 @@ impl Supervisor {
             generation: FIRST_GENERATION,
             health: Health::Starting(live),
             budget,
+            last_fault: String::new(),
         })
     }
 
@@ -195,6 +198,7 @@ impl Supervisor {
 
     async fn fail(&mut self, op: &'static str, fault: &Fault) {
         self.report(op, fault);
+        self.last_fault = fault.to_string();
         let enabled = matches!(self.health, Health::Healthy(_));
         let health = std::mem::replace(&mut self.health, Health::Recovering);
         if let Health::Starting(live) | Health::Healthy(live) = health {
@@ -241,7 +245,11 @@ impl Supervisor {
             }
         };
         let limit = self.factory.sandbox().max_call_duration;
-        match enable(&mut live, limit).await {
+        let reason = EnableReason::Recovered(RecoveryInfo {
+            attempt: u32::try_from(generation - FIRST_GENERATION).unwrap_or(u32::MAX),
+            cause: self.last_fault.clone(),
+        });
+        match enable(&mut live, limit, &reason).await {
             Ok(()) => {
                 let ctx = self.factory.ctx();
                 for name in self.factory.registrations().sweep(generation) {
@@ -256,6 +264,7 @@ impl Supervisor {
             }
             Err(fault) => {
                 self.report("on-enable", &fault);
+                self.last_fault = fault.to_string();
                 self.discard(live);
                 false
             }
@@ -292,12 +301,16 @@ async fn run_guest(
     outcome
 }
 
-async fn enable(live: &mut LiveInstance, limit: Duration) -> Result<(), Fault> {
+async fn enable(
+    live: &mut LiveInstance,
+    limit: Duration,
+    reason: &EnableReason,
+) -> Result<(), Fault> {
     live.begin_call(None);
     let enabling = live
         .bindings
         .infrarust_plugin_guest()
-        .call_on_enable(&mut live.store);
+        .call_on_enable(&mut live.store, reason);
     let outcome = contain(limit, enabling).await;
     live.end_call();
     outcome?.map_err(Fault::Refused)

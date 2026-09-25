@@ -16,6 +16,7 @@ members = [
     "limbo-handler",
     "slow-handler",
     "deadline-probe",
+    "old-world",
 ]
 
 [workspace.dependencies]

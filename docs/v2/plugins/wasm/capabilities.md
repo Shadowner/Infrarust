@@ -147,53 +147,46 @@ pub fn from_config(grants: &[String], denies: &[String]) -> (Self, Vec<String>) 
 
 Unknown names in `deny` are reported with the same warning as unknown grants. `deny` also applies to compiled-in plugins: they start from every capability and lose the ones listed.
 
-A denied capability behaves exactly like one that was never granted: the plugin still loads, and every call that needs the capability is refused (see [Refused calls](#refused-calls)). Denying `config-read`, for example, makes `get-value` answer `none` even for a key the proxy has.
+A denied capability behaves exactly like one that was never granted: the plugin still loads, and every call that needs the capability is refused (see [Refused calls](#refused-calls)). Denying `config-read`, for example, makes `get-value` return a `permission-denied` error even for a key the proxy has.
 
 ## What a missing capability does
 
-Every host interface is linked for every plugin, whatever it was granted. A plugin that imports `ban-service` but only calls it when the operator granted `ban` loads either way. The check happens when a gated function is called: without the capability the host does not run the call, and answers with the interface's own error type or, when the function has no error channel, with a neutral value.
+Every host interface is linked for every plugin, whatever it was granted. A plugin that imports `ban-service` but only calls it when the operator granted `ban` loads either way. The check happens when a gated function is called: without the capability the host does not run the call and returns a `host-error` of kind `permission-denied` whose message names the capability. The SDK surfaces it as an `Error` with kind `ErrorKind::PermissionDenied`.
 
 ### Refused calls
 
 | Interface | Function | Needs | Answer when refused |
 |-----------|----------|-------|---------------------|
-| `ban-service` | `ban`, `unban`, `is-banned`, `get-ban`, `get-all-bans` | `ban` | `service-error` `operation-failed: "missing capability: ban"` |
-| `server-manager` | `start`, `stop` | `server-manage` | `service-error` `operation-failed: "missing capability: server-manage"` |
-| `server-manager` | `get-state`, `get-all-servers` | `server-manage` | `none`, empty list |
-| `config-service` | `get-server-config`, `get-all-server-configs`, `get-value` | `config-read` | `none`, empty list, `none` |
-| `player-registry` | `get-player`, `get-player-by-uuid`, `get-player-by-id` | `player-read` | `none` |
-| `player-registry` | `get-players-on-server`, `get-all-players` | `player-read` | empty list |
-| `player-registry` | `online-count`, `online-count-on` | `player-read` | `0` |
-| `player` | `send-message`, `send-title`, `send-action-bar` | `player-write` | `player-error` `send-failed: "missing capability: player-write"` |
-| `player` | `switch-server` | `player-write` | `player-error` `switch-failed: "missing capability: player-write"` |
-| `player` | `disconnect` | `player-write` | nothing happens |
-| `player` | `send-packet` | `raw-packet` | `player-error` `send-failed: "missing capability: raw-packet"` |
-| `event-bus` | `subscribe` | `event-bus` | a fresh listener handle with no listener behind it: no event is delivered |
-| `event-bus` | `subscribe` with kind `raw-packet` | `event-bus` and `raw-packet` | same as above |
-| `event-bus` | `subscribe` with kind `chat-message` | `event-bus` and `chat-intercept` | same as above: the plugin never sees a chat message and cannot deny or change one |
-| `event-bus` | `unsubscribe` | `event-bus` | nothing happens |
-| `command-manager` | `register`, `unregister` | `command` | nothing happens: the command is not routed to the plugin |
-| `scheduler` | `delay`, `interval` | `scheduler` | task handle `0`: the callback never runs |
-| `scheduler` | `cancel` | `scheduler` | nothing happens |
-| `codec-registry` | `register-codec-filter`, `unregister-codec-filter` | `codec-filter` | nothing happens: no filter joins the codec chain |
-| `limbo` | `register-limbo-handler` | `limbo` | nothing happens: the handler never fires |
+| `ban-service` | `ban`, `unban`, `get`, `list` | `ban` | `permission-denied: "missing capability: ban"` |
+| `server-manager` | `get-state`, `start`, `stop`, `list` | `server-manage` | `permission-denied: "missing capability: server-manage"` |
+| `config-service` | `get-value`, `get-server`, `list-servers` | `config-read` | `permission-denied: "missing capability: config-read"` |
+| `players` | `get`, `get-by-name`, `get-by-uuid` | `player-read` | `none` |
+| `players` | `list` | `player-read` | empty list |
+| `players` | `count` | `player-read` | `0` |
+| `players` | `has-permission` | `player-read` | `permission-denied: "missing capability: player-read"` |
+| `players` | `send-message`, `send-title`, `send-action-bar`, `disconnect`, `switch-server` | `player-write` | `permission-denied: "missing capability: player-write"` |
+| `players` | `send-packet` | `raw-packet` | `permission-denied: "missing capability: raw-packet"` |
+| `event-bus` | `subscribe`, `unsubscribe` | `event-bus` | `permission-denied: "missing capability: event-bus"` |
+| `event-bus` | `subscribe` with kind `chat-message` | `event-bus` and `chat-intercept` | `permission-denied: "missing capability: chat-intercept"`: the plugin never sees a chat message |
+| `command-manager` | `register`, `unregister` | `command` | `permission-denied: "missing capability: command"` |
+| `scheduler` | `delay`, `interval`, `cancel` | `scheduler` | `permission-denied: "missing capability: scheduler"` |
+| `codec-registry` | `register-codec-filter`, `unregister-codec-filter` | `codec-filter` | `permission-denied: "missing capability: codec-filter"` |
+| `limbo` | `register-limbo-handler` | `limbo` | `permission-denied: "missing capability: limbo"` |
 
-The `player` methods that only read (`id`, `profile`, `current-server`, and so on) have no check of their own: a plugin only holds a `player` handle it got from `player-registry`, which needs `player-read`. The limbo session resources only reach a plugin through a handler it registered, which needs `limbo`. `log` and `types` are never gated.
+The five player reads are the contract's infallible reads: they have no error channel and answer a neutral value instead. The limbo session resources only reach a plugin through a handler it registered, which needs `limbo`. `log`, `text`, `types` and `events` are never gated.
 
-The WIT contract has no error channel for the calls answered with a neutral value, so the guest cannot tell that such a call was refused. The host logs every refusal instead, naming the plugin, the call (`call="ban-service.is-banned"`) and the missing capability. It logs at `warn`, and at `error` for `register-limbo-handler`, whose refusal leaves the plugin believing it registered a handler. The log is rate-limited to one line per capability per minute for each plugin instance; the `suppressed` field counts the refusals skipped since the previous line.
+The host also logs every refusal, naming the plugin, the call (`call="ban-service.get"`) and the missing capability. It logs at `warn`, and at `error` for `register-limbo-handler`, whose refusal means a server that points at the handler holds nobody. The log is rate-limited to one line per capability per minute for each plugin instance; the `suppressed` field counts the refusals skipped since the previous line.
 
 The `capability-denied` test fixture calls `ban-service` without the `ban` capability and records the answer:
 
 ```rust
-match ban_service::is_banned(&BanTarget::Username("nobody".to_string())) {
-    Ok(banned) => format!("ok: {banned}"),
-    Err(ServiceError::NotFound(message)) => format!("not-found: {message}"),
-    Err(ServiceError::OperationFailed(message)) => format!("operation-failed: {message}"),
-    Err(ServiceError::Unavailable(message)) => format!("unavailable: {message}"),
+match ban_service::get(&BanTarget::Username("nobody".to_string())) {
+    Ok(entry) => format!("ok: {}", entry.is_some()),
+    Err(error) => format!("{}: {}", kind(error.kind), error.message),
 }
 ```
 
-It loads, runs its `on_enable`, and records `operation-failed: missing capability: ban`.
+It loads, runs its `on_enable`, and records `permission-denied: missing capability: ban`.
 
 ### The load-time report
 
@@ -203,9 +196,9 @@ Before it instantiates a plugin, the host reads the component's import list, whi
 WARN plugin my-plugin imports ban-service but lacks the `ban` capability; calls will be refused
 ```
 
-The warning also carries the imported functions in its `functions` field. The report works per function, not per interface. Every component imports the `limbo` interface for its session resource types, but only `register-limbo-handler` needs `limbo`, so a plugin that never registers a limbo handler is not reported. In the same way `player-registry` is reported against `player-write` only when the plugin imports a method that acts on a player, and against `raw-packet` only when it imports `send-packet`.
+The warning also carries the imported functions in its `functions` field. The report works per function, not per interface. Every component imports the `limbo` interface for its session resource types, but only `register-limbo-handler` needs `limbo`, so a plugin that never registers a limbo handler is not reported. In the same way `players` is reported against `player-write` only when the plugin imports a function that acts on a player, and against `raw-packet` only when it imports `send-packet`.
 
-The report reads imports, not arguments, so it cannot tell which event kinds a plugin subscribes to: a `raw-packet` or `chat-message` subscription without its capability is only reported when the call is refused.
+The report reads imports, not arguments, so it cannot tell which event kinds a plugin subscribes to: a `chat-message` subscription without `chat-intercept` is only reported when the call is refused.
 
 ### Chat needs `chat-intercept`
 
@@ -216,7 +209,7 @@ A chat listener sees every message players type, including private messages, and
 permissions = ["chat-intercept"]
 ```
 
-Without it the plugin still loads and `subscribe` still returns a handle, but no chat message reaches the handler, and the host logs the refusal with `call="event-bus.subscribe(chat-message)"` and `capability="chat-intercept"`. Compiled-in plugins hold the capability unless their config denies it.
+Without it the plugin still loads, but `subscribe` returns a `permission-denied` error (`ctx.on::<ChatMessageEvent>` returns it as an `Error`), no chat message reaches the plugin, and the host logs the refusal with `call="event-bus.subscribe(chat-message)"` and `capability="chat-intercept"`. Compiled-in plugins hold the capability unless their config denies it.
 
 ### Strict mode
 
@@ -285,7 +278,7 @@ A plugin that spins past the budget is interrupted and its instance is replaced 
 Codec filters run on their own budget, `codec_cpu_budget`, since each filter call is synchronous and normally finishes in microseconds. It is re-armed before every `create`/`filter`/lifecycle call; with the defaults that is 16 ticks. See [Codec Filters](./codec-filters) for the filter contract.
 
 ::: info Host calls have their own timeout
-Epoch interruption cannot preempt a guest parked inside a host `.await` (such as a ban lookup or a server start), and that waiting time does not count against `cpu_budget`. Each such host call is wrapped in `host_call_timeout`, and cut shorter when the deadline of the guest call that made it is closer; on expiry the guest sees a `service-error` instead of hanging. See [Lifecycle](./lifecycle#deadlines).
+Epoch interruption cannot preempt a guest parked inside a host `.await` (such as a ban lookup or a server start), and that waiting time does not count against `cpu_budget`. Each such host call is wrapped in `host_call_timeout`, and cut shorter when the deadline of the guest call that made it is closer; on expiry the guest sees a `timeout` host error instead of hanging. See [Lifecycle](./lifecycle#deadlines).
 :::
 
 ### Memory cap

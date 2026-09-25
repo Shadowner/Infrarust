@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use infrarust_api::command::CommandRegistration;
 use infrarust_api::limbo::SessionHandle;
 use infrarust_api::types::PlayerId;
 
@@ -62,6 +63,7 @@ struct Hold {
 #[derive(Default)]
 pub(crate) struct Registrations {
     commands: Mutex<HashMap<String, Arc<Binding>>>,
+    command_registrations: Mutex<HashMap<String, CommandRegistration>>,
     limbo: Mutex<HashMap<String, Arc<Binding>>>,
     holds: Mutex<HashMap<PlayerId, Hold>>,
 }
@@ -73,6 +75,19 @@ impl Registrations {
 
     pub(crate) fn unbind_command(&self, name: &str) {
         lock(&self.commands).remove(name);
+        lock(&self.command_registrations).remove(name);
+    }
+
+    pub(crate) fn record_command_registration(
+        &self,
+        name: &str,
+        registration: CommandRegistration,
+    ) {
+        lock(&self.command_registrations).insert(name.to_owned(), registration);
+    }
+
+    pub(crate) fn command_registration(&self, name: &str) -> Option<CommandRegistration> {
+        lock(&self.command_registrations).get(name).cloned()
     }
 
     pub(crate) fn bind_limbo(&self, name: &str, generation: u64, callback: u64) -> Bound {
@@ -89,6 +104,11 @@ impl Registrations {
             }
             current
         });
+        let mut registrations = lock(&self.command_registrations);
+        for name in &stale {
+            registrations.remove(name);
+        }
+        drop(registrations);
         for binding in lock(&self.limbo).values() {
             if binding.generation() != Some(generation) {
                 binding.clear();

@@ -13,8 +13,8 @@ fn log(line: &str) {
     writeln!(file, "{line}").expect("writing the fixture log");
 }
 
-fn ban_check(username: &str) -> Result<bool, ServiceError> {
-    Bans.is_banned(&BanTarget::Username(username.to_string()))
+fn ban_check(username: &str) -> Result<bool, Error> {
+    Bans::is_banned(&BanTarget::Username(username.to_string()))
 }
 
 #[derive(Default)]
@@ -34,29 +34,30 @@ impl LimboHandler for BanGate {
 
 #[plugin(id = "deadline-probe", name = "Deadline Probe Fixture")]
 impl Plugin for DeadlineProbe {
-    fn on_enable(&self, ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
         ctx.on::<PreLoginEvent>(EventPriority::Normal, |event| {
             match ban_check(&event.profile.username) {
                 Ok(false) => log("pre-login allowed"),
-                Ok(true) => event.deny(Component::text("Banned").into_json()),
+                Ok(true) => event.deny(Component::text("Banned")),
                 Err(_) => {
                     log("pre-login service-error");
-                    event.deny(Component::text(UNAVAILABLE).into_json());
+                    event.deny(Component::text(UNAVAILABLE));
                 }
             }
-        });
+        })?;
         ctx.on::<ServerPreConnectEvent>(EventPriority::Normal, |event| {
             log("pre-connect");
             event.redirect_to("backend-1");
-        });
-        ctx.command("check", |_| {
-            log(match ban_check("Steve") {
-                Ok(_) => "check answered",
-                Err(_) => "check service-error",
-            });
-        })
-        .register();
-        ctx.command("ping", |_| log("command")).register();
+        })?;
+        ctx.command("check")
+            .handler(|_| {
+                log(match ban_check("Steve") {
+                    Ok(_) => "check answered",
+                    Err(_) => "check service-error",
+                });
+            })
+            .register()?;
+        ctx.command("ping").handler(|_| log("command")).register()?;
         Ok(())
     }
 
