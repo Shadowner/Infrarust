@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use infrarust_core::auth::game_profile::offline_uuid;
+use infrarust_core::auth::mojang::minecraft_server_hash;
 use infrarust_protocol::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
@@ -12,7 +13,7 @@ use infrarust_protocol::packets::config::{
 use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::packets::login::{
     CEncryptionRequest, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression,
-    SLoginAcknowledged, SLoginPluginResponse, SLoginStart,
+    EncryptionProof, SEncryptionResponse, SLoginAcknowledged, SLoginPluginResponse, SLoginStart,
 };
 use infrarust_protocol::packets::play::chat::{
     CChatMessageLegacy, CSystemChatMessage, SChatCommand, SChatMessage,
@@ -27,6 +28,10 @@ use infrarust_protocol::packets::status::{
     CPingResponse, CStatusResponse, SPingRequest, SStatusRequest,
 };
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
+use rand::RngCore;
+use rand::rngs::OsRng;
+use rsa::pkcs8::DecodePublicKey;
+use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
@@ -192,18 +197,21 @@ impl FakeClient {
 
         let deadline = Instant::now() + self.timeout;
         let mut profile = None;
+        let mut server_hash = None;
         loop {
             let event = tokio::time::timeout_at(deadline, events.recv())
                 .await
                 .map_err(|_| HarnessError::timeout("the login to complete", self.timeout))?
                 .ok_or_else(|| HarnessError::Closed("the login to complete".to_string()))?;
             match event {
+                ClientEvent::Encrypted(hash) => server_hash = Some(hash),
                 ClientEvent::LoginSucceeded(uuid) => profile = Some(uuid),
                 ClientEvent::Joined(join) => {
                     return Ok(LoginOutcome::Joined(ClientSession {
                         version,
                         username: username.to_string(),
                         uuid: profile,
+                        server_hash,
                         join,
                         writer,
                         events,
@@ -224,6 +232,7 @@ impl FakeClient {
 
 #[derive(Debug)]
 enum ClientEvent {
+    Encrypted(String),
     LoginSucceeded(Uuid),
     Joined(PacketFrame),
     Frame(PacketFrame),
@@ -319,9 +328,9 @@ impl Driver {
             return Ok(Flow::Continue);
         }
         if wire::is::<CEncryptionRequest>(&frame, version) {
-            return Err(HarnessError::Unsupported(
-                "FakeClient does not implement online-mode encryption yet".to_string(),
-            ));
+            let request = wire::decode::<CEncryptionRequest>(&frame, version)?;
+            self.answer_encryption(&request).await?;
+            return Ok(Flow::Continue);
         }
         if wire::is::<CLoginSuccess>(&frame, version) {
             let success = wire::decode::<CLoginSuccess>(&frame, version)?;
@@ -334,6 +343,34 @@ impl Driver {
             }
         }
         Ok(Flow::Continue)
+    }
+
+    async fn answer_encryption(&mut self, request: &CEncryptionRequest) -> HarnessResult<()> {
+        let key = RsaPublicKey::from_public_key_der(&request.public_key)
+            .map_err(|e| HarnessError::Unexpected(format!("server public key: {e}")))?;
+        let mut secret = [0u8; 16];
+        OsRng.fill_bytes(&mut secret);
+        let encrypt = |data: &[u8]| {
+            key.encrypt(&mut OsRng, Pkcs1v15Encrypt, data)
+                .map_err(|e| HarnessError::Unexpected(format!("RSA encryption failed: {e}")))
+        };
+        let response = SEncryptionResponse {
+            shared_secret: encrypt(&secret)?,
+            proof: EncryptionProof::VerifyToken(encrypt(&request.verify_token)?),
+        };
+        let frame = wire::encode(&response, self.version)?;
+        {
+            let mut writer = self.writer.lock().await;
+            writer.write_frame(&frame).await?;
+            writer.enable_encryption(&secret);
+        }
+        self.reader.enable_decryption(&secret);
+        self.emit(ClientEvent::Encrypted(minecraft_server_hash(
+            &request.server_id,
+            &secret,
+            &request.public_key,
+        )));
+        Ok(())
     }
 
     async fn on_config(&mut self, frame: PacketFrame) -> HarnessResult<Flow> {
@@ -396,6 +433,7 @@ pub struct ClientSession {
     version: ProtocolVersion,
     username: String,
     uuid: Option<Uuid>,
+    server_hash: Option<String>,
     join: PacketFrame,
     writer: Arc<Mutex<FrameWriter>>,
     events: mpsc::UnboundedReceiver<ClientEvent>,
@@ -423,6 +461,10 @@ impl ClientSession {
 
     pub const fn uuid(&self) -> Option<Uuid> {
         self.uuid
+    }
+
+    pub fn server_hash(&self) -> Option<&str> {
+        self.server_hash.as_deref()
     }
 
     pub const fn join_frame(&self) -> &PacketFrame {
@@ -479,8 +521,10 @@ impl ClientSession {
                 ClientEvent::Closed(reason) => {
                     return Err(HarnessError::Closed(format!("{what} ({reason})")));
                 }
-                ClientEvent::LoginSucceeded(_) | ClientEvent::Joined(_) | ClientEvent::Frame(_) => {
-                }
+                ClientEvent::Encrypted(_)
+                | ClientEvent::LoginSucceeded(_)
+                | ClientEvent::Joined(_)
+                | ClientEvent::Frame(_) => {}
             }
         }
     }

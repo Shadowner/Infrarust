@@ -1,0 +1,550 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use infrarust_api::error::PluginError;
+use infrarust_api::event::bus::{EventBus, EventBusExt};
+use infrarust_api::event::{BoxFuture, Event, EventPriority, ResultedEvent};
+use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
+use infrarust_api::events::connection::{
+    KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
+    PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPreConnectEvent,
+    ServerPreConnectResult, ServerSwitchEvent,
+};
+use infrarust_api::events::lifecycle::{
+    DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult,
+    PostLoginEvent, PreLoginEvent, PreLoginResult,
+};
+use infrarust_api::events::proxy::{
+    BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
+    ProxyShutdownEvent, ServerStateChangeEvent,
+};
+use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
+use infrarust_api::types::{GameProfile, PlayerId, ServerId};
+use serde_json::{Value, json};
+use tokio::sync::Notify;
+use tokio::time::Instant;
+
+use crate::error::{HarnessError, HarnessResult};
+
+pub const RECORDER_PLUGIN_ID: &str = "harness_recorder";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum EventKind {
+    PreLogin,
+    PostLogin,
+    PermissionsSetup,
+    OnlineAuthFailed,
+    Disconnect,
+    PlayerChooseInitialServer,
+    ServerPreConnect,
+    ServerConnected,
+    ServerSwitch,
+    KickedFromServer,
+    ChatMessage,
+    ProxyPing,
+    ProxyInitialize,
+    ProxyShutdown,
+    ConfigReload,
+    BackendHealth,
+    ServerStateChange,
+}
+
+impl EventKind {
+    pub const ALL: [Self; 17] = [
+        Self::PreLogin,
+        Self::PostLogin,
+        Self::PermissionsSetup,
+        Self::OnlineAuthFailed,
+        Self::Disconnect,
+        Self::PlayerChooseInitialServer,
+        Self::ServerPreConnect,
+        Self::ServerConnected,
+        Self::ServerSwitch,
+        Self::KickedFromServer,
+        Self::ChatMessage,
+        Self::ProxyPing,
+        Self::ProxyInitialize,
+        Self::ProxyShutdown,
+        Self::ConfigReload,
+        Self::BackendHealth,
+        Self::ServerStateChange,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::PreLogin => "PreLogin",
+            Self::PostLogin => "PostLogin",
+            Self::PermissionsSetup => "PermissionsSetup",
+            Self::OnlineAuthFailed => "OnlineAuthFailed",
+            Self::Disconnect => "Disconnect",
+            Self::PlayerChooseInitialServer => "PlayerChooseInitialServer",
+            Self::ServerPreConnect => "ServerPreConnect",
+            Self::ServerConnected => "ServerConnected",
+            Self::ServerSwitch => "ServerSwitch",
+            Self::KickedFromServer => "KickedFromServer",
+            Self::ChatMessage => "ChatMessage",
+            Self::ProxyPing => "ProxyPing",
+            Self::ProxyInitialize => "ProxyInitialize",
+            Self::ProxyShutdown => "ProxyShutdown",
+            Self::ConfigReload => "ConfigReload",
+            Self::BackendHealth => "BackendHealth",
+            Self::ServerStateChange => "ServerStateChange",
+        }
+    }
+}
+
+impl std::fmt::Display for EventKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Recorded {
+    pub seq: u64,
+    pub kind: EventKind,
+    pub player: Option<PlayerId>,
+    pub username: Option<String>,
+    pub detail: Value,
+}
+
+#[derive(Debug, Default)]
+struct Log {
+    events: Vec<Recorded>,
+    usernames: HashMap<PlayerId, String>,
+}
+
+impl Log {
+    fn learn(&mut self, player: PlayerId, username: &str) {
+        if username.is_empty() || self.usernames.contains_key(&player) {
+            return;
+        }
+        self.usernames.insert(player, username.to_string());
+        for event in &mut self.events {
+            if event.player == Some(player) && event.username.is_none() {
+                event.username = Some(username.to_string());
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct Inner {
+    log: Mutex<Log>,
+    changed: Notify,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Recorder {
+    inner: Arc<Inner>,
+}
+
+impl Recorder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn plugin(&self) -> RecordingPlugin {
+        RecordingPlugin {
+            id: RECORDER_PLUGIN_ID.to_string(),
+            recorder: self.clone(),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Log> {
+        self.inner
+            .log
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn record(
+        &self,
+        kind: EventKind,
+        player: Option<PlayerId>,
+        username: Option<&str>,
+        detail: Value,
+    ) {
+        {
+            let mut log = self.lock();
+            if let (Some(player), Some(username)) = (player, username) {
+                log.learn(player, username);
+            }
+            let username = username
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .or_else(|| player.and_then(|p| log.usernames.get(&p).cloned()));
+            let seq = log.events.len() as u64;
+            log.events.push(Recorded {
+                seq,
+                kind,
+                player,
+                username,
+                detail,
+            });
+        }
+        self.inner.changed.notify_waiters();
+    }
+
+    pub fn events(&self) -> Vec<Recorded> {
+        self.lock().events.clone()
+    }
+
+    pub fn kinds(&self) -> Vec<EventKind> {
+        self.lock().events.iter().map(|e| e.kind).collect()
+    }
+
+    pub fn of(&self, kind: EventKind) -> Vec<Recorded> {
+        self.filter(|e| e.kind == kind)
+    }
+
+    pub fn for_player(&self, player: PlayerId) -> Vec<Recorded> {
+        self.filter(|e| e.player == Some(player))
+    }
+
+    pub fn for_username(&self, username: &str) -> Vec<Recorded> {
+        self.filter(|e| e.username.as_deref() == Some(username))
+    }
+
+    pub fn player_id(&self, username: &str) -> Option<PlayerId> {
+        self.lock()
+            .usernames
+            .iter()
+            .find(|(_, name)| name.as_str() == username)
+            .map(|(id, _)| *id)
+    }
+
+    pub fn count(&self, kind: EventKind) -> usize {
+        self.lock().events.iter().filter(|e| e.kind == kind).count()
+    }
+
+    pub fn filter(&self, mut pick: impl FnMut(&Recorded) -> bool) -> Vec<Recorded> {
+        let mut events = self.events();
+        events.retain(|e| pick(e));
+        events
+    }
+
+    pub async fn wait_for(
+        &self,
+        mut pick: impl FnMut(&Recorded) -> bool,
+        timeout: Duration,
+    ) -> HarnessResult<Recorded> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let changed = self.inner.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if let Some(found) = self.events().into_iter().find(|e| pick(e)) {
+                return Ok(found);
+            }
+            if tokio::time::timeout_at(deadline, changed).await.is_err() {
+                let seen: Vec<String> = self
+                    .events()
+                    .iter()
+                    .map(|e| format!("{}({})", e.kind, e.username.as_deref().unwrap_or("-")))
+                    .collect();
+                return Err(HarnessError::timeout(
+                    format!(
+                        "a matching recorded event (seen so far: [{}])",
+                        seen.join(", ")
+                    ),
+                    timeout,
+                ));
+            }
+        }
+    }
+
+    pub async fn wait_for_kind(
+        &self,
+        kind: EventKind,
+        timeout: Duration,
+    ) -> HarnessResult<Recorded> {
+        self.wait_for(|e| e.kind == kind, timeout).await
+    }
+}
+
+pub struct RecordingPlugin {
+    id: String,
+    recorder: Recorder,
+}
+
+impl RecordingPlugin {
+    pub fn new() -> Self {
+        Recorder::new().plugin()
+    }
+
+    #[must_use]
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = id.into();
+        self
+    }
+
+    pub fn recorder(&self) -> Recorder {
+        self.recorder.clone()
+    }
+}
+
+impl Default for RecordingPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Plugin for RecordingPlugin {
+    fn metadata(&self) -> PluginMetadata {
+        PluginMetadata::new(self.id.clone(), "Harness event recorder", "0.0.0")
+    }
+
+    fn on_enable<'a>(
+        &'a self,
+        ctx: &'a dyn PluginContext,
+    ) -> BoxFuture<'a, Result<(), PluginError>> {
+        subscribe_all(ctx.event_bus(), &self.recorder);
+        Box::pin(async { Ok(()) })
+    }
+}
+
+type Capture = (EventKind, Option<PlayerId>, Option<String>, Value);
+
+fn on<E: Event>(bus: &dyn EventBus, recorder: &Recorder, capture: fn(&E) -> Capture) {
+    let recorder = recorder.clone();
+    bus.subscribe(EventPriority::LAST, move |event: &mut E| {
+        let (kind, player, username, detail) = capture(event);
+        recorder.record(kind, player, username.as_deref(), detail);
+    });
+}
+
+fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
+    on::<PreLoginEvent>(bus, recorder, |e| {
+        (
+            EventKind::PreLogin,
+            None,
+            Some(e.profile.username.clone()),
+            json!({
+                "profile": profile(&e.profile),
+                "remote_addr": e.remote_addr.to_string(),
+                "protocol_version": e.protocol_version.raw(),
+                "server_domain": e.server_domain,
+                "result": pre_login_result(e.result()),
+            }),
+        )
+    });
+    on::<PostLoginEvent>(bus, recorder, |e| {
+        (
+            EventKind::PostLogin,
+            Some(e.player_id),
+            Some(e.profile.username.clone()),
+            json!({
+                "profile": profile(&e.profile),
+                "protocol_version": e.protocol_version.raw(),
+            }),
+        )
+    });
+    on::<PermissionsSetupEvent>(bus, recorder, |e| {
+        let result = match e.result() {
+            PermissionsSetupResult::UseDefault => "use_default",
+            PermissionsSetupResult::Custom(_) => "custom",
+            _ => "other",
+        };
+        (
+            EventKind::PermissionsSetup,
+            Some(e.player_id),
+            Some(e.profile.username.clone()),
+            json!({
+                "profile": profile(&e.profile),
+                "online_mode": e.online_mode,
+                "result": result,
+            }),
+        )
+    });
+    on::<OnlineAuthFailed>(bus, recorder, |e| {
+        (
+            EventKind::OnlineAuthFailed,
+            None,
+            Some(e.username.clone()),
+            json!({ "username": e.username }),
+        )
+    });
+    on::<DisconnectEvent>(bus, recorder, |e| {
+        (
+            EventKind::Disconnect,
+            Some(e.player_id),
+            Some(e.username.clone()),
+            json!({
+                "username": e.username,
+                "last_server": e.last_server.as_ref().map(ServerId::as_str),
+            }),
+        )
+    });
+    on::<PlayerChooseInitialServerEvent>(bus, recorder, |e| {
+        let result = match e.result() {
+            PlayerChooseInitialServerResult::Allowed => json!("allowed"),
+            PlayerChooseInitialServerResult::Redirect(id) => json!({ "redirect": id.as_str() }),
+            PlayerChooseInitialServerResult::SendToLimbo { limbo_handlers } => {
+                json!({ "send_to_limbo": limbo_handlers })
+            }
+            _ => json!("other"),
+        };
+        (
+            EventKind::PlayerChooseInitialServer,
+            Some(e.player_id),
+            Some(e.profile.username.clone()),
+            json!({
+                "profile": profile(&e.profile),
+                "initial_server": e.initial_server.as_str(),
+                "result": result,
+            }),
+        )
+    });
+    on::<ServerPreConnectEvent>(bus, recorder, |e| {
+        let result = match e.result() {
+            ServerPreConnectResult::Allowed => json!("allowed"),
+            ServerPreConnectResult::ConnectTo(id) => json!({ "connect_to": id.as_str() }),
+            ServerPreConnectResult::SendToLimbo { limbo_handlers } => {
+                json!({ "send_to_limbo": limbo_handlers })
+            }
+            ServerPreConnectResult::VirtualBackend(_) => json!("virtual_backend"),
+            ServerPreConnectResult::Denied { reason } => {
+                json!({ "denied": reason.to_string() })
+            }
+            _ => json!("other"),
+        };
+        (
+            EventKind::ServerPreConnect,
+            Some(e.player_id),
+            Some(e.profile.username.clone()),
+            json!({
+                "profile": profile(&e.profile),
+                "original_server": e.original_server.as_str(),
+                "result": result,
+            }),
+        )
+    });
+    on::<ServerConnectedEvent>(bus, recorder, |e| {
+        (
+            EventKind::ServerConnected,
+            Some(e.player_id),
+            None,
+            json!({ "server": e.server.as_str() }),
+        )
+    });
+    on::<ServerSwitchEvent>(bus, recorder, |e| {
+        (
+            EventKind::ServerSwitch,
+            Some(e.player_id),
+            None,
+            json!({
+                "previous_server": e.previous_server.as_str(),
+                "new_server": e.new_server.as_str(),
+            }),
+        )
+    });
+    on::<KickedFromServerEvent>(bus, recorder, |e| {
+        let result = match e.result() {
+            KickedFromServerResult::DisconnectPlayer { reason } => {
+                json!({ "disconnect_player": reason.to_string() })
+            }
+            KickedFromServerResult::RedirectTo(id) => json!({ "redirect_to": id.as_str() }),
+            KickedFromServerResult::SendToLimbo { limbo_handlers } => {
+                json!({ "send_to_limbo": limbo_handlers })
+            }
+            KickedFromServerResult::Notify { message } => {
+                json!({ "notify": message.to_string() })
+            }
+            _ => json!("other"),
+        };
+        (
+            EventKind::KickedFromServer,
+            Some(e.player_id),
+            None,
+            json!({
+                "server": e.server.as_str(),
+                "reason": e.reason.to_string(),
+                "result": result,
+            }),
+        )
+    });
+    on::<ChatMessageEvent>(bus, recorder, |e| {
+        let result = match e.result() {
+            ChatMessageResult::Allow => json!("allow"),
+            ChatMessageResult::Deny { reason } => json!({ "deny": reason.to_string() }),
+            ChatMessageResult::Modify { new_message } => json!({ "modify": new_message }),
+            _ => json!("other"),
+        };
+        (
+            EventKind::ChatMessage,
+            Some(e.player_id),
+            None,
+            json!({ "message": e.message, "result": result }),
+        )
+    });
+    on::<ProxyPingEvent>(bus, recorder, |e| {
+        (
+            EventKind::ProxyPing,
+            None,
+            None,
+            json!({
+                "remote_addr": e.remote_addr.to_string(),
+                "description": e.response.description.to_string(),
+                "max_players": e.response.max_players,
+                "online_players": e.response.online_players,
+                "protocol_version": e.response.protocol_version.raw(),
+                "version_name": e.response.version_name,
+                "has_favicon": e.response.favicon.is_some(),
+            }),
+        )
+    });
+    on::<ProxyInitializeEvent>(bus, recorder, |_| {
+        (EventKind::ProxyInitialize, None, None, json!({}))
+    });
+    on::<ProxyShutdownEvent>(bus, recorder, |_| {
+        (EventKind::ProxyShutdown, None, None, json!({}))
+    });
+    on::<ConfigReloadEvent>(bus, recorder, |_| {
+        (EventKind::ConfigReload, None, None, json!({}))
+    });
+    on::<BackendHealthEvent>(bus, recorder, |e| {
+        let servers: Vec<&str> = e.servers.iter().map(ServerId::as_str).collect();
+        (
+            EventKind::BackendHealth,
+            None,
+            None,
+            json!({
+                "address": e.address.to_string(),
+                "servers": servers,
+                "state": e.state.as_str(),
+            }),
+        )
+    });
+    on::<ServerStateChangeEvent>(bus, recorder, |e| {
+        (
+            EventKind::ServerStateChange,
+            None,
+            None,
+            json!({
+                "server": e.server.as_str(),
+                "old_state": format!("{:?}", e.old_state).to_lowercase(),
+                "new_state": format!("{:?}", e.new_state).to_lowercase(),
+            }),
+        )
+    });
+}
+
+fn profile(profile: &GameProfile) -> Value {
+    json!({
+        "uuid": profile.uuid.to_string(),
+        "username": profile.username,
+        "properties": profile.properties.len(),
+    })
+}
+
+fn pre_login_result(result: &PreLoginResult) -> Value {
+    match result {
+        PreLoginResult::Allowed => json!("allowed"),
+        PreLoginResult::Denied { reason } => json!({ "denied": reason.to_string() }),
+        PreLoginResult::ForceOffline => json!("force_offline"),
+        PreLoginResult::ForceOnline => json!("force_online"),
+        _ => json!("other"),
+    }
+}

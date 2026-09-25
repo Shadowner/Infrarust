@@ -30,6 +30,9 @@ pub enum HarnessError {
 
     #[error("unsupported: {0}")]
     Unsupported(String),
+
+    #[error("invalid test setup: {0}")]
+    Setup(String),
 }
 
 impl HarnessError {
@@ -38,6 +41,10 @@ impl HarnessError {
             what: what.into(),
             after,
         }
+    }
+
+    pub(crate) fn setup(message: impl std::fmt::Display) -> Self {
+        Self::Setup(message.to_string())
     }
 }
 
