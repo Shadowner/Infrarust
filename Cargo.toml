@@ -195,5 +195,6 @@ libdeflater = { opt-level = 2 }
 aes = { opt-level = 2 }
 cfb8 = { opt-level = 2 }
 rsa = { opt-level = 2 }
+num-bigint-dig = { opt-level = 2 }
 sha1 = { opt-level = 2 }
 sha2 = { opt-level = 2 }
