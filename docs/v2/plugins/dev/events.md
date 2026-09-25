@@ -208,8 +208,8 @@ Every event goes through the same dispatch: listeners run one after another in p
 
 | Delivery | Events | What it means |
 |----------|--------|---------------|
-| Inline, awaited | `ConnectionHandshakeEvent`, `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `PluginMessageEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
-| Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `BanIssuedEvent`, `BanRevokedEvent`, `ConnectionRejectedEvent`, `PluginEnabledEvent`, `PluginDisabledEvent`, `ServiceProvidedEvent`, `ServiceRemovedEvent`, `PlayerClientBrandEvent`, `PlayerSettingsChangedEvent`, `PlayerChannelRegisterEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
+| Inline, awaited | `ConnectionHandshakeEvent`, `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `PluginMessageEvent`, `PreTransferEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
+| Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `BanIssuedEvent`, `BanRevokedEvent`, `ConnectionRejectedEvent`, `PluginEnabledEvent`, `PluginDisabledEvent`, `ServiceProvidedEvent`, `ServiceRemovedEvent`, `PlayerClientBrandEvent`, `PlayerSettingsChangedEvent`, `PlayerChannelRegisterEvent`, `PlayerResourcePackStatusEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
 
 Because the queue delivers one event at a time, a slow listener on a queued event delays the queued events behind it, up to `handler_timeout` per listener. A listener that panics does not stop the queue: the next event is still delivered.
 
@@ -561,7 +561,7 @@ Fired before the proxy opens a connection to a backend server, once per connecti
 | Variant | Description |
 |---------|-------------|
 | `Initial` (`initial`) | The player's first server after login, also when an initial limbo gate held them first |
-| `Switch` (`switch`) | `Player::switch_server`, a command or a plugin moves the player to another server |
+| `Switch` (`switch`) | `Player::switch_server`, `Player::connect`, a command or a plugin moves the player to another server |
 | `LimboExit` (`limbo_exit`) | A limbo handler sends the player to another server than the one it held them for, or back to a server after a kick sent them to limbo |
 | `KickRedirect` (`kick_redirect`) | A `KickedFromServerEvent` listener redirected the kicked player |
 | `PluginMessage` (`plugin_message`) | A backend asked for it on the [BungeeCord channel](./messaging#the-bungeecord-channel) (`Connect`, `ConnectOther`) |
@@ -895,6 +895,84 @@ ctx.event_bus().subscribe::<PlayerSettingsChangedEvent, _>(EventPriority::NORMAL
 ```
 
 WASM plugins (contract 0.2.3) receive none of these events. Plugin messaging for WASM comes with the next contract version.
+
+## Resource pack and transfer events
+
+The proxy reads resource pack answers and transfers in `offline`, `client_only` and limbo. See [resource packs](./api#resource-packs) and [transfers](./api#transfers) on the `Player` trait.
+
+### PlayerResourcePackStatusEvent
+
+Posted for every answer the client gives to a resource pack, in the configuration phase or in play, whether the proxy or a backend sent the pack. Informational and queued.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `player` | `Arc<dyn Player>` | The player |
+| `pack_id` | `Option<Uuid>` | The pack's UUID. From 1.20.3 it is the UUID in the client's answer. Before 1.20.3 answers carry none: it is the `ResourcePackRequest` id for a pack the proxy sent, and `None` for a backend's pack |
+| `status` | `ResourcePackStatus` | What the client did with the pack |
+| `origin` | `ResourcePackOrigin` | `Proxy` for a pack sent with `send_resource_pack`, `Backend` for one a server sent |
+
+**`ResourcePackStatus`** (`#[non_exhaustive]`, `as_str()` gives the name in parentheses, `id()` the protocol value):
+
+| Variant | Id | Final | Description |
+|---------|----|-------|-------------|
+| `SuccessfullyLoaded` (`successfully_loaded`) | 0 | yes | The pack is applied |
+| `Declined` (`declined`) | 1 | yes | The player declined the prompt |
+| `FailedDownload` (`failed_download`) | 2 | yes | The download failed |
+| `Accepted` (`accepted`) | 3 | no | The player accepted; the download starts |
+| `Downloaded` (`downloaded`) | 4 | no | Downloaded, not applied yet (1.20.3 and later) |
+| `InvalidUrl` (`invalid_url`) | 5 | yes | The URL is not valid (1.20.3 and later) |
+| `FailedReload` (`failed_reload`) | 6 | yes | The client could not reload its resources (1.20.3 and later) |
+| `Discarded` (`discarded`) | 7 | yes | The pack was removed or replaced before it was applied (1.20.3 and later) |
+| `Unknown(i32)` (`unknown`) | any other | no | A value this version of Infrarust does not know |
+
+`is_final()` tells whether the client will send more answers about the pack. Answers to the proxy's packs are not forwarded to the backend; answers to a backend's packs are, unchanged.
+
+```rust
+use infrarust_api::events::resource_pack::{PlayerResourcePackStatusEvent, ResourcePackOrigin};
+use infrarust_api::player::ResourcePackStatus;
+
+ctx.event_bus().subscribe::<PlayerResourcePackStatusEvent, _>(EventPriority::NORMAL, |event| {
+    if event.origin == ResourcePackOrigin::Proxy && event.status == ResourcePackStatus::Declined {
+        let player = Arc::clone(&event.player);
+        tokio::spawn(async move {
+            player.disconnect(Component::text("This server needs its resource pack")).await;
+        });
+    }
+});
+```
+
+### PreTransferEvent
+
+Fired before a Transfer packet reaches the client (1.20.5 and later): when a plugin calls `Player::transfer`, and when a backend sends one, in the configuration phase or in play. Awaited: the transfer waits for the listeners.
+
+**Type:** Resulted
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `player` | `Arc<dyn Player>` | The player |
+| `host` | `String` | The destination host |
+| `port` | `u16` | The destination port |
+| `origin` | `TransferOrigin` | `Plugin` or `Backend` |
+
+**Results** (`PreTransferResult`):
+
+| Variant | Shortcut | Description |
+|---------|----------|-------------|
+| `Allowed` (default) | | Send the transfer to `host:port` |
+| `Denied { reason }` | `deny(reason)` | Send nothing. `Player::transfer` returns `Err(PlayerError::Denied(reason))`; a backend's transfer is dropped |
+| `Redirect { host, port }` | `redirect(host, port)` | Send the player to this destination instead |
+
+`destination()` returns where the player will go under the current result, or `None` when it is denied.
+
+```rust
+use infrarust_api::events::transfer::{PreTransferEvent, TransferOrigin};
+
+ctx.event_bus().subscribe::<PreTransferEvent, _>(EventPriority::NORMAL, |event| {
+    if event.origin == TransferOrigin::Backend && !event.host.ends_with(".example.com") {
+        event.deny(Component::text("Transfers leave the network only through the proxy"));
+    }
+});
+```
 
 ## Packet events
 

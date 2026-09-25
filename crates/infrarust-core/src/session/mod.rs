@@ -3,6 +3,7 @@ pub(crate) mod chat_intercept;
 pub(crate) mod chat_utils;
 pub(crate) mod client_bridge;
 pub mod kick;
+pub(crate) mod presentation;
 pub(crate) mod proxy_loop;
 pub(crate) mod server_join;
 pub(crate) mod server_switch;

@@ -1,12 +1,18 @@
 pub mod config;
+pub mod cookie;
 pub mod handshake;
 pub mod login;
 pub mod play;
+pub mod resource_pack;
 pub mod status;
 
 pub use config::{
     CConfigDisconnect, CConfigPluginMessage, CFinishConfig, CKnownPacks, CRegistryData, KnownPack,
     SAcknowledgeFinishConfig, SConfigClientInformation, SConfigPluginMessage, SKnownPacks,
+};
+pub use cookie::{
+    CConfigCookieRequest, CConfigStoreCookie, CCookieRequest, CLoginCookieRequest, CStoreCookie,
+    MAX_COOKIE_PAYLOAD, SConfigCookieResponse, SCookieResponse, SLoginCookieResponse,
 };
 pub use handshake::SHandshake;
 pub use login::{
@@ -15,14 +21,20 @@ pub use login::{
     SLoginPluginResponse, SLoginStart,
 };
 pub use play::{
-    ArgumentSignature, CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CChunkData,
-    CCommands, CDisconnect, CGameEvent, CJoinGame, CKeepAlive, CPluginMessage, CRespawn,
-    CSetCenterChunk, CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes,
-    CStartConfiguration, CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse,
+    ArgumentSignature, BossBarAction, CBossBar, CChatMessageLegacy, CChunkBatchFinished,
+    CChunkBatchStart, CChunkData, CClearTitles, CCommands, CConfigTransfer, CDisconnect,
+    CGameEvent, CJoinGame, CKeepAlive, CPluginMessage, CRespawn, CSetCenterChunk,
+    CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes, CStartConfiguration,
+    CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse, CTabListHeaderFooter,
     CTitleLegacy, CTransfer, ClientInformation, DimensionInfo, LastSeenMessages, PreviousMessage,
     PreviousMessages, SAcknowledgeConfiguration, SChatAcknowledgement, SChatCommand,
     SChatCommandSigned, SChatMessage, SChatSessionUpdate, SClientInformation, SKeepAlive,
     SPluginMessage, STabCompleteRequest,
+};
+pub use resource_pack::{
+    CConfigResourcePack, CConfigResourcePackPop, CConfigResourcePackPush, CResourcePack,
+    CResourcePackPop, CResourcePackPush, ResourcePackResult, SConfigResourcePackResponse,
+    SResourcePackResponse,
 };
 pub use status::{CPingResponse, CStatusResponse, SPingRequest, SStatusRequest};
 

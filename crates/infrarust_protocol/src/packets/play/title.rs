@@ -111,7 +111,9 @@ impl Packet for CSetTitleTimes {
     }
 }
 
-#[derive(Debug, Clone)]
+const TITLE_ACTION_BAR_ADDED: ProtocolVersion = ProtocolVersion(315);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CTitleLegacy {
     SetTitle(String),
     SetSubtitle(String),
@@ -120,20 +122,22 @@ pub enum CTitleLegacy {
         stay: i32,
         fade_out: i32,
     },
+    Hide,
+    Reset,
 }
 
 impl CTitleLegacy {
+    fn shift(version: ProtocolVersion) -> i32 {
+        i32::from(version.no_less_than(TITLE_ACTION_BAR_ADDED))
+    }
+
     fn action_id(&self, version: ProtocolVersion) -> i32 {
         match self {
             Self::SetTitle(_) => 0,
             Self::SetSubtitle(_) => 1,
-            Self::SetTimes { .. } => {
-                if version.less_than(ProtocolVersion::V1_12) {
-                    2
-                } else {
-                    3
-                }
-            }
+            Self::SetTimes { .. } => 2 + Self::shift(version),
+            Self::Hide => 3 + Self::shift(version),
+            Self::Reset => 4 + Self::shift(version),
         }
     }
 }
@@ -145,28 +149,24 @@ impl Packet for CTitleLegacy {
     const DIRECTION: Direction = Direction::Clientbound;
     const ENCODE_ONLY: bool = true;
     const IDS: &'static [PacketMapping] = ids![
-        V1_8  => 0x45,
-        V1_9  => 0x47,
-        V1_12 => 0x48,
-        V1_13 => 0x4B,
-        V1_14 => 0x4F,
-        V1_15 => 0x50,
-        V1_16 => 0x4F,
+        V1_8               => 0x45,
+        V1_12              => 0x47,
+        V1_12_1            => 0x48,
+        V1_13              => 0x4B,
+        V1_14              => 0x4F,
+        V1_15              => 0x50,
+        V1_16 ..= V1_16_4  => 0x4F,
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let action = r.read_var_int()?.0;
-        let times_action = if version.less_than(ProtocolVersion::V1_12) {
-            2
-        } else {
-            3
-        };
+        let shift = Self::shift(version);
 
         if action == 0 {
             Ok(Self::SetTitle(r.read_string()?))
         } else if action == 1 {
             Ok(Self::SetSubtitle(r.read_string()?))
-        } else if action == times_action {
+        } else if action == 2 + shift {
             let fade_in = r.read_i32_be()?;
             let stay = r.read_i32_be()?;
             let fade_out = r.read_i32_be()?;
@@ -175,6 +175,10 @@ impl Packet for CTitleLegacy {
                 stay,
                 fade_out,
             })
+        } else if action == 3 + shift {
+            Ok(Self::Hide)
+        } else if action == 4 + shift {
+            Ok(Self::Reset)
         } else {
             Err(crate::error::ProtocolError::invalid(format!(
                 "CTitleLegacy: unknown action {action}"
@@ -201,7 +205,44 @@ impl Packet for CTitleLegacy {
                 w.write_i32_be(*stay)?;
                 w.write_i32_be(*fade_out)?;
             }
+            Self::Hide | Self::Reset => {}
         }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CClearTitles {
+    pub reset: bool,
+}
+
+impl Packet for CClearTitles {
+    const NAME: &'static str = "CClearTitles";
+
+    const STATE: ConnectionState = ConnectionState::Play;
+    const DIRECTION: Direction = Direction::Clientbound;
+    const ENCODE_ONLY: bool = true;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_17   => 0x10,
+        V1_19   => 0x0D,
+        V1_19_3 => 0x0C,
+        V1_19_4 => 0x0E,
+        V1_20_2 => 0x0F,
+        V1_21_5 => 0x0E,
+    ];
+
+    fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
+        Ok(Self {
+            reset: r.read_bool()?,
+        })
+    }
+
+    fn encode(
+        &self,
+        mut w: &mut (impl std::io::Write + ?Sized),
+        _version: ProtocolVersion,
+    ) -> ProtocolResult<()> {
+        w.write_bool(self.reset)?;
         Ok(())
     }
 }
@@ -284,6 +325,35 @@ mod tests {
                 assert_eq!(fade_out, 20);
             }
             _ => panic!("expected SetTimes"),
+        }
+    }
+
+    #[test]
+    fn test_legacy_title_hide_and_reset_follow_the_action_bar_shift() {
+        for version in [ProtocolVersion::V1_8, ProtocolVersion::V1_12_2] {
+            assert_eq!(round_trip(&CTitleLegacy::Hide, version), CTitleLegacy::Hide);
+            assert_eq!(
+                round_trip(&CTitleLegacy::Reset, version),
+                CTitleLegacy::Reset
+            );
+        }
+        let mut buf = Vec::new();
+        CTitleLegacy::Reset
+            .encode(&mut buf, ProtocolVersion::V1_9_4)
+            .unwrap();
+        assert_eq!(buf, [4]);
+        buf.clear();
+        CTitleLegacy::Reset
+            .encode(&mut buf, ProtocolVersion::V1_12_2)
+            .unwrap();
+        assert_eq!(buf, [5]);
+    }
+
+    #[test]
+    fn test_clear_titles_round_trip() {
+        for reset in [true, false] {
+            let decoded = round_trip(&CClearTitles { reset }, ProtocolVersion::V1_21);
+            assert_eq!(decoded.reset, reset);
         }
     }
 

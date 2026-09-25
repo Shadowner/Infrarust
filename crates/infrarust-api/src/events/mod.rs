@@ -20,6 +20,8 @@ pub mod named;
 pub mod packet;
 pub mod plugin;
 pub mod proxy;
+pub mod resource_pack;
+pub mod transfer;
 
 pub use ban::{BanIssuedEvent, BanRevokedEvent};
 pub use chat::{ChatMessageEvent, ChatMessageResult};
@@ -50,3 +52,5 @@ pub use proxy::{
     BackendHealthEvent, ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
+pub use resource_pack::{PlayerResourcePackStatusEvent, ResourcePackOrigin};
+pub use transfer::{PreTransferEvent, PreTransferResult, TransferOrigin};

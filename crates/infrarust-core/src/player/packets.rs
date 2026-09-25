@@ -4,14 +4,18 @@
 //! ready to be written to the client bridge.
 
 use bytes::Bytes;
+use uuid::Uuid;
 
+use infrarust_api::player::{BossBar, BossBarUpdate, clamp_progress};
 use infrarust_api::types::{Component, TitleData};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
+use infrarust_protocol::packets::play::boss_bar::{BossBarAction, CBossBar};
 use infrarust_protocol::packets::play::chat::{CChatMessageLegacy, CSystemChatMessage};
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
+use infrarust_protocol::packets::play::tab_list::CTabListHeaderFooter;
 use infrarust_protocol::packets::play::title::{
-    CSetSubtitle, CSetTitle, CSetTitleTimes, CTitleLegacy,
+    CClearTitles, CSetSubtitle, CSetTitle, CSetTitleTimes, CTitleLegacy,
 };
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
@@ -151,6 +155,78 @@ pub fn build_title_packets(
     frames.push(encode_packet(&title_pkt, version, registry)?);
 
     Ok(frames)
+}
+
+pub fn build_header_footer(
+    header: &Component,
+    footer: &Component,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<PacketFrame, CoreError> {
+    let packet = CTabListHeaderFooter {
+        header: encode_text_component(header, version, ConnectionState::Play),
+        footer: encode_text_component(footer, version, ConnectionState::Play),
+    };
+    encode_packet(&packet, version, registry)
+}
+
+pub fn build_clear_title(
+    reset: bool,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<Option<PacketFrame>, CoreError> {
+    if version.less_than(ProtocolVersion::V1_8) {
+        return Ok(None);
+    }
+    if version.less_than(ProtocolVersion::V1_17) {
+        let packet = if reset {
+            CTitleLegacy::Reset
+        } else {
+            CTitleLegacy::Hide
+        };
+        return encode_packet(&packet, version, registry).map(Some);
+    }
+    encode_packet(&CClearTitles { reset }, version, registry).map(Some)
+}
+
+pub(crate) fn boss_bar_added(id: Uuid, bar: &BossBar, version: ProtocolVersion) -> CBossBar {
+    CBossBar {
+        id,
+        action: BossBarAction::Add {
+            title: encode_text_component(&bar.title, version, ConnectionState::Play),
+            health: clamp_progress(bar.progress),
+            color: bar.color.id(),
+            division: bar.overlay.id(),
+            flags: bar.flags.bits(),
+        },
+    }
+}
+
+pub(crate) fn boss_bar_updated(
+    id: Uuid,
+    update: &BossBarUpdate,
+    version: ProtocolVersion,
+) -> Option<CBossBar> {
+    let action = match update {
+        BossBarUpdate::Title(title) => {
+            BossBarAction::UpdateTitle(encode_text_component(title, version, ConnectionState::Play))
+        }
+        BossBarUpdate::Progress(progress) => BossBarAction::UpdateHealth(clamp_progress(*progress)),
+        BossBarUpdate::Style { color, overlay } => BossBarAction::UpdateStyle {
+            color: color.id(),
+            division: overlay.id(),
+        },
+        BossBarUpdate::Flags(flags) => BossBarAction::UpdateFlags(flags.bits()),
+        _ => return None,
+    };
+    Some(CBossBar { id, action })
+}
+
+pub(crate) const fn boss_bar_removed(id: Uuid) -> CBossBar {
+    CBossBar {
+        id,
+        action: BossBarAction::Remove,
+    }
 }
 
 /// Encodes a typed packet into a `PacketFrame`.

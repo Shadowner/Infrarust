@@ -7,35 +7,51 @@ pub(crate) mod client_state;
 pub(crate) mod commands;
 pub(crate) mod lifecycle;
 pub(crate) mod packets;
+pub(crate) mod presentation;
 pub mod registry;
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock, Weak};
 use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use infrarust_api::error::PlayerError;
 use infrarust_api::event::{BoxFuture, ResultedEvent};
 use infrarust_api::events::connection::ConnectCause;
 use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
+use infrarust_api::events::transfer::{PreTransferEvent, PreTransferResult, TransferOrigin};
 use infrarust_api::messaging::{ChannelId, MAX_TO_BACKEND_PAYLOAD, MAX_TO_CLIENT_PAYLOAD};
 use infrarust_api::permissions::{DefaultPermissionChecker, PermissionChecker, PermissionSubject};
-use infrarust_api::player::{ClientSettings, Player};
+use infrarust_api::player::{
+    BossBar, BossBarControl, BossBarHandle, BossBarUpdate, ClientSettings, ConnectionResult,
+    MAX_COOKIE_SIZE, Player, ResourcePackRequest, cookie_key,
+};
 use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
 };
 use infrarust_config::ServerAddress;
+use infrarust_protocol::version::ProtocolVersion as WireVersion;
 
 use crate::event_bus::EventBusImpl;
 use crate::loadbalancer::BackendLoad;
 use crate::permissions::PermissionService;
 
 use client_state::ClientState;
+use presentation::{BarControl, Presentation};
+
+const TAB_LIST_SINCE: WireVersion = WireVersion::V1_8;
+const BOSS_BAR_SINCE: WireVersion = WireVersion::V1_9;
+const RESOURCE_PACK_SINCE: WireVersion = WireVersion::V1_8;
+const PACK_STACK_SINCE: WireVersion = WireVersion::V1_20_3;
+const COOKIES_SINCE: WireVersion = WireVersion::V1_20_5;
+const TRANSFER_SINCE: WireVersion = WireVersion::V1_20_5;
+const MAX_TRANSFER_HOST: usize = 32_767;
 
 /// Channel buffer size for player commands.
 const COMMAND_CHANNEL_SIZE: usize = 32;
@@ -63,6 +79,37 @@ pub enum PlayerCommand {
     /// Switch the player to a different backend server.
     SwitchServer(ServerId, ConnectCause),
     PluginMessage(OutgoingMessage),
+    HeaderFooter(Box<(Component, Component)>),
+    ClearTitle {
+        reset: bool,
+    },
+    BossBar(Uuid, BossBarCommand),
+    Client(ClientCommand),
+}
+
+#[derive(Debug)]
+pub enum BossBarCommand {
+    Show(Box<BossBar>),
+    Update(BossBarUpdate),
+    Hide,
+}
+
+#[derive(Debug)]
+pub enum ClientCommand {
+    PushPack(Box<ResourcePackRequest>),
+    PopPack(Option<Uuid>),
+    StoreCookie {
+        key: String,
+        data: Bytes,
+    },
+    RequestCookie {
+        key: String,
+        reply: oneshot::Sender<Option<Bytes>>,
+    },
+    Transfer {
+        host: String,
+        port: u16,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +157,10 @@ pub struct PlayerSession {
     virtual_host: Option<String>,
     released: CancellationToken,
     client: ClientState,
+    presentation: Arc<Presentation>,
+    events: Option<Arc<EventBusImpl>>,
+    shared: OnceLock<Weak<Self>>,
+    connects: Mutex<Vec<(ServerId, oneshot::Sender<ConnectionResult>)>>,
 }
 
 impl std::fmt::Debug for PlayerSession {
@@ -163,6 +214,47 @@ impl PlayerSession {
             virtual_host: None,
             released: CancellationToken::new(),
             client: ClientState::default(),
+            presentation: Arc::default(),
+            events: None,
+            shared: OnceLock::new(),
+            connects: Mutex::new(Vec::new()),
+        }
+    }
+
+    #[must_use]
+    pub fn with_events(mut self, events: Arc<EventBusImpl>) -> Self {
+        self.events = Some(events);
+        self
+    }
+
+    pub fn into_shared(self) -> Arc<Self> {
+        let shared = Arc::new(self);
+        let _ = shared.shared.set(Arc::downgrade(&shared));
+        shared
+    }
+
+    fn shared_player(&self) -> Option<Arc<dyn Player>> {
+        self.shared
+            .get()
+            .and_then(Weak::upgrade)
+            .map(|session| session as Arc<dyn Player>)
+    }
+
+    pub(crate) const fn presentation(&self) -> &Arc<Presentation> {
+        &self.presentation
+    }
+
+    pub(crate) fn settle_connect(&self, target: &ServerId, result: &ConnectionResult) {
+        let settled: Vec<_> = {
+            let mut connects = self.connects.lock().unwrap_or_else(PoisonError::into_inner);
+            let (settled, waiting) = std::mem::take(&mut *connects)
+                .into_iter()
+                .partition(|(server, _)| server == target);
+            *connects = waiting;
+            settled
+        };
+        for (_, reply) in settled {
+            let _ = reply.send(result.clone());
         }
     }
 
@@ -186,7 +278,7 @@ impl PlayerSession {
         let session = Self::new(
             PlayerId::new(1),
             GameProfile {
-                uuid: uuid::Uuid::new_v4(),
+                uuid: Uuid::new_v4(),
                 username: "TestPlayer".to_string(),
                 properties: vec![],
             },
@@ -211,6 +303,11 @@ impl PlayerSession {
     pub fn set_disconnected(&self) {
         self.connected.store(false, Ordering::Release);
         self.set_connected_address(None);
+        self.presentation.end();
+        self.connects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 
     /// Updates the current server (called by the proxy loop on server switch).
@@ -372,15 +469,64 @@ impl PlayerSession {
 
     /// Checks preconditions for sending commands and sends via `try_send`.
     fn try_send_command(&self, cmd: PlayerCommand) -> Result<(), PlayerError> {
+        self.ready()?;
+        self.command_tx
+            .try_send(cmd)
+            .map_err(|e| PlayerError::SendFailed(e.to_string()))
+    }
+
+    async fn send_command(&self, cmd: PlayerCommand) -> Result<(), PlayerError> {
+        self.ready()?;
+        self.command_tx
+            .send(cmd)
+            .await
+            .map_err(|e| PlayerError::SendFailed(e.to_string()))
+    }
+
+    fn ready(&self) -> Result<(), PlayerError> {
         if !self.active {
             return Err(PlayerError::NotActive);
         }
         if !self.connected.load(Ordering::Acquire) {
             return Err(PlayerError::Disconnected);
         }
-        self.command_tx
-            .try_send(cmd)
-            .map_err(|e| PlayerError::SendFailed(e.to_string()))
+        Ok(())
+    }
+
+    fn supports(&self, since: WireVersion, feature: &str) -> Result<(), PlayerError> {
+        self.ready()?;
+        let version = WireVersion(self.protocol_version.raw());
+        if version.less_than(since) {
+            return Err(PlayerError::Unsupported(format!(
+                "{feature}: the client runs Minecraft {version}, this needs {since} or newer"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn approve_transfer(
+        &self,
+        host: String,
+        port: u16,
+    ) -> Result<(String, u16), PlayerError> {
+        let (Some(bus), Some(player)) = (&self.events, self.shared_player()) else {
+            return Ok((host, port));
+        };
+        let event = bus
+            .fire(PreTransferEvent::new(
+                player,
+                host,
+                port,
+                TransferOrigin::Plugin,
+            ))
+            .await;
+        match event.result() {
+            PreTransferResult::Denied { reason } => {
+                Err(PlayerError::Denied(Box::new(reason.clone())))
+            }
+            PreTransferResult::Redirect { host, port } => Ok((host.clone(), *port)),
+            _ => Ok((event.host, event.port)),
+        }
     }
 }
 
@@ -543,5 +689,116 @@ impl Player for PlayerSession {
             data,
             MAX_TO_BACKEND_PAYLOAD,
         )
+    }
+
+    fn connect(&self, target: ServerId) -> BoxFuture<'_, Result<ConnectionResult, PlayerError>> {
+        Box::pin(async move {
+            self.ready()?;
+            let (reply, result) = oneshot::channel();
+            self.connects
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push((target.clone(), reply));
+            self.send_command(PlayerCommand::SwitchServer(target, ConnectCause::Switch))
+                .await?;
+            Ok(result.await.unwrap_or(ConnectionResult::Cancelled))
+        })
+    }
+
+    fn set_player_list_header_footer(
+        &self,
+        header: Component,
+        footer: Component,
+    ) -> Result<(), PlayerError> {
+        self.supports(TAB_LIST_SINCE, "tab list headers and footers")?;
+        self.try_send_command(PlayerCommand::HeaderFooter(Box::new((
+            header.clone(),
+            footer.clone(),
+        ))))?;
+        self.presentation.set_header_footer(header, footer);
+        Ok(())
+    }
+
+    fn clear_title(&self, reset: bool) -> Result<(), PlayerError> {
+        self.try_send_command(PlayerCommand::ClearTitle { reset })
+    }
+
+    fn show_boss_bar(&self, bar: BossBar) -> Result<BossBarHandle, PlayerError> {
+        self.supports(BOSS_BAR_SINCE, "boss bars")?;
+        let id = Uuid::new_v4();
+        self.presentation.show_bar(id, bar.clone());
+        if let Err(e) = self.try_send_command(PlayerCommand::BossBar(
+            id,
+            BossBarCommand::Show(Box::new(bar)),
+        )) {
+            self.presentation.hide_bar(id);
+            return Err(e);
+        }
+        let control = BarControl::new(Arc::clone(&self.presentation), self.command_tx.clone());
+        Ok(BossBarHandle::new(
+            id,
+            Arc::new(control) as Arc<dyn BossBarControl>,
+        ))
+    }
+
+    fn send_resource_pack(&self, pack: ResourcePackRequest) -> Result<(), PlayerError> {
+        self.supports(RESOURCE_PACK_SINCE, "resource packs")?;
+        pack.validate().map_err(PlayerError::InvalidArgument)?;
+        self.try_send_command(PlayerCommand::Client(ClientCommand::PushPack(Box::new(
+            pack,
+        ))))
+    }
+
+    fn remove_resource_pack(&self, id: Option<Uuid>) -> Result<(), PlayerError> {
+        self.supports(PACK_STACK_SINCE, "removing resource packs")?;
+        self.try_send_command(PlayerCommand::Client(ClientCommand::PopPack(id)))
+    }
+
+    fn transfer(&self, host: &str, port: u16) -> BoxFuture<'_, Result<(), PlayerError>> {
+        let host = host.to_string();
+        Box::pin(async move {
+            self.supports(TRANSFER_SINCE, "transfers")?;
+            if host.is_empty() || host.chars().count() > MAX_TRANSFER_HOST {
+                return Err(PlayerError::InvalidArgument(format!(
+                    "a transfer host must have 1 to {MAX_TRANSFER_HOST} characters"
+                )));
+            }
+            let (host, port) = self.approve_transfer(host, port).await?;
+            self.send_command(PlayerCommand::Client(ClientCommand::Transfer {
+                host,
+                port,
+            }))
+            .await
+        })
+    }
+
+    fn store_cookie(&self, key: &str, data: Bytes) -> Result<(), PlayerError> {
+        self.supports(COOKIES_SINCE, "cookies")?;
+        let key = cookie_key(key).map_err(PlayerError::InvalidArgument)?;
+        if data.len() > MAX_COOKIE_SIZE {
+            return Err(PlayerError::InvalidArgument(format!(
+                "a cookie of {} bytes is over the {MAX_COOKIE_SIZE} bytes a client keeps",
+                data.len()
+            )));
+        }
+        self.try_send_command(PlayerCommand::Client(ClientCommand::StoreCookie {
+            key,
+            data,
+        }))
+    }
+
+    fn request_cookie(&self, key: &str) -> BoxFuture<'_, Result<Option<Bytes>, PlayerError>> {
+        let key = cookie_key(key);
+        Box::pin(async move {
+            self.supports(COOKIES_SINCE, "cookies")?;
+            let key = key.map_err(PlayerError::InvalidArgument)?;
+            let (reply, answer) = oneshot::channel();
+            self.send_command(PlayerCommand::Client(ClientCommand::RequestCookie {
+                key,
+                reply,
+            }))
+            .await?;
+            answer.await.map_err(|_| PlayerError::Disconnected)
+        })
     }
 }

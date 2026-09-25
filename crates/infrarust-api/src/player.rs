@@ -5,12 +5,31 @@ use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 
+use uuid::Uuid;
+
 use crate::error::PlayerError;
 use crate::event::BoxFuture;
 use crate::messaging::ChannelId;
 use crate::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
 };
+
+mod boss_bar;
+mod connection;
+mod resource_pack;
+
+pub use boss_bar::{
+    BossBar, BossBarColor, BossBarControl, BossBarFlags, BossBarHandle, BossBarOverlay,
+    BossBarUpdate, clamp_progress,
+};
+pub use connection::{ConnectionResult, MAX_COOKIE_SIZE, cookie_key};
+pub use resource_pack::{
+    MAX_RESOURCE_PACK_URL, RESOURCE_PACK_HASH_LENGTH, ResourcePackRequest, ResourcePackStatus,
+};
+
+fn unsupported(feature: &str) -> PlayerError {
+    PlayerError::Unsupported(format!("{feature} is not implemented by this player"))
+}
 
 pub mod private {
     /// Sealed — only the proxy implements [`Player`](super::Player).
@@ -128,6 +147,46 @@ pub trait Player: Send + Sync + private::Sealed {
         _data: Bytes,
     ) -> Result<(), PlayerError> {
         Err(PlayerError::NotActive)
+    }
+
+    fn connect(&self, _target: ServerId) -> BoxFuture<'_, Result<ConnectionResult, PlayerError>> {
+        Box::pin(async { Err(unsupported("connect")) })
+    }
+
+    fn set_player_list_header_footer(
+        &self,
+        _header: Component,
+        _footer: Component,
+    ) -> Result<(), PlayerError> {
+        Err(unsupported("the player list header and footer"))
+    }
+
+    fn clear_title(&self, _reset: bool) -> Result<(), PlayerError> {
+        Err(unsupported("clearing titles"))
+    }
+
+    fn show_boss_bar(&self, _bar: BossBar) -> Result<BossBarHandle, PlayerError> {
+        Err(unsupported("boss bars"))
+    }
+
+    fn send_resource_pack(&self, _pack: ResourcePackRequest) -> Result<(), PlayerError> {
+        Err(unsupported("resource packs"))
+    }
+
+    fn remove_resource_pack(&self, _id: Option<Uuid>) -> Result<(), PlayerError> {
+        Err(unsupported("resource packs"))
+    }
+
+    fn transfer(&self, _host: &str, _port: u16) -> BoxFuture<'_, Result<(), PlayerError>> {
+        Box::pin(async { Err(unsupported("transfers")) })
+    }
+
+    fn store_cookie(&self, _key: &str, _data: Bytes) -> Result<(), PlayerError> {
+        Err(unsupported("cookies"))
+    }
+
+    fn request_cookie(&self, _key: &str) -> BoxFuture<'_, Result<Option<Bytes>, PlayerError>> {
+        Box::pin(async { Err(unsupported("cookies")) })
     }
 }
 

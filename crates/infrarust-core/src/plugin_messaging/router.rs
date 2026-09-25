@@ -27,6 +27,7 @@ use crate::player::PlayerSession;
 use crate::player::client_state::to_settings;
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
+use crate::session::presentation::PresentationIds;
 
 pub(crate) const fn phase_of(state: ConnectionState) -> MessagePhase {
     match state {
@@ -39,6 +40,7 @@ pub(crate) struct ClientObserver {
     session: Arc<PlayerSession>,
     bus: Arc<EventBusImpl>,
     ids: MessageIds,
+    presentation: PresentationIds,
     version: ProtocolVersion,
 }
 
@@ -52,11 +54,18 @@ impl ClientObserver {
             session: Arc::clone(session),
             bus: Arc::clone(&services.event_bus),
             ids: MessageIds::resolve(&services.packet_registry, version),
+            presentation: PresentationIds::resolve(&services.packet_registry, version),
             version,
         }
     }
 
     pub(crate) fn observe(&self, frame: &PacketFrame, state: ConnectionState) {
+        if self
+            .presentation
+            .client_reply(&self.session, &self.bus, frame, state)
+        {
+            return;
+        }
         if self.ids.is_information(frame, state) {
             observe_information(&self.session, &self.bus, frame, state, self.version);
         } else if self.ids.is_serverbound(frame, state)

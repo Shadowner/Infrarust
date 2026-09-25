@@ -28,6 +28,8 @@ use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
+use infrarust_api::events::resource_pack::PlayerResourcePackStatusEvent;
+use infrarust_api::events::transfer::{PreTransferEvent, PreTransferResult};
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::ban_service::{BanEntry, BanSource};
 use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
@@ -71,10 +73,12 @@ pub enum EventKind {
     PluginDisabled,
     ServiceProvided,
     ServiceRemoved,
+    PlayerResourcePackStatus,
+    PreTransfer,
 }
 
 impl EventKind {
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 32] = [
         Self::PreLogin,
         Self::GameProfileRequest,
         Self::Login,
@@ -105,6 +109,8 @@ impl EventKind {
         Self::PluginDisabled,
         Self::ServiceProvided,
         Self::ServiceRemoved,
+        Self::PlayerResourcePackStatus,
+        Self::PreTransfer,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -139,6 +145,8 @@ impl EventKind {
             Self::PluginDisabled => "PluginDisabled",
             Self::ServiceProvided => "ServiceProvided",
             Self::ServiceRemoved => "ServiceRemoved",
+            Self::PlayerResourcePackStatus => "PlayerResourcePackStatus",
+            Self::PreTransfer => "PreTransfer",
         }
     }
 }
@@ -351,6 +359,7 @@ impl Plugin for RecordingPlugin {
     ) -> BoxFuture<'a, Result<(), PluginError>> {
         subscribe_all(ctx.event_bus(), &self.recorder);
         subscribe_plugin_events(ctx.event_bus(), &self.recorder);
+        subscribe_presentation_events(ctx.event_bus(), &self.recorder);
         Box::pin(async { Ok(()) })
     }
 }
@@ -803,6 +812,42 @@ fn subscribe_plugin_events(bus: &dyn EventBus, recorder: &Recorder) {
             None,
             None,
             json!({ "service": e.service, "provider": e.provider }),
+        )
+    });
+}
+
+fn subscribe_presentation_events(bus: &dyn EventBus, recorder: &Recorder) {
+    on::<PlayerResourcePackStatusEvent>(bus, recorder, |e| {
+        (
+            EventKind::PlayerResourcePackStatus,
+            Some(e.player_id()),
+            Some(e.player.profile().username.clone()),
+            json!({
+                "pack_id": e.pack_id.map(|id| id.to_string()),
+                "status": e.status.as_str(),
+                "origin": e.origin.as_str(),
+            }),
+        )
+    });
+    on::<PreTransferEvent>(bus, recorder, |e| {
+        let result = match e.result() {
+            PreTransferResult::Allowed => json!("allowed"),
+            PreTransferResult::Denied { reason } => json!({ "denied": reason.to_string() }),
+            PreTransferResult::Redirect { host, port } => {
+                json!({ "redirect": format!("{host}:{port}") })
+            }
+            _ => json!("other"),
+        };
+        (
+            EventKind::PreTransfer,
+            Some(e.player_id()),
+            Some(e.player.profile().username.clone()),
+            json!({
+                "host": e.host,
+                "port": e.port,
+                "origin": e.origin.as_str(),
+                "result": result,
+            }),
         )
     });
 }

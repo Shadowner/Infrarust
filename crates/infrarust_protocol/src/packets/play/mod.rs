@@ -1,3 +1,4 @@
+pub mod boss_bar;
 pub mod center_chunk;
 pub mod chat;
 pub mod chat_session;
@@ -18,9 +19,11 @@ pub mod respawn_switch;
 pub mod spawn_position;
 pub mod start_configuration;
 pub mod tab_complete;
+pub mod tab_list;
 pub mod title;
 pub mod transfer;
 
+pub use boss_bar::{BossBarAction, CBossBar};
 pub use center_chunk::CSetCenterChunk;
 pub use chat::{
     ArgumentSignature, CChatMessageLegacy, CSystemChatMessage, LastSeenMessages, PreviousMessage,
@@ -42,5 +45,6 @@ pub use respawn::CRespawn;
 pub use spawn_position::CSetDefaultSpawnPosition;
 pub use start_configuration::{CStartConfiguration, SAcknowledgeConfiguration};
 pub use tab_complete::{CTabCompleteResponse, STabCompleteRequest};
-pub use title::{CSetSubtitle, CSetTitle, CSetTitleTimes, CTitleLegacy};
-pub use transfer::CTransfer;
+pub use tab_list::CTabListHeaderFooter;
+pub use title::{CClearTitles, CSetSubtitle, CSetTitle, CSetTitleTimes, CTitleLegacy};
+pub use transfer::{CConfigTransfer, CTransfer};

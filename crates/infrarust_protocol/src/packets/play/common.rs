@@ -28,6 +28,18 @@ pub fn read_text_component(
     Ok(payload[..split].to_vec())
 }
 
+pub fn read_nested_text_component(
+    r: &mut &[u8],
+    version: ProtocolVersion,
+) -> ProtocolResult<Vec<u8>> {
+    if version.less_than(NBT_COMPONENT_VERSION) {
+        return Ok(r.read_string()?.into_bytes());
+    }
+    let start = *r;
+    crate::nbt::skip_network_nbt(r)?;
+    Ok(start[..start.len() - r.len()].to_vec())
+}
+
 pub fn write_text_component(
     mut w: &mut (impl Write + ?Sized),
     text: &[u8],

@@ -32,6 +32,15 @@ pub enum PlayerError {
 
     #[error("plugin message of {size} bytes is over the {max} bytes allowed")]
     MessageTooLarge { size: usize, max: usize },
+
+    #[error("not supported: {0}")]
+    Unsupported(String),
+
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
+
+    #[error("denied: {0}")]
+    Denied(Box<crate::types::Component>),
 }
 
 /// Errors that can occur when interacting with proxy services.

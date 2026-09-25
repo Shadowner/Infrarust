@@ -144,23 +144,23 @@ impl InterceptedHandler {
 
         let session_token = shutdown.child_token();
         let (cmd_tx, cmd_rx) = PlayerSession::channel();
-        let player = Arc::new(
-            PlayerSession::new(
-                crate::player::next_player_id(),
-                profile.clone(),
-                api_version,
-                remote_addr,
-                None,
-                true,
-                online_mode,
-                cmd_tx,
-                session_token.clone(),
-                crate::permissions::default_checker(),
-                Arc::clone(&self.services.backend_load),
-            )
-            .with_permissions(Arc::clone(&self.services.permission_service))
-            .with_virtual_host(handshake.domain.clone()),
-        );
+        let player = PlayerSession::new(
+            crate::player::next_player_id(),
+            profile.clone(),
+            api_version,
+            remote_addr,
+            None,
+            true,
+            online_mode,
+            cmd_tx,
+            session_token.clone(),
+            crate::permissions::default_checker(),
+            Arc::clone(&self.services.backend_load),
+        )
+        .with_permissions(Arc::clone(&self.services.permission_service))
+        .with_virtual_host(handshake.domain.clone())
+        .with_events(Arc::clone(&self.services.event_bus))
+        .into_shared();
 
         player.setup_permissions(&self.services.event_bus).await;
 
@@ -185,7 +185,8 @@ impl InterceptedHandler {
         }
 
         let lifecycle = PlayerLifecycle::begin(&self.services, Arc::clone(&player)).await;
-        let mut commands = CommandInbox::new(cmd_rx);
+        let mut commands =
+            CommandInbox::new(cmd_rx).with_presentation(Arc::clone(player.presentation()));
         if let Some(reason) = commands.take_kick(&mut client, registry, false) {
             client.disconnect(&reason, registry).await.ok();
             lifecycle

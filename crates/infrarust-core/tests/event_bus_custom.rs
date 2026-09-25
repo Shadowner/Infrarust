@@ -34,6 +34,8 @@ use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
+use infrarust_api::events::resource_pack::PlayerResourcePackStatusEvent;
+use infrarust_api::events::transfer::PreTransferEvent;
 use infrarust_api::types::{GameProfile, ProtocolVersion};
 use infrarust_core::event_bus::{BUILTIN_EVENTS, DiagnosticKind, EventBusImpl, is_builtin_event};
 use infrarust_core::plugin::tracking::TrackingEventBus;
@@ -232,7 +234,7 @@ async fn a_failing_handler_names_the_plugin_that_fired_the_event() {
 
 type Probe = (&'static str, fn() -> TypeId);
 
-const BUILTIN_NAMES: [Probe; 34] = [
+const BUILTIN_NAMES: [Probe; 36] = [
     ("PreLoginEvent", TypeId::of::<PreLoginEvent>),
     (
         "GameProfileRequestEvent",
@@ -294,6 +296,11 @@ const BUILTIN_NAMES: [Probe; 34] = [
         "PlayerChannelRegisterEvent",
         TypeId::of::<PlayerChannelRegisterEvent>,
     ),
+    (
+        "PlayerResourcePackStatusEvent",
+        TypeId::of::<PlayerResourcePackStatusEvent>,
+    ),
+    ("PreTransferEvent", TypeId::of::<PreTransferEvent>),
 ];
 
 const OPEN_API_EVENTS: [&str; 1] = ["NamedEvent"];

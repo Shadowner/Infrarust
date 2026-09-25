@@ -40,6 +40,35 @@ macro_rules! define_twin_packets {
         )+
     };
     (
+        states: {
+            $(
+                $( #[$pmeta:meta] )*
+                $name:ident : $state:ident / $direction:ident = $ids:expr
+            ),+ $(,)?
+        },
+        encode_only: $encode_only:expr,
+        fields: $fields:tt,
+        shared_impl: $shared_impl:tt,
+        decode($r:ident, $decode_ver:ident): $decode_body:expr,
+        encode($self_:ident, $w:ident, $encode_ver:ident): $encode_body:expr $(,)?
+    ) => {
+        $(
+            define_twin_packets!(@one
+                $( #[$pmeta] )*
+                $name,
+                $crate::version::ConnectionState::$state,
+                $crate::version::Direction::$direction,
+                $ids,
+                $encode_only,
+                $fields,
+                decode($r, $decode_ver): $decode_body,
+                encode($self_, $w, $encode_ver): $encode_body
+            );
+
+            impl $name $shared_impl
+        )+
+    };
+    (
         clientbound: $c_name:ident,
         serverbound: $s_name:ident,
         state: $state:expr,

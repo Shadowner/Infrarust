@@ -206,9 +206,35 @@ player.send_title(TitleData::new(
 ))?;
 player.send_action_bar(Component::text("Action bar text"))?;
 player.send_packet(raw_packet)?;
-player.switch_server(ServerId::new("survival")).await?;
 player.send_plugin_message(&ChannelId::modern("myplugin:main")?, Bytes::from_static(b"hi"))?;
 player.send_plugin_message_to_backend(&ChannelId::bungeecord(), request)?;
+
+// Servers: connect waits for the outcome, switch_server does not
+let result: ConnectionResult = player.connect(ServerId::new("survival")).await?;
+player.switch_server(ServerId::new("survival")).await?;
+
+// Tab list, titles and boss bars
+player.set_player_list_header_footer(
+    Component::text("My Network").color("gold"),
+    Component::text("play.example.com"),
+)?;
+player.clear_title(true)?;
+let bar: BossBarHandle = player.show_boss_bar(
+    BossBar::new(Component::text("Event starts soon")).progress(0.25),
+)?;
+bar.set_progress(0.5)?;
+bar.hide()?;
+
+// Resource packs, transfers and cookies
+player.send_resource_pack(
+    ResourcePackRequest::new("https://cdn.example.com/pack.zip")
+        .hash("2e1a4ab4c1f7d1d7a7e9c4c9a16f1b1a0c3d2f10")
+        .required(true),
+)?;
+player.remove_resource_pack(None)?;
+player.transfer("eu.example.com", 25565).await?;
+player.store_cookie("myplugin:ticket", Bytes::from_static(b"abc"))?;
+let ticket: Option<Bytes> = player.request_cookie("myplugin:ticket").await?;
 
 // What the client said about itself (None or empty in the forwarding modes)
 let brand: Option<String> = player.client_brand();
@@ -224,7 +250,7 @@ player.disconnect(Component::text("Goodbye")).await;
 `has_permission()` asks the active permission provider's checker for the node, then falls back to the node's registered default, then denies. There are no permission levels: an admin is a player holding `infrarust.admin` (`ADMIN_PERMISSION`). `refresh_permissions()` asks the provider for a new checker and sends this player a rebuilt command tree. See [Permissions](./permissions).
 
 ::: warning
-`send_message`, `send_title`, `send_action_bar`, `send_packet`, `send_plugin_message`, `send_plugin_message_to_backend` and `switch_server` only work when the player is on an active proxy path, which means `ClientOnly` or `Offline` mode. On passive paths (`Passthrough`, `ZeroCopy`, `ServerOnly`) they return `Err(PlayerError::NotActive)`. Check `player.is_active()` first. `disconnect` always works.
+Every action except `disconnect` only works when the player is on an active proxy path, which means `ClientOnly` or `Offline` mode: `send_message`, `send_title`, `send_action_bar`, `send_packet`, `send_plugin_message`, `send_plugin_message_to_backend`, `switch_server`, `connect`, `set_player_list_header_footer`, `clear_title`, `show_boss_bar`, `send_resource_pack`, `remove_resource_pack`, `transfer`, `store_cookie` and `request_cookie`. On passive paths (`Passthrough`, `ZeroCopy`, `ServerOnly`) the proxy only copies bytes between client and backend, and they return `Err(PlayerError::NotActive)`. Check `player.is_active()` first. `disconnect` always works.
 :::
 
 `client_brand()`, `settings()` and `known_channels()` hold what the client sent on `minecraft:brand`, in its Client Information packet and on `minecraft:register`. `virtual_host()` is the domain the client connected to, known in every proxy mode. `ping()` is the last keepalive round trip the proxy measured. The proxy sends the settings, the brand and the channels again to every server a switch reaches. See [Plugin messaging](./messaging#client-state).
@@ -235,13 +261,138 @@ player.disconnect(Component::text("Goodbye")).await;
 
 On an active path, the proxy delivers each action according to where the player is:
 
-- **Still logging in or in the configuration phase (1.20.2+).** Messages, titles, action bars, raw packets and `switch_server` requests wait in order and go out right after the player's `JoinGame`. A client in these phases cannot read play packets, so nothing is sent early.
+- **Still logging in or in the configuration phase (1.20.2+).** Messages, titles, `clear_title`, action bars, raw packets, the tab list header and footer, boss bars, and `switch_server` and `connect` requests wait in order and go out right after the player's `JoinGame`. A client in these phases cannot read play packets, so nothing is sent early.
+- **Resource packs, transfers and cookies** have a configuration packet as well as a play packet. They go out as soon as the client is in the configuration phase or in game, with the packet for that phase. During the login, and while a server switch runs its configuration phase, they wait.
 - **In game.** Actions go out as soon as the proxy's connection loop picks them up.
-- **In limbo.** Same as in game. The player is in play state, so messages and titles show at once. `switch_server` takes the player out of limbo and sends them to that server.
+- **In limbo.** Same as in game. The player is in play state, so messages and titles show at once. `switch_server` and `connect` take the player out of limbo and send them to that server.
 
 `disconnect(reason)` never waits in that queue. The reason is sent in the packet the client expects at that moment: the login disconnect during login, the configuration disconnect during the configuration phase, and the play disconnect in game or in limbo. In game, messages queued before the kick are sent before it; actions still waiting for `JoinGame` are dropped. `disconnect` returns right away. If the player already has a full backlog of pending actions, the connection is closed without the reason.
 
 On a passive path (`Passthrough`, `ZeroCopy`, `ServerOnly`), the proxy only copies bytes between client and backend and cannot add a packet to the stream. `disconnect` closes both connections and the reason is not shown: the client sees a plain connection loss.
+
+#### Connecting to a server
+
+`connect(target)` sends the player to another server and resolves once the switch is over, with a `ConnectionResult`:
+
+| Result | When |
+|--------|------|
+| `Success` | The player joined `target`, or the server a [`ServerPreConnectEvent`](./events#serverpreconnectevent) listener redirected them to |
+| `AlreadyConnected` | The player was already on `target`, or a listener redirected them to the server they are on |
+| `Denied(reason)` | A `ServerPreConnectEvent` listener denied the switch. The player stays where they are and sees `reason` in chat |
+| `Failed(reason)` | The server could not be reached, refused the login, or disconnected the player during the switch. `reason` is the server's disconnect reason, or its `disconnect_message` when it gave none. What happens to the player is up to [`KickedFromServerEvent`](./events#kickedfromserverevent); by default they stay |
+| `Cancelled` | The switch ended without an outcome: the player left or was kicked, the proxy shut down, a listener sent the player to limbo instead, or the request was dropped |
+
+`is_success()` is `true` for `Success` and `AlreadyConnected`. `connect` returns `Err(PlayerError::NotActive)` on a passive path and `Err(PlayerError::Disconnected)` when the player has left. It has no timeout of its own; wrap it in `tokio::time::timeout` to bound the wait.
+
+`switch_server(target)` queues the same request and returns as soon as it is queued. It stays for code that does not need the outcome, like the proxy's `/server` and `/send` commands. Both fire `ServerPreConnectEvent` with the cause `switch`. When several `connect` calls wait for the same server, one switch there settles all of them.
+
+```rust
+match player.connect(ServerId::new("minigames")).await? {
+    ConnectionResult::Success | ConnectionResult::AlreadyConnected => {}
+    ConnectionResult::Failed(reason) => {
+        player.send_message(Component::error("Minigames are down: ").append(reason))?;
+    }
+    _ => {}
+}
+```
+
+#### Tab list, titles and boss bars
+
+`set_player_list_header_footer(header, footer)` sets the text above and below the player list (1.8 and later, `Err(PlayerError::Unsupported)` on 1.7). The proxy keeps the last header and footer a plugin set and sends them again after every server switch, right after the new server's `JoinGame`: from 1.20.2 the configuration phase of a switch clears them on the client, and before that the new server may send its own. A backend can still replace them; the last packet the client gets wins.
+
+`clear_title(reset)` removes the title on screen. With `reset`, the fade times go back to the client's defaults too. From 1.17 it sends Clear Titles; from 1.8 to 1.16.4 it sends the Title packet with the hide action, or the reset action when `reset` is set. On 1.7, which has no titles, it does nothing.
+
+`show_boss_bar(bar)` shows a boss bar owned by the proxy and returns a `BossBarHandle` (1.9 and later, `Err(PlayerError::Unsupported)` on 1.8 and older). The proxy gives each bar a random UUID of its own, so it never clashes with the bars a backend shows.
+
+```rust
+let bar = player.show_boss_bar(
+    BossBar::new(Component::text("Double XP"))
+        .progress(1.0)
+        .color(BossBarColor::Purple)
+        .overlay(BossBarOverlay::Notched10)
+        .flags(BossBarFlags::NONE.with(BossBarFlags::DARKEN_SCREEN)),
+)?;
+bar.set_title(Component::text("Double XP: 5 minutes left"))?;
+bar.set_progress(0.5)?;
+bar.set_style(BossBarColor::Red, BossBarOverlay::Progress)?;
+bar.hide()?;
+```
+
+| `BossBarHandle` method | Sends |
+|------------------------|-------|
+| `set_title(component)` | Update title |
+| `set_progress(f32)` | Update health. The value is clamped to `0.0..=1.0` |
+| `set_style(color, overlay)` | Update style |
+| `set_flags(flags)` | Update flags: `DARKEN_SCREEN`, `PLAY_BOSS_MUSIC`, `CREATE_WORLD_FOG` |
+| `update(BossBarUpdate)` | Any of the above |
+| `hide()` | Remove |
+
+The bar stays until `hide()`; dropping the handle does not remove it, and clones drive the same bar. After `hide()`, the handle returns `Err(PlayerError::InvalidArgument)`. When the player leaves, the proxy forgets their bars and the handle returns `Err(PlayerError::Disconnected)`.
+
+Server switches:
+
+- **Before 1.20.2** the client keeps its boss bars across a `JoinGame`. The proxy's bars stay on screen, and the proxy removes the bars the previous server showed, which it tracks as they pass, so they do not linger.
+- **From 1.20.2** the configuration phase of a switch clears every bar. The proxy shows its own bars again, with their latest title, progress, style and flags, right after the new server's `JoinGame`.
+
+#### Resource packs
+
+`send_resource_pack(pack)` asks the client to download and apply a resource pack:
+
+```rust
+let pack = ResourcePackRequest::new("https://cdn.example.com/event.zip")
+    .hash("2e1a4ab4c1f7d1d7a7e9c4c9a16f1b1a0c3d2f10")
+    .required(true)
+    .prompt(Component::text("This event needs its textures"));
+let pack_id = pack.id;
+player.send_resource_pack(pack)?;
+// later
+player.remove_resource_pack(Some(pack_id))?;
+```
+
+| Field | Description |
+|-------|-------------|
+| `id` | The pack's UUID. `new()` picks a random one; set your own with `.id(uuid)` |
+| `url` | Where the client downloads the pack, at most 32767 characters |
+| `hash` | The SHA-1 of the file as 40 hexadecimal characters, or `None` to skip the check |
+| `required` | The client is told the server requires the pack, and a vanilla client leaves the server when the player declines it |
+| `prompt` | A message on the client's prompt |
+
+A hash that is not 40 hexadecimal characters, or a longer URL, returns `Err(PlayerError::InvalidArgument)`: the client would fail to read the packet and disconnect.
+
+| Client | Sent | `remove_resource_pack` |
+|--------|------|------------------------|
+| 1.20.3 and later | Add Resource Pack with `id`. Packs stack on the client | Remove Resource Pack: one pack with `Some(id)`, every server pack with `None` |
+| 1.17 to 1.20.2 | Resource Pack Send, which replaces the previous pack. `id` is not sent; the proxy keeps it to report statuses | `Err(PlayerError::Unsupported)`: the protocol has no way to remove a pack before 1.20.3 |
+| 1.8 to 1.16.4 | The same, without `required` and `prompt`, which these versions lack | `Err(PlayerError::Unsupported)` |
+| 1.7 | Nothing: `Err(PlayerError::Unsupported)` | `Err(PlayerError::Unsupported)` |
+
+Every answer the client gives, for a pack from the proxy or from a backend, posts a [`PlayerResourcePackStatusEvent`](./events#playerresourcepackstatusevent). Answers to the proxy's packs stay on the proxy; answers to a backend's packs are forwarded to it unchanged. From 1.20.3 the proxy tells them apart by pack UUID. Before 1.20.3 the answers carry no UUID, so the proxy matches them in the order the packs reached the client: an answer belongs to the oldest pack that has not reached a final status yet.
+
+#### Transfers
+
+`transfer(host, port)` sends the player to another server or proxy with the Transfer packet (1.20.5 and later, `Err(PlayerError::Unsupported)` before). The client closes its connection to Infrarust and connects to `host:port` with the transfer intent, keeping its [cookies](#cookies). The target must accept transfers: `accepts-transfers=true` on a vanilla server.
+
+Before the packet is sent, the proxy fires [`PreTransferEvent`](./events#pretransferevent) with the origin `Plugin`. A listener that denies it makes `transfer` return `Err(PlayerError::Denied(reason))` and nothing is sent; a redirect sends the listener's destination instead. `transfer` returns once the packet is queued. An empty host, or one over 32767 characters, returns `Err(PlayerError::InvalidArgument)`.
+
+A Transfer packet a backend sends goes through the same event, with the origin `Backend`: allowed, it reaches the client unchanged; redirected, the proxy rewrites the destination; denied, the proxy drops it.
+
+#### Cookies
+
+`store_cookie(key, data)` stores up to 5120 bytes on the client, and `request_cookie(key)` reads them back (1.20.5 and later, `Err(PlayerError::Unsupported)` before). The client keeps its cookies while it moves between servers with transfers, and forgets them when the game closes.
+
+```rust
+player.store_cookie("myplugin:ticket", Bytes::from(ticket.to_bytes()))?;
+
+// after a transfer, on the proxy the player lands on
+match player.request_cookie("myplugin:ticket").await? {
+    Some(data) => verify(&data),
+    None => tracing::info!("no ticket"),
+}
+```
+
+A key is an identifier: `namespace:path` in lowercase letters, digits, `_`, `-` and `.`, with `/` also allowed in the path. A key without a namespace gets `minecraft:`, as the client would give it. Another key, or data over 5120 bytes, returns `Err(PlayerError::InvalidArgument)`.
+
+`request_cookie` resolves with `Some(data)`, or `None` when the client has no cookie under that key. It returns `Err(PlayerError::Disconnected)` if the player leaves before answering. It has no timeout of its own: a vanilla client always answers, and `tokio::time::timeout` bounds the wait when you need to. The proxy matches answers to requests by key and in order, so a plugin and a backend can ask for the same cookie at the same time: each gets its own answer, and only the backend's reaches the backend.
 
 ## Scheduler
 

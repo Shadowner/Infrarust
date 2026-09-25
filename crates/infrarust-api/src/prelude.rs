@@ -27,7 +27,11 @@ pub use crate::events::*;
 pub use crate::plugin::{Plugin, PluginContext, PluginDependency, PluginMetadata};
 
 // Player
-pub use crate::player::{ChatMode, ClientSettings, MainHand, ParticleStatus, Player, SkinParts};
+pub use crate::player::{
+    BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, BossBarUpdate, ChatMode,
+    ClientSettings, ConnectionResult, MainHand, ParticleStatus, Player, ResourcePackRequest,
+    ResourcePackStatus, SkinParts,
+};
 
 pub use crate::messaging::{
     ChannelId, ChannelIdError, ChannelRegistrar, Endpoint, MessagePhase, MessagingError,

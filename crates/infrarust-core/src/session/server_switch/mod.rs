@@ -327,6 +327,13 @@ pub(crate) async fn perform_switch(
         &services.packet_registry,
     )
     .await?;
+    crate::session::presentation::restore_after_switch(
+        client,
+        session,
+        &services.packet_registry,
+        version,
+    )
+    .await?;
 
     join.joined(&services.event_bus).await;
 

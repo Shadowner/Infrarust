@@ -9,7 +9,7 @@ use infrarust_api::events::connection::{
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
-use infrarust_api::player::Player;
+use infrarust_api::player::{ConnectionResult, Player};
 use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
@@ -116,6 +116,7 @@ pub(super) async fn run_session_loop(
                             .resolve_handlers(&handler_names)
                         {
                             Ok(handlers) if !handlers.is_empty() => {
+                                session.settle_connect(&target, &ConnectionResult::Success);
                                 mode = ConnectionMode::Limbo(
                                     handlers,
                                     LimboEntryContext::PluginRedirect {
@@ -140,16 +141,17 @@ pub(super) async fn run_session_loop(
                         if target == current_server_id =>
                     {
                         tracing::debug!(server = %target, "already on the requested server");
+                        session.settle_connect(&target, &ConnectionResult::AlreadyConnected);
                         continue;
                     }
                     ProxyLoopOutcome::SwitchRequested { target, cause } => {
                         let request = SwitchTarget::Unapproved {
-                            server: target,
+                            server: target.clone(),
                             cause,
                         };
-                        let settled = match switch(&route, client, &current_server_id, request)
-                            .await
-                        {
+                        let action = switch(&route, client, &current_server_id, request).await;
+                        session.settle_connect(&target, &connection_result(&route, &action));
+                        let settled = match action {
                             SwitchAction::Backend(backend, server) => {
                                 Settled::Backend(backend, server)
                             }
@@ -290,8 +292,11 @@ pub(super) async fn run_session_loop(
                             LimboExitResult::SwitchedTo(ref s) => s.clone(),
                             _ => current_server_id.clone(),
                         };
+                        let requested = target.clone();
                         let target = pending.release(target, gate_target.as_ref());
-                        match switch(&route, client, &current_server_id, target).await {
+                        let action = switch(&route, client, &current_server_id, target).await;
+                        session.settle_connect(&requested, &connection_result(&route, &action));
+                        match action {
                             SwitchAction::Backend(new_backend, new_server) => {
                                 mode = ConnectionMode::Backend(new_backend);
                                 current_server_id = new_server;
@@ -475,6 +480,20 @@ async fn switch(
         Ok(SwitchResult::Unchanged) => SwitchAction::Unchanged,
         Ok(SwitchResult::Failed(kick)) => SwitchAction::Failed(kick),
         Err(e) => SwitchAction::Error(e),
+    }
+}
+
+fn connection_result(route: &Route<'_>, action: &SwitchAction) -> ConnectionResult {
+    if route.session.shutdown_token().is_cancelled() {
+        return ConnectionResult::Cancelled;
+    }
+    match action {
+        SwitchAction::Backend(..) => ConnectionResult::Success,
+        SwitchAction::Unchanged => ConnectionResult::AlreadyConnected,
+        SwitchAction::Limbo(..) => ConnectionResult::Cancelled,
+        SwitchAction::Denied(reason) => ConnectionResult::Denied(reason.clone()),
+        SwitchAction::Failed(kick) => ConnectionResult::Failed(shown_reason(route, kick)),
+        SwitchAction::Error(e) => ConnectionResult::Failed(Component::text(e.to_string())),
     }
 }
 

@@ -1,19 +1,30 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
 use infrarust_api::events::connection::ConnectCause;
 use infrarust_api::types::{Component, ProtocolVersion as ApiVersion, ServerId};
 use infrarust_protocol::io::PacketFrame;
+use infrarust_protocol::packets::cookie::{
+    CConfigCookieRequest, CConfigStoreCookie, CCookieRequest, CStoreCookie,
+};
+use infrarust_protocol::packets::play::transfer::{CConfigTransfer, CTransfer};
+use infrarust_protocol::packets::resource_pack::{
+    CConfigResourcePack, CConfigResourcePackPop, CConfigResourcePackPush, CResourcePack,
+    CResourcePackPop, CResourcePackPush,
+};
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::ConnectionState;
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
-use super::packets;
-use super::{MessageTarget, OutgoingMessage, PlayerCommand};
+use super::packets::{self, encode_packet};
+use super::presentation::Presentation;
+use super::{BossBarCommand, ClientCommand, MessageTarget, OutgoingMessage, PlayerCommand};
 use crate::error::CoreError;
 use crate::plugin_messaging::channels::{self, MessageIds};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::util::text::encode_text_component;
 
 #[derive(Debug)]
 pub(crate) enum CommandOutcome {
@@ -26,6 +37,8 @@ pub(crate) struct CommandInbox {
     receiver: mpsc::Receiver<PlayerCommand>,
     deferred: VecDeque<PlayerCommand>,
     messages: VecDeque<OutgoingMessage>,
+    client_commands: VecDeque<ClientCommand>,
+    presentation: Option<Arc<Presentation>>,
 }
 
 impl CommandInbox {
@@ -34,7 +47,145 @@ impl CommandInbox {
             receiver,
             deferred: VecDeque::new(),
             messages: VecDeque::new(),
+            client_commands: VecDeque::new(),
+            presentation: None,
         }
+    }
+
+    #[must_use]
+    pub(crate) fn with_presentation(mut self, presentation: Arc<Presentation>) -> Self {
+        self.presentation = Some(presentation);
+        self
+    }
+
+    fn deliver_client_commands(
+        &mut self,
+        client: &mut ClientBridge,
+        registry: &PacketRegistry,
+        client_open: bool,
+    ) {
+        let state = client.state();
+        if self.client_commands.is_empty()
+            || !client_open
+            || !matches!(state, ConnectionState::Config | ConnectionState::Play)
+        {
+            return;
+        }
+        while let Some(command) = self.client_commands.pop_front() {
+            if let Err(e) = self.deliver_client_command(client, registry, state, command) {
+                tracing::warn!("failed to deliver a player command: {e}");
+            }
+        }
+    }
+
+    fn deliver_client_command(
+        &self,
+        client: &mut ClientBridge,
+        registry: &PacketRegistry,
+        state: ConnectionState,
+        command: ClientCommand,
+    ) -> Result<(), CoreError> {
+        let version = client.protocol_version;
+        let config = state == ConnectionState::Config;
+        let frame = match command {
+            ClientCommand::PushPack(pack) => {
+                let legacy = version.less_than(ProtocolVersion::V1_20_3);
+                let url = pack.url.clone();
+                let hash = pack.hash.clone().unwrap_or_default().to_ascii_lowercase();
+                let forced = pack.required;
+                let prompt = pack
+                    .prompt
+                    .as_ref()
+                    .map(|prompt| encode_text_component(prompt, version, state));
+                let id = pack.id;
+                let frame = match (legacy, config) {
+                    (true, true) => encode_packet(
+                        &CConfigResourcePack {
+                            url,
+                            hash,
+                            forced,
+                            prompt,
+                        },
+                        version,
+                        registry,
+                    ),
+                    (true, false) => encode_packet(
+                        &CResourcePack {
+                            url,
+                            hash,
+                            forced,
+                            prompt,
+                        },
+                        version,
+                        registry,
+                    ),
+                    (false, true) => encode_packet(
+                        &CConfigResourcePackPush {
+                            id,
+                            url,
+                            hash,
+                            forced,
+                            prompt,
+                        },
+                        version,
+                        registry,
+                    ),
+                    (false, false) => encode_packet(
+                        &CResourcePackPush {
+                            id,
+                            url,
+                            hash,
+                            forced,
+                            prompt,
+                        },
+                        version,
+                        registry,
+                    ),
+                }?;
+                if let Some(presentation) = &self.presentation {
+                    presentation.pack_pushed(Some(id), true, legacy);
+                }
+                frame
+            }
+            ClientCommand::PopPack(id) if config => {
+                encode_packet(&CConfigResourcePackPop { id }, version, registry)?
+            }
+            ClientCommand::PopPack(id) => {
+                encode_packet(&CResourcePackPop { id }, version, registry)?
+            }
+            ClientCommand::StoreCookie { key, data } => {
+                let payload = data.to_vec();
+                if config {
+                    encode_packet(&CConfigStoreCookie { key, payload }, version, registry)?
+                } else {
+                    encode_packet(&CStoreCookie { key, payload }, version, registry)?
+                }
+            }
+            ClientCommand::RequestCookie { key, reply } => {
+                let frame = if config {
+                    encode_packet(
+                        &CConfigCookieRequest { key: key.clone() },
+                        version,
+                        registry,
+                    )?
+                } else {
+                    encode_packet(&CCookieRequest { key: key.clone() }, version, registry)?
+                };
+                if let Some(presentation) = &self.presentation {
+                    presentation.cookie_requested(&key, Some(reply));
+                }
+                frame
+            }
+            ClientCommand::Transfer { host, port } => {
+                let port = i32::from(port);
+                if config {
+                    encode_packet(&CConfigTransfer { host, port }, version, registry)?
+                } else {
+                    encode_packet(&CTransfer { host, port }, version, registry)?
+                }
+            }
+        };
+        client.queue_frame(&frame)
     }
 
     pub(crate) fn deliver_messages(
@@ -44,6 +195,7 @@ impl CommandInbox {
         registry: &PacketRegistry,
         client_open: bool,
     ) {
+        self.deliver_client_commands(client, registry, client_open);
         if self.messages.is_empty() {
             return;
         }
@@ -105,6 +257,10 @@ impl CommandInbox {
             PlayerCommand::Kick(reason) => return CommandOutcome::Kick(reason),
             PlayerCommand::PluginMessage(message) => {
                 self.messages.push_back(message);
+                return CommandOutcome::Continue;
+            }
+            PlayerCommand::Client(command) => {
+                self.client_commands.push_back(command);
                 return CommandOutcome::Continue;
             }
             command => command,
@@ -193,9 +349,30 @@ fn queue_frames(
         PlayerCommand::SendPacket(raw) => {
             client.queue_frame(&PacketFrame::new(raw.packet_id, raw.data))
         }
+        PlayerCommand::HeaderFooter(texts) => client.queue_frame(&packets::build_header_footer(
+            &texts.0, &texts.1, version, registry,
+        )?),
+        PlayerCommand::ClearTitle { reset } => {
+            match packets::build_clear_title(reset, version, registry)? {
+                Some(frame) => client.queue_frame(&frame),
+                None => Ok(()),
+            }
+        }
+        PlayerCommand::BossBar(id, command) => {
+            let packet = match command {
+                BossBarCommand::Show(bar) => Some(packets::boss_bar_added(id, &bar, version)),
+                BossBarCommand::Update(update) => packets::boss_bar_updated(id, &update, version),
+                BossBarCommand::Hide => Some(packets::boss_bar_removed(id)),
+            };
+            match packet {
+                Some(packet) => client.queue_frame(&encode_packet(&packet, version, registry)?),
+                None => Ok(()),
+            }
+        }
         PlayerCommand::Kick(_)
         | PlayerCommand::SwitchServer(..)
-        | PlayerCommand::PluginMessage(_) => Ok(()),
+        | PlayerCommand::PluginMessage(_)
+        | PlayerCommand::Client(_) => Ok(()),
     }
 }
 

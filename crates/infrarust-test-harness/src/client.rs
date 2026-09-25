@@ -24,6 +24,7 @@ use infrarust_protocol::packets::play::keepalive::{CKeepAlive, SKeepAlive};
 use infrarust_protocol::packets::play::start_configuration::{
     CStartConfiguration, SAcknowledgeConfiguration,
 };
+use infrarust_protocol::packets::resource_pack::ResourcePackResult;
 use infrarust_protocol::packets::status::{
     CPingResponse, CStatusResponse, SPingRequest, SStatusRequest,
 };
@@ -41,6 +42,7 @@ use uuid::Uuid;
 
 use crate::DEFAULT_TIMEOUT;
 use crate::chat::{self, now_millis};
+use crate::client_replies::{ClientReplies, CookieJar};
 use crate::error::{HarnessError, HarnessResult};
 use crate::framing::{FrameReader, FrameWriter, FramedConn};
 use crate::plugin_message::ClientHello;
@@ -59,6 +61,7 @@ pub struct FakeClient {
     proxy_source: Option<SocketAddr>,
     claimed_uuid: Option<Uuid>,
     hello: Option<ClientHello>,
+    replies: ClientReplies,
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +106,23 @@ impl FakeClient {
             proxy_source: None,
             claimed_uuid: None,
             hello: None,
+            replies: ClientReplies::default(),
         }
+    }
+
+    #[must_use]
+    pub fn cookies(mut self, jar: CookieJar) -> Self {
+        self.replies.jar = jar;
+        self
+    }
+
+    #[must_use]
+    pub fn answer_resource_packs(
+        mut self,
+        results: impl IntoIterator<Item = ResourcePackResult>,
+    ) -> Self {
+        self.replies.pack_results = results.into_iter().collect();
+        self
     }
 
     #[must_use]
@@ -225,6 +244,7 @@ impl FakeClient {
             state: ConnectionState::Login,
             events: events_tx,
             hello: self.hello.clone(),
+            replies: self.replies.clone(),
         };
         let driver = TaskGuard(tokio::spawn(driver.run()));
 
@@ -255,6 +275,7 @@ impl FakeClient {
                         config_frames,
                         writer,
                         events,
+                        jar: self.replies.jar.clone(),
                         _driver: driver,
                     }));
                 }
@@ -303,6 +324,7 @@ struct Driver {
     state: ConnectionState,
     events: mpsc::UnboundedSender<ClientEvent>,
     hello: Option<ClientHello>,
+    replies: ClientReplies,
 }
 
 impl Driver {
@@ -335,8 +357,21 @@ impl Driver {
         Ok(())
     }
 
+    async fn reply(&self, frame: &PacketFrame) -> HarnessResult<()> {
+        let answers = self.replies.answer(frame, self.state, self.version)?;
+        if answers.is_empty() {
+            return Ok(());
+        }
+        let mut writer = self.writer.lock().await;
+        for answer in &answers {
+            writer.write_frame(answer).await?;
+        }
+        Ok(())
+    }
+
     async fn drive(&mut self) -> HarnessResult<()> {
         while let Some(frame) = self.reader.read_frame().await? {
+            self.reply(&frame).await?;
             let flow = match self.state {
                 ConnectionState::Login => self.on_login(frame).await?,
                 ConnectionState::Config => self.on_config(frame).await?,
@@ -496,6 +531,7 @@ pub struct ClientSession {
     config_frames: Vec<PacketFrame>,
     writer: Arc<Mutex<FrameWriter>>,
     events: mpsc::UnboundedReceiver<ClientEvent>,
+    jar: CookieJar,
     _driver: TaskGuard,
 }
 
@@ -536,6 +572,10 @@ impl ClientSession {
 
     pub fn config_frames(&self) -> &[PacketFrame] {
         &self.config_frames
+    }
+
+    pub fn cookies(&self) -> CookieJar {
+        self.jar.clone()
     }
 
     pub async fn send_frame(&self, frame: &PacketFrame) -> HarnessResult<()> {
@@ -628,6 +668,17 @@ impl ClientSession {
             ClientEvent::Frame(frame) | ClientEvent::Joined(frame)
                 if wire::is::<P>(frame, version) =>
             {
+                Some(wire::decode::<P>(frame, version))
+            }
+            _ => None,
+        })
+        .await
+    }
+
+    pub async fn expect_config<P: Packet>(&mut self, timeout: Duration) -> HarnessResult<P> {
+        let version = self.version;
+        self.wait_for(P::NAME, timeout, |event| match event {
+            ClientEvent::Config(frame) if wire::is::<P>(frame, version) => {
                 Some(wire::decode::<P>(frame, version))
             }
             _ => None,

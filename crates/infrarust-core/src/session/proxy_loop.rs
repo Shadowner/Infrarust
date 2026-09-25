@@ -51,6 +51,7 @@ use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::kick::BackendKick;
+use crate::session::presentation::PresentationIds;
 use crate::session::server_join::ServerJoin;
 use crate::util::text::encode_text_component;
 
@@ -129,6 +130,7 @@ struct HotIds {
     c_keepalive: Option<i32>,
     s_keepalive: Option<i32>,
     messages: MessageIds,
+    presentation: PresentationIds,
 }
 
 impl HotIds {
@@ -145,6 +147,7 @@ impl HotIds {
             c_keepalive: registry.get_packet_id::<CKeepAlive>(version),
             s_keepalive: registry.get_packet_id::<SKeepAlive>(version),
             messages: MessageIds::resolve(registry, version),
+            presentation: PresentationIds::resolve(registry, version),
         }
     }
 
@@ -742,6 +745,12 @@ async fn handle_client_to_backend(
             loop_state.keepalive_answered(&frame, version);
         }
         if let Some(session) = loop_state.session.as_ref() {
+            if hot_ids
+                .presentation
+                .client_reply(session, &services.event_bus, &frame, state)
+            {
+                return Ok(());
+            }
             if hot_ids.messages.is_information(&frame, state) {
                 router::observe_information(session, &services.event_bus, &frame, state, version);
             } else if hot_ids.messages.is_serverbound(&frame, state) {
@@ -853,6 +862,12 @@ async fn handle_client_to_backend(
     if state == ConnectionState::Config
         && let Some(session) = loop_state.session.as_ref()
     {
+        if hot_ids
+            .presentation
+            .client_reply(session, &services.event_bus, &frame, state)
+        {
+            return Ok(());
+        }
         if hot_ids.messages.is_information(&frame, state) {
             router::observe_information(session, &services.event_bus, &frame, state, version);
         } else if hot_ids.messages.is_serverbound(&frame, state) {
@@ -913,6 +928,22 @@ async fn handle_client_to_backend(
     Ok(())
 }
 
+async fn presentation_from_backend(
+    ids: &PresentationIds,
+    session: &Arc<PlayerSession>,
+    services: &ProxyServices,
+    frame: PacketFrame,
+    state: ConnectionState,
+) -> Option<PacketFrame> {
+    ids.observe_backend(session, &frame, state);
+    if ids.is_transfer(&frame, state) {
+        return ids
+            .transfer_from_backend(session, &services.event_bus, frame, state)
+            .await;
+    }
+    Some(frame)
+}
+
 /// Handles a packet from the backend, forwarding it to the client.
 ///
 /// Order: CodecFilter → EventBus → state interception → forward.
@@ -941,6 +972,14 @@ async fn handle_backend_to_client(
 
         if Some(frame.id) == hot_ids.c_keepalive {
             loop_state.keepalive_sent(&frame, version);
+        }
+        if let Some(session) = loop_state.session.as_ref() {
+            match presentation_from_backend(&hot_ids.presentation, session, services, frame, state)
+                .await
+            {
+                Some(next) => frame = next,
+                None => return Ok(BackendAction::Continue),
+            }
         }
         if hot_ids.messages.is_clientbound(&frame, state)
             && let Some(session) = loop_state.session.as_ref()
@@ -1017,6 +1056,17 @@ async fn handle_backend_to_client(
     }
 
     if state == ConnectionState::Config
+        && let Some(session) = loop_state.session.as_ref()
+    {
+        match presentation_from_backend(&hot_ids.presentation, session, services, frame, state)
+            .await
+        {
+            Some(next) => frame = next,
+            None => return Ok(BackendAction::Continue),
+        }
+    }
+
+    if state == ConnectionState::Config
         && hot_ids.messages.is_clientbound(&frame, state)
         && let Some(session) = loop_state.session.as_ref()
     {
@@ -1089,7 +1139,9 @@ async fn handle_backend_to_client(
                 return Ok(BackendAction::Continue);
             }
 
-            if state == ConnectionState::Config {
+            if state == ConnectionState::Config
+                && !hot_ids.presentation.is_player_request(&frame, state)
+            {
                 let is_known_packs = registry
                     .get_packet_id::<infrarust_protocol::CKnownPacks>(version)
                     .is_some_and(|id| id == frame.id);
@@ -1109,7 +1161,9 @@ async fn handle_backend_to_client(
             client.queue_frame(&frame)?;
         }
         Ok(DecodedPacket::Opaque { .. }) => {
-            if state == ConnectionState::Config {
+            if state == ConnectionState::Config
+                && !hot_ids.presentation.is_player_request(&frame, state)
+            {
                 services
                     .registry_codec_cache
                     .collect_registry_frame(version, frame.clone());

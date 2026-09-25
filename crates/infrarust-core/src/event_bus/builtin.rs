@@ -25,6 +25,8 @@ use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
+use infrarust_api::events::resource_pack::PlayerResourcePackStatusEvent;
+use infrarust_api::events::transfer::PreTransferEvent;
 
 pub static BUILTIN_EVENTS: &[TypeId] = &[
     TypeId::of::<PreLoginEvent>(),
@@ -62,6 +64,8 @@ pub static BUILTIN_EVENTS: &[TypeId] = &[
     TypeId::of::<PluginDisabledEvent>(),
     TypeId::of::<ServiceProvidedEvent>(),
     TypeId::of::<ServiceRemovedEvent>(),
+    TypeId::of::<PlayerResourcePackStatusEvent>(),
+    TypeId::of::<PreTransferEvent>(),
 ];
 
 pub fn is_builtin_event(type_id: TypeId) -> bool {

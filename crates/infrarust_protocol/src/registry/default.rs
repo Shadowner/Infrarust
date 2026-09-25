@@ -1,18 +1,22 @@
 use std::any::TypeId;
 
 use crate::packets::{
-    CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CChunkData, CCommands,
-    CConfigDisconnect, CConfigPluginMessage, CDisconnect, CEncryptionRequest, CFinishConfig,
-    CGameEvent, CJoinGame, CKeepAlive, CKnownPacks, CLoginDisconnect, CLoginPluginRequest,
-    CLoginSuccess, CPingResponse, CPluginMessage, CRegistryData, CRespawn, CSetCenterChunk,
-    CSetCompression, CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes,
-    CStartConfiguration, CStatusResponse, CSynchronizePlayerPosition, CSystemChatMessage,
-    CTabCompleteResponse, CTitleLegacy, CTransfer, Packet, PacketMapping,
-    SAcknowledgeConfiguration, SAcknowledgeFinishConfig, SChatAcknowledgement, SChatCommand,
-    SChatCommandSigned, SChatMessage, SChatSessionUpdate, SClientInformation,
-    SConfigClientInformation, SConfigPluginMessage, SEncryptionResponse, SHandshake, SKeepAlive,
-    SKnownPacks, SLoginAcknowledged, SLoginPluginResponse, SLoginStart, SPingRequest,
-    SPluginMessage, SStatusRequest, STabCompleteRequest,
+    CBossBar, CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CChunkData, CClearTitles,
+    CCommands, CConfigCookieRequest, CConfigDisconnect, CConfigPluginMessage, CConfigResourcePack,
+    CConfigResourcePackPop, CConfigResourcePackPush, CConfigStoreCookie, CConfigTransfer,
+    CCookieRequest, CDisconnect, CEncryptionRequest, CFinishConfig, CGameEvent, CJoinGame,
+    CKeepAlive, CKnownPacks, CLoginCookieRequest, CLoginDisconnect, CLoginPluginRequest,
+    CLoginSuccess, CPingResponse, CPluginMessage, CRegistryData, CResourcePack, CResourcePackPop,
+    CResourcePackPush, CRespawn, CSetCenterChunk, CSetCompression, CSetDefaultSpawnPosition,
+    CSetSubtitle, CSetTitle, CSetTitleTimes, CStartConfiguration, CStatusResponse, CStoreCookie,
+    CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse, CTabListHeaderFooter,
+    CTitleLegacy, CTransfer, Packet, PacketMapping, SAcknowledgeConfiguration,
+    SAcknowledgeFinishConfig, SChatAcknowledgement, SChatCommand, SChatCommandSigned, SChatMessage,
+    SChatSessionUpdate, SClientInformation, SConfigClientInformation, SConfigCookieResponse,
+    SConfigPluginMessage, SConfigResourcePackResponse, SCookieResponse, SEncryptionResponse,
+    SHandshake, SKeepAlive, SKnownPacks, SLoginAcknowledged, SLoginCookieResponse,
+    SLoginPluginResponse, SLoginStart, SPingRequest, SPluginMessage, SResourcePackResponse,
+    SStatusRequest, STabCompleteRequest,
 };
 use crate::registry::PacketRegistry;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
@@ -60,6 +64,8 @@ packet_table! {
     CLoginSuccess,
     CSetCompression,
     CLoginPluginRequest,
+    CLoginCookieRequest,
+    SLoginCookieResponse,
     SConfigPluginMessage,
     SAcknowledgeFinishConfig,
     SKnownPacks,
@@ -69,6 +75,14 @@ packet_table! {
     CFinishConfig,
     CRegistryData,
     CKnownPacks,
+    CConfigResourcePack,
+    CConfigResourcePackPush,
+    CConfigResourcePackPop,
+    CConfigStoreCookie,
+    CConfigCookieRequest,
+    CConfigTransfer,
+    SConfigResourcePackResponse,
+    SConfigCookieResponse,
     CCommands,
     CTabCompleteResponse,
     CKeepAlive,
@@ -83,6 +97,14 @@ packet_table! {
     CSetSubtitle,
     CSetTitleTimes,
     CTransfer,
+    CClearTitles,
+    CTabListHeaderFooter,
+    CBossBar,
+    CResourcePack,
+    CResourcePackPush,
+    CResourcePackPop,
+    CStoreCookie,
+    CCookieRequest,
     CStartConfiguration,
     CGameEvent,
     CSetCenterChunk,
@@ -101,6 +123,8 @@ packet_table! {
     SChatSessionUpdate,
     SClientInformation,
     SPluginMessage,
+    SResourcePackResponse,
+    SCookieResponse,
 }
 
 #[must_use]
@@ -160,6 +184,6 @@ mod tests {
                 descriptor.name
             );
         }
-        assert_eq!(DEFAULT_PACKETS.len(), 55);
+        assert_eq!(DEFAULT_PACKETS.len(), 75);
     }
 }

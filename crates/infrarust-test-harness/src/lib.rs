@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod chat;
 pub mod client;
+pub mod client_replies;
 pub mod error;
 pub mod framing;
 pub mod legacy;
@@ -19,6 +20,7 @@ use std::time::Duration;
 pub use backend::{BackendConn, FakeBackend, FakeBackendBuilder, LoginBehavior, ObservedHandshake};
 pub use chat::{ChatFrame, ChatPacket};
 pub use client::{ClientSession, FakeClient, LoginOutcome, StatusResult};
+pub use client_replies::CookieJar;
 pub use error::{HarnessError, HarnessResult};
 pub use framing::{FrameReader, FrameWriter, FramedConn};
 pub use infrarust_protocol::io::PacketFrame;
