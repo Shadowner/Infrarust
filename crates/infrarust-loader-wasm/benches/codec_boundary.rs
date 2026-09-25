@@ -1,5 +1,5 @@
 #[cfg(all(feature = "wasm", wasm_fixtures_available))]
-#[path = "../tests/mock_services/mod.rs"]
+#[path = "../tests/support/mock_services.rs"]
 mod mock_services;
 
 #[cfg(all(feature = "wasm", wasm_fixtures_available))]

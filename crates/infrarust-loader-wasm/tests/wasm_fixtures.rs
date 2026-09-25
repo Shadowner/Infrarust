@@ -1,213 +1,73 @@
-//! The whole file compiles to nothing unless the `wasm` feature is on AND `build.rs`
-//! managed to build the fixtures (the `wasm_fixtures_available` cfg), so a machine without
-//! the `wasm32-wasip2` target degrades to "0 tests" rather than a spurious failure.
-
 #![cfg(all(feature = "wasm", wasm_fixtures_available))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+mod support;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use infrarust_api::command::CommandManager;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::connection::{ServerPreConnectEvent, ServerPreConnectResult};
 use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
-use infrarust_api::services::ban_service::BanService;
-use infrarust_api::services::config_service::ConfigService;
-use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::{GameProfile, PlayerId, ProtocolVersion, ServerId};
-use infrarust_config::ProxyConfig;
-use infrarust_core::event_bus::{EventBusConfig, EventBusImpl};
-use infrarust_core::plugin::manager::PluginServices;
-use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions};
-use infrarust_core::services::command_manager::CommandManagerImpl;
-use infrarust_core::services::scheduler::SchedulerImpl;
-use infrarust_core::services::server_manager_bridge::NoopServerManager;
-use infrarust_loader_wasm::{WasmPluginLoader, build_engine};
+use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
+use infrarust_core::event_bus::EventBusConfig;
+use infrarust_core::plugin::PluginContextFactoryImpl;
+use infrarust_loader_wasm::WasmPluginLoader;
 use tracing::instrument::WithSubscriber;
 
-mod mock_services;
-use mock_services::{
-    CountingPlayerRegistry, MapConfigService, MockBanService, MockConfigService,
-    MockLoadBalancerService, MockPlayerRegistry, PendingBanService, RecordingPlayerRegistry,
+use support::mock_services::{
+    CountingPlayerRegistry, MapConfigService, MockPlayerRegistry, PendingBanService,
+    RecordingPlayerRegistry,
+};
+use support::{
+    EnvOptions, TestEnv, add_fixture, fresh_loader, load_enabled, make_env, make_env_with,
+    nil_profile, read_log, stage, write_script,
 };
 
-const FIXTURE_DIR: &str = env!("INFRARUST_WASM_FIXTURE_DIR");
-
-fn fixture_path(name: &str) -> PathBuf {
-    PathBuf::from(FIXTURE_DIR).join(format!("fixture_{}.wasm", name.replace('-', "_")))
-}
-
-fn fresh_loader() -> WasmPluginLoader {
-    let config: ProxyConfig = toml::from_str("").expect("default proxy config");
-    WasmPluginLoader::new(build_engine(&config).expect("build engine"))
-}
-
-struct TestEnv {
-    factory: PluginContextFactoryImpl,
-    event_bus: Arc<EventBusImpl>,
-    command_manager: Arc<CommandManagerImpl>,
-}
-
-fn make_env(
-    plugins_dir: PathBuf,
-    player_registry: Arc<dyn PlayerRegistry>,
-    config_service: Arc<dyn ConfigService>,
-) -> TestEnv {
-    make_env_with(
-        plugins_dir,
-        player_registry,
-        config_service,
-        Arc::new(MockBanService),
-        EventBusConfig::default(),
-        HashMap::new(),
-    )
-}
-
-fn make_env_with(
-    plugins_dir: PathBuf,
-    player_registry: Arc<dyn PlayerRegistry>,
-    config_service: Arc<dyn ConfigService>,
-    ban_service: Arc<dyn BanService>,
-    bus_config: EventBusConfig,
-    plugin_configs: HashMap<String, PluginPermissions>,
-) -> TestEnv {
-    let event_bus = Arc::new(EventBusImpl::with_config(bus_config));
-    let command_manager = Arc::new(CommandManagerImpl::new());
-    let services = PluginServices {
-        event_bus: Arc::clone(&event_bus),
-        player_registry,
-        server_manager: Arc::new(NoopServerManager),
-        ban_service,
-        command_manager: Arc::clone(&command_manager) as Arc<dyn CommandManager>,
-        scheduler: Arc::new(SchedulerImpl::new()),
-        config_service,
-        load_balancer_service: Arc::new(MockLoadBalancerService),
-        plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
-        codec_filter_registry: Arc::new(
-            infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
-        ),
-        transport_filter_registry: Arc::new(
-            infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
-        ),
-        domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
-        proxy_shutdown: tokio_util::sync::CancellationToken::new(),
-        proxy_info: infrarust_api::services::proxy_info::ProxyInfo::default(),
-        plugins_dir,
-    };
-    TestEnv {
-        factory: PluginContextFactoryImpl::new(services, plugin_configs),
-        event_bus,
-        command_manager,
-    }
-}
-
-fn make_factory(plugins_dir: PathBuf) -> PluginContextFactoryImpl {
-    make_env(
-        plugins_dir,
-        Arc::new(MockPlayerRegistry),
-        Arc::new(MockConfigService),
-    )
-    .factory
-}
-
-async fn load_enabled(
-    loader: &WasmPluginLoader,
-    factory: &PluginContextFactoryImpl,
-    id: &str,
-) -> Box<dyn Plugin> {
-    let plugin = loader
-        .load(id, factory)
-        .await
-        .unwrap_or_else(|e| panic!("load {id}: {e}"));
-    let ctx = factory.create_context(id);
-    plugin
-        .on_enable(ctx.as_ref())
-        .await
-        .unwrap_or_else(|e| panic!("enable {id}: {e}"));
-    plugin
-}
-
-fn nil_profile(username: &str) -> GameProfile {
-    GameProfile {
-        uuid: uuid::Uuid::nil(),
-        username: username.to_string(),
-        properties: vec![],
-    }
-}
-
-/// Stages a single fixture under a fresh temp plugin dir.
-fn stage(fixture: &str) -> (tempfile::TempDir, PathBuf) {
-    let tmp = tempfile::tempdir().unwrap();
-    let plugins_dir = tmp.path().to_path_buf();
-    std::fs::copy(
-        fixture_path(fixture),
-        plugins_dir.join(format!("{fixture}.wasm")),
-    )
-    .unwrap();
-    (tmp, plugins_dir)
+fn make_factory(plugins_dir: &Path) -> PluginContextFactoryImpl {
+    make_env(plugins_dir.to_path_buf()).factory
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_hello_loads_enables_disables() {
-    let tmp = tempfile::tempdir().unwrap();
-    let plugins_dir = tmp.path().to_path_buf();
-    std::fs::copy(fixture_path("hello"), plugins_dir.join("hello.wasm")).unwrap();
-
+async fn test_scripted_sdk_plugin_lifecycle() {
+    let (_tmp, plugins_dir) = stage("scripted");
+    write_script(&plugins_dir, "scripted", "");
     let loader = fresh_loader();
-    let factory = make_factory(plugins_dir.clone());
+    let factory = make_factory(&plugins_dir);
 
     let metas = loader.discover(&plugins_dir).await.unwrap();
-    assert!(metas.iter().any(|m| m.id == "hello"), "hello discovered");
+    assert!(
+        metas.iter().any(|m| m.id == "scripted"),
+        "the SDK-generated metadata export names the plugin"
+    );
 
-    let plugin = loader.load("hello", &factory).await.expect("load hello");
-    let ctx = factory.create_context("hello");
+    let plugin = loader.load("scripted", &factory).await.expect("load");
+    let ctx = factory.create_context("scripted");
     plugin.on_enable(ctx.as_ref()).await.expect("on_enable ok");
-
-    let marker = plugins_dir.join("hello").join("enabled.marker");
-    assert!(marker.exists(), "on_enable should write enabled.marker");
+    let data_dir = plugins_dir.join("scripted");
+    assert_eq!(
+        read_log(&data_dir),
+        ["enable"],
+        "on_enable ran and wrote into its WASI-scoped data dir"
+    );
 
     plugin.on_disable().await.expect("on_disable ok");
-    loader.unload("hello").await.expect("unload ok");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_sdk_smoke_loads_via_library_split() {
-    let (_tmp, plugins_dir) = stage("sdk-smoke");
-    let loader = fresh_loader();
-    let factory = make_factory(plugins_dir.clone());
-
-    let metas = loader.discover(&plugins_dir).await.unwrap();
-    assert!(
-        metas.iter().any(|m| m.id == "sdk-smoke"),
-        "sdk-smoke metadata read through the SDK library split"
-    );
-
-    let _plugin = load_enabled(&loader, &factory, "sdk-smoke").await;
-    let marker = plugins_dir.join("sdk-smoke").join("sdk-smoke.marker");
-    assert!(
-        marker.exists(),
-        "on_enable ran through the SDK-exported component"
-    );
+    assert_eq!(read_log(&data_dir), ["enable", "disable"]);
+    loader.unload("scripted").await.expect("unload ok");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trap_on_purpose_is_contained() {
-    let tmp = tempfile::tempdir().unwrap();
-    let plugins_dir = tmp.path().to_path_buf();
-    std::fs::copy(
-        fixture_path("trap-on-purpose"),
-        plugins_dir.join("trap.wasm"),
-    )
-    .unwrap();
-    std::fs::copy(fixture_path("hello"), plugins_dir.join("hello.wasm")).unwrap();
+    let (_tmp, plugins_dir) = stage("scripted");
+    add_fixture(&plugins_dir, "trap-on-purpose", "trap");
+    write_script(&plugins_dir, "scripted", "");
 
     let loader = fresh_loader();
-    let factory = make_factory(plugins_dir.clone());
+    let factory = make_factory(&plugins_dir);
     loader.discover(&plugins_dir).await.unwrap();
 
     let trap = loader
@@ -220,25 +80,22 @@ async fn test_trap_on_purpose_is_contained() {
         "a guest trap must surface as Err, not Ok"
     );
 
-    let hello = loader
-        .load("hello", &factory)
+    let scripted = loader
+        .load("scripted", &factory)
         .await
         .expect("engine still usable after a trap");
-    let hello_ctx = factory.create_context("hello");
-    hello
-        .on_enable(hello_ctx.as_ref())
+    let scripted_ctx = factory.create_context("scripted");
+    scripted
+        .on_enable(scripted_ctx.as_ref())
         .await
-        .expect("hello enables after a trap");
+        .expect("another plugin enables after a trap");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cpu_spin_interrupted_by_epoch() {
-    let tmp = tempfile::tempdir().unwrap();
-    let plugins_dir = tmp.path().to_path_buf();
-    std::fs::copy(fixture_path("cpu-spin"), plugins_dir.join("cpu.wasm")).unwrap();
-
+    let (_tmp, plugins_dir) = stage("cpu-spin");
     let loader = fresh_loader();
-    let factory = make_factory(plugins_dir.clone());
+    let factory = make_factory(&plugins_dir);
     loader.discover(&plugins_dir).await.unwrap();
 
     let plugin = loader
@@ -257,12 +114,9 @@ async fn test_cpu_spin_interrupted_by_epoch() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_memory_bomb_refused_by_limiter() {
-    let tmp = tempfile::tempdir().unwrap();
-    let plugins_dir = tmp.path().to_path_buf();
-    std::fs::copy(fixture_path("memory-bomb"), plugins_dir.join("bomb.wasm")).unwrap();
-
+    let (_tmp, plugins_dir) = stage("memory-bomb");
     let loader = fresh_loader();
-    let factory = make_factory(plugins_dir.clone());
+    let factory = make_factory(&plugins_dir);
     loader.discover(&plugins_dir).await.unwrap();
 
     let plugin = loader
@@ -282,9 +136,7 @@ async fn test_memory_bomb_refused_by_limiter() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_aot_cache_reused() {
-    let tmp = tempfile::tempdir().unwrap();
-    let plugins_dir = tmp.path().to_path_buf();
-    std::fs::copy(fixture_path("hello"), plugins_dir.join("hello.wasm")).unwrap();
+    let (_tmp, plugins_dir) = stage("scripted");
 
     {
         let loader = fresh_loader();
@@ -303,7 +155,7 @@ async fn test_aot_cache_reused() {
     {
         let loader = fresh_loader();
         let metas = loader.discover(&plugins_dir).await.unwrap();
-        assert!(metas.iter().any(|m| m.id == "hello"));
+        assert!(metas.iter().any(|m| m.id == "scripted"));
     }
     let mtime_second = std::fs::metadata(&cwasm_path).unwrap().modified().unwrap();
     assert_eq!(
@@ -313,116 +165,17 @@ async fn test_aot_cache_reused() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_event_subscriber_receives_post_login() {
-    let (_tmp, plugins_dir) = stage("event-subscriber");
-    let loader = fresh_loader();
-    let env = make_env(
-        plugins_dir.clone(),
-        Arc::new(MockPlayerRegistry),
-        Arc::new(MockConfigService),
-    );
-    loader.discover(&plugins_dir).await.unwrap();
-    let _plugin = load_enabled(&loader, &env.factory, "event-subscriber").await;
-
-    // Fire a PostLoginEvent on the same bus the guest subscribed to.
-    env.event_bus
-        .fire(PostLoginEvent {
-            profile: nil_profile("Steve"),
-            player_id: PlayerId::new(1),
-            protocol_version: ProtocolVersion::MINECRAFT_1_21,
-        })
-        .await;
-
-    let marker = plugins_dir
-        .join("event-subscriber")
-        .join("post-login.marker");
-    let got = std::fs::read_to_string(&marker)
-        .expect("guest should have written post-login.marker on receipt");
-    assert_eq!(got, "Steve", "guest saw the joining player's username");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_multi_handler_ordering_and_independent_cancel() {
-    let (_tmp, plugins_dir) = stage("multi-handler");
-    let loader = fresh_loader();
-    let env = make_env(
-        plugins_dir.clone(),
-        Arc::new(MockPlayerRegistry),
-        Arc::new(MockConfigService),
-    );
-    loader.discover(&plugins_dir).await.unwrap();
-    let _plugin = load_enabled(&loader, &env.factory, "multi-handler").await;
-
-    let marker = plugins_dir.join("multi-handler").join("multi.marker");
-
-    env.event_bus
-        .fire(PostLoginEvent {
-            profile: nil_profile("Steve"),
-            player_id: PlayerId::new(1),
-            protocol_version: ProtocolVersion::MINECRAFT_1_21,
-        })
-        .await;
-    assert_eq!(
-        std::fs::read_to_string(&marker).expect("marker written on first fire"),
-        "ABCD",
-        "handlers ran in priority order (custom interleaved) with the cancelled one absent"
-    );
-
-    env.event_bus
-        .fire(PostLoginEvent {
-            profile: nil_profile("Alex"),
-            player_id: PlayerId::new(2),
-            protocol_version: ProtocolVersion::MINECRAFT_1_21,
-        })
-        .await;
-    assert_eq!(
-        std::fs::read_to_string(&marker).expect("marker after second fire"),
-        "ABCDABCD",
-        "each handler fired exactly once per event (no double-fire)"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_event_modifier_applies_outcome() {
-    let (_tmp, plugins_dir) = stage("event-modifier");
-    let loader = fresh_loader();
-    let env = make_env(
-        plugins_dir.clone(),
-        Arc::new(MockPlayerRegistry),
-        Arc::new(MockConfigService),
-    );
-    loader.discover(&plugins_dir).await.unwrap();
-    let _plugin = load_enabled(&loader, &env.factory, "event-modifier").await;
-
-    let event = ServerPreConnectEvent::new(
-        PlayerId::new(1),
-        nil_profile("Steve"),
-        ServerId::new("lobby"),
-    );
-    let event = env.event_bus.fire(event).await;
-
-    match event.result() {
-        ServerPreConnectResult::ConnectTo(target) => {
-            assert_eq!(
-                target.as_str(),
-                "backend-1",
-                "guest redirected the connection"
-            );
-        }
-        _ => panic!("expected ServerPreConnectResult::ConnectTo(backend-1)"),
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn test_host_caller_reads_services() {
     let (_tmp, plugins_dir) = stage("host-caller");
     let loader = fresh_loader();
-    let mut values = HashMap::new();
-    values.insert("greeting".to_string(), "hello-wasm".to_string());
-    let env = make_env(
+    let values = HashMap::from([("greeting".to_string(), "hello-wasm".to_string())]);
+    let env = make_env_with(
         plugins_dir.clone(),
-        Arc::new(CountingPlayerRegistry { count: 7 }),
-        Arc::new(MapConfigService { values }),
+        EnvOptions {
+            player_registry: Arc::new(CountingPlayerRegistry { count: 7 }),
+            config_service: Arc::new(MapConfigService { values }),
+            ..EnvOptions::default()
+        },
     );
     loader.discover(&plugins_dir).await.unwrap();
     let _plugin = load_enabled(&loader, &env.factory, "host-caller").await;
@@ -440,19 +193,35 @@ async fn test_host_caller_reads_services() {
     );
 }
 
+struct CommandPluginEnv {
+    _tmp: tempfile::TempDir,
+    plugins_dir: PathBuf,
+    env: TestEnv,
+    _loader: WasmPluginLoader,
+    _plugin: Box<dyn Plugin>,
+}
+
+async fn enable_command_plugin() -> CommandPluginEnv {
+    let (tmp, plugins_dir) = stage("command-plugin");
+    let loader = fresh_loader();
+    let env = make_env(plugins_dir.clone());
+    loader.discover(&plugins_dir).await.unwrap();
+    let plugin = load_enabled(&loader, &env.factory, "command-plugin").await;
+    CommandPluginEnv {
+        _tmp: tmp,
+        plugins_dir,
+        env,
+        _loader: loader,
+        _plugin: plugin,
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_command_plugin_dispatch_reaches_guest() {
-    let (_tmp, plugins_dir) = stage("command-plugin");
-    let loader = fresh_loader();
-    let env = make_env(
-        plugins_dir.clone(),
-        Arc::new(MockPlayerRegistry),
-        Arc::new(MockConfigService),
-    );
-    loader.discover(&plugins_dir).await.unwrap();
-    let _plugin = load_enabled(&loader, &env.factory, "command-plugin").await;
+    let fx = enable_command_plugin().await;
 
-    let found = env
+    let found = fx
+        .env
         .command_manager
         .dispatch(None, "greet world peace", &MockPlayerRegistry)
         .await;
@@ -461,7 +230,7 @@ async fn test_command_plugin_dispatch_reaches_guest() {
         "the guest-registered 'greet' command should be found"
     );
 
-    let marker = plugins_dir.join("command-plugin").join("command.marker");
+    let marker = fx.plugins_dir.join("command-plugin").join("command.marker");
     let got =
         std::fs::read_to_string(&marker).expect("guest should record the command args on dispatch");
     assert_eq!(got, "world,peace", "command args reached the guest");
@@ -469,24 +238,16 @@ async fn test_command_plugin_dispatch_reaches_guest() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_command_plugin_tab_complete_reaches_guest() {
-    let (_tmp, plugins_dir) = stage("command-plugin");
-    let loader = fresh_loader();
-    let env = make_env(
-        plugins_dir.clone(),
-        Arc::new(MockPlayerRegistry),
-        Arc::new(MockConfigService),
-    );
-    loader.discover(&plugins_dir).await.unwrap();
-    let _plugin = load_enabled(&loader, &env.factory, "command-plugin").await;
+    let fx = enable_command_plugin().await;
 
-    let one = env.command_manager.tab_complete("greet w").await;
+    let one = fx.env.command_manager.tab_complete("greet w").await;
     assert_eq!(
         one,
         vec!["world".to_string()],
         "prefix 'w' completes to exactly 'world' through the guest completer"
     );
 
-    let all = env.command_manager.tab_complete("greet ").await;
+    let all = fx.env.command_manager.tab_complete("greet ").await;
     assert_eq!(
         all.len(),
         3,
@@ -496,39 +257,32 @@ async fn test_command_plugin_tab_complete_reaches_guest() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_command_plugin_completer_can_register_a_command() {
-    let (_tmp, plugins_dir) = stage("command-plugin");
-    let loader = fresh_loader();
-    let env = make_env(
-        plugins_dir.clone(),
-        Arc::new(MockPlayerRegistry),
-        Arc::new(MockConfigService),
-    );
-    loader.discover(&plugins_dir).await.unwrap();
-    let _plugin = load_enabled(&loader, &env.factory, "command-plugin").await;
+    let fx = enable_command_plugin().await;
 
     assert_eq!(
-        env.command_manager.tab_complete("nest ").await,
+        fx.env.command_manager.tab_complete("nest ").await,
         vec!["registered".to_string()],
         "a completer registering a command must return its candidates, not trap"
     );
     assert_eq!(
-        env.command_manager.tab_complete("nested ").await,
+        fx.env.command_manager.tab_complete("nested ").await,
         vec!["inner".to_string()],
         "the command registered from the completer carries its own completer"
     );
     assert!(
-        env.command_manager
+        fx.env
+            .command_manager
             .dispatch(None, "nested", &MockPlayerRegistry)
             .await,
         "the command registered from the completer is dispatchable"
     );
     assert_eq!(
-        std::fs::read_to_string(plugins_dir.join("command-plugin").join("nested.marker"))
+        std::fs::read_to_string(fx.plugins_dir.join("command-plugin").join("nested.marker"))
             .expect("nested command ran in the guest"),
         "ran"
     );
     assert_eq!(
-        env.command_manager.tab_complete("greet w").await,
+        fx.env.command_manager.tab_complete("greet w").await,
         vec!["world".to_string()],
         "the instance is still healthy afterwards"
     );
@@ -536,20 +290,13 @@ async fn test_command_plugin_completer_can_register_a_command() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_command_plugin_unregister_reaches_host() {
-    let (_tmp, plugins_dir) = stage("command-plugin");
-    let loader = fresh_loader();
-    let env = make_env(
-        plugins_dir.clone(),
-        Arc::new(MockPlayerRegistry),
-        Arc::new(MockConfigService),
-    );
-    loader.discover(&plugins_dir).await.unwrap();
-    let _plugin = load_enabled(&loader, &env.factory, "command-plugin").await;
-    let marker = plugins_dir.join("command-plugin").join("unnest.marker");
+    let fx = enable_command_plugin().await;
+    let marker = fx.plugins_dir.join("command-plugin").join("unnest.marker");
 
-    env.command_manager.tab_complete("nest ").await;
+    fx.env.command_manager.tab_complete("nest ").await;
     assert!(
-        env.command_manager
+        fx.env
+            .command_manager
             .dispatch(None, "unnest", &MockPlayerRegistry)
             .await
     );
@@ -559,14 +306,16 @@ async fn test_command_plugin_unregister_reaches_host() {
         "the guest owned `nested` and removed it"
     );
     assert!(
-        !env.command_manager
+        !fx.env
+            .command_manager
             .dispatch(None, "nested", &MockPlayerRegistry)
             .await,
         "the host no longer routes `nested`"
     );
 
     assert!(
-        env.command_manager
+        fx.env
+            .command_manager
             .dispatch(None, "unnest", &MockPlayerRegistry)
             .await
     );
@@ -576,7 +325,8 @@ async fn test_command_plugin_unregister_reaches_host() {
         "a second unregister finds nothing to remove"
     );
     assert!(
-        env.command_manager
+        fx.env
+            .command_manager
             .dispatch(None, "greet again", &MockPlayerRegistry)
             .await,
         "other commands are untouched"
@@ -588,13 +338,15 @@ async fn test_stats_count_command() {
     let (_tmp, plugins_dir) = stage("stats");
     let loader = fresh_loader();
     let sent = Arc::new(Mutex::new(Vec::new()));
-    let env = make_env(
+    let env = make_env_with(
         plugins_dir.clone(),
-        Arc::new(RecordingPlayerRegistry {
-            count: 7,
-            sent: Arc::clone(&sent),
-        }),
-        Arc::new(MockConfigService),
+        EnvOptions {
+            player_registry: Arc::new(RecordingPlayerRegistry {
+                count: 7,
+                sent: Arc::clone(&sent),
+            }),
+            ..EnvOptions::default()
+        },
     );
     loader.discover(&plugins_dir).await.unwrap();
     let _plugin = load_enabled(&loader, &env.factory, "stats").await;
@@ -616,7 +368,7 @@ async fn test_stats_count_command() {
 async fn test_capability_denied_fails_to_load() {
     let (_tmp, plugins_dir) = stage("capability-denied");
     let loader = fresh_loader();
-    let factory = make_factory(plugins_dir.clone());
+    let factory = make_factory(&plugins_dir);
     loader.discover(&plugins_dir).await.unwrap();
 
     let result = loader.load("capability-denied", &factory).await;
@@ -634,20 +386,15 @@ async fn enable_slow_handler(
 ) -> (TestEnv, Box<dyn Plugin>) {
     let env = make_env_with(
         plugins_dir.to_path_buf(),
-        Arc::new(MockPlayerRegistry),
-        Arc::new(MockConfigService),
-        Arc::new(PendingBanService),
-        EventBusConfig {
-            handler_timeout: SLOW_HANDLER_TIMEOUT,
-            ..EventBusConfig::default()
-        },
-        HashMap::from([(
-            "slow-handler".to_string(),
-            PluginPermissions {
-                permissions: vec!["ban".to_string()],
-                trusted: false,
+        EnvOptions {
+            ban_service: Arc::new(PendingBanService),
+            bus_config: EventBusConfig {
+                handler_timeout: SLOW_HANDLER_TIMEOUT,
+                ..EventBusConfig::default()
             },
-        )]),
+            ..EnvOptions::default()
+        }
+        .grant("slow-handler", "ban"),
     );
     loader.discover(plugins_dir).await.unwrap();
     let plugin = load_enabled(loader, &env.factory, "slow-handler").await;

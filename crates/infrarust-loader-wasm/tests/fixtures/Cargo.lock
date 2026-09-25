@@ -62,27 +62,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fixture-event-modifier"
-version = "0.0.0"
-dependencies = [
- "infrarust-plugin-sdk",
-]
-
-[[package]]
-name = "fixture-event-subscriber"
-version = "0.0.0"
-dependencies = [
- "infrarust-plugin-sdk",
-]
-
-[[package]]
-name = "fixture-hello"
-version = "0.0.0"
-dependencies = [
- "infrarust-plugin-sdk",
-]
-
-[[package]]
 name = "fixture-host-caller"
 version = "0.0.0"
 dependencies = [
@@ -105,14 +84,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "fixture-multi-handler"
+name = "fixture-scripted"
 version = "0.0.0"
 dependencies = [
  "infrarust-plugin-sdk",
 ]
 
 [[package]]
-name = "fixture-sdk-smoke"
+name = "fixture-scripted-peer"
 version = "0.0.0"
 dependencies = [
  "infrarust-plugin-sdk",

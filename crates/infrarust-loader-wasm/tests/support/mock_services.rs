@@ -1,5 +1,3 @@
-//! Minimal mock implementations of plugin API services, for the fixture tests.
-//! Shared across test binaries, so not every item is used by each.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -140,8 +138,6 @@ impl ConfigService for MockConfigService {
     }
 }
 
-/// A player registry that reports a fixed online count (the rest stay empty),
-/// for exercising `player-registry.online-count` from a guest.
 pub struct CountingPlayerRegistry {
     pub count: usize,
 }
@@ -172,9 +168,6 @@ impl PlayerRegistry for CountingPlayerRegistry {
     }
 }
 
-/// A player that records every message sent to it, so a test can assert what a
-/// plugin replied. `get_player_by_id`/`get_player` hand one out; the rest of the
-/// registry stays empty, and `online_count` reports a fixed value.
 pub struct RecordingPlayerRegistry {
     pub count: usize,
     pub sent: Arc<Mutex<Vec<String>>>,
@@ -286,8 +279,6 @@ impl Player for RecordingPlayer {
     }
 }
 
-/// A config service backed by a fixed key→value map, for exercising
-/// `config-service.get-value` from a guest.
 pub struct MapConfigService {
     pub values: HashMap<String, String>,
 }

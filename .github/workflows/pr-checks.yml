@@ -51,3 +51,5 @@ jobs:
           cargo test 2>&1 | tee test.log
           grep -q 'test test_stats_count_command \.\.\. ok' test.log \
             || { echo "::error::WASM fixture tests did not run"; exit 1; }
+          grep -q 'test pre_login_deny_wasm \.\.\. ok' test.log \
+            || { echo "::error::WASM conformance tests did not run"; exit 1; }

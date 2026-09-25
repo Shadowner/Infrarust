@@ -1,5 +1,5 @@
 [package]
-name = "fixture-hello"
+name = "fixture-scripted-peer"
 version = "0.0.0"
 edition = "2024"
 publish = false
