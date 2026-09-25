@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use infrarust_config::{EventsConfig, ProxyConfig, WasmConfig, WasmLimits};
+use infrarust_config::{EventsConfig, ProxyConfig, WasmConfig, WasmLimits, WasmRecoveryConfig};
 
 #[derive(Debug, Clone)]
 pub struct WasmLoaderConfig {
@@ -85,6 +85,7 @@ pub(crate) struct SandboxLimits {
     pub(crate) max_call_duration: Duration,
     pub(crate) queue_capacity: usize,
     pub(crate) event_budget: Duration,
+    pub(crate) recovery: WasmRecoveryConfig,
 }
 
 impl SandboxLimits {
@@ -100,6 +101,7 @@ impl SandboxLimits {
                 .queue_capacity
                 .clamp(1, tokio::sync::Semaphore::MAX_PERMITS),
             event_budget,
+            recovery: limits.recovery,
         }
     }
 }
@@ -131,6 +133,31 @@ mod tests {
         assert_eq!(sandbox.max_call_duration, Duration::from_secs(60));
         assert_eq!(sandbox.queue_capacity, 1024);
         assert_eq!(sandbox.event_budget, Duration::from_secs(10));
+        assert_eq!(sandbox.recovery, WasmRecoveryConfig::default());
+    }
+
+    #[test]
+    fn recovery_limits_follow_the_wasm_section_and_plugin_overrides() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [wasm.recovery]
+            max_restarts = 3
+            backoff_initial = "2s"
+
+            [plugins.flaky.wasm.recovery]
+            max_restarts = 1
+            "#,
+        )
+        .unwrap();
+        let loader = WasmLoaderConfig::from_proxy_config(&config);
+        let defaults = loader.default_sandbox().recovery;
+        assert_eq!(defaults.max_restarts, 3);
+        assert_eq!(defaults.backoff_initial, Duration::from_secs(2));
+        assert_eq!(defaults.window, Duration::from_secs(300));
+        let flaky = loader.sandbox_for("flaky").recovery;
+        assert_eq!(flaky.max_restarts, 1);
+        assert_eq!(flaky.backoff_initial, Duration::from_secs(2));
+        assert_eq!(loader.sandbox_for("other").recovery, defaults);
     }
 
     #[test]

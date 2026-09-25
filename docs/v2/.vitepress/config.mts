@@ -206,6 +206,7 @@ export default
               { text: 'Getting Started', link: '/plugins/wasm/getting-started' },
               { text: 'Architecture', link: '/plugins/wasm/architecture' },
               { text: 'Lifecycle', link: '/plugins/wasm/lifecycle' },
+              { text: 'Fault Model', link: '/plugins/wasm/fault-model' },
               { text: 'Events', link: '/plugins/wasm/events' },
               { text: 'Commands', link: '/plugins/wasm/commands' },
               { text: 'Codec Filters', link: '/plugins/wasm/codec-filters' },

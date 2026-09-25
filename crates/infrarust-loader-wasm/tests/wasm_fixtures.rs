@@ -26,7 +26,7 @@ use tracing::instrument::WithSubscriber;
 
 use support::mock_services::{
     CountingPlayerRegistry, Gate, GatedBanService, MapConfigService, MockPlayerRegistry,
-    PanickingBanService, RecordingPlayerRegistry,
+    RecordingPlayerRegistry,
 };
 use support::{
     EnvOptions, TestEnv, add_fixture, fresh_loader, load_enabled, loader_from_toml, make_env,
@@ -840,104 +840,4 @@ async fn test_unload_stops_the_plugin_task() {
             .is_ok()
     );
     assert!(read_log(&data).is_empty(), "no guest code ran after unload");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_call_past_max_call_duration_poisons_the_instance() {
-    let (_tmp, plugins_dir) = stage("slow-handler");
-    let data = plugins_dir.join("slow-handler");
-    let loader = loader_from_toml("[plugins.slow-handler.wasm]\nmax_call_duration = \"200ms\"\n");
-    let gate = Gate::new();
-    let errors = LogCapture::at(tracing::Level::ERROR);
-
-    async {
-        let (env, plugin) = enable_slow_handler(&loader, &plugins_dir, &gate).await;
-
-        tokio::time::timeout(PROMPTLY, env.event_bus.fire(post_login()))
-            .await
-            .expect("max_call_duration cuts off a guest call parked in a host call");
-        let event = env.event_bus.fire(pre_connect()).await;
-        assert_eq!(
-            outcome(&event),
-            "allowed",
-            "an instance whose call was cut off gives no outcome"
-        );
-        assert!(
-            env.command_manager
-                .dispatch(None, "ping", &MockPlayerRegistry)
-                .await
-        );
-        let disabled = tokio::time::timeout(PROMPTLY, plugin.on_disable())
-            .await
-            .expect("on_disable must not hang on a poisoned instance");
-        assert!(disabled.is_ok(), "{disabled:?}");
-        assert!(
-            read_log(&data).is_empty(),
-            "no guest code ran after the call was cut off"
-        );
-    }
-    .with_subscriber(errors.clone())
-    .await;
-
-    assert_eq!(
-        errors.matching("max_call_duration").len(),
-        1,
-        "{:?}",
-        errors.lines()
-    );
-    assert_eq!(
-        errors.matching("abandoned mid-execution").len(),
-        1,
-        "the unfinished call poisons the instance once: {:?}",
-        errors.lines()
-    );
-    assert!(
-        errors.matching("trapped").is_empty(),
-        "later calls are refused up front, not attempted: {:?}",
-        errors.lines()
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_host_panic_inside_a_guest_call_poisons_the_instance() {
-    let (_tmp, plugins_dir) = stage("slow-handler");
-    let data = plugins_dir.join("slow-handler");
-    let loader = fresh_loader();
-    let errors = LogCapture::at(tracing::Level::ERROR);
-
-    async {
-        let (env, plugin) = enable_slow_handler_with(
-            &loader,
-            &plugins_dir,
-            Arc::new(PanickingBanService),
-            PATIENT_HANDLER_TIMEOUT,
-        )
-        .await;
-
-        tokio::time::timeout(PROMPTLY, env.event_bus.fire(post_login()))
-            .await
-            .expect("a panicking host call must not hang the caller");
-        let event = env.event_bus.fire(pre_connect()).await;
-        assert_eq!(outcome(&event), "allowed");
-        let disabled = tokio::time::timeout(PROMPTLY, plugin.on_disable())
-            .await
-            .expect("on_disable must not hang");
-        assert!(disabled.is_ok(), "{disabled:?}");
-        assert!(read_log(&data).is_empty());
-    }
-    .with_subscriber(errors.clone())
-    .await;
-
-    assert_eq!(
-        errors.matching("panicked in a host function").len(),
-        1,
-        "{:?}",
-        errors.lines()
-    );
-    assert_eq!(
-        errors.matching("abandoned mid-execution").len(),
-        1,
-        "{:?}",
-        errors.lines()
-    );
 }

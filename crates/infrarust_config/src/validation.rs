@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::error::ConfigError;
 use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
-use crate::types::{BalanceStrategy, WasmLimits};
+use crate::types::{BalanceStrategy, WasmLimits, WasmRecoveryConfig};
 
 /// Validates a single server configuration.
 ///
@@ -356,6 +356,8 @@ const WASM_MAX_EPOCH_TICK: Duration = Duration::from_secs(1);
 const WASM_MAX_DURATION: Duration = Duration::from_secs(3600);
 const WASM_MAX_MEMORY_MB: u32 = 4096;
 const WASM_MAX_QUEUE_CAPACITY: usize = 1 << 20;
+const WASM_MAX_RESTARTS: u32 = 1000;
+const WASM_MAX_RECOVERY_DURATION: Duration = Duration::from_secs(86_400);
 
 pub fn validate_wasm_config(config: &ProxyConfig) -> Result<(), ConfigError> {
     let tick = config.wasm.epoch_tick;
@@ -450,6 +452,36 @@ fn validate_wasm_limits(
         return Err(ConfigError::Validation(format!(
             "{scope}.queue_capacity must be between 1 and {WASM_MAX_QUEUE_CAPACITY} (got {})",
             limits.queue_capacity
+        )));
+    }
+    validate_wasm_recovery(scope, &limits.recovery)
+}
+
+fn validate_wasm_recovery(scope: &str, recovery: &WasmRecoveryConfig) -> Result<(), ConfigError> {
+    if recovery.max_restarts > WASM_MAX_RESTARTS {
+        return Err(ConfigError::Validation(format!(
+            "{scope}.recovery.max_restarts must be at most {WASM_MAX_RESTARTS} (got {})",
+            recovery.max_restarts
+        )));
+    }
+    for (key, value) in [
+        ("window", recovery.window),
+        ("backoff_initial", recovery.backoff_initial),
+        ("backoff_max", recovery.backoff_max),
+    ] {
+        if value.is_zero() || value > WASM_MAX_RECOVERY_DURATION {
+            return Err(ConfigError::Validation(format!(
+                "{scope}.recovery.{key} must be greater than zero and at most {} (got {})",
+                humantime::format_duration(WASM_MAX_RECOVERY_DURATION),
+                humantime::format_duration(value)
+            )));
+        }
+    }
+    if recovery.backoff_initial > recovery.backoff_max {
+        return Err(ConfigError::Validation(format!(
+            "{scope}.recovery.backoff_initial ({}) must not be longer than {scope}.recovery.backoff_max ({})",
+            humantime::format_duration(recovery.backoff_initial),
+            humantime::format_duration(recovery.backoff_max)
         )));
     }
     Ok(())

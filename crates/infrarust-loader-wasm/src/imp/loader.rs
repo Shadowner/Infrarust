@@ -6,20 +6,20 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::loader::{LoaderError, PluginContextFactory, PluginLoader};
 use infrarust_api::permissions::Capability;
 use infrarust_api::plugin::{Plugin, PluginMetadata};
+use wasmtime::Engine;
 use wasmtime::component::Component;
-use wasmtime::{Engine, Store};
 
 use crate::actor::PluginActor;
-use crate::bindings::Plugin as PluginBindings;
 use crate::cache::AotCache;
 use crate::config::WasmLoaderConfig;
 use crate::consts::CACHE_SUBDIR;
 use crate::epoch::EpochTicker;
-use crate::error::WasmLoaderError;
+use crate::instance::InstanceFactory;
 use crate::linker::build_linker;
 use crate::metadata::extract_metadata;
 use crate::plugin::WasmPlugin;
-use crate::store_state::{PluginStoreState, build_load_state, install_epoch_control};
+use crate::registrations::Registrations;
+use crate::store_state::PluginSetup;
 
 pub struct WasmPluginLoader {
     engine: Engine,
@@ -145,26 +145,21 @@ impl PluginLoader for WasmPluginLoader {
                 None
             };
 
-            let state = build_load_state(
-                plugin_id.to_owned(),
+            let setup = PluginSetup {
+                plugin_id: plugin_id.to_owned(),
                 ctx,
                 capabilities,
-                &data_dir,
+                data_dir,
                 codec,
-                &sandbox,
-            )
-            .map_err(|e| e.into_loader_error(plugin_id))?;
-            let mut store = Store::new(&self.engine, state);
-            install_epoch_control(&mut store, sandbox.max_epoch_yields);
-            store.limiter(|s: &mut PluginStoreState| {
-                s.limits_mut() as &mut dyn wasmtime::ResourceLimiter
-            });
-
-            let bindings = PluginBindings::instantiate_async(&mut store, &entry.component, &linker)
+                sandbox,
+                registrations: Arc::new(Registrations::default()),
+            };
+            let factory =
+                InstanceFactory::new(self.engine.clone(), &entry.component, &linker, setup)
+                    .map_err(|e| e.into_loader_error(plugin_id))?;
+            let actor = PluginActor::start(factory)
                 .await
-                .map_err(|e| map_instantiate_error(plugin_id, &e).into_loader_error(plugin_id))?;
-
-            let actor = PluginActor::spawn(store, bindings, &sandbox);
+                .map_err(|e| e.into_loader_error(plugin_id))?;
             self.actors
                 .lock()
                 .expect("actors lock poisoned")
@@ -187,21 +182,6 @@ impl PluginLoader for WasmPluginLoader {
             tracing::debug!(plugin = %plugin_id, "wasm plugin unloaded");
             Ok(())
         })
-    }
-}
-
-fn map_instantiate_error(plugin_id: &str, e: &wasmtime::Error) -> WasmLoaderError {
-    let reason = e.to_string();
-    if reason.contains("infrarust:plugin/") {
-        WasmLoaderError::CapabilityDenied {
-            plugin_id: plugin_id.to_owned(),
-            reason,
-        }
-    } else {
-        WasmLoaderError::Instantiate {
-            plugin_id: plugin_id.to_owned(),
-            reason,
-        }
     }
 }
 

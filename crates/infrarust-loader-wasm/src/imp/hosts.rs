@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use infrarust_api::error::ServiceError;
@@ -17,6 +18,7 @@ use crate::bindings::infrarust::plugin::{
 };
 use crate::consts::PLAYER_SWITCH_TIMEOUT;
 use crate::deadline::HostCallLimit;
+use crate::registrations::Bound;
 use crate::store_state::PluginStoreState;
 use crate::{convert, dispatch, proxies};
 
@@ -495,9 +497,15 @@ impl command_manager::Host for PluginStoreState {
         description: String,
         callback_id: u64,
     ) -> wasmtime::Result<()> {
-        let instance = self.instance_ref(CallKind::Callback);
+        let instance = self.instance_ref(CallKind::Callback).any_generation();
         let ctx = self.require_ctx()?;
-        let handler = Box::new(proxies::WasmCommandHandler::new(callback_id, instance));
+        let Bound::Fresh(binding) =
+            self.registrations()
+                .bind_command(&name, self.generation(), callback_id)
+        else {
+            return Ok(());
+        };
+        let handler = Box::new(proxies::WasmCommandHandler::new(binding, instance));
         let alias_refs: Vec<&str> = aliases.iter().map(String::as_str).collect();
         ctx.command_manager()
             .register(&name, &alias_refs, &description, handler);
@@ -505,6 +513,7 @@ impl command_manager::Host for PluginStoreState {
     }
 
     async fn unregister(&mut self, name: String) -> wasmtime::Result<()> {
+        self.registrations().unbind_command(&name);
         if let Some(ctx) = self.ctx() {
             ctx.command_manager().unregister(&name);
         }
@@ -572,6 +581,7 @@ impl scheduler::Host for PluginStoreState {
                 proxies::dispatch_scheduled_task(instance, callback_id);
             }),
         );
+        self.record_task(handle.as_u64());
         Ok(handle.as_u64())
     }
 
@@ -584,10 +594,12 @@ impl scheduler::Host for PluginStoreState {
                 proxies::dispatch_scheduled_task(instance.clone(), callback_id);
             }),
         );
+        self.record_task(handle.as_u64());
         Ok(handle.as_u64())
     }
 
     async fn cancel(&mut self, handle: u64) -> wasmtime::Result<()> {
+        self.forget_task(handle);
         if let Some(ctx) = self.ctx() {
             ctx.scheduler().cancel(TaskHandle::new(handle));
         }
@@ -601,10 +613,19 @@ impl limbo::Host for PluginStoreState {
                 "register_limbo_handler denied: missing Limbo capability");
             return Ok(());
         }
-        let instance = self.instance_ref(CallKind::Callback);
+        let instance = self.instance_ref(CallKind::Callback).any_generation();
         let ctx = self.require_ctx()?;
+        let Bound::Fresh(binding) =
+            self.registrations()
+                .bind_limbo(&name, self.generation(), handler)
+        else {
+            return Ok(());
+        };
         ctx.register_limbo_handler(Box::new(crate::limbo::WasmLimboHandler::new(
-            handler, name, instance,
+            binding,
+            name,
+            instance,
+            Arc::clone(self.registrations()),
         )));
         Ok(())
     }
@@ -892,7 +913,7 @@ mod tests {
         let handle = state
             .push_player(Arc::new(StalledPlayer::new()))
             .expect("the resource table accepts a player");
-        state.begin_call("handle-event", Some(Deadline::after(Duration::ZERO)));
+        state.begin_call(Some(Deadline::after(Duration::ZERO)));
 
         let result = state
             .switch_server(handle, "lobby".to_string())

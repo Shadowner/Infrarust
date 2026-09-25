@@ -1,5 +1,7 @@
 //! Marker + proxy bridge for guest-registered command and scheduler callbacks.
 
+use std::sync::Arc;
+
 use infrarust_api::command::{CommandContext, CommandHandler};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::services::player_registry::PlayerRegistry;
@@ -7,18 +9,16 @@ use infrarust_api::types::PlayerId;
 
 use crate::actor::InstanceRef;
 use crate::plugin::call_guest;
+use crate::registrations::Binding;
 
 pub(crate) struct WasmCommandHandler {
-    callback_id: u64,
+    binding: Arc<Binding>,
     instance: InstanceRef,
 }
 
 impl WasmCommandHandler {
-    pub(crate) fn new(callback_id: u64, instance: InstanceRef) -> Self {
-        Self {
-            callback_id,
-            instance,
-        }
+    pub(crate) fn new(binding: Arc<Binding>, instance: InstanceRef) -> Self {
+        Self { binding, instance }
     }
 }
 
@@ -29,11 +29,14 @@ impl CommandHandler for WasmCommandHandler {
         _player_registry: &'a dyn PlayerRegistry,
     ) -> BoxFuture<'a, ()> {
         let instance = self.instance.clone();
-        let callback_id = self.callback_id;
+        let binding = Arc::clone(&self.binding);
         Box::pin(async move {
             let player = ctx.player_id.map(PlayerId::as_u64);
             let _ = call_guest(instance, "handle-command", move |store, bindings| {
                 Box::pin(async move {
+                    let Some(callback_id) = binding.callback_for(store.data().generation()) else {
+                        return Ok(());
+                    };
                     bindings
                         .infrarust_plugin_guest()
                         .call_handle_command(&mut *store, callback_id, &ctx.args, player)
@@ -50,10 +53,13 @@ impl CommandHandler for WasmCommandHandler {
         cursor: u32,
     ) -> BoxFuture<'a, Vec<String>> {
         let instance = self.instance.clone();
-        let callback_id = self.callback_id;
+        let binding = Arc::clone(&self.binding);
         Box::pin(async move {
             call_guest(instance, "tab-complete", move |store, bindings| {
                 Box::pin(async move {
+                    let Some(callback_id) = binding.callback_for(store.data().generation()) else {
+                        return Ok(Vec::new());
+                    };
                     bindings
                         .infrarust_plugin_guest()
                         .call_tab_complete(&mut *store, callback_id, &partial_args, cursor)

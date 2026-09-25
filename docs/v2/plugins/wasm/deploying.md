@@ -137,9 +137,9 @@ If a plugin imports a host interface it was not granted, instantiation fails. Th
 
 One exception: the `limbo` interface is always linked regardless of the `limbo` capability. Importing it never blocks load. If the `limbo` capability is absent, calls to `register-limbo-handler` are ignored at runtime (the host logs a warning) rather than causing a load failure.
 
-### A trap poisons the plugin
+### A trap during `on_enable` fails the plugin
 
-If the guest traps during `on_enable` (a panic, an out-of-bounds access, or a CPU-time overrun), the host marks the instance poisoned and reports the failure. A poisoned plugin is effectively disabled: its `on_disable` is skipped rather than re-entering trapped guest code. The same happens later on if any call traps or runs past `max_call_duration`.
+If the guest traps during its first `on_enable` (a panic, an out-of-bounds access, or a CPU-time overrun), the host reports the failure and the plugin is not enabled. Once a plugin is enabled, a trap or a call past `max_call_duration` does not disable it: the host starts a fresh instance and runs `on_enable` again, and quarantines a plugin that keeps failing. See [Fault model](./fault-model) and the `[wasm.recovery]` settings.
 
 ## The AOT cache
 

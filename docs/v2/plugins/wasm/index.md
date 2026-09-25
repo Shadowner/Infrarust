@@ -138,12 +138,15 @@ flowchart LR
 
 The plugin runs single-threaded with no async runtime. Keep mutable state in `Cell` or `RefCell` fields rather than across threads. Read the [Architecture](./architecture) page for how the host instances, the sync codec path, and the async limbo instance fit together.
 
+If the plugin traps or runs past its limits, the host replaces its instance with a fresh one and runs `on_enable` again, so anything kept only in memory is lost. Persist what matters to the data directory. See the [Fault Model](./fault-model).
+
 ## Section map
 
 | Page | Topic |
 |------|-------|
 | [Getting Started](./getting-started) | Build and run your first WASM plugin end to end. |
 | [Architecture](./architecture) | Host instances, the contract, and the execution model. |
+| [Fault Model](./fault-model) | What happens when a plugin traps: fresh instances, restart budget, quarantine. |
 | [Capabilities](./capabilities) | Baseline and opt-in capabilities, and the config that grants them. |
 | [Events](./events) | The event kinds the SDK exposes and how to handle them. |
 | [Commands](./commands) | Registering and handling proxy commands. |

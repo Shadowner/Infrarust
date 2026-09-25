@@ -1,11 +1,9 @@
-use std::any::Any;
 use std::fmt;
-use std::panic::AssertUnwindSafe;
+use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use futures_util::FutureExt;
 use infrarust_api::event::BoxFuture;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
@@ -17,15 +15,21 @@ use crate::bindings::Plugin as PluginBindings;
 use crate::config::SandboxLimits;
 use crate::consts::QUEUE_FULL_WARN_INTERVAL;
 use crate::deadline::Deadline;
+use crate::error::WasmLoaderError;
+use crate::instance::InstanceFactory;
 use crate::store_state::PluginStoreState;
+use crate::supervisor::Supervisor;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CallFailure {
     Stopped,
     QueueFull,
-    Poisoned,
+    Failed,
+    Quarantined,
+    Replaced,
     Expired,
     Trapped(String),
+    Abandoned(String),
     Dropped,
 }
 
@@ -35,34 +39,49 @@ pub(crate) enum CallKind {
     Callback,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JobKind {
+    Call,
+    Enable,
+    Disable,
+}
+
 impl fmt::Display for CallFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Stopped => f.write_str("the plugin instance is stopped"),
             Self::QueueFull => f.write_str("the plugin call queue is full"),
-            Self::Poisoned => f.write_str("the plugin instance is poisoned"),
+            Self::Failed => f.write_str("the plugin failed before it was enabled"),
+            Self::Quarantined => f.write_str("the plugin is quarantined after repeated faults"),
+            Self::Replaced => {
+                f.write_str("the plugin instance the call was meant for was replaced")
+            }
             Self::Expired => f.write_str("the call's deadline passed while it was queued"),
             Self::Trapped(reason) => write!(f, "the guest trapped: {reason}"),
+            Self::Abandoned(reason) => write!(f, "the call was abandoned: {reason}"),
             Self::Dropped => f.write_str("the call was dropped before it completed"),
         }
     }
 }
 
-trait GuestCall: Send {
+pub(crate) trait GuestCall: Send {
     fn caller_gone(&self) -> bool;
 
-    fn refuse(self: Box<Self>, failure: CallFailure);
-
     fn run<'a>(
-        self: Box<Self>,
+        &'a mut self,
         store: &'a mut Store<PluginStoreState>,
         bindings: &'a PluginBindings,
     ) -> BoxFuture<'a, wasmtime::Result<()>>;
+
+    fn answer(self: Box<Self>);
+
+    fn refuse(self: Box<Self>, failure: CallFailure);
 }
 
 struct TypedCall<T, F> {
     reply: oneshot::Sender<Result<T, CallFailure>>,
-    call: F,
+    call: Option<F>,
+    value: Option<T>,
 }
 
 impl<T, F> GuestCall for TypedCall<T, F>
@@ -79,44 +98,45 @@ where
         self.reply.is_closed()
     }
 
-    fn refuse(self: Box<Self>, failure: CallFailure) {
-        let _ = self.reply.send(Err(failure));
-    }
-
     fn run<'a>(
-        self: Box<Self>,
+        &'a mut self,
         store: &'a mut Store<PluginStoreState>,
         bindings: &'a PluginBindings,
     ) -> BoxFuture<'a, wasmtime::Result<()>> {
-        let TypedCall { reply, call } = *self;
-        let pending = call(store, bindings);
+        let call = self.call.take();
+        let value = &mut self.value;
         Box::pin(async move {
-            match pending.await {
-                Ok(value) => {
-                    let _ = reply.send(Ok(value));
-                    Ok(())
-                }
-                Err(trap) => {
-                    let _ = reply.send(Err(CallFailure::Trapped(trap.to_string())));
-                    Err(trap)
-                }
-            }
+            let call =
+                call.ok_or_else(|| wasmtime::Error::msg("a guest call can only run once"))?;
+            *value = Some(call(store, bindings).await?);
+            Ok(())
         })
+    }
+
+    fn answer(self: Box<Self>) {
+        let TypedCall { reply, value, .. } = *self;
+        let _ = reply.send(value.ok_or(CallFailure::Dropped));
+    }
+
+    fn refuse(self: Box<Self>, failure: CallFailure) {
+        let _ = self.reply.send(Err(failure));
     }
 }
 
-struct Job {
-    op: &'static str,
-    last: bool,
-    deadline: Option<Deadline>,
-    call: Box<dyn GuestCall>,
+pub(crate) struct Job {
+    pub(crate) op: &'static str,
+    pub(crate) kind: JobKind,
+    pub(crate) deadline: Option<Deadline>,
+    pub(crate) generation: Option<u64>,
+    pub(crate) call: Box<dyn GuestCall>,
 }
 
 impl Job {
     fn new<T, F>(
         op: &'static str,
-        last: bool,
+        kind: JobKind,
         deadline: Option<Deadline>,
+        generation: Option<u64>,
         call: F,
     ) -> (Self, oneshot::Receiver<Result<T, CallFailure>>)
     where
@@ -131,9 +151,14 @@ impl Job {
         let (reply, answer) = oneshot::channel();
         let job = Self {
             op,
-            last,
+            kind,
             deadline,
-            call: Box::new(TypedCall { reply, call }),
+            generation,
+            call: Box::new(TypedCall {
+                reply,
+                call: Some(call),
+                value: None,
+            }),
         };
         (job, answer)
     }
@@ -202,6 +227,7 @@ pub(crate) struct InstanceRef {
     jobs: mpsc::WeakSender<Job>,
     info: Arc<ActorInfo>,
     kind: CallKind,
+    generation: Option<u64>,
 }
 
 impl InstanceRef {
@@ -211,12 +237,27 @@ impl InstanceRef {
             jobs: jobs.downgrade(),
             info: Arc::new(ActorInfo::new(String::new(), &SandboxLimits::default())),
             kind: CallKind::Callback,
+            generation: None,
         }
     }
 
     pub(crate) fn for_calls(&self, kind: CallKind) -> Self {
         Self {
             kind,
+            ..self.clone()
+        }
+    }
+
+    pub(crate) fn stamped(&self, generation: u64) -> Self {
+        Self {
+            generation: Some(generation),
+            ..self.clone()
+        }
+    }
+
+    pub(crate) fn any_generation(&self) -> Self {
+        Self {
+            generation: None,
             ..self.clone()
         }
     }
@@ -235,7 +276,7 @@ impl InstanceRef {
             return Err(CallFailure::Stopped);
         };
         let deadline = Deadline::after(self.info.budget(self.kind));
-        let (job, answer) = Job::new(op, false, Some(deadline), call);
+        let (job, answer) = Job::new(op, JobKind::Call, Some(deadline), self.generation, call);
         match jobs.try_send(job) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
@@ -251,52 +292,42 @@ impl InstanceRef {
 
 pub(crate) struct PluginActor {
     jobs: Mutex<Option<mpsc::Sender<Job>>>,
-    instance: InstanceRef,
+    info: Arc<ActorInfo>,
     stopping: Arc<AtomicBool>,
     task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl PluginActor {
-    pub(crate) fn spawn(
-        mut store: Store<PluginStoreState>,
-        bindings: PluginBindings,
-        sandbox: &SandboxLimits,
-    ) -> Arc<Self> {
+    pub(crate) async fn start(factory: InstanceFactory) -> Result<Arc<Self>, WasmLoaderError> {
+        let sandbox = *factory.sandbox();
         let (jobs, queue) = mpsc::channel(sandbox.queue_capacity);
-        let info = Arc::new(ActorInfo::new(store.data().plugin_id.clone(), sandbox));
+        let info = Arc::new(ActorInfo::new(factory.plugin_id().to_owned(), &sandbox));
         let instance = InstanceRef {
             jobs: jobs.downgrade(),
-            info,
+            info: Arc::clone(&info),
             kind: CallKind::Callback,
+            generation: None,
         };
-        store.data_mut().set_instance_ref(instance.clone());
+        let supervisor = Supervisor::start(factory, instance).await?;
         let stopping = Arc::new(AtomicBool::new(false));
-        let task = tokio::spawn(
-            run(
-                store,
-                bindings,
-                queue,
-                Arc::clone(&stopping),
-                sandbox.max_call_duration,
-            )
-            .with_current_subscriber(),
-        );
-        Arc::new(Self {
+        let task =
+            tokio::spawn(run(supervisor, queue, Arc::clone(&stopping)).with_current_subscriber());
+        Ok(Arc::new(Self {
             jobs: Mutex::new(Some(jobs)),
-            instance,
+            info,
             stopping,
             task: Mutex::new(Some(task)),
-        })
+        }))
     }
 
     pub(crate) fn plugin_id(&self) -> &str {
-        &self.instance.info.plugin_id
+        &self.info.plugin_id
     }
 
     pub(crate) async fn call_lifecycle<T, F>(
         &self,
         op: &'static str,
-        last: bool,
+        kind: JobKind,
         call: F,
     ) -> Result<T, CallFailure>
     where
@@ -316,7 +347,7 @@ impl PluginActor {
         let Some(jobs) = jobs else {
             return Err(CallFailure::Stopped);
         };
-        let (job, answer) = Job::new(op, last, None, call);
+        let (job, answer) = Job::new(op, kind, None, None, call);
         if jobs.send(job).await.is_err() {
             return Err(CallFailure::Stopped);
         }
@@ -357,80 +388,32 @@ impl Drop for PluginActor {
 }
 
 async fn run(
-    mut store: Store<PluginStoreState>,
-    bindings: PluginBindings,
+    mut supervisor: Supervisor,
     mut queue: mpsc::Receiver<Job>,
     stopping: Arc<AtomicBool>,
-    max_call_duration: Duration,
 ) {
-    while let Some(job) = queue.recv().await {
+    loop {
+        let job = match supervisor.retry_at() {
+            Some(at) => tokio::select! {
+                biased;
+                job = queue.recv() => job,
+                () = tokio::time::sleep_until(at) => {
+                    supervisor.retry().await;
+                    continue;
+                }
+            },
+            None => queue.recv().await,
+        };
+        let Some(job) = job else {
+            break;
+        };
         if stopping.load(Ordering::Acquire) {
             job.call.refuse(CallFailure::Stopped);
             break;
         }
-        let last = job.last;
-        execute(&mut store, &bindings, job, max_call_duration).await;
-        if last {
+        if let ControlFlow::Break(()) = supervisor.handle(job).await {
             break;
         }
     }
-    tracing::debug!(plugin = %store.data().plugin_id, "wasm plugin task stopped");
-}
-
-async fn execute(
-    store: &mut Store<PluginStoreState>,
-    bindings: &PluginBindings,
-    job: Job,
-    max_call_duration: Duration,
-) {
-    let Job {
-        op, deadline, call, ..
-    } = job;
-    if call.caller_gone() {
-        tracing::debug!(plugin = %store.data().plugin_id, op,
-            "skipping a queued wasm guest call: its caller stopped waiting");
-        return;
-    }
-    if store.data_mut().is_poisoned() {
-        call.refuse(CallFailure::Poisoned);
-        return;
-    }
-    if deadline.is_some_and(|deadline| deadline.has_passed()) {
-        tracing::warn!(plugin = %store.data().plugin_id, op,
-            "skipping a queued wasm guest call: its deadline passed while it waited");
-        call.refuse(CallFailure::Expired);
-        return;
-    }
-    store.data_mut().reset_epoch_budget();
-    store.data_mut().begin_call(op, deadline);
-    let running = AssertUnwindSafe(call.run(store, bindings)).catch_unwind();
-    let outcome = tokio::time::timeout(max_call_duration, running).await;
-    let state = store.data_mut();
-    match outcome {
-        Ok(Ok(Ok(()))) => state.end_call(),
-        Ok(Ok(Err(trap))) => {
-            state.end_call();
-            tracing::error!(plugin = %state.plugin_id, op, error = %trap,
-                "wasm guest trapped; poisoning instance");
-            state.set_poisoned();
-        }
-        Ok(Err(payload)) => {
-            tracing::error!(plugin = %state.plugin_id, op, panic = %panic_message(payload.as_ref()),
-                "wasm guest call panicked in a host function; abandoning it");
-        }
-        Err(_) => {
-            tracing::error!(plugin = %state.plugin_id, op, limit = ?max_call_duration,
-                "wasm guest call exceeded max_call_duration; abandoning it");
-        }
-    }
-}
-
-fn panic_message(payload: &(dyn Any + Send)) -> &str {
-    if let Some(message) = payload.downcast_ref::<&str>() {
-        message
-    } else if let Some(message) = payload.downcast_ref::<String>() {
-        message
-    } else {
-        "non-string panic payload"
-    }
+    supervisor.retire();
 }

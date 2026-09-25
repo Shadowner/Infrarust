@@ -264,15 +264,17 @@ A handle stored across a hold outlives the session if you never drop it. Clean u
 
 ## Fail-closed behavior
 
-The host treats a guest trap as a denial, never a silent pass. A trap also poisons the instance, so subsequent dispatches to that instance short-circuit instead of running stale guest code.
+The host treats a guest trap as a denial, never a silent pass. A trap also discards the instance: the host never runs guest code in it again and starts a fresh instance instead (see [Fault model](./fault-model)).
 
 | Dispatch | On trap |
 |----------|---------|
-| `on_player_enter` | Session is denied with "Limbo handler unavailable"; instance poisoned |
-| `on_command` | The command is dropped; instance poisoned |
-| `on_chat` | The chat message is dropped; instance poisoned |
-| `on_disconnect` | Cleanup is skipped; instance poisoned |
-| `on_session_end` | Cleanup is skipped; instance poisoned |
+| `on_player_enter` | Session is denied with "Limbo handler unavailable" |
+| `on_command` | The command is dropped |
+| `on_chat` | The chat message is dropped |
+| `on_disconnect` | Cleanup is skipped |
+| `on_session_end` | Cleanup is skipped |
+
+Every player the discarded instance was still holding (its handler returned `Hold` or `HoldWithTimeout` and has not completed yet) is released at once with the same "Limbo handler unavailable" denial, so no player waits on a handler that no longer exists. Handlers are known by name: when the fresh instance registers the same handler names in `on_enable`, the proxy's existing handlers route to it. A name it does not register again denies the players who reach it. While the plugin is quarantined, its handlers deny every player that enters.
 
 A handler that panics in `on_player_enter` denies the player rather than leaving them stuck in limbo:
 
@@ -294,5 +296,6 @@ The host also denies the session if it cannot upgrade the instance reference or 
 - [Capabilities](./capabilities): the full capability table and the baseline set
 - [API Reference](./api-reference): every exported type and method
 - [Examples](./examples): complete plugin sources, including limbo gates
-- [Architecture](./architecture): how the host lends sessions and poisons instances
+- [Architecture](./architecture): how the host lends sessions to the guest
+- [Fault model](./fault-model): what happens to held players when an instance is replaced
 - [Native plugin guide](../dev/getting-started): the async native API, which differs from this synchronous WASM API

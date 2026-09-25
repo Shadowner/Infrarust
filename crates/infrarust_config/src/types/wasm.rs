@@ -32,6 +32,9 @@ pub struct WasmConfig {
 
     #[serde(default = "defaults::wasm_queue_capacity")]
     pub queue_capacity: usize,
+
+    #[serde(default)]
+    pub recovery: WasmRecoveryConfig,
 }
 
 impl Default for WasmConfig {
@@ -44,6 +47,7 @@ impl Default for WasmConfig {
             host_call_timeout: defaults::wasm_host_call_timeout(),
             max_call_duration: defaults::wasm_max_call_duration(),
             queue_capacity: defaults::wasm_queue_capacity(),
+            recovery: WasmRecoveryConfig::default(),
         }
     }
 }
@@ -58,6 +62,7 @@ impl WasmConfig {
             host_call_timeout: self.host_call_timeout,
             max_call_duration: self.max_call_duration,
             queue_capacity: self.queue_capacity,
+            recovery: self.recovery,
         }
     }
 
@@ -92,6 +97,9 @@ pub struct PluginWasmConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_capacity: Option<usize>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<PluginWasmRecoveryConfig>,
 }
 
 impl PluginWasmConfig {
@@ -104,6 +112,71 @@ impl PluginWasmConfig {
             host_call_timeout: self.host_call_timeout.unwrap_or(base.host_call_timeout),
             max_call_duration: self.max_call_duration.unwrap_or(base.max_call_duration),
             queue_capacity: self.queue_capacity.unwrap_or(base.queue_capacity),
+            recovery: self
+                .recovery
+                .as_ref()
+                .map_or(base.recovery, |overrides| overrides.apply(base.recovery)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WasmRecoveryConfig {
+    #[serde(default = "defaults::wasm_recovery_max_restarts")]
+    pub max_restarts: u32,
+
+    #[serde(default = "defaults::wasm_recovery_window")]
+    #[serde(with = "humantime_serde")]
+    pub window: Duration,
+
+    #[serde(default = "defaults::wasm_recovery_backoff_initial")]
+    #[serde(with = "humantime_serde")]
+    pub backoff_initial: Duration,
+
+    #[serde(default = "defaults::wasm_recovery_backoff_max")]
+    #[serde(with = "humantime_serde")]
+    pub backoff_max: Duration,
+}
+
+impl Default for WasmRecoveryConfig {
+    fn default() -> Self {
+        Self {
+            max_restarts: defaults::wasm_recovery_max_restarts(),
+            window: defaults::wasm_recovery_window(),
+            backoff_initial: defaults::wasm_recovery_backoff_initial(),
+            backoff_max: defaults::wasm_recovery_backoff_max(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginWasmRecoveryConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_restarts: Option<u32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "humantime_serde::option")]
+    pub window: Option<Duration>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "humantime_serde::option")]
+    pub backoff_initial: Option<Duration>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "humantime_serde::option")]
+    pub backoff_max: Option<Duration>,
+}
+
+impl PluginWasmRecoveryConfig {
+    #[must_use]
+    pub fn apply(&self, base: WasmRecoveryConfig) -> WasmRecoveryConfig {
+        WasmRecoveryConfig {
+            max_restarts: self.max_restarts.unwrap_or(base.max_restarts),
+            window: self.window.unwrap_or(base.window),
+            backoff_initial: self.backoff_initial.unwrap_or(base.backoff_initial),
+            backoff_max: self.backoff_max.unwrap_or(base.backoff_max),
         }
     }
 }
@@ -116,6 +189,7 @@ pub struct WasmLimits {
     pub host_call_timeout: Duration,
     pub max_call_duration: Duration,
     pub queue_capacity: usize,
+    pub recovery: WasmRecoveryConfig,
 }
 
 impl Default for WasmLimits {
@@ -150,6 +224,7 @@ mod tests {
                 host_call_timeout: Duration::from_secs(30),
                 max_call_duration: Duration::from_secs(60),
                 queue_capacity: 1024,
+                recovery: WasmRecoveryConfig::default(),
             }
         );
     }
@@ -179,6 +254,7 @@ mod tests {
                 host_call_timeout: Duration::from_secs(10),
                 max_call_duration: Duration::from_secs(45),
                 queue_capacity: 64,
+                recovery: WasmRecoveryConfig::default(),
             }
         );
     }
@@ -204,6 +280,60 @@ mod tests {
         assert_eq!(limits.queue_capacity, 64);
         assert_eq!(limits.host_call_timeout, Duration::from_secs(30));
         assert_eq!(config.wasm.limits_for(None), config.wasm.limits());
+    }
+
+    #[test]
+    fn an_absent_recovery_table_uses_the_documented_defaults() {
+        let config: ProxyConfig = toml::from_str("[wasm]\nqueue_capacity = 8\n").unwrap();
+        let recovery = config.wasm.limits().recovery;
+        assert_eq!(recovery.max_restarts, 5);
+        assert_eq!(recovery.window, Duration::from_secs(300));
+        assert_eq!(recovery.backoff_initial, Duration::from_secs(1));
+        assert_eq!(recovery.backoff_max, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn the_recovery_table_parses_and_a_plugin_overrides_only_its_keys() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [wasm.recovery]
+            max_restarts = 3
+            window = "1m"
+            backoff_initial = "2s"
+            backoff_max = "10m"
+
+            [plugins.flaky.wasm.recovery]
+            max_restarts = 1
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.wasm.limits().recovery,
+            WasmRecoveryConfig {
+                max_restarts: 3,
+                window: Duration::from_secs(60),
+                backoff_initial: Duration::from_secs(2),
+                backoff_max: Duration::from_secs(600),
+            }
+        );
+        let flaky = config
+            .wasm
+            .limits_for(config.plugins["flaky"].wasm.as_ref())
+            .recovery;
+        assert_eq!(flaky.max_restarts, 1);
+        assert_eq!(flaky.window, Duration::from_secs(60));
+        assert_eq!(flaky.backoff_max, Duration::from_secs(600));
+    }
+
+    #[test]
+    fn unknown_recovery_keys_are_rejected() {
+        let global = toml::from_str::<ProxyConfig>("[wasm.recovery]\nmax_retries = 3\n");
+        assert!(
+            global.is_err(),
+            "a misspelt recovery key must not be ignored"
+        );
+        let plugin = toml::from_str::<ProxyConfig>("[plugins.p.wasm.recovery]\nwindows = \"1m\"\n");
+        assert!(plugin.is_err());
     }
 
     #[test]

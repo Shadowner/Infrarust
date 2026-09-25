@@ -17,14 +17,18 @@ pub(crate) mod engine;
 pub(crate) mod epoch;
 pub(crate) mod error;
 pub(crate) mod hosts;
+pub(crate) mod instance;
 pub(crate) mod limbo;
 pub(crate) mod linker;
 pub(crate) mod loader;
 pub(crate) mod metadata;
 pub(crate) mod plugin;
 pub(crate) mod proxies;
+pub(crate) mod recovery;
+pub(crate) mod registrations;
 pub(crate) mod resources;
 pub(crate) mod store_state;
+pub(crate) mod supervisor;
 
 pub use config::WasmLoaderConfig;
 pub use engine::build_engine;

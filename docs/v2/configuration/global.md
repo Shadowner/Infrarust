@@ -399,12 +399,12 @@ Limits that apply to every WASM plugin. Each plugin runs in its own sandbox and 
 | `cpu_budget` | CPU time one call into a plugin may use before it traps. Time spent waiting on a host call (a ban lookup, a server start) does not count. |
 | `codec_cpu_budget` | The same budget for each codec filter call (`create`, `filter` and the connection hooks). |
 | `host_call_timeout` | How long one ban-service or server-manager call made by a plugin may take. When it runs out the plugin gets a `service-error` and carries on. A host call also ends early, with the same error, shortly before the deadline of the call it belongs to (`[events] handler_timeout` for an event, `max_call_duration` for a command, a scheduled task or a limbo callback), so the plugin always gets to decide. |
-| `max_call_duration` | Wall-clock limit on one call into a plugin, host calls included. A call still running at this limit is abandoned and the plugin is poisoned. |
+| `max_call_duration` | Wall-clock limit on one call into a plugin, host calls included. A call still running at this limit is abandoned and the plugin's instance is replaced by a fresh one. |
 | `queue_capacity` | How many calls may wait for a busy plugin. When the queue is full a new call is refused on the spot: an event gets no answer from that plugin and a command does nothing. The refusal is logged as a warning, at most once every 5 seconds per plugin. |
 
 A plugin call that has started always runs to the end, even when its caller stops waiting. If the event bus gives up on a WASM listener after `[events] handler_timeout`, the event moves on without that plugin's answer, the call finishes inside the plugin, and the plugin stays healthy. A call that is still queued when its caller gives up is dropped without running.
 
-A trap (a panic in the plugin, a memory or CPU overrun) poisons the plugin: later calls are refused and its `on_disable` is skipped. See [Capabilities & Sandbox](../plugins/wasm/capabilities#the-sandbox).
+A trap (a panic in the plugin, a memory or CPU overrun) does not disable the plugin for good. The proxy throws the faulty instance away, starts a fresh one from the compiled plugin and runs its `on_enable` again. Anything the plugin kept only in memory is lost; files in its data directory are kept. A plugin that keeps failing is quarantined for a while, as set in `[wasm.recovery]` below. See [Fault model](../plugins/wasm/fault-model).
 
 Startup fails when a value is out of range:
 
@@ -414,7 +414,30 @@ Startup fails when a value is out of range:
 - `host_call_timeout` and `max_call_duration` must be greater than zero and at most `1h`.
 - `queue_capacity` must be between 1 and 1048576.
 
-The proxy logs a warning, without refusing to start, when `cpu_budget` is longer than `max_call_duration`: the wall-clock limit then stops a busy guest call first and poisons the plugin instead of the CPU budget trapping it.
+The proxy logs a warning, without refusing to start, when `cpu_budget` is longer than `max_call_duration`: the wall-clock limit then stops a busy guest call first instead of the CPU budget trapping it.
+
+### Recovery after a fault
+
+```toml
+[wasm.recovery]
+max_restarts = 5
+window = "5m"
+backoff_initial = "1s"
+backoff_max = "5m"
+```
+
+After a fault the proxy starts a fresh instance of the plugin straight away, up to `max_restarts` times within `window`. The next fault inside the window quarantines the plugin for `backoff_initial`, doubled for each quarantine in a row up to `backoff_max`. While a plugin is quarantined its events keep their result, its commands do nothing and its limbo handlers deny the player, all without waiting. Once the backoff has passed the proxy tries a fresh instance again.
+
+| Key | What it controls |
+|-----|------------------|
+| `max_restarts` | Fresh instances started straight away within `window`. `0` quarantines the plugin on its first fault. |
+| `window` | Sliding window over which restarts are counted. |
+| `backoff_initial` | Length of the first quarantine. |
+| `backoff_max` | Longest a quarantine lasts. |
+
+Each fault is logged at error level with the plugin, the call and the cause. A successful recovery is logged at info level with the instance generation, and a quarantine at warn level with the time until the next attempt.
+
+Startup fails when `max_restarts` is above 1000, when `window`, `backoff_initial` or `backoff_max` is zero or longer than `24h`, or when `backoff_initial` is longer than `backoff_max`.
 
 ## Plugins
 
@@ -434,7 +457,7 @@ Plugin configurations are keyed by plugin ID.
 - `permissions` grants capabilities on top of the baseline every WASM plugin receives.
 - `deny` removes capabilities. It is applied after the baseline and the grants, so it can take away a baseline capability such as `player-write`, and a capability listed in both `permissions` and `deny` is denied. It also applies to compiled-in plugins.
 - `enabled` skips the plugin when set to `false` (defaults to `true` when omitted).
-- `[plugins.<id>.wasm]` overrides the `[wasm]` limits for that plugin. It accepts every key of `[wasm]` except `epoch_tick`; keys it leaves out keep the proxy-wide value.
+- `[plugins.<id>.wasm]` overrides the `[wasm]` limits for that plugin. It accepts every key of `[wasm]` except `epoch_tick`, and `[plugins.<id>.wasm.recovery]` overrides `[wasm.recovery]`; keys it leaves out keep the proxy-wide value.
 
 Unknown capability names in `permissions` or `deny` are ignored with a warning. The capability strings are listed in [Capabilities & Sandbox](../plugins/wasm/capabilities#capability-matrix). `path` is accepted for compatibility; WASM plugins are always discovered in `plugins_dir`.
 
@@ -483,6 +506,12 @@ codec_cpu_budget = "800ms"
 host_call_timeout = "30s"
 max_call_duration = "60s"
 queue_capacity = 1024
+
+[wasm.recovery]
+max_restarts = 5
+window = "5m"
+backoff_initial = "1s"
+backoff_max = "5m"
 
 # [telemetry]
 # enabled = true

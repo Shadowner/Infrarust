@@ -1,11 +1,12 @@
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use infrarust_api::event::ListenerHandle;
 use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
+use infrarust_api::services::scheduler::TaskHandle;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
@@ -16,6 +17,17 @@ use crate::config::SandboxLimits;
 use crate::consts::EPOCH_DEADLINE_TICKS;
 use crate::deadline::{Deadline, HostCallLimit};
 use crate::error::WasmLoaderError;
+use crate::registrations::Registrations;
+
+pub(crate) struct PluginSetup {
+    pub(crate) plugin_id: String,
+    pub(crate) ctx: Arc<dyn PluginContext>,
+    pub(crate) capabilities: CapabilitySet,
+    pub(crate) data_dir: PathBuf,
+    pub(crate) codec: Option<Arc<CodecInstantiator>>,
+    pub(crate) sandbox: SandboxLimits,
+    pub(crate) registrations: Arc<Registrations>,
+}
 
 pub(crate) struct PluginStoreState {
     table: ResourceTable,
@@ -24,22 +36,19 @@ pub(crate) struct PluginStoreState {
     capabilities: CapabilitySet,
     ctx: Option<Arc<dyn PluginContext>>,
     instance: InstanceRef,
-    poisoned: bool,
-    call_in_flight: Option<&'static str>,
     deadline: Option<Deadline>,
     pub(crate) plugin_id: String,
     pub(crate) epoch_yields: u32,
     host_call_timeout: Duration,
+    generation: u64,
+    registrations: Arc<Registrations>,
     next_listener_id: u64,
     listeners: HashMap<u64, ListenerHandle>,
+    tasks: HashSet<u64>,
     codec: Option<Arc<CodecInstantiator>>,
 }
 
 impl PluginStoreState {
-    pub(crate) fn reset_epoch_budget(&mut self) {
-        self.epoch_yields = 0;
-    }
-
     pub(crate) fn limits_mut(&mut self) -> &mut StoreLimits {
         &mut self.limits
     }
@@ -76,31 +85,21 @@ impl PluginStoreState {
         self.instance.for_calls(kind)
     }
 
-    pub(crate) fn set_instance_ref(&mut self, instance: InstanceRef) {
-        self.instance = instance;
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
-    pub(crate) fn is_poisoned(&mut self) -> bool {
-        if let Some(op) = self.call_in_flight.take() {
-            tracing::error!(plugin = %self.plugin_id, op,
-                "previous wasm guest call was abandoned mid-execution; poisoning instance");
-            self.poisoned = true;
-        }
-        self.poisoned
+    pub(crate) fn registrations(&self) -> &Arc<Registrations> {
+        &self.registrations
     }
 
-    pub(crate) fn begin_call(&mut self, op: &'static str, deadline: Option<Deadline>) {
-        self.call_in_flight = Some(op);
+    pub(crate) fn begin_call(&mut self, deadline: Option<Deadline>) {
+        self.epoch_yields = 0;
         self.deadline = deadline;
     }
 
     pub(crate) fn end_call(&mut self) {
-        self.call_in_flight = None;
         self.deadline = None;
-    }
-
-    pub(crate) fn set_poisoned(&mut self) {
-        self.poisoned = true;
     }
 
     pub(crate) fn mint_listener_id(&mut self) -> u64 {
@@ -115,6 +114,28 @@ impl PluginStoreState {
 
     pub(crate) fn take_listener(&mut self, id: u64) -> Option<ListenerHandle> {
         self.listeners.remove(&id)
+    }
+
+    pub(crate) fn record_task(&mut self, handle: u64) {
+        self.tasks.insert(handle);
+    }
+
+    pub(crate) fn forget_task(&mut self, handle: u64) {
+        self.tasks.remove(&handle);
+    }
+
+    pub(crate) fn release_host_resources(&mut self) {
+        let listeners: Vec<ListenerHandle> = self.listeners.drain().map(|(_, h)| h).collect();
+        let tasks: Vec<u64> = self.tasks.drain().collect();
+        let Some(ctx) = self.ctx.as_ref() else {
+            return;
+        };
+        for handle in listeners {
+            ctx.event_bus().unsubscribe(handle);
+        }
+        for task in tasks {
+            ctx.scheduler().cancel(TaskHandle::new(task));
+        }
     }
 
     pub(crate) fn codec_instantiator(&self) -> Option<&Arc<CodecInstantiator>> {
@@ -160,29 +181,27 @@ fn build_wasi_ctx(data_dir: &Path) -> Result<WasiCtx, WasmLoaderError> {
 }
 
 pub(crate) fn build_load_state(
-    plugin_id: String,
-    ctx: Arc<dyn PluginContext>,
-    capabilities: CapabilitySet,
-    data_dir: &Path,
-    codec: Option<Arc<CodecInstantiator>>,
-    sandbox: &SandboxLimits,
+    setup: &PluginSetup,
+    generation: u64,
+    instance: InstanceRef,
 ) -> Result<PluginStoreState, WasmLoaderError> {
     Ok(PluginStoreState {
         table: ResourceTable::new(),
-        wasi: build_wasi_ctx(data_dir)?,
-        limits: store_limits(sandbox),
-        capabilities,
-        ctx: Some(ctx),
-        instance: InstanceRef::detached(),
-        poisoned: false,
-        call_in_flight: None,
+        wasi: build_wasi_ctx(&setup.data_dir)?,
+        limits: store_limits(&setup.sandbox),
+        capabilities: setup.capabilities.clone(),
+        ctx: Some(Arc::clone(&setup.ctx)),
+        instance,
         deadline: None,
-        plugin_id,
+        plugin_id: setup.plugin_id.clone(),
         epoch_yields: 0,
-        host_call_timeout: sandbox.host_call_timeout,
+        host_call_timeout: setup.sandbox.host_call_timeout,
+        generation,
+        registrations: Arc::clone(&setup.registrations),
         next_listener_id: 1,
         listeners: HashMap::new(),
-        codec,
+        tasks: HashSet::new(),
+        codec: setup.codec.clone(),
     })
 }
 
@@ -194,14 +213,15 @@ pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> P
         capabilities: CapabilitySet::default(),
         ctx: None,
         instance: InstanceRef::detached(),
-        poisoned: false,
-        call_in_flight: None,
         deadline: None,
         plugin_id,
         epoch_yields: 0,
         host_call_timeout: sandbox.host_call_timeout,
+        generation: 0,
+        registrations: Arc::default(),
         next_listener_id: 1,
         listeners: HashMap::new(),
+        tasks: HashSet::new(),
         codec: None,
     }
 }

@@ -452,6 +452,51 @@ fn test_proxy_zero_or_absurd_wasm_values_are_invalid() {
 }
 
 #[test]
+fn test_proxy_out_of_range_wasm_recovery_values_are_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    for (line, key) in [
+        ("max_restarts = 1001", "wasm.recovery.max_restarts"),
+        ("window = \"0s\"", "wasm.recovery.window"),
+        ("window = \"2d\"", "wasm.recovery.window"),
+        ("backoff_initial = \"0s\"", "wasm.recovery.backoff_initial"),
+        ("backoff_max = \"0s\"", "wasm.recovery.backoff_max"),
+        ("backoff_max = \"2d\"", "wasm.recovery.backoff_max"),
+        (
+            "backoff_initial = \"10m\"\nbackoff_max = \"1m\"",
+            "wasm.recovery.backoff_initial",
+        ),
+    ] {
+        let config = proxy_from_toml(&format!("[wasm.recovery]\n{line}"), dir.path());
+        let err = validate_proxy_config(&config).expect_err(line).to_string();
+        assert!(err.contains(key), "{line}: {err}");
+    }
+}
+
+#[test]
+fn test_proxy_in_range_wasm_recovery_values_are_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml(
+        "[wasm.recovery]\nmax_restarts = 0\nwindow = \"24h\"\nbackoff_initial = \"5m\"\nbackoff_max = \"5m\"",
+        dir.path(),
+    );
+    assert!(validate_proxy_config(&config).is_ok());
+}
+
+#[test]
+fn test_proxy_invalid_plugin_recovery_override_names_the_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml(
+        "[wasm.recovery]\nbackoff_max = \"1m\"\n\n[plugins.flaky.wasm.recovery]\nbackoff_initial = \"2m\"",
+        dir.path(),
+    );
+    let err = validate_wasm_config(&config).unwrap_err().to_string();
+    assert!(
+        err.contains("plugins.flaky.wasm.recovery.backoff_initial"),
+        "{err}"
+    );
+}
+
+#[test]
 fn test_proxy_invalid_plugin_wasm_override_names_the_plugin() {
     let dir = tempfile::tempdir().unwrap();
     let config = proxy_from_toml(

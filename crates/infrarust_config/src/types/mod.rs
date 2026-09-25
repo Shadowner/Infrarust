@@ -37,7 +37,9 @@ pub use server_manager::{
 };
 pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
 pub use telemetry::{MetricsConfig, ResourceConfig, TelemetryConfig, TracesConfig};
-pub use wasm::{PluginWasmConfig, WasmConfig, WasmLimits};
+pub use wasm::{
+    PluginWasmConfig, PluginWasmRecoveryConfig, WasmConfig, WasmLimits, WasmRecoveryConfig,
+};
 pub use web::WebConfig;
 
 /// Default Minecraft port.

@@ -1,12 +1,12 @@
 ---
 title: WASM Plugin Lifecycle
-description: How a WASM plugin moves from discovery and AOT compilation through enable, dispatch, and disable, plus the fail-closed trap model.
+description: How a WASM plugin moves from discovery and AOT compilation through enable, dispatch, and disable, and what happens after a trap.
 outline: [2, 3]
 ---
 
 # WASM Plugin Lifecycle
 
-A WASM plugin passes through five stages: discovery, ahead-of-time compilation, metadata probing, load, and enable. After enabling, the host dispatches events and callbacks into the guest until the plugin is disabled. A guest trap at any point poisons the instance and stops further dispatch. This page describes each stage against the loader source.
+A WASM plugin passes through five stages: discovery, ahead-of-time compilation, metadata probing, load, and enable. After enabling, the host dispatches events and callbacks into the guest until the plugin is disabled. A fault after enabling replaces the instance with a fresh one; see [Fault model](./fault-model). This page describes each stage against the loader source.
 
 ## State diagram
 
@@ -19,9 +19,14 @@ stateDiagram-v2
     Loaded --> Enabled: on_enable() (guest registers handlers)
     Enabled --> Enabled: dispatch events / callbacks
     Enabled --> Disabled: on_disable()
-    Enabled --> Poisoned: guest trap
-    Poisoned --> [*]: on_disable skipped
+    Enabled --> Recovering: fault
+    Recovering --> Enabled: fresh instance, on_enable() again
+    Recovering --> Quarantined: restart budget spent
+    Quarantined --> Recovering: backoff passed
+    Quarantined --> Disabled: on_disable skipped
+    Loaded --> Failed: fault in the first on_enable()
     Disabled --> [*]
+    Failed --> [*]
 ```
 
 ## Discovery
@@ -114,14 +119,17 @@ let codec = if capabilities.has(Capability::CodecFilter) {
 };
 ```
 
-The store is created with the plugin state, epoch control is installed, and a memory limiter is attached. The component is then instantiated asynchronously.
+The linker is resolved against the component once, into a `PluginPre` (the bindgen wrapper around wasmtime's `InstancePre`). Every instance of the plugin is created from it: the first one at load, and each fresh one after a fault. For each instance a store is created with the plugin state, epoch control is installed, and a memory limiter is attached, then the component is instantiated asynchronously.
 
 ```rust
-let mut store = Store::new(&self.engine, state);
-install_epoch_control(&mut store);
-store.limiter(|s: &mut PluginStoreState| s.limits_mut() as &mut dyn wasmtime::ResourceLimiter);
+// InstanceFactory in instance.rs
+let pre = PluginPre::new(linker.instantiate_pre(component)?)?;
 
-let bindings = PluginBindings::instantiate_async(&mut store, &entry.component, &linker).await?;
+// InstanceFactory::instantiate, once per instance
+let mut store = Store::new(&self.engine, state);
+install_epoch_control(&mut store, max_epoch_yields);
+store.limiter(|s: &mut PluginStoreState| s.limits_mut() as &mut dyn wasmtime::ResourceLimiter);
+let bindings = self.pre.instantiate_async(&mut store).await?;
 ```
 
 The store enforces a linear-memory cap of `MEMORY_LIMIT` (64 MiB) and traps the guest on a memory-grow failure (`trap_on_grow_failure(true)`). An instantiation error that names a missing `infrarust:plugin/` import is reported as a capability denial rather than a generic failure.
@@ -173,13 +181,13 @@ Codec filters and limbo handlers are registered through their own registrar hook
 |--------------|-------------|
 | `Ok(())` | Plugin is enabled |
 | `Err(message)` | Returned as `PluginError::InitFailed(message)`; plugin not enabled |
-| Trap | Instance is poisoned; returned as a trap error carrying the trap message |
+| Trap or cut-off | Returned as an error; the plugin is not enabled and no fresh instance is tried |
 
 ## Dispatch
 
 After enabling, events and registered callbacks re-enter the guest. Each plugin instance is owned by one task that runs calls one at a time, in the order they arrive, from a queue of `queue_capacity` entries (`[wasm]` in `infrarust.toml`, default 1024). A call that finds the queue full is refused immediately and logged as a rate-limited warning. A call that has started runs to the end even if its caller stops waiting; a queued call whose caller has already given up, or whose [deadline](#deadlines) has passed, is skipped. See [Capabilities & Sandbox](./capabilities#one-call-at-a-time).
 
-Each call into the guest resets the epoch budget first, so a single long callback cannot exhaust a budget left over from an earlier call. A dedicated OS thread bumps the engine epoch every `epoch_tick` (50 ms by default). On each deadline the callback either grants another tick (cooperative yield) or, once the call has used `cpu_budget` (3 s by default, 60 ticks), interrupts the guest with a trap. A call that is still running after `max_call_duration` (60 s by default), host calls included, is abandoned and the instance is poisoned.
+Each call into the guest resets the epoch budget first, so a single long callback cannot exhaust a budget left over from an earlier call. A dedicated OS thread bumps the engine epoch every `epoch_tick` (50 ms by default). On each deadline the callback either grants another tick (cooperative yield) or, once the call has used `cpu_budget` (3 s by default, 60 ticks), interrupts the guest with a trap. A call that is still running after `max_call_duration` (60 s by default), host calls included, is abandoned and the instance is replaced (see [Fault model](./fault-model)).
 
 A synchronous codec `filter` call gets its own budget, `codec_cpu_budget` (800 ms by default, 16 ticks), re-armed before every `create`/`filter`/lifecycle call. See [Events](./events) for the dispatched event kinds and [Limbo](./limbo) for limbo callbacks.
 
@@ -190,7 +198,7 @@ Each call into the guest carries a deadline, fixed when the call is queued:
 | Call | Deadline | Why |
 |------|----------|-----|
 | Event handler | `[events] handler_timeout` (10 s by default) | The event bus stops waiting for the listener at that point |
-| Command, tab completion, scheduled task, limbo callback | `max_call_duration` (60 s by default) | Nothing in the proxy stops waiting earlier, and the call is cut off and poisoned at that limit |
+| Command, tab completion, scheduled task, limbo callback | `max_call_duration` (60 s by default) | Nothing in the proxy stops waiting earlier, and the call is cut off at that limit |
 | `on_enable`, `on_disable` | none | The proxy waits for them, and `on_disable` must run |
 
 The deadline has three effects:
@@ -205,11 +213,11 @@ A running call is not cut at its deadline. Guest code between host calls keeps r
 
 `on_disable` is called on proxy shutdown. It is queued behind any call still running, and it is the last job of the plugin's task: calls queued behind it are dropped and the task stops once it has run, dropping the instance.
 
-If the instance is poisoned, the guest call is skipped and `on_disable` returns `Ok(())` with a warning. For a healthy instance the budget is reset and the guest `on_disable` runs. An `Err(message)` is surfaced as `PluginError::Custom(message)`; a trap during `on_disable` is logged and returned as a `Custom` error.
+If the plugin is quarantined, or its first `on_enable` failed, there is no live instance: the guest call is skipped and `on_disable` returns `Ok(())` with a warning. For a live instance the budget is reset and the guest `on_disable` runs. An `Err(message)` is surfaced as `PluginError::Custom(message)`; a trap during `on_disable` is logged and returned as a `Custom` error, and no fresh instance is started. In every case the host then removes the instance's event listeners and scheduled tasks, releases the players it holds in limbo, and stops the task. `unload` does the same without running the guest.
 
-## Trap and the poisoning model
+## Faults and recovery
 
-Any guest trap poisons the instance. The poison flag lives on the store state (`PluginStoreState::poisoned`) and is set on the first trap. Sources of a trap:
+A fault is a guest trap, a call cut off by `max_call_duration`, or a panic in a host function during a call. Sources of a trap:
 
 - A guest panic.
 - An out-of-bounds memory or table access.
@@ -217,25 +225,25 @@ Any guest trap poisons the instance. The poison flag lives on the store state (`
 - A memory-grow failure (the store traps on grow failure once `memory_limit_mb`, 64 MiB by default, is hit).
 - Use of a dropped or invalid resource handle.
 
-A call that did not finish poisons the instance the same way: one cut off by `max_call_duration`, or one interrupted by a panic in a host function. A caller that stops waiting (for example the event bus after `[events] handler_timeout`) does not: the call keeps running inside the plugin and the instance stays healthy. Host calls inside it return an error before that point anyway, see [Deadlines](#deadlines).
+A caller that stops waiting (for example the event bus after `[events] handler_timeout`) is not a fault: the call keeps running inside the plugin and the instance stays healthy. Host calls inside it return an error before that point anyway, see [Deadlines](#deadlines).
 
-The model is fail-closed: once an instance is poisoned, `on_disable` is skipped and the instance is not asked to run cleanup that could trap again or observe inconsistent state. A poisoned instance is not reused for further dispatch.
+wasmtime cannot re-enter an instance whose call trapped or was cut off, so the host never reuses it. After a fault in an enabled plugin, the plugin's task discards the instance and its host-side registrations, creates a fresh instance from the compiled component and runs `on_enable` in it. Restarts are budgeted: past `[wasm.recovery] max_restarts` within `window`, the plugin is quarantined with an exponential backoff and every call to it is answered at once without running guest code.
 
 ```mermaid
 flowchart LR
     A[Guest call] -->|Ok| B[Continue dispatch]
-    A -->|Trap| C[set_poisoned]
-    C --> D[on_disable skipped]
-    C --> E[no further dispatch]
+    A -->|Fault| C[Discard instance and its listeners, tasks, limbo holds]
+    C --> D{Restart budget left?}
+    D -->|yes| E[Fresh instance, on_enable again]
+    D -->|no| F[Quarantine until the backoff passes]
+    F --> E
 ```
 
-:::danger
-Poisoning is one-way. There is no recovery path that un-poisons a running instance; the plugin stays inert until the proxy restarts.
-:::
+What survives a fresh instance, how commands and limbo handlers are rebound, and how the budget and backoff work are described in [Fault model](./fault-model).
 
 ### Resource handle lifetimes
 
-The guest owns resource handles it acquires (for example a limbo session handle). The guest is responsible for dropping them. Using a handle after it has been dropped, or using an invalid handle, traps the guest, which poisons the instance under the same fail-closed rule. Hold a handle only as long as the underlying object is valid.
+The guest owns resource handles it acquires (for example a limbo session handle). The guest is responsible for dropping them. Using a handle after it has been dropped, or using an invalid handle, traps the guest, which is a fault like any other trap. Handles do not survive a fresh instance. Hold a handle only as long as the underlying object is valid.
 
 ## Hot reload
 
@@ -243,6 +251,7 @@ Hot reload of a changed `*.wasm` without a proxy restart is not implemented. `un
 
 ## See also
 
+- [Fault model](./fault-model): recovery, restart budget and quarantine.
 - [Architecture](./architecture): engine, store, and linker layout.
 - [Capabilities](./capabilities): baseline versus opt-in grants and their kebab-case strings.
 - [Events](./events): the event kinds dispatched into the guest.

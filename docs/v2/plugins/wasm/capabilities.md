@@ -228,7 +228,7 @@ flowchart LR
     M -->|over memory_limit_mb| MT[Trap on grow]
     G --> W{Wall clock}
     W -->|past max_call_duration| A[Call abandoned]
-    T --> P[Poison instance]
+    T --> P[Fresh instance or quarantine]
     MT --> P
     A --> P
 ```
@@ -237,7 +237,7 @@ flowchart LR
 
 A dedicated OS thread bumps the engine epoch every `epoch_tick`. Each guest call gets one tick before the deadline callback fires; the callback then either re-grants a tick (a cooperative yield) or, once the call has used `cpu_budget` worth of ticks, interrupts the guest with a hard trap. The budget is converted to ticks by rounding up, so the defaults give 60 yields of 50 ms.
 
-A plugin that spins past the budget is interrupted and its instance is poisoned. The yield counter resets at the start of each call, so well-behaved plugins that return promptly never approach the limit.
+A plugin that spins past the budget is interrupted and its instance is replaced by a fresh one (see [Fault model](./fault-model)). The yield counter resets at the start of each call, so well-behaved plugins that return promptly never approach the limit.
 
 Codec filters run on their own budget, `codec_cpu_budget`, since each filter call is synchronous and normally finishes in microseconds. It is re-armed before every `create`/`filter`/lifecycle call; with the defaults that is 16 ticks. See [Codec Filters](./codec-filters) for the filter contract.
 
@@ -257,7 +257,7 @@ Each plugin instance is owned by its own task. Every call into the guest (events
 - Each job carries a deadline: `[events] handler_timeout` for events, `max_call_duration` for commands, tab completion, scheduled tasks and limbo callbacks. Host calls made during the job return an error shortly before it, so a handler waiting on a slow service still answers before the event bus gives up. See [Lifecycle](./lifecycle#deadlines).
 - A job whose caller has already given up, or whose deadline has passed, by the time it reaches the front of the queue is skipped; the guest never sees it.
 - At most `queue_capacity` jobs wait. When the queue is full, a new call is refused immediately rather than waiting: an event gets no answer from the plugin, a command does nothing, a tab completion returns no suggestions. A warning naming the plugin and the operation is logged, at most once every 5 seconds per plugin.
-- `max_call_duration` is the safety net for a call that never returns, for instance an `on_enable` that makes many slow host calls in a row (lifecycle calls carry no deadline). The call is abandoned and the instance is poisoned, because wasmtime cannot re-enter a component whose call was cut off.
+- `max_call_duration` is the safety net for a call that never returns, for instance an `on_enable` that makes many slow host calls in a row (lifecycle calls carry no deadline). The call is abandoned and the instance is replaced by a fresh one, because wasmtime cannot re-enter a component whose call was cut off.
 - `on_disable` is the last job: jobs queued behind it are dropped, and the task stops once it has run. Unloading a plugin stops its task the same way and drops the instance.
 
 ### Filesystem and WASI
@@ -272,15 +272,18 @@ builder
 
 There is no network access, no inherited stdio, and no second preopen. Outbound network (`network`) and access outside the data directory (`filesystem-extended`) are deferred; the capabilities are defined but the WASI context does not yet widen for them.
 
-## Trap, poison, fail-closed
+## Traps and recovery
 
-A trap from any of the limits above does not just abort the current call. The runtime marks the instance poisoned, and every later call into that plugin returns an error instead of running guest code. A call that never finished (cut off by `max_call_duration`, or interrupted by a panic in a host function) poisons the instance the same way. This is the fail-closed rule: a misbehaving plugin is fenced off rather than retried into the same fault. A caller that merely stopped waiting does not poison anything. The full state machine is on [Lifecycle](./lifecycle).
+A trap from any of the limits above does not just abort the current call. The host never runs guest code in that instance again: it discards the instance, removes the listeners and tasks it registered, releases the players it held in limbo, and starts a fresh instance that runs `on_enable` again. A call that never finished (cut off by `max_call_duration`, or interrupted by a panic in a host function) is handled the same way. The call that faulted gets no answer from the plugin, and a limbo entry fails closed.
+
+Restarts are budgeted by `[wasm.recovery]`. A plugin that keeps faulting is quarantined with an exponential backoff: calls to it are answered at once without running guest code until the proxy tries a fresh instance again. A caller that merely stopped waiting is not a fault. The full model is on [Fault model](./fault-model).
 
 ## See also
 
 - [Deploying](./deploying): where the `permissions` and `deny` config keys live and how rejected strings surface.
 - [Global Settings](../../configuration/global#wasm-plugin-sandbox): the `[wasm]` table and its accepted ranges.
-- [Lifecycle](./lifecycle): trap, poison, and fail-closed semantics in full.
+- [Fault model](./fault-model): recovery, restart budget and quarantine in full.
+- [Lifecycle](./lifecycle): the stages from discovery to disable.
 - [Architecture](./architecture): how the linker, store, and engine fit together.
 - [Services](./services): the host interfaces each capability unlocks.
 - [Codec Filters](./codec-filters): the `codec-filter` capability and the per-call budget.

@@ -185,3 +185,19 @@ pub const fn wasm_max_call_duration() -> Duration {
 pub const fn wasm_queue_capacity() -> usize {
     1024
 }
+
+pub const fn wasm_recovery_max_restarts() -> u32 {
+    5
+}
+
+pub const fn wasm_recovery_window() -> Duration {
+    Duration::from_secs(300)
+}
+
+pub const fn wasm_recovery_backoff_initial() -> Duration {
+    Duration::from_secs(1)
+}
+
+pub const fn wasm_recovery_backoff_max() -> Duration {
+    Duration::from_secs(300)
+}

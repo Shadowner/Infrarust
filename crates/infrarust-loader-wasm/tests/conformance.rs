@@ -404,7 +404,7 @@ conformance!(
         )
         .plugin("scripted-peer", ["on chat-message late record"])
         .fire(E::PreLogin, "allowed")
-        .fire_diverging(E::ChatMessage, "modify:alive", "allow")
+        .fire(E::ChatMessage, "modify:alive")
         .disable()
         .log(
             "scripted",
@@ -414,15 +414,23 @@ conformance!(
                 "disable".to_owned(),
             ],
         )
-        .wasm_log("scripted", [seen(E::PreLogin, NORMAL)])
+        .wasm_log(
+            "scripted",
+            [
+                seen(E::PreLogin, NORMAL),
+                "enable".to_owned(),
+                seen(E::ChatMessage, NORMAL),
+                "disable".to_owned(),
+            ],
+        )
         .log(
             "scripted-peer",
             [seen(E::ChatMessage, LATE), "disable".to_owned()],
         )
         .expect_divergence(
-            "a native panic is contained to the one handler call, but a WASM trap poisons the \
-             instance: its later handlers and its on_disable are refused while other plugins \
-             keep running"
+            "a native panic is contained to the one handler call, but a WASM trap discards the \
+             instance: a fresh one runs on_enable again before it handles the later events, so \
+             the WASM log shows a second enable"
         ),
 );
 

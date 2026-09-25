@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod conformance;
+pub mod log_capture;
 pub mod mock_services;
 pub mod native_scripted;
 #[path = "../fixtures/scripted/src/script.rs"]

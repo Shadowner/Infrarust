@@ -5,7 +5,7 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use wasmtime::Store;
 
-use crate::actor::{CallFailure, InstanceRef, PluginActor};
+use crate::actor::{CallFailure, InstanceRef, JobKind, PluginActor};
 use crate::bindings::Plugin as PluginBindings;
 use crate::error::WasmLoaderError;
 use crate::store_state::PluginStoreState;
@@ -68,7 +68,7 @@ impl Plugin for WasmPlugin {
         Box::pin(async move {
             let result = self
                 .actor
-                .call_lifecycle("on-enable", false, |store, bindings| {
+                .call_lifecycle("on-enable", JobKind::Enable, |store, bindings| {
                     Box::pin(async move {
                         bindings
                             .infrarust_plugin_guest()
@@ -95,7 +95,7 @@ impl Plugin for WasmPlugin {
         Box::pin(async move {
             let result = self
                 .actor
-                .call_lifecycle("on-disable", true, |store, bindings| {
+                .call_lifecycle("on-disable", JobKind::Disable, |store, bindings| {
                     Box::pin(async move {
                         bindings
                             .infrarust_plugin_guest()
@@ -112,9 +112,14 @@ impl Plugin for WasmPlugin {
                         "wasm guest on_disable returned an error");
                     Err(PluginError::Custom(message))
                 }
-                Err(CallFailure::Poisoned) => {
+                Err(CallFailure::Quarantined) => {
                     tracing::warn!(plugin = %self.plugin_id,
-                        "skipping on_disable for a poisoned wasm plugin (a previous call trapped or was abandoned)");
+                        "skipping on_disable for a quarantined wasm plugin: it has no live instance");
+                    Ok(())
+                }
+                Err(CallFailure::Failed) => {
+                    tracing::warn!(plugin = %self.plugin_id,
+                        "skipping on_disable for a wasm plugin that failed before it was enabled");
                     Ok(())
                 }
                 Err(CallFailure::Stopped) => {
