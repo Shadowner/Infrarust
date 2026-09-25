@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use infrarust_api::command::CommandManager;
 use infrarust_api::error::PluginError;
-use infrarust_api::event::bus::EventBus;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::{
     ban_service::BanService, config_service::ConfigService, load_balancer::LoadBalancerService,
@@ -15,6 +14,7 @@ use infrarust_api::services::{
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
 
@@ -26,7 +26,7 @@ use super::loader::PluginLoader;
 
 /// Services required to construct per-plugin contexts.
 pub struct PluginServices {
-    pub event_bus: Arc<dyn EventBus>,
+    pub event_bus: Arc<EventBusImpl>,
     pub player_registry: Arc<dyn PlayerRegistry>,
     pub server_manager: Arc<dyn ServerManager>,
     pub ban_service: Arc<dyn BanService>,
@@ -341,6 +341,7 @@ mod tests {
 
     use infrarust_api::error::PluginError;
     use infrarust_api::event::BoxFuture;
+    use infrarust_api::event::bus::EventBus;
     use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 
     use crate::plugin::context_factory::PluginContextFactory;

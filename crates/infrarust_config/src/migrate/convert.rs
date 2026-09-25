@@ -735,6 +735,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
     let config = ProxyConfig {
         bind,
         active_health: ActiveHealthConfig::default(),
+        events: Default::default(),
         max_connections: 0,
         connect_timeout: crate::defaults::connect_timeout(),
         connect_max_attempts: crate::defaults::connect_max_attempts(),

@@ -82,3 +82,47 @@ fn test_proxy_defaults_minimal_config() {
     assert_eq!(config.status_cache.ttl, Duration::from_secs(5));
     assert!(config.default_motd.is_none());
 }
+
+#[test]
+fn test_parse_proxy_events_defaults() {
+    let config: ProxyConfig = toml::from_str("").unwrap();
+
+    assert_eq!(config.events.handler_timeout, Duration::from_secs(10));
+    assert_eq!(config.events.slow_handler_threshold, Duration::from_secs(1));
+    assert_eq!(
+        config.events.packet_handler_timeout,
+        Duration::from_secs(10)
+    );
+}
+
+#[test]
+fn test_parse_proxy_events_section() {
+    let config: ProxyConfig = toml::from_str(
+        r#"
+        [events]
+        handler_timeout = "200ms"
+        slow_handler_threshold = "50ms"
+        packet_handler_timeout = "2s"
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.events.handler_timeout, Duration::from_millis(200));
+    assert_eq!(
+        config.events.slow_handler_threshold,
+        Duration::from_millis(50)
+    );
+    assert_eq!(config.events.packet_handler_timeout, Duration::from_secs(2));
+}
+
+#[test]
+fn test_parse_proxy_events_rejects_unknown_keys() {
+    let parsed = toml::from_str::<ProxyConfig>(
+        r#"
+        [events]
+        handler_timeot = "1s"
+        "#,
+    );
+
+    assert!(parsed.is_err());
+}

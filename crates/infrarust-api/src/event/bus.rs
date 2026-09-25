@@ -88,7 +88,7 @@ pub trait EventBus: Send + Sync + private::Sealed {
     ) -> bool;
 
     /// Removes a previously registered listener.
-    fn unsubscribe(&self, handle: ListenerHandle);
+    fn unsubscribe(&self, handle: ListenerHandle) -> bool;
 }
 
 /// Extension trait providing typed event subscription methods.

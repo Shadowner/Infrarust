@@ -6,6 +6,8 @@
 
 pub mod bus;
 pub mod conversion;
+pub mod diagnostic;
 pub(crate) mod handler;
 
-pub use bus::EventBusImpl;
+pub use bus::{CORE_OWNER, EventBusConfig, EventBusImpl};
+pub use diagnostic::{DiagnosticKind, HandlerDiagnostic};

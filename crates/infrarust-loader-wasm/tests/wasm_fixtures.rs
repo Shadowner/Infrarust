@@ -12,7 +12,6 @@ use std::time::Duration;
 
 use infrarust_api::command::CommandManager;
 use infrarust_api::event::ResultedEvent;
-use infrarust_api::event::bus::EventBus;
 use infrarust_api::events::connection::{ServerPreConnectEvent, ServerPreConnectResult};
 use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::loader::{PluginContextFactory, PluginLoader};
@@ -60,7 +59,7 @@ fn make_env(
     let event_bus = Arc::new(EventBusImpl::new());
     let command_manager = Arc::new(CommandManagerImpl::new());
     let services = PluginServices {
-        event_bus: Arc::clone(&event_bus) as Arc<dyn EventBus>,
+        event_bus: Arc::clone(&event_bus),
         player_registry,
         server_manager: Arc::new(NoopServerManager),
         ban_service: Arc::new(MockBanService),

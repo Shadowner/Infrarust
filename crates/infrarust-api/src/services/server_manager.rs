@@ -1,7 +1,7 @@
 //! Server manager service.
 
 use crate::error::ServiceError;
-use crate::event::{BoxFuture, ListenerHandle};
+use crate::event::BoxFuture;
 use crate::types::ServerId;
 
 pub mod private {
@@ -27,9 +27,6 @@ pub enum ServerState {
     Crashed,
 }
 
-/// A callback for server state change notifications.
-pub type StateChangeCallback = Box<dyn Fn(&ServerId, ServerState, ServerState) + Send + Sync>;
-
 /// Service for managing backend server lifecycle.
 ///
 /// Obtained via [`PluginContext::server_manager()`](crate::plugin::PluginContext::server_manager).
@@ -44,11 +41,6 @@ pub trait ServerManager: Send + Sync + private::Sealed {
     /// Stops a server. Returns an error if the server is not running
     /// or the ID is unknown.
     fn stop(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>>;
-
-    /// Registers a callback for server state changes.
-    ///
-    /// The callback receives the server ID, old state, and new state.
-    fn on_state_change(&self, callback: StateChangeCallback) -> ListenerHandle;
 
     /// Returns all servers and their current states.
     fn get_all_servers(&self) -> Vec<(ServerId, ServerState)>;

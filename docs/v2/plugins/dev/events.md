@@ -49,7 +49,13 @@ ctx.event_bus().subscribe_async::<DisconnectEvent, _>(
 );
 ```
 
-Both methods return a `ListenerHandle` you can pass to `event_bus().unsubscribe(handle)` to remove the listener.
+Both methods return a `ListenerHandle` you can pass to `event_bus().unsubscribe(handle)` to remove the listener. `unsubscribe` returns `true` when it removed something. A plugin can only remove its own listeners: passing a handle that another plugin registered does nothing, returns `false`, and logs a warning.
+
+## When a listener fails
+
+A listener that panics is skipped: the proxy logs the panic with your plugin ID and passes the event on to the next listener. Anything the listener changed on the event before panicking is kept, so set the result last if a later step might fail.
+
+Async listeners also have a time limit, `handler_timeout` in the [`[events]`](../../configuration/global#plugin-event-handlers) section (10 seconds by default, `packet_handler_timeout` for raw packet listeners). A listener still running at the deadline is cancelled and the event continues without it. A listener that takes longer than `slow_handler_threshold` (1 second by default) is logged as slow. Synchronous listeners can't be interrupted, so keep blocking work out of them.
 
 ## Priority
 

@@ -2116,6 +2116,7 @@ dependencies = [
  "bytes",
  "infrarust-api",
  "infrarust-core",
+ "infrarust-plugin-server-wake",
  "infrarust_config",
  "infrarust_protocol",
  "rand 0.8.6",

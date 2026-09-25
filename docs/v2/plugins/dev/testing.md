@@ -384,8 +384,7 @@ use infrarust_core::services::server_manager_bridge::NoopServerManager;
 let event_bus = Arc::new(EventBusImpl::new());
 
 let services = PluginServices {
-    event_bus: Arc::clone(&event_bus)
-        as Arc<dyn infrarust_api::event::bus::EventBus>,
+    event_bus: Arc::clone(&event_bus),
     player_registry: Arc::new(MockPlayerRegistry),
     server_manager: Arc::new(NoopServerManager),
     ban_service: Arc::new(MockBanService),

@@ -1,6 +1,7 @@
 //! Tracking wrappers that record registered resources for automatic cleanup.
 
 use std::any::TypeId;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use infrarust_api::command::{CommandHandler, CommandManager};
@@ -8,19 +9,42 @@ use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus};
 use infrarust_api::event::{ConnectionState, ListenerHandle, PacketDirection, PacketFilter};
 use infrarust_api::services::scheduler::{Scheduler, TaskHandle};
 
+use crate::event_bus::EventBusImpl;
+use crate::event_bus::handler::HandlerKind;
+
 /// Wraps an [`EventBus`] and records all [`ListenerHandle`]s for later cleanup.
 pub struct TrackingEventBus {
-    inner: Arc<dyn EventBus>,
-    handles: Arc<Mutex<Vec<ListenerHandle>>>,
+    inner: Arc<EventBusImpl>,
+    owner: Arc<str>,
+    handles: Mutex<HashSet<ListenerHandle>>,
 }
 
 impl TrackingEventBus {
-    pub fn new(inner: Arc<dyn EventBus>, handles: Arc<Mutex<Vec<ListenerHandle>>>) -> Self {
-        Self { inner, handles }
+    pub fn new(inner: Arc<EventBusImpl>, plugin_id: &str) -> Self {
+        Self {
+            inner,
+            owner: Arc::from(plugin_id),
+            handles: Mutex::new(HashSet::new()),
+        }
+    }
+
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    pub fn tracked_count(&self) -> usize {
+        self.handles.lock().expect("lock poisoned").len()
+    }
+
+    pub fn unsubscribe_all(&self) {
+        let handles = std::mem::take(&mut *self.handles.lock().expect("lock poisoned"));
+        for handle in handles {
+            self.inner.unsubscribe_owned(&self.owner, handle);
+        }
     }
 
     fn track(&self, handle: ListenerHandle) -> ListenerHandle {
-        self.handles.lock().expect("lock poisoned").push(handle);
+        self.handles.lock().expect("lock poisoned").insert(handle);
         handle
     }
 }
@@ -34,7 +58,12 @@ impl EventBus for TrackingEventBus {
         priority: infrarust_api::event::EventPriority,
         handler: ErasedHandler,
     ) -> ListenerHandle {
-        let handle = self.inner.subscribe_erased(event_type, priority, handler);
+        let handle = self.inner.subscribe_owned(
+            Arc::clone(&self.owner),
+            event_type,
+            priority,
+            HandlerKind::from_sync(handler),
+        );
         self.track(handle)
     }
 
@@ -44,9 +73,12 @@ impl EventBus for TrackingEventBus {
         priority: infrarust_api::event::EventPriority,
         handler: ErasedAsyncHandler,
     ) -> ListenerHandle {
-        let handle = self
-            .inner
-            .subscribe_async_erased(event_type, priority, handler);
+        let handle = self.inner.subscribe_owned(
+            Arc::clone(&self.owner),
+            event_type,
+            priority,
+            HandlerKind::from_async(handler),
+        );
         self.track(handle)
     }
 
@@ -56,7 +88,12 @@ impl EventBus for TrackingEventBus {
         priority: infrarust_api::event::EventPriority,
         handler: ErasedHandler,
     ) -> ListenerHandle {
-        let handle = self.inner.subscribe_packet(filter, priority, handler);
+        let handle = self.inner.subscribe_packet_owned(
+            Arc::clone(&self.owner),
+            filter,
+            priority,
+            HandlerKind::from_sync(handler),
+        );
         self.track(handle)
     }
 
@@ -66,7 +103,12 @@ impl EventBus for TrackingEventBus {
         priority: infrarust_api::event::EventPriority,
         handler: ErasedAsyncHandler,
     ) -> ListenerHandle {
-        let handle = self.inner.subscribe_packet_async(filter, priority, handler);
+        let handle = self.inner.subscribe_packet_owned(
+            Arc::clone(&self.owner),
+            filter,
+            priority,
+            HandlerKind::from_async(handler),
+        );
         self.track(handle)
     }
 
@@ -79,8 +121,17 @@ impl EventBus for TrackingEventBus {
         self.inner.has_packet_listeners(packet_id, state, direction)
     }
 
-    fn unsubscribe(&self, handle: ListenerHandle) {
-        self.inner.unsubscribe(handle);
+    fn unsubscribe(&self, handle: ListenerHandle) -> bool {
+        let tracked = self.handles.lock().expect("lock poisoned").remove(&handle);
+        if !tracked {
+            tracing::warn!(
+                plugin = %self.owner,
+                listener = handle.as_u64(),
+                "refused to unsubscribe a listener this plugin did not register"
+            );
+            return false;
+        }
+        self.inner.unsubscribe_owned(&self.owner, handle)
     }
 }
 

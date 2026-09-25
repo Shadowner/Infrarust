@@ -5,7 +5,9 @@ pub mod state;
 use std::sync::{Arc, Mutex};
 
 use infrarust_api::error::PluginError;
-use infrarust_api::event::BoxFuture;
+use infrarust_api::event::bus::EventBusExt;
+use infrarust_api::event::{BoxFuture, EventPriority};
+use infrarust_api::events::proxy::ServerStateChangeEvent;
 use infrarust_api::limbo::handler::HandlerResult;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::server_manager::ServerState;
@@ -60,10 +62,10 @@ impl Plugin for ServerWakePlugin {
             }));
 
             let wake_state = Arc::clone(&state);
-            let sm = ctx.server_manager_handle();
-            sm.on_state_change(Box::new(move |server_id, _old_state, new_state| {
-                handle_state_change(&wake_state, server_id, new_state);
-            }));
+            ctx.event_bus()
+                .subscribe::<ServerStateChangeEvent, _>(EventPriority::NORMAL, move |event| {
+                    handle_state_change(&wake_state, &event.server, event.new_state)
+                });
 
             {
                 let mut guard = self

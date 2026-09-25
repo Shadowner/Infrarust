@@ -38,7 +38,7 @@ impl LimboHandler for DummyLimbo {
 
 fn build_services(plugins_dir: &Path) -> PluginServices {
     PluginServices {
-        event_bus: Arc::new(EventBusImpl::new()) as Arc<dyn infrarust_api::event::bus::EventBus>,
+        event_bus: Arc::new(EventBusImpl::new()),
         player_registry: Arc::new(MockPlayerRegistry),
         server_manager: Arc::new(NoopServerManager),
         ban_service: Arc::new(MockBanService),

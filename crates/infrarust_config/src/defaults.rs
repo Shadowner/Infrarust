@@ -141,3 +141,15 @@ pub const fn announce_proxy_commands() -> bool {
 pub fn session_url() -> String {
     "https://sessionserver.mojang.com/session/minecraft/hasJoined".to_string()
 }
+
+pub const fn event_handler_timeout() -> Duration {
+    Duration::from_secs(10)
+}
+
+pub const fn event_slow_handler_threshold() -> Duration {
+    Duration::from_secs(1)
+}
+
+pub const fn event_packet_handler_timeout() -> Duration {
+    Duration::from_secs(10)
+}

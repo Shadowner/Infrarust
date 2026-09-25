@@ -257,6 +257,25 @@ admins = ["Notch", "00000000-0000-0000-0000-000000000000"]
 player_commands = ["list", "find"]
 ```
 
+### `[events]`
+
+Limits on plugin event listeners. A listener that panics is skipped and the event continues with the next listener.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `handler_timeout` | duration | `"10s"` | Longest an async listener may run for a regular event before it is cancelled |
+| `slow_handler_threshold` | duration | `"1s"` | Listeners running longer than this are logged as slow |
+| `packet_handler_timeout` | duration | `"10s"` | Longest an async raw packet listener may run before it is cancelled |
+
+All three must be greater than zero. Synchronous listeners can't be cancelled; one that overruns is reported as slow.
+
+```toml
+[events]
+handler_timeout = "10s"
+slow_handler_threshold = "1s"
+packet_handler_timeout = "10s"
+```
+
 ### `[plugins.<id>]`
 
 Per-plugin configuration, keyed by plugin ID. Plugins are WASM components; if `path` is omitted the plugin is discovered from `plugins_dir`.
@@ -521,6 +540,11 @@ retries = 3
 file = "bans.json"
 purge_interval = "300s"
 enable_audit_log = true
+
+[events]
+handler_timeout = "10s"
+slow_handler_threshold = "1s"
+packet_handler_timeout = "10s"
 
 [default_motd.offline]
 text = "§cNo server found for this domain"

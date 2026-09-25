@@ -262,7 +262,7 @@ mod tests {
     use axum::http::{self, HeaderName, HeaderValue, Request, StatusCode, header};
     use http_body_util::BodyExt;
     use infrarust_api::error::ServiceError;
-    use infrarust_api::event::{BoxFuture, ListenerHandle};
+    use infrarust_api::event::BoxFuture;
     use infrarust_api::player::Player;
     use infrarust_api::services::ban_service::{BanEntry, BanTarget};
     use infrarust_api::services::config_service::{ServerConfig, ServerSource};
@@ -270,7 +270,7 @@ mod tests {
         BackendState, BackendStatus, LbError, LoadBalancerService,
     };
     use infrarust_api::services::plugin_registry::{PluginDependencyInfo, PluginInfo};
-    use infrarust_api::services::server_manager::{ServerState, StateChangeCallback};
+    use infrarust_api::services::server_manager::ServerState;
     use infrarust_api::types::{PlayerId, ServerAddress, ServerId};
     use tokio::sync::broadcast;
     use tokio_util::sync::CancellationToken;
@@ -361,9 +361,6 @@ mod tests {
         }
         fn stop(&self, _server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {
             Box::pin(async { Ok(()) })
-        }
-        fn on_state_change(&self, _callback: StateChangeCallback) -> ListenerHandle {
-            ListenerHandle::new(0)
         }
         fn get_all_servers(&self) -> Vec<(ServerId, ServerState)> {
             vec![]

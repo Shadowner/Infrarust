@@ -170,6 +170,11 @@ These values apply to both player-to-proxy and proxy-to-backend connections.
 file = "bans.json"
 purge_interval = "300s"
 enable_audit_log = true
+
+[events]
+handler_timeout = "10s"
+slow_handler_threshold = "1s"
+packet_handler_timeout = "10s"
 ```
 
 `file` is the path to the JSON file where bans are stored. `purge_interval` controls how often expired bans are removed from the file. When `enable_audit_log` is `true`, every ban and unban operation is logged.
@@ -340,6 +345,23 @@ player_commands = []
 `player_commands` overrides which `/ir` subcommands non-admin players can run. By default, players can use `help`, `version`, `list`, `find`, and `server`.
 
 Plugins can register custom permission checkers that extend or replace this list.
+
+## Plugin event handlers
+
+```toml
+[events]
+handler_timeout = "10s"
+slow_handler_threshold = "1s"
+packet_handler_timeout = "10s"
+```
+
+Limits on the event listeners that plugins register. A listener that panics is skipped and the event moves on to the next listener, so a buggy plugin can't take down a player's connection or the proxy. Whatever the listener changed on the event before it panicked is kept.
+
+`handler_timeout` caps how long one async listener may run for a regular event such as `PreLoginEvent` or `ChatMessageEvent`. When it runs out, the proxy cancels that listener and continues with the next one, so a stuck plugin delays a login by this much at most. `packet_handler_timeout` does the same for raw packet listeners.
+
+`slow_handler_threshold` logs a warning for any listener that takes longer than this. Synchronous listeners can't be interrupted, so one that runs past `handler_timeout` finishes anyway and shows up as slow rather than timed out.
+
+Panics and timeouts are logged at error level, slow listeners at warn level, and each log line names the plugin and the event. All three values must be greater than zero.
 
 ## Plugins
 

@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::defaults;
 use crate::types::{
-    ActiveHealthConfig, AuthConfig, BanConfig, DockerProviderConfig, ForwardingConfig,
-    IpFilterConfig, KeepaliveConfig, MotdConfig, PermissionsConfig, RateLimitConfig,
-    StatusCacheConfig, TelemetryConfig, WebConfig,
+    ActiveHealthConfig, AuthConfig, BanConfig, DockerProviderConfig, EventsConfig,
+    ForwardingConfig, IpFilterConfig, KeepaliveConfig, MotdConfig, PermissionsConfig,
+    RateLimitConfig, StatusCacheConfig, TelemetryConfig, WebConfig,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +117,9 @@ pub struct ProxyConfig {
     /// Background probing that brings ejected backend addresses back.
     #[serde(default)]
     pub active_health: ActiveHealthConfig,
+
+    #[serde(default)]
+    pub events: EventsConfig,
 
     /// Plugin configurations keyed by plugin ID.
     #[serde(default)]

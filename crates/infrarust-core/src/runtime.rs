@@ -9,7 +9,6 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::command::CommandManager;
-use infrarust_api::event::bus::EventBus;
 use infrarust_api::events::proxy::{ProxyInitializeEvent, ProxyShutdownEvent};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
@@ -211,7 +210,7 @@ fn plugin_services(
     };
 
     PluginServices {
-        event_bus: Arc::clone(&services.event_bus) as Arc<dyn EventBus>,
+        event_bus: Arc::clone(&services.event_bus),
         player_registry: Arc::clone(&services.player_registry) as Arc<dyn PlayerRegistry>,
         server_manager,
         ban_service: Arc::new(BanServiceBridge::new(Arc::clone(&services.ban_manager))),

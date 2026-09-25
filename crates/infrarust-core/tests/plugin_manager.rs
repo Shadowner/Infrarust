@@ -461,7 +461,7 @@ async fn test_cleanup_on_disable() {
     let call_count = Arc::new(AtomicUsize::new(0));
 
     let services = PluginServices {
-        event_bus: Arc::clone(&event_bus) as Arc<dyn infrarust_api::event::bus::EventBus>,
+        event_bus: Arc::clone(&event_bus),
         player_registry: Arc::new(MockPlayerRegistry),
         server_manager: Arc::new(NoopServerManager),
         ban_service: Arc::new(MockBanService),

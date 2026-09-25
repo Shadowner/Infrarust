@@ -14,8 +14,8 @@ use infrarust_api::events::proxy::ServerStateChangeEvent;
 use infrarust_api::types::ServerId;
 use infrarust_server_manager::ServerManagerService;
 
-use crate::event_bus::EventBusImpl;
 use crate::event_bus::conversion::convert_server_state;
+use crate::event_bus::{EventBusConfig, EventBusImpl};
 
 use crate::auth::mojang::MojangAuth;
 use crate::ban::file_storage::FileBanStorage;
@@ -84,7 +84,9 @@ impl ProxyServer {
         let packet_registry = Arc::new(build_default_registry());
 
         // Create the event bus
-        let event_bus = Arc::new(EventBusImpl::new());
+        let event_bus = Arc::new(EventBusImpl::with_config(EventBusConfig::from(
+            &config.events,
+        )));
 
         #[cfg(feature = "telemetry")]
         let proxy_metrics = Arc::new(crate::telemetry::ProxyMetrics::new());

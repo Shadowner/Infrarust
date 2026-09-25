@@ -19,7 +19,7 @@ workspace = true
 
 [features]
 default = []
-docker = ["dep:bollard", "dep:futures-util"]
+docker = ["dep:bollard"]
 libdeflater = ["infrarust_protocol/libdeflater"]
 # Per-filter / per-packet hot-path timing, emitted on the `infrarust::bench_timing`
 # tracing target. Off by default — compiles out entirely in normal builds.
@@ -40,6 +40,7 @@ infrarust_server_manager = { workspace = true }
 
 tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 tokio-util = { workspace = true }
+futures-util = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true }
 governor = { workspace = true }
@@ -65,7 +66,6 @@ quanta = { workspace = true, optional = true }
 
 # Docker provider (optional)
 bollard = { workspace = true, optional = true }
-futures-util = { workspace = true, optional = true }
 
 # Telemetry (optional)
 opentelemetry = { workspace = true, optional = true }
@@ -96,4 +96,8 @@ harness = false
 
 [[bench]]
 name = "intercepted_pipeline"
+harness = false
+
+[[bench]]
+name = "event_dispatch"
 harness = false

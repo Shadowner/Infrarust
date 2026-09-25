@@ -404,3 +404,17 @@ fn test_proxy_web_bind_collision_is_invalid() {
     );
     assert!(validate_proxy_config(&config).is_ok());
 }
+
+#[test]
+fn test_proxy_zero_event_timeouts_are_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    for key in [
+        "handler_timeout",
+        "slow_handler_threshold",
+        "packet_handler_timeout",
+    ] {
+        let config = proxy_from_toml(&format!("[events]\n{key} = \"0s\""), dir.path());
+        let err = validate_proxy_config(&config).unwrap_err().to_string();
+        assert!(err.contains(&format!("events.{key}")), "{err}");
+    }
+}

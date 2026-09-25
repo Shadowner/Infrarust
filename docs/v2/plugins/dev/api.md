@@ -256,10 +256,19 @@ for (id, state) in manager.get_all_servers() {
     tracing::info!("{}: {:?}", id, state);
 }
 
-// React to state changes
-let handle = manager.on_state_change(Box::new(|server, old, new| {
-    tracing::info!("{server}: {old:?} -> {new:?}");
-}));
+```
+
+To react to state changes, subscribe to `ServerStateChangeEvent` on the event bus. Like every listener, it is removed automatically when your plugin is disabled:
+
+```rust
+use infrarust_api::events::proxy::ServerStateChangeEvent;
+
+ctx.event_bus().subscribe::<ServerStateChangeEvent, _>(
+    EventPriority::NORMAL,
+    |event| {
+        tracing::info!("{}: {:?} -> {:?}", event.server, event.old_state, event.new_state);
+    },
+);
 ```
 
 `ServerState` has these variants:

@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::command::CommandManager;
-use infrarust_api::event::ListenerHandle;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use infrarust_api::limbo::LimboHandler;
@@ -21,6 +20,7 @@ use infrarust_api::services::{
     server_manager::ServerManager,
 };
 
+use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::provider::ProviderId;
@@ -56,7 +56,6 @@ pub struct PluginContextImpl {
     capabilities: CapabilitySet,
 
     // Shared tracking state (also held by the wrappers)
-    registered_handles: Arc<Mutex<Vec<ListenerHandle>>>,
     registered_commands: Arc<Mutex<Vec<String>>>,
     registered_tasks: Arc<Mutex<Vec<TaskHandle>>>,
     registered_provider_ids: Arc<Mutex<Vec<ProviderId>>>,
@@ -67,7 +66,7 @@ impl PluginContextImpl {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         plugin_id: String,
-        event_bus: Arc<dyn EventBus>,
+        event_bus: Arc<EventBusImpl>,
         player_registry: Arc<dyn PlayerRegistry>,
         server_manager: Arc<dyn ServerManager>,
         ban_service: Arc<dyn BanService>,
@@ -84,14 +83,10 @@ impl PluginContextImpl {
         plugins_dir: PathBuf,
         capabilities: CapabilitySet,
     ) -> Self {
-        let registered_handles = Arc::new(Mutex::new(Vec::new()));
         let registered_commands = Arc::new(Mutex::new(Vec::new()));
         let registered_tasks = Arc::new(Mutex::new(Vec::new()));
 
-        let tracking_bus = Arc::new(TrackingEventBus::new(
-            event_bus,
-            Arc::clone(&registered_handles),
-        ));
+        let tracking_bus = Arc::new(TrackingEventBus::new(event_bus, &plugin_id));
         let tracking_cmd = Arc::new(TrackingCommandManager::new(
             command_manager,
             Arc::clone(&registered_commands),
@@ -130,7 +125,6 @@ impl PluginContextImpl {
             plugin_id,
             plugins_dir,
             capabilities,
-            registered_handles,
             registered_commands,
             registered_tasks,
             registered_provider_ids: Arc::new(Mutex::new(Vec::new())),
@@ -165,10 +159,7 @@ impl PluginContextImpl {
 
     pub fn cleanup(&self) {
         // Unsubscribe all event listeners
-        let handles = std::mem::take(&mut *self.registered_handles.lock().expect("lock poisoned"));
-        for handle in handles {
-            self.event_bus.unsubscribe(handle);
-        }
+        self.event_bus.unsubscribe_all();
 
         // Unregister all commands
         let commands =

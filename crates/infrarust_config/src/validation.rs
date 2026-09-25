@@ -237,6 +237,24 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<(), ConfigError> 
         ));
     }
 
+    for (key, value) in [
+        ("events.handler_timeout", config.events.handler_timeout),
+        (
+            "events.slow_handler_threshold",
+            config.events.slow_handler_threshold,
+        ),
+        (
+            "events.packet_handler_timeout",
+            config.events.packet_handler_timeout,
+        ),
+    ] {
+        if value.is_zero() {
+            return Err(ConfigError::Validation(format!(
+                "{key} must be greater than zero"
+            )));
+        }
+    }
+
     if config.rate_limit.enabled {
         if config.rate_limit.window.is_zero() {
             return Err(ConfigError::Validation(

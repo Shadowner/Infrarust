@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use infrarust_api::command::CommandManager;
-use infrarust_api::event::bus::EventBus;
 use infrarust_api::loader::PluginContextFactory;
 use infrarust_api::plugin::Plugin;
 use infrarust_api::services::proxy_info::ProxyInfo;
@@ -36,7 +35,7 @@ use mock_services::{
 async fn native_count_command_matches_wasm() {
     let command_manager = Arc::new(CommandManagerImpl::new());
     let services = PluginServices {
-        event_bus: Arc::new(EventBusImpl::new()) as Arc<dyn EventBus>,
+        event_bus: Arc::new(EventBusImpl::new()),
         player_registry: Arc::new(MockPlayerRegistry),
         server_manager: Arc::new(NoopServerManager),
         ban_service: Arc::new(MockBanService),

@@ -4,6 +4,7 @@
 
 use std::any::Any;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler};
 use infrarust_api::event::{BoxFuture, EventPriority, ListenerHandle};
@@ -44,5 +45,7 @@ pub struct HandlerEntry {
     pub handle: ListenerHandle,
     /// Dispatch priority (lower value = higher priority = runs first).
     pub priority: EventPriority,
+    pub owner: Arc<str>,
+    pub alive: Arc<AtomicBool>,
     pub kind: HandlerKind,
 }

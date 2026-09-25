@@ -60,7 +60,8 @@ impl EventPriority {
 pub struct ListenerHandle(u64);
 
 impl ListenerHandle {
-    pub const fn new(id: u64) -> Self {
+    #[doc(hidden)]
+    pub const fn from_raw(id: u64) -> Self {
         Self(id)
     }
 
@@ -144,7 +145,7 @@ mod tests {
 
     #[test]
     fn listener_handle() {
-        let h = ListenerHandle::new(42);
+        let h = ListenerHandle::from_raw(42);
         assert_eq!(h.as_u64(), 42);
     }
 }
