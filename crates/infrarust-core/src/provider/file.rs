@@ -178,14 +178,23 @@ fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<P
     let mut events = Vec::new();
 
     // Collect current files
+    let entries = match std::fs::read_dir(dir).and_then(Iterator::collect::<Result<Vec<_>, _>>) {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::warn!(
+                dir = %dir.display(),
+                error = %e,
+                "cannot list the servers directory, keeping the current servers"
+            );
+            return events;
+        }
+    };
     let mut current_files: HashMap<PathBuf, Option<ServerConfig>> = HashMap::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "toml") {
-                let config = load_server_config(&path).ok();
-                current_files.insert(path, config);
-            }
+    for entry in entries {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "toml") {
+            let config = load_server_config(&path).ok();
+            current_files.insert(path, config);
         }
     }
 

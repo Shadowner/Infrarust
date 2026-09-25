@@ -239,3 +239,84 @@ async fn test_watch_invalid_toml_keeps_old() {
     shutdown.cancel();
     watch_handle.await.unwrap();
 }
+
+async fn first_event_after_probe(dir: &std::path::Path, rx: &mut mpsc::Receiver<ProviderEvent>) {
+    std::fs::write(dir.join("probe.toml"), MINIMAL_CONFIG).unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("timeout waiting for the probe")
+        .expect("channel closed");
+    match event {
+        ProviderEvent::Added(pc) => assert_eq!(pc.id.to_string(), "file@probe.toml"),
+        other => panic!("expected only the probe to be added, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_watch_is_silent_about_files_present_at_start() {
+    let dir = create_test_config_dir(&[("a.toml", MINIMAL_CONFIG), ("b.toml", FULL_CONFIG)]);
+    let provider = FileProvider::new(dir.path().to_path_buf());
+    let (tx, mut rx) = mpsc::channel(32);
+    let shutdown = CancellationToken::new();
+
+    let shutdown_clone = shutdown.clone();
+    let watch_handle = tokio::spawn(async move {
+        provider.watch(tx, shutdown_clone).await.unwrap();
+    });
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    first_event_after_probe(dir.path(), &mut rx).await;
+
+    shutdown.cancel();
+    watch_handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_watch_ignores_a_rewrite_with_the_same_content() {
+    let dir = create_test_config_dir(&[("server.toml", FULL_CONFIG)]);
+    let provider = FileProvider::new(dir.path().to_path_buf());
+    let (tx, mut rx) = mpsc::channel(32);
+    let shutdown = CancellationToken::new();
+
+    let shutdown_clone = shutdown.clone();
+    let watch_handle = tokio::spawn(async move {
+        provider.watch(tx, shutdown_clone).await.unwrap();
+    });
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    std::fs::write(dir.path().join("server.toml"), FULL_CONFIG).unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    first_event_after_probe(dir.path(), &mut rx).await;
+
+    shutdown.cancel();
+    watch_handle.await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_watch_keeps_servers_when_the_directory_cannot_be_listed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = create_test_config_dir(&[("a.toml", MINIMAL_CONFIG), ("b.toml", FULL_CONFIG)]);
+    let provider = FileProvider::new(dir.path().to_path_buf());
+    let (tx, mut rx) = mpsc::channel(32);
+    let shutdown = CancellationToken::new();
+
+    let shutdown_clone = shutdown.clone();
+    let watch_handle = tokio::spawn(async move {
+        provider.watch(tx, shutdown_clone).await.unwrap();
+    });
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o000)).unwrap();
+    let during = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        during.is_err(),
+        "an unreadable directory changed the servers: {during:?}"
+    );
+    first_event_after_probe(dir.path(), &mut rx).await;
+
+    shutdown.cancel();
+    watch_handle.await.unwrap();
+}
