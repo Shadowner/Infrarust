@@ -77,6 +77,7 @@ struct BackendConfig {
     compression: Option<i32>,
     login: LoginBehavior,
     status: Option<Value>,
+    hold_config: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +101,12 @@ impl FakeBackendBuilder {
     #[must_use]
     pub fn status(mut self, json: Value) -> Self {
         self.config.status = Some(json);
+        self
+    }
+
+    #[must_use]
+    pub const fn hold_config(mut self) -> Self {
+        self.config.hold_config = true;
         self
     }
 
@@ -137,6 +144,7 @@ impl FakeBackend {
                 compression: None,
                 login: LoginBehavior::Accept,
                 status: None,
+                hold_config: false,
             },
         }
     }
@@ -316,6 +324,9 @@ async fn serve_login(
     if version.no_less_than(ProtocolVersion::V1_20_2) {
         read_until::<SLoginAcknowledged>(&mut conn, version, &mut setup.config_frames).await?;
         setup.state = ConnectionState::Config;
+        if config.hold_config {
+            return Ok(BackendConn::start(conn, setup));
+        }
         send(&mut conn, &CFinishConfig, version).await?;
         read_until::<SAcknowledgeFinishConfig>(&mut conn, version, &mut setup.config_frames)
             .await?;
@@ -451,6 +462,31 @@ impl BackendConn {
     pub async fn send_packet<P: Packet>(&mut self, packet: &P) -> HarnessResult<()> {
         let frame = wire::encode(packet, self.setup.version)?;
         self.send_frame(&frame).await
+    }
+
+    pub async fn finish_config(&mut self, timeout: Duration) -> HarnessResult<()> {
+        if self.setup.state != ConnectionState::Config {
+            return Err(HarnessError::Unexpected(format!(
+                "cannot finish the configuration phase in {} state",
+                self.setup.state
+            )));
+        }
+        self.send_packet(&CFinishConfig).await?;
+        let version = self.setup.version;
+        let deadline = Instant::now() + timeout;
+        loop {
+            let frame = tokio::time::timeout_at(deadline, self.frames.recv())
+                .await
+                .map_err(|_| HarnessError::timeout(SAcknowledgeFinishConfig::NAME, timeout))?
+                .ok_or_else(|| HarnessError::Closed(SAcknowledgeFinishConfig::NAME.to_string()))?;
+            if wire::is::<SAcknowledgeFinishConfig>(&frame, version) {
+                break;
+            }
+            self.setup.config_frames.push(frame);
+        }
+        self.setup.state = ConnectionState::Play;
+        let join = infrarust_core::test_support::join_game_frame(version)?;
+        self.send_frame(&join).await
     }
 
     pub async fn kick_json(&mut self, json: &str) -> HarnessResult<()> {

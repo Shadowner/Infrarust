@@ -17,6 +17,7 @@ use super::handler_chain::{LimboChainResult, run_handler_chain};
 use super::keepalive::KeepAliveState;
 use super::session::LimboSessionImpl;
 use super::virtual_session::VirtualSessionCore;
+use crate::player::commands::CommandInbox;
 use crate::player::packets::build_disconnect;
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
@@ -43,6 +44,7 @@ pub(crate) async fn enter_limbo(
     entry_context: LimboEntryContext,
     services: &ProxyServices,
     cancel: CancellationToken,
+    commands: &mut CommandInbox,
 ) -> LimboExitResult {
     let registry = Arc::clone(&services.packet_registry);
     let mut core = VirtualSessionCore::new(
@@ -80,6 +82,7 @@ pub(crate) async fn enter_limbo(
         version,
         &registry,
         true,
+        commands,
     )
     .await;
 
@@ -389,6 +392,7 @@ mod tests {
             },
             &services,
             CancellationToken::new(),
+            &mut idle_commands(),
         )
         .await;
 

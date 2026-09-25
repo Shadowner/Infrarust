@@ -15,6 +15,7 @@ use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
+use super::LIMBO_SWITCH_TARGET;
 use super::chat::{ClientMessage, parse_client_message};
 use super::keepalive::{
     KeepAliveState, KeepAliveTick, extract_keepalive_id, is_keepalive_response,
@@ -22,6 +23,7 @@ use super::keepalive::{
 use super::session::LimboSessionImpl;
 use super::spawn::send_spawn_sequence;
 use super::virtual_session::VirtualSessionCore;
+use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 
@@ -50,6 +52,7 @@ pub(crate) async fn run_handler_chain(
     version: ProtocolVersion,
     registry: &PacketRegistry,
     needs_join_game: bool,
+    commands: &mut CommandInbox,
 ) -> LimboChainResult {
     let mut spawn_sent = false;
 
@@ -80,6 +83,7 @@ pub(crate) async fn run_handler_chain(
                     cancel.clone(),
                     timeout,
                     complete_rx,
+                    commands,
                 )
                 .await
                 {
@@ -146,6 +150,7 @@ async fn wait_for_hold(
     cancel: CancellationToken,
     timeout: Option<HoldTimeout>,
     mut complete_rx: oneshot::Receiver<HandlerResult>,
+    commands: &mut CommandInbox,
 ) -> HandlerAction {
     let mut keepalive_interval =
         tokio::time::interval(Duration::from_secs(KEEPALIVE_INTERVAL_SECS));
@@ -162,8 +167,29 @@ async fn wait_for_hold(
     };
     tokio::pin!(hold_timeout);
 
+    let released = commands.drain(client, &core.packet_registry, true);
+    if let Some(action) = settle_commands(client, commands, &core.packet_registry, released).await {
+        return action;
+    }
+
     loop {
         tokio::select! {
+            biased;
+
+            Some(command) = commands.recv() => {
+                let outcome = commands.apply(command, client, &core.packet_registry, true);
+                if let Some(action) = settle_commands(client, commands, &core.packet_registry, outcome).await {
+                    return action;
+                }
+            }
+
+            () = cancel.cancelled() => {
+                if let Some(reason) = commands.take_kick(client, &core.packet_registry, true) {
+                    return HandlerAction::Exit(LimboChainResult::Kick(reason));
+                }
+                return HandlerAction::Exit(LimboChainResult::Shutdown);
+            }
+
             frame = client.read_frame() => {
                 match frame {
                     Ok(Some(frame)) => {
@@ -232,10 +258,6 @@ async fn wait_for_hold(
                 };
             }
 
-            () = cancel.cancelled() => {
-                return HandlerAction::Exit(LimboChainResult::Shutdown);
-            }
-
             () = &mut hold_timeout => {
                 if let Some(result) = on_timeout.clone() {
                     return process_handler_result(result);
@@ -243,6 +265,29 @@ async fn wait_for_hold(
             }
         }
     }
+}
+
+async fn settle_commands(
+    client: &mut ClientBridge,
+    commands: &mut CommandInbox,
+    registry: &PacketRegistry,
+    mut outcome: CommandOutcome,
+) -> Option<HandlerAction> {
+    let exit = loop {
+        match outcome {
+            CommandOutcome::Switch(target) if target.as_str() == LIMBO_SWITCH_TARGET => {
+                tracing::debug!("ignoring a request to enter limbo from limbo");
+                outcome = commands.drain(client, registry, true);
+            }
+            CommandOutcome::Switch(target) => break Some(LimboChainResult::Switch(target)),
+            CommandOutcome::Kick(reason) => break Some(LimboChainResult::Kick(reason)),
+            CommandOutcome::Continue => break None,
+        }
+    };
+    if client.flush().await.is_err() {
+        return Some(HandlerAction::Exit(LimboChainResult::ClientDisconnected));
+    }
+    exit.map(HandlerAction::Exit)
 }
 
 #[cfg(test)]
@@ -385,6 +430,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         assert!(matches!(result, LimboChainResult::Completed));
@@ -421,6 +467,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         assert!(matches!(result, LimboChainResult::Kick(_)));
@@ -459,6 +506,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         match result {
@@ -489,6 +537,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         assert!(matches!(result, LimboChainResult::Completed));
@@ -520,6 +569,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         match result {
@@ -554,6 +604,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         assert!(matches!(result, LimboChainResult::Shutdown));
@@ -584,6 +635,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         assert!(matches!(result, LimboChainResult::ClientDisconnected));
@@ -609,6 +661,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         assert!(matches!(result, LimboChainResult::Completed));
@@ -640,6 +693,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         assert!(matches!(result, LimboChainResult::Kick(_)));
@@ -673,6 +727,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         assert!(matches!(result, LimboChainResult::Completed));
@@ -730,6 +785,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         assert!(
@@ -765,6 +821,7 @@ mod tests {
                 CancellationToken::new(),
                 None,
                 rx_b,
+                &mut idle_commands(),
             ),
         )
         .await;
@@ -800,6 +857,7 @@ mod tests {
             ProtocolVersion::V1_21,
             &registry,
             true,
+            &mut idle_commands(),
         )
         .await;
         assert!(matches!(result, LimboChainResult::Completed));

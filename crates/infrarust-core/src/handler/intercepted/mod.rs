@@ -19,6 +19,7 @@ use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::player::PlayerSession;
+use crate::player::commands::CommandInbox;
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 
@@ -228,7 +229,7 @@ impl InterceptedHandler {
             );
 
         let session_server = target_server_id.clone();
-        let mut cmd_rx = cmd_rx;
+        let mut commands = CommandInbox::new(cmd_rx);
         let outcome = session_loop::run_session_loop(
             &mut client,
             initial_mode,
@@ -244,11 +245,19 @@ impl InterceptedHandler {
             &self.services,
             &self.backend_connector,
             session_token,
-            &mut cmd_rx,
+            &mut commands,
             &mut client_codec_chain,
             &mut server_codec_chain,
         )
         .await;
+
+        if let Some(reason) = commands.take_kick(&mut client, &self.services.packet_registry, false)
+        {
+            client
+                .disconnect(&reason, &self.services.packet_registry)
+                .await
+                .ok();
+        }
 
         client_codec_chain.close();
         server_codec_chain.close();

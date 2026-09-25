@@ -71,6 +71,25 @@ async fn test_kick_cancels_token() {
     assert!(session.shutdown_token().is_cancelled());
 }
 
+#[tokio::test(start_paused = true)]
+async fn disconnect_does_not_wait_for_room_in_a_full_command_channel() {
+    let (session, _rx) = PlayerSession::new_test(true);
+    for i in 0..32 {
+        session
+            .send_message(Component::text(format!("msg {i}")))
+            .expect("should succeed");
+    }
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        session.disconnect(Component::text("goodbye")),
+    )
+    .await
+    .expect("disconnect must not wait for the command channel to drain");
+
+    assert!(session.shutdown_token().is_cancelled());
+}
+
 #[test]
 fn test_current_server_update() {
     let (session, _rx) = PlayerSession::new_test(true);

@@ -17,3 +17,5 @@ pub(crate) mod virtual_session; // VirtualSessionCore — shared plumbing
 
 #[cfg(test)]
 pub(crate) mod test_helpers; // Shared test utilities
+
+pub(crate) const LIMBO_SWITCH_TARGET: &str = "$limbo";

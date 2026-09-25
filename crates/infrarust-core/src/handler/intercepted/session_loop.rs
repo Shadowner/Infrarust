@@ -7,16 +7,16 @@ use infrarust_api::limbo::handler::LimboHandler;
 use infrarust_api::types::{Component, PlayerId};
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::event::ResultedEvent;
 
 use crate::error::CoreError;
 use crate::filter::codec_chain::CodecFilterChain;
+use crate::limbo::LIMBO_SWITCH_TARGET;
 use crate::limbo::engine::{LimboExitResult, enter_limbo};
 use crate::pipeline::types::HandshakeData;
-use crate::player::PlayerCommand;
+use crate::player::commands::CommandInbox;
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
@@ -42,7 +42,7 @@ pub(super) async fn run_session_loop(
     services: &ProxyServices,
     backend_connector: &BackendConnector,
     session_token: CancellationToken,
-    cmd_rx: &mut mpsc::Receiver<PlayerCommand>,
+    commands: &mut CommandInbox,
     client_codec_chain: &mut CodecFilterChain,
     server_codec_chain: &mut CodecFilterChain,
 ) -> ProxyLoopOutcome {
@@ -59,7 +59,7 @@ pub(super) async fn run_session_loop(
                     backend,
                     &services.packet_registry,
                     session_token.clone(),
-                    cmd_rx,
+                    commands,
                     services,
                     player_id,
                     client_codec_chain,
@@ -68,7 +68,9 @@ pub(super) async fn run_session_loop(
                 .await;
 
                 match outcome {
-                    ProxyLoopOutcome::SwitchRequested { target } if target.as_str() == "$limbo" => {
+                    ProxyLoopOutcome::SwitchRequested { target }
+                        if target.as_str() == LIMBO_SWITCH_TARGET =>
+                    {
                         // "$limbo" sentinel: enter limbo for current server's handlers
                         let server_config = services
                             .domain_router
@@ -216,6 +218,7 @@ pub(super) async fn run_session_loop(
                     entry_ctx.clone(),
                     services,
                     session_token.clone(),
+                    commands,
                 )
                 .await;
 

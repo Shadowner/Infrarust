@@ -3,6 +3,7 @@
 //! Provides [`PlayerSession`] (the concrete implementation of `dyn Player`)
 //! and [`PlayerCommand`] (the command channel enum for packet injection).
 
+pub(crate) mod commands;
 pub(crate) mod packets;
 pub mod registry;
 
@@ -54,7 +55,7 @@ pub enum PlayerCommand {
 ///
 /// Holds identity data and a command channel to the proxy loop.
 /// Sync methods (`send_message`, etc.) use `try_send` on the bounded channel.
-/// Async methods (`disconnect`, `switch_server`) use `send().await`.
+/// `switch_server` uses `send().await`.
 pub struct PlayerSession {
     player_id: PlayerId,
     profile: GameProfile,
@@ -255,7 +256,12 @@ impl Player for PlayerSession {
 
     fn disconnect(&self, reason: Component) -> BoxFuture<'_, ()> {
         Box::pin(async move {
-            let _ = self.command_tx.send(PlayerCommand::Kick(reason)).await;
+            if let Err(e) = self.command_tx.try_send(PlayerCommand::Kick(reason)) {
+                tracing::debug!(
+                    player = %self.profile.username,
+                    "disconnecting without queueing the kick reason: {e}"
+                );
+            }
             self.shutdown_token.cancel();
         })
     }

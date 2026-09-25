@@ -10,8 +10,7 @@
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::{PlayerId, RawPacket, ServerId};
-use tokio::sync::mpsc;
+use infrarust_api::types::{Component, PlayerId, RawPacket, ServerId};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_protocol::io::PacketFrame;
@@ -23,6 +22,7 @@ use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::packets::play::chat_session::SChatSessionUpdate;
 use infrarust_protocol::packets::play::commands::CCommands;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
+use infrarust_protocol::packets::play::join_game::CJoinGame;
 use infrarust_protocol::packets::play::tab_complete::{
     CTabCompleteResponse, STabCompleteRequest, TabCompleteMatch,
 };
@@ -33,6 +33,7 @@ use crate::error::CoreError;
 use crate::event_bus::conversion::{protocol_direction_to_api, protocol_state_to_api};
 use crate::filter::codec_chain::{CodecFilterChain, FilterResult};
 use crate::player::PlayerCommand;
+use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
@@ -96,6 +97,7 @@ struct HotIds {
     s_chat_message: Option<i32>,
     c_disconnect: Option<i32>,
     c_commands: Option<i32>,
+    c_join_game: Option<i32>,
 }
 
 impl HotIds {
@@ -108,7 +110,12 @@ impl HotIds {
             s_chat_message: registry.get_packet_id::<SChatMessage>(version),
             c_disconnect: registry.get_packet_id::<CDisconnect>(version),
             c_commands: registry.get_packet_id::<CCommands>(version),
+            c_join_game: registry.get_packet_id::<CJoinGame>(version),
         }
+    }
+
+    fn joins_game(&self, frame: &PacketFrame, backend: &BackendBridge, in_game: bool) -> bool {
+        !in_game && backend.state == ConnectionState::Play && Some(frame.id) == self.c_join_game
     }
 }
 
@@ -130,189 +137,215 @@ pub async fn proxy_loop(
     backend: &mut BackendBridge,
     registry: &PacketRegistry,
     shutdown: CancellationToken,
-    command_rx: &mut mpsc::Receiver<PlayerCommand>,
+    commands: &mut CommandInbox,
     services: &ProxyServices,
     player_id: PlayerId,
     client_codec_chain: &mut CodecFilterChain,
     server_codec_chain: &mut CodecFilterChain,
 ) -> ProxyLoopOutcome {
     let hot_ids = HotIds::resolve(registry, client.protocol_version);
+    let mut in_game = client.state() == ConnectionState::Play;
+    if in_game {
+        let outcome = commands.drain(client, registry, in_game);
+        if let Err(e) = client.flush().await {
+            return ProxyLoopOutcome::Error(e);
+        }
+        if let Some(end) = settle_commands(client, registry, outcome).await {
+            return end;
+        }
+    }
     loop {
-        tokio::select! {
-            frame = client.read_frame() => {
-                match frame {
-                    Ok(Some(frame)) => {
-                        let mut result = handle_client_to_backend(client, backend, frame, registry, services, player_id, client_codec_chain, &hot_ids).await;
-                        let mut command_outcome = drain_player_commands(client, command_rx, registry);
-                        while result.is_ok() && command_outcome.is_none() {
-                            match client.try_next_frame() {
-                                Ok(Some(frame)) => {
-                                    result = handle_client_to_backend(client, backend, frame, registry, services, player_id, client_codec_chain, &hot_ids).await;
-                                    command_outcome = drain_player_commands(client, command_rx, registry);
-                                }
-                                Ok(None) => break,
-                                Err(e) => result = Err(e),
-                            }
-                        }
-                        if result.is_ok() {
-                            result = backend.flush().await;
-                        }
-                        if result.is_ok() {
-                            result = client.flush().await; // tab-complete responses etc.
-                        }
-                        if let Err(e) = result {
-                            let _ = backend.flush().await;
-                            let _ = client.flush().await;
-                            if e.is_expected_disconnect() {
-                                break ProxyLoopOutcome::BackendDisconnected { reason: Some(e.to_string()) };
-                            }
-                            break ProxyLoopOutcome::Error(e);
-                        }
-                        match command_outcome {
-                            Some(CommandResult::Kick) => break ProxyLoopOutcome::ClientDisconnected,
-                            Some(CommandResult::Switch(target)) => break ProxyLoopOutcome::SwitchRequested { target },
-                            _ => {}
-                        }
-                    }
-                    Ok(None) => break ProxyLoopOutcome::ClientDisconnected,
-                    Err(e) => break ProxyLoopOutcome::Error(e),
-                }
-            }
-            frame = backend.read_frame() => {
-                match frame {
-                    Ok(Some(frame)) => {
-                        let mut result = handle_backend_to_client(client, backend, frame, registry, services, player_id, server_codec_chain, &hot_ids).await;
-                        let mut command_outcome = drain_player_commands(client, command_rx, registry);
-                        while matches!(result, Ok(BackendAction::Continue)) && command_outcome.is_none() {
-                            match backend.try_next_frame() {
-                                Ok(Some(frame)) => {
-                                    result = handle_backend_to_client(client, backend, frame, registry, services, player_id, server_codec_chain, &hot_ids).await;
-                                    command_outcome = drain_player_commands(client, command_rx, registry);
-                                }
-                                Ok(None) => break,
-                                Err(e) => result = Err(e),
-                            }
-                        }
-                        match result {
-                            Ok(action) => {
-                                if let Err(e) = client.flush().await {
-                                    break ProxyLoopOutcome::Error(e);
-                                }
-                                if let Err(e) = backend.flush().await {
-                                    break ProxyLoopOutcome::Error(e);
-                                }
-                                match action {
-                                    BackendAction::Continue => {}
-                                    BackendAction::Disconnected(reason) => {
-                                        break ProxyLoopOutcome::BackendDisconnected { reason };
-                                    }
-                                }
-                                match command_outcome {
-                                    Some(CommandResult::Kick) => break ProxyLoopOutcome::ClientDisconnected,
-                                    Some(CommandResult::Switch(target)) => break ProxyLoopOutcome::SwitchRequested { target },
-                                    _ => {}
-                                }
-                            }
-                            Err(e) => {
-                                let _ = client.flush().await;
-                                break ProxyLoopOutcome::Error(e);
-                            }
-                        }
-                    }
-                    Ok(None) => break ProxyLoopOutcome::BackendDisconnected { reason: None },
-                    Err(e) => break ProxyLoopOutcome::Error(e),
-                }
-            }
-            Some(cmd) = command_rx.recv() => {
-                let result = handle_player_command(client, cmd, registry);
+        let event = tokio::select! {
+            biased;
+            Some(command) = commands.recv() => LoopEvent::Command(command),
+            () = shutdown.cancelled() => LoopEvent::Shutdown,
+            event = next_frame(client, backend) => event,
+        };
+        match event {
+            LoopEvent::Command(command) => {
+                let outcome = match commands.apply(command, client, registry, in_game) {
+                    CommandOutcome::Continue => commands.drain(client, registry, in_game),
+                    outcome => outcome,
+                };
                 if let Err(e) = client.flush().await {
                     tracing::warn!("failed to flush player command: {e}");
                 }
-                match result {
-                    Ok(CommandResult::Continue) => {}
-                    Ok(CommandResult::Kick) => break ProxyLoopOutcome::ClientDisconnected,
-                    Ok(CommandResult::Switch(target)) => {
-                        break ProxyLoopOutcome::SwitchRequested { target };
-                    }
-                    Err(e) => {
-                        tracing::warn!("failed to handle player command: {e}");
-                    }
+                if let Some(end) = settle_commands(client, registry, outcome).await {
+                    break end;
                 }
             }
-            () = shutdown.cancelled() => {
+            LoopEvent::Shutdown => {
+                if let Some(reason) = commands.take_kick(client, registry, in_game) {
+                    break kick(client, &reason, registry).await;
+                }
+                let _ = client.flush().await;
                 break ProxyLoopOutcome::Shutdown;
             }
+            LoopEvent::Client(frame) => match frame {
+                Ok(Some(frame)) => {
+                    let mut result = handle_client_to_backend(
+                        client,
+                        backend,
+                        frame,
+                        registry,
+                        services,
+                        player_id,
+                        client_codec_chain,
+                        &hot_ids,
+                    )
+                    .await;
+                    let mut command_outcome = commands.drain(client, registry, in_game);
+                    while result.is_ok() && matches!(command_outcome, CommandOutcome::Continue) {
+                        match client.try_next_frame() {
+                            Ok(Some(frame)) => {
+                                result = handle_client_to_backend(
+                                    client,
+                                    backend,
+                                    frame,
+                                    registry,
+                                    services,
+                                    player_id,
+                                    client_codec_chain,
+                                    &hot_ids,
+                                )
+                                .await;
+                                command_outcome = commands.drain(client, registry, in_game);
+                            }
+                            Ok(None) => break,
+                            Err(e) => result = Err(e),
+                        }
+                    }
+                    if result.is_ok() {
+                        result = backend.flush().await;
+                    }
+                    if result.is_ok() {
+                        result = client.flush().await;
+                    }
+                    if let Err(e) = result {
+                        let _ = backend.flush().await;
+                        let _ = client.flush().await;
+                        if e.is_expected_disconnect() {
+                            break ProxyLoopOutcome::BackendDisconnected {
+                                reason: Some(e.to_string()),
+                            };
+                        }
+                        break ProxyLoopOutcome::Error(e);
+                    }
+                    if let Some(end) = settle_commands(client, registry, command_outcome).await {
+                        break end;
+                    }
+                }
+                Ok(None) => break ProxyLoopOutcome::ClientDisconnected,
+                Err(e) => break ProxyLoopOutcome::Error(e),
+            },
+            LoopEvent::Backend(frame) => match frame {
+                Ok(Some(frame)) => {
+                    let joins = hot_ids.joins_game(&frame, backend, in_game);
+                    let mut result = handle_backend_to_client(
+                        client,
+                        backend,
+                        frame,
+                        registry,
+                        services,
+                        player_id,
+                        server_codec_chain,
+                        &hot_ids,
+                    )
+                    .await;
+                    in_game |= joins && result.is_ok();
+                    let mut command_outcome = commands.drain(client, registry, in_game);
+                    while matches!(result, Ok(BackendAction::Continue))
+                        && matches!(command_outcome, CommandOutcome::Continue)
+                    {
+                        match backend.try_next_frame() {
+                            Ok(Some(frame)) => {
+                                let joins = hot_ids.joins_game(&frame, backend, in_game);
+                                result = handle_backend_to_client(
+                                    client,
+                                    backend,
+                                    frame,
+                                    registry,
+                                    services,
+                                    player_id,
+                                    server_codec_chain,
+                                    &hot_ids,
+                                )
+                                .await;
+                                in_game |= joins && result.is_ok();
+                                command_outcome = commands.drain(client, registry, in_game);
+                            }
+                            Ok(None) => break,
+                            Err(e) => result = Err(e),
+                        }
+                    }
+                    match result {
+                        Ok(action) => {
+                            if let Err(e) = client.flush().await {
+                                break ProxyLoopOutcome::Error(e);
+                            }
+                            if let Err(e) = backend.flush().await {
+                                break ProxyLoopOutcome::Error(e);
+                            }
+                            match action {
+                                BackendAction::Continue => {}
+                                BackendAction::Disconnected(reason) => {
+                                    break ProxyLoopOutcome::BackendDisconnected { reason };
+                                }
+                            }
+                            if let Some(end) =
+                                settle_commands(client, registry, command_outcome).await
+                            {
+                                break end;
+                            }
+                        }
+                        Err(e) => {
+                            let _ = client.flush().await;
+                            break ProxyLoopOutcome::Error(e);
+                        }
+                    }
+                }
+                Ok(None) => break ProxyLoopOutcome::BackendDisconnected { reason: None },
+                Err(e) => break ProxyLoopOutcome::Error(e),
+            },
         }
     }
 }
 
-/// What `handle_player_command` resolved to.
-enum CommandResult {
-    /// Continue the loop normally.
-    Continue,
-    /// Kick the player — terminate the connection.
-    Kick,
-    /// Switch to a different server.
-    Switch(ServerId),
+enum LoopEvent {
+    Command(PlayerCommand),
+    Shutdown,
+    Client(Result<Option<PacketFrame>, CoreError>),
+    Backend(Result<Option<PacketFrame>, CoreError>),
 }
 
-fn drain_player_commands(
+async fn next_frame(client: &mut ClientBridge, backend: &mut BackendBridge) -> LoopEvent {
+    tokio::select! {
+        frame = client.read_frame() => LoopEvent::Client(frame),
+        frame = backend.read_frame() => LoopEvent::Backend(frame),
+    }
+}
+
+async fn settle_commands(
     client: &mut ClientBridge,
-    command_rx: &mut mpsc::Receiver<PlayerCommand>,
     registry: &PacketRegistry,
-) -> Option<CommandResult> {
-    while let Ok(cmd) = command_rx.try_recv() {
-        match handle_player_command(client, cmd, registry) {
-            Ok(CommandResult::Continue) => {}
-            Ok(outcome) => return Some(outcome),
-            Err(e) => tracing::warn!("failed to handle player command: {e}"),
-        }
+    outcome: CommandOutcome,
+) -> Option<ProxyLoopOutcome> {
+    match outcome {
+        CommandOutcome::Continue => None,
+        CommandOutcome::Kick(reason) => Some(kick(client, &reason, registry).await),
+        CommandOutcome::Switch(target) => Some(ProxyLoopOutcome::SwitchRequested { target }),
     }
-    None
 }
 
-/// Handles a player command from the plugin system.
-///
-/// Frames are queued on the client bridge; the caller flushes.
-fn handle_player_command(
+async fn kick(
     client: &mut ClientBridge,
-    cmd: PlayerCommand,
+    reason: &Component,
     registry: &PacketRegistry,
-) -> Result<CommandResult, CoreError> {
-    use crate::player::packets;
-
-    let version = client.protocol_version;
-
-    match cmd {
-        PlayerCommand::SendMessage(component) => {
-            let frame = packets::build_system_chat_message(&component, version, registry)?;
-            client.queue_frame(&frame)?;
-        }
-        PlayerCommand::SendActionBar(component) => {
-            let frame = packets::build_action_bar(&component, version, registry)?;
-            client.queue_frame(&frame)?;
-        }
-        PlayerCommand::SendTitle(title_data) => {
-            let frames = packets::build_title_packets(&title_data, version, registry)?;
-            for frame in &frames {
-                client.queue_frame(frame)?;
-            }
-        }
-        PlayerCommand::SendPacket(raw_packet) => {
-            let frame = raw_to_frame(&raw_packet);
-            client.queue_frame(&frame)?;
-        }
-        PlayerCommand::Kick(reason) => {
-            let frame = packets::build_disconnect(&reason, version, registry)?;
-            client.queue_frame(&frame)?;
-            return Ok(CommandResult::Kick);
-        }
-        PlayerCommand::SwitchServer(target) => {
-            return Ok(CommandResult::Switch(target));
-        }
+) -> ProxyLoopOutcome {
+    if let Err(e) = client.disconnect(reason, registry).await {
+        tracing::debug!("failed to send the kick reason: {e}");
     }
-
-    Ok(CommandResult::Continue)
+    ProxyLoopOutcome::ClientDisconnected
 }
 
 /// Queues injected frames from a codec filter's FrameOutput.

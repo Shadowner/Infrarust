@@ -197,6 +197,18 @@ player.disconnect(Component::text("Goodbye")).await;
 `send_message`, `send_title`, `send_action_bar`, `send_packet`, and `switch_server` only work when the player is on an active proxy path, which means `ClientOnly` or `Offline` mode. On passive paths (`Passthrough`, `ZeroCopy`, `ServerOnly`) they return `Err(PlayerError::NotActive)`. Check `player.is_active()` first. `disconnect` always works.
 :::
 
+#### When actions reach the client
+
+On an active path, the proxy delivers each action according to where the player is:
+
+- **Still logging in or in the configuration phase (1.20.2+).** Messages, titles, action bars, raw packets and `switch_server` requests wait in order and go out right after the player's `JoinGame`. A client in these phases cannot read play packets, so nothing is sent early.
+- **In game.** Actions go out as soon as the proxy's connection loop picks them up.
+- **In limbo.** Same as in game. The player is in play state, so messages and titles show at once. `switch_server` takes the player out of limbo and sends them to that server.
+
+`disconnect(reason)` never waits in that queue. The reason is sent in the packet the client expects at that moment: the login disconnect during login, the configuration disconnect during the configuration phase, and the play disconnect in game or in limbo. In game, messages queued before the kick are sent before it; actions still waiting for `JoinGame` are dropped. `disconnect` returns right away. If the player already has a full backlog of pending actions, the connection is closed without the reason.
+
+On a passive path (`Passthrough`, `ZeroCopy`, `ServerOnly`), the proxy only copies bytes between client and backend and cannot add a packet to the stream. `disconnect` closes both connections and the reason is not shown: the client sees a plain connection loss.
+
 ## Scheduler
 
 Runs delayed one-shot tasks and recurring interval tasks on the proxy's async runtime.
