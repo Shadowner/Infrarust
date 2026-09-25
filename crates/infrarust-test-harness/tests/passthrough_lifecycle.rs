@@ -700,9 +700,9 @@ async fn a_redirect_to_a_proxy_login_server_fails_closed(
 family!(a_redirect_to_a_proxy_login_server_fails_closed);
 
 fn assert_forwarding_ended(disconnect: &Recorded) {
-    let cause = &disconnect.detail["cause"];
-    assert!(
-        *cause == json!("client_quit") || *cause == json!("backend_closed"),
+    assert_eq!(
+        disconnect.detail["cause"],
+        json!("client_quit"),
         "{disconnect:?}"
     );
     assert_eq!(disconnect.detail["reason"], json!(null), "{disconnect:?}");

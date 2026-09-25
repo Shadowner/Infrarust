@@ -234,9 +234,9 @@ async fn a_legacy_ping_is_relayed_from_the_backend() {
 }
 
 fn assert_forwarding_ended(disconnect: &Recorded) {
-    let cause = &disconnect.detail["cause"];
-    assert!(
-        *cause == json!("client_quit") || *cause == json!("backend_closed"),
+    assert_eq!(
+        disconnect.detail["cause"],
+        json!("client_quit"),
         "{disconnect:?}"
     );
     assert_eq!(disconnect.detail["reason"], json!(null), "{disconnect:?}");

@@ -614,6 +614,10 @@ impl ClientSession {
         .await
     }
 
+    pub async fn close_write(&self) -> HarnessResult<()> {
+        self.writer.lock().await.shutdown().await
+    }
+
     pub async fn quit(self) {
         let _ = self.writer.lock().await.shutdown().await;
     }
