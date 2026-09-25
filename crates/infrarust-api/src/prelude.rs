@@ -31,9 +31,11 @@ pub use crate::player::Player;
 
 // Services
 pub use crate::services::{
-    BackendState, BackendStatus, BanEntry, BanService, BanTarget, ConfigService, ConfigWriteError,
-    LbError, LoadBalancerService, PlayerRegistry, PluginRegistry, ProxyInfo, ProxyMode, Scheduler,
-    ServerConfig, ServerManager, ServerState, TaskHandle,
+    BackendState, BackendStatus, BanEntry, BanFeatures, BanPage, BanProvider, BanProviderRejected,
+    BanQuery, BanRequest, BanService, BanSource, BanTarget, BanVerdict, ConfigService,
+    ConfigWriteError, LbError, LoadBalancerService, LoginAttempt, LoginStage, PlayerRegistry,
+    PluginRegistry, ProxyInfo, ProxyMode, Scheduler, ServerConfig, ServerManager, ServerState,
+    TaskHandle, UnbanRequest,
 };
 
 // Permissions and capabilities

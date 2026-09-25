@@ -5,7 +5,7 @@ use std::time::Duration;
 use infrarust_api::error::PlayerError;
 use infrarust_api::event::EventPriority;
 use infrarust_api::events::lifecycle::PreLoginEvent;
-use infrarust_api::services::ban_service::BanTarget;
+use infrarust_api::services::ban_service::{BanRequest, BanTarget};
 use infrarust_api::types::{Component, NamedColor};
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_test_harness::legacy::LEGACY_PROTOCOL;
@@ -136,15 +136,16 @@ async fn a_banned_name_cannot_log_in_with_a_legacy_client() {
         .unwrap();
     let target = BanTarget::Username("Griefer".into());
     let bans = &proxy.services().ban_manager;
-    bans.ban(target.clone(), Some("griefing".into()), None, "test".into())
+    bans.issue(BanRequest::new(target.clone()).reason("griefing"))
         .await
         .unwrap();
     let kick = bans
-        .is_banned(&target)
+        .get(&target)
         .await
         .unwrap()
         .unwrap()
-        .kick_message();
+        .default_kick_message()
+        .to_plain();
 
     let reason = proxy
         .legacy_client_for("old")

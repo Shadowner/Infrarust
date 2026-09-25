@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use infrarust_api::error::{PlayerError, ServiceError};
 use infrarust_api::limbo::{HandlerResult, LimboEntryContext, SessionEndReason};
 use infrarust_api::permissions::PermissionLevel;
-use infrarust_api::services::ban_service::{BanEntry, BanTarget};
+use infrarust_api::services::ban_service::{BanEntry, BanTarget, IpNet};
 use infrarust_api::services::config_service::{ProxyMode, ServerConfig};
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{Component, GameProfile, RawPacket, ServerId, TitleData};
@@ -95,7 +95,11 @@ pub(crate) fn server_config_to_wit(c: &ServerConfig) -> wit::ServerConfig {
 
 pub(crate) fn ban_target_from_wit(t: &wit::BanTarget) -> Option<BanTarget> {
     match t {
-        wit::BanTarget::Ip(s) => s.parse().ok().map(BanTarget::Ip),
+        wit::BanTarget::Ip(s) => s
+            .parse()
+            .map(BanTarget::Ip)
+            .or_else(|_| s.parse::<IpNet>().map(BanTarget::IpRange))
+            .ok(),
         wit::BanTarget::Username(s) => Some(BanTarget::Username(s.clone())),
         wit::BanTarget::Uuid(s) => uuid::Uuid::parse_str(s).ok().map(BanTarget::Uuid),
     }
@@ -104,6 +108,7 @@ pub(crate) fn ban_target_from_wit(t: &wit::BanTarget) -> Option<BanTarget> {
 pub(crate) fn ban_target_to_wit(t: &BanTarget) -> wit::BanTarget {
     match t {
         BanTarget::Ip(ip) => wit::BanTarget::Ip(ip.to_string()),
+        BanTarget::IpRange(net) => wit::BanTarget::Ip(net.to_string()),
         BanTarget::Username(u) => wit::BanTarget::Username(u.clone()),
         BanTarget::Uuid(u) => wit::BanTarget::Uuid(u.to_string()),
         _ => wit::BanTarget::Username(String::new()),
@@ -116,7 +121,7 @@ pub(crate) fn ban_entry_to_wit(e: &BanEntry) -> wit::BanEntry {
         reason: e.reason.clone(),
         expires_at: e.expires_at.map(system_time_to_millis),
         created_at: system_time_to_millis(e.created_at),
-        source: e.source.clone(),
+        source: e.source.to_string(),
     }
 }
 

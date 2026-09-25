@@ -11,6 +11,7 @@ use infrarust_api::events::lifecycle::{
     PermissionsSetupResult, PreLoginEvent, PreLoginResult,
 };
 use infrarust_api::player::Player;
+use infrarust_api::services::ban_service::LoginAttempt;
 use infrarust_api::types::{Component, GameProfile, ServerId};
 use infrarust_config::{DomainRewrite, ProxyMode, ServerAddress, ServerConfig};
 use infrarust_protocol::Packet;
@@ -122,7 +123,8 @@ impl ForwardedLogin<'_> {
         origin: Route,
         opening: Opening<'_>,
     ) -> Result<Option<Ready>, CoreError> {
-        let Some(mut admitted) = self.admit(ctx, arrival).await? else {
+        let origin_server = ServerId::new(origin.routing.config_id.clone());
+        let Some(mut admitted) = self.admit(ctx, arrival, origin_server).await? else {
             return Ok(None);
         };
         if let Some(cause) = self.interrupted(ctx, &mut admitted).await {
@@ -155,6 +157,7 @@ impl ForwardedLogin<'_> {
         &self,
         ctx: &mut ConnectionContext,
         arrival: Arrival,
+        origin_server: ServerId,
     ) -> Result<Option<Admitted>, CoreError> {
         let services = self.services;
         let bus = &services.event_bus;
@@ -198,25 +201,18 @@ impl ForwardedLogin<'_> {
                 profile,
                 false,
                 remote_addr,
-                Some(arrival.domain),
+                Some(arrival.domain.clone()),
                 arrival.protocol_version,
             ))
             .await;
         let profile = request.profile;
 
-        if let Some(ban) = services
-            .ban_manager
-            .check_player(&ctx.client_ip, &profile.username, Some(&profile.uuid))
-            .await?
-        {
-            tracing::info!(
-                ip = %ctx.client_ip,
-                username = %profile.username,
-                uuid = %profile.uuid,
-                ban_type = ban.target.display_type(),
-                "connection rejected: player is banned"
-            );
-            self.kick(ctx, &Component::text(ban.kick_message())).await;
+        let attempt =
+            LoginAttempt::post_auth(ctx.client_ip, profile.username.clone(), profile.uuid, false)
+                .virtual_host(arrival.domain)
+                .server(origin_server);
+        if let Some(reason) = services.ban_manager.refusal(&attempt).await {
+            self.kick(ctx, &reason).await;
             return Ok(None);
         }
 

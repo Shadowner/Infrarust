@@ -3,9 +3,6 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::future::Future;
-use std::net::IpAddr;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -27,9 +24,6 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::ban::manager::BanManager;
-use crate::ban::storage::BanStorage;
-use crate::ban::types::{BanEntry, BanTarget};
-use crate::error::CoreError;
 use crate::event_bus::bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_chain::TransportFilterChain;
@@ -90,7 +84,6 @@ pub fn test_proxy_services() -> ProxyServices {
     let backend_health = Arc::new(crate::loadbalancer::PassiveBackendHealth::new());
     let domain_router = Arc::new(DomainRouter::new());
     let packet_registry = Arc::new(test_registry());
-    let ban_storage: Arc<dyn BanStorage> = Arc::new(NullBanStorage);
     let provider: Arc<dyn crate::registry_data::RegistryDataProvider> =
         Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider);
 
@@ -115,9 +108,9 @@ pub fn test_proxy_services() -> ProxyServices {
         backend_load,
         packet_registry,
         server_manager: None,
-        ban_manager: Arc::new(BanManager::new(
-            ban_storage,
+        ban_manager: Arc::new(BanManager::disabled(
             Arc::new(ConnectionRegistry::new()),
+            Arc::new(EventBusImpl::new()),
         )),
         config: Arc::new(toml::from_str("").unwrap()),
         config_path: std::path::PathBuf::from("infrarust.toml"),
@@ -133,58 +126,6 @@ pub fn test_proxy_services() -> ProxyServices {
         permission_service: Arc::new(crate::permissions::PermissionService::new_sync(
             &Default::default(),
         )),
-    }
-}
-
-struct NullBanStorage;
-
-impl BanStorage for NullBanStorage {
-    fn add_ban(
-        &self,
-        _entry: BanEntry,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
-        Box::pin(async { Ok(()) })
-    }
-
-    fn remove_ban(
-        &self,
-        _target: &BanTarget,
-    ) -> Pin<Box<dyn Future<Output = Result<bool, CoreError>> + Send + '_>> {
-        Box::pin(async { Ok(false) })
-    }
-
-    fn is_banned(
-        &self,
-        _target: &BanTarget,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<BanEntry>, CoreError>> + Send + '_>> {
-        Box::pin(async { Ok(None) })
-    }
-
-    fn check_player<'a>(
-        &'a self,
-        _ip: &'a IpAddr,
-        _username: &'a str,
-        _uuid: Option<&'a Uuid>,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<BanEntry>, CoreError>> + Send + 'a>> {
-        Box::pin(async { Ok(None) })
-    }
-
-    fn get_all_active(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<BanEntry>, CoreError>> + Send + '_>> {
-        Box::pin(async { Ok(vec![]) })
-    }
-
-    fn purge_expired(&self) -> Pin<Box<dyn Future<Output = Result<usize, CoreError>> + Send + '_>> {
-        Box::pin(async { Ok(0) })
-    }
-
-    fn load(&self) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
-        Box::pin(async { Ok(()) })
-    }
-
-    fn save(&self) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
-        Box::pin(async { Ok(()) })
     }
 }
 

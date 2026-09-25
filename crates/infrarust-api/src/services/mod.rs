@@ -12,7 +12,10 @@ pub mod proxy_info;
 pub mod scheduler;
 pub mod server_manager;
 
-pub use ban_service::{BanEntry, BanService, BanTarget};
+pub use ban_service::{
+    BanEntry, BanFeatures, BanPage, BanProvider, BanProviderRejected, BanQuery, BanRequest,
+    BanService, BanSource, BanTarget, BanVerdict, IpNet, LoginAttempt, LoginStage, UnbanRequest,
+};
 pub use config_service::{ConfigService, ConfigWriteError, ProxyMode, ServerConfig};
 pub use load_balancer::{BackendState, BackendStatus, LbError, LoadBalancerService};
 pub use player_registry::PlayerRegistry;

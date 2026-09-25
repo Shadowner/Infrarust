@@ -73,6 +73,7 @@ pub fn format_system_time(time: SystemTime) -> String {
 pub fn ban_target_type_str(target: &BanTarget) -> &'static str {
     match target {
         BanTarget::Ip(_) => "ip",
+        BanTarget::IpRange(_) => "ip_range",
         BanTarget::Username(_) => "username",
         BanTarget::Uuid(_) => "uuid",
         other => {
@@ -85,6 +86,7 @@ pub fn ban_target_type_str(target: &BanTarget) -> &'static str {
 pub fn ban_target_value(target: &BanTarget) -> String {
     match target {
         BanTarget::Ip(ip) => ip.to_string(),
+        BanTarget::IpRange(net) => net.to_string(),
         BanTarget::Username(name) => name.clone(),
         BanTarget::Uuid(uuid) => uuid.to_string(),
         other => {
@@ -99,14 +101,19 @@ pub fn parse_ban_target(target_type: &str, value: &str) -> Result<BanTarget, Api
         "ip" => value
             .parse()
             .map(BanTarget::Ip)
+            .or_else(|_| value.parse().map(BanTarget::IpRange))
             .map_err(|_| ApiError::BadRequest(format!("Invalid IP address: {value}"))),
+        "ip_range" => value
+            .parse()
+            .map(BanTarget::IpRange)
+            .map_err(|_| ApiError::BadRequest(format!("Invalid IP range: {value}"))),
         "username" => Ok(BanTarget::Username(value.to_string())),
         "uuid" => value
             .parse()
             .map(BanTarget::Uuid)
             .map_err(|_| ApiError::BadRequest(format!("Invalid UUID: {value}"))),
         _ => Err(ApiError::BadRequest(format!(
-            "Invalid target type '{target_type}'. Expected: ip, username, uuid"
+            "Invalid target type '{target_type}'. Expected: ip, ip_range, username, uuid"
         ))),
     }
 }

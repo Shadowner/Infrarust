@@ -617,6 +617,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         .as_ref()
         .and_then(|f| f.ban.as_ref())
         .map(|b| BanConfig {
+            provider: crate::BanProviderSelection::Builtin,
             file: b
                 .file_path
                 .as_ref()

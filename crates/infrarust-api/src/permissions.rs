@@ -86,10 +86,11 @@ pub enum Capability {
     /// Outbound network access.
     Network,
     ChatIntercept,
+    BanProvider,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 18] = [
+    pub const ALL: [Capability; 19] = [
         Capability::EventBus,
         Capability::PlayerRead,
         Capability::PlayerWrite,
@@ -108,6 +109,7 @@ impl Capability {
         Capability::FilesystemExtended,
         Capability::Network,
         Capability::ChatIntercept,
+        Capability::BanProvider,
     ];
 
     #[must_use]
@@ -131,6 +133,7 @@ impl Capability {
             Capability::FilesystemExtended => "filesystem-extended",
             Capability::Network => "network",
             Capability::ChatIntercept => "chat-intercept",
+            Capability::BanProvider => "ban-provider",
         }
     }
 
@@ -155,6 +158,7 @@ impl Capability {
             "filesystem-extended" => Capability::FilesystemExtended,
             "network" => Capability::Network,
             "chat-intercept" => Capability::ChatIntercept,
+            "ban-provider" => Capability::BanProvider,
             _ => return None,
         };
         Some(cap)
@@ -276,7 +280,7 @@ mod tests {
                 "from_kebab lost {cap:?}"
             );
         }
-        assert_eq!(Capability::ALL.len(), 18);
+        assert_eq!(Capability::ALL.len(), 19);
         assert_eq!(names.len(), Capability::ALL.len());
     }
 
@@ -305,6 +309,7 @@ mod tests {
         assert!(!b.has(Capability::CodecFilter));
         assert!(!b.has(Capability::TransportFilter));
         assert!(!b.has(Capability::ChatIntercept));
+        assert!(!b.has(Capability::BanProvider));
     }
 
     #[test]

@@ -5,6 +5,7 @@ use crate::util::{ban_target_type_str, ban_target_value, format_duration, format
 
 #[derive(Serialize)]
 pub struct BanResponse {
+    pub id: String,
     pub target_type: String,
     pub target_value: String,
     pub reason: Option<String>,
@@ -18,13 +19,14 @@ pub struct BanResponse {
 impl BanResponse {
     pub fn from_entry(entry: &BanEntry) -> Self {
         Self {
+            id: entry.id.clone(),
             target_type: ban_target_type_str(&entry.target).to_string(),
             target_value: ban_target_value(&entry.target),
             reason: entry.reason.clone(),
             expires_at: entry.expires_at.map(format_system_time),
             expires_in: entry.remaining().map(format_duration),
             created_at: format_system_time(entry.created_at),
-            source: entry.source.clone(),
+            source: entry.source.to_string(),
             permanent: entry.is_permanent(),
         }
     }

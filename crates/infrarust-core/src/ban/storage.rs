@@ -1,61 +1,35 @@
 //! Ban storage trait definition.
 
 use std::future::Future;
-use std::net::IpAddr;
 use std::pin::Pin;
 
-use uuid::Uuid;
+use infrarust_api::services::ban_service::{BanPage, BanQuery, LoginAttempt};
 
-use crate::ban::types::{BanEntry, BanTarget};
+use crate::ban::types::{BanEntry, BanSource, BanTarget};
 use crate::error::CoreError;
 
-/// Backend for ban storage.
-///
-/// The trait is dyn-compatible, using `Pin<Box<dyn Future>>` return types.
-/// Implemented by `FileBanStorage` (JSON file).
-/// Future: Redis, `SQLite`.
+pub type StorageFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, CoreError>> + Send + 'a>>;
+
 pub trait BanStorage: Send + Sync {
-    /// Adds a ban. If a ban already exists for this target, it is replaced.
-    fn add_ban(
-        &self,
-        entry: BanEntry,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>>;
+    fn add_ban(&self, entry: BanEntry) -> StorageFuture<'_, BanEntry>;
 
-    /// Removes a ban. Returns `true` if a ban existed.
-    fn remove_ban(
-        &self,
-        target: &BanTarget,
-    ) -> Pin<Box<dyn Future<Output = Result<bool, CoreError>> + Send + '_>>;
-
-    /// Checks if a specific target is banned.
-    /// Returns `None` if not banned or if the ban has expired.
-    /// Expired bans are lazily purged.
-    fn is_banned(
-        &self,
-        target: &BanTarget,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<BanEntry>, CoreError>> + Send + '_>>;
-
-    /// Checks a player against all three ban types in one operation.
-    /// Order: IP → username → UUID.
-    /// Returns the first active ban found, or `None`.
-    fn check_player<'a>(
+    fn remove_ban<'a>(
         &'a self,
-        ip: &'a IpAddr,
-        username: &'a str,
-        uuid: Option<&'a Uuid>,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<BanEntry>, CoreError>> + Send + 'a>>;
+        target: &'a BanTarget,
+        source: &'a BanSource,
+    ) -> StorageFuture<'a, Option<BanEntry>>;
 
-    /// Lists all active (non-expired) bans.
-    fn get_all_active(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<BanEntry>, CoreError>> + Send + '_>>;
+    fn get_ban<'a>(&'a self, target: &'a BanTarget) -> StorageFuture<'a, Option<BanEntry>>;
 
-    /// Purges expired bans. Returns the number of bans removed.
-    fn purge_expired(&self) -> Pin<Box<dyn Future<Output = Result<usize, CoreError>> + Send + '_>>;
+    fn check<'a>(&'a self, attempt: &'a LoginAttempt) -> StorageFuture<'a, Option<BanEntry>>;
 
-    /// Loads bans from the persistent backend (at startup).
-    fn load(&self) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>>;
+    fn list(&self, query: BanQuery) -> StorageFuture<'_, BanPage>;
 
-    /// Persists current state to the backend (for file-based backends).
-    fn save(&self) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>>;
+    fn get_all_active(&self) -> StorageFuture<'_, Vec<BanEntry>>;
+
+    fn purge_expired(&self) -> StorageFuture<'_, usize>;
+
+    fn load(&self) -> StorageFuture<'_, ()>;
+
+    fn save(&self) -> StorageFuture<'_, ()>;
 }

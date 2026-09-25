@@ -1,11 +1,13 @@
 ---
 title: Bans
-description: Block players by IP address, username, or UUID with permanent or temporary bans.
+description: Block players by IP address, IP range, username, or UUID with permanent or temporary bans, kept by the built-in store or by a ban plugin.
 ---
 
 # Bans
 
-Infrarust has a built-in ban system that blocks players by IP address, username, or Mojang UUID. Bans can be permanent or temporary, and they take effect immediately: connected players are kicked the moment you issue the ban.
+Infrarust blocks players by IP address, IP range (CIDR), username, or Mojang UUID. Bans can be permanent or temporary, and they take effect immediately: connected players are kicked the moment you issue the ban.
+
+Bans come from one **provider**. The built-in provider keeps them in a JSON file. A ban plugin can take over instead, and then every check and every ban command goes through that plugin.
 
 ## Configuration
 
@@ -15,6 +17,7 @@ The ban system is configured under the `ban` key in your proxy config:
 
 ```toml [infrarust.toml]
 [ban]
+provider = "builtin"
 file = "bans.json"
 purge_interval = "5m"
 enable_audit_log = true
@@ -22,6 +25,7 @@ enable_audit_log = true
 
 ```yaml [infrarust.yml]
 ban:
+  provider: builtin
   file: bans.json
   purge_interval: 5m
   enable_audit_log: true
@@ -31,11 +35,26 @@ ban:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `file` | path | `bans.json` | Path to the JSON file where bans are stored |
-| `purge_interval` | duration | `5m` | How often expired bans are cleaned up |
+| `provider` | string | `builtin` | Who decides who is banned: `builtin`, `none`, or a plugin id. See [Choosing a provider](#choosing-a-provider). |
+| `file` | path | `bans.json` | Path to the JSON file where the built-in provider stores bans |
+| `purge_interval` | duration | `5m` | How often the built-in provider cleans up expired bans |
 | `enable_audit_log` | bool | `true` | Track ban/unban operations in the ban file |
 
-All three options are optional. The defaults above apply if you omit the `[ban]` section entirely.
+All options are optional. The defaults above apply if you omit the `[ban]` section entirely. `file`, `purge_interval` and `enable_audit_log` only matter with the built-in provider.
+
+## Choosing a provider
+
+| `provider` | Effect |
+|------------|--------|
+| `builtin` | Bans live in `file`. This is the default. |
+| `none` | No ban checks: everyone may join. Ban commands, the admin API and plugins get a "bans are disabled" error. The ban file is not read. |
+| any other value | The plugin with that id provides bans. The ban file is not read; the plugin keeps bans wherever it wants. |
+
+With a plugin provider, the plugin has to register itself when it is enabled. If it does not (it failed to load, it is disabled, or the id is misspelled), Infrarust logs an error at startup and **refuses every login** with "Your ban status cannot be checked right now. Please try again later." until it does. Server list pings are still answered. The same applies while the plugin reports that its storage is unreachable.
+
+This is deliberate: you told the proxy that this plugin decides who is banned, and letting everyone in without it would quietly lift every ban it holds. If you want no ban checks, say so with `provider = "none"`.
+
+Only the configured plugin can provide bans. Another plugin that tries is refused and a warning is logged. Plugin authors: see [Bans for plugin developers](../../plugins/dev/bans).
 
 ## Console commands
 
@@ -57,16 +76,20 @@ ban TempBan 2h
 
 ### ban-ip
 
-Ban an IP address. All players currently connected from that IP are disconnected. Also available as `banip`.
+Ban an IP address or a CIDR range. All players currently connected from a matching address are disconnected. Also available as `banip`.
 
 ```
-ban-ip <ip> [duration] [reason...]
+ban-ip <ip|cidr> [duration] [reason...]
 ```
 
 ```
 ban-ip 192.168.1.100 24h suspicious activity
 ban-ip 10.0.0.50 permanent
+ban-ip 203.0.113.0/24 7d botnet
+ban-ip 2001:db8:abcd::/48 permanent
 ```
+
+Addresses are matched on the player's real IP, the one from the PROXY protocol header when [`receive_proxy_protocol`](./proxy-protocol) is on. An IPv4 ban also matches a client that reaches a dual-stack listener as `::ffff:a.b.c.d`.
 
 ### unban
 
@@ -78,15 +101,15 @@ unban <player>
 
 ### unban-ip
 
-Remove an IP ban. Also available as `unbanip` or `pardonip`.
+Remove an IP or range ban. The argument must be written the way the ban was issued. Also available as `unbanip` or `pardonip`.
 
 ```
-unban-ip <ip>
+unban-ip <ip|cidr>
 ```
 
 ### banlist
 
-List all active bans in a table showing target, type, reason, source, and remaining time. Also available as `bans`.
+List all active bans in a table showing id, target, type, reason, source, and remaining time. Also available as `bans`.
 
 ```
 banlist
@@ -94,10 +117,10 @@ banlist
 
 ### baninfo
 
-Show full details of a specific ban. The argument is auto-detected as an IP, UUID, or username.
+Show full details of a specific ban. The argument is auto-detected as an IP, CIDR range, UUID, or username.
 
 ```
-baninfo <player|ip|uuid>
+baninfo <player|ip|cidr|uuid>
 ```
 
 ```
@@ -108,12 +131,13 @@ baninfo 550e8400-e29b-41d4-a716-446655440000
 
 ## How bans are checked
 
-Infrarust checks bans at two points in the connection pipeline:
+Infrarust asks the provider at three points:
 
-1. An IP check runs before the handshake. If the connecting IP is banned, the connection is dropped immediately with no server response.
-2. A full check runs during login, after the client sends its username. This checks the player's IP, username (case-insensitive), and UUID against the ban list.
+1. **Server list ping.** A ping from a banned address or range is closed without an answer, so banned addresses do not see the MOTD. Legacy pings are checked too.
+2. **Login start**, after the client sends its username and before authentication. The built-in provider checks the IP, IP ranges and the username (case-insensitive).
+3. **After authentication**, once the final profile is known (after `GameProfileRequestEvent`, in every proxy mode). The built-in provider now also checks the UUID.
 
-Banned players see a kick message with the ban reason and, for temporary bans, the remaining time.
+A refused login is disconnected in the login state with the ban message. With the built-in provider the message shows the ban reason and, for temporary bans, the remaining time; a plugin provider shows its own message.
 
 ## Storage
 
@@ -123,15 +147,18 @@ A ban entry looks like this:
 
 ```json
 {
+  "id": "12",
   "target": { "type": "username", "value": "Griefer123" },
   "reason": "griefing the spawn area",
   "expires_at": 1711324800,
   "created_at": 1710720000,
-  "source": "console"
+  "source": { "type": "console" }
 }
 ```
 
-Permanent bans have `expires_at` set to `null`. The `source` field records who issued the ban: `"console"` for console commands, `"plugin"` for plugin-initiated bans.
+Every ban gets an `id` that is never reused, even across restarts (the file keeps the last one in `next_id`). Range bans use `{ "type": "ip_range", "value": "203.0.113.0/24" }`. Permanent bans have `expires_at` set to `null`. The `source` field records who issued the ban: `console`, `web_api` (the admin API), `plugin` with the plugin id as `value`, `player`, or `system`.
+
+Files written by earlier versions still load: entries without an `id` get one, and a plain string `source` is read as before (`"console"` is the console, `"plugin"` becomes a plugin source named `plugin`).
 
 ::: tip
 You don't need to create `bans.json` manually. Infrarust creates it the first time you issue a ban. If the file doesn't exist at startup, the proxy starts with an empty ban list. If the file is corrupt, Infrarust renames it to `bans.json.bak` and starts fresh rather than refusing to start.
@@ -141,12 +168,4 @@ Writes are crash-safe: the proxy writes to a temporary file first, then atomical
 
 ## Plugin API
 
-Plugins can manage bans through the `BanService` trait, available via `PluginContext::ban_service()`. The API provides five methods:
-
-- `ban(target, reason, duration)` adds a ban (duration `None` means permanent)
-- `unban(target)` removes a ban and returns `true` if one was removed
-- `is_banned(target)` checks if a target is banned and returns `true` or `false`
-- `get_ban(target)` returns the full `BanEntry` if banned
-- `get_all_bans()` lists all active bans
-
-Ban targets are constructed with `BanTarget::Ip(addr)`, `BanTarget::Username(name)`, or `BanTarget::Uuid(uuid)`.
+Plugins manage bans through `PluginContext::ban_service()`, whichever provider is active, and a ban plugin can become the provider. Each ban records its source, and every ban and unban is announced with `BanIssuedEvent` and `BanRevokedEvent`. See [Bans for plugin developers](../../plugins/dev/bans).

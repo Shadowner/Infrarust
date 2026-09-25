@@ -158,7 +158,7 @@ pub fn get(&self, target: &BanTarget) -> Result<Option<BanEntry>, ServiceError>;
 pub fn all(&self) -> Result<Vec<BanEntry>, ServiceError>;
 ```
 
-`duration_ms` of `None` is a permanent ban. A `BanEntry` has these fields:
+`duration_ms` of `None` is a permanent ban. `BanTarget::Ip` also accepts a CIDR range such as `"203.0.113.0/24"`, which bans every address inside it. The calls go to whichever ban provider the operator selected, and a ban your plugin issues is attributed to it (`source` reads `plugin:<your id>`). With `[ban] provider = "none"` every call returns `service-error::unavailable`. A `BanEntry` has these fields:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -166,7 +166,7 @@ pub fn all(&self) -> Result<Vec<BanEntry>, ServiceError>;
 | `reason` | `Option<String>` | Optional reason text |
 | `expires_at` | `Option<u64>` | Epoch millis, `None` for permanent |
 | `created_at` | `u64` | When the ban was issued, epoch millis |
-| `source` | `String` | What issued the ban |
+| `source` | `String` | Who issued the ban: `console`, `web-api`, `plugin:<id>`, `player:<name>` or `system` |
 
 ```rust
 use infrarust_plugin_sdk::services::BanTarget;

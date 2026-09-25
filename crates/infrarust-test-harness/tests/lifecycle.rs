@@ -9,7 +9,7 @@ use infrarust_api::events::connection::ServerPreConnectEvent;
 use infrarust_api::events::lifecycle::{
     DisconnectEvent, GameProfileRequestEvent, LoginEvent, PostLoginEvent,
 };
-use infrarust_api::services::ban_service::BanTarget;
+use infrarust_api::services::ban_service::{BanRequest, BanTarget};
 use infrarust_api::types::{Component, ServerId};
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_core::event_bus::DiagnosticKind;
@@ -155,15 +155,16 @@ async fn client_only_uuid_ban_ends_in_login(version: ProtocolVersion) {
         .unwrap();
     let target = BanTarget::Uuid(offline_uuid("Banned"));
     let bans = &proxy.services().ban_manager;
-    bans.ban(target.clone(), Some("cheating".into()), None, "test".into())
+    bans.issue(BanRequest::new(target.clone()).reason("cheating"))
         .await
         .unwrap();
     let kick = bans
-        .is_banned(&target)
+        .get(&target)
         .await
         .unwrap()
         .unwrap()
-        .kick_message();
+        .default_kick_message()
+        .to_plain();
 
     let info = proxy
         .client(version)

@@ -5,7 +5,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 
-use infrarust_api::services::ban_service::BanTarget;
+use infrarust_api::services::ban_service::{BanRequest, BanSource, BanTarget, UnbanRequest};
 
 use crate::dto::ban::{BanCheckResponse, BanResponse};
 use crate::dto::requests::{BanTargetRequest, CreateBanRequest};
@@ -39,7 +39,7 @@ pub async fn list(
 
     let mut bans = state
         .ban_service
-        .get_all_bans()
+        .list_all()
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to fetch bans: {e}")))?;
 
@@ -48,7 +48,7 @@ pub async fn list(
     }
 
     if let Some(ref src) = query.source {
-        bans.retain(|b| b.source == *src);
+        bans.retain(|b| b.source.to_string() == *src);
     }
 
     bans.sort_by_key(|b| std::cmp::Reverse(b.created_at));
@@ -66,7 +66,7 @@ pub async fn check(
 
     let ban_entry = state
         .ban_service
-        .get_ban(&target)
+        .get(&target)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to check ban: {e}")))?;
 
@@ -92,6 +92,7 @@ pub async fn create(
         BanTargetRequest::Ip(ref ip) => ip
             .parse()
             .map(BanTarget::Ip)
+            .or_else(|_| ip.parse().map(BanTarget::IpRange))
             .map_err(|_| ApiError::BadRequest(format!("Invalid IP address: {ip}")))?,
         BanTargetRequest::Username(ref name) => BanTarget::Username(name.clone()),
         BanTargetRequest::Uuid(ref uuid) => uuid
@@ -122,9 +123,12 @@ pub async fn create(
     let target_type = ban_target_type_str(&target);
     let target_value = ban_target_value(&target);
 
+    let mut request = BanRequest::new(target).source(web_api());
+    request.reason = body.reason.clone();
+    request.duration = duration;
     state
         .ban_service
-        .ban(target, body.reason.clone(), duration)
+        .ban(request)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to create ban: {e}")))?;
 
@@ -159,11 +163,11 @@ pub async fn delete(
 
     let removed = state
         .ban_service
-        .unban(&target)
+        .unban(UnbanRequest::new(target.clone()).source(web_api()))
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to remove ban: {e}")))?;
 
-    if removed {
+    if removed.is_some() {
         let _ = state.event_tx.send(ApiEvent::BanRemoved {
             target_type: ban_target_type_str(&target).to_string(),
             target_value: ban_target_value(&target),
@@ -175,4 +179,8 @@ pub async fn delete(
             "No active ban found for {target_type}/{value}"
         )))
     }
+}
+
+const fn web_api() -> BanSource {
+    BanSource::WebApi { actor: None }
 }

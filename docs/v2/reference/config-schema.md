@@ -99,7 +99,8 @@ Persistent ban system with automatic expiration.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `file` | string | `"bans.json"` | Path to the JSON file storing active bans |
+| `provider` | string | `"builtin"` | `"builtin"`, `"none"` (no ban checks) or the id of the plugin that provides bans |
+| `file` | string | `"bans.json"` | Path to the JSON file storing active bans (built-in provider) |
 | `purge_interval` | duration | `"300s"` | How often expired bans are purged from the file |
 | `enable_audit_log` | boolean | `true` | Log ban/unban operations |
 

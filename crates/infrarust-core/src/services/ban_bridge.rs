@@ -1,79 +1,65 @@
-//! [`BanService`] bridge — delegates to the internal [`BanManager`].
-
 use std::sync::Arc;
-use std::time::Duration;
 
 use infrarust_api::error::ServiceError;
 use infrarust_api::event::BoxFuture;
-use infrarust_api::services::ban_service::{BanEntry, BanService, BanTarget};
+use infrarust_api::services::ban_service::{
+    BanEntry, BanFeatures, BanPage, BanQuery, BanRequest, BanService, BanSource, BanTarget,
+    BanVerdict, LoginAttempt, UnbanRequest,
+};
 
-use crate::ban::manager::BanManager;
-
-/// Bridges the API-level [`BanService`] trait to the core [`BanManager`].
-pub struct BanServiceBridge {
-    manager: Arc<BanManager>,
+pub struct PluginBanService {
+    inner: Arc<dyn BanService>,
+    plugin_id: String,
 }
 
-impl BanServiceBridge {
-    pub fn new(manager: Arc<BanManager>) -> Self {
-        Self { manager }
+impl PluginBanService {
+    pub fn new(inner: Arc<dyn BanService>, plugin_id: impl Into<String>) -> Self {
+        Self {
+            inner,
+            plugin_id: plugin_id.into(),
+        }
+    }
+
+    fn source(&self) -> BanSource {
+        BanSource::Plugin(self.plugin_id.clone())
     }
 }
 
-impl infrarust_api::services::ban_service::private::Sealed for BanServiceBridge {}
+impl infrarust_api::services::ban_service::private::Sealed for PluginBanService {}
 
-impl BanService for BanServiceBridge {
-    fn ban(
+impl BanService for PluginBanService {
+    fn check<'a>(
+        &'a self,
+        attempt: &'a LoginAttempt,
+    ) -> BoxFuture<'a, Result<Option<BanVerdict>, ServiceError>> {
+        self.inner.check(attempt)
+    }
+
+    fn ban(&self, mut request: BanRequest) -> BoxFuture<'_, Result<BanEntry, ServiceError>> {
+        request.source.get_or_insert_with(|| self.source());
+        self.inner.ban(request)
+    }
+
+    fn unban(
         &self,
-        target: BanTarget,
-        reason: Option<String>,
-        duration: Option<Duration>,
-    ) -> BoxFuture<'_, Result<(), ServiceError>> {
-        Box::pin(async move {
-            self.manager
-                .ban(target, reason, duration, "plugin".to_string())
-                .await
-                .map_err(|e| ServiceError::OperationFailed(e.to_string()))
-        })
+        mut request: UnbanRequest,
+    ) -> BoxFuture<'_, Result<Option<BanEntry>, ServiceError>> {
+        request.source.get_or_insert_with(|| self.source());
+        self.inner.unban(request)
     }
 
-    fn unban(&self, target: &BanTarget) -> BoxFuture<'_, Result<bool, ServiceError>> {
-        let target = target.clone();
-        Box::pin(async move {
-            self.manager
-                .unban(&target)
-                .await
-                .map_err(|e| ServiceError::OperationFailed(e.to_string()))
-        })
+    fn get<'a>(
+        &'a self,
+        target: &'a BanTarget,
+    ) -> BoxFuture<'a, Result<Option<BanEntry>, ServiceError>> {
+        self.inner.get(target)
     }
 
-    fn is_banned(&self, target: &BanTarget) -> BoxFuture<'_, Result<bool, ServiceError>> {
-        let target = target.clone();
-        Box::pin(async move {
-            self.manager
-                .is_banned(&target)
-                .await
-                .map(|entry| entry.is_some())
-                .map_err(|e| ServiceError::OperationFailed(e.to_string()))
-        })
+    fn list(&self, query: BanQuery) -> BoxFuture<'_, Result<BanPage, ServiceError>> {
+        self.inner.list(query)
     }
 
-    fn get_ban(&self, target: &BanTarget) -> BoxFuture<'_, Result<Option<BanEntry>, ServiceError>> {
-        let target = target.clone();
-        Box::pin(async move {
-            self.manager
-                .is_banned(&target)
-                .await
-                .map_err(|e| ServiceError::OperationFailed(e.to_string()))
-        })
-    }
-
-    fn get_all_bans(&self) -> BoxFuture<'_, Result<Vec<BanEntry>, ServiceError>> {
-        Box::pin(async move {
-            self.manager
-                .get_all_bans()
-                .await
-                .map_err(|e| ServiceError::OperationFailed(e.to_string()))
-        })
+    fn features(&self) -> BanFeatures {
+        self.inner.features()
     }
 }

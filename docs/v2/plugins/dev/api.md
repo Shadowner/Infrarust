@@ -93,6 +93,7 @@ The `PluginContext` trait provides access to every service and registration meth
 | `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register TCP-level filters (needs the `TransportFilter` capability) |
 | `register_limbo_handler(handler)` | `()` | Register a limbo handler |
 | `register_config_provider(provider)` | `()` | Register a dynamic config provider |
+| `register_ban_provider(provider)` | `Result<(), BanProviderRejected>` | Become the ban provider. Needs `ban-provider` and `[ban] provider` naming this plugin, see [Bans](./bans) |
 | `proxy_info()` | `&ProxyInfo` | Read-only proxy version and runtime settings |
 | `capabilities()` | `&CapabilitySet` | Capabilities granted to this plugin |
 | `data_dir()` | `PathBuf` | This plugin's data directory, `<plugins_dir>/<plugin_id>`, created if missing |
@@ -309,46 +310,37 @@ ctx.event_bus().subscribe::<ServerStateChangeEvent, _>(
 
 ## BanService
 
-Manage player bans by IP, username, or UUID.
+Ban, unban and look up players by IP, IP range, username or UUID. The service forwards to whichever ban provider the operator selected, the built-in one or a plugin's.
 
 ```rust
 use std::time::Duration;
 
 let bans = ctx.ban_service();
 
-// Permanent ban by username
+// Permanent ban by username, attributed to this plugin
+bans.ban(BanRequest::new(BanTarget::Username("griefer".into())).reason("Griefing"))
+    .await?;
+
+// Temporary range ban (1 hour)
 bans.ban(
-    BanTarget::Username("griefer".into()),
-    Some("Griefing".into()),
-    None, // permanent
-).await?;
+    BanRequest::new(BanTarget::IpRange("203.0.113.0/24".parse()?))
+        .reason("Spam")
+        .duration(Duration::from_secs(3600)),
+)
+.await?;
 
-// Temporary ban by IP (1 hour)
-bans.ban(
-    BanTarget::Ip("1.2.3.4".parse().unwrap()),
-    Some("Spam".into()),
-    Some(Duration::from_secs(3600)),
-).await?;
+// Look up and remove
+let entry = bans.get(&BanTarget::Username("griefer".into())).await?;
+let removed = bans.unban(UnbanRequest::new(BanTarget::Username("griefer".into()))).await?;
 
-// Ban by UUID
-bans.ban(
-    BanTarget::Uuid(uuid),
-    None,
-    None,
-).await?;
-
-// Check and remove bans
-let is_banned = bans.is_banned(&BanTarget::Username("griefer".into())).await?;
-let entry = bans.get_ban(&BanTarget::Username("griefer".into())).await?;
-let removed = bans.unban(&BanTarget::Username("griefer".into())).await?;
-
-// List all active bans
-let all_bans = bans.get_all_bans().await?;
+// One page of active bans, or all of them
+let page = bans.list(BanQuery::new().limit(50)).await?;
+let all_bans = bans.list_all().await?;
 ```
 
-`BanTarget` variants: `Ip(IpAddr)`, `Username(String)`, `Uuid(uuid::Uuid)`.
+`BanEntry` has an `id`, the `target`, `reason`, `source` (a `BanSource`), `created_at` and `expires_at`. Use `entry.is_expired()`, `entry.is_permanent()` and `entry.remaining()` to inspect it.
 
-`BanEntry` contains the `target`, `reason`, `expires_at`, `created_at`, and `source` fields. Use `entry.is_expired()`, `entry.is_permanent()`, and `entry.remaining()` to inspect ban state.
+A plugin can also become the ban provider with `ctx.register_ban_provider(...)`. See [Bans](./bans) for the provider model, request options, sources and events.
 
 ## ConfigService
 

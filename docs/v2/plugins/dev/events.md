@@ -186,7 +186,7 @@ Every event goes through the same dispatch: listeners run one after another in p
 | Delivery | Events | What it means |
 |----------|--------|---------------|
 | Inline, awaited | `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
-| Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
+| Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `BanIssuedEvent`, `BanRevokedEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
 
 Because the queue delivers one event at a time, a slow listener on a queued event delays the queued events behind it, up to `handler_timeout` per listener. A listener that panics does not stop the queue: the next event is still delivered.
 
@@ -856,6 +856,49 @@ Fired when a backend address changes health state, for example when it stops acc
 | `address` | `ServerAddress` | The backend address whose health changed |
 | `servers` | `Vec<ServerId>` | The servers that list this address |
 | `state` | `BackendState` | The new health state |
+
+## Ban events
+
+The [ban service](./bans) posts these after the active ban provider changed its bans, whichever provider it is and whoever made the change: the console, the admin API, a plugin. They are queued, so listeners see them in the order the bans were issued and revoked. Plugins can listen to them but not fire them.
+
+### BanIssuedEvent
+
+Posted after a ban was stored, before any online player it matches is kicked.
+
+**Type:** Informational
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entry` | `BanEntry` | The stored ban, with the `id` its provider gave it |
+| `source` | `BanSource` | Who issued it: `Console`, `WebApi`, `Plugin(id)`, `Player` or `System` |
+| `silent` | `bool` | The issuer asked for the ban not to be announced |
+
+### BanRevokedEvent
+
+Posted after a ban was removed. Nothing is posted when the target was not banned.
+
+**Type:** Informational
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entry` | `BanEntry` | The ban that was removed |
+| `source` | `BanSource` | Who removed it |
+| `silent` | `bool` | The remover asked for this not to be announced |
+
+```rust
+ctx.event_bus().subscribe::<BanIssuedEvent, _>(EventPriority::NORMAL, |event| {
+    if !event.silent {
+        tracing::info!(
+            "{} banned {}: {}",
+            event.source,
+            event.entry.target,
+            event.entry.reason.as_deref().unwrap_or("no reason"),
+        );
+    }
+});
+```
+
+WASM plugins (contract 0.2.3) do not receive ban events.
 
 ## Custom events
 

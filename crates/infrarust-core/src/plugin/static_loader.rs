@@ -257,6 +257,12 @@ mod tests {
         fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
             unimplemented!("mock")
         }
+        fn register_ban_provider(
+            &self,
+            _provider: Arc<dyn infrarust_api::services::ban_service::BanProvider>,
+        ) -> Result<(), infrarust_api::services::ban_service::BanProviderRejected> {
+            unimplemented!("mock")
+        }
         fn config_service_handle(
             &self,
         ) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {

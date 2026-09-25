@@ -4,9 +4,9 @@ use std::future::Future;
 use std::pin::Pin;
 
 use comfy_table::Cell;
-use infrarust_api::services::ban_service::{BanEntry, BanTarget};
-use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::Component;
+use infrarust_api::services::ban_service::{
+    BanEntry, BanRequest, BanService, BanSource, BanTarget, IpNet, UnbanRequest,
+};
 
 use crate::console::ConsoleServices;
 use crate::console::dispatcher::ConsoleCommand;
@@ -63,13 +63,14 @@ impl ConsoleCommand for BanCommand {
             };
 
             let target = BanTarget::Username(name.to_string());
-            if let Err(e) = services
+            let issued = match services
                 .ban_manager
-                .ban(target, reason.clone(), duration, "console".to_string())
+                .issue(console_ban(target, reason.clone(), duration))
                 .await
             {
-                return CommandOutput::Error(format!("Failed to ban {name}: {e}"));
-            }
+                Ok(issued) => issued,
+                Err(e) => return CommandOutput::Error(format!("Failed to ban {name}: {e}")),
+            };
 
             let duration_str = duration
                 .map(format_duration_short)
@@ -87,16 +88,11 @@ impl ConsoleCommand for BanCommand {
             let mut lines = vec![OutputLine::Success(format!(
                 "Banned {name} {duration_str} (reason: {reason_str})"
             ))];
-
-            if let Some(player) = services.player_registry.get_player(name) {
-                let server = player
-                    .current_server()
-                    .map(|s| s.as_str().to_string())
-                    .unwrap_or_default();
-                player
-                    .disconnect(Component::text(format!("Banned: {reason_str}")))
-                    .await;
-                lines.push(OutputLine::Success(format!("Player kicked from {server}")));
+            if issued.kicked > 0 {
+                lines.push(OutputLine::Success(format!(
+                    "Kicked {} player(s)",
+                    issued.kicked
+                )));
             }
 
             CommandOutput::Lines(lines)
@@ -116,11 +112,11 @@ impl ConsoleCommand for BanIpCommand {
     }
 
     fn description(&self) -> &str {
-        "Ban an IP address"
+        "Ban an IP address or range"
     }
 
     fn usage(&self) -> &str {
-        "ban-ip <ip> [duration] [reason...]"
+        "ban-ip <ip|cidr> [duration] [reason...]"
     }
 
     fn category(&self) -> CommandCategory {
@@ -137,15 +133,15 @@ impl ConsoleCommand for BanIpCommand {
                 Some(ip) => *ip,
                 None => {
                     return CommandOutput::Error(
-                        "Usage: ban-ip <ip> [duration] [reason...]".to_string(),
+                        "Usage: ban-ip <ip|cidr> [duration] [reason...]".to_string(),
                     );
                 }
             };
 
-            let ip: std::net::IpAddr = match ip_str.parse() {
-                Ok(ip) => ip,
-                Err(_) => return CommandOutput::Error(format!("Invalid IP address: '{ip_str}'")),
+            let Some(target) = parse_address_target(ip_str) else {
+                return CommandOutput::Error(format!("Invalid IP address or range: '{ip_str}'"));
             };
+            let ip = ip_str;
 
             let (duration, reason_start) = if args.len() > 1 {
                 match parse_duration_arg(args[1]) {
@@ -162,14 +158,14 @@ impl ConsoleCommand for BanIpCommand {
                 None
             };
 
-            let target = BanTarget::Ip(ip);
-            if let Err(e) = services
+            let issued = match services
                 .ban_manager
-                .ban(target, reason.clone(), duration, "console".to_string())
+                .issue(console_ban(target, reason.clone(), duration))
                 .await
             {
-                return CommandOutput::Error(format!("Failed to ban IP {ip}: {e}"));
-            }
+                Ok(issued) => issued,
+                Err(e) => return CommandOutput::Error(format!("Failed to ban IP {ip}: {e}")),
+            };
 
             let duration_str = duration
                 .map(format_duration_short)
@@ -184,12 +180,7 @@ impl ConsoleCommand for BanIpCommand {
                 "IP banned from console"
             );
 
-            let sessions = services.connection_registry.find_by_ip(&ip);
-            let kicked = sessions.len();
-            for session in sessions {
-                session.shutdown_token().cancel();
-            }
-
+            let kicked = issued.kicked;
             let mut lines = vec![OutputLine::Success(format!(
                 "Banned IP {ip} {duration_str} (reason: {reason_str})"
             ))];
@@ -240,12 +231,12 @@ impl ConsoleCommand for UnbanCommand {
             };
 
             let target = BanTarget::Username(name.to_string());
-            match services.ban_manager.unban(&target).await {
-                Ok(true) => {
+            match services.ban_manager.revoke(console_unban(target)).await {
+                Ok(Some(_)) => {
                     tracing::info!(target: "console", player = name, "Player unbanned from console");
                     CommandOutput::Success(format!("Unbanned {name}"))
                 }
-                Ok(false) => CommandOutput::Error(format!("Player '{name}' is not banned")),
+                Ok(None) => CommandOutput::Error(format!("Player '{name}' is not banned")),
                 Err(e) => CommandOutput::Error(format!("Failed to unban {name}: {e}")),
             }
         })
@@ -264,11 +255,11 @@ impl ConsoleCommand for UnbanIpCommand {
     }
 
     fn description(&self) -> &str {
-        "Unban an IP address"
+        "Unban an IP address or range"
     }
 
     fn usage(&self) -> &str {
-        "unban-ip <ip>"
+        "unban-ip <ip|cidr>"
     }
 
     fn category(&self) -> CommandCategory {
@@ -283,21 +274,20 @@ impl ConsoleCommand for UnbanIpCommand {
         Box::pin(async move {
             let ip_str = match args.first() {
                 Some(ip) => *ip,
-                None => return CommandOutput::Error("Usage: unban-ip <ip>".to_string()),
+                None => return CommandOutput::Error("Usage: unban-ip <ip|cidr>".to_string()),
             };
 
-            let ip: std::net::IpAddr = match ip_str.parse() {
-                Ok(ip) => ip,
-                Err(_) => return CommandOutput::Error(format!("Invalid IP address: '{ip_str}'")),
+            let Some(target) = parse_address_target(ip_str) else {
+                return CommandOutput::Error(format!("Invalid IP address or range: '{ip_str}'"));
             };
+            let ip = ip_str;
 
-            let target = BanTarget::Ip(ip);
-            match services.ban_manager.unban(&target).await {
-                Ok(true) => {
+            match services.ban_manager.revoke(console_unban(target)).await {
+                Ok(Some(_)) => {
                     tracing::info!(target: "console", ip = %ip, "IP unbanned from console");
                     CommandOutput::Success(format!("Unbanned IP {ip}"))
                 }
-                Ok(false) => CommandOutput::Error(format!("IP {ip} is not banned")),
+                Ok(None) => CommandOutput::Error(format!("IP {ip} is not banned")),
                 Err(e) => CommandOutput::Error(format!("Failed to unban IP {ip}: {e}")),
             }
         })
@@ -333,7 +323,7 @@ impl ConsoleCommand for BanListCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let bans = match services.ban_manager.get_all_bans().await {
+            let bans = match BanService::list_all(services.ban_manager.as_ref()).await {
                 Ok(bans) => bans,
                 Err(e) => return CommandOutput::Error(format!("Failed to fetch bans: {e}")),
             };
@@ -346,7 +336,14 @@ impl ConsoleCommand for BanListCommand {
 
             let renderer = crate::console::output::OutputRenderer::new();
             let mut table = renderer.create_table();
-            table.set_header(vec!["Target", "Type", "Reason", "Source", "Remaining"]);
+            table.set_header(vec![
+                "ID",
+                "Target",
+                "Type",
+                "Reason",
+                "Source",
+                "Remaining",
+            ]);
 
             for ban in &active {
                 let remaining = if ban.is_permanent() {
@@ -358,6 +355,7 @@ impl ConsoleCommand for BanListCommand {
                 };
 
                 table.add_row(vec![
+                    Cell::new(&ban.id),
                     Cell::new(format_ban_target(&ban.target)),
                     Cell::new(ban.target.display_type()),
                     Cell::new(ban.reason.as_deref().unwrap_or("-")),
@@ -406,7 +404,7 @@ impl ConsoleCommand for BanInfoCommand {
 
             let target = parse_ban_target(arg);
 
-            match services.ban_manager.is_banned(&target).await {
+            match services.ban_manager.get(&target).await {
                 Ok(Some(ban)) => {
                     let remaining = if ban.is_permanent() {
                         "permanent".to_string()
@@ -417,6 +415,7 @@ impl ConsoleCommand for BanInfoCommand {
                     };
 
                     CommandOutput::Lines(vec![
+                        OutputLine::Info(format!("  ID: {}", ban.id)),
                         OutputLine::Info(format!("  Target: {}", format_ban_target(&ban.target))),
                         OutputLine::Info(format!("  Type: {}", ban.target.display_type())),
                         OutputLine::Info(format!(
@@ -438,8 +437,31 @@ impl ConsoleCommand for BanInfoCommand {
 fn format_ban_target(target: &BanTarget) -> String {
     match target {
         BanTarget::Ip(ip) => ip.to_string(),
+        BanTarget::IpRange(net) => net.to_string(),
         BanTarget::Username(name) => name.clone(),
         BanTarget::Uuid(uuid) => uuid.to_string(),
         _ => "unknown".to_string(),
     }
+}
+
+fn parse_address_target(arg: &str) -> Option<BanTarget> {
+    if let Ok(ip) = arg.parse::<std::net::IpAddr>() {
+        return Some(BanTarget::Ip(ip));
+    }
+    arg.parse::<IpNet>().ok().map(BanTarget::IpRange)
+}
+
+fn console_ban(
+    target: BanTarget,
+    reason: Option<String>,
+    duration: Option<std::time::Duration>,
+) -> BanRequest {
+    let mut request = BanRequest::new(target).source(BanSource::Console);
+    request.reason = reason;
+    request.duration = duration;
+    request
+}
+
+fn console_unban(target: BanTarget) -> UnbanRequest {
+    UnbanRequest::new(target).source(BanSource::Console)
 }

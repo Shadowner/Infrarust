@@ -274,8 +274,10 @@ Drain intent is stored in `<plugins_dir>/admin_api/drained.json` and replayed af
 |--------|------|-------------|
 | GET | `/api/v1/bans` | List all bans (paginated) |
 | GET | `/api/v1/bans/check/{target_type}/{value}` | Check if a username, UUID, or IP is banned |
-| POST | `/api/v1/bans` | Create a ban. Target types: `username`, `uuid`, `ip` |
-| DELETE | `/api/v1/bans/{target_type}/{value}` | Remove a ban |
+| POST | `/api/v1/bans` | Create a ban. Target types: `username`, `uuid`, `ip` (an address or a CIDR range) |
+| DELETE | `/api/v1/bans/{target_type}/{value}` | Remove a ban. `target_type` is `username`, `uuid`, `ip` or `ip_range`; URL-encode the `/` of a range as `%2F` |
+
+The ban endpoints go through whichever [ban provider](../../configuration/security/bans#choosing-a-provider) is active. Bans created or removed here are recorded with the `web-api` source, and every ban in a response carries the `id` the provider gave it. With `[ban] provider = "none"` they answer with an error.
 
 ### Plugins
 

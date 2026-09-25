@@ -230,6 +230,7 @@ export default
               { text: 'Events Reference', link: '/plugins/dev/events' },
               { text: 'Commands API', link: '/plugins/dev/commands' },
               { text: 'Plugin API', link: '/plugins/dev/api' },
+              { text: 'Bans API', link: '/plugins/dev/bans' },
               { text: 'Testing Plugins', link: '/plugins/dev/testing' },
             ],
           },

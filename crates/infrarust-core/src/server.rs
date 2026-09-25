@@ -20,9 +20,7 @@ use crate::event_bus::conversion::convert_server_state;
 use crate::event_bus::{EventBusConfig, EventBusImpl};
 
 use crate::auth::mojang::MojangAuth;
-use crate::ban::file_storage::FileBanStorage;
 use crate::ban::manager::BanManager;
-use crate::ban::storage::BanStorage;
 use crate::error::CoreError;
 use crate::handler::InterceptedHandler;
 use crate::handler::legacy::LegacyHandler;
@@ -253,10 +251,10 @@ impl ProxyServer {
         #[cfg(feature = "telemetry")]
         let status_handler = status_handler.with_metrics(Arc::clone(&proxy_metrics));
 
-        // Ban system
-        let ban_storage = Arc::new(FileBanStorage::new(config.ban.file.clone()));
-        ban_storage.load().await?;
-        let ban_manager = Arc::new(BanManager::new(ban_storage, Arc::clone(&registry)));
+        let ban_manager = Arc::new(
+            BanManager::from_config(&config.ban, Arc::clone(&registry), Arc::clone(&event_bus))
+                .await?,
+        );
 
         // Build plugin services
         let player_registry = Arc::new(PlayerRegistryImpl::new(Arc::clone(&registry)));
@@ -306,13 +304,13 @@ impl ProxyServer {
             permission_service,
         };
 
-        // Build common pipeline: IpFilter → BanIpCheck → HandshakeParser → RateLimiter → DomainRouter
+        // Build common pipeline: IpFilter → HandshakeParser → BanIpCheck → RateLimiter → DomainRouter
         let mut common_pipeline = Pipeline::new();
         common_pipeline.add(Box::new(IpFilterMiddleware::new(config.ip_filter.clone())));
+        common_pipeline.add(Box::new(HandshakeParserMiddleware::new()));
         common_pipeline.add(Box::new(BanIpCheckMiddleware::new(Arc::clone(
             &ban_manager,
         ))));
-        common_pipeline.add(Box::new(HandshakeParserMiddleware::new()));
         common_pipeline.add(Box::new(RateLimiterMiddleware::new(&config.rate_limit)));
         common_pipeline.add(Box::new(DomainRouterMiddleware::new(Arc::clone(
             &domain_router,
@@ -588,6 +586,10 @@ impl ProxyServer {
                 }
                 return Ok(());
             }
+            MiddlewareResult::Kick(reason) => {
+                self.send_kick(&mut ctx, &reason).await.ok();
+                return Ok(());
+            }
         }
 
         // Branch on intent
@@ -616,6 +618,10 @@ impl ProxyServer {
                     MiddlewareResult::ShortCircuit => return Ok(()),
                     MiddlewareResult::Reject(msg) => {
                         self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
+                        return Ok(());
+                    }
+                    MiddlewareResult::Kick(reason) => {
+                        self.send_kick(&mut ctx, &reason).await.ok();
                         return Ok(());
                     }
                 }

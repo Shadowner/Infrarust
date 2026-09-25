@@ -3,11 +3,14 @@ use std::sync::{Arc, Mutex, Weak};
 
 use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
+use infrarust_api::services::ban_service::BanService;
 
 pub use infrarust_api::loader::PluginContextFactory;
 
 use super::context::PluginContextImpl;
 use super::manager::PluginServices;
+use crate::ban::BanManager;
+use crate::services::ban_bridge::PluginBanService;
 
 /// Per-plugin permissions extracted from proxy configuration.
 #[derive(Debug, Clone, Default)]
@@ -22,6 +25,7 @@ pub struct PluginContextFactoryImpl {
     services: PluginServices,
     plugin_configs: HashMap<String, PluginPermissions>,
     contexts: Mutex<HashMap<String, Weak<PluginContextImpl>>>,
+    ban_providers: Option<Arc<BanManager>>,
 }
 
 impl PluginContextFactoryImpl {
@@ -33,7 +37,14 @@ impl PluginContextFactoryImpl {
             services,
             plugin_configs,
             contexts: Mutex::new(HashMap::new()),
+            ban_providers: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_ban_providers(mut self, bans: Arc<BanManager>) -> Self {
+        self.ban_providers = Some(bans);
+        self
     }
 }
 
@@ -70,7 +81,11 @@ impl PluginContextFactory for PluginContextFactoryImpl {
             Arc::clone(&self.services.event_bus),
             Arc::clone(&self.services.player_registry),
             Arc::clone(&self.services.server_manager),
-            Arc::clone(&self.services.ban_service),
+            Arc::new(PluginBanService::new(
+                Arc::clone(&self.services.ban_service),
+                plugin_id,
+            )) as Arc<dyn BanService>,
+            self.ban_providers.clone(),
             Arc::clone(&self.services.config_service),
             Arc::clone(&self.services.load_balancer_service),
             Arc::clone(&self.services.plugin_registry),

@@ -3,7 +3,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
-use infrarust_api::services::ban_service::BanTarget;
+use infrarust_api::services::ban_service::{BanRequest, BanTarget};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_test_harness::{
     ConnectionState, DEFAULT_TIMEOUT, EventKind, FakeBackend, ProtocolVersion, Recorder,
@@ -68,16 +68,17 @@ async fn a_username_ban_in_another_case_kicks_the_player() {
     let target = BanTarget::Username("sTEVE".into());
     let bans = &proxy.services().ban_manager;
 
-    bans.ban(target.clone(), Some("griefing".into()), None, "test".into())
+    bans.issue(BanRequest::new(target.clone()).reason("griefing"))
         .await
         .unwrap();
 
     let kick = bans
-        .is_banned(&target)
+        .get(&target)
         .await
         .unwrap()
         .unwrap()
-        .kick_message();
+        .default_kick_message()
+        .to_plain();
     let info = session.expect_disconnect(T).await.unwrap();
     assert_eq!(info.state, ConnectionState::Play, "{info:?}");
     assert_eq!(info.text, kick, "{info:?}");

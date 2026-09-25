@@ -5,6 +5,7 @@ use std::time::Duration;
 use infrarust_api::error::PluginError;
 use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{BoxFuture, Event, EventPriority, ResultedEvent};
+use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::command::{CommandExecuteEvent, CommandExecuteResult};
 use infrarust_api::events::connection::{
@@ -21,6 +22,7 @@ use infrarust_api::events::proxy::{
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
+use infrarust_api::services::ban_service::{BanEntry, BanSource};
 use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
 use serde_json::{Value, json};
 use tokio::sync::Notify;
@@ -52,10 +54,12 @@ pub enum EventKind {
     ConfigReload,
     BackendHealth,
     ServerStateChange,
+    BanIssued,
+    BanRevoked,
 }
 
 impl EventKind {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 22] = [
         Self::PreLogin,
         Self::GameProfileRequest,
         Self::Login,
@@ -76,6 +80,8 @@ impl EventKind {
         Self::ConfigReload,
         Self::BackendHealth,
         Self::ServerStateChange,
+        Self::BanIssued,
+        Self::BanRevoked,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -100,6 +106,8 @@ impl EventKind {
             Self::ConfigReload => "ConfigReload",
             Self::BackendHealth => "BackendHealth",
             Self::ServerStateChange => "ServerStateChange",
+            Self::BanIssued => "BanIssued",
+            Self::BanRevoked => "BanRevoked",
         }
     }
 }
@@ -628,6 +636,33 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
             }),
         )
     });
+    on::<BanIssuedEvent>(bus, recorder, |e| {
+        (
+            EventKind::BanIssued,
+            None,
+            None,
+            ban_detail(&e.entry, &e.source, e.silent),
+        )
+    });
+    on::<BanRevokedEvent>(bus, recorder, |e| {
+        (
+            EventKind::BanRevoked,
+            None,
+            None,
+            ban_detail(&e.entry, &e.source, e.silent),
+        )
+    });
+}
+
+fn ban_detail(entry: &BanEntry, source: &BanSource, silent: bool) -> Value {
+    json!({
+        "id": entry.id,
+        "target": entry.target.to_string(),
+        "reason": entry.reason,
+        "entry_source": entry.source.to_string(),
+        "source": source.to_string(),
+        "silent": silent,
+    })
 }
 
 pub fn component_value(component: &Component) -> Value {

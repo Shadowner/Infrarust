@@ -13,7 +13,8 @@ use infrarust_api::events::lifecycle::{
 };
 use infrarust_api::permissions::PermissionChecker;
 use infrarust_api::player::Player;
-use infrarust_api::types::{Component, GameProfile};
+use infrarust_api::services::ban_service::LoginAttempt;
+use infrarust_api::types::{Component, GameProfile, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use tokio_util::sync::CancellationToken;
 
@@ -130,23 +131,16 @@ impl InterceptedHandler {
         let rewritten = request.is_modified();
         let profile = request.profile;
 
-        if let Some(ban_entry) = self
-            .services
-            .ban_manager
-            .check_player(&ctx.client_ip, &profile.username, Some(&profile.uuid))
-            .await?
-        {
-            tracing::info!(
-                ip = %ctx.client_ip,
-                username = %profile.username,
-                uuid = %profile.uuid,
-                ban_type = ban_entry.target.display_type(),
-                "connection rejected post-auth: player is banned"
-            );
-            client
-                .disconnect(&Component::text(ban_entry.kick_message()), registry)
-                .await
-                .ok();
+        let attempt = LoginAttempt::post_auth(
+            ctx.client_ip,
+            profile.username.clone(),
+            profile.uuid,
+            online_mode,
+        )
+        .virtual_host(handshake.domain.clone())
+        .server(ServerId::new(routing.config_id.clone()));
+        if let Some(reason) = self.services.ban_manager.refusal(&attempt).await {
+            client.disconnect(&reason, registry).await.ok();
             return Ok(());
         }
 

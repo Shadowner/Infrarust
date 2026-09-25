@@ -167,6 +167,7 @@ These values apply to both player-to-proxy and proxy-to-backend connections.
 
 ```toml
 [ban]
+provider = "builtin"
 file = "bans.json"
 purge_interval = "300s"
 enable_audit_log = true
@@ -178,7 +179,7 @@ packet_handler_timeout = "10s"
 disconnect_deadline = "15s"
 ```
 
-`file` is the path to the JSON file where bans are stored. `purge_interval` controls how often expired bans are removed from the file. When `enable_audit_log` is `true`, every ban and unban operation is logged.
+`provider` picks who decides who is banned: `"builtin"` (the default) uses the ban file, `"none"` turns ban checks off, and a plugin id hands bans to that plugin. See [Bans](./security/bans#choosing-a-provider). `file` is the path to the JSON file where the built-in provider stores bans. `purge_interval` controls how often expired bans are removed from the file. When `enable_audit_log` is `true`, every ban and unban operation is logged.
 
 ## Default MOTD
 

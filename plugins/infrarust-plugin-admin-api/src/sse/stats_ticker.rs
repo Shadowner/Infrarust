@@ -53,7 +53,7 @@ impl StatsTicker {
                         .count();
                     let bans_active = self
                         .ban_service
-                        .get_all_bans()
+                        .list_all()
                         .await
                         .map(|b| b.len())
                         .unwrap_or(0);

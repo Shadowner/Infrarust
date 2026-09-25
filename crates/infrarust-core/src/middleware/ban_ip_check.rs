@@ -1,23 +1,15 @@
-//! Middleware that rejects banned IPs early in the common pipeline.
-//!
-//! Unlike `BanCheckMiddleware` (login pipeline, checks IP + username),
-//! this middleware runs before intent branching and blocks banned IPs
-//! from even receiving the MOTD.
-
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+
+use infrarust_api::services::ban_service::LoginAttempt;
 
 use crate::ban::BanManager;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
+use crate::pipeline::types::{ConnectionIntent, HandshakeData};
 
-/// Middleware that rejects banned IPs in the common pipeline.
-///
-/// Placed after `IpFilterMiddleware` in the common pipeline.
-/// Blocks the connection before the handshake intent is even evaluated,
-/// so banned IPs cannot receive the MOTD or status ping.
 pub struct BanIpCheckMiddleware {
     ban_manager: Arc<BanManager>,
 }
@@ -38,16 +30,16 @@ impl Middleware for BanIpCheckMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
-            let ip = ctx.client_ip;
+            let Some(handshake) = ctx.extensions.get::<HandshakeData>() else {
+                return Ok(MiddlewareResult::Continue);
+            };
+            if handshake.intent != ConnectionIntent::Status {
+                return Ok(MiddlewareResult::Continue);
+            }
 
-            if self.ban_manager.is_ip_banned(&ip).await?.is_some() {
-                tracing::info!(
-                    ip = %ip,
-                    "connection dropped: IP is banned"
-                );
-                // ShortCircuit, not Reject: at this stage the client hasn't
-                // sent a handshake yet, so we can't send a proper disconnect
-                // packet. Just close the connection silently.
+            let attempt =
+                LoginAttempt::status(ctx.client_ip).virtual_host(handshake.domain.clone());
+            if self.ban_manager.refusal(&attempt).await.is_some() {
                 Ok(MiddlewareResult::ShortCircuit)
             } else {
                 Ok(MiddlewareResult::Continue)

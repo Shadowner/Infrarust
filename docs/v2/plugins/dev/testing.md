@@ -66,8 +66,10 @@ All operations succeed and report no bans:
 ```rust
 use infrarust_api::error::ServiceError;
 use infrarust_api::event::BoxFuture;
-use infrarust_api::services::ban_service::{BanEntry, BanTarget};
-use std::time::Duration;
+use infrarust_api::services::ban_service::{
+    BanEntry, BanFeatures, BanPage, BanQuery, BanRequest, BanSource, BanTarget, BanVerdict,
+    LoginAttempt, UnbanRequest,
+};
 
 pub struct MockBanService;
 
@@ -75,31 +77,36 @@ impl infrarust_api::services::ban_service::private::Sealed
     for MockBanService {}
 
 impl infrarust_api::services::ban_service::BanService for MockBanService {
+    fn check<'a>(
+        &'a self, _attempt: &'a LoginAttempt,
+    ) -> BoxFuture<'a, Result<Option<BanVerdict>, ServiceError>> {
+        Box::pin(async { Ok(None) })
+    }
     fn ban(
-        &self, _target: BanTarget, _reason: Option<String>,
-        _duration: Option<Duration>,
-    ) -> BoxFuture<'_, Result<(), ServiceError>> {
-        Box::pin(async { Ok(()) })
+        &self, request: BanRequest,
+    ) -> BoxFuture<'_, Result<BanEntry, ServiceError>> {
+        Box::pin(async move {
+            let source = request.source.unwrap_or(BanSource::System);
+            Ok(BanEntry::new("1", request.target, source))
+        })
     }
     fn unban(
-        &self, _target: &BanTarget,
-    ) -> BoxFuture<'_, Result<bool, ServiceError>> {
-        Box::pin(async { Ok(false) })
-    }
-    fn is_banned(
-        &self, _target: &BanTarget,
-    ) -> BoxFuture<'_, Result<bool, ServiceError>> {
-        Box::pin(async { Ok(false) })
-    }
-    fn get_ban(
-        &self, _target: &BanTarget,
+        &self, _request: UnbanRequest,
     ) -> BoxFuture<'_, Result<Option<BanEntry>, ServiceError>> {
         Box::pin(async { Ok(None) })
     }
-    fn get_all_bans(
-        &self,
-    ) -> BoxFuture<'_, Result<Vec<BanEntry>, ServiceError>> {
-        Box::pin(async { Ok(vec![]) })
+    fn get<'a>(
+        &'a self, _target: &'a BanTarget,
+    ) -> BoxFuture<'a, Result<Option<BanEntry>, ServiceError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn list(
+        &self, _query: BanQuery,
+    ) -> BoxFuture<'_, Result<BanPage, ServiceError>> {
+        Box::pin(async { Ok(BanPage::default()) })
+    }
+    fn features(&self) -> BanFeatures {
+        BanFeatures::new()
     }
 }
 ```
@@ -190,6 +197,12 @@ impl PluginContext for MockPluginContext {
     fn ban_service_handle(
         &self,
     ) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
+        unimplemented!("mock")
+    }
+    fn register_ban_provider(
+        &self,
+        _provider: Arc<dyn infrarust_api::services::ban_service::BanProvider>,
+    ) -> Result<(), infrarust_api::services::ban_service::BanProviderRejected> {
         unimplemented!("mock")
     }
     fn config_service(

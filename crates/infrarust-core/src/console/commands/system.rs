@@ -381,13 +381,14 @@ impl ConsoleCommand for GcCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            match services.ban_manager.get_all_bans().await {
-                Ok(bans) => {
-                    let active = bans.iter().filter(|b| !b.is_expired()).count();
-                    CommandOutput::Success(format!(
-                        "GC cycle completed. {active} active ban(s) remaining."
-                    ))
-                }
+            let Some(builtin) = services.ban_manager.builtin_provider() else {
+                return CommandOutput::Success("GC cycle completed.".to_string());
+            };
+            match builtin.storage().get_all_active().await {
+                Ok(bans) => CommandOutput::Success(format!(
+                    "GC cycle completed. {} active ban(s) remaining.",
+                    bans.len()
+                )),
                 Err(e) => CommandOutput::Error(format!("GC failed: {e}")),
             }
         })

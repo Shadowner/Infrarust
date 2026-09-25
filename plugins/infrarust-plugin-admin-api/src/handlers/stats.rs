@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::State;
+use infrarust_api::error::ServiceError;
 
 use crate::dto::stats::StatsResponse;
 use crate::error::ApiError;
@@ -15,13 +16,11 @@ pub async fn overview(
 ) -> Result<Json<ApiResponse<StatsResponse>>, ApiError> {
     let players = state.player_registry.get_all_players();
     let all_servers = state.server_manager.get_all_servers();
-    let bans = state
-        .ban_service
-        .get_all_bans()
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to fetch bans: {e}")))?;
-
-    let bans_active = bans.iter().filter(|b| !b.is_expired()).count();
+    let bans_active = match state.ban_service.list_all().await {
+        Ok(bans) => bans.iter().filter(|b| !b.is_expired()).count(),
+        Err(ServiceError::Unavailable(_)) => 0,
+        Err(e) => return Err(ApiError::Internal(format!("Failed to fetch bans: {e}"))),
+    };
 
     let mut players_by_server: HashMap<String, usize> = HashMap::new();
     for player in &players {

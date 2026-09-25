@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use infrarust_api::event::bus::{EventBus, EventBusExt, FireError};
 use infrarust_api::event::{Event, EventPriority};
+use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::chat::ChatMessageEvent;
 use infrarust_api::events::command::CommandExecuteEvent;
 use infrarust_api::events::connection::{
@@ -215,7 +216,7 @@ async fn a_failing_handler_names_the_plugin_that_fired_the_event() {
 
 type Probe = (&'static str, fn() -> TypeId);
 
-const BUILTIN_NAMES: [Probe; 20] = [
+const BUILTIN_NAMES: [Probe; 22] = [
     ("PreLoginEvent", TypeId::of::<PreLoginEvent>),
     (
         "GameProfileRequestEvent",
@@ -248,6 +249,8 @@ const BUILTIN_NAMES: [Probe; 20] = [
         "ServerStateChangeEvent",
         TypeId::of::<ServerStateChangeEvent>,
     ),
+    ("BanIssuedEvent", TypeId::of::<BanIssuedEvent>),
+    ("BanRevokedEvent", TypeId::of::<BanRevokedEvent>),
 ];
 
 const OPEN_API_EVENTS: [&str; 1] = ["NamedEvent"];

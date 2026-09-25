@@ -1,6 +1,7 @@
 //! [`PluginContext`] implementation — per-plugin service aggregator.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio_util::sync::CancellationToken;
@@ -15,11 +16,15 @@ use infrarust_api::provider::PluginConfigProvider;
 use infrarust_api::services::proxy_info::ProxyInfo;
 use infrarust_api::services::scheduler::{Scheduler, TaskHandle};
 use infrarust_api::services::{
-    ban_service::BanService, config_service::ConfigService, load_balancer::LoadBalancerService,
-    player_registry::PlayerRegistry, plugin_registry::PluginRegistry,
+    ban_service::{BanProvider, BanProviderRejected, BanService},
+    config_service::ConfigService,
+    load_balancer::LoadBalancerService,
+    player_registry::PlayerRegistry,
+    plugin_registry::PluginRegistry,
     server_manager::ServerManager,
 };
 
+use crate::ban::BanManager;
 use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
@@ -40,6 +45,8 @@ pub struct PluginContextImpl {
     player_registry: Arc<dyn PlayerRegistry>,
     server_manager: Arc<dyn ServerManager>,
     ban_service: Arc<dyn BanService>,
+    ban_providers: Option<Arc<BanManager>>,
+    registered_ban_provider: AtomicBool,
     config_service: Arc<dyn ConfigService>,
     load_balancer_service: Arc<dyn LoadBalancerService>,
     plugin_registry: Arc<dyn PluginRegistry>,
@@ -70,6 +77,7 @@ impl PluginContextImpl {
         player_registry: Arc<dyn PlayerRegistry>,
         server_manager: Arc<dyn ServerManager>,
         ban_service: Arc<dyn BanService>,
+        ban_providers: Option<Arc<BanManager>>,
         config_service: Arc<dyn ConfigService>,
         load_balancer_service: Arc<dyn LoadBalancerService>,
         plugin_registry: Arc<dyn PluginRegistry>,
@@ -108,6 +116,8 @@ impl PluginContextImpl {
             player_registry,
             server_manager,
             ban_service,
+            ban_providers,
+            registered_ban_provider: AtomicBool::new(false),
             config_service,
             load_balancer_service,
             plugin_registry,
@@ -187,6 +197,12 @@ impl PluginContextImpl {
             self.domain_router.remove(pid);
         }
 
+        if self.registered_ban_provider.swap(false, Ordering::SeqCst)
+            && let Some(bans) = &self.ban_providers
+        {
+            bans.unregister_provider(&self.plugin_id);
+        }
+
         tracing::debug!(plugin = %self.plugin_id, "Plugin resources cleaned up");
     }
 }
@@ -224,6 +240,27 @@ impl PluginContext for PluginContextImpl {
 
     fn ban_service_handle(&self) -> Arc<dyn BanService> {
         Arc::clone(&self.ban_service)
+    }
+
+    fn register_ban_provider(
+        &self,
+        provider: Arc<dyn BanProvider>,
+    ) -> Result<(), BanProviderRejected> {
+        if !self.capabilities.has(Capability::BanProvider) {
+            tracing::warn!(
+                plugin = %self.plugin_id,
+                "register_ban_provider denied: missing ban-provider capability"
+            );
+            return Err(BanProviderRejected::MissingCapability);
+        }
+        let Some(bans) = &self.ban_providers else {
+            return Err(BanProviderRejected::NotSelected {
+                selected: infrarust_config::BanProviderSelection::BUILTIN.to_string(),
+            });
+        };
+        bans.register_provider(&self.plugin_id, provider)?;
+        self.registered_ban_provider.store(true, Ordering::SeqCst);
+        Ok(())
     }
 
     fn config_service(&self) -> &dyn ConfigService {

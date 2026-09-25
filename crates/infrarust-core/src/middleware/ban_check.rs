@@ -1,21 +1,16 @@
-//! Middleware that checks if a connecting player is banned.
-
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+
+use infrarust_api::services::ban_service::LoginAttempt;
+use infrarust_api::types::ServerId;
 
 use crate::ban::BanManager;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::LoginData;
+use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 
-/// Middleware that rejects banned players during the login pipeline.
-///
-/// Checks the player's IP and username against the ban storage.
-/// Placed after `LoginStartParserMiddleware` in the login pipeline.
-///
-/// **Requires**: `LoginData` (from `LoginStartParserMiddleware`)
 pub struct BanCheckMiddleware {
     ban_manager: Arc<BanManager>,
 }
@@ -36,31 +31,24 @@ impl Middleware for BanCheckMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
-            let ip = ctx.client_ip;
-
-            // Username from LoginData (inserted by LoginStartParser)
-            let username = if let Some(data) = ctx.extensions.get::<LoginData>() {
-                data.username.as_str()
-            } else {
+            let Some(login) = ctx.extensions.get::<LoginData>() else {
                 tracing::warn!("ban_check: LoginData not found in extensions, skipping check");
                 return Ok(MiddlewareResult::Continue);
             };
 
-            let uuid: Option<&uuid::Uuid> = None;
-
-            match self.ban_manager.check_player(&ip, username, uuid).await? {
-                Some(ban_entry) => {
-                    let message = ban_entry.kick_message();
-                    tracing::info!(
-                        ip = %ip,
-                        username = %username,
-                        ban_type = ban_entry.target.display_type(),
-                        "connection rejected: player is banned"
-                    );
-                    Ok(MiddlewareResult::Reject(message))
-                }
-                None => Ok(MiddlewareResult::Continue),
+            let mut attempt = LoginAttempt::pre_auth(ctx.client_ip, login.username.clone())
+                .claimed_uuid(login.player_uuid);
+            if let Some(handshake) = ctx.extensions.get::<HandshakeData>() {
+                attempt = attempt.virtual_host(handshake.domain.clone());
             }
+            if let Some(routing) = ctx.extensions.get::<RoutingData>() {
+                attempt = attempt.server(ServerId::new(routing.config_id.clone()));
+            }
+
+            Ok(match self.ban_manager.refusal(&attempt).await {
+                Some(reason) => MiddlewareResult::Kick(reason),
+                None => MiddlewareResult::Continue,
+            })
         })
     }
 }

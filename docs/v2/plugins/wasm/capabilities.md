@@ -54,6 +54,7 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `ChatIntercept` | `chat-intercept` | Subscribe to `chat-message`: read, deny and rewrite what players type in chat | No |
 | `ServerManage` | `server-manage` | Start/stop servers and read their state | No |
 | `Ban` | `ban` | Use the ban service | No |
+| `BanProvider` | `ban-provider` | Register a ban provider with `register_ban_provider` (native plugins only, no WASM binding yet) | No |
 | `CodecFilter` | `codec-filter` | Register codec filters | No |
 | `Limbo` | `limbo` | Provide limbo handlers | No |
 | `TransportFilter` | `transport-filter` | Register transport filters (never grantable via config) | No |

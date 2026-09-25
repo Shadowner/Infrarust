@@ -27,7 +27,6 @@ use crate::plugin::{
 };
 use crate::server::{DEFAULT_DRAIN_TIMEOUT, ProxyServer};
 use crate::services::ProxyServices;
-use crate::services::ban_bridge::BanServiceBridge;
 use crate::services::config_service::ConfigServiceImpl;
 use crate::services::scheduler::SchedulerImpl;
 use crate::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};
@@ -144,12 +143,14 @@ impl ProxyRuntimeBuilder {
         let context_factory = PluginContextFactoryImpl::new(
             plugin_services,
             plugin_permissions(plugin_cfgs, trusted),
-        );
+        )
+        .with_ban_providers(Arc::clone(&services.ban_manager));
 
         let errors = plugin_manager.load_and_enable_all(&context_factory).await;
         if !errors.is_empty() {
             tracing::warn!(count = errors.len(), "Some plugins failed to enable");
         }
+        services.ban_manager.report_missing_provider();
 
         plugin_registry.update_from(&plugin_manager.list_plugins(), &|id| {
             plugin_manager.plugin_state(id).cloned()
@@ -209,7 +210,7 @@ fn plugin_services(
         event_bus: Arc::clone(&services.event_bus),
         player_registry: Arc::clone(&services.player_registry) as Arc<dyn PlayerRegistry>,
         server_manager,
-        ban_service: Arc::new(BanServiceBridge::new(Arc::clone(&services.ban_manager))),
+        ban_service: Arc::clone(&services.ban_manager) as _,
         command_manager: Arc::clone(&services.command_manager),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(ConfigServiceImpl::new(

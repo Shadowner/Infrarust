@@ -1,5 +1,6 @@
 use std::any::TypeId;
 
+use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::chat::ChatMessageEvent;
 use infrarust_api::events::command::CommandExecuteEvent;
 use infrarust_api::events::connection::{
@@ -16,7 +17,7 @@ use infrarust_api::events::proxy::{
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
 
-pub static BUILTIN_EVENTS: [TypeId; 21] = [
+pub static BUILTIN_EVENTS: [TypeId; 23] = [
     TypeId::of::<PreLoginEvent>(),
     TypeId::of::<GameProfileRequestEvent>(),
     TypeId::of::<LoginEvent>(),
@@ -37,6 +38,8 @@ pub static BUILTIN_EVENTS: [TypeId; 21] = [
     TypeId::of::<ConfigReloadEvent>(),
     TypeId::of::<BackendHealthEvent>(),
     TypeId::of::<ServerStateChangeEvent>(),
+    TypeId::of::<BanIssuedEvent>(),
+    TypeId::of::<BanRevokedEvent>(),
     TypeId::of::<RawPacketEvent>(),
 ];
 

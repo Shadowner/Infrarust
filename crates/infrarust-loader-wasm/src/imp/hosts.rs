@@ -6,6 +6,7 @@ use infrarust_api::command::CommandSpec;
 use infrarust_api::error::ServiceError;
 use infrarust_api::filter::{FilterMetadata, FilterPriority};
 use infrarust_api::permissions::Capability;
+use infrarust_api::services::ban_service::{BanRequest, UnbanRequest};
 use infrarust_api::services::scheduler::TaskHandle;
 use infrarust_api::types::{PlayerId, ServerId};
 use tokio::time::timeout;
@@ -490,12 +491,14 @@ impl ban_service::Host for PluginStoreState {
                 "invalid ban target".to_string(),
             )));
         };
-        let duration = duration_ms.map(Duration::from_millis);
-        Ok(await_service(
-            self.service_call_limit(),
-            ctx.ban_service().ban(native_target, reason, duration),
+        let mut request = BanRequest::new(native_target);
+        request.reason = reason;
+        request.duration = duration_ms.map(Duration::from_millis);
+        Ok(
+            await_service(self.service_call_limit(), ctx.ban_service().ban(request))
+                .await
+                .map(|_| ()),
         )
-        .await)
     }
 
     async fn unban(
@@ -511,7 +514,12 @@ impl ban_service::Host for PluginStoreState {
                 "invalid ban target".to_string(),
             )));
         };
-        Ok(await_service(self.service_call_limit(), ctx.ban_service().unban(&t)).await)
+        Ok(await_service(
+            self.service_call_limit(),
+            ctx.ban_service().unban(UnbanRequest::new(t)),
+        )
+        .await
+        .map(|removed| removed.is_some()))
     }
 
     async fn is_banned(
@@ -527,7 +535,11 @@ impl ban_service::Host for PluginStoreState {
                 "invalid ban target".to_string(),
             )));
         };
-        Ok(await_service(self.service_call_limit(), ctx.ban_service().is_banned(&t)).await)
+        Ok(
+            await_service(self.service_call_limit(), ctx.ban_service().get(&t))
+                .await
+                .map(|entry| entry.is_some()),
+        )
     }
 
     async fn get_ban(
@@ -544,7 +556,7 @@ impl ban_service::Host for PluginStoreState {
             )));
         };
         Ok(
-            await_service(self.service_call_limit(), ctx.ban_service().get_ban(&t))
+            await_service(self.service_call_limit(), ctx.ban_service().get(&t))
                 .await
                 .map(|opt| opt.as_ref().map(convert::ban_entry_to_wit)),
         )
@@ -558,7 +570,7 @@ impl ban_service::Host for PluginStoreState {
         }
         let ctx = self.require_ctx()?;
         Ok(
-            await_service(self.service_call_limit(), ctx.ban_service().get_all_bans())
+            await_service(self.service_call_limit(), ctx.ban_service().list_all())
                 .await
                 .map(|bans| bans.iter().map(convert::ban_entry_to_wit).collect()),
         )

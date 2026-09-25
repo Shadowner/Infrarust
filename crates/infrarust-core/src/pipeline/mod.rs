@@ -52,6 +52,10 @@ impl Pipeline {
                     tracing::debug!(middleware = mw.name(), reason, "pipeline rejected");
                     return Ok(result);
                 }
+                MiddlewareResult::Kick(ref reason) => {
+                    tracing::debug!(middleware = mw.name(), reason = %reason, "pipeline kicked");
+                    return Ok(result);
+                }
             }
         }
         Ok(MiddlewareResult::Continue)

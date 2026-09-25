@@ -4,6 +4,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::events::proxy::{PingResponse, ProxyPingEvent};
+use infrarust_api::services::ban_service::LoginAttempt;
 use infrarust_api::types::{Component, LEGACY_SECTION, ServerId};
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_protocol::legacy::{
@@ -77,6 +78,13 @@ impl LegacyHandler {
             .hostname
             .as_deref()
             .map(|host| normalize_handshake(host).to_lowercase());
+        let mut attempt = LoginAttempt::status(ctx.client_ip);
+        if let Some(host) = &virtual_host {
+            attempt = attempt.virtual_host(host.clone());
+        }
+        if self.services.ban_manager.refusal(&attempt).await.is_some() {
+            return Ok(());
+        }
         let route = virtual_host
             .as_deref()
             .and_then(|host| self.services.domain_router.resolve_route(host));
@@ -380,21 +388,11 @@ impl LegacyHandler {
             return Ok(());
         };
 
-        if let Some(ban) = self
-            .services
-            .ban_manager
-            .check_player(&ctx.client_ip, &handshake.username, None)
-            .await?
-        {
-            tracing::info!(
-                ip = %ctx.client_ip,
-                username = %handshake.username,
-                ban_type = ban.target.display_type(),
-                "legacy connection rejected: player is banned"
-            );
-            send_legacy_kick(ctx.stream_mut(), &Component::text(ban.kick_message()))
-                .await
-                .ok();
+        let attempt = LoginAttempt::pre_auth(ctx.client_ip, handshake.username.clone())
+            .virtual_host(domain.clone())
+            .server(ServerId::new(server_config.effective_id()));
+        if let Some(reason) = self.services.ban_manager.refusal(&attempt).await {
+            send_legacy_kick(ctx.stream_mut(), &reason).await.ok();
             return Ok(());
         }
 
