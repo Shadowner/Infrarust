@@ -354,6 +354,7 @@ Per-plugin configuration, keyed by plugin ID. WASM plugins are discovered from `
 | `path` | string | none | Accepted for compatibility. WASM plugins are always loaded from `plugins_dir` |
 | `permissions` | array of strings | `[]` | Capabilities granted on top of the baseline |
 | `deny` | array of strings | `[]` | Capabilities removed after the baseline and `permissions` are applied. A capability in both lists is denied. Also applies to compiled-in plugins |
+| `strict_capabilities` | boolean | `false` | WASM plugins: refuse to load the plugin when it imports a host function whose capability it lacks, instead of loading it with those calls refused |
 | `enabled` | boolean | `true` | Set to `false` to skip the plugin |
 
 Capability names are kebab-case (`player-write`, `codec-filter`, ...); unknown names in either list are ignored with a warning. See [Capabilities & Sandbox](../plugins/wasm/capabilities#capability-matrix).

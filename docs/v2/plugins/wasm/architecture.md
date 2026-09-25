@@ -39,18 +39,18 @@ The `infrarust:plugin@0.2.3` world has 11 host imports and 2 guest exports.
 | Import | Purpose | Capability gate |
 |--------|---------|-----------------|
 | `types` | Shared records and aliases; defines no functions | none |
-| `log` | `trace` / `debug` / `info` / `warn` / `error` | always linked |
+| `log` | `trace` / `debug` / `info` / `warn` / `error` | none |
 | `event-bus` | `subscribe` / `unsubscribe` | `event-bus` |
-| `player-registry` | Look up players; the `player` resource | `player-read` |
+| `player-registry` | Look up players; the `player` resource | `player-read`; acting on a player needs `player-write`, `send-packet` needs `raw-packet` |
 | `server-manager` | Read state, `start` / `stop` backends | `server-manage` |
 | `ban-service` | `ban` / `unban` / `is-banned` / `get-ban` / `get-all-bans` | `ban` |
 | `config-service` | Read server configs and config values | `config-read` |
 | `command-manager` | `register` / `unregister` a command | `command` |
 | `scheduler` | `delay` / `interval` / `cancel` tasks | `scheduler` |
-| `limbo` | `register-limbo-handler`; the session resources | always linked |
+| `limbo` | `register-limbo-handler`; the session resources | `limbo` for `register-limbo-handler` |
 | `codec-registry` | `register-codec-filter` / `unregister-codec-filter` | `codec-filter` |
 
-`types` carries the shared data shapes and has no linker entry. `log` and `limbo` are linked for every plugin. The remaining imports are linked only when the plugin holds the matching capability; see [How capabilities gate imports](#how-capabilities-gate-imports).
+`types` carries the shared data shapes and has no linker entry. Every other import is linked for every plugin, and the gated functions check the plugin's capabilities when they are called; see [How capabilities gate imports](#how-capabilities-gate-imports).
 
 ### 2 guest exports (host-callable)
 
@@ -149,14 +149,14 @@ When the host hands a session to `limbo-on-player-enter`, it pushes the native s
 
 ## How capabilities gate imports
 
-The host links host services per plugin. Six baseline capabilities are granted to every WASM plugin: `event-bus`, `player-read`, `player-write`, `command`, `scheduler`, and `config-read`. Opt-in imports such as `server-manage`, `ban`, and `codec-filter` are linked only when the plugin lists the matching capability in its TOML permissions:
+Six baseline capabilities are granted to every WASM plugin: `event-bus`, `player-read`, `player-write`, `command`, `scheduler`, and `config-read`. Opt-in capabilities such as `server-manage`, `ban`, and `codec-filter` are granted when the plugin lists them in its TOML permissions:
 
 ```toml
 [plugins.my_plugin]
 permissions = ["server-manage", "ban", "codec-filter"]
 ```
 
-If a plugin imports an interface it has no capability for, the host never links it and instantiation fails for that plugin. Capability strings are kebab-case. The `limbo` import is always linked, but the host enforces the `limbo` capability at registration: `register-limbo-handler` is a no-op for a plugin that lacks the capability, so enforcement happens there rather than at link time. [Capabilities](./capabilities) lists every string, its default state, and what it grants.
+Every interface is linked for every plugin; the capabilities are checked when a gated function is called. A call without its capability is refused: it returns the interface's error (`missing capability: ban`) or, for a function with no error type, an empty answer, and the proxy log records it. At load the host reads the component's imports and warns once per interface the plugin imports without the grant; `strict_capabilities = true` refuses such a plugin instead. Capability strings are kebab-case. [Capabilities](./capabilities) lists every string, its default state, what it grants and what each refused call returns.
 
 :::info Virtual Backend is planned
 The Virtual Backend capability is defined in the contract but not yet enforced, and no WASM bridge exists for it. Treat it as a future feature.

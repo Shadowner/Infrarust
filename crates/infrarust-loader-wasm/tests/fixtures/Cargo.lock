@@ -43,6 +43,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-codec-std"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-command-plugin"
 version = "0.0.0"
 dependencies = [

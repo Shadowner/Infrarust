@@ -452,7 +452,7 @@ The boundary has no `&mut`, so a changed frame is returned in `filter-extras`; `
 
 ## Host service imports
 
-These imports are the host side of the boundary. Methods tagged `host-async` suspend the guest fiber during I/O; methods tagged `gated: X` only link when the plugin holds capability `X`. The author-facing wrappers are on [Services](./services).
+These imports are the host side of the boundary. Methods tagged `host-async` suspend the guest fiber during I/O. Methods tagged `gated: X` are linked for every plugin but refused at call time when the plugin lacks capability `X` (the comments in the WIT files still describe the older link-time gating); [Capabilities](./capabilities#refused-calls) lists what each refused call returns. The author-facing wrappers are on [Services](./services).
 
 ### log
 
@@ -589,7 +589,7 @@ interface scheduler {                                                         //
 
 ### limbo
 
-The host owns the native session and lends it by borrow to the `limbo-on-*` guest callbacks. The capability is enforced when the host mints a session for a capability-holding plugin, not at link time.
+The host owns the native session and lends it by borrow to the `limbo-on-*` guest callbacks. `register-limbo-handler` is refused at call time for a plugin without the `limbo` capability, so no session is ever minted for it.
 
 ```wit
 interface limbo {

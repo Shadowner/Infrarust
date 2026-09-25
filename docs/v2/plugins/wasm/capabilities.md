@@ -6,9 +6,9 @@ outline: [2, 3]
 
 # Capabilities & Sandbox
 
-A WASM plugin starts with no access to the host. It receives a fixed baseline of capabilities, and the proxy operator grants anything beyond that in config. Each capability maps to one host interface. If the capability is absent, the interface is omitted from the linker, and any plugin that imports it fails to instantiate.
+A WASM plugin starts with no access to the host. It receives a fixed baseline of capabilities, and the proxy operator grants anything beyond that in config. Each capability gates one host interface, or a few methods of one. Every interface is linked for every plugin: the host checks the capability each time a gated function is called and refuses the call when it is missing. At load time the host logs which imports will be refused, and `strict_capabilities = true` turns that report into a load failure.
 
-This page covers the capability enum, the baseline-vs-opt-in split, how granting and revoking work, and the CPU, memory, call-queue, and filesystem limits the runtime enforces.
+This page covers the capability enum, the baseline-vs-opt-in split, how granting and revoking work, what a refused call returns, and the CPU, memory, call-queue, and filesystem limits the runtime enforces.
 
 ## The capability model
 
@@ -144,54 +144,80 @@ pub fn from_config(grants: &[String], denies: &[String]) -> (Self, Vec<String>) 
 
 Unknown names in `deny` are reported with the same warning as unknown grants. `deny` also applies to compiled-in plugins: they start from every capability and lose the ones listed.
 
-A denied capability behaves exactly like one that was never granted. Denying `event-bus`, `player-read`, `command`, `scheduler` or `config-read` removes the matching interface from the linker, so a plugin that imports it fails to load (see below). Denying `player-write` keeps `player-registry` linked but refuses the calls that act on a player; see [Method-level gating](#method-level-gating).
+A denied capability behaves exactly like one that was never granted: the plugin still loads, and every call that needs the capability is refused (see [Refused calls](#refused-calls)). Denying `config-read`, for example, makes `get-value` answer `none` even for a key the proxy has.
 
 ## What a missing capability does
 
-The linker decides which host interfaces a plugin can import. `build_linker` always links `log` and `limbo`, then conditionally links the rest based on the granted set:
+Every host interface is linked for every plugin, whatever it was granted. A plugin that imports `ban-service` but only calls it when the operator granted `ban` loads either way. The check happens when a gated function is called: without the capability the host does not run the call, and answers with the interface's own error type or, when the function has no error channel, with a neutral value.
+
+### Refused calls
+
+| Interface | Function | Needs | Answer when refused |
+|-----------|----------|-------|---------------------|
+| `ban-service` | `ban`, `unban`, `is-banned`, `get-ban`, `get-all-bans` | `ban` | `service-error` `operation-failed: "missing capability: ban"` |
+| `server-manager` | `start`, `stop` | `server-manage` | `service-error` `operation-failed: "missing capability: server-manage"` |
+| `server-manager` | `get-state`, `get-all-servers` | `server-manage` | `none`, empty list |
+| `config-service` | `get-server-config`, `get-all-server-configs`, `get-value` | `config-read` | `none`, empty list, `none` |
+| `player-registry` | `get-player`, `get-player-by-uuid`, `get-player-by-id` | `player-read` | `none` |
+| `player-registry` | `get-players-on-server`, `get-all-players` | `player-read` | empty list |
+| `player-registry` | `online-count`, `online-count-on` | `player-read` | `0` |
+| `player` | `send-message`, `send-title`, `send-action-bar` | `player-write` | `player-error` `send-failed: "missing capability: player-write"` |
+| `player` | `switch-server` | `player-write` | `player-error` `switch-failed: "missing capability: player-write"` |
+| `player` | `disconnect` | `player-write` | nothing happens |
+| `player` | `send-packet` | `raw-packet` | `player-error` `send-failed: "missing capability: raw-packet"` |
+| `event-bus` | `subscribe` | `event-bus` | a fresh listener handle with no listener behind it: no event is delivered |
+| `event-bus` | `subscribe` with kind `raw-packet` | `event-bus` and `raw-packet` | same as above |
+| `event-bus` | `unsubscribe` | `event-bus` | nothing happens |
+| `command-manager` | `register`, `unregister` | `command` | nothing happens: the command is not routed to the plugin |
+| `scheduler` | `delay`, `interval` | `scheduler` | task handle `0`: the callback never runs |
+| `scheduler` | `cancel` | `scheduler` | nothing happens |
+| `codec-registry` | `register-codec-filter`, `unregister-codec-filter` | `codec-filter` | nothing happens: no filter joins the codec chain |
+| `limbo` | `register-limbo-handler` | `limbo` | nothing happens: the handler never fires |
+
+The `player` methods that only read (`id`, `profile`, `current-server`, and so on) have no check of their own: a plugin only holds a `player` handle it got from `player-registry`, which needs `player-read`. The limbo session resources only reach a plugin through a handler it registered, which needs `limbo`. `log` and `types` are never gated.
+
+The WIT contract has no error channel for the calls answered with a neutral value, so the guest cannot tell that such a call was refused. The host logs every refusal instead, naming the plugin, the call (`call="ban-service.is-banned"`) and the missing capability. It logs at `warn`, and at `error` for `register-limbo-handler`, whose refusal leaves the plugin believing it registered a handler. The log is rate-limited to one line per capability per minute for each plugin instance; the `suppressed` field counts the refusals skipped since the previous line.
+
+The `capability-denied` test fixture calls `ban-service` without the `ban` capability and records the answer:
 
 ```rust
-// crates/infrarust-loader-wasm/src/linker.rs
-link!(linker, plugin_id, log); // always available
-link!(linker, plugin_id, limbo);
-
-if caps.has(Capability::EventBus) {
-    link!(linker, plugin_id, event_bus);
-}
-// ...
-if caps.has(Capability::Ban) {
-    link!(linker, plugin_id, ban_service);
-}
-if caps.has(Capability::CodecFilter) {
-    link!(linker, plugin_id, codec_registry);
+match ban_service::is_banned(&BanTarget::Username("nobody".to_string())) {
+    Ok(banned) => format!("ok: {banned}"),
+    Err(ServiceError::NotFound(message)) => format!("not-found: {message}"),
+    Err(ServiceError::OperationFailed(message)) => format!("operation-failed: {message}"),
+    Err(ServiceError::Unavailable(message)) => format!("unavailable: {message}"),
 }
 ```
 
-If a plugin imports an interface that was not linked, instantiation fails. The `capability-denied` test fixture imports and calls `ban-service` without the `ban` capability:
+It loads, runs its `on_enable`, and records `operation-failed: missing capability: ban`.
 
-```rust
-// tests/fixtures/capability-denied/src/lib.rs
-on_enable: {
-    let _ = ban_service::is_banned(&BanTarget::Username("nobody".to_string()));
-    Ok(())
-}
+### The load-time report
+
+Before it instantiates a plugin, the host reads the component's import list, which names every host function the plugin can call. For each gated interface the plugin imports without the matching grant, it logs one warning:
+
+```
+WARN plugin my-plugin imports ban-service but lacks the `ban` capability; calls will be refused
 ```
 
-Because the host omits `ban-service` from the linker, `load()` returns `Err`. The failure surfaces at instantiation, not at the call site, so a plugin missing a capability never enters its `on_enable`.
+The warning also carries the imported functions in its `functions` field. The report works per function, not per interface. Every component imports the `limbo` interface for its session resource types, but only `register-limbo-handler` needs `limbo`, so a plugin that never registers a limbo handler is not reported. In the same way `player-registry` is reported against `player-write` only when the plugin imports a method that acts on a player, and against `raw-packet` only when it imports `send-packet`.
 
-### Method-level gating
+### Strict mode
 
-Some methods inside a linked interface need an extra capability. `player.send-packet` requires `raw-packet` even though `player-read` and `player-write` are baseline. The interface is present, so the call resolves; without `raw-packet` the host returns a `player-error` (`send-failed: "missing capability: raw-packet"`) rather than sending.
+`strict_capabilities = true` refuses to load a plugin the report would warn about, which was the behaviour of earlier versions for every plugin:
 
-The methods that act on a player need `player-write`. It is baseline, so this only matters when it is denied:
+```toml
+[plugins.my-plugin]
+permissions = ["ban"]
+strict_capabilities = true
+```
 
-| Method | Without `player-write` |
-|--------|------------------------|
-| `send-message`, `send-title`, `send-action-bar` | `player-error` `send-failed: "missing capability: player-write"` |
-| `switch-server` | `player-error` `switch-failed: "missing capability: player-write"` |
-| `disconnect` | Ignored, with a warning in the proxy log (the call has no error channel) |
+The load fails with a capability error that lists each interface, the capability it needs and the functions involved:
 
-Reading a player (`id`, `profile`, `current-server`, and so on) only needs `player-read`.
+```
+plugin 'my-plugin' imports a host interface it lacks the capability for: infrarust:plugin/config-service needs `config-read` (get-value); refused because strict_capabilities = true
+```
+
+Use it for a plugin that cannot do its job without the capabilities it imports, so a missing grant or a `deny` stops it at startup instead of leaving it running with calls refused. The default is `false`. Strict mode only reads the import list; the calls are checked the same way either way.
 
 ## The sandbox
 
@@ -271,6 +297,8 @@ builder
 ```
 
 There is no network access, no inherited stdio, and no second preopen. Outbound network (`network`) and access outside the data directory (`filesystem-extended`) are deferred; the capabilities are defined but the WASI context does not yet widen for them.
+
+Codec filter instances get a narrower host than this: clocks, randomness, an empty environment and discarded stdio, with no filesystem at all. See [Codec Filters](./codec-filters#what-a-filter-can-call).
 
 ## Traps and recovery
 

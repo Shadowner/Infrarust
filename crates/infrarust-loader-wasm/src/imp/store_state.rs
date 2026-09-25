@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use infrarust_api::event::ListenerHandle;
-use infrarust_api::permissions::CapabilitySet;
+use infrarust_api::permissions::{Capability, CapabilitySet};
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::scheduler::TaskHandle;
 use wasmtime::component::ResourceTable;
@@ -14,9 +14,10 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, W
 use crate::actor::{CallKind, InstanceRef};
 use crate::codec::CodecInstantiator;
 use crate::config::SandboxLimits;
-use crate::consts::EPOCH_DEADLINE_TICKS;
+use crate::consts::{DENIED_CALL_LOG_INTERVAL, EPOCH_DEADLINE_TICKS};
 use crate::deadline::{Deadline, HostCallLimit};
 use crate::error::WasmLoaderError;
+use crate::rate_limit::RateLimit;
 use crate::registrations::Registrations;
 
 pub(crate) struct PluginSetup {
@@ -46,6 +47,7 @@ pub(crate) struct PluginStoreState {
     listeners: HashMap<u64, ListenerHandle>,
     tasks: HashSet<u64>,
     codec: Option<Arc<CodecInstantiator>>,
+    denials: HashMap<Capability, RateLimit>,
 }
 
 impl PluginStoreState {
@@ -79,6 +81,25 @@ impl PluginStoreState {
 
     pub(crate) fn capabilities(&self) -> &CapabilitySet {
         &self.capabilities
+    }
+
+    pub(crate) fn report_denied(&mut self, capability: Capability, call: &'static str) {
+        let Some(suppressed) = self
+            .denials
+            .entry(capability)
+            .or_insert_with(|| RateLimit::new(DENIED_CALL_LOG_INTERVAL, 1))
+            .admit(Instant::now())
+        else {
+            return;
+        };
+        let name = capability.to_kebab();
+        if capability == Capability::Limbo {
+            tracing::error!(plugin = %self.plugin_id, call, capability = name, suppressed,
+                "wasm plugin call refused: missing capability `{name}`; the call did nothing");
+        } else {
+            tracing::warn!(plugin = %self.plugin_id, call, capability = name, suppressed,
+                "wasm plugin call refused: missing capability `{name}`");
+        }
     }
 
     pub(crate) fn instance_ref(&self, kind: CallKind) -> InstanceRef {
@@ -202,6 +223,7 @@ pub(crate) fn build_load_state(
         listeners: HashMap::new(),
         tasks: HashSet::new(),
         codec: setup.codec.clone(),
+        denials: HashMap::new(),
     })
 }
 
@@ -223,6 +245,7 @@ pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> P
         listeners: HashMap::new(),
         tasks: HashSet::new(),
         codec: None,
+        denials: HashMap::new(),
     }
 }
 

@@ -549,6 +549,7 @@ mod tests {
                 permissions: Vec::new(),
                 deny: Vec::new(),
                 wasm: None,
+                strict_capabilities: false,
                 enabled: false,
             },
         );

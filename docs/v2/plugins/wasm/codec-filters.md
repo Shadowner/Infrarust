@@ -19,7 +19,7 @@ Codec filters need the `codec-filter` capability. It is opt-in, so it must be li
 permissions = ["codec-filter"]
 ```
 
-If the plugin calls `reg.add(...)` without the capability granted, the host omits the codec-registry import and the plugin fails to load.
+If the plugin calls `reg.add(...)` without the capability granted, the plugin still loads, but the host refuses the registration: no filter joins the codec chain, and the proxy log shows a `missing capability` warning for `codec-registry.register-codec-filter` plus the load-time report for `codec-registry`. With `strict_capabilities = true` the plugin is refused at load instead. See [Capabilities](./capabilities#what-a-missing-capability-does).
 
 :::tip
 See [Capabilities](./capabilities) for the full baseline and opt-in lists.
@@ -218,6 +218,37 @@ flowchart TD
 ```
 
 Only mutate when you mean to. A read-only filter that returns `Pass` adds no copy.
+
+## What a filter can call
+
+A codec filter instance runs in its own synchronous store, separate from the plugin's main instance, and sees a smaller host. What it can import:
+
+| Import | Behaviour inside a filter |
+|--------|---------------------------|
+| `log` (`info!` and the other macros) | Written to the proxy log with the plugin id, at most 20 lines per second for all the plugin's filter instances together. Lines over the limit are dropped; the next line that gets through carries a `suppressed` count. A level the proxy does not log costs nothing and does not use up the budget. |
+| `wasi:clocks` wall and monotonic clocks | `now` and `resolution` work, so `Instant::now()` and `SystemTime::now()` do. |
+| `wasi:random` (`random`, `insecure`, `insecure-seed`) | Work, so `HashMap::new()` (its `RandomState` asks for a seed) and random numbers do. |
+| `wasi:cli/environment` | Empty environment, no arguments, no working directory. |
+| stdout, stderr | Writes succeed and are discarded, so a stray `println!` does not break the filter. |
+| stdin | Always at end of stream. |
+| Everything else | Traps: the filesystem (there is no preopened directory), sockets, `exit`, sleeping on a clock (`subscribe-duration`, `subscribe-instant`), and every other `infrarust:plugin` interface. |
+
+A trap poisons that connection-side instance as described in [Trap behavior](#trap-behavior), so a filter that calls a trapping import passes every later packet through unchanged. The plugin's other host services (players, bans, config, the scheduler) are not reachable from a filter; read what you need in `on_enable` and pass it through the constructor, or reconstruct it from the [`CodecSessionInit`](#codecsessioninit).
+
+```rust
+struct Tally {
+    seen: HashMap<i32, u32>,
+}
+
+impl CodecFilter for Tally {
+    fn filter(&mut self, _ctx: &CodecContext, packet: &mut Packet, _out: &mut Injections) -> Verdict {
+        let count = self.seen.entry(packet.id()).or_insert(0);
+        *count += 1;
+        debug!("packet {:#x} seen {count} times", packet.id());
+        Verdict::Pass
+    }
+}
+```
 
 ## Hot path and the CPU budget
 

@@ -14,6 +14,7 @@ use crate::cache::AotCache;
 use crate::config::WasmLoaderConfig;
 use crate::consts::CACHE_SUBDIR;
 use crate::epoch::EpochTicker;
+use crate::gates::check_imports;
 use crate::instance::InstanceFactory;
 use crate::linker::build_linker;
 use crate::metadata::extract_metadata;
@@ -129,7 +130,15 @@ impl PluginLoader for WasmPluginLoader {
             let data_dir = ctx.data_dir();
             let sandbox = self.config.sandbox_for(plugin_id);
 
-            let linker = build_linker(&self.engine, plugin_id, &capabilities)
+            check_imports(
+                &self.engine,
+                &entry.component,
+                plugin_id,
+                &capabilities,
+                self.config.strict_capabilities(plugin_id),
+            )
+            .map_err(|e| e.into_loader_error(plugin_id))?;
+            let linker = build_linker(&self.engine, plugin_id)
                 .map_err(|e| e.into_loader_error(plugin_id))?;
 
             let codec = if capabilities.has(Capability::CodecFilter) {

@@ -12,7 +12,10 @@ use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use infrarust_api::types::{PlayerId, ServerId};
 use infrarust_core::plugin::PluginContextFactoryImpl;
 use infrarust_core::plugin::context::PluginContextImpl;
+use tracing::Level;
+use tracing::instrument::WithSubscriber;
 
+use support::log_capture::LogCapture;
 use support::{EnvOptions, fresh_loader, load_enabled, make_env_with, nil_profile, stage};
 
 const FIXTURE: &str = "limbo-handler";
@@ -143,17 +146,39 @@ async fn chat_is_dispatched_and_disconnect_cleans_up() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn registration_noops_without_capability() {
+async fn registration_without_capability_is_refused_with_one_error() {
     let (_tmp, dir) = stage(FIXTURE);
     let loader = fresh_loader();
     let factory = limbo_env(dir.clone(), FIXTURE, false);
-    loader.discover(&dir).await.unwrap();
-    let _plugin = load_enabled(&loader, &factory, FIXTURE).await;
+    let logs = LogCapture::at(Level::WARN);
+
+    async {
+        loader.discover(&dir).await.unwrap();
+        let _plugin = load_enabled(&loader, &factory, FIXTURE).await;
+    }
+    .with_subscriber(logs.clone())
+    .await;
 
     assert!(
         take_handlers(&factory, FIXTURE).is_empty(),
         "without the Limbo capability the guest registers no handlers"
     );
+    let errors = logs.at_level(Level::ERROR);
+    assert_eq!(
+        errors.len(),
+        1,
+        "four refused registrations log one error: {:?}",
+        logs.lines()
+    );
+    assert!(
+        errors[0].contains("limbo.register-limbo-handler")
+            && errors[0].contains(FIXTURE)
+            && errors[0].contains("missing capability"),
+        "{errors:?}"
+    );
+    let report = logs.matching("calls will be refused");
+    assert_eq!(report.len(), 1, "{:?}", logs.lines());
+    assert!(report[0].contains("`limbo`"), "{report:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

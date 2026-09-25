@@ -94,6 +94,19 @@ mod bench {
         start.elapsed().as_nanos() as f64 / ITERS as f64
     }
 
+    const CREATE_ITERS: u64 = 2_000;
+
+    fn us_per_create(registry: &CodecFilterRegistryImpl) -> f64 {
+        for _ in 0..CREATE_ITERS / 10 {
+            drop(black_box(client_chain(registry)));
+        }
+        let start = Instant::now();
+        for _ in 0..CREATE_ITERS {
+            drop(black_box(client_chain(registry)));
+        }
+        start.elapsed().as_nanos() as f64 / CREATE_ITERS as f64 / 1_000.0
+    }
+
     fn fixture_path(name: &str) -> PathBuf {
         PathBuf::from(env!("INFRARUST_WASM_FIXTURE_DIR"))
             .join(format!("fixture_{}.wasm", name.replace('-', "_")))
@@ -196,6 +209,11 @@ mod bench {
             } else {
                 "over (see report)"
             }
+        );
+        let native_create = us_per_create(&native_registry);
+        let wasm_create = us_per_create(&wasm_registry);
+        println!(
+            "  chain create + close ({CREATE_ITERS} iterations, client + server side): native {native_create:.2}µs, wasm {wasm_create:.2}µs\n"
         );
     }
 }

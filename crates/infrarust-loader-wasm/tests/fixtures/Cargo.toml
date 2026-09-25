@@ -12,6 +12,7 @@ members = [
     "capability-denied",
     "codec-modify",
     "codec-stateful",
+    "codec-std",
     "limbo-handler",
     "slow-handler",
     "deadline-probe",

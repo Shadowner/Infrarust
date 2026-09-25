@@ -144,6 +144,9 @@ pub struct PluginConfig {
     pub deny: Vec<String>,
 
     #[serde(default)]
+    pub strict_capabilities: bool,
+
+    #[serde(default)]
     pub wasm: Option<PluginWasmConfig>,
 
     /// Whether the plugin is enabled (default: true).

@@ -102,7 +102,7 @@ Capability::VirtualBackend => "virtual-backend",
 
 Three pieces are missing before a WASM plugin can host a backend:
 
-- Enforcement: nothing in the host checks `virtual-backend`. The WASM linker (`crates/infrarust-loader-wasm/src/linker.rs`) conditionally links a host interface only for `event-bus`, `player-read`, `command`, `scheduler`, `config-read`, `server-manage`, `ban`, and `codec-filter`. There is no branch for `virtual-backend`.
+- Enforcement: nothing in the host checks `virtual-backend`. The WASM host functions check `event-bus`, `player-read`, `player-write`, `raw-packet`, `command`, `scheduler`, `config-read`, `server-manage`, `ban`, `codec-filter` and `limbo` when they are called (`crates/infrarust-loader-wasm/src/imp/gates.rs` maps each import to its capability). No host function needs `virtual-backend`.
 - Dispatch: the proxy has no path that routes a player's connection to a registered `VirtualBackendHandler`.
 - WASM bridge: there is no host wrapper that forwards `on_session_start`, `on_packet_received`, and `on_session_end` to guest exports.
 

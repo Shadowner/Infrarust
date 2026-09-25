@@ -370,20 +370,6 @@ async fn test_stats_count_command() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_capability_denied_fails_to_load() {
-    let (_tmp, plugins_dir) = stage("capability-denied");
-    let loader = fresh_loader();
-    let factory = make_factory(&plugins_dir);
-    loader.discover(&plugins_dir).await.unwrap();
-
-    let result = loader.load("capability-denied", &factory).await;
-    assert!(
-        result.is_err(),
-        "a plugin importing an ungranted gated interface must fail to instantiate"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn test_per_plugin_memory_limit_applies_to_that_plugin_only() {
     let (_tmp, plugins_dir) = stage("scripted");
     add_fixture(&plugins_dir, "scripted-peer", "scripted-peer");
@@ -408,29 +394,6 @@ async fn test_per_plugin_memory_limit_applies_to_that_plugin_only() {
         read_log(&plugins_dir.join("scripted-peer")),
         ["enable"],
         "a plugin without an override keeps the 64 MiB default"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_denied_baseline_capability_is_refused_like_an_ungranted_one() {
-    let (_tmp, plugins_dir) = stage("host-caller");
-    let loader = fresh_loader();
-    let env = make_env_with(
-        plugins_dir.clone(),
-        EnvOptions::default().deny("host-caller", "config-read"),
-    );
-    loader.discover(&plugins_dir).await.unwrap();
-
-    let err = loader
-        .load("host-caller", &env.factory)
-        .await
-        .err()
-        .expect("config-read is baseline, but denied it must not be linked");
-    let message = err.to_string();
-    assert!(message.contains("lacks the capability"), "{message}");
-    assert!(
-        message.contains("infrarust:plugin/config-service"),
-        "{message}"
     );
 }
 

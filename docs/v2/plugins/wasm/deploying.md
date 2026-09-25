@@ -57,6 +57,7 @@ The `PluginConfig` table accepts these keys:
 |-----|------|---------|------------|
 | `permissions` | list of strings | `[]` | All plugins. Opt-in capability strings (kebab-case). |
 | `deny` | list of strings | `[]` | All plugins. Capabilities to remove, applied after the baseline and `permissions`. |
+| `strict_capabilities` | bool | `false` | WASM plugins. `true` refuses to load the plugin when it imports a host function it lacks the capability for, see [Missing capability](#missing-capability). |
 | `enabled` | bool | `true` | All plugins. `false` skips the plugin at startup. |
 | `wasm` | table | none | WASM plugins. Per-plugin sandbox limits, see [Sandbox limits](#sandbox-limits). |
 | `path` | string | none | Native plugins only. WASM plugins omit it. |
@@ -103,7 +104,7 @@ deny = ["player-write"]
 
 With this, the plugin can look players up but cannot message, move or kick them.
 
-A denied capability behaves as if it had never been granted: a denied interface such as `config-read` makes a plugin that imports it fail to load, and a denied `player-write` makes the player-acting calls return a `player-error`. Details in [Capabilities](./capabilities#revoking-capabilities).
+A denied capability behaves as if it had never been granted: the plugin loads, and the calls that need it are refused. A denied `config-read` makes config lookups answer `none`, and a denied `player-write` makes the player-acting calls return a `player-error`. Details in [Capabilities](./capabilities#refused-calls).
 
 ::: info
 Native (compiled-in) plugins are trusted and receive every capability. WASM plugins receive the baseline plus whatever opt-ins you declare. The full table of capabilities, what each unlocks, and which host interfaces they map to is in [Capabilities](./capabilities).
@@ -111,7 +112,7 @@ Native (compiled-in) plugins are trusted and receive every capability. WASM plug
 
 ## What happens at load
 
-The host builds a per-plugin linker from the granted capability set. A host interface is linked only when its capability is present.
+Every host interface is linked for every plugin. Before instantiating, the host compares the plugin's imports with its granted capabilities and logs one warning per import it will refuse, or refuses the plugin when `strict_capabilities` is set.
 
 ```mermaid
 sequenceDiagram
@@ -121,11 +122,12 @@ sequenceDiagram
     Proxy->>Cache: compile or load .cwasm
     Cache-->>Proxy: component
     Proxy->>Proxy: read metadata, resolve config
-    Proxy->>Proxy: build linker from capability set
-    Proxy->>Plugin: instantiate
-    alt imports an unlinked interface
-        Plugin--xProxy: capability denied (load fails)
-    else all imports satisfied
+    Proxy->>Proxy: compare imports with granted capabilities
+    alt ungranted import and strict_capabilities
+        Proxy--xPlugin: capability denied (load fails)
+    else otherwise
+        Proxy->>Proxy: warn once per ungranted import
+        Proxy->>Plugin: instantiate
         Plugin-->>Proxy: instance ready
         Proxy->>Plugin: on_enable
     end
@@ -133,9 +135,23 @@ sequenceDiagram
 
 ### Missing capability
 
-If a plugin imports a host interface it was not granted, instantiation fails. The host reports a capability-denied error and the plugin does not load. Grant the matching capability in `permissions` to fix it.
+If a plugin imports a host function it was not granted, it still loads and the host logs one warning per interface:
 
-One exception: the `limbo` interface is always linked regardless of the `limbo` capability. Importing it never blocks load. If the `limbo` capability is absent, calls to `register-limbo-handler` are ignored at runtime (the host logs a warning) rather than causing a load failure.
+```
+WARN plugin analytics imports ban-service but lacks the `ban` capability; calls will be refused
+```
+
+Each call to that function is then refused: functions with an error type return a `missing capability` error, the others return an empty answer and do nothing. Grant the capability in `permissions` if the plugin needs it. A limbo handler registered without `limbo` is refused the same way and logged at `error`, since the plugin cannot tell.
+
+To refuse such a plugin at startup instead, set `strict_capabilities`:
+
+```toml
+[plugins.analytics]
+permissions = ["ban"]
+strict_capabilities = true
+```
+
+The full list of what each refused call returns is in [Capabilities](./capabilities#what-a-missing-capability-does).
 
 ### A trap during `on_enable` fails the plugin
 

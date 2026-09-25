@@ -69,3 +69,29 @@ fn test_plugin_deny_list_and_wasm_overrides() {
     assert!(plain.plugins["plain"].deny.is_empty());
     assert!(plain.plugins["plain"].wasm.is_none());
 }
+
+#[test]
+fn test_plugin_strict_capabilities_is_an_opt_in_flag() {
+    let config: ProxyConfig = toml::from_str(
+        r#"
+        [plugins.locked]
+        permissions = ["ban"]
+        strict_capabilities = true
+
+        [plugins.plain]
+        "#,
+    )
+    .unwrap();
+    assert!(config.plugins["locked"].strict_capabilities);
+    assert!(!config.plugins["plain"].strict_capabilities);
+
+    let not_a_bool = toml::from_str::<ProxyConfig>("[plugins.p]\nstrict_capabilities = \"yes\"\n")
+        .expect_err("strict_capabilities is a boolean");
+    assert!(
+        not_a_bool.to_string().contains("strict_capabilities"),
+        "{not_a_bool}"
+    );
+    let typo = toml::from_str::<ProxyConfig>("[plugins.p]\nstrict_capability = true\n")
+        .expect_err("a misspelt key is refused, not ignored");
+    assert!(typo.to_string().contains("strict_capability"), "{typo}");
+}

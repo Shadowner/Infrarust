@@ -88,16 +88,40 @@ impl InstanceFactory {
 }
 
 pub(crate) fn map_instantiate_error(plugin_id: &str, e: &wasmtime::Error) -> WasmLoaderError {
-    let reason = e.to_string();
-    if reason.contains("infrarust:plugin/") {
-        WasmLoaderError::CapabilityDenied {
-            plugin_id: plugin_id.to_owned(),
-            reason,
-        }
-    } else {
-        WasmLoaderError::Instantiate {
-            plugin_id: plugin_id.to_owned(),
-            reason,
-        }
+    WasmLoaderError::Instantiate {
+        plugin_id: plugin_id.to_owned(),
+        reason: e.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::linker::build_linker;
+
+    #[test]
+    fn an_import_from_another_contract_version_is_an_instantiate_error() {
+        let config: infrarust_config::ProxyConfig = toml::from_str("").unwrap();
+        let engine = crate::engine::build_engine(&config).unwrap();
+        let component = Component::new(
+            &engine,
+            r#"(component
+                (import "infrarust:plugin/ban-service@9.0.0" (instance
+                    (export "is-banned" (func))
+                ))
+            )"#,
+        )
+        .unwrap();
+        let linker = build_linker(&engine, "future").unwrap();
+        let err = linker
+            .instantiate_pre(&component)
+            .map(|_| ())
+            .expect_err("the host implements 0.2.x, not 9.0.0");
+
+        let mapped = map_instantiate_error("future", &err);
+        assert!(
+            matches!(&mapped, WasmLoaderError::Instantiate { reason, .. } if reason.contains("infrarust:plugin/ban-service@9.0.0")),
+            "{mapped:?}"
+        );
     }
 }

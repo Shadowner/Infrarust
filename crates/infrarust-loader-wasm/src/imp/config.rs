@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use infrarust_config::{EventsConfig, ProxyConfig, WasmConfig, WasmLimits, WasmRecoveryConfig};
@@ -9,6 +9,7 @@ pub struct WasmLoaderConfig {
     event_handler_timeout: Duration,
     defaults: WasmLimits,
     plugins: HashMap<String, WasmLimits>,
+    strict_capabilities: HashSet<String>,
 }
 
 impl WasmLoaderConfig {
@@ -24,11 +25,18 @@ impl WasmLoaderConfig {
                     .map(|overrides| (id.clone(), config.wasm.limits_for(Some(overrides))))
             })
             .collect();
+        let strict_capabilities = config
+            .plugins
+            .iter()
+            .filter(|(_, plugin)| plugin.strict_capabilities)
+            .map(|(id, _)| id.clone())
+            .collect();
         Self {
             epoch_tick: config.wasm.epoch_tick,
             event_handler_timeout: config.events.handler_timeout,
             defaults: config.wasm.limits(),
             plugins,
+            strict_capabilities,
         }
     }
 
@@ -43,6 +51,11 @@ impl WasmLoaderConfig {
             .get(plugin_id)
             .copied()
             .unwrap_or(self.defaults)
+    }
+
+    #[must_use]
+    pub fn strict_capabilities(&self, plugin_id: &str) -> bool {
+        self.strict_capabilities.contains(plugin_id)
     }
 
     pub(crate) fn sandbox_for(&self, plugin_id: &str) -> SandboxLimits {
@@ -66,6 +79,7 @@ impl Default for WasmLoaderConfig {
             event_handler_timeout: EventsConfig::default().handler_timeout,
             defaults: wasm.limits(),
             plugins: HashMap::new(),
+            strict_capabilities: HashSet::new(),
         }
     }
 }
@@ -201,6 +215,26 @@ mod tests {
         let sandbox = WasmLoaderConfig::from_proxy_config(&config).default_sandbox();
         assert_eq!(sandbox.max_epoch_yields, 50);
         assert_eq!(sandbox.codec_deadline_ticks, 2);
+    }
+
+    #[test]
+    fn strict_capabilities_is_read_per_plugin() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [plugins.locked]
+            strict_capabilities = true
+
+            [plugins.relaxed]
+            strict_capabilities = false
+            permissions = ["ban"]
+            "#,
+        )
+        .unwrap();
+        let loader = WasmLoaderConfig::from_proxy_config(&config);
+        assert!(loader.strict_capabilities("locked"));
+        assert!(!loader.strict_capabilities("relaxed"));
+        assert!(!loader.strict_capabilities("unknown"));
+        assert!(!WasmLoaderConfig::default().strict_capabilities("locked"));
     }
 
     #[test]

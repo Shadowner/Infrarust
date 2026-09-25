@@ -12,7 +12,10 @@ use infrarust_api::types::{ProtocolVersion, RawPacket};
 use infrarust_core::filter::codec_chain::{CodecFilterChain, FilterResult, build_codec_chains};
 use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
 use infrarust_core::plugin::PluginContextFactoryImpl;
+use tracing::Level;
+use tracing::instrument::WithSubscriber;
 
+use support::log_capture::LogCapture;
 use support::{EnvOptions, fresh_loader, load_enabled, make_env_with, stage};
 
 fn codec_env(
@@ -115,15 +118,128 @@ async fn codec_filter_state_is_per_instance() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn codec_filter_denied_without_capability() {
+async fn codec_filter_registration_is_refused_without_capability() {
     let (_tmp, plugins_dir) = stage("codec-modify");
     let loader = fresh_loader();
-    let (factory, _registry) = codec_env(plugins_dir.clone(), "codec-modify", false);
-    loader.discover(&plugins_dir).await.unwrap();
+    let (factory, registry) = codec_env(plugins_dir.clone(), "codec-modify", false);
+    let logs = LogCapture::at(Level::WARN);
 
-    let result = loader.load("codec-modify", &factory).await;
+    async {
+        loader.discover(&plugins_dir).await.unwrap();
+        let _plugin = load_enabled(&loader, &factory, "codec-modify").await;
+    }
+    .with_subscriber(logs.clone())
+    .await;
+
     assert!(
-        result.is_err(),
-        "registering a codec filter without the capability must fail to load"
+        registry.is_empty(),
+        "the host refused the registration, so no filter joins the chain"
+    );
+    let report = logs.matching("calls will be refused");
+    assert_eq!(report.len(), 1, "{:?}", logs.lines());
+    assert!(
+        report[0].contains("codec-registry") && report[0].contains("`codec-filter`"),
+        "{report:?}"
+    );
+    let refused = logs.matching("missing capability");
+    assert_eq!(refused.len(), 1, "{:?}", logs.lines());
+    assert!(
+        refused[0].contains("codec-registry.register-codec-filter"),
+        "{refused:?}"
+    );
+}
+
+async fn enable_codec_std(
+    plugins_dir: &std::path::Path,
+) -> (
+    Arc<CodecFilterRegistryImpl>,
+    Box<dyn infrarust_api::plugin::Plugin>,
+    infrarust_loader_wasm::WasmPluginLoader,
+) {
+    let loader = fresh_loader();
+    let (factory, registry) = codec_env(plugins_dir.to_path_buf(), "codec-std", true);
+    loader.discover(plugins_dir).await.unwrap();
+    let plugin = load_enabled(&loader, &factory, "codec-std").await;
+    (registry, plugin, loader)
+}
+
+fn count_of(packet: &RawPacket) -> u32 {
+    u32::from_le_bytes(
+        packet.data[..]
+            .try_into()
+            .unwrap_or_else(|_| panic!("the filter did not rewrite {:?}", packet.data)),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn codec_filter_can_log_and_use_std_collections() {
+    let (_tmp, plugins_dir) = stage("codec-std");
+    let logs = LogCapture::at(Level::INFO);
+
+    let counts = async {
+        let (registry, _plugin, _loader) = enable_codec_std(&plugins_dir).await;
+        let mut chain = client_chain(&registry);
+        let mut counts = Vec::new();
+        for id in [0x05, 0x05, 0x06, 0x05] {
+            let mut packet = RawPacket::new(id, Bytes::new());
+            assert!(matches!(chain.process(&mut packet), FilterResult::Pass));
+            counts.push(count_of(&packet));
+        }
+        counts
+    }
+    .with_subscriber(logs.clone())
+    .await;
+
+    assert_eq!(
+        counts,
+        [1, 2, 1, 3],
+        "the HashMap keeps a count per packet id across calls"
+    );
+    assert_eq!(
+        logs.matching("codec-std filter created").len(),
+        2,
+        "{:?}",
+        logs.lines()
+    );
+    let seen = logs.matching("codec-std saw packet");
+    assert_eq!(seen.len(), 4, "{:?}", logs.lines());
+    assert!(
+        seen.iter()
+            .all(|line| line.starts_with("INFO ") && line.contains("plugin=codec-std")),
+        "{seen:?}"
+    );
+    assert!(
+        logs.matching("trapped").is_empty() && logs.matching("create failed").is_empty(),
+        "{:?}",
+        logs.lines()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn codec_filter_logging_is_rate_limited_per_plugin() {
+    const PACKETS: u32 = 500;
+    let (_tmp, plugins_dir) = stage("codec-std");
+    let logs = LogCapture::at(Level::INFO);
+
+    let last = async {
+        let (registry, _plugin, _loader) = enable_codec_std(&plugins_dir).await;
+        let mut chain = client_chain(&registry);
+        let mut last = 0;
+        for _ in 0..PACKETS {
+            let mut packet = RawPacket::new(0x07, Bytes::new());
+            chain.process(&mut packet);
+            last = count_of(&packet);
+        }
+        last
+    }
+    .with_subscriber(logs.clone())
+    .await;
+
+    assert_eq!(last, PACKETS, "every packet still went through the guest");
+    let seen = logs.matching("codec-std saw packet").len();
+    let limit = usize::try_from(PACKETS / 2).unwrap();
+    assert!(
+        (1..limit).contains(&seen),
+        "{seen} of {PACKETS} filter log lines reached the proxy log"
     );
 }

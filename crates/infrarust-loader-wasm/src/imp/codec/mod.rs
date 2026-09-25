@@ -1,8 +1,11 @@
 pub(crate) mod bindings;
 mod convert;
+mod host;
 mod linker;
 mod proxies;
 mod store_state;
+
+use std::sync::Arc;
 
 use infrarust_api::filter::CodecSessionInit;
 use wasmtime::component::{Component, InstancePre};
@@ -13,7 +16,7 @@ pub(crate) use proxies::WasmCodecFilterFactory;
 use bindings::exports::infrarust::plugin::codec_filter::GuestIndices;
 use linker::build_codec_linker;
 use proxies::WasmCodecFilterInstance;
-use store_state::CodecStoreState;
+use store_state::{CodecLog, CodecStoreState};
 
 use crate::config::SandboxLimits;
 use crate::error::WasmLoaderError;
@@ -23,6 +26,7 @@ pub(crate) struct CodecInstantiator {
     pre: InstancePre<CodecStoreState>,
     indices: GuestIndices,
     plugin_id: String,
+    log: Arc<CodecLog>,
     memory_bytes: usize,
     deadline_ticks: u64,
 }
@@ -44,6 +48,7 @@ impl CodecInstantiator {
             engine,
             pre,
             indices,
+            log: Arc::new(CodecLog::new(plugin_id.clone())),
             plugin_id,
             memory_bytes: sandbox.memory_bytes,
             deadline_ticks: sandbox.codec_deadline_ticks,
@@ -59,7 +64,10 @@ impl CodecInstantiator {
         factory_id: u64,
         init: &CodecSessionInit,
     ) -> Result<WasmCodecFilterInstance, WasmLoaderError> {
-        let mut store = Store::new(&self.engine, CodecStoreState::new(self.memory_bytes));
+        let mut store = Store::new(
+            &self.engine,
+            CodecStoreState::new(self.memory_bytes, Arc::clone(&self.log)),
+        );
         store.set_epoch_deadline(self.deadline_ticks);
         store.limiter(|s: &mut CodecStoreState| {
             s.limits_mut() as &mut dyn wasmtime::ResourceLimiter

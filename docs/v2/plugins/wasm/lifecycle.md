@@ -15,7 +15,7 @@ stateDiagram-v2
     [*] --> Discovered: scan *.wasm
     Discovered --> Compiled: AOT compile / cache hit
     Compiled --> Probed: metadata() in probe context
-    Probed --> Loaded: instantiate with capability linker
+    Probed --> Loaded: check imports, instantiate
     Loaded --> Enabled: on_enable() (guest registers handlers)
     Enabled --> Enabled: dispatch events / callbacks
     Enabled --> Disabled: on_disable()
@@ -104,12 +104,13 @@ A trap in `metadata()` fails the probe with a `Metadata` error and the plugin is
 
 ## Load
 
-`load` looks the plugin up by `id` in the discovered set, asks the context factory for a `PluginContext`, and reads the capabilities granted to that context. The linker is built against those capabilities, so only the host interfaces the plugin is allowed to call are wired in.
+`load` looks the plugin up by `id` in the discovered set, asks the context factory for a `PluginContext`, and reads the capabilities granted to that context. It compares the component's imports with those capabilities: each import the plugin lacks the capability for is logged once, or refuses the load when `strict_capabilities` is set (see [Capabilities](./capabilities#the-load-time-report)). The linker wires in every host interface; the capabilities are checked again on each gated call.
 
 ```rust
 // load in loader.rs
 let capabilities = ctx.capabilities().clone();
-let linker = build_linker(&self.engine, plugin_id, &capabilities)?;
+check_imports(&self.engine, &entry.component, plugin_id, &capabilities, strict)?;
+let linker = build_linker(&self.engine, plugin_id)?;
 
 // CodecFilter is opt-in: a separate sync instantiator is built only when granted
 let codec = if capabilities.has(Capability::CodecFilter) {

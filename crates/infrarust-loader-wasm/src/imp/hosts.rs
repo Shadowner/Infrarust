@@ -33,19 +33,40 @@ async fn await_service<T>(
     }
 }
 
+fn missing_capability(capability: Capability) -> String {
+    format!("missing capability: {}", capability.to_kebab())
+}
+
 impl PluginStoreState {
     fn service_call_limit(&self) -> HostCallLimit {
         self.host_call_limit(self.host_call_timeout())
     }
 
-    fn deny_player_write(
-        &self,
+    fn lacks(&mut self, capability: Capability, call: &'static str) -> bool {
+        if self.capabilities().has(capability) {
+            return false;
+        }
+        self.report_denied(capability, call);
+        true
+    }
+
+    fn refused_service(
+        &mut self,
+        capability: Capability,
+        call: &'static str,
+    ) -> Option<wt::ServiceError> {
+        self.lacks(capability, call)
+            .then(|| wt::ServiceError::OperationFailed(missing_capability(capability)))
+    }
+
+    fn refused_player(
+        &mut self,
+        capability: Capability,
+        call: &'static str,
         error: impl FnOnce(String) -> wt::PlayerError,
     ) -> Option<wt::PlayerError> {
-        if self.capabilities().has(Capability::PlayerWrite) {
-            return None;
-        }
-        Some(error("missing capability: player-write".to_string()))
+        self.lacks(capability, call)
+            .then(|| error(missing_capability(capability)))
     }
 }
 
@@ -78,6 +99,12 @@ impl event_bus::Host for PluginStoreState {
         kind: event_bus::EventKind,
         priority: wt::EventPriority,
     ) -> wasmtime::Result<u64> {
+        if self.lacks(Capability::EventBus, "event-bus.subscribe")
+            || (matches!(kind, event_bus::EventKind::RawPacket)
+                && self.lacks(Capability::RawPacket, "event-bus.subscribe(raw-packet)"))
+        {
+            return Ok(self.mint_listener_id());
+        }
         let instance = self.instance_ref(CallKind::Event);
         let ctx = self.require_ctx()?;
         let native_priority = dispatch::priority_from_wit(priority);
@@ -99,6 +126,9 @@ impl event_bus::Host for PluginStoreState {
     }
 
     async fn unsubscribe(&mut self, handle: u64) -> wasmtime::Result<()> {
+        if self.lacks(Capability::EventBus, "event-bus.unsubscribe") {
+            return Ok(());
+        }
         if let Some(native) = self.take_listener(handle)
             && let Some(ctx) = self.ctx()
         {
@@ -113,6 +143,9 @@ impl player_registry::Host for PluginStoreState {
         &mut self,
         username: String,
     ) -> wasmtime::Result<Option<Resource<PlayerHandle>>> {
+        if self.lacks(Capability::PlayerRead, "player-registry.get-player") {
+            return Ok(None);
+        }
         let ctx = self.require_ctx()?;
         match ctx.player_registry().get_player(&username) {
             Some(p) => Ok(Some(self.push_player(p)?)),
@@ -124,6 +157,9 @@ impl player_registry::Host for PluginStoreState {
         &mut self,
         player_uuid: String,
     ) -> wasmtime::Result<Option<Resource<PlayerHandle>>> {
+        if self.lacks(Capability::PlayerRead, "player-registry.get-player-by-uuid") {
+            return Ok(None);
+        }
         let uuid = uuid::Uuid::parse_str(&player_uuid)
             .map_err(|e| wasmtime::Error::msg(format!("invalid uuid {player_uuid:?}: {e}")))?;
         let ctx = self.require_ctx()?;
@@ -137,6 +173,9 @@ impl player_registry::Host for PluginStoreState {
         &mut self,
         id: u64,
     ) -> wasmtime::Result<Option<Resource<PlayerHandle>>> {
+        if self.lacks(Capability::PlayerRead, "player-registry.get-player-by-id") {
+            return Ok(None);
+        }
         let ctx = self.require_ctx()?;
         match ctx.player_registry().get_player_by_id(PlayerId::new(id)) {
             Some(p) => Ok(Some(self.push_player(p)?)),
@@ -148,6 +187,12 @@ impl player_registry::Host for PluginStoreState {
         &mut self,
         server: String,
     ) -> wasmtime::Result<Vec<Resource<PlayerHandle>>> {
+        if self.lacks(
+            Capability::PlayerRead,
+            "player-registry.get-players-on-server",
+        ) {
+            return Ok(Vec::new());
+        }
         let ctx = self.require_ctx()?;
         let players = ctx
             .player_registry()
@@ -160,6 +205,9 @@ impl player_registry::Host for PluginStoreState {
     }
 
     async fn get_all_players(&mut self) -> wasmtime::Result<Vec<Resource<PlayerHandle>>> {
+        if self.lacks(Capability::PlayerRead, "player-registry.get-all-players") {
+            return Ok(Vec::new());
+        }
         let ctx = self.require_ctx()?;
         let players = ctx.player_registry().get_all_players();
         let mut out = Vec::with_capacity(players.len());
@@ -170,11 +218,17 @@ impl player_registry::Host for PluginStoreState {
     }
 
     async fn online_count(&mut self) -> wasmtime::Result<u32> {
+        if self.lacks(Capability::PlayerRead, "player-registry.online-count") {
+            return Ok(0);
+        }
         let ctx = self.require_ctx()?;
         Ok(u32::try_from(ctx.player_registry().online_count()).unwrap_or(u32::MAX))
     }
 
     async fn online_count_on(&mut self, server: String) -> wasmtime::Result<u32> {
+        if self.lacks(Capability::PlayerRead, "player-registry.online-count-on") {
+            return Ok(0);
+        }
         let ctx = self.require_ctx()?;
         let n = ctx
             .player_registry()
@@ -227,9 +281,7 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
         reason: String,
     ) -> wasmtime::Result<()> {
-        if !self.capabilities().has(Capability::PlayerWrite) {
-            tracing::warn!(plugin = %self.plugin_id,
-                "player disconnect denied: missing capability player-write");
+        if self.lacks(Capability::PlayerWrite, "player.disconnect") {
             return Ok(());
         }
         let player = self.resolve_player(&self_)?;
@@ -251,7 +303,11 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
         message: String,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
-        if let Some(denied) = self.deny_player_write(wt::PlayerError::SendFailed) {
+        if let Some(denied) = self.refused_player(
+            Capability::PlayerWrite,
+            "player.send-message",
+            wt::PlayerError::SendFailed,
+        ) {
             return Ok(Err(denied));
         }
         let player = self.resolve_player(&self_)?;
@@ -266,7 +322,11 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
         title: wt::TitleData,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
-        if let Some(denied) = self.deny_player_write(wt::PlayerError::SendFailed) {
+        if let Some(denied) = self.refused_player(
+            Capability::PlayerWrite,
+            "player.send-title",
+            wt::PlayerError::SendFailed,
+        ) {
             return Ok(Err(denied));
         }
         let player = self.resolve_player(&self_)?;
@@ -280,7 +340,11 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
         message: String,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
-        if let Some(denied) = self.deny_player_write(wt::PlayerError::SendFailed) {
+        if let Some(denied) = self.refused_player(
+            Capability::PlayerWrite,
+            "player.send-action-bar",
+            wt::PlayerError::SendFailed,
+        ) {
             return Ok(Err(denied));
         }
         let player = self.resolve_player(&self_)?;
@@ -294,10 +358,12 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
         packet: wt::RawPacket,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
-        if !self.capabilities().has(Capability::RawPacket) {
-            return Ok(Err(wt::PlayerError::SendFailed(
-                "missing capability: raw-packet".to_string(),
-            )));
+        if let Some(denied) = self.refused_player(
+            Capability::RawPacket,
+            "player.send-packet",
+            wt::PlayerError::SendFailed,
+        ) {
+            return Ok(Err(denied));
         }
         let player = self.resolve_player(&self_)?;
         Ok(player
@@ -310,7 +376,11 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
         target: String,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
-        if let Some(denied) = self.deny_player_write(wt::PlayerError::SwitchFailed) {
+        if let Some(denied) = self.refused_player(
+            Capability::PlayerWrite,
+            "player.switch-server",
+            wt::PlayerError::SwitchFailed,
+        ) {
             return Ok(Err(denied));
         }
         let player = self.resolve_player(&self_)?;
@@ -354,6 +424,9 @@ impl player_registry::HostPlayer for PluginStoreState {
 
 impl server_manager::Host for PluginStoreState {
     async fn get_state(&mut self, server: String) -> wasmtime::Result<Option<wt::ServerState>> {
+        if self.lacks(Capability::ServerManage, "server-manager.get-state") {
+            return Ok(None);
+        }
         let ctx = self.require_ctx()?;
         Ok(ctx
             .server_manager()
@@ -362,18 +435,29 @@ impl server_manager::Host for PluginStoreState {
     }
 
     async fn start(&mut self, server: String) -> wasmtime::Result<Result<(), wt::ServiceError>> {
+        if let Some(denied) = self.refused_service(Capability::ServerManage, "server-manager.start")
+        {
+            return Ok(Err(denied));
+        }
         let ctx = self.require_ctx()?;
         let sid = ServerId::from(server);
         Ok(await_service(self.service_call_limit(), ctx.server_manager().start(&sid)).await)
     }
 
     async fn stop(&mut self, server: String) -> wasmtime::Result<Result<(), wt::ServiceError>> {
+        if let Some(denied) = self.refused_service(Capability::ServerManage, "server-manager.stop")
+        {
+            return Ok(Err(denied));
+        }
         let ctx = self.require_ctx()?;
         let sid = ServerId::from(server);
         Ok(await_service(self.service_call_limit(), ctx.server_manager().stop(&sid)).await)
     }
 
     async fn get_all_servers(&mut self) -> wasmtime::Result<Vec<(String, wt::ServerState)>> {
+        if self.lacks(Capability::ServerManage, "server-manager.get-all-servers") {
+            return Ok(Vec::new());
+        }
         let ctx = self.require_ctx()?;
         Ok(ctx
             .server_manager()
@@ -391,6 +475,9 @@ impl ban_service::Host for PluginStoreState {
         reason: Option<String>,
         duration_ms: Option<u64>,
     ) -> wasmtime::Result<Result<(), wt::ServiceError>> {
+        if let Some(denied) = self.refused_service(Capability::Ban, "ban-service.ban") {
+            return Ok(Err(denied));
+        }
         let ctx = self.require_ctx()?;
         let Some(native_target) = convert::ban_target_from_wit(&target) else {
             return Ok(Err(wt::ServiceError::OperationFailed(
@@ -409,6 +496,9 @@ impl ban_service::Host for PluginStoreState {
         &mut self,
         target: wt::BanTarget,
     ) -> wasmtime::Result<Result<bool, wt::ServiceError>> {
+        if let Some(denied) = self.refused_service(Capability::Ban, "ban-service.unban") {
+            return Ok(Err(denied));
+        }
         let ctx = self.require_ctx()?;
         let Some(t) = convert::ban_target_from_wit(&target) else {
             return Ok(Err(wt::ServiceError::OperationFailed(
@@ -422,6 +512,9 @@ impl ban_service::Host for PluginStoreState {
         &mut self,
         target: wt::BanTarget,
     ) -> wasmtime::Result<Result<bool, wt::ServiceError>> {
+        if let Some(denied) = self.refused_service(Capability::Ban, "ban-service.is-banned") {
+            return Ok(Err(denied));
+        }
         let ctx = self.require_ctx()?;
         let Some(t) = convert::ban_target_from_wit(&target) else {
             return Ok(Err(wt::ServiceError::OperationFailed(
@@ -435,6 +528,9 @@ impl ban_service::Host for PluginStoreState {
         &mut self,
         target: wt::BanTarget,
     ) -> wasmtime::Result<Result<Option<wt::BanEntry>, wt::ServiceError>> {
+        if let Some(denied) = self.refused_service(Capability::Ban, "ban-service.get-ban") {
+            return Ok(Err(denied));
+        }
         let ctx = self.require_ctx()?;
         let Some(t) = convert::ban_target_from_wit(&target) else {
             return Ok(Err(wt::ServiceError::OperationFailed(
@@ -451,6 +547,9 @@ impl ban_service::Host for PluginStoreState {
     async fn get_all_bans(
         &mut self,
     ) -> wasmtime::Result<Result<Vec<wt::BanEntry>, wt::ServiceError>> {
+        if let Some(denied) = self.refused_service(Capability::Ban, "ban-service.get-all-bans") {
+            return Ok(Err(denied));
+        }
         let ctx = self.require_ctx()?;
         Ok(
             await_service(self.service_call_limit(), ctx.ban_service().get_all_bans())
@@ -465,6 +564,9 @@ impl config_service::Host for PluginStoreState {
         &mut self,
         server: String,
     ) -> wasmtime::Result<Option<wt::ServerConfig>> {
+        if self.lacks(Capability::ConfigRead, "config-service.get-server-config") {
+            return Ok(None);
+        }
         let ctx = self.require_ctx()?;
         Ok(ctx
             .config_service()
@@ -474,6 +576,12 @@ impl config_service::Host for PluginStoreState {
     }
 
     async fn get_all_server_configs(&mut self) -> wasmtime::Result<Vec<wt::ServerConfig>> {
+        if self.lacks(
+            Capability::ConfigRead,
+            "config-service.get-all-server-configs",
+        ) {
+            return Ok(Vec::new());
+        }
         let ctx = self.require_ctx()?;
         Ok(ctx
             .config_service()
@@ -484,6 +592,9 @@ impl config_service::Host for PluginStoreState {
     }
 
     async fn get_value(&mut self, key: String) -> wasmtime::Result<Option<String>> {
+        if self.lacks(Capability::ConfigRead, "config-service.get-value") {
+            return Ok(None);
+        }
         let ctx = self.require_ctx()?;
         Ok(ctx.config_service().get_value(&key))
     }
@@ -497,6 +608,9 @@ impl command_manager::Host for PluginStoreState {
         description: String,
         callback_id: u64,
     ) -> wasmtime::Result<()> {
+        if self.lacks(Capability::Command, "command-manager.register") {
+            return Ok(());
+        }
         let instance = self.instance_ref(CallKind::Callback).any_generation();
         let ctx = self.require_ctx()?;
         let Bound::Fresh(binding) =
@@ -513,6 +627,9 @@ impl command_manager::Host for PluginStoreState {
     }
 
     async fn unregister(&mut self, name: String) -> wasmtime::Result<()> {
+        if self.lacks(Capability::Command, "command-manager.unregister") {
+            return Ok(());
+        }
         self.registrations().unbind_command(&name);
         if let Some(ctx) = self.ctx() {
             ctx.command_manager().unregister(&name);
@@ -537,6 +654,12 @@ impl codec_registry::Host for PluginStoreState {
         metadata: codec_registry::CodecFilterMetadata,
         factory: u64,
     ) -> wasmtime::Result<()> {
+        if self.lacks(
+            Capability::CodecFilter,
+            "codec-registry.register-codec-filter",
+        ) {
+            return Ok(());
+        }
         let Some(instantiator) = self.codec_instantiator().cloned() else {
             return Err(wasmtime::Error::msg(
                 "codec instantiator unavailable (register-codec-filter called off the load path)",
@@ -563,6 +686,12 @@ impl codec_registry::Host for PluginStoreState {
     }
 
     async fn unregister_codec_filter(&mut self, id: String) -> wasmtime::Result<()> {
+        if self.lacks(
+            Capability::CodecFilter,
+            "codec-registry.unregister-codec-filter",
+        ) {
+            return Ok(());
+        }
         if let Some(ctx) = self.ctx()
             && let Some(registry) = ctx.codec_filters()
         {
@@ -573,6 +702,9 @@ impl codec_registry::Host for PluginStoreState {
 }
 impl scheduler::Host for PluginStoreState {
     async fn delay(&mut self, after_ms: u64, callback_id: u64) -> wasmtime::Result<u64> {
+        if self.lacks(Capability::Scheduler, "scheduler.delay") {
+            return Ok(0);
+        }
         let instance = self.instance_ref(CallKind::Callback);
         let ctx = self.require_ctx()?;
         let handle = ctx.scheduler().delay(
@@ -586,6 +718,9 @@ impl scheduler::Host for PluginStoreState {
     }
 
     async fn interval(&mut self, period_ms: u64, callback_id: u64) -> wasmtime::Result<u64> {
+        if self.lacks(Capability::Scheduler, "scheduler.interval") {
+            return Ok(0);
+        }
         let instance = self.instance_ref(CallKind::Callback);
         let ctx = self.require_ctx()?;
         let handle = ctx.scheduler().interval(
@@ -599,6 +734,9 @@ impl scheduler::Host for PluginStoreState {
     }
 
     async fn cancel(&mut self, handle: u64) -> wasmtime::Result<()> {
+        if self.lacks(Capability::Scheduler, "scheduler.cancel") {
+            return Ok(());
+        }
         self.forget_task(handle);
         if let Some(ctx) = self.ctx() {
             ctx.scheduler().cancel(TaskHandle::new(handle));
@@ -608,9 +746,7 @@ impl scheduler::Host for PluginStoreState {
 }
 impl limbo::Host for PluginStoreState {
     async fn register_limbo_handler(&mut self, name: String, handler: u64) -> wasmtime::Result<()> {
-        if !self.capabilities().has(Capability::Limbo) {
-            tracing::warn!(plugin = %self.plugin_id, handler = %name,
-                "register_limbo_handler denied: missing Limbo capability");
+        if self.lacks(Capability::Limbo, "limbo.register-limbo-handler") {
             return Ok(());
         }
         let instance = self.instance_ref(CallKind::Callback).any_generation();
@@ -801,7 +937,8 @@ mod tests {
 
     #[tokio::test]
     async fn get_player_by_uuid_traps_on_malformed_uuid() {
-        let mut state = build_probe_state("test".to_string(), &SandboxLimits::default());
+        let mut state = build_probe_state("test".to_string(), &SandboxLimits::default())
+            .with_capabilities(CapabilitySet::baseline());
         let err = state
             .get_player_by_uuid("not-a-uuid".to_string())
             .await
@@ -954,5 +1091,287 @@ mod tests {
             .disconnect(handle, "bye".to_string())
             .await
             .expect("a denied disconnect is ignored, not a trap");
+    }
+
+    macro_rules! expect {
+        ($failures:ident, $capability:expr, $call:literal, $result:expr, $pattern:pat $(if $guard:expr)?) => {{
+            let result = $result;
+            if !matches!(result, $pattern $(if $guard)?) {
+                $failures.push(format!("{:?} {}: {:?}", $capability, $call, result));
+            }
+        }};
+    }
+
+    fn nobody() -> wt::BanTarget {
+        wt::BanTarget::Username("nobody".to_string())
+    }
+
+    fn missing(capability: Capability) -> String {
+        format!("missing capability: {}", capability.to_kebab())
+    }
+
+    fn codec_metadata() -> codec_registry::CodecFilterMetadata {
+        codec_registry::CodecFilterMetadata {
+            id: "ops".to_string(),
+            priority: 2,
+            after: vec![],
+            before: vec![],
+        }
+    }
+
+    async fn unrefused_calls(capability: Capability) -> Vec<String> {
+        let mut state = build_probe_state("denied".to_string(), &SandboxLimits::default())
+            .with_capabilities(CapabilitySet::native_trusted().without(capability));
+        let denied = missing(capability);
+        let mut failures = Vec::new();
+        let s = &mut state;
+        match capability {
+            Capability::Ban => {
+                expect!(failures, capability, "ban", ban_service::Host::ban(s, nobody(), None, None).await,
+                    Ok(Err(wt::ServiceError::OperationFailed(ref m))) if *m == denied);
+                expect!(failures, capability, "unban", ban_service::Host::unban(s, nobody()).await,
+                    Ok(Err(wt::ServiceError::OperationFailed(ref m))) if *m == denied);
+                expect!(failures, capability, "is-banned", ban_service::Host::is_banned(s, nobody()).await,
+                    Ok(Err(wt::ServiceError::OperationFailed(ref m))) if *m == denied);
+                expect!(failures, capability, "get-ban", ban_service::Host::get_ban(s, nobody()).await,
+                    Ok(Err(wt::ServiceError::OperationFailed(ref m))) if *m == denied);
+                expect!(failures, capability, "get-all-bans", ban_service::Host::get_all_bans(s).await,
+                    Ok(Err(wt::ServiceError::OperationFailed(ref m))) if *m == denied);
+            }
+            Capability::ServerManage => {
+                expect!(failures, capability, "start", server_manager::Host::start(s, "lobby".into()).await,
+                    Ok(Err(wt::ServiceError::OperationFailed(ref m))) if *m == denied);
+                expect!(failures, capability, "stop", server_manager::Host::stop(s, "lobby".into()).await,
+                    Ok(Err(wt::ServiceError::OperationFailed(ref m))) if *m == denied);
+                expect!(
+                    failures,
+                    capability,
+                    "get-state",
+                    server_manager::Host::get_state(s, "lobby".into()).await,
+                    Ok(None)
+                );
+                expect!(failures, capability, "get-all-servers", server_manager::Host::get_all_servers(s).await,
+                    Ok(ref v) if v.is_empty());
+            }
+            Capability::ConfigRead => {
+                expect!(
+                    failures,
+                    capability,
+                    "get-server-config",
+                    config_service::Host::get_server_config(s, "lobby".into()).await,
+                    Ok(None)
+                );
+                expect!(failures, capability, "get-all-server-configs",
+                    config_service::Host::get_all_server_configs(s).await, Ok(ref v) if v.is_empty());
+                expect!(
+                    failures,
+                    capability,
+                    "get-value",
+                    config_service::Host::get_value(s, "greeting".into()).await,
+                    Ok(None)
+                );
+            }
+            Capability::PlayerRead => {
+                expect!(
+                    failures,
+                    capability,
+                    "get-player",
+                    player_registry::Host::get_player(s, "Steve".into()).await,
+                    Ok(None)
+                );
+                expect!(
+                    failures,
+                    capability,
+                    "get-player-by-uuid",
+                    player_registry::Host::get_player_by_uuid(s, uuid::Uuid::nil().to_string())
+                        .await,
+                    Ok(None)
+                );
+                expect!(
+                    failures,
+                    capability,
+                    "get-player-by-id",
+                    player_registry::Host::get_player_by_id(s, 1).await,
+                    Ok(None)
+                );
+                expect!(failures, capability, "get-players-on-server",
+                    player_registry::Host::get_players_on_server(s, "lobby".into()).await, Ok(ref v) if v.is_empty());
+                expect!(failures, capability, "get-all-players",
+                    player_registry::Host::get_all_players(s).await, Ok(ref v) if v.is_empty());
+                expect!(
+                    failures,
+                    capability,
+                    "online-count",
+                    player_registry::Host::online_count(s).await,
+                    Ok(0)
+                );
+                expect!(
+                    failures,
+                    capability,
+                    "online-count-on",
+                    player_registry::Host::online_count_on(s, "lobby".into()).await,
+                    Ok(0)
+                );
+            }
+            Capability::PlayerWrite => {
+                let player: Arc<dyn Player> = Arc::new(StalledPlayer::new());
+                let handle = s.push_player(Arc::clone(&player)).unwrap();
+                expect!(failures, capability, "send-message",
+                    player_registry::HostPlayer::send_message(s, handle, "hi".into()).await,
+                    Ok(Err(wt::PlayerError::SendFailed(ref m))) if *m == denied);
+                let handle = s.push_player(Arc::clone(&player)).unwrap();
+                expect!(failures, capability, "send-action-bar",
+                    player_registry::HostPlayer::send_action_bar(s, handle, "hi".into()).await,
+                    Ok(Err(wt::PlayerError::SendFailed(ref m))) if *m == denied);
+                let handle = s.push_player(Arc::clone(&player)).unwrap();
+                let title = wt::TitleData {
+                    title: "t".into(),
+                    subtitle: "s".into(),
+                    fade_in_ticks: 0,
+                    stay_ticks: 0,
+                    fade_out_ticks: 0,
+                };
+                expect!(failures, capability, "send-title",
+                    player_registry::HostPlayer::send_title(s, handle, title).await,
+                    Ok(Err(wt::PlayerError::SendFailed(ref m))) if *m == denied);
+                let handle = s.push_player(Arc::clone(&player)).unwrap();
+                expect!(failures, capability, "switch-server",
+                    player_registry::HostPlayer::switch_server(s, handle, "lobby".into()).await,
+                    Ok(Err(wt::PlayerError::SwitchFailed(ref m))) if *m == denied);
+                let handle = s.push_player(player).unwrap();
+                expect!(
+                    failures,
+                    capability,
+                    "disconnect",
+                    player_registry::HostPlayer::disconnect(s, handle, "bye".into()).await,
+                    Ok(())
+                );
+            }
+            Capability::RawPacket => {
+                let handle = s.push_player(Arc::new(StalledPlayer::new())).unwrap();
+                let packet = wt::RawPacket {
+                    packet_id: 1,
+                    data: vec![],
+                };
+                expect!(failures, capability, "send-packet",
+                    player_registry::HostPlayer::send_packet(s, handle, packet).await,
+                    Ok(Err(wt::PlayerError::SendFailed(ref m))) if *m == denied);
+                if let Err(e) =
+                    event_bus::Host::subscribe(s, event_bus::EventKind::RawPacket, 128).await
+                {
+                    failures.push(format!("{capability:?} subscribe(raw-packet): {e:?}"));
+                }
+            }
+            Capability::EventBus => {
+                match event_bus::Host::subscribe(s, event_bus::EventKind::PostLogin, 128).await {
+                    Ok(listener) => {
+                        if s.take_listener(listener).is_some() {
+                            failures
+                                .push(format!("{capability:?} subscribe registered a listener"));
+                        }
+                        expect!(
+                            failures,
+                            capability,
+                            "unsubscribe",
+                            event_bus::Host::unsubscribe(s, listener).await,
+                            Ok(())
+                        );
+                    }
+                    Err(e) => failures.push(format!("{capability:?} subscribe: {e:?}")),
+                }
+            }
+            Capability::Command => {
+                expect!(
+                    failures,
+                    capability,
+                    "register",
+                    command_manager::Host::register(s, "probe".into(), vec![], String::new(), 1)
+                        .await,
+                    Ok(())
+                );
+                expect!(
+                    failures,
+                    capability,
+                    "unregister",
+                    command_manager::Host::unregister(s, "probe".into()).await,
+                    Ok(())
+                );
+            }
+            Capability::Scheduler => {
+                expect!(
+                    failures,
+                    capability,
+                    "delay",
+                    scheduler::Host::delay(s, 10, 1).await,
+                    Ok(0)
+                );
+                expect!(
+                    failures,
+                    capability,
+                    "interval",
+                    scheduler::Host::interval(s, 10, 1).await,
+                    Ok(0)
+                );
+                expect!(
+                    failures,
+                    capability,
+                    "cancel",
+                    scheduler::Host::cancel(s, 0).await,
+                    Ok(())
+                );
+            }
+            Capability::CodecFilter => {
+                expect!(
+                    failures,
+                    capability,
+                    "register-codec-filter",
+                    codec_registry::Host::register_codec_filter(s, codec_metadata(), 1).await,
+                    Ok(())
+                );
+                expect!(
+                    failures,
+                    capability,
+                    "unregister-codec-filter",
+                    codec_registry::Host::unregister_codec_filter(s, "ops".into()).await,
+                    Ok(())
+                );
+            }
+            Capability::Limbo => {
+                expect!(
+                    failures,
+                    capability,
+                    "register-limbo-handler",
+                    limbo::Host::register_limbo_handler(s, "gate".into(), 1).await,
+                    Ok(())
+                );
+            }
+            other => failures.push(format!("{other:?}: no gated host call to probe")),
+        }
+        failures
+    }
+
+    #[tokio::test]
+    async fn every_gated_host_call_is_refused_without_its_capability() {
+        let mut failures = Vec::new();
+        for capability in [
+            Capability::Ban,
+            Capability::ServerManage,
+            Capability::ConfigRead,
+            Capability::PlayerRead,
+            Capability::PlayerWrite,
+            Capability::RawPacket,
+            Capability::EventBus,
+            Capability::Command,
+            Capability::Scheduler,
+            Capability::CodecFilter,
+            Capability::Limbo,
+        ] {
+            failures.extend(unrefused_calls(capability).await);
+        }
+        assert!(
+            failures.is_empty(),
+            "host calls that were not refused:\n{}",
+            failures.join("\n")
+        );
     }
 }

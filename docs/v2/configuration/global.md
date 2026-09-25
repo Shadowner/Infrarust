@@ -445,6 +445,7 @@ Startup fails when `max_restarts` is above 1000, when `window`, `backoff_initial
 [plugins.my_plugin]
 permissions = ["ban", "limbo"]
 deny = ["player-write"]
+strict_capabilities = false
 enabled = true
 
 [plugins.my_plugin.wasm]
@@ -456,6 +457,7 @@ Plugin configurations are keyed by plugin ID.
 
 - `permissions` grants capabilities on top of the baseline every WASM plugin receives.
 - `deny` removes capabilities. It is applied after the baseline and the grants, so it can take away a baseline capability such as `player-write`, and a capability listed in both `permissions` and `deny` is denied. It also applies to compiled-in plugins.
+- `strict_capabilities` (WASM plugins, defaults to `false`) refuses to load the plugin when it imports a host function whose capability it lacks. Without it such a plugin loads, a warning names each import that will be refused, and the calls are refused when made. See [What a missing capability does](../plugins/wasm/capabilities#what-a-missing-capability-does).
 - `enabled` skips the plugin when set to `false` (defaults to `true` when omitted).
 - `[plugins.<id>.wasm]` overrides the `[wasm]` limits for that plugin. It accepts every key of `[wasm]` except `epoch_tick`, and `[plugins.<id>.wasm.recovery]` overrides `[wasm.recovery]`; keys it leaves out keep the proxy-wide value.
 
