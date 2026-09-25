@@ -29,6 +29,7 @@ telemetry = [
     "dep:opentelemetry_sdk",
     "dep:opentelemetry-otlp",
 ]
+test-support = []
 
 [dependencies]
 infrarust-api = { workspace = true, features = ["serde"] }

@@ -2109,6 +2109,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "infrarust-test-harness"
+version = "2.0.0-beta.3"
+dependencies = [
+ "bytes",
+ "infrarust-api",
+ "infrarust-core",
+ "infrarust_config",
+ "infrarust_protocol",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "uuid",
+]
+
+[[package]]
 name = "infrarust-transport"
 version = "2.0.0-beta.3"
 dependencies = [

@@ -262,7 +262,7 @@ fn limbo_player_position(version: ProtocolVersion) -> CSynchronizePlayerPosition
     }
 }
 
-fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGame, CoreError> {
+pub(crate) fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGame, CoreError> {
     if version.less_than(ProtocolVersion::V1_16) {
         let raw_payload = build_pre_1_16_join_game_payload(version)?;
         return Ok(CJoinGame {

@@ -1,0 +1,25 @@
+[package]
+name = "infrarust-test-harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish = false
+description = "In-process Minecraft protocol fakes (client and backend) for driving real traffic through Infrarust in tests"
+
+[lints]
+workspace = true
+
+[dependencies]
+infrarust-core = { workspace = true, features = ["test-support"] }
+infrarust-api = { workspace = true }
+infrarust_protocol = { workspace = true }
+infrarust_config = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+bytes = { workspace = true }
+uuid = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }

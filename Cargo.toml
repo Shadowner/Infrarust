@@ -11,6 +11,7 @@ members = [
     "crates/infrarust-loader-wasm",
     "crates/infrarust-plugin-sdk",
     "crates/infrarust-plugin-macros",
+    "crates/infrarust-test-harness",
     "crates/infrarust",
     "plugins/infrarust-plugin-auth",
     "plugins/infrarust-plugin-hello",
