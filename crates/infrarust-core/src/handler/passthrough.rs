@@ -22,7 +22,7 @@ use crate::forwarding::{ForwardingData, ForwardingHandler, build_handshake_for_b
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::player::lifecycle::PlayerLifecycle;
-use crate::player::{PlayerCommand, PlayerSession};
+use crate::player::{PlayerCommand, PlayerSession, SHUTDOWN_REASON};
 use crate::services::ProxyServices;
 use crate::session::server_join::pre_connect;
 
@@ -107,7 +107,11 @@ impl PassthroughHandler {
 
         let lifecycle = PlayerLifecycle::begin(&self.services, Arc::clone(&player)).await;
         if session_token.is_cancelled() {
-            let reason = queued_kick(&mut cmd_rx);
+            let reason = queued_kick(&mut cmd_rx).or_else(|| {
+                shutdown
+                    .is_cancelled()
+                    .then(|| Component::text(SHUTDOWN_REASON))
+            });
             if let Some(reason) = &reason {
                 super::helpers::send_login_disconnect(ctx.stream_mut(), reason, version, registry)
                     .await

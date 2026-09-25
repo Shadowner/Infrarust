@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use infrarust_api::player::Player;
+use infrarust_api::types::Component;
 
 use crate::ban::storage::BanStorage;
 use crate::ban::types::{BanEntry, BanTarget};
@@ -56,6 +57,7 @@ impl BanManager {
         source: String,
     ) -> Result<(), CoreError> {
         let entry = BanEntry::new(target.clone(), reason, duration, source);
+        let kick_message = entry.kick_message();
         self.storage.add_ban(entry).await?;
 
         // Kick connected player(s) matching this target
@@ -80,7 +82,9 @@ impl BanManager {
                 username = %session.profile().username,
                 "kicking connected player due to ban"
             );
-            session.shutdown_token().cancel();
+            session
+                .disconnect(Component::text(kick_message.clone()))
+                .await;
         }
 
         if !sessions_to_kick.is_empty() {

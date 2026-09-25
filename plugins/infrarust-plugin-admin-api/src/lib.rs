@@ -300,6 +300,9 @@ mod tests {
         fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn Player>> {
             None
         }
+        fn get_players_by_ip(&self, _ip: std::net::IpAddr) -> Vec<Arc<dyn Player>> {
+            vec![]
+        }
         fn get_players_on_server(&self, _server: &ServerId) -> Vec<Arc<dyn Player>> {
             vec![]
         }

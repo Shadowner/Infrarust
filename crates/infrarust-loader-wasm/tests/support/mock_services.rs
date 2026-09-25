@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -29,6 +29,9 @@ impl PlayerRegistry for MockPlayerRegistry {
     }
     fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn Player>> {
         None
+    }
+    fn get_players_by_ip(&self, _ip: IpAddr) -> Vec<Arc<dyn Player>> {
+        vec![]
     }
     fn get_players_on_server(&self, _server: &ServerId) -> Vec<Arc<dyn Player>> {
         vec![]
@@ -229,6 +232,9 @@ impl PlayerRegistry for CountingPlayerRegistry {
     fn get_player_by_id(&self, _id: PlayerId) -> Option<Arc<dyn Player>> {
         None
     }
+    fn get_players_by_ip(&self, _ip: IpAddr) -> Vec<Arc<dyn Player>> {
+        vec![]
+    }
     fn get_players_on_server(&self, _server: &ServerId) -> Vec<Arc<dyn Player>> {
         vec![]
     }
@@ -273,6 +279,9 @@ impl PlayerRegistry for RecordingPlayerRegistry {
     }
     fn get_player_by_id(&self, id: PlayerId) -> Option<Arc<dyn Player>> {
         Some(self.player(id))
+    }
+    fn get_players_by_ip(&self, _ip: IpAddr) -> Vec<Arc<dyn Player>> {
+        vec![]
     }
     fn get_players_on_server(&self, _server: &ServerId) -> Vec<Arc<dyn Player>> {
         vec![]

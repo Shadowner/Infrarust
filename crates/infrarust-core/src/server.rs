@@ -1,6 +1,8 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use infrarust_config::{
     ForwardingMode as ConfigForwardingMode, ProxyConfig, ProxyMode, UnknownDomainBehavior,
@@ -39,6 +41,7 @@ use crate::pipeline::Pipeline;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
 use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected, RoutingData};
+use crate::player::SHUTDOWN_REASON;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::provider::file::FileProvider;
 use crate::provider::registry::ProviderRegistry;
@@ -47,6 +50,8 @@ use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::status::{FaviconCache, StatusCache, StatusHandler, StatusRelayClient};
+
+pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The main proxy server orchestrator.
 ///
@@ -63,6 +68,9 @@ pub struct ProxyServer {
     backend_health: Arc<crate::loadbalancer::PassiveBackendHealth>,
     unknown_domain_behavior: UnknownDomainBehavior,
     shutdown: CancellationToken,
+    sessions: CancellationToken,
+    background: CancellationToken,
+    connections: TaskTracker,
 }
 
 impl ProxyServer {
@@ -77,6 +85,9 @@ impl ProxyServer {
         config_path: std::path::PathBuf,
         shutdown: CancellationToken,
     ) -> Result<Self, CoreError> {
+        let sessions = CancellationToken::new();
+        let background = CancellationToken::new();
+
         // Create domain router (initially empty — providers populate it)
         let domain_router = Arc::new(DomainRouter::new());
 
@@ -133,7 +144,7 @@ impl ProxyServer {
             Arc::clone(&event_bus),
             Arc::clone(&status_cache),
             Arc::clone(&favicon_cache),
-            shutdown.clone(),
+            background.clone(),
         );
 
         // File provider (always enabled)
@@ -222,7 +233,7 @@ impl ProxyServer {
         let relay_client = StatusRelayClient::new(
             Arc::clone(&backend_connector),
             Arc::clone(&packet_registry),
-            std::time::Duration::from_secs(5),
+            Duration::from_secs(5),
         );
 
         let status_handler = StatusHandler::new(
@@ -248,7 +259,7 @@ impl ProxyServer {
             Arc::clone(&backend_connector),
             Arc::clone(&backend_load),
             Arc::clone(&backend_health) as _,
-            shutdown.clone(),
+            sessions.clone(),
         );
 
         // Ban system
@@ -370,6 +381,9 @@ impl ProxyServer {
             backend_health,
             unknown_domain_behavior: config.unknown_domain_behavior,
             shutdown,
+            sessions,
+            background,
+            connections: TaskTracker::new(),
         })
     }
 
@@ -378,8 +392,18 @@ impl ProxyServer {
     /// # Errors
     /// Returns `CoreError` if the listener fails to bind.
     pub async fn run(self: Arc<Self>) -> Result<(), CoreError> {
-        let listener = self.bind().await?;
-        self.serve(listener).await
+        let listener = match self.bind().await {
+            Ok(listener) => listener,
+            Err(e) => {
+                self.stop_background_tasks();
+                return Err(e);
+            }
+        };
+        let result = Arc::clone(&self).serve(listener).await;
+        self.close_sessions();
+        self.drain_connections(DEFAULT_DRAIN_TIMEOUT).await;
+        self.stop_background_tasks();
+        result
     }
 
     pub async fn bind(&self) -> Result<Listener, CoreError> {
@@ -406,7 +430,7 @@ impl ProxyServer {
             sm.initial_health_check().await;
             let player_counter: Arc<dyn infrarust_server_manager::PlayerCounter> =
                 Arc::clone(&self.services.connection_registry) as _;
-            let _monitoring_handles = sm.start_monitoring(player_counter, self.shutdown.clone());
+            let _monitoring_handles = sm.start_monitoring(player_counter, self.background.clone());
             tracing::info!("server manager monitoring started");
         }
 
@@ -414,7 +438,7 @@ impl ProxyServer {
         let _purge_handle = self
             .services
             .ban_manager
-            .start_purge_task(config.ban.purge_interval, self.shutdown.clone());
+            .start_purge_task(config.ban.purge_interval, self.background.clone());
 
         // Always spawned: whether an address is probed is resolved per server,
         // so a server can opt in while the proxy-wide block opts out.
@@ -424,7 +448,7 @@ impl ProxyServer {
             Arc::clone(&self.services.packet_registry),
             config,
         ))
-        .spawn(self.shutdown.clone());
+        .spawn(self.background.clone());
 
         // Config hot-reload is handled by the ProviderRegistry (started in new())
 
@@ -447,7 +471,7 @@ impl ProxyServer {
                 }
             };
 
-            let shutdown = self.shutdown.clone();
+            let sessions = self.sessions.clone();
             let peer = accepted.connection.peer_addr();
             let local = accepted.connection.local_addr();
             tracing::debug!(peer = %peer, "new connection");
@@ -485,14 +509,46 @@ impl ProxyServer {
             }
 
             let server = Arc::clone(&self);
-            tokio::spawn(async move {
-                if let Err(e) = server.handle_connection(accepted, shutdown).await {
+            self.connections.spawn(async move {
+                if let Err(e) = server.handle_connection(accepted, sessions).await {
                     tracing::warn!(peer = %peer, error = %e, "connection error");
                 }
             });
         }
 
         Ok(())
+    }
+
+    pub fn close_sessions(&self) {
+        self.sessions.cancel();
+    }
+
+    pub async fn drain_connections(&self, timeout: Duration) {
+        self.connections.close();
+        let remaining = self.connections.len();
+        if remaining == 0 {
+            return;
+        }
+        tracing::info!(remaining, "waiting for active connections to drain");
+        match tokio::time::timeout(timeout, self.connections.wait()).await {
+            Ok(()) => tracing::info!("all connections drained"),
+            Err(_) => tracing::warn!(
+                remaining = self.connections.len(),
+                "drain timeout, forcing shutdown"
+            ),
+        }
+    }
+
+    pub fn active_connections(&self) -> usize {
+        self.connections.len()
+    }
+
+    pub fn stop_background_tasks(&self) {
+        self.background.cancel();
+    }
+
+    pub const fn background_token(&self) -> &CancellationToken {
+        &self.background
     }
 
     /// Processes a single connection through the pipeline.
@@ -503,8 +559,14 @@ impl ProxyServer {
     ) -> Result<(), CoreError> {
         let mut ctx = ConnectionContext::from_accepted(accepted);
 
+        let common = tokio::select! {
+            biased;
+            () = shutdown.cancelled() => return Ok(()),
+            result = self.common_pipeline.execute(&mut ctx) => result?,
+        };
+
         // Execute common pipeline
-        match self.common_pipeline.execute(&mut ctx).await? {
+        match common {
             MiddlewareResult::Continue => {}
             MiddlewareResult::ShortCircuit => {
                 // Check if legacy was detected
@@ -536,13 +598,30 @@ impl ProxyServer {
 
         match intent {
             ConnectionIntent::Status => {
-                self.status_handler
-                    .handle(&mut ctx, &self.services.connection_registry)
-                    .await?;
+                let status = self
+                    .status_handler
+                    .handle(&mut ctx, &self.services.connection_registry);
+                tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => {}
+                    result = status => result?,
+                }
             }
             ConnectionIntent::Login => {
+                let login = tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => None,
+                    result = self.login_pipeline.execute(&mut ctx) => Some(result?),
+                };
+                let Some(login) = login else {
+                    self.send_kick(&mut ctx, &Component::text(SHUTDOWN_REASON))
+                        .await
+                        .ok();
+                    return Ok(());
+                };
+
                 // Execute login pipeline
-                match self.login_pipeline.execute(&mut ctx).await? {
+                match login {
                     MiddlewareResult::Continue => {}
                     MiddlewareResult::ShortCircuit => return Ok(()),
                     MiddlewareResult::Reject(msg) => {
@@ -747,5 +826,12 @@ impl ProxyServer {
                 }
             }
         }
+    }
+}
+
+impl Drop for ProxyServer {
+    fn drop(&mut self) {
+        self.sessions.cancel();
+        self.background.cancel();
     }
 }

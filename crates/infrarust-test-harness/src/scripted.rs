@@ -7,11 +7,13 @@ use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 
 type Registration = Box<dyn Fn(&dyn EventBus) + Send + Sync>;
 type EnableHook = Box<dyn Fn(&dyn PluginContext) + Send + Sync>;
+type DisableHook = Box<dyn Fn() + Send + Sync>;
 
 pub struct ScriptedPlugin {
     id: String,
     registrations: Vec<Registration>,
     enable_hooks: Vec<EnableHook>,
+    disable_hooks: Vec<DisableHook>,
 }
 
 impl ScriptedPlugin {
@@ -20,6 +22,7 @@ impl ScriptedPlugin {
             id: id.into(),
             registrations: Vec::new(),
             enable_hooks: Vec::new(),
+            disable_hooks: Vec::new(),
         }
     }
 
@@ -60,6 +63,12 @@ impl ScriptedPlugin {
         self.enable_hooks.push(Box::new(hook));
         self
     }
+
+    #[must_use]
+    pub fn on_disable(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.disable_hooks.push(Box::new(hook));
+        self
+    }
 }
 
 impl Plugin for ScriptedPlugin {
@@ -76,6 +85,13 @@ impl Plugin for ScriptedPlugin {
         }
         for hook in &self.enable_hooks {
             hook(ctx);
+        }
+        Box::pin(async { Ok(()) })
+    }
+
+    fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
+        for hook in &self.disable_hooks {
+            hook();
         }
         Box::pin(async { Ok(()) })
     }

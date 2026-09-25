@@ -14,6 +14,7 @@ use infrarust_api::events::lifecycle::{
 use infrarust_api::permissions::PermissionChecker;
 use infrarust_api::player::Player;
 use infrarust_api::types::{Component, GameProfile};
+use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use tokio_util::sync::CancellationToken;
 
@@ -23,9 +24,9 @@ use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
-use crate::player::PlayerSession;
 use crate::player::commands::CommandInbox;
 use crate::player::lifecycle::PlayerLifecycle;
+use crate::player::{PlayerSession, SHUTDOWN_REASON};
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::ProxyLoopOutcome;
@@ -201,7 +202,9 @@ impl InterceptedHandler {
             return Ok(());
         }
         if session_token.is_cancelled() {
-            lifecycle.end(cancelled_cause(&shutdown)).await;
+            let cause = cancelled_cause(&shutdown);
+            announce_shutdown(&mut client, &cause, registry).await;
+            lifecycle.end(cause).await;
             return Ok(());
         }
 
@@ -307,6 +310,7 @@ impl InterceptedHandler {
             }
             None => disconnect_cause(&outcome, &shutdown, version),
         };
+        announce_shutdown(&mut client, &cause, registry).await;
 
         client_codec_chain.close();
         server_codec_chain.close();
@@ -350,6 +354,19 @@ impl InterceptedHandler {
         if let PermissionsSetupResult::Custom(checker) = setup.result() {
             player.set_permission_checker(Arc::clone(checker));
         }
+    }
+}
+
+async fn announce_shutdown(
+    client: &mut ClientBridge,
+    cause: &DisconnectCause,
+    registry: &PacketRegistry,
+) {
+    if matches!(cause, DisconnectCause::Shutdown) {
+        client
+            .disconnect(&Component::text(SHUTDOWN_REASON), registry)
+            .await
+            .ok();
     }
 }
 

@@ -1,5 +1,6 @@
 //! Thread-safe registry of active proxy sessions.
 
+use std::hash::Hash;
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -17,6 +18,38 @@ use crate::player::PlayerSession;
 pub struct ConnectionRegistry {
     sessions: DashMap<Uuid, Arc<PlayerSession>>,
     id_index: DashMap<PlayerId, Uuid>,
+    name_index: SessionIndex<String>,
+    ip_index: SessionIndex<IpAddr>,
+}
+
+struct SessionIndex<K> {
+    entries: DashMap<K, Vec<Arc<PlayerSession>>>,
+}
+
+impl<K: Eq + Hash> SessionIndex<K> {
+    fn new() -> Self {
+        Self {
+            entries: DashMap::new(),
+        }
+    }
+
+    fn insert(&self, key: K, session: &Arc<PlayerSession>) {
+        self.entries
+            .entry(key)
+            .or_default()
+            .push(Arc::clone(session));
+    }
+
+    fn remove(&self, key: &K, player_id: PlayerId) {
+        self.entries.remove_if_mut(key, |_, sessions| {
+            sessions.retain(|s| s.id() != player_id);
+            sessions.is_empty()
+        });
+    }
+}
+
+fn name_key(username: &str) -> String {
+    username.to_lowercase()
 }
 
 impl ConnectionRegistry {
@@ -25,7 +58,23 @@ impl ConnectionRegistry {
         Self {
             sessions: DashMap::new(),
             id_index: DashMap::new(),
+            name_index: SessionIndex::new(),
+            ip_index: SessionIndex::new(),
         }
+    }
+
+    fn index(&self, session: &Arc<PlayerSession>) {
+        self.name_index
+            .insert(name_key(&session.profile().username), session);
+        self.ip_index
+            .insert(session.remote_addr().ip().to_canonical(), session);
+    }
+
+    fn unindex(&self, session: &PlayerSession) {
+        self.name_index
+            .remove(&name_key(&session.profile().username), session.id());
+        self.ip_index
+            .remove(&session.remote_addr().ip().to_canonical(), session.id());
     }
 
     /// Registers a player session, keyed by profile UUID.
@@ -35,9 +84,11 @@ impl ConnectionRegistry {
         let uuid = session.profile().uuid;
         let player_id = session.id();
         self.id_index.insert(player_id, uuid);
+        self.index(&session);
         if let Some(previous) = self.sessions.insert(uuid, Arc::clone(&session)) {
             if previous.id() != player_id {
                 self.id_index.remove(&previous.id());
+                self.unindex(&previous);
             }
             previous.shutdown_token().cancel();
             previous.set_disconnected();
@@ -65,6 +116,7 @@ impl ConnectionRegistry {
             .remove_if(session_uuid, |_, s| s.id() == player_id)?;
         self.id_index
             .remove_if(&player_id, |_, u| u == session_uuid);
+        self.unindex(&session);
         session.set_disconnected();
         Some(session)
     }
@@ -79,12 +131,13 @@ impl ConnectionRegistry {
         self.sessions.get(session_uuid).map(|r| Arc::clone(&r))
     }
 
-    /// Finds the first session matching the given username.
     pub fn find_by_username(&self, username: &str) -> Option<Arc<PlayerSession>> {
-        self.sessions
+        let matches = self.name_index.entries.get(&name_key(username))?;
+        matches
             .iter()
-            .find(|r| r.profile().username == username)
-            .map(|r| Arc::clone(&r))
+            .find(|s| s.profile().username == username)
+            .or_else(|| matches.first())
+            .map(Arc::clone)
     }
 
     pub fn find_by_server(&self, server_id: &str) -> Vec<Arc<PlayerSession>> {
@@ -113,11 +166,11 @@ impl ConnectionRegistry {
 
     /// Finds all sessions from a given IP (may be multiple for multi-accounts).
     pub fn find_by_ip(&self, ip: &IpAddr) -> Vec<Arc<PlayerSession>> {
-        self.sessions
-            .iter()
-            .filter(|r| r.remote_addr().ip() == *ip)
-            .map(|r| Arc::clone(&r))
-            .collect()
+        self.ip_index
+            .entries
+            .get(&ip.to_canonical())
+            .map(|sessions| sessions.clone())
+            .unwrap_or_default()
     }
 
     /// Finds the session with the given Mojang UUID.
@@ -195,6 +248,44 @@ mod tests {
             crate::permissions::default_checker(),
             Arc::clone(load),
         ))
+    }
+
+    fn connected(id: u64, uuid: Uuid, username: &str, addr: &str) -> Arc<PlayerSession> {
+        let (tx, _rx) = mpsc::channel::<PlayerCommand>(32);
+        Arc::new(PlayerSession::new(
+            PlayerId::new(id),
+            GameProfile {
+                uuid,
+                username: username.to_string(),
+                properties: vec![],
+            },
+            infrarust_api::types::ProtocolVersion::new(767),
+            addr.parse().unwrap(),
+            None,
+            true,
+            false,
+            tx,
+            CancellationToken::new(),
+            crate::permissions::default_checker(),
+            Arc::new(BackendLoad::new()),
+        ))
+    }
+
+    fn ids(sessions: &[Arc<PlayerSession>]) -> Vec<u64> {
+        let mut ids: Vec<u64> = sessions.iter().map(|s| s.id().as_u64()).collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    fn found_id(registry: &ConnectionRegistry, username: &str) -> Option<u64> {
+        registry.find_by_username(username).map(|s| s.id().as_u64())
+    }
+
+    fn is_empty(registry: &ConnectionRegistry) -> bool {
+        registry.sessions.is_empty()
+            && registry.id_index.is_empty()
+            && registry.name_index.entries.is_empty()
+            && registry.ip_index.entries.is_empty()
     }
 
     fn make_session_with_id(id: u64, username: &str, server: &str) -> Arc<PlayerSession> {
@@ -376,6 +467,130 @@ mod tests {
         assert_eq!(load.active_connections_for_address(&a), 1);
         drop(orphan);
         assert_eq!(load.active_connections_for_address(&a), 0);
+    }
+
+    #[test]
+    fn a_username_is_found_in_any_case() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let _steve = registry.register(connected(1, Uuid::new_v4(), "Steve", "10.0.0.1:1"));
+
+        for spelling in ["Steve", "steve", "STEVE", "sTeVe"] {
+            assert_eq!(found_id(&registry, spelling), Some(1), "{spelling}");
+        }
+        assert_eq!(found_id(&registry, "Stev"), None);
+        assert_eq!(found_id(&registry, "Steven"), None);
+    }
+
+    #[test]
+    fn an_exact_spelling_wins_over_another_case() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let _upper = registry.register(connected(1, Uuid::new_v4(), "Steve", "10.0.0.1:1"));
+        let lower = registry.register(connected(2, Uuid::new_v4(), "steve", "10.0.0.2:1"));
+
+        assert_eq!(found_id(&registry, "Steve"), Some(1));
+        assert_eq!(found_id(&registry, "steve"), Some(2));
+        assert!(found_id(&registry, "STEVE").is_some());
+
+        drop(lower);
+        assert_eq!(found_id(&registry, "steve"), Some(1));
+    }
+
+    #[test]
+    fn unregistering_clears_every_index() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let alice = registry.register(connected(1, Uuid::new_v4(), "Alice", "10.0.0.1:1"));
+        let bob = registry.register(connected(2, Uuid::new_v4(), "Bob", "10.0.0.1:2"));
+        assert_eq!(ids(&registry.find_by_ip(&ip)), [1, 2]);
+
+        drop(alice);
+
+        assert_eq!(found_id(&registry, "alice"), None);
+        assert_eq!(found_id(&registry, "bob"), Some(2));
+        assert_eq!(ids(&registry.find_by_ip(&ip)), [2]);
+
+        drop(bob);
+
+        assert!(registry.find_by_ip(&ip).is_empty());
+        assert!(is_empty(&registry));
+    }
+
+    #[test]
+    fn a_replaced_session_leaves_the_indexes_to_its_successor() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let uuid = Uuid::new_v4();
+        let old_ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let new_ip: IpAddr = "10.0.0.2".parse().unwrap();
+        let first = registry.register(connected(1, uuid, "Alice", "10.0.0.1:1"));
+
+        let second = registry.register(connected(2, uuid, "ALICE", "10.0.0.2:1"));
+
+        assert_eq!(found_id(&registry, "alice"), Some(2));
+        assert!(registry.find_by_ip(&old_ip).is_empty());
+        assert_eq!(ids(&registry.find_by_ip(&new_ip)), [2]);
+
+        drop(first);
+
+        assert_eq!(found_id(&registry, "Alice"), Some(2));
+        assert_eq!(ids(&registry.find_by_ip(&new_ip)), [2]);
+        assert_eq!(
+            registry.find_by_uuid(&uuid).map(|s| s.id().as_u64()),
+            Some(2)
+        );
+
+        drop(second);
+
+        assert!(is_empty(&registry));
+    }
+
+    #[test]
+    fn an_ipv4_mapped_address_is_the_same_client() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let _mapped = registry.register(connected(
+            1,
+            Uuid::new_v4(),
+            "Alice",
+            "[::ffff:203.0.113.7]:1",
+        ));
+
+        let ip: IpAddr = "203.0.113.7".parse().unwrap();
+        assert_eq!(ids(&registry.find_by_ip(&ip)), [1]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_logins_keep_the_indexes_consistent() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let shared_uuid = Uuid::new_v4();
+        let mut tasks = Vec::new();
+        for i in 0..64u64 {
+            let registry = Arc::clone(&registry);
+            tasks.push(tokio::spawn(async move {
+                let (uuid, name) = if i % 4 == 0 {
+                    (shared_uuid, "Shared".to_string())
+                } else {
+                    (Uuid::new_v4(), format!("Player{i}"))
+                };
+                let spelling = if i % 2 == 0 {
+                    name.to_uppercase()
+                } else {
+                    name.to_lowercase()
+                };
+                let addr = format!("10.0.{}.1:{}", i % 3, 1000 + i);
+                let guard = registry.register(connected(i + 1, uuid, &spelling, &addr));
+                tokio::task::yield_now().await;
+                let found = registry.find_by_username(&name);
+                if uuid != shared_uuid {
+                    assert_eq!(found.map(|s| s.id().as_u64()), Some(i + 1));
+                }
+                tokio::task::yield_now().await;
+                drop(guard);
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+
+        assert!(is_empty(&registry));
     }
 
     #[test]

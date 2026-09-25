@@ -34,15 +34,20 @@ impl PlayerLifecycle {
     pub(crate) async fn begin(services: &ProxyServices, session: Arc<PlayerSession>) -> Self {
         let deadline = services.config.events.disconnect_deadline;
         displace_previous(services, &session, deadline).await;
-        let guard = services.connection_registry.register(Arc::clone(&session));
-        let lifecycle = Self {
+        let mut lifecycle = Self {
             bus: Arc::clone(&services.event_bus),
             deadline,
-            registration: Some(Registration {
-                session: Arc::clone(&session),
-                guard: Some(guard),
-            }),
+            registration: None,
         };
+        if session.shutdown_token().is_cancelled() {
+            session.set_disconnected();
+            return lifecycle;
+        }
+        let guard = services.connection_registry.register(Arc::clone(&session));
+        lifecycle.registration = Some(Registration {
+            session: Arc::clone(&session),
+            guard: Some(guard),
+        });
         let _ = services
             .event_bus
             .fire(PostLoginEvent::new(session as Arc<dyn Player>))

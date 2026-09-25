@@ -1,7 +1,7 @@
 //! Mocks over the infrarust-api player traits plus a handler test harness.
 
 use std::collections::HashSet;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -218,6 +218,16 @@ impl PlayerRegistry for MockRegistry {
 
     fn get_player_by_id(&self, id: PlayerId) -> Option<Arc<dyn Player>> {
         self.find(|p| p.id == id)
+    }
+
+    fn get_players_by_ip(&self, ip: IpAddr) -> Vec<Arc<dyn Player>> {
+        self.players
+            .lock()
+            .expect("lock poisoned")
+            .iter()
+            .filter(|p| p.remote_addr().ip() == ip)
+            .map(|p| Arc::clone(p) as Arc<dyn Player>)
+            .collect()
     }
 
     fn get_players_on_server(&self, _server: &ServerId) -> Vec<Arc<dyn Player>> {

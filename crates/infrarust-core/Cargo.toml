@@ -39,7 +39,7 @@ infrarust-transport = { workspace = true }
 infrarust_server_manager = { workspace = true }
 
 tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
-tokio-util = { workspace = true }
+tokio-util = { workspace = true, features = ["rt"] }
 futures-util = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true }

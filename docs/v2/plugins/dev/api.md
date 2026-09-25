@@ -135,6 +135,9 @@ if let Some(player) = registry.get_player_by_id(player_id) {
     tracing::info!("Player on {:?}", player.current_server());
 }
 
+// Every player connecting from the same address (alt accounts)
+let alts = registry.get_players_by_ip(ip);
+
 // All players on a specific server
 let lobby_players = registry.get_players_on_server(&ServerId::new("lobby"));
 
@@ -148,10 +151,17 @@ let on_lobby = registry.online_count_on(&ServerId::new("lobby"));
 | `get_player(username)` | `Option<Arc<dyn Player>>` | Lookup by username (case-insensitive) |
 | `get_player_by_uuid(uuid)` | `Option<Arc<dyn Player>>` | Lookup by Mojang UUID |
 | `get_player_by_id(id)` | `Option<Arc<dyn Player>>` | Lookup by session `PlayerId` |
+| `get_players_by_ip(ip)` | `Vec<Arc<dyn Player>>` | Every player whose client connects from `ip` |
 | `get_players_on_server(server)` | `Vec<Arc<dyn Player>>` | All players on a backend server |
 | `get_all_players()` | `Vec<Arc<dyn Player>>` | Every connected player |
 | `online_count()` | `usize` | Total connected player count |
 | `online_count_on(server)` | `usize` | Player count on a specific server |
+
+Lookups by username, UUID, session ID and IP use indexes and never scan the online players. A player is findable from the moment `PostLoginEvent` fires until its `DisconnectEvent` has been handled.
+
+`get_player` ignores case: `"notch"`, `"Notch"` and `"NOTCH"` find the same player. In offline mode, two players can be online whose names differ only by case. When that happens, the one spelled exactly like the argument wins, and otherwise either one is returned.
+
+`get_players_by_ip` matches the address in `Player::remote_addr()`. With `receive_proxy_protocol` enabled, that is the client address from the PROXY protocol header, not the load balancer's. An IPv4 address also matches clients seen as IPv4-mapped IPv6 (`::ffff:a.b.c.d`).
 
 ### The Player trait
 

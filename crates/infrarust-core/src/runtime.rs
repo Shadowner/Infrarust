@@ -26,15 +26,12 @@ use crate::plugin::manager::{PluginManager, PluginServices};
 use crate::plugin::{
     PluginContextFactoryImpl, PluginLoader, PluginPermissions, PluginRegistryImpl,
 };
-use crate::server::ProxyServer;
+use crate::server::{DEFAULT_DRAIN_TIMEOUT, ProxyServer};
 use crate::services::ProxyServices;
 use crate::services::ban_bridge::BanServiceBridge;
 use crate::services::config_service::ConfigServiceImpl;
 use crate::services::scheduler::SchedulerImpl;
 use crate::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};
-
-const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
-const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 pub struct ProxyRuntime;
 
@@ -163,7 +160,7 @@ impl ProxyRuntimeBuilder {
             services.limbo_handler_registry.register(Arc::from(handler));
         }
 
-        activate_config_providers(&plugin_manager, services, &shutdown).await;
+        activate_config_providers(&plugin_manager, services, server.background_token()).await;
 
         server.rebuild_transport_filter_chain(&transport_filter_registry);
 
@@ -369,17 +366,21 @@ impl RunningProxy {
         &self.shutdown
     }
 
-    pub async fn wait(self) -> Result<(), CoreError> {
-        let result = match self.serve_task.await {
+    pub async fn wait(mut self) -> Result<(), CoreError> {
+        let result = match (&mut self.serve_task).await {
             Ok(result) => result,
             Err(e) => Err(CoreError::Other(format!("proxy server task failed: {e}"))),
         };
 
-        self.server.event_bus().fire(ProxyShutdownEvent).await;
+        self.server.close_sessions();
+        self.server.drain_connections(self.drain_timeout).await;
+
+        let bus = self.server.event_bus();
+        bus.fire(ProxyShutdownEvent).await;
+        bus.flush().await;
 
         self.plugin_manager.write().await.shutdown().await;
-
-        drain_connections(&self.server, self.drain_timeout).await;
+        self.server.stop_background_tasks();
 
         result
     }
@@ -390,30 +391,12 @@ impl RunningProxy {
     }
 }
 
-async fn drain_connections(server: &ProxyServer, drain_timeout: Duration) {
-    let remaining = server.registry().count();
-    if remaining == 0 {
-        return;
+impl Drop for RunningProxy {
+    fn drop(&mut self) {
+        self.shutdown.cancel();
+        self.server.close_sessions();
+        self.server.stop_background_tasks();
     }
-    tracing::info!(remaining, "waiting for active connections to drain");
-
-    let _ = tokio::time::timeout(drain_timeout, async {
-        loop {
-            let count = server.registry().count();
-            if count == 0 {
-                tracing::info!("all connections drained");
-                break;
-            }
-            tokio::time::sleep(DRAIN_POLL_INTERVAL).await;
-        }
-    })
-    .await
-    .inspect_err(|_| {
-        tracing::warn!(
-            remaining = server.registry().count(),
-            "drain timeout, forcing shutdown"
-        );
-    });
 }
 
 #[cfg(test)]

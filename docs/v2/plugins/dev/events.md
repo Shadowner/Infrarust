@@ -59,7 +59,7 @@ Only the `Denied` result of `ServerPreConnectEvent` is honored. The results of `
 ### Guarantees
 
 - Every event up to and including `PostLoginEvent` is awaited: the login waits for all listeners before it moves on.
-- A login that ends before `PostLoginEvent` (denied, banned, failed authentication) never creates a player, so no `DisconnectEvent` follows.
+- A login that ends before `PostLoginEvent` (denied, banned, failed authentication, disconnected by `player.disconnect` during an earlier event, or cut short by a proxy shutdown) never creates a player, so no `DisconnectEvent` follows.
 - Once `PostLoginEvent` has fired, `DisconnectEvent` fires exactly once for that player, whatever ends the session: the client leaving, a kick, a denied or failed initial connection, the backend closing, a proxy shutdown or an error.
 - During `PostLoginEvent` the player is already in the player registry (`get_player_by_id`, `get_player` and `get_player_by_uuid` find it) and `current_server()` is `None`, because the player has not been routed yet.
 - A `player.disconnect(reason)` made during `PostLoginEvent` disconnects the client in the state it is in (the login phase for `offline`, before any server is chosen) with that reason, and the player's `DisconnectEvent` follows. Messages, titles and action bars sent during `PostLoginEvent` wait and reach the client once it has joined the game.
@@ -78,6 +78,20 @@ These hold for `offline` and `client_only`. Passthrough modes differ as describe
 - `current_server()` stays `None` until the first `ServerPostConnectEvent`, also while a limbo gate holds the player before their first server. The player already counts toward that server in `PlayerRegistry::online_count_on` and `get_players_on_server`, in the status player count and in the server manager's idle detection.
 - A switch to the server the player is already on does nothing and fires no event.
 - `DisconnectEvent::last_server` is the last server the player joined, `None` if they never got a `ServerPostConnectEvent`.
+
+### Proxy shutdown
+
+When the proxy stops (a signal, the `stop` console command, or a plugin cancelling `proxy_shutdown()`), it goes through these steps in order:
+
+1. It stops accepting connections.
+2. It ends every connection. In `offline` and `client_only`, a player is disconnected with "Proxy is shutting down", in whatever phase it is in (login, configuration or play). In passthrough modes, a player whose traffic is already forwarded only sees the connection close, because the proxy does not write into the forwarded stream. Each player's `DisconnectEvent` fires with the cause `Shutdown` while every plugin is still enabled and subscribed. A login still in progress gets the same message and ends without a `PostLoginEvent`, so it gets no `DisconnectEvent` either. Server list pings and connections that have not finished their handshake are closed.
+3. It waits for every connection to finish, for at most 30 seconds. Each `DisconnectEvent` is still bounded by `[events] disconnect_deadline`, so a listener that hangs holds the shutdown only that long.
+4. It fires `ProxyShutdownEvent` and waits for its listeners. By then no player is online, unless the 30 seconds ran out.
+5. It delivers the queued events that were posted before this point (`ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`).
+6. It disables the plugins, in reverse load order: `on_disable` runs, then the plugin's listeners, commands, scheduled tasks and config providers are removed.
+7. It stops its background work: the file and Docker providers and their watchers, active health probes, the expired ban purge and server manager monitoring.
+
+A plugin can save per-player state in its `DisconnectEvent` listener and global state in `ProxyShutdownEvent` or `on_disable`. The services from the plugin context, such as the player registry or the ban service, still work in `on_disable`.
 
 ## Subscribing to events
 
@@ -332,7 +346,7 @@ Fired exactly once for every player that got a `PostLoginEvent`, when their sess
 | `ClientQuit` (`client_quit`) | The client closed the connection |
 | `Kicked { reason }` (`kicked`) | The proxy ended the session: `Player::disconnect`, a denied connection, a duplicate login. `reason` is what the client was shown |
 | `BackendClosed { reason }` (`backend_closed`) | The backend kicked the player or closed the connection and the player was not moved elsewhere |
-| `Shutdown` (`shutdown`) | The proxy is shutting down |
+| `Shutdown` (`shutdown`) | The proxy is shutting down. The client was shown "Proxy is shutting down" (`offline` and `client_only`). See [Proxy shutdown](#proxy-shutdown) |
 | `Error` (`error`) | The session failed, for example an I/O error or an initial backend that could not be reached |
 
 ```rust
@@ -626,7 +640,7 @@ Fired after the proxy finishes startup and all plugins are loaded. No fields. Us
 
 ### ProxyShutdownEvent
 
-Fired when the proxy shuts down. No fields. Use this or `Plugin::on_disable` for resource cleanup.
+Fired during shutdown, once every player session has ended and before any plugin is disabled. No fields. Use this or `Plugin::on_disable` for resource cleanup. See [Proxy shutdown](#proxy-shutdown) for the full sequence.
 
 ### ConfigReloadEvent
 
