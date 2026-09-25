@@ -1,7 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+use std::path::Path;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_core::provider::file::FileProvider;
@@ -93,101 +95,103 @@ async fn test_provider_id_format() {
     assert_eq!(configs[0].id.to_string(), "file@survival.toml");
 }
 
+fn summary(event: &ProviderEvent) -> String {
+    match event {
+        ProviderEvent::Added(pc) => format!("added {}", pc.id),
+        ProviderEvent::Updated(pc) => format!("updated {}", pc.id),
+        ProviderEvent::Removed(id) => format!("removed {id}"),
+    }
+}
+
+async fn next_event(rx: &mut mpsc::Receiver<ProviderEvent>) -> ProviderEvent {
+    tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("timeout waiting for event")
+        .expect("channel closed")
+}
+
+struct Watching {
+    rx: mpsc::Receiver<ProviderEvent>,
+    shutdown: CancellationToken,
+    handle: JoinHandle<()>,
+}
+
+impl Watching {
+    async fn after_load(dir: &Path) -> Self {
+        let provider = FileProvider::new(dir.to_path_buf());
+        provider.load_initial().await.unwrap();
+        std::fs::write(dir.join("ready.toml"), MINIMAL_CONFIG).unwrap();
+
+        let (tx, mut rx) = mpsc::channel(32);
+        let shutdown = CancellationToken::new();
+        let token = shutdown.clone();
+        let handle = tokio::spawn(async move {
+            provider.watch(tx, token).await.unwrap();
+        });
+        assert_eq!(summary(&next_event(&mut rx).await), "added file@ready.toml");
+
+        Self {
+            rx,
+            shutdown,
+            handle,
+        }
+    }
+
+    async fn next(&mut self) -> ProviderEvent {
+        next_event(&mut self.rx).await
+    }
+
+    async fn only_the_probe_changes(&mut self, dir: &Path) {
+        std::fs::write(dir.join("probe.toml"), MINIMAL_CONFIG).unwrap();
+        assert_eq!(summary(&self.next().await), "added file@probe.toml");
+        std::fs::remove_file(dir.join("probe.toml")).unwrap();
+        assert_eq!(summary(&self.next().await), "removed file@probe.toml");
+    }
+
+    async fn stop(self) {
+        self.shutdown.cancel();
+        self.handle.await.unwrap();
+    }
+}
+
 #[tokio::test]
 async fn test_watch_detects_new_file() {
     let dir = create_test_config_dir(&[]);
-    let provider = FileProvider::new(dir.path().to_path_buf());
-    let (tx, mut rx) = mpsc::channel(32);
-    let shutdown = CancellationToken::new();
+    let mut watching = Watching::after_load(dir.path()).await;
 
-    let shutdown_clone = shutdown.clone();
-    let watch_handle = tokio::spawn(async move {
-        provider.watch(tx, shutdown_clone).await.unwrap();
-    });
-
-    // Wait for watcher to initialize
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    // Create a new config file
     std::fs::write(dir.path().join("new.toml"), MINIMAL_CONFIG).unwrap();
 
-    // Wait for event
-    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-        .await
-        .expect("timeout waiting for event")
-        .expect("channel closed");
-
-    assert!(matches!(event, ProviderEvent::Added(_)));
-    if let ProviderEvent::Added(pc) = event {
-        assert_eq!(pc.id.to_string(), "file@new.toml");
-    }
-
-    shutdown.cancel();
-    watch_handle.await.unwrap();
+    assert_eq!(summary(&watching.next().await), "added file@new.toml");
+    watching.stop().await;
 }
 
 #[tokio::test]
 async fn test_watch_detects_removed_file() {
     let dir = create_test_config_dir(&[("existing.toml", MINIMAL_CONFIG)]);
-    let provider = FileProvider::new(dir.path().to_path_buf());
-    let (tx, mut rx) = mpsc::channel(32);
-    let shutdown = CancellationToken::new();
+    let mut watching = Watching::after_load(dir.path()).await;
 
-    let shutdown_clone = shutdown.clone();
-    let watch_handle = tokio::spawn(async move {
-        provider.watch(tx, shutdown_clone).await.unwrap();
-    });
-
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    // Remove the file
     std::fs::remove_file(dir.path().join("existing.toml")).unwrap();
 
-    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-        .await
-        .expect("timeout waiting for event")
-        .expect("channel closed");
-
-    assert!(matches!(event, ProviderEvent::Removed(_)));
-    if let ProviderEvent::Removed(id) = event {
-        assert_eq!(id.to_string(), "file@existing.toml");
-    }
-
-    shutdown.cancel();
-    watch_handle.await.unwrap();
+    assert_eq!(
+        summary(&watching.next().await),
+        "removed file@existing.toml"
+    );
+    watching.stop().await;
 }
 
 #[tokio::test]
 async fn test_watch_detects_modified_file() {
     let dir = create_test_config_dir(&[("server.toml", MINIMAL_CONFIG)]);
-    let provider = FileProvider::new(dir.path().to_path_buf());
-    let (tx, mut rx) = mpsc::channel(32);
-    let shutdown = CancellationToken::new();
+    let mut watching = Watching::after_load(dir.path()).await;
 
-    let shutdown_clone = shutdown.clone();
-    let watch_handle = tokio::spawn(async move {
-        provider.watch(tx, shutdown_clone).await.unwrap();
-    });
-
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    // Modify the file with different content
     std::fs::write(dir.path().join("server.toml"), FULL_CONFIG).unwrap();
 
-    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-        .await
-        .expect("timeout waiting for event")
-        .expect("channel closed");
-
-    assert!(matches!(event, ProviderEvent::Updated(_)));
+    let event = watching.next().await;
+    assert_eq!(summary(&event), "updated file@server.toml");
     if let ProviderEvent::Updated(pc) = event {
-        assert_eq!(pc.id.to_string(), "file@server.toml");
-        // Should have the updated domains
         assert!(pc.config.domains.contains(&"survival.mc.com".to_string()));
     }
-
-    shutdown.cancel();
-    watch_handle.await.unwrap();
+    watching.stop().await;
 }
 
 #[tokio::test]
@@ -215,78 +219,75 @@ async fn test_watch_stops_on_shutdown() {
 #[tokio::test]
 async fn test_watch_invalid_toml_keeps_old() {
     let dir = create_test_config_dir(&[("server.toml", MINIMAL_CONFIG)]);
-    let provider = FileProvider::new(dir.path().to_path_buf());
-    let (tx, mut rx) = mpsc::channel(32);
-    let shutdown = CancellationToken::new();
+    let mut watching = Watching::after_load(dir.path()).await;
 
-    let shutdown_clone = shutdown.clone();
-    let watch_handle = tokio::spawn(async move {
-        provider.watch(tx, shutdown_clone).await.unwrap();
-    });
-
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    // Write invalid TOML — should NOT produce an Updated or Removed event
     std::fs::write(dir.path().join("server.toml"), "invalid {{{ toml").unwrap();
 
-    // Should timeout — no event emitted for invalid TOML
-    let result = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await;
-    assert!(
-        result.is_err(),
-        "expected no event for invalid TOML modification"
-    );
-
-    shutdown.cancel();
-    watch_handle.await.unwrap();
-}
-
-async fn first_event_after_probe(dir: &std::path::Path, rx: &mut mpsc::Receiver<ProviderEvent>) {
-    std::fs::write(dir.join("probe.toml"), MINIMAL_CONFIG).unwrap();
-    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-        .await
-        .expect("timeout waiting for the probe")
-        .expect("channel closed");
-    match event {
-        ProviderEvent::Added(pc) => assert_eq!(pc.id.to_string(), "file@probe.toml"),
-        other => panic!("expected only the probe to be added, got {other:?}"),
-    }
+    watching.only_the_probe_changes(dir.path()).await;
+    watching.stop().await;
 }
 
 #[tokio::test]
-async fn test_watch_is_silent_about_files_present_at_start() {
+async fn test_watch_is_silent_about_files_already_loaded() {
     let dir = create_test_config_dir(&[("a.toml", MINIMAL_CONFIG), ("b.toml", FULL_CONFIG)]);
-    let provider = FileProvider::new(dir.path().to_path_buf());
-    let (tx, mut rx) = mpsc::channel(32);
-    let shutdown = CancellationToken::new();
+    let mut watching = Watching::after_load(dir.path()).await;
 
-    let shutdown_clone = shutdown.clone();
-    let watch_handle = tokio::spawn(async move {
-        provider.watch(tx, shutdown_clone).await.unwrap();
-    });
-
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    first_event_after_probe(dir.path(), &mut rx).await;
-
-    shutdown.cancel();
-    watch_handle.await.unwrap();
+    watching.only_the_probe_changes(dir.path()).await;
+    watching.stop().await;
 }
 
 #[tokio::test]
 async fn test_watch_ignores_a_rewrite_with_the_same_content() {
     let dir = create_test_config_dir(&[("server.toml", FULL_CONFIG)]);
+    let mut watching = Watching::after_load(dir.path()).await;
+
+    std::fs::write(dir.path().join("server.toml"), FULL_CONFIG).unwrap();
+
+    watching.only_the_probe_changes(dir.path()).await;
+    watching.stop().await;
+}
+
+#[tokio::test]
+async fn test_watch_emits_changes_made_between_load_and_watch() {
+    let dir = create_test_config_dir(&[
+        ("kept.toml", MINIMAL_CONFIG),
+        ("changed.toml", MINIMAL_CONFIG),
+        ("gone.toml", MINIMAL_CONFIG),
+    ]);
     let provider = FileProvider::new(dir.path().to_path_buf());
+    assert_eq!(provider.load_initial().await.unwrap().len(), 3);
+
+    std::fs::write(dir.path().join("added.toml"), MINIMAL_CONFIG).unwrap();
+    std::fs::write(dir.path().join("changed.toml"), FULL_CONFIG).unwrap();
+    std::fs::remove_file(dir.path().join("gone.toml")).unwrap();
+
     let (tx, mut rx) = mpsc::channel(32);
     let shutdown = CancellationToken::new();
-
     let shutdown_clone = shutdown.clone();
     let watch_handle = tokio::spawn(async move {
         provider.watch(tx, shutdown_clone).await.unwrap();
     });
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    std::fs::write(dir.path().join("server.toml"), FULL_CONFIG).unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    first_event_after_probe(dir.path(), &mut rx).await;
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap_or_else(|_| panic!("a change made before the watch was lost, got {seen:?}"))
+            .expect("channel closed");
+        if let ProviderEvent::Updated(pc) = &event {
+            assert!(pc.config.domains.contains(&"survival.mc.com".to_string()));
+        }
+        seen.push(summary(&event));
+    }
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            "added file@added.toml",
+            "removed file@gone.toml",
+            "updated file@changed.toml",
+        ]
+    );
 
     shutdown.cancel();
     watch_handle.await.unwrap();
@@ -298,25 +299,15 @@ async fn test_watch_keeps_servers_when_the_directory_cannot_be_listed() {
     use std::os::unix::fs::PermissionsExt;
 
     let dir = create_test_config_dir(&[("a.toml", MINIMAL_CONFIG), ("b.toml", FULL_CONFIG)]);
-    let provider = FileProvider::new(dir.path().to_path_buf());
-    let (tx, mut rx) = mpsc::channel(32);
-    let shutdown = CancellationToken::new();
+    let mut watching = Watching::after_load(dir.path()).await;
 
-    let shutdown_clone = shutdown.clone();
-    let watch_handle = tokio::spawn(async move {
-        provider.watch(tx, shutdown_clone).await.unwrap();
-    });
-
-    tokio::time::sleep(Duration::from_millis(300)).await;
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o000)).unwrap();
-    let during = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+    let during = tokio::time::timeout(Duration::from_secs(1), watching.rx.recv()).await;
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(
         during.is_err(),
         "an unreadable directory changed the servers: {during:?}"
     );
-    first_event_after_probe(dir.path(), &mut rx).await;
-
-    shutdown.cancel();
-    watch_handle.await.unwrap();
+    watching.only_the_probe_changes(dir.path()).await;
+    watching.stop().await;
 }

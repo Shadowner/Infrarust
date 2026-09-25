@@ -11,17 +11,21 @@ use infrarust_config::{KeepaliveConfig, ServerAddress};
 use infrarust_core::loadbalancer::{BackendHealthView, BackendState, PassiveBackendHealth};
 use infrarust_transport::{BackendConnector, ConnectionInfo};
 
+fn closed_port() -> tokio::net::TcpSocket {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_reuseaddr(false).unwrap();
+    socket
+        .bind(std::net::SocketAddr::from(([127, 0, 0, 1], 0)))
+        .unwrap();
+    socket
+}
+
 #[tokio::test]
 async fn observer_records_failover_outcomes() {
-    // Dead address: bind then drop, so the port refuses connections.
-    let dead = {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        ServerAddress {
-            host: "127.0.0.1".to_string(),
-            port,
-        }
+    let reserved = closed_port();
+    let dead = ServerAddress {
+        host: "127.0.0.1".to_string(),
+        port: reserved.local_addr().unwrap().port(),
     };
     let live_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let live = ServerAddress {

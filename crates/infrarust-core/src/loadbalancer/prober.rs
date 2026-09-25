@@ -232,6 +232,15 @@ mod tests {
         ))
     }
 
+    fn closed_port() -> tokio::net::TcpSocket {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.set_reuseaddr(false).unwrap();
+        socket
+            .bind(std::net::SocketAddr::from(([127, 0, 0, 1], 0)))
+            .unwrap();
+        socket
+    }
+
     fn config(address: &str) -> ServerConfig {
         toml::from_str(&format!(
             "name = \"probed\"\ndomains = [\"probed.test\"]\naddresses = [\"{address}\"]\n"
@@ -285,9 +294,8 @@ mod tests {
     /// come back in slow start rather than at full weight.
     #[tokio::test]
     async fn sweep_reinstates_a_recovered_address_in_slow_start() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
+        let reserved = closed_port();
+        let port = reserved.local_addr().unwrap().port();
 
         let router = Arc::new(DomainRouter::new());
         router.add(
@@ -310,9 +318,7 @@ mod tests {
         assert_ne!(health.snapshot(&address).state, BackendState::Healthy);
 
         // The server comes back.
-        let _listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-            .await
-            .unwrap();
+        let _listener = reserved.listen(16).unwrap();
         health.rewind_failures_for_test(&address);
         prober(&router, &health).sweep().await;
 
