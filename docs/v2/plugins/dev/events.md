@@ -86,7 +86,7 @@ PreLoginEvent ─────────────── Denied ──▶ dis
 - `PreLoginEvent`: `Denied` is honored. `ForceOffline` and `ForceOnline` are ignored and logged at debug level, since the backend runs its own login.
 - `GameProfileRequestEvent` fires with `online_mode: false` and the offline profile (see [`[auth] offline_uuid`](../../configuration/global#authentication)). The profile left in the event is the player's identity on the proxy: the UUID ban check, the player registry and every later event use it, and BungeeCord or BungeeGuard forwarding sends its UUID and properties (skin textures, for example) to the backend. The backend still runs its own login with the name the client sent, and the client receives the backend's `LoginSuccess`, so a changed name or UUID only exists on the proxy unless forwarding carries it.
 - `PermissionsSetupEvent` and `LoginEvent` fire with `online_mode: false`.
-- The player is not active: `is_active()` is `false`, and `send_message`, `send_title`, `send_action_bar`, `send_packet` and `switch_server` return `PlayerError::NotActive`. `disconnect` works: until the proxy has connected to the backend, the client gets the reason in a login disconnect; after that, the proxy closes the connection without a message.
+- The player is not active: `is_active()` is `false`, and `send_message`, `send_title`, `send_action_bar`, `send_packet`, `send_plugin_message`, `send_plugin_message_to_backend` and `switch_server` return `PlayerError::NotActive`. No plugin message or client state event fires, and `client_brand()`, `settings()` and `ping()` return `None`. `disconnect` works: until the proxy has connected to the backend, the client gets the reason in a login disconnect; after that, the proxy closes the connection without a message.
 - `PlayerChooseInitialServerEvent`: `Redirect` is honored. `ServerPreConnectEvent`: `Allowed`, `ConnectTo` and `Denied` are honored.
 - `SendToLimbo`, from either event, disconnects the player with "Limbo is not available on this server" and logs a warning: limbo needs the proxy to run the login, which only `offline` and `client_only` do. The `DisconnectEvent` cause is `Kicked` with that reason.
 - A redirect (`Redirect`, `ConnectTo`, or `RedirectTo` from `KickedFromServerEvent`) must target a server in a forwarding mode. Forwarding the login to an `offline` or `client_only` server would skip the login the proxy runs for it, so the player is disconnected with "This server cannot be joined from here" and a warning is logged. An unknown server disconnects the player with "Unknown server".
@@ -208,8 +208,8 @@ Every event goes through the same dispatch: listeners run one after another in p
 
 | Delivery | Events | What it means |
 |----------|--------|---------------|
-| Inline, awaited | `ConnectionHandshakeEvent`, `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
-| Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `BanIssuedEvent`, `BanRevokedEvent`, `ConnectionRejectedEvent`, `PluginEnabledEvent`, `PluginDisabledEvent`, `ServiceProvidedEvent`, `ServiceRemovedEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
+| Inline, awaited | `ConnectionHandshakeEvent`, `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `PluginMessageEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
+| Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `BanIssuedEvent`, `BanRevokedEvent`, `ConnectionRejectedEvent`, `PluginEnabledEvent`, `PluginDisabledEvent`, `ServiceProvidedEvent`, `ServiceRemovedEvent`, `PlayerClientBrandEvent`, `PlayerSettingsChangedEvent`, `PlayerChannelRegisterEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
 
 Because the queue delivers one event at a time, a slow listener on a queued event delays the queued events behind it, up to `handler_timeout` per listener. A listener that panics does not stop the queue: the next event is still delivered.
 
@@ -564,6 +564,7 @@ Fired before the proxy opens a connection to a backend server, once per connecti
 | `Switch` (`switch`) | `Player::switch_server`, a command or a plugin moves the player to another server |
 | `LimboExit` (`limbo_exit`) | A limbo handler sends the player to another server than the one it held them for, or back to a server after a kick sent them to limbo |
 | `KickRedirect` (`kick_redirect`) | A `KickedFromServerEvent` listener redirected the kicked player |
+| `PluginMessage` (`plugin_message`) | A backend asked for it on the [BungeeCord channel](./messaging#the-bungeecord-channel) (`Connect`, `ConnectOther`) |
 
 **Results** (`ServerPreConnectResult`):
 
@@ -844,6 +845,56 @@ Formats: [Java Edition protocol, packets](https://minecraft.wiki/w/Java_Edition_
 ### WASM chat events
 
 Contract 0.2.3 has `chat-message` and no command event. A WASM plugin needs the [`chat-intercept`](../wasm/capabilities) capability to subscribe to `chat-message`. `deny(component)` maps to `Deny { reason: Some(..) }` and `modify(text)` to `Modify`. The record carries `player-id` and `message` only. See [WASM events](../wasm/events).
+
+## Plugin message and client events
+
+The proxy reads plugin messages and the client's settings in `offline`, `client_only` and limbo. [Plugin messaging](./messaging) covers channels, sending, the BungeeCord channel and the client state in full.
+
+### PluginMessageEvent
+
+Fired for a plugin message on a channel a plugin registered with `ctx.channel_registrar()`, in the configuration phase and in play, from the client or the backend. Awaited in the player's session: the message waits for the listeners. Messages on other channels pass through untouched and fire nothing.
+
+**Type:** Resulted
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `player` | `Arc<dyn Player>` | The player whose connection carries the message |
+| `source` | `Endpoint` | `Client` or `Backend(ServerId)` |
+| `channel` | `ChannelId` | The registered channel |
+| `raw_channel` | `String` | The channel name as sent |
+| `data` | `Bytes` | The payload |
+| `phase` | `MessagePhase` | `Configuration` or `Play` |
+
+**Results** (`PluginMessageResult`): `Forward` (default, `forward()`), `Handled` (`handled()`, nothing is forwarded) and `Replace(Bytes)` (`replace(data)`, forward `data` instead).
+
+A client message on `BungeeCord`, `bungeecord:main` or a `velocity:` channel is dropped before this event, whoever registered the channel.
+
+### PlayerClientBrandEvent
+
+Posted when the client sends its brand (`minecraft:brand`, `MC|Brand` before 1.13) and it differs from the last one. Informational and queued. Fields: `player`, `brand`.
+
+### PlayerSettingsChangedEvent
+
+Posted when the client sends its settings (Client Information) and they differ from the last ones: at login and whenever the player changes an option. Informational and queued. Fields: `player`, `settings` (`ClientSettings`).
+
+### PlayerChannelRegisterEvent
+
+Posted when channels are registered on `minecraft:register` (`REGISTER` before 1.13). Informational and queued. Fields: `player`, `channels` (the names in the message), `direction` (`PacketDirection::Serverbound` when the client registered them, `Clientbound` when the backend did). Unregistrations post nothing.
+
+```rust
+use infrarust_api::events::client::PlayerSettingsChangedEvent;
+
+ctx.event_bus().subscribe::<PlayerSettingsChangedEvent, _>(EventPriority::NORMAL, |event| {
+    tracing::info!(
+        "{} plays in {} with a view distance of {}",
+        event.player.profile().username,
+        event.settings.locale,
+        event.settings.view_distance,
+    );
+});
+```
+
+WASM plugins (contract 0.2.3) receive none of these events. Plugin messaging for WASM comes with the next contract version.
 
 ## Packet events
 

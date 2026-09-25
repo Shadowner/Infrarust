@@ -17,6 +17,7 @@ use crate::limbo::registry_cache::RegistryCodecCache;
 use crate::loadbalancer::BackendHealthView;
 use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
+use crate::plugin_messaging::PluginMessaging;
 use crate::provider::ProviderEvent;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
@@ -71,6 +72,7 @@ pub struct ProxyServices {
     pub forwarding_mode: Arc<ForwardingMode>,
     pub forwarding_secret: Option<Arc<[u8]>>,
     pub permission_service: Arc<PermissionService>,
+    pub plugin_messaging: Arc<PluginMessaging>,
 }
 
 impl ProxyServices {

@@ -26,6 +26,12 @@ pub enum PlayerError {
     /// A server switch operation failed.
     #[error("switch failed: {0}")]
     SwitchFailed(String),
+
+    #[error("player is not connected to a backend server")]
+    NoBackend,
+
+    #[error("plugin message of {size} bytes is over the {max} bytes allowed")]
+    MessageTooLarge { size: usize, max: usize },
 }
 
 /// Errors that can occur when interacting with proxy services.

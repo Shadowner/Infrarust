@@ -128,6 +128,7 @@ mod tests {
             ip_filter: None,
             disconnect_message: None,
             limbo_handlers: vec![],
+            bungeecord_channel: false,
         }
     }
 

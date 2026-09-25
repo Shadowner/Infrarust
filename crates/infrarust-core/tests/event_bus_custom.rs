@@ -10,6 +10,9 @@ use infrarust_api::event::bus::{EventBus, EventBusExt, FireError};
 use infrarust_api::event::{Event, EventPriority};
 use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::chat::ChatMessageEvent;
+use infrarust_api::events::client::{
+    PlayerChannelRegisterEvent, PlayerClientBrandEvent, PlayerSettingsChangedEvent,
+};
 use infrarust_api::events::command::CommandExecuteEvent;
 use infrarust_api::events::connection::{
     KickedFromServerEvent, PlayerChooseInitialServerEvent, ServerConnectedEvent,
@@ -21,6 +24,7 @@ use infrarust_api::events::lifecycle::{
     PostLoginEvent, PreLoginEvent,
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
+use infrarust_api::events::messaging::PluginMessageEvent;
 use infrarust_api::events::named::{NamedEvent, NamedEventResponse};
 use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_api::events::plugin::{
@@ -228,7 +232,7 @@ async fn a_failing_handler_names_the_plugin_that_fired_the_event() {
 
 type Probe = (&'static str, fn() -> TypeId);
 
-const BUILTIN_NAMES: [Probe; 30] = [
+const BUILTIN_NAMES: [Probe; 34] = [
     ("PreLoginEvent", TypeId::of::<PreLoginEvent>),
     (
         "GameProfileRequestEvent",
@@ -277,6 +281,19 @@ const BUILTIN_NAMES: [Probe; 30] = [
     ("PluginDisabledEvent", TypeId::of::<PluginDisabledEvent>),
     ("ServiceProvidedEvent", TypeId::of::<ServiceProvidedEvent>),
     ("ServiceRemovedEvent", TypeId::of::<ServiceRemovedEvent>),
+    ("PluginMessageEvent", TypeId::of::<PluginMessageEvent>),
+    (
+        "PlayerClientBrandEvent",
+        TypeId::of::<PlayerClientBrandEvent>,
+    ),
+    (
+        "PlayerSettingsChangedEvent",
+        TypeId::of::<PlayerSettingsChangedEvent>,
+    ),
+    (
+        "PlayerChannelRegisterEvent",
+        TypeId::of::<PlayerChannelRegisterEvent>,
+    ),
 ];
 
 const OPEN_API_EVENTS: [&str; 1] = ["NamedEvent"];

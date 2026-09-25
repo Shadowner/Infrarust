@@ -9,11 +9,13 @@
 
 pub mod ban;
 pub mod chat;
+pub mod client;
 pub mod command;
 pub mod connection;
 pub mod handshake;
 pub mod lifecycle;
 pub mod limbo;
+pub mod messaging;
 pub mod named;
 pub mod packet;
 pub mod plugin;
@@ -21,6 +23,7 @@ pub mod proxy;
 
 pub use ban::{BanIssuedEvent, BanRevokedEvent};
 pub use chat::{ChatMessageEvent, ChatMessageResult};
+pub use client::{PlayerChannelRegisterEvent, PlayerClientBrandEvent, PlayerSettingsChangedEvent};
 pub use command::{CommandExecuteEvent, CommandExecuteResult};
 pub use connection::{
     ConnectCause, KickCause, KickedFromServerEvent, KickedFromServerResult,
@@ -37,6 +40,7 @@ pub use lifecycle::{
     PreLoginResult,
 };
 pub use limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
+pub use messaging::{PluginMessageEvent, PluginMessageResult};
 pub use named::{NamedEvent, NamedEventResponse};
 pub use packet::{PacketDirection, RawPacketEvent, RawPacketResult};
 pub use plugin::{

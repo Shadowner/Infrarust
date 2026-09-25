@@ -2,6 +2,9 @@ use std::any::TypeId;
 
 use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::chat::ChatMessageEvent;
+use infrarust_api::events::client::{
+    PlayerChannelRegisterEvent, PlayerClientBrandEvent, PlayerSettingsChangedEvent,
+};
 use infrarust_api::events::command::CommandExecuteEvent;
 use infrarust_api::events::connection::{
     KickedFromServerEvent, PlayerChooseInitialServerEvent, ServerConnectedEvent,
@@ -13,6 +16,7 @@ use infrarust_api::events::lifecycle::{
     PostLoginEvent, PreLoginEvent,
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
+use infrarust_api::events::messaging::PluginMessageEvent;
 use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_api::events::plugin::{
     PluginDisabledEvent, PluginEnabledEvent, ServiceProvidedEvent, ServiceRemovedEvent,
@@ -50,6 +54,10 @@ pub static BUILTIN_EVENTS: &[TypeId] = &[
     TypeId::of::<LimboEnterEvent>(),
     TypeId::of::<LimboExitEvent>(),
     TypeId::of::<RawPacketEvent>(),
+    TypeId::of::<PluginMessageEvent>(),
+    TypeId::of::<PlayerClientBrandEvent>(),
+    TypeId::of::<PlayerSettingsChangedEvent>(),
+    TypeId::of::<PlayerChannelRegisterEvent>(),
     TypeId::of::<PluginEnabledEvent>(),
     TypeId::of::<PluginDisabledEvent>(),
     TypeId::of::<ServiceProvidedEvent>(),

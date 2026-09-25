@@ -20,6 +20,7 @@ pub mod permissions;
 pub mod pipeline;
 pub mod player;
 pub mod plugin;
+pub mod plugin_messaging;
 pub mod provider;
 pub mod registry;
 pub mod registry_data;

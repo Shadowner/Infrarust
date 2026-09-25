@@ -194,6 +194,7 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
         ip_filter,
         disconnect_message: None,
         limbo_handlers: Vec::new(),
+        bungeecord_channel: false,
     };
 
     MigrationResult { config, warnings }
@@ -737,6 +738,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         bind,
         active_health: ActiveHealthConfig::default(),
         events: Default::default(),
+        plugin_messaging: Default::default(),
         wasm: Default::default(),
         max_connections: 0,
         connect_timeout: crate::defaults::connect_timeout(),

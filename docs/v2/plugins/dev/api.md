@@ -105,6 +105,8 @@ The `PluginContext` trait provides access to every service and registration meth
 | `data_dir()` | `PathBuf` | This plugin's data directory, `<plugins_dir>/<plugin_id>`, created if missing |
 | `proxy_shutdown()` | `CancellationToken` | Token that fires when the proxy shuts down |
 | `plugin_id()` | `&str` | This plugin's ID |
+| `channel_registrar()` | `&dyn ChannelRegistrar` | Register the plugin message channels this plugin listens on, removed when it is disabled. See [Plugin messaging](./messaging) |
+| `server_messenger()` | `Arc<dyn ServerMessenger>` | Send a plugin message to a backend server through a player on it. See [Plugin messaging](./messaging#messages-to-a-server) |
 
 `codec_filters()` and `transport_filters()` return `None` unless the plugin holds the matching capability in its Infrarust config, with the transport filter capability reserved for trusted native plugins.
 
@@ -205,6 +207,15 @@ player.send_title(TitleData::new(
 player.send_action_bar(Component::text("Action bar text"))?;
 player.send_packet(raw_packet)?;
 player.switch_server(ServerId::new("survival")).await?;
+player.send_plugin_message(&ChannelId::modern("myplugin:main")?, Bytes::from_static(b"hi"))?;
+player.send_plugin_message_to_backend(&ChannelId::bungeecord(), request)?;
+
+// What the client said about itself (None or empty in the forwarding modes)
+let brand: Option<String> = player.client_brand();
+let settings: Option<ClientSettings> = player.settings();
+let channels: Vec<String> = player.known_channels();
+let ping: Option<Duration> = player.ping();
+let host: Option<String> = player.virtual_host();
 
 // Always works regardless of proxy mode
 player.disconnect(Component::text("Goodbye")).await;
@@ -213,8 +224,12 @@ player.disconnect(Component::text("Goodbye")).await;
 `has_permission()` asks the active permission provider's checker for the node, then falls back to the node's registered default, then denies. There are no permission levels: an admin is a player holding `infrarust.admin` (`ADMIN_PERMISSION`). `refresh_permissions()` asks the provider for a new checker and sends this player a rebuilt command tree. See [Permissions](./permissions).
 
 ::: warning
-`send_message`, `send_title`, `send_action_bar`, `send_packet`, and `switch_server` only work when the player is on an active proxy path, which means `ClientOnly` or `Offline` mode. On passive paths (`Passthrough`, `ZeroCopy`, `ServerOnly`) they return `Err(PlayerError::NotActive)`. Check `player.is_active()` first. `disconnect` always works.
+`send_message`, `send_title`, `send_action_bar`, `send_packet`, `send_plugin_message`, `send_plugin_message_to_backend` and `switch_server` only work when the player is on an active proxy path, which means `ClientOnly` or `Offline` mode. On passive paths (`Passthrough`, `ZeroCopy`, `ServerOnly`) they return `Err(PlayerError::NotActive)`. Check `player.is_active()` first. `disconnect` always works.
 :::
+
+`client_brand()`, `settings()` and `known_channels()` hold what the client sent on `minecraft:brand`, in its Client Information packet and on `minecraft:register`. `virtual_host()` is the domain the client connected to, known in every proxy mode. `ping()` is the last keepalive round trip the proxy measured. The proxy sends the settings, the brand and the channels again to every server a switch reaches. See [Plugin messaging](./messaging#client-state).
+
+`send_plugin_message` and `send_plugin_message_to_backend` send on a channel, picking the configuration or play packet for the phase the connection is in, and return `PlayerError::MessageTooLarge` over 1 MiB (to the client) or 32767 bytes (to the backend), and `PlayerError::NoBackend` when the player is not on a backend. See [Plugin messaging](./messaging#sending-plugin-messages) for when they are delivered.
 
 #### When actions reach the client
 

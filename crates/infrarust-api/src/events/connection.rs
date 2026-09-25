@@ -13,6 +13,7 @@ pub enum ConnectCause {
     Switch,
     LimboExit,
     KickRedirect,
+    PluginMessage,
 }
 
 impl ConnectCause {
@@ -22,6 +23,7 @@ impl ConnectCause {
             Self::Switch => "switch",
             Self::LimboExit => "limbo_exit",
             Self::KickRedirect => "kick_redirect",
+            Self::PluginMessage => "plugin_message",
         }
     }
 }
@@ -445,6 +447,7 @@ mod tests {
         assert_eq!(ConnectCause::Switch.as_str(), "switch");
         assert_eq!(ConnectCause::LimboExit.as_str(), "limbo_exit");
         assert_eq!(ConnectCause::KickRedirect.as_str(), "kick_redirect");
+        assert_eq!(ConnectCause::PluginMessage.as_str(), "plugin_message");
     }
 
     #[test]

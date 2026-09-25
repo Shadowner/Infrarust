@@ -32,6 +32,10 @@ pub struct PluginContextFactoryImpl {
     permissions: Option<Arc<PermissionService>>,
     limbo_handlers: Arc<LimboHandlerRegistry>,
     service_registry: Arc<ServiceRegistryImpl>,
+    messaging: Option<(
+        Arc<crate::plugin_messaging::PluginMessaging>,
+        Arc<crate::registry::ConnectionRegistry>,
+    )>,
 }
 
 impl PluginContextFactoryImpl {
@@ -50,7 +54,18 @@ impl PluginContextFactoryImpl {
             permissions: None,
             limbo_handlers: Arc::new(LimboHandlerRegistry::new()),
             service_registry,
+            messaging: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_messaging(
+        mut self,
+        messaging: Arc<crate::plugin_messaging::PluginMessaging>,
+        players: Arc<crate::registry::ConnectionRegistry>,
+    ) -> Self {
+        self.messaging = Some((messaging, players));
+        self
     }
 
     #[must_use]
@@ -133,6 +148,13 @@ impl PluginContextFactory for PluginContextFactoryImpl {
         ctx = ctx
             .with_limbo_handlers(Arc::clone(&self.limbo_handlers))
             .with_services(Arc::clone(&self.service_registry));
+        if let Some((messaging, players)) = &self.messaging {
+            ctx = ctx.with_channels(crate::plugin_messaging::PluginChannels::new(
+                plugin_id,
+                messaging,
+                Arc::clone(players),
+            ));
+        }
         let ctx = Arc::new(ctx);
 
         cache.insert(plugin_id.to_string(), Arc::downgrade(&ctx));

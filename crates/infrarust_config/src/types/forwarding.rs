@@ -36,11 +36,17 @@ pub struct ForwardingConfig {
     #[serde(default = "default_secret_file")]
     pub secret_file: PathBuf,
 
-    #[serde(default = "default_true")]
-    pub bungeecord_channel: bool,
+    #[serde(default, skip_serializing)]
+    pub bungeecord_channel: Option<bool>,
 
-    #[serde(default)]
-    pub channel_permissions: BungeeCordChannelPermissions,
+    #[serde(default, skip_serializing)]
+    pub channel_permissions: Option<BungeeCordChannelPermissions>,
+}
+
+impl ForwardingConfig {
+    pub const fn has_moved_channel_keys(&self) -> bool {
+        self.bungeecord_channel.is_some() || self.channel_permissions.is_some()
+    }
 }
 
 impl Default for ForwardingConfig {
@@ -48,8 +54,8 @@ impl Default for ForwardingConfig {
         Self {
             mode: ForwardingMode::default(),
             secret_file: default_secret_file(),
-            bungeecord_channel: true,
-            channel_permissions: BungeeCordChannelPermissions::default(),
+            bungeecord_channel: None,
+            channel_permissions: None,
         }
     }
 }

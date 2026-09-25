@@ -120,8 +120,15 @@ pub(super) async fn resolve_initial_mode(
         infrarust_api::events::connection::PlayerChooseInitialServerResult::SendToLimbo {
             limbo_handlers,
         } => {
-            prepare_client_for_limbo(client, auth_result, login_completed, version, services)
-                .await?;
+            prepare_client_for_limbo(
+                client,
+                player,
+                auth_result,
+                login_completed,
+                version,
+                services,
+            )
+            .await?;
             let Some(handlers) =
                 resolve_limbo_strict(&services.limbo_handler_registry, limbo_handlers)
             else {
@@ -159,8 +166,15 @@ pub(super) async fn resolve_initial_mode(
             infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo {
                 limbo_handlers,
             } => {
-                prepare_client_for_limbo(client, auth_result, login_completed, version, services)
-                    .await?;
+                prepare_client_for_limbo(
+                    client,
+                    player,
+                    auth_result,
+                    login_completed,
+                    version,
+                    services,
+                )
+                .await?;
                 let handler_names = if limbo_handlers.is_empty() {
                     server_config.limbo_handlers.clone()
                 } else {
@@ -237,7 +251,15 @@ pub(super) async fn resolve_initial_mode(
             &server_config.limbo_handlers,
         )
     {
-        prepare_client_for_limbo(client, auth_result, login_completed, version, services).await?;
+        prepare_client_for_limbo(
+            client,
+            player,
+            auth_result,
+            login_completed,
+            version,
+            services,
+        )
+        .await?;
         initial_mode = Some(ConnectionMode::Limbo(
             handlers,
             LimboEntryContext::InitialConnection {
@@ -400,6 +422,7 @@ fn build_forwarding_data(
 
 async fn prepare_client_for_limbo(
     client: &mut ClientBridge,
+    player: &Arc<PlayerSession>,
     auth_result: &AuthResult,
     login_completed: &mut bool,
     version: ProtocolVersion,
@@ -413,6 +436,9 @@ async fn prepare_client_for_limbo(
             version,
             &services.packet_registry,
             &services.registry_codec_cache,
+            Some(&crate::plugin_messaging::router::ClientObserver::new(
+                player, services, version,
+            )),
         )
         .await
     {

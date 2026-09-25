@@ -85,14 +85,14 @@ impl KeepAliveState {
 
     /// Processes a keepalive response from the client.
     ///
-    /// Returns `true` if the ID matches the last sent keepalive, clearing
-    /// the pending state. Returns `false` on mismatch.
-    pub fn on_response(&mut self, id: i64) -> bool {
-        if id == self.last_sent_id {
+    /// Returns the round trip time if the ID matches the last sent keepalive,
+    /// clearing the pending state. Returns `None` on mismatch.
+    pub fn on_response(&mut self, id: i64) -> Option<Duration> {
+        if self.awaiting_response && id == self.last_sent_id {
             self.awaiting_response = false;
-            true
+            Some(self.last_sent_at.elapsed())
         } else {
-            false
+            None
         }
     }
 }
@@ -180,7 +180,7 @@ mod tests {
 
         let _ = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
         assert!(
-            state.on_response(state.last_sent_id),
+            state.on_response(state.last_sent_id).is_some(),
             "valid id clears pending"
         );
         assert!(!state.awaiting_response);
@@ -198,8 +198,12 @@ mod tests {
         state.last_sent_id = 42;
         state.awaiting_response = true;
 
-        assert!(state.on_response(42));
+        assert!(state.on_response(42).is_some());
         assert!(!state.awaiting_response);
+        assert!(
+            state.on_response(42).is_none(),
+            "a second answer measures nothing"
+        );
     }
 
     #[test]
@@ -208,7 +212,7 @@ mod tests {
         state.last_sent_id = 42;
         state.awaiting_response = true;
 
-        assert!(!state.on_response(99));
+        assert!(state.on_response(99).is_none());
         assert!(state.awaiting_response);
     }
 }

@@ -102,6 +102,7 @@ Forwarding proxy modes (`passthrough`, `zero_copy`, `server_only`) require at le
 | `max_players` | integer | `0` | Maximum players allowed on this server. `0` means unlimited. |
 | `disconnect_message` | string | `"Server is currently unreachable. Please try again later."` | Message shown to players when the backend is unreachable. |
 | `limbo_handlers` | list of strings | `[]` | Registered handler names for the limbo handler chain, executed in order. |
+| `bungeecord_channel` | bool | `false` | Let this server's plugins use the `BungeeCord` plugin messaging channel. Needs [`[plugin_messaging] bungeecord = true`](./global#plugin-messaging) and `offline` or `client_only`. |
 
 #### Proxy modes
 
@@ -290,6 +291,7 @@ Infrarust validates every server file at startup and on hot-reload. Invalid file
 - `addresses` must contain at least one entry.
 - Forwarding modes (`passthrough`, `zero_copy`, `server_only`) require at least one domain.
 - Forwarding modes cannot set `network` (they don't support server switching).
+- Forwarding modes cannot set `bungeecord_channel` (the proxy does not read their backend's packets).
 - `name` and `network` must match `[a-z0-9_-]+` and be at most 64 characters.
 - Domain strings cannot be empty.
 - No two server files can share the same effective ID.

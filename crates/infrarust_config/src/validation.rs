@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::error::ConfigError;
 use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
-use crate::types::{BalanceStrategy, WasmLimits, WasmRecoveryConfig};
+use crate::types::{BalanceStrategy, ForwardingConfig, WasmLimits, WasmRecoveryConfig};
 
 /// Validates a single server configuration.
 ///
@@ -40,6 +40,13 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
             return Err(ConfigError::Validation(format!(
                 "server '{id}' uses {:?} mode which cannot belong to a network \
                  (forwarding modes don't support server switching)",
+                config.proxy_mode
+            )));
+        }
+        if config.bungeecord_channel {
+            return Err(ConfigError::Validation(format!(
+                "server '{id}' uses {:?} mode, where the proxy does not read the backend's \
+                 packets: bungeecord_channel needs offline or client_only",
                 config.proxy_mode
             )));
         }
@@ -208,6 +215,18 @@ pub fn validate_proxy_config(config: &ProxyConfig) -> Result<(), ConfigError> {
     }
 
     validate_proxy_document(config)?;
+
+    if config
+        .forwarding
+        .as_ref()
+        .is_some_and(ForwardingConfig::has_moved_channel_keys)
+    {
+        tracing::warn!(
+            "[forwarding] bungeecord_channel and [forwarding.channel_permissions] are no longer \
+             read: use [plugin_messaging] bungeecord, [plugin_messaging.bungeecord_permissions] \
+             and bungeecord_channel = true in the server files"
+        );
+    }
 
     if !config.plugins.is_empty() && !config.plugins_dir.is_dir() {
         tracing::warn!(

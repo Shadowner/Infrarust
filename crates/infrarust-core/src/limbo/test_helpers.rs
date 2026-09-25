@@ -126,6 +126,7 @@ pub fn test_proxy_services() -> ProxyServices {
         permission_service: Arc::new(crate::permissions::PermissionService::new_sync(
             &Default::default(),
         )),
+        plugin_messaging: Arc::new(crate::plugin_messaging::PluginMessaging::default()),
     }
 }
 

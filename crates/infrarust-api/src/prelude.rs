@@ -27,7 +27,12 @@ pub use crate::events::*;
 pub use crate::plugin::{Plugin, PluginContext, PluginDependency, PluginMetadata};
 
 // Player
-pub use crate::player::Player;
+pub use crate::player::{ChatMode, ClientSettings, MainHand, ParticleStatus, Player, SkinParts};
+
+pub use crate::messaging::{
+    ChannelId, ChannelIdError, ChannelRegistrar, Endpoint, MessagePhase, MessagingError,
+    ServerMessenger,
+};
 
 // Services
 pub use crate::services::{

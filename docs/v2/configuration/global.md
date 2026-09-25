@@ -272,7 +272,6 @@ Individual servers can define their own `[ip_filter]` in addition to, or instead
 [forwarding]
 mode = "none"
 secret_file = "forwarding.secret"
-bungeecord_channel = true
 ```
 
 Player IP forwarding passes the real client IP and UUID to backend servers. The `mode` values are:
@@ -286,7 +285,7 @@ Player IP forwarding passes the real client IP and UUID to backend servers. The 
 
 `secret_file` is the path to the shared secret used by `bungee_guard` and `velocity`. The file is created automatically if it does not exist.
 
-`bungeecord_channel` enables the `BungeeCord` plugin messaging channel. The `[forwarding.channel_permissions]` subtable controls which sub-channels are allowed; most are enabled by default, and `connect_other`, `message`, `message_raw`, `kick_player`, and `kick_player_raw` are disabled by default.
+The BungeeCord forwarding modes only concern the handshake. The `BungeeCord` plugin messaging channel, which backend plugins use to ask the proxy things, is set up in [`[plugin_messaging]`](#plugin-messaging). `bungeecord_channel` and `[forwarding.channel_permissions]` used to sit here and were never acted on: they still load, are ignored, and log a warning pointing to the new keys.
 
 ::: warning
 BungeeCord legacy forwarding sends the real IP in plain text in the handshake. Anyone who can reach your backend port can spoof it. Use `bungee_guard` or `velocity` if you need IP forwarding and cannot fully firewall the backend.
@@ -381,6 +380,39 @@ Limits on the event listeners that plugins register. A listener that panics is s
 `disconnect_deadline` bounds the whole `DisconnectEvent` dispatch for one player, every listener included. When a player leaves, the proxy runs the `DisconnectEvent` listeners and removes the player from the registry once they are done, or once this deadline passes, whichever comes first. Listeners still running at the deadline are cancelled and a warning is logged. The same deadline bounds how long a second login with the same UUID waits for the first session to finish its `DisconnectEvent`. See [the player lifecycle](../plugins/dev/events#player-lifecycle).
 
 Panics and timeouts are logged at error level, slow listeners at warn level, and each log line names the plugin and the event. All four values must be greater than zero.
+
+## Plugin messaging
+
+```toml
+[plugin_messaging]
+bungeecord = false
+
+[plugin_messaging.bungeecord_permissions]
+connect = true
+connect_other = false
+ip = true
+ip_other = true
+player_count = true
+player_list = true
+get_servers = true
+get_server = true
+get_player_server = true
+forward = true
+forward_to_player = true
+uuid = true
+uuid_other = true
+server_ip = true
+message = false
+message_raw = false
+kick_player = false
+kick_player_raw = false
+```
+
+`bungeecord` lets the proxy answer the requests backend plugins send on the `BungeeCord` channel (`bungeecord:main` since 1.13): move a player, count and list players, forward a message to another server. It is off by default, and it only applies to the servers that also set [`bungeecord_channel = true`](./servers#proxy-behavior). For any other server, or while `bungeecord` is off, a BungeeCord message is forwarded to the client as before. Requests only see the requesting server's [network](./servers#identity).
+
+`bungeecord_permissions` allows each subchannel. Reads are allowed by default. `connect_other`, `message`, `message_raw`, `kick_player` and `kick_player_raw` act on other players and are off by default. The keys also accept the subchannel names (`ConnectOther`, `KickPlayer`...). A refused subchannel gets no answer.
+
+See [Plugin messaging](../plugins/dev/messaging#the-bungeecord-channel) for the request and response formats. The section is read at startup.
 
 ## WASM plugin sandbox
 

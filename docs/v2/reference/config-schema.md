@@ -207,9 +207,8 @@ Player info forwarding to the backend, the same mechanism Velocity and BungeeCor
 |--------|------|---------|-------------|
 | `mode` | string | `"none"` | Forwarding scheme: `"none"`, `"bungee_cord"`, `"bungee_guard"`, or `"velocity"` |
 | `secret_file` | string | `"forwarding.secret"` | Path to the shared secret file for `velocity` and `bungee_guard`. Created automatically if absent |
-| `bungeecord_channel` | boolean | `true` | Handle BungeeCord plugin messaging channel requests |
 
-`mode` accepts two aliases for backward compatibility: `"legacy"` maps to `bungee_cord` and `"modern"` maps to `velocity`. A `[forwarding.channel_permissions]` sub-table controls which BungeeCord channel subchannels are answered (Connect, IP, PlayerCount, and similar); most are enabled by default while `ConnectOther`, `Message`, `MessageRaw`, `KickPlayer`, and `KickPlayerRaw` are off. See [Proxy forwarding](../configuration/proxy-forwarding) for the protocol details.
+`mode` accepts two aliases for backward compatibility: `"legacy"` maps to `bungee_cord` and `"modern"` maps to `velocity`. See [Proxy forwarding](../configuration/proxy-forwarding) for the protocol details. The former `bungeecord_channel` key and `[forwarding.channel_permissions]` sub-table still load but are ignored, with a warning: the BungeeCord plugin messaging channel moved to [`[plugin_messaging]`](#plugin-messaging).
 
 ```toml
 [forwarding]
@@ -279,6 +278,25 @@ handler_timeout = "10s"
 slow_handler_threshold = "1s"
 packet_handler_timeout = "10s"
 disconnect_deadline = "15s"
+```
+
+### `[plugin_messaging]`
+
+The `BungeeCord` plugin messaging channel (`bungeecord:main` since 1.13) that backend plugins use to ask the proxy things. See [Plugin messaging](../plugins/dev/messaging#the-bungeecord-channel).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `bungeecord` | boolean | `false` | Answer BungeeCord channel requests from the servers that set `bungeecord_channel = true` |
+| `bungeecord_permissions` | table | see below | Which subchannels are answered |
+
+`bungeecord_permissions` has one boolean per subchannel: `connect`, `connect_other`, `ip`, `ip_other`, `player_count`, `player_list`, `get_servers`, `get_server`, `get_player_server`, `forward`, `forward_to_player`, `uuid`, `uuid_other`, `server_ip`, `message`, `message_raw`, `kick_player`, `kick_player_raw` (the subchannel names such as `KickPlayer` are accepted too). All are `true` except `connect_other`, `message`, `message_raw`, `kick_player` and `kick_player_raw`.
+
+```toml
+[plugin_messaging]
+bungeecord = true
+
+[plugin_messaging.bungeecord_permissions]
+connect_other = true
 ```
 
 ### `[auth]`
@@ -408,6 +426,7 @@ Each file in the `servers_dir` directory defines one backend server. The filenam
 | `max_players` | integer | `0` | Maximum players on this server. 0 = unlimited |
 | `disconnect_message` | string | `"Server is currently unreachable. Please try again later."` | Message sent to the player when the backend is unreachable |
 | `limbo_handlers` | array of strings | `[]` | Plugin IDs for limbo handler chain, executed in order |
+| `bungeecord_channel` | boolean | `false` | Answer this server's BungeeCord channel requests when `[plugin_messaging] bungeecord` is on. Only for `offline` and `client_only` |
 
 Minimal example:
 

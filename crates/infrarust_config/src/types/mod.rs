@@ -11,6 +11,7 @@ mod health;
 mod ip_filter;
 mod network;
 mod permissions;
+mod plugin_messaging;
 mod proxy_mode;
 mod rate_limit;
 mod server_manager;
@@ -30,6 +31,7 @@ pub use health::{ActiveHealthConfig, ProbeKind};
 pub use ip_filter::IpFilterConfig;
 pub use network::{KeepaliveConfig, TimeoutConfig};
 pub use permissions::{PermissionProviderSelection, PermissionsConfig};
+pub use plugin_messaging::PluginMessagingConfig;
 pub use proxy_mode::ProxyMode;
 pub use rate_limit::RateLimitConfig;
 pub use server_manager::{

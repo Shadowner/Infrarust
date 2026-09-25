@@ -5,8 +5,9 @@
 //! and `config_phase` submodules for details.
 
 mod config_phase;
+mod replay;
 mod switch_packets;
-mod validation;
+pub(crate) mod validation;
 
 use std::sync::Arc;
 
@@ -24,6 +25,7 @@ use crate::error::CoreError;
 use crate::forwarding::{ForwardingData, build_handshake_for_backend};
 use crate::pipeline::types::HandshakeData;
 use crate::player::PlayerSession;
+use crate::plugin_messaging::router::Scope;
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
@@ -137,7 +139,9 @@ pub(crate) async fn perform_switch(
                 }
                 _ => server,
             };
-            if cause == ConnectCause::Switch && effective == *current_server {
+            if matches!(cause, ConnectCause::Switch | ConnectCause::PluginMessage)
+                && effective == *current_server
+            {
                 return Ok(SwitchResult::Unchanged);
             }
             effective
@@ -223,14 +227,28 @@ pub(crate) async fn perform_switch(
 
     let mut stranded = client.state() != ConnectionState::Play;
     let join_game_frame = if version.no_less_than(ProtocolVersion::V1_20_2) {
+        if let Err(e) =
+            replay::replay(&mut new_backend, session, services, &server_config, version).await
+        {
+            return Ok(SwitchResult::Failed(Kick::failed(
+                effective_target,
+                e,
+                stranded,
+            )));
+        }
         let session_token = session.shutdown_token().clone();
+        let scope = Scope {
+            services,
+            session,
+            server: &effective_target,
+            version,
+        };
         let config_phase = tokio::time::timeout(
             std::time::Duration::from_secs(SWITCH_CONFIG_PHASE_TIMEOUT_SECS),
             config_phase::handle_config_phase_switch(
                 client,
                 &mut new_backend,
-                &services.packet_registry,
-                version,
+                &scope,
                 &mut stranded,
             ),
         );
@@ -272,7 +290,19 @@ pub(crate) async fn perform_switch(
                     stranded,
                 )));
             }
-            Ok(Some(frame)) => frame,
+            Ok(Some(frame)) => {
+                if let Err(e) =
+                    replay::replay(&mut new_backend, session, services, &server_config, version)
+                        .await
+                {
+                    return Ok(SwitchResult::Failed(Kick::failed(
+                        effective_target,
+                        e,
+                        stranded,
+                    )));
+                }
+                frame
+            }
             Ok(None) => {
                 return Ok(SwitchResult::Failed(Kick::failed(
                     effective_target,

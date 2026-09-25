@@ -545,3 +545,82 @@ fn test_proxy_cpu_budget_past_max_call_duration_is_a_warning() {
         "{warnings:?}"
     );
 }
+
+#[test]
+fn test_bungeecord_channel_needs_an_intercepted_mode() {
+    for mode in ["passthrough", "zero_copy", "server_only"] {
+        let config = from_toml(&format!(
+            r#"
+            domains = ["mc.example.com"]
+            addresses = ["127.0.0.1:25565"]
+            proxy_mode = "{mode}"
+            bungeecord_channel = true
+        "#
+        ));
+        let err = validate_server_config(&config).unwrap_err().to_string();
+        assert!(err.contains("bungeecord_channel"), "{mode}: {err}");
+    }
+    for mode in ["offline", "client_only"] {
+        let config = from_toml(&format!(
+            r#"
+            addresses = ["127.0.0.1:25565"]
+            proxy_mode = "{mode}"
+            bungeecord_channel = true
+        "#
+        ));
+        assert!(config.bungeecord_channel);
+        assert!(validate_server_config(&config).is_ok(), "{mode}");
+    }
+}
+
+#[test]
+fn test_the_bungeecord_channel_is_off_by_default() {
+    let server = from_toml(r#"addresses = ["127.0.0.1:25565"]"#);
+    assert!(!server.bungeecord_channel);
+    let dir = tempfile::tempdir().unwrap();
+    let proxy = proxy_from_toml("", dir.path());
+    assert!(!proxy.plugin_messaging.bungeecord);
+    let permissions = &proxy.plugin_messaging.bungeecord_permissions;
+    assert!(permissions.connect && permissions.player_list && permissions.forward);
+    assert!(!permissions.connect_other && !permissions.message && !permissions.kick_player);
+}
+
+#[test]
+fn test_plugin_messaging_section_parses() {
+    let dir = tempfile::tempdir().unwrap();
+    let proxy = proxy_from_toml(
+        r#"
+        [plugin_messaging]
+        bungeecord = true
+
+        [plugin_messaging.bungeecord_permissions]
+        message = true
+        KickPlayer = true
+    "#,
+        dir.path(),
+    );
+    assert!(proxy.plugin_messaging.bungeecord);
+    assert!(proxy.plugin_messaging.bungeecord_permissions.message);
+    assert!(proxy.plugin_messaging.bungeecord_permissions.kick_player);
+    assert!(validate_proxy_config(&proxy).is_ok());
+}
+
+#[test]
+fn test_the_moved_forwarding_channel_keys_still_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let proxy = proxy_from_toml(
+        r#"
+        [forwarding]
+        mode = "none"
+        bungeecord_channel = true
+
+        [forwarding.channel_permissions]
+        message = true
+    "#,
+        dir.path(),
+    );
+    let forwarding = proxy.forwarding.as_ref().unwrap();
+    assert!(forwarding.has_moved_channel_keys());
+    assert!(!proxy.plugin_messaging.bungeecord);
+    assert!(validate_proxy_config(&proxy).is_ok());
+}

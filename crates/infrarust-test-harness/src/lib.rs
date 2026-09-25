@@ -4,6 +4,7 @@ pub mod client;
 pub mod error;
 pub mod framing;
 pub mod legacy;
+pub mod plugin_message;
 pub mod proxy;
 pub mod recorder;
 pub mod scripted;

@@ -38,7 +38,7 @@ pub(crate) fn log_proxy_loop_outcome(session_id: &Uuid, outcome: &ProxyLoopOutco
                 tracing::warn!(session = %session_id, error = %e, "session error");
             }
         }
-        ProxyLoopOutcome::SwitchRequested { target } => {
+        ProxyLoopOutcome::SwitchRequested { target, .. } => {
             tracing::info!(session = %session_id, %target, "server switch requested");
         }
         ProxyLoopOutcome::Kicked { reason } => {

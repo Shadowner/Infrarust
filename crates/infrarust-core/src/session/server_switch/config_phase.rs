@@ -12,10 +12,11 @@ use infrarust_protocol::packets::play::disconnect::CDisconnect;
 use infrarust_protocol::packets::play::start_configuration::{
     CStartConfiguration, SAcknowledgeConfiguration,
 };
-use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
+use crate::plugin_messaging::channels::MessageIds;
+use crate::plugin_messaging::router::{self, Scope};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::kick::BackendKick;
@@ -50,16 +51,40 @@ async fn client_frame(client: &mut ClientBridge) -> Result<PacketFrame, PhaseErr
         .ok_or(PhaseError::Client(CoreError::ConnectionClosed))
 }
 
+async fn from_client(
+    scope: &Scope<'_>,
+    messages: &MessageIds,
+    frame: PacketFrame,
+) -> Option<PacketFrame> {
+    let state = ConnectionState::Config;
+    if messages.is_information(&frame, state) {
+        router::observe_information(
+            scope.session,
+            &scope.services.event_bus,
+            &frame,
+            state,
+            scope.version,
+        );
+        return Some(frame);
+    }
+    if messages.is_serverbound(&frame, state) {
+        return router::from_client(scope, frame, state).await;
+    }
+    Some(frame)
+}
+
 /// Handles the configuration phase during a server switch for 1.20.2+.
 ///
 /// Returns the JoinGame frame read from the backend after config phase completes.
 pub(super) async fn handle_config_phase_switch(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
-    registry: &PacketRegistry,
-    version: ProtocolVersion,
+    scope: &Scope<'_>,
     stranded: &mut bool,
 ) -> Result<PacketFrame, PhaseError> {
+    let registry = scope.services.packet_registry.as_ref();
+    let version = scope.version;
+    let messages = MessageIds::resolve(registry, version);
     let config_kick = registry.get_packet_id::<CConfigDisconnect>(version);
     let finish_config_id = registry.get_packet_id::<CFinishConfig>(version);
     let ack_finish_id = registry.get_packet_id::<SAcknowledgeFinishConfig>(version);
@@ -106,10 +131,24 @@ pub(super) async fn handle_config_phase_switch(
                     let frame = read
                         .map_err(PhaseError::Client)?
                         .ok_or(PhaseError::Client(CoreError::ConnectionClosed))?;
-                    backend.write_frame(&frame).await.map_err(PhaseError::Backend)?;
+                    if let Some(frame) = from_client(scope, &messages, frame).await {
+                        backend.write_frame(&frame).await.map_err(PhaseError::Backend)?;
+                    }
                     continue;
                 }
             },
+        };
+        let frame = if messages.is_clientbound(&frame, ConnectionState::Config) {
+            let routed = router::from_backend(scope, frame, backend, ConnectionState::Config)
+                .await
+                .map_err(PhaseError::Backend)?;
+            backend.flush().await.map_err(PhaseError::Backend)?;
+            match routed {
+                Some(frame) => frame,
+                None => continue,
+            }
+        } else {
+            frame
         };
         client
             .write_frame(&frame)

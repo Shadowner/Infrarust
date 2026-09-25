@@ -113,6 +113,7 @@ pub fn labels_to_server_config(
             ip_filter: None,
             disconnect_message: None,
             limbo_handlers: Vec::new(),
+            bungeecord_channel: false,
         }
     })
 }

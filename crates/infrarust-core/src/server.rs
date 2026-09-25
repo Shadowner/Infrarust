@@ -303,6 +303,9 @@ impl ProxyServer {
             forwarding_mode,
             forwarding_secret,
             permission_service,
+            plugin_messaging: Arc::new(crate::plugin_messaging::PluginMessaging::new(
+                &config.plugin_messaging,
+            )),
         };
 
         // Build common pipeline: IpFilter → HandshakeParser → BanIpCheck → RateLimiter → DomainRouter

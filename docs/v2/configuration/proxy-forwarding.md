@@ -57,7 +57,6 @@ mode = "none"
 |---|---|---|---|
 | `mode` | string | `"none"` | Forwarding mode: `none`, `velocity` (alias: `modern`), `bungee_cord` (alias: `legacy`), `bungee_guard`. |
 | `secret_file` | path | `"forwarding.secret"` | Path to the shared secret file. Used by `velocity` and `bungee_guard` modes. Created automatically if it doesn't exist. |
-| `bungeecord_channel` | bool | `true` | Enable BungeeCord plugin messaging channel support. |
 
 ### Per-server override
 
@@ -194,37 +193,9 @@ allowed-tokens:
 
 3. Set `bungeecord: true` in `spigot.yml` and `online-mode=false` in `server.properties`.
 
-## BungeeCord channel permissions
+## BungeeCord plugin messaging channel
 
-When `bungeecord_channel` is enabled (default), the proxy handles BungeeCord plugin messaging channels. You can control which operations backends are allowed to perform through the channel:
-
-```toml
-[forwarding]
-mode = "velocity"
-bungeecord_channel = true
-
-[forwarding.channel_permissions]
-connect = true
-connect_other = false
-ip = true
-ip_other = true
-player_count = true
-player_list = true
-get_servers = true
-get_server = true
-get_player_server = true
-forward = true
-forward_to_player = true
-uuid = true
-uuid_other = true
-server_ip = true
-message = false
-message_raw = false
-kick_player = false
-kick_player_raw = false
-```
-
-Permissions that default to `false` are write operations (sending messages, kicking players, connecting other players). Read operations default to `true`.
+BungeeCord forwarding and the `BungeeCord` plugin messaging channel are unrelated: forwarding passes the player's IP and UUID in the handshake, the channel lets backend plugins ask the proxy to move or list players. The channel is configured in [`[plugin_messaging]`](./global#plugin-messaging) and per server with `bungeecord_channel`, and is off by default. The former `[forwarding] bungeecord_channel` and `[forwarding.channel_permissions]` keys are ignored and log a warning.
 
 ## Choosing a mode
 

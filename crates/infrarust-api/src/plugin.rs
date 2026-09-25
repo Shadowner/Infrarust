@@ -250,6 +250,14 @@ pub trait PluginContext: Send + Sync + private::Sealed {
 
     /// Capabilities granted to this plugin (source: Infrarust config).
     fn capabilities(&self) -> &crate::permissions::CapabilitySet;
+
+    fn channel_registrar(&self) -> &dyn crate::messaging::ChannelRegistrar {
+        &crate::messaging::Inert
+    }
+
+    fn server_messenger(&self) -> Arc<dyn crate::messaging::ServerMessenger> {
+        Arc::new(crate::messaging::Inert)
+    }
 }
 
 #[cfg(test)]

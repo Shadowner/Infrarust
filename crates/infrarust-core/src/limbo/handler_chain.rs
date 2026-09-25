@@ -17,7 +17,7 @@ use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::ProtocolVersion;
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use super::LIMBO_SWITCH_TARGET;
 use super::chat::{ClientMessage, parse_client_message};
@@ -29,6 +29,7 @@ use super::spawn::send_spawn_sequence;
 use super::virtual_session::VirtualSessionCore;
 use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::player::packets::build_system_chat_message;
+use crate::plugin_messaging::router::ClientObserver;
 use crate::services::ProxyServices;
 use crate::services::command_manager::DispatchOutcome;
 use crate::session::client_bridge::ClientBridge;
@@ -173,6 +174,11 @@ async fn wait_for_hold(
     };
     tokio::pin!(hold_timeout);
 
+    let player = services.connection_registry.find_by_id(core.player_id);
+    let observer = player
+        .as_ref()
+        .map(|player| ClientObserver::new(player, services, core.protocol_version));
+
     let released = commands.drain(client, &core.packet_registry, true);
     if let Some(action) = settle_commands(client, commands, &core.packet_registry, released).await {
         return action;
@@ -199,11 +205,17 @@ async fn wait_for_hold(
             frame = client.read_frame() => {
                 match frame {
                     Ok(Some(frame)) => {
+                        if let Some(observer) = &observer {
+                            observer.observe(&frame, ConnectionState::Play);
+                        }
                         if is_keepalive_response(&frame, &core.packet_registry, core.protocol_version) {
-                            if let Some(id) = extract_keepalive_id(&frame, core.protocol_version)
-                                && !keepalive.on_response(id) {
-                                    tracing::debug!(id, "limbo keepalive response ID mismatch");
+                            if let Some(id) = extract_keepalive_id(&frame, core.protocol_version) {
+                                match (keepalive.on_response(id), &player) {
+                                    (Some(rtt), Some(player)) => player.client_state().record_ping(rtt),
+                                    (Some(_), None) => {}
+                                    (None, _) => tracing::debug!(id, "limbo keepalive response ID mismatch"),
                                 }
+                            }
                         } else if let Some(msg) = parse_client_message(&frame, &core.packet_registry, core.protocol_version) {
                             match msg {
                                 ClientMessage::Command { name, args } => {
@@ -319,15 +331,16 @@ async fn settle_commands(
 ) -> Option<HandlerAction> {
     let exit = loop {
         match outcome {
-            CommandOutcome::Switch(target) if target.as_str() == LIMBO_SWITCH_TARGET => {
+            CommandOutcome::Switch(target, _) if target.as_str() == LIMBO_SWITCH_TARGET => {
                 tracing::debug!("ignoring a request to enter limbo from limbo");
                 outcome = commands.drain(client, registry, true);
             }
-            CommandOutcome::Switch(target) => break Some(LimboChainResult::Switch(target)),
+            CommandOutcome::Switch(target, _) => break Some(LimboChainResult::Switch(target)),
             CommandOutcome::Kick(reason) => break Some(LimboChainResult::Kick(reason)),
             CommandOutcome::Continue => break None,
         }
     };
+    commands.deliver_messages(client, None, registry, true);
     if client.flush().await.is_err() {
         return Some(HandlerAction::Exit(LimboChainResult::ClientDisconnected));
     }

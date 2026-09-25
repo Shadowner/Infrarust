@@ -23,6 +23,7 @@ fn make_config(id: &str, domains: &[&str], addr: &str) -> ServerConfig {
         ip_filter: None,
         disconnect_message: None,
         limbo_handlers: vec![],
+        bungeecord_channel: false,
     }
 }
 

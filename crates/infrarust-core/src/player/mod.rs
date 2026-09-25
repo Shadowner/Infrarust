@@ -3,6 +3,7 @@
 //! Provides [`PlayerSession`] (the concrete implementation of `dyn Player`)
 //! and [`PlayerCommand`] (the command channel enum for packet injection).
 
+pub(crate) mod client_state;
 pub(crate) mod commands;
 pub(crate) mod lifecycle;
 pub(crate) mod packets;
@@ -11,16 +12,20 @@ pub mod registry;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+
+use bytes::Bytes;
 
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::error::PlayerError;
 use infrarust_api::event::{BoxFuture, ResultedEvent};
+use infrarust_api::events::connection::ConnectCause;
 use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
+use infrarust_api::messaging::{ChannelId, MAX_TO_BACKEND_PAYLOAD, MAX_TO_CLIENT_PAYLOAD};
 use infrarust_api::permissions::{DefaultPermissionChecker, PermissionChecker, PermissionSubject};
-use infrarust_api::player::Player;
+use infrarust_api::player::{ClientSettings, Player};
 use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
 };
@@ -29,6 +34,8 @@ use infrarust_config::ServerAddress;
 use crate::event_bus::EventBusImpl;
 use crate::loadbalancer::BackendLoad;
 use crate::permissions::PermissionService;
+
+use client_state::ClientState;
 
 /// Channel buffer size for player commands.
 const COMMAND_CHANNEL_SIZE: usize = 32;
@@ -54,7 +61,21 @@ pub enum PlayerCommand {
     /// Kick the player with a reason.
     Kick(Component),
     /// Switch the player to a different backend server.
-    SwitchServer(ServerId),
+    SwitchServer(ServerId, ConnectCause),
+    PluginMessage(OutgoingMessage),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageTarget {
+    Client,
+    Backend,
+}
+
+#[derive(Debug)]
+pub struct OutgoingMessage {
+    pub target: MessageTarget,
+    pub channel: ChannelId,
+    pub data: Bytes,
 }
 
 struct Routing {
@@ -88,6 +109,7 @@ pub struct PlayerSession {
     permissions_changed: watch::Sender<u64>,
     virtual_host: Option<String>,
     released: CancellationToken,
+    client: ClientState,
 }
 
 impl std::fmt::Debug for PlayerSession {
@@ -140,6 +162,7 @@ impl PlayerSession {
             permissions_changed: watch::Sender::new(0),
             virtual_host: None,
             released: CancellationToken::new(),
+            client: ClientState::default(),
         }
     }
 
@@ -250,8 +273,39 @@ impl PlayerSession {
         &self.profile
     }
 
-    pub fn virtual_host(&self) -> Option<&str> {
-        self.virtual_host.as_deref()
+    pub(crate) const fn client_state(&self) -> &ClientState {
+        &self.client
+    }
+
+    pub(crate) fn request_switch(
+        &self,
+        target: ServerId,
+        cause: ConnectCause,
+    ) -> Result<(), PlayerError> {
+        self.try_send_command(PlayerCommand::SwitchServer(target, cause))
+    }
+
+    fn send_message_to(
+        &self,
+        target: MessageTarget,
+        channel: &ChannelId,
+        data: Bytes,
+        max: usize,
+    ) -> Result<(), PlayerError> {
+        if !self.active {
+            return Err(PlayerError::NotActive);
+        }
+        if data.len() > max {
+            return Err(PlayerError::MessageTooLarge {
+                size: data.len(),
+                max,
+            });
+        }
+        self.try_send_command(PlayerCommand::PluginMessage(OutgoingMessage {
+            target,
+            channel: channel.clone(),
+            data,
+        }))
     }
 
     pub fn permission_subject(&self) -> PermissionSubject {
@@ -416,7 +470,7 @@ impl Player for PlayerSession {
                 return Err(PlayerError::Disconnected);
             }
             self.command_tx
-                .send(PlayerCommand::SwitchServer(target))
+                .send(PlayerCommand::SwitchServer(target, ConnectCause::Switch))
                 .await
                 .map_err(|e| PlayerError::SendFailed(e.to_string()))
         })
@@ -449,5 +503,45 @@ impl Player for PlayerSession {
 
     fn connected_at(&self) -> SystemTime {
         self.connected_at
+    }
+
+    fn virtual_host(&self) -> Option<String> {
+        self.virtual_host.clone()
+    }
+
+    fn client_brand(&self) -> Option<String> {
+        self.client.brand()
+    }
+
+    fn settings(&self) -> Option<ClientSettings> {
+        self.client.settings()
+    }
+
+    fn known_channels(&self) -> Vec<String> {
+        self.client.channels()
+    }
+
+    fn ping(&self) -> Option<Duration> {
+        self.client.ping()
+    }
+
+    fn send_plugin_message(&self, channel: &ChannelId, data: Bytes) -> Result<(), PlayerError> {
+        self.send_message_to(MessageTarget::Client, channel, data, MAX_TO_CLIENT_PAYLOAD)
+    }
+
+    fn send_plugin_message_to_backend(
+        &self,
+        channel: &ChannelId,
+        data: Bytes,
+    ) -> Result<(), PlayerError> {
+        if self.active && self.connected_address().is_none() {
+            return Err(PlayerError::NoBackend);
+        }
+        self.send_message_to(
+            MessageTarget::Backend,
+            channel,
+            data,
+            MAX_TO_BACKEND_PAYLOAD,
+        )
     }
 }

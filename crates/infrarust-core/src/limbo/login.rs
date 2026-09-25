@@ -14,6 +14,7 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::limbo::registry_cache::RegistryCodecCache;
+use crate::plugin_messaging::router::ClientObserver;
 use crate::session::client_bridge::ClientBridge;
 
 const LIMBO_CONFIG_PHASE_TIMEOUT_SECS: u64 = 10;
@@ -41,6 +42,7 @@ pub(crate) async fn complete_config_for_limbo(
     version: ProtocolVersion,
     registry: &PacketRegistry,
     codec_cache: &RegistryCodecCache,
+    observer: Option<&ClientObserver>,
 ) -> Result<(), CoreError> {
     // 1. KnownPacks handshake (>= 1.20.5, protocol >= 766)
     if let Ok(Some(kp_frame)) = codec_cache.get_known_packs_frame(version) {
@@ -53,6 +55,7 @@ pub(crate) async fn complete_config_for_limbo(
             client,
             skp_id,
             "limbo login: client did not send KnownPacks in time",
+            observer,
         )
         .await?;
     }
@@ -89,6 +92,7 @@ pub(crate) async fn complete_config_for_limbo(
         client,
         ack_id,
         "limbo login: client did not acknowledge finish config in time",
+        observer,
     )
     .await?;
 
@@ -106,6 +110,7 @@ async fn absorb_until(
     client: &mut ClientBridge,
     target_id: Option<i32>,
     timeout_message: &'static str,
+    observer: Option<&ClientObserver>,
 ) -> Result<(), CoreError> {
     tokio::time::timeout(
         Duration::from_secs(LIMBO_CONFIG_PHASE_TIMEOUT_SECS),
@@ -118,6 +123,9 @@ async fn absorb_until(
 
                 if Some(frame.id) == target_id {
                     break;
+                }
+                if let Some(observer) = observer {
+                    observer.observe(&frame, ConnectionState::Config);
                 }
                 tracing::trace!(
                     id = frame.id,
@@ -147,7 +155,7 @@ mod tests {
 
         let mut client = ClientBridge::new(server_side, BytesMut::new(), ProtocolVersion::V1_21);
 
-        let result = absorb_until(&mut client, Some(0x42), "test timeout").await;
+        let result = absorb_until(&mut client, Some(0x42), "test timeout", None).await;
         assert!(
             matches!(result, Err(CoreError::Timeout(_))),
             "expected a timeout, got {result:?}"

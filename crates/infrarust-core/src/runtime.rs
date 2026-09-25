@@ -147,7 +147,11 @@ impl ProxyRuntimeBuilder {
         )
         .with_ban_providers(Arc::clone(&services.ban_manager))
         .with_permissions(Arc::clone(&services.permission_service))
-        .with_limbo_handlers(Arc::clone(&services.limbo_handler_registry));
+        .with_limbo_handlers(Arc::clone(&services.limbo_handler_registry))
+        .with_messaging(
+            Arc::clone(&services.plugin_messaging),
+            Arc::clone(&services.connection_registry),
+        );
 
         let errors = plugin_manager.load_and_enable_all(&context_factory).await;
         if !errors.is_empty() {

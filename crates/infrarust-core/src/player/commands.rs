@@ -2,25 +2,30 @@ use std::collections::VecDeque;
 
 use tokio::sync::mpsc;
 
-use infrarust_api::types::{Component, ServerId};
+use infrarust_api::events::connection::ConnectCause;
+use infrarust_api::types::{Component, ProtocolVersion as ApiVersion, ServerId};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::registry::PacketRegistry;
+use infrarust_protocol::version::ConnectionState;
 
-use super::PlayerCommand;
 use super::packets;
+use super::{MessageTarget, OutgoingMessage, PlayerCommand};
 use crate::error::CoreError;
+use crate::plugin_messaging::channels::{self, MessageIds};
+use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 
 #[derive(Debug)]
 pub(crate) enum CommandOutcome {
     Continue,
     Kick(Component),
-    Switch(ServerId),
+    Switch(ServerId, ConnectCause),
 }
 
 pub(crate) struct CommandInbox {
     receiver: mpsc::Receiver<PlayerCommand>,
     deferred: VecDeque<PlayerCommand>,
+    messages: VecDeque<OutgoingMessage>,
 }
 
 impl CommandInbox {
@@ -28,7 +33,61 @@ impl CommandInbox {
         Self {
             receiver,
             deferred: VecDeque::new(),
+            messages: VecDeque::new(),
         }
+    }
+
+    pub(crate) fn deliver_messages(
+        &mut self,
+        client: &mut ClientBridge,
+        mut backend: Option<&mut BackendBridge>,
+        registry: &PacketRegistry,
+        client_open: bool,
+    ) {
+        if self.messages.is_empty() {
+            return;
+        }
+        let version = client.protocol_version;
+        let ids = MessageIds::resolve(registry, version);
+        let api_version = ApiVersion::new(version.0);
+        let mut kept = VecDeque::new();
+        while let Some(message) = self.messages.pop_front() {
+            let channel = message.channel.wire_name(api_version);
+            let delivered = match message.target {
+                MessageTarget::Client if client_open => ids.clientbound(client.state()).map(|id| {
+                    client.queue_frame(&channels::build(id, channel, &message.data, version))
+                }),
+                MessageTarget::Client => None,
+                MessageTarget::Backend => match backend.as_deref_mut() {
+                    Some(backend)
+                        if matches!(
+                            backend.state,
+                            ConnectionState::Config | ConnectionState::Play
+                        ) =>
+                    {
+                        ids.serverbound(backend.state).map(|id| {
+                            backend.queue_frame(&channels::build(
+                                id,
+                                channel,
+                                &message.data,
+                                version,
+                            ))
+                        })
+                    }
+                    Some(_) => None,
+                    None => {
+                        tracing::debug!(%channel, "dropping a plugin message for a backend: the player is not on one");
+                        continue;
+                    }
+                },
+            };
+            match delivered {
+                Some(Ok(())) => {}
+                Some(Err(e)) => tracing::warn!(%channel, "failed to deliver a plugin message: {e}"),
+                None => kept.push_back(message),
+            }
+        }
+        self.messages = kept;
     }
 
     pub(crate) async fn recv(&mut self) -> Option<PlayerCommand> {
@@ -42,9 +101,14 @@ impl CommandInbox {
         registry: &PacketRegistry,
         in_game: bool,
     ) -> CommandOutcome {
-        if let PlayerCommand::Kick(reason) = command {
-            return CommandOutcome::Kick(reason);
-        }
+        let command = match command {
+            PlayerCommand::Kick(reason) => return CommandOutcome::Kick(reason),
+            PlayerCommand::PluginMessage(message) => {
+                self.messages.push_back(message);
+                return CommandOutcome::Continue;
+            }
+            command => command,
+        };
         self.deferred.push_back(command);
         if in_game {
             self.release(client, registry)
@@ -83,7 +147,7 @@ impl CommandInbox {
         loop {
             match self.drain(client, registry, in_game) {
                 CommandOutcome::Kick(reason) => return Some(reason),
-                CommandOutcome::Switch(_) => {}
+                CommandOutcome::Switch(..) => {}
                 CommandOutcome::Continue => return None,
             }
         }
@@ -93,7 +157,9 @@ impl CommandInbox {
         while let Some(command) = self.deferred.pop_front() {
             match command {
                 PlayerCommand::Kick(reason) => return CommandOutcome::Kick(reason),
-                PlayerCommand::SwitchServer(target) => return CommandOutcome::Switch(target),
+                PlayerCommand::SwitchServer(target, cause) => {
+                    return CommandOutcome::Switch(target, cause);
+                }
                 other => {
                     if let Err(e) = queue_frames(client, other, registry) {
                         tracing::warn!("failed to deliver player command: {e}");
@@ -127,7 +193,9 @@ fn queue_frames(
         PlayerCommand::SendPacket(raw) => {
             client.queue_frame(&PacketFrame::new(raw.packet_id, raw.data))
         }
-        PlayerCommand::Kick(_) | PlayerCommand::SwitchServer(_) => Ok(()),
+        PlayerCommand::Kick(_)
+        | PlayerCommand::SwitchServer(..)
+        | PlayerCommand::PluginMessage(_) => Ok(()),
     }
 }
 
@@ -156,8 +224,11 @@ mod tests {
         let registry = test_registry();
         let (tx, mut inbox) = inbox();
         tx.try_send(message("first")).unwrap();
-        tx.try_send(PlayerCommand::SwitchServer(ServerId::new("b")))
-            .unwrap();
+        tx.try_send(PlayerCommand::SwitchServer(
+            ServerId::new("b"),
+            ConnectCause::Switch,
+        ))
+        .unwrap();
         tx.try_send(message("second")).unwrap();
 
         assert!(matches!(
@@ -167,7 +238,10 @@ mod tests {
         assert_eq!(inbox.deferred.len(), 3);
 
         match inbox.drain(&mut client, &registry, true) {
-            CommandOutcome::Switch(target) => assert_eq!(target, ServerId::new("b")),
+            CommandOutcome::Switch(target, cause) => {
+                assert_eq!(target, ServerId::new("b"));
+                assert_eq!(cause, ConnectCause::Switch);
+            }
             other => panic!("expected the deferred switch, got {other:?}"),
         }
         assert_eq!(inbox.deferred.len(), 1);
@@ -201,8 +275,11 @@ mod tests {
         let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
         let registry = test_registry();
         let (tx, mut inbox) = inbox();
-        tx.try_send(PlayerCommand::SwitchServer(ServerId::new("b")))
-            .unwrap();
+        tx.try_send(PlayerCommand::SwitchServer(
+            ServerId::new("b"),
+            ConnectCause::Switch,
+        ))
+        .unwrap();
         tx.try_send(message("last words")).unwrap();
         tx.try_send(PlayerCommand::Kick(Component::text("bye")))
             .unwrap();

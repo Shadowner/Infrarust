@@ -73,6 +73,7 @@ pub mod filter;
 pub mod limbo;
 pub mod loader;
 pub mod message;
+pub mod messaging;
 pub mod permissions;
 pub mod player;
 pub mod plugin;

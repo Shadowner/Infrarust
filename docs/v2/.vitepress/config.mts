@@ -228,6 +228,7 @@ export default
               { text: 'Architecture & Pipeline', link: '/plugins/dev/architecture' },
               { text: 'Plugin Lifecycle', link: '/plugins/dev/lifecycle' },
               { text: 'Events Reference', link: '/plugins/dev/events' },
+              { text: 'Plugin Messaging', link: '/plugins/dev/messaging' },
               { text: 'Commands API', link: '/plugins/dev/commands' },
               { text: 'Plugin API', link: '/plugins/dev/api' },
               { text: 'Bans API', link: '/plugins/dev/bans' },

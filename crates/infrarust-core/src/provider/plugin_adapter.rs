@@ -173,6 +173,7 @@ fn convert_api_to_config(
         ip_filter: None,
         disconnect_message: api.disconnect_message.clone(),
         limbo_handlers: api.limbo_handlers.clone(),
+        bungeecord_channel: false,
     };
 
     infrarust_config::validate_server_config(&config).map_err(|e| e.to_string())?;

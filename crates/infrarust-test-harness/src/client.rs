@@ -43,6 +43,7 @@ use crate::DEFAULT_TIMEOUT;
 use crate::chat::{self, now_millis};
 use crate::error::{HarnessError, HarnessResult};
 use crate::framing::{FrameReader, FrameWriter, FramedConn};
+use crate::plugin_message::ClientHello;
 use crate::text::{DisconnectInfo, component_text, uses_nbt_components};
 use crate::wire;
 
@@ -57,6 +58,7 @@ pub struct FakeClient {
     timeout: Duration,
     proxy_source: Option<SocketAddr>,
     claimed_uuid: Option<Uuid>,
+    hello: Option<ClientHello>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,7 +102,14 @@ impl FakeClient {
             timeout: DEFAULT_TIMEOUT,
             proxy_source: None,
             claimed_uuid: None,
+            hello: None,
         }
+    }
+
+    #[must_use]
+    pub fn hello(mut self, hello: ClientHello) -> Self {
+        self.hello = Some(hello);
+        self
     }
 
     #[must_use]
@@ -215,6 +224,7 @@ impl FakeClient {
             version,
             state: ConnectionState::Login,
             events: events_tx,
+            hello: self.hello.clone(),
         };
         let driver = TaskGuard(tokio::spawn(driver.run()));
 
@@ -222,6 +232,7 @@ impl FakeClient {
         let mut profile = None;
         let mut profile_name = None;
         let mut server_hash = None;
+        let mut config_frames = Vec::new();
         loop {
             let event = tokio::time::timeout_at(deadline, events.recv())
                 .await
@@ -241,6 +252,7 @@ impl FakeClient {
                         profile_name,
                         server_hash,
                         join,
+                        config_frames,
                         writer,
                         events,
                         _driver: driver,
@@ -252,6 +264,7 @@ impl FakeClient {
                         "the login to complete ({reason})"
                     )));
                 }
+                ClientEvent::Config(frame) => config_frames.push(frame),
                 ClientEvent::Frame(_) => {}
             }
         }
@@ -263,6 +276,7 @@ enum ClientEvent {
     Encrypted(String),
     LoginSucceeded(Uuid, String),
     Joined(PacketFrame),
+    Config(PacketFrame),
     Frame(PacketFrame),
     Disconnected(DisconnectInfo),
     Closed(String),
@@ -288,6 +302,7 @@ struct Driver {
     version: ProtocolVersion,
     state: ConnectionState,
     events: mpsc::UnboundedSender<ClientEvent>,
+    hello: Option<ClientHello>,
 }
 
 impl Driver {
@@ -307,6 +322,17 @@ impl Driver {
     async fn send<P: Packet>(&self, packet: &P) -> HarnessResult<()> {
         let frame = wire::encode(packet, self.version)?;
         self.writer.lock().await.write_frame(&frame).await
+    }
+
+    async fn greet(&mut self, state: ConnectionState) -> HarnessResult<()> {
+        let Some(hello) = self.hello.take() else {
+            return Ok(());
+        };
+        let mut writer = self.writer.lock().await;
+        for frame in hello.frames(state, self.version)? {
+            writer.write_frame(&frame).await?;
+        }
+        Ok(())
     }
 
     async fn drive(&mut self) -> HarnessResult<()> {
@@ -366,6 +392,7 @@ impl Driver {
             if version.no_less_than(ProtocolVersion::V1_20_2) {
                 self.send(&SLoginAcknowledged).await?;
                 self.state = ConnectionState::Config;
+                self.greet(ConnectionState::Config).await?;
             } else {
                 self.state = ConnectionState::Play;
             }
@@ -424,6 +451,7 @@ impl Driver {
             self.emit(ClientEvent::Disconnected(info));
             return Ok(Flow::Stop);
         }
+        self.emit(ClientEvent::Config(frame));
         Ok(Flow::Continue)
     }
 
@@ -450,6 +478,7 @@ impl Driver {
         }
         if wire::is::<CJoinGame>(&frame, version) {
             self.emit(ClientEvent::Joined(frame));
+            self.greet(ConnectionState::Play).await?;
         } else {
             self.emit(ClientEvent::Frame(frame));
         }
@@ -464,6 +493,7 @@ pub struct ClientSession {
     profile_name: Option<String>,
     server_hash: Option<String>,
     join: PacketFrame,
+    config_frames: Vec<PacketFrame>,
     writer: Arc<Mutex<FrameWriter>>,
     events: mpsc::UnboundedReceiver<ClientEvent>,
     _driver: TaskGuard,
@@ -502,6 +532,10 @@ impl ClientSession {
 
     pub const fn join_frame(&self) -> &PacketFrame {
         &self.join
+    }
+
+    pub fn config_frames(&self) -> &[PacketFrame] {
+        &self.config_frames
     }
 
     pub async fn send_frame(&self, frame: &PacketFrame) -> HarnessResult<()> {
@@ -574,6 +608,7 @@ impl ClientSession {
                 ClientEvent::Encrypted(_)
                 | ClientEvent::LoginSucceeded(..)
                 | ClientEvent::Joined(_)
+                | ClientEvent::Config(_)
                 | ClientEvent::Frame(_) => {}
             }
         }

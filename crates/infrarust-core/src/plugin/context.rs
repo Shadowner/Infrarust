@@ -76,6 +76,7 @@ pub struct PluginContextImpl {
 
     registered_provider_ids: Arc<Mutex<Vec<ProviderId>>>,
     registered_provider_tokens: Arc<Mutex<Vec<CancellationToken>>>,
+    channels: crate::plugin_messaging::PluginChannels,
 }
 
 impl PluginContextImpl {
@@ -146,7 +147,14 @@ impl PluginContextImpl {
             capabilities,
             registered_provider_ids: Arc::new(Mutex::new(Vec::new())),
             registered_provider_tokens: Arc::new(Mutex::new(Vec::new())),
+            channels: crate::plugin_messaging::PluginChannels::default(),
         }
+    }
+
+    #[must_use]
+    pub fn with_channels(mut self, channels: crate::plugin_messaging::PluginChannels) -> Self {
+        self.channels = channels;
+        self
     }
 
     #[must_use]
@@ -254,6 +262,7 @@ impl PluginContextImpl {
             self.refresh_online_players();
         }
         self.permissions.unregister_nodes(&self.plugin_id);
+        self.channels.cleanup();
 
         tracing::debug!(plugin = %self.plugin_id, "Plugin resources cleaned up");
     }
@@ -467,5 +476,13 @@ impl PluginContext for PluginContextImpl {
 
     fn capabilities(&self) -> &CapabilitySet {
         &self.capabilities
+    }
+
+    fn channel_registrar(&self) -> &dyn infrarust_api::messaging::ChannelRegistrar {
+        self.channels.registrar()
+    }
+
+    fn server_messenger(&self) -> Arc<dyn infrarust_api::messaging::ServerMessenger> {
+        self.channels.messenger()
     }
 }

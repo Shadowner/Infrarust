@@ -107,7 +107,7 @@ pub(super) async fn run_session_loop(
                 .await;
 
                 match outcome {
-                    ProxyLoopOutcome::SwitchRequested { target }
+                    ProxyLoopOutcome::SwitchRequested { target, .. }
                         if target.as_str() == LIMBO_SWITCH_TARGET =>
                     {
                         let handler_names = server_limbo_handlers(&route, &current_server_id);
@@ -136,14 +136,16 @@ pub(super) async fn run_session_loop(
                             }
                         }
                     }
-                    ProxyLoopOutcome::SwitchRequested { target } if target == current_server_id => {
+                    ProxyLoopOutcome::SwitchRequested { target, .. }
+                        if target == current_server_id =>
+                    {
                         tracing::debug!(server = %target, "already on the requested server");
                         continue;
                     }
-                    ProxyLoopOutcome::SwitchRequested { target } => {
+                    ProxyLoopOutcome::SwitchRequested { target, cause } => {
                         let request = SwitchTarget::Unapproved {
                             server: target,
-                            cause: ConnectCause::Switch,
+                            cause,
                         };
                         let settled = match switch(&route, client, &current_server_id, request)
                             .await
@@ -703,11 +705,17 @@ async fn leave_login(route: &Route<'_>, client: &mut ClientBridge) -> Result<(),
 async fn enter_play(route: &Route<'_>, client: &mut ClientBridge) -> Result<(), CoreError> {
     leave_login(route, client).await?;
     if client.state() == ConnectionState::Config {
+        let observer = crate::plugin_messaging::router::ClientObserver::new(
+            route.session,
+            route.services,
+            route.version,
+        );
         crate::limbo::login::complete_config_for_limbo(
             client,
             route.version,
             &route.services.packet_registry,
             &route.services.registry_codec_cache,
+            Some(&observer),
         )
         .await?;
     }
