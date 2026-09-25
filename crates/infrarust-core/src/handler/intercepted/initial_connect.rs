@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use infrarust_api::event::ResultedEvent;
+use infrarust_api::events::lifecycle::DisconnectCause;
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
 use infrarust_api::types::Component;
@@ -32,7 +33,13 @@ pub(super) enum InitialMode {
         server_id: infrarust_api::types::ServerId,
     },
     /// Disconnect already sent.
-    Denied,
+    Denied(DisconnectCause),
+}
+
+fn kicked(reason: Component) -> InitialMode {
+    InitialMode::Denied(DisconnectCause::Kicked {
+        reason: Some(reason),
+    })
 }
 
 fn resolve_limbo_strict(
@@ -62,14 +69,12 @@ async fn deny_no_limbo_handlers(
     services: &ProxyServices,
 ) -> Result<InitialMode, CoreError> {
     tracing::warn!("SendToLimbo at initial connect but no handlers resolved");
+    let reason = Component::text("No limbo handlers configured");
     client
-        .disconnect(
-            &Component::text("No limbo handlers configured"),
-            &services.packet_registry,
-        )
+        .disconnect(&reason, &services.packet_registry)
         .await
         .ok();
-    Ok(InitialMode::Denied)
+    Ok(kicked(reason))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -141,7 +146,7 @@ pub(super) async fn resolve_initial_mode(
                     .disconnect(reason, &services.packet_registry)
                     .await
                     .ok();
-                return Ok(InitialMode::Denied);
+                return Ok(kicked(reason.clone()));
             }
             infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo {
                 limbo_handlers,
@@ -184,14 +189,12 @@ pub(super) async fn resolve_initial_mode(
                 to = %target_server_id,
                 "plugin redirected to an unknown server"
             );
+            let reason = Component::text("Unknown server");
             client
-                .disconnect(
-                    &Component::text("Unknown server"),
-                    &services.packet_registry,
-                )
+                .disconnect(&reason, &services.packet_registry)
                 .await
                 .ok();
-            return Ok(InitialMode::Denied);
+            return Ok(kicked(reason));
         };
         Some(RoutingData {
             server_config,
@@ -238,7 +241,11 @@ pub(super) async fn resolve_initial_mode(
         limbo_mode
     } else {
         let forwarding_handler = services.resolve_forwarding_handler(server_config);
-        if requires_proxy_completed_login(&forwarding_handler, *login_completed) {
+        if requires_proxy_completed_login(
+            &forwarding_handler,
+            auth_result.rewritten,
+            *login_completed,
+        ) {
             ensure_login_complete(client, auth_result, login_completed, version, services).await?;
         }
 
@@ -290,7 +297,7 @@ pub(super) async fn resolve_initial_mode(
                             .disconnect(&msg, &services.packet_registry)
                             .await
                             .ok();
-                        return Ok(InitialMode::Denied);
+                        return Ok(InitialMode::Denied(DisconnectCause::Error));
                     }
                 } else {
                     tracing::warn!(
@@ -303,7 +310,7 @@ pub(super) async fn resolve_initial_mode(
                         .disconnect(&msg, &services.packet_registry)
                         .await
                         .ok();
-                    return Ok(InitialMode::Denied);
+                    return Ok(InitialMode::Denied(DisconnectCause::Error));
                 }
             }
         }
@@ -470,21 +477,13 @@ async fn ensure_login_complete(
         return Ok(());
     }
 
-    super::auth::send_login_success(
+    super::auth::complete_login(
         client,
-        auth_result.player_uuid,
-        &auth_result.username,
-        &[],
+        &auth_result.api_profile,
         version,
         &services.packet_registry,
     )
     .await?;
-
-    if version.no_less_than(ProtocolVersion::V1_20_2) {
-        super::auth::consume_login_acknowledged(client, version, &services.packet_registry).await?;
-    } else {
-        client.set_state(ConnectionState::Play);
-    }
 
     *login_completed = true;
     Ok(())
@@ -492,9 +491,10 @@ async fn ensure_login_complete(
 
 const fn requires_proxy_completed_login(
     handler: &crate::forwarding::ForwardingHandler,
+    profile_rewritten: bool,
     login_completed: bool,
 ) -> bool {
-    handler.is_velocity() && !login_completed
+    !login_completed && (handler.is_velocity() || profile_rewritten)
 }
 
 #[cfg(test)]
@@ -563,8 +563,7 @@ mod tests {
             player_uuid: uuid::Uuid::nil(),
             username: "Redirected".to_string(),
             api_profile: test_profile(),
-            login_completed: false,
-            online_mode: false,
+            rewritten: false,
         };
         let handshake = HandshakeData {
             domain: "origin.test".to_string(),
@@ -661,11 +660,26 @@ mod tests {
         let velocity = build_forwarding_handler(&ForwardingMode::Velocity {
             secret: b"test-secret".to_vec(),
         });
-        assert!(requires_proxy_completed_login(&velocity, false));
-        assert!(!requires_proxy_completed_login(&velocity, true));
+        assert!(requires_proxy_completed_login(&velocity, false, false));
+        assert!(!requires_proxy_completed_login(&velocity, false, true));
         assert!(!requires_proxy_completed_login(
             &ForwardingHandler::None,
+            false,
             false
+        ));
+    }
+
+    #[test]
+    fn a_rewritten_profile_requires_proxy_completed_login() {
+        assert!(requires_proxy_completed_login(
+            &ForwardingHandler::None,
+            true,
+            false
+        ));
+        assert!(!requires_proxy_completed_login(
+            &ForwardingHandler::None,
+            true,
+            true
         ));
     }
 }

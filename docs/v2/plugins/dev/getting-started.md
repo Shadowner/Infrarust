@@ -104,11 +104,11 @@ ctx.event_bus()
 
 ctx.event_bus()
     .subscribe(EventPriority::NORMAL, |event: &mut DisconnectEvent| {
-        tracing::info!("[GreetPlugin] {} left the proxy", event.username);
+        tracing::info!("[GreetPlugin] {} left the proxy", event.username());
     });
 ```
 
-The event type in the closure signature determines which events you receive. The proxy fires `PostLoginEvent` after a player authenticates and `DisconnectEvent` when they leave.
+The event type in the closure signature determines which events you receive. The proxy fires `PostLoginEvent` once a player has logged in and `DisconnectEvent`, exactly once, when they leave.
 
 ### Event priorities
 
@@ -261,7 +261,7 @@ impl Plugin for GreetPlugin {
 
             ctx.event_bus()
                 .subscribe(EventPriority::NORMAL, |event: &mut DisconnectEvent| {
-                    tracing::info!("[GreetPlugin] {} left", event.username);
+                    tracing::info!("[GreetPlugin] {} left", event.username());
                 });
 
             ctx.command_manager().register(

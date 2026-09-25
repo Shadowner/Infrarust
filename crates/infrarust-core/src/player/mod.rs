@@ -4,6 +4,7 @@
 //! and [`PlayerCommand`] (the command channel enum for packet injection).
 
 pub(crate) mod commands;
+pub(crate) mod lifecycle;
 pub(crate) mod packets;
 pub mod registry;
 
@@ -70,7 +71,8 @@ pub struct PlayerSession {
     connected_at: SystemTime,
     command_tx: mpsc::Sender<PlayerCommand>,
     shutdown_token: CancellationToken,
-    permission_checker: Arc<dyn PermissionChecker>,
+    permission_checker: RwLock<Arc<dyn PermissionChecker>>,
+    released: CancellationToken,
 }
 
 impl std::fmt::Debug for PlayerSession {
@@ -113,7 +115,8 @@ impl PlayerSession {
             connected_at: SystemTime::now(),
             command_tx,
             shutdown_token,
-            permission_checker,
+            permission_checker: RwLock::new(permission_checker),
+            released: CancellationToken::new(),
         }
     }
 
@@ -190,6 +193,30 @@ impl PlayerSession {
 
     pub fn game_profile(&self) -> &GameProfile {
         &self.profile
+    }
+
+    pub fn set_permission_checker(&self, checker: Arc<dyn PermissionChecker>) {
+        *self
+            .permission_checker
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = checker;
+    }
+
+    fn permission_checker(&self) -> Arc<dyn PermissionChecker> {
+        Arc::clone(
+            &self
+                .permission_checker
+                .read()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
+    }
+
+    pub(crate) fn mark_released(&self) {
+        self.released.cancel();
+    }
+
+    pub(crate) async fn released(&self) {
+        self.released.cancelled().await;
     }
 
     /// Checks preconditions for sending commands and sends via `try_send`.
@@ -302,11 +329,11 @@ impl Player for PlayerSession {
     }
 
     fn permission_level(&self) -> PermissionLevel {
-        self.permission_checker.permission_level()
+        self.permission_checker().permission_level()
     }
 
     fn has_permission(&self, permission: &str) -> bool {
-        self.permission_checker.has_permission(permission)
+        self.permission_checker().has_permission(permission)
     }
 
     fn connected_at(&self) -> SystemTime {

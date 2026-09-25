@@ -33,6 +33,7 @@ use rand::rngs::OsRng;
 use rsa::pkcs8::DecodePublicKey;
 use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
 use serde_json::Value;
+use tokio::net::TcpStream;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -53,6 +54,8 @@ pub struct FakeClient {
     domain: String,
     port: u16,
     timeout: Duration,
+    proxy_source: Option<SocketAddr>,
+    claimed_uuid: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,7 +97,21 @@ impl FakeClient {
             domain: addr.ip().to_string(),
             port: addr.port(),
             timeout: DEFAULT_TIMEOUT,
+            proxy_source: None,
+            claimed_uuid: None,
         }
+    }
+
+    #[must_use]
+    pub const fn proxy_protocol(mut self, source: SocketAddr) -> Self {
+        self.proxy_source = Some(source);
+        self
+    }
+
+    #[must_use]
+    pub const fn claimed_uuid(mut self, uuid: Uuid) -> Self {
+        self.claimed_uuid = Some(uuid);
+        self
     }
 
     #[must_use]
@@ -120,7 +137,12 @@ impl FakeClient {
     }
 
     async fn open(&self, next_state: ConnectionState) -> HarnessResult<FramedConn> {
-        let mut conn = FramedConn::connect(self.addr).await?;
+        let mut stream = TcpStream::connect(self.addr).await?;
+        if let Some(source) = self.proxy_source {
+            let header = proxy_v2_header(source, self.addr)?;
+            tokio::io::AsyncWriteExt::write_all(&mut stream, &header).await?;
+        }
+        let mut conn = FramedConn::new(stream)?;
         let handshake = SHandshake {
             protocol_version: VarInt(self.version.0),
             server_address: self.domain.clone(),
@@ -178,7 +200,7 @@ impl FakeClient {
             name: username.to_string(),
             uuid: version
                 .no_less_than(ProtocolVersion::V1_19_1)
-                .then(|| offline_uuid(username)),
+                .then(|| self.claimed_uuid.unwrap_or_else(|| offline_uuid(username))),
             profile_key: None,
         };
         conn.write_frame(&wire::encode(&start, version)?).await?;
@@ -197,6 +219,7 @@ impl FakeClient {
 
         let deadline = Instant::now() + self.timeout;
         let mut profile = None;
+        let mut profile_name = None;
         let mut server_hash = None;
         loop {
             let event = tokio::time::timeout_at(deadline, events.recv())
@@ -205,12 +228,16 @@ impl FakeClient {
                 .ok_or_else(|| HarnessError::Closed("the login to complete".to_string()))?;
             match event {
                 ClientEvent::Encrypted(hash) => server_hash = Some(hash),
-                ClientEvent::LoginSucceeded(uuid) => profile = Some(uuid),
+                ClientEvent::LoginSucceeded(uuid, name) => {
+                    profile = Some(uuid);
+                    profile_name = Some(name);
+                }
                 ClientEvent::Joined(join) => {
                     return Ok(LoginOutcome::Joined(ClientSession {
                         version,
                         username: username.to_string(),
                         uuid: profile,
+                        profile_name,
                         server_hash,
                         join,
                         writer,
@@ -233,7 +260,7 @@ impl FakeClient {
 #[derive(Debug)]
 enum ClientEvent {
     Encrypted(String),
-    LoginSucceeded(Uuid),
+    LoginSucceeded(Uuid, String),
     Joined(PacketFrame),
     Frame(PacketFrame),
     Disconnected(DisconnectInfo),
@@ -334,7 +361,7 @@ impl Driver {
         }
         if wire::is::<CLoginSuccess>(&frame, version) {
             let success = wire::decode::<CLoginSuccess>(&frame, version)?;
-            self.emit(ClientEvent::LoginSucceeded(success.uuid));
+            self.emit(ClientEvent::LoginSucceeded(success.uuid, success.username));
             if version.no_less_than(ProtocolVersion::V1_20_2) {
                 self.send(&SLoginAcknowledged).await?;
                 self.state = ConnectionState::Config;
@@ -433,6 +460,7 @@ pub struct ClientSession {
     version: ProtocolVersion,
     username: String,
     uuid: Option<Uuid>,
+    profile_name: Option<String>,
     server_hash: Option<String>,
     join: PacketFrame,
     writer: Arc<Mutex<FrameWriter>>,
@@ -461,6 +489,10 @@ impl ClientSession {
 
     pub const fn uuid(&self) -> Option<Uuid> {
         self.uuid
+    }
+
+    pub fn profile_name(&self) -> Option<&str> {
+        self.profile_name.as_deref()
     }
 
     pub fn server_hash(&self) -> Option<&str> {
@@ -524,7 +556,7 @@ impl ClientSession {
                     return Err(HarnessError::Closed(format!("{what} ({reason})")));
                 }
                 ClientEvent::Encrypted(_)
-                | ClientEvent::LoginSucceeded(_)
+                | ClientEvent::LoginSucceeded(..)
                 | ClientEvent::Joined(_)
                 | ClientEvent::Frame(_) => {}
             }
@@ -600,6 +632,24 @@ fn system_message_content(
         return Ok((message.position != 2).then(|| message.content.into_bytes()));
     }
     Ok(None)
+}
+
+fn proxy_v2_header(source: SocketAddr, destination: SocketAddr) -> HarnessResult<Vec<u8>> {
+    const SIGNATURE: [u8; 12] = [
+        0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A,
+    ];
+    let (SocketAddr::V4(source), SocketAddr::V4(destination)) = (source, destination) else {
+        return Err(HarnessError::setup(
+            "the PROXY protocol header supports IPv4 addresses only",
+        ));
+    };
+    let mut header = SIGNATURE.to_vec();
+    header.extend_from_slice(&[0x21, 0x11, 0x00, 0x0C]);
+    header.extend_from_slice(&source.ip().octets());
+    header.extend_from_slice(&destination.ip().octets());
+    header.extend_from_slice(&source.port().to_be_bytes());
+    header.extend_from_slice(&destination.port().to_be_bytes());
+    Ok(header)
 }
 
 fn now_millis() -> i64 {

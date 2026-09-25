@@ -20,7 +20,7 @@ mod wasm;
 mod web;
 
 pub use address::{DomainRewrite, ServerAddress};
-pub use auth::AuthConfig;
+pub use auth::{AuthConfig, OfflineUuidPolicy};
 pub use balance::{BalanceConfig, BalanceStrategy, WeightedAddress};
 pub use ban::BanConfig;
 pub use docker::DockerProviderConfig;

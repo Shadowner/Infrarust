@@ -111,6 +111,28 @@ pub fn make_env_with(plugins_dir: PathBuf, options: EnvOptions) -> TestEnv {
     }
 }
 
+pub fn session_player(
+    id: u64,
+    profile: GameProfile,
+    protocol: i32,
+    remote_addr: std::net::SocketAddr,
+) -> Arc<dyn infrarust_api::player::Player> {
+    let (commands, _) = infrarust_core::player::PlayerSession::channel();
+    Arc::new(infrarust_core::player::PlayerSession::new(
+        infrarust_api::types::PlayerId::new(id),
+        profile,
+        infrarust_api::types::ProtocolVersion::new(protocol),
+        remote_addr,
+        None,
+        true,
+        true,
+        commands,
+        CancellationToken::new(),
+        infrarust_core::permissions::default_checker(),
+        Arc::new(infrarust_core::loadbalancer::BackendLoad::new()),
+    ))
+}
+
 pub fn nil_profile(username: &str) -> GameProfile {
     GameProfile {
         uuid: uuid::Uuid::nil(),

@@ -179,7 +179,7 @@ Events fall into categories:
 
 | Category | Events |
 |----------|--------|
-| Lifecycle | `PreLoginEvent`, `PostLoginEvent`, `DisconnectEvent`, `OnlineAuthFailed`, `PermissionsSetupEvent` |
+| Lifecycle | `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `DisconnectEvent` |
 | Connection | `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerSwitchEvent`, `KickedFromServerEvent` |
 | Chat | `ChatMessageEvent` |
 | Proxy | `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `ConfigReloadEvent`, `ServerStateChangeEvent`, `BackendHealthEvent` |

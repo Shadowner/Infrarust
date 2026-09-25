@@ -27,7 +27,7 @@ pub(crate) enum LimboExitResult {
     Completed,
     SwitchedTo(ServerId),
     /// Disconnect packet already sent.
-    Kicked,
+    Kicked(Component),
     ClientDisconnected,
     Shutdown,
     Timeout,
@@ -125,7 +125,7 @@ async fn map_chain_result(
 
         LimboChainResult::Kick(reason) => {
             send_disconnect(client, &reason, version, registry).await;
-            LimboExitResult::Kicked
+            LimboExitResult::Kicked(reason)
         }
 
         LimboChainResult::ClientDisconnected => {
@@ -234,7 +234,7 @@ mod tests {
             PlayerId::new(1),
         )
         .await;
-        assert!(matches!(result, LimboExitResult::Kicked));
+        assert!(matches!(result, LimboExitResult::Kicked(_)));
     }
 
     #[tokio::test]

@@ -18,6 +18,10 @@ pub struct EventsConfig {
     #[serde(default = "defaults::event_packet_handler_timeout")]
     #[serde(with = "humantime_serde")]
     pub packet_handler_timeout: Duration,
+
+    #[serde(default = "defaults::event_disconnect_deadline")]
+    #[serde(with = "humantime_serde")]
+    pub disconnect_deadline: Duration,
 }
 
 impl Default for EventsConfig {
@@ -26,6 +30,25 @@ impl Default for EventsConfig {
             handler_timeout: defaults::event_handler_timeout(),
             slow_handler_threshold: defaults::event_slow_handler_threshold(),
             packet_handler_timeout: defaults::event_packet_handler_timeout(),
+            disconnect_deadline: defaults::event_disconnect_deadline(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disconnect_deadline_defaults_to_fifteen_seconds() {
+        let config: EventsConfig = toml::from_str("").expect("empty events config");
+        assert_eq!(config.disconnect_deadline, Duration::from_secs(15));
+    }
+
+    #[test]
+    fn parses_a_custom_disconnect_deadline() {
+        let config: EventsConfig =
+            toml::from_str(r#"disconnect_deadline = "300ms""#).expect("valid events config");
+        assert_eq!(config.disconnect_deadline, Duration::from_millis(300));
     }
 }

@@ -16,6 +16,7 @@ use crate::filter::codec_chain::CodecFilterChain;
 use crate::limbo::LIMBO_SWITCH_TARGET;
 use crate::limbo::engine::{LimboExitResult, enter_limbo};
 use crate::pipeline::types::HandshakeData;
+use crate::player::PlayerSession;
 use crate::player::commands::CommandInbox;
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
@@ -38,7 +39,7 @@ pub(super) async fn run_session_loop(
     peer_addr: std::net::SocketAddr,
     real_ip: Option<std::net::IpAddr>,
     mut current_server_id: infrarust_api::types::ServerId,
-    session_id: &uuid::Uuid,
+    session: &PlayerSession,
     services: &ProxyServices,
     backend_connector: &BackendConnector,
     session_token: CancellationToken,
@@ -51,9 +52,7 @@ pub(super) async fn run_session_loop(
     loop {
         match mode {
             ConnectionMode::Backend(ref mut backend) => {
-                if let Some(session) = services.connection_registry.get(session_id) {
-                    session.set_connected_address(backend.server_address().cloned());
-                }
+                session.set_connected_address(backend.server_address().cloned());
                 let outcome = proxy_loop(
                     client,
                     backend,
@@ -102,7 +101,7 @@ pub(super) async fn run_session_loop(
                                 ) {
                                     let _ = client.write_frame(&frame).await;
                                 }
-                                break ProxyLoopOutcome::ClientDisconnected;
+                                break ProxyLoopOutcome::Kicked { reason };
                             }
                         }
                     }
@@ -125,10 +124,7 @@ pub(super) async fn run_session_loop(
                         {
                             SwitchAction::Backend(new_backend, new_server) => {
                                 mode = ConnectionMode::Backend(new_backend);
-                                if let Some(session) = services.connection_registry.get(session_id)
-                                {
-                                    session.set_current_server(new_server.clone());
-                                }
+                                session.set_current_server(new_server.clone());
                                 current_server_id = new_server;
                                 tracing::debug!("re-entering proxy loop after switch");
                                 continue;
@@ -188,10 +184,7 @@ pub(super) async fn run_session_loop(
                         {
                             DisconnectAction::SwitchBackend(new_backend, new_server) => {
                                 mode = ConnectionMode::Backend(new_backend);
-                                if let Some(session) = services.connection_registry.get(session_id)
-                                {
-                                    session.set_current_server(new_server.clone());
-                                }
+                                session.set_current_server(new_server.clone());
                                 current_server_id = new_server;
                                 continue;
                             }
@@ -206,9 +199,7 @@ pub(super) async fn run_session_loop(
                 }
             }
             ConnectionMode::Limbo(ref handlers, ref entry_ctx) => {
-                if let Some(session) = services.connection_registry.get(session_id) {
-                    session.set_connected_address(None);
-                }
+                session.set_connected_address(None);
                 let exit = enter_limbo(
                     client,
                     handlers.clone(),
@@ -249,10 +240,7 @@ pub(super) async fn run_session_loop(
                         {
                             SwitchAction::Backend(new_backend, new_server) => {
                                 mode = ConnectionMode::Backend(new_backend);
-                                if let Some(session) = services.connection_registry.get(session_id)
-                                {
-                                    session.set_current_server(new_server.clone());
-                                }
+                                session.set_current_server(new_server.clone());
                                 current_server_id = new_server;
                                 continue;
                             }
@@ -263,7 +251,9 @@ pub(super) async fn run_session_loop(
                                             "skipping re-entry into limbo after initial connection gate"
                                         );
                                     }
-                                    break ProxyLoopOutcome::ClientDisconnected;
+                                    break ProxyLoopOutcome::Error(CoreError::Other(
+                                        "no limbo handlers left to continue with".to_string(),
+                                    ));
                                 }
                                 mode = ConnectionMode::Limbo(handlers, limbo_ctx);
                                 continue;
@@ -277,11 +267,11 @@ pub(super) async fn run_session_loop(
                                 ) {
                                     let _ = client.write_frame(&frame).await;
                                 }
-                                break ProxyLoopOutcome::ClientDisconnected;
+                                break ProxyLoopOutcome::Kicked { reason };
                             }
                             SwitchAction::Error(e) => {
                                 tracing::warn!("switch after limbo failed: {e}");
-                                break ProxyLoopOutcome::ClientDisconnected;
+                                break ProxyLoopOutcome::Error(e);
                             }
                         }
                     }
@@ -293,7 +283,9 @@ pub(super) async fn run_session_loop(
                             tracing::warn!(
                                 "limbo-to-limbo but no valid handlers resolved, disconnecting"
                             );
-                            break ProxyLoopOutcome::ClientDisconnected;
+                            break ProxyLoopOutcome::Error(CoreError::Other(
+                                "no limbo handlers resolved for a limbo-to-limbo move".to_string(),
+                            ));
                         }
                         mode = ConnectionMode::Limbo(
                             handlers,
@@ -303,10 +295,10 @@ pub(super) async fn run_session_loop(
                         );
                         continue;
                     }
-                    LimboExitResult::Kicked | LimboExitResult::Timeout => {
-                        break ProxyLoopOutcome::ClientDisconnected;
+                    LimboExitResult::Kicked(reason) => {
+                        break ProxyLoopOutcome::Kicked { reason };
                     }
-                    LimboExitResult::ClientDisconnected => {
+                    LimboExitResult::Timeout | LimboExitResult::ClientDisconnected => {
                         break ProxyLoopOutcome::ClientDisconnected;
                     }
                     LimboExitResult::Shutdown => {
@@ -414,7 +406,9 @@ async fn handle_backend_disconnect(
             {
                 let _ = client.write_frame(&frame).await;
             }
-            DisconnectAction::Break(ProxyLoopOutcome::ClientDisconnected)
+            DisconnectAction::Break(ProxyLoopOutcome::BackendKicked {
+                reason: reason.clone(),
+            })
         }
         infrarust_api::events::connection::KickedFromServerResult::RedirectTo(server) => {
             match handle_switch(
@@ -438,7 +432,9 @@ async fn handle_backend_disconnect(
                 }
                 SwitchAction::Limbo(handlers, ctx) => {
                     if handlers.is_empty() {
-                        DisconnectAction::Break(ProxyLoopOutcome::ClientDisconnected)
+                        DisconnectAction::Break(ProxyLoopOutcome::Error(CoreError::Other(
+                            "no limbo handlers resolved after a kick".to_string(),
+                        )))
                     } else {
                         DisconnectAction::SwitchLimbo(handlers, ctx)
                     }
@@ -489,7 +485,9 @@ async fn handle_backend_disconnect(
                 ) {
                     let _ = client.write_frame(&frame).await;
                 }
-                DisconnectAction::Break(ProxyLoopOutcome::ClientDisconnected)
+                DisconnectAction::Break(ProxyLoopOutcome::BackendKicked {
+                    reason: kick_reason,
+                })
             }
         }
         infrarust_api::events::connection::KickedFromServerResult::Notify { message } => {

@@ -41,7 +41,7 @@ impl EventBridge {
         ctx.event_bus()
             .subscribe::<PostLoginEvent, _>(EventPriority::LAST, move |event| {
                 let _ = tx.send(ApiEvent::PlayerJoin {
-                    player_id: event.player_id.as_u64(),
+                    player_id: event.player_id().as_u64(),
                     username: event.profile.username.clone(),
                     uuid: event.profile.uuid.to_string(),
                     server: String::new(), // Not yet routed at PostLogin
@@ -54,8 +54,8 @@ impl EventBridge {
         ctx.event_bus()
             .subscribe::<DisconnectEvent, _>(EventPriority::LAST, move |event| {
                 let _ = tx.send(ApiEvent::PlayerLeave {
-                    player_id: event.player_id.as_u64(),
-                    username: event.username.clone(),
+                    player_id: event.player_id().as_u64(),
+                    username: event.username().to_string(),
                     last_server: event.last_server.as_ref().map(|s| s.as_str().to_string()),
                     timestamp: now_iso8601(),
                 });

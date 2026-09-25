@@ -26,7 +26,7 @@ pub use server_id::{ServerAddress, ServerId};
 ///
 /// Contains the UUID, username, and profile properties (typically skin data)
 /// as received during the login handshake.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameProfile {
     /// The player's Mojang UUID.
     pub uuid: uuid::Uuid,
@@ -49,7 +49,7 @@ impl GameProfile {
 /// A single property on a [`GameProfile`].
 ///
 /// Typically contains skin texture data signed by Mojang.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileProperty {
     /// Property name (e.g. `"textures"`).
     pub name: String,

@@ -12,8 +12,8 @@ use infrarust_api::events::connection::{
     ServerPreConnectResult, ServerSwitchEvent,
 };
 use infrarust_api::events::lifecycle::{
-    DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult,
-    PostLoginEvent, PreLoginEvent, PreLoginResult,
+    DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult, OnlineAuthFailed,
+    PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent, PreLoginResult,
 };
 use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
@@ -32,6 +32,8 @@ pub const RECORDER_PLUGIN_ID: &str = "harness_recorder";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum EventKind {
     PreLogin,
+    GameProfileRequest,
+    Login,
     PostLogin,
     PermissionsSetup,
     OnlineAuthFailed,
@@ -51,8 +53,10 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 19] = [
         Self::PreLogin,
+        Self::GameProfileRequest,
+        Self::Login,
         Self::PostLogin,
         Self::PermissionsSetup,
         Self::OnlineAuthFailed,
@@ -74,6 +78,8 @@ impl EventKind {
     pub const fn name(self) -> &'static str {
         match self {
             Self::PreLogin => "PreLogin",
+            Self::GameProfileRequest => "GameProfileRequest",
+            Self::Login => "Login",
             Self::PostLogin => "PostLogin",
             Self::PermissionsSetup => "PermissionsSetup",
             Self::OnlineAuthFailed => "OnlineAuthFailed",
@@ -330,14 +336,31 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
             }),
         )
     });
+    on::<GameProfileRequestEvent>(bus, recorder, |e| {
+        (
+            EventKind::GameProfileRequest,
+            None,
+            Some(e.profile.username.clone()),
+            json!({
+                "original": profile(e.original()),
+                "profile": profile(&e.profile),
+                "online_mode": e.online_mode,
+                "remote_addr": e.remote_addr.to_string(),
+                "virtual_host": e.virtual_host,
+                "protocol_version": e.protocol_version.raw(),
+            }),
+        )
+    });
     on::<PostLoginEvent>(bus, recorder, |e| {
         (
             EventKind::PostLogin,
-            Some(e.player_id),
+            Some(e.player_id()),
             Some(e.profile.username.clone()),
             json!({
                 "profile": profile(&e.profile),
                 "protocol_version": e.protocol_version.raw(),
+                "remote_addr": e.player.remote_addr().to_string(),
+                "current_server": e.player.current_server().as_ref().map(ServerId::as_str),
             }),
         )
     });
@@ -349,10 +372,27 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
         };
         (
             EventKind::PermissionsSetup,
-            Some(e.player_id),
-            Some(e.profile.username.clone()),
+            Some(e.player_id()),
+            Some(e.profile().username.clone()),
             json!({
-                "profile": profile(&e.profile),
+                "profile": profile(e.profile()),
+                "online_mode": e.online_mode,
+                "result": result,
+            }),
+        )
+    });
+    on::<LoginEvent>(bus, recorder, |e| {
+        let result = match e.result() {
+            LoginResult::Allowed => json!("allowed"),
+            LoginResult::Denied { reason } => json!({ "denied": reason.to_string() }),
+            _ => json!("other"),
+        };
+        (
+            EventKind::Login,
+            Some(e.player_id()),
+            Some(e.profile().username.clone()),
+            json!({
+                "profile": profile(e.profile()),
                 "online_mode": e.online_mode,
                 "result": result,
             }),
@@ -369,11 +409,13 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
     on::<DisconnectEvent>(bus, recorder, |e| {
         (
             EventKind::Disconnect,
-            Some(e.player_id),
-            Some(e.username.clone()),
+            Some(e.player_id()),
+            Some(e.username().to_string()),
             json!({
-                "username": e.username,
+                "username": e.username(),
                 "last_server": e.last_server.as_ref().map(ServerId::as_str),
+                "cause": e.cause.as_str(),
+                "reason": e.cause.reason().map(ToString::to_string),
             }),
         )
     });

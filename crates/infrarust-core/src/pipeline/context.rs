@@ -74,6 +74,7 @@ pub struct ConnectionContext {
     pub peer_addr: SocketAddr,
     /// Effective client IP (after proxy protocol resolution).
     pub client_ip: IpAddr,
+    client_port: u16,
     /// Local listener address.
     pub local_addr: SocketAddr,
     /// Timestamp when the connection was accepted.
@@ -93,12 +94,13 @@ impl ConnectionContext {
         let local_addr = accepted.connection.local_addr();
         let connected_at = accepted.connection.connected_at();
         let (connection, permit) = accepted.into_parts();
-        let (stream, buffered_data, _info) = connection.into_parts();
+        let (stream, buffered_data, info) = connection.into_parts();
 
         Self {
             stream: Some(stream),
             peer_addr,
             client_ip,
+            client_port: info.real_port.unwrap_or(peer_addr.port()),
             local_addr,
             connected_at,
             buffered_data,
@@ -168,12 +170,17 @@ impl ConnectionContext {
             stream: Some(stream),
             peer_addr,
             client_ip,
+            client_port: peer_addr.port(),
             local_addr,
             connected_at: Instant::now(),
             buffered_data: BytesMut::new(),
             extensions: Extensions::new(),
             _permit: None,
         }
+    }
+
+    pub const fn client_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.client_ip, self.client_port)
     }
 
     pub fn connection_duration(&self) -> Duration {

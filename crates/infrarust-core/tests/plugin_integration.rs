@@ -11,8 +11,8 @@ use infrarust_api::event::bus::EventBusExt;
 use infrarust_api::event::{BoxFuture, EventPriority};
 use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
-use infrarust_api::types::{GameProfile, PlayerId, ProtocolVersion};
 use infrarust_core::event_bus::EventBusImpl;
+use infrarust_core::player::PlayerSession;
 use infrarust_core::plugin::PluginContextFactoryImpl;
 use infrarust_core::plugin::manager::{PluginManager, PluginServices};
 use infrarust_core::plugin::static_loader::StaticPluginLoader;
@@ -100,15 +100,8 @@ async fn test_plugin_receives_events_end_to_end() {
     assert!(manager.is_plugin_loaded("test_plugin"));
 
     // 2. Fire a PostLoginEvent
-    let event = PostLoginEvent {
-        profile: GameProfile {
-            uuid: uuid::Uuid::nil(),
-            username: "TestPlayer".into(),
-            properties: vec![],
-        },
-        player_id: PlayerId::new(1),
-        protocol_version: ProtocolVersion::MINECRAFT_1_21,
-    };
+    let (player, _commands) = PlayerSession::new_test(true);
+    let event = PostLoginEvent::new(Arc::new(player));
     event_bus.fire(event).await;
 
     // 3. Verify the plugin handler was called

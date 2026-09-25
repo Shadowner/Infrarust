@@ -1,8 +1,9 @@
 //! Shared helpers for connection handlers.
 
+#[cfg(feature = "telemetry")]
 use std::sync::Arc;
 
-use infrarust_api::types::{Component, PlayerId, ServerId};
+use infrarust_api::types::Component;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
@@ -12,26 +13,7 @@ use infrarust_protocol::version::ProtocolVersion;
 use infrarust_protocol::{Packet, PacketRegistry};
 
 use crate::error::CoreError;
-use crate::event_bus::EventBusImpl;
 use crate::session::proxy_loop::ProxyLoopOutcome;
-
-/// Fires a `DisconnectEvent` on the event bus.
-///
-/// Called by all handlers at session teardown. Fire-and-return (not fire-and-forget)
-/// because we want to ensure the event is processed before session cleanup.
-pub(crate) async fn fire_disconnect_event(
-    event_bus: &Arc<EventBusImpl>,
-    player_id: PlayerId,
-    username: String,
-    last_server: Option<ServerId>,
-) {
-    let disconnect = infrarust_api::events::lifecycle::DisconnectEvent {
-        player_id,
-        username,
-        last_server,
-    };
-    let _ = event_bus.fire(disconnect).await;
-}
 
 /// Logs the outcome of a proxy loop session with consistent formatting.
 ///
@@ -57,6 +39,12 @@ pub(crate) fn log_proxy_loop_outcome(session_id: &Uuid, outcome: &ProxyLoopOutco
         }
         ProxyLoopOutcome::SwitchRequested { target } => {
             tracing::info!(session = %session_id, %target, "server switch requested");
+        }
+        ProxyLoopOutcome::Kicked { reason } => {
+            tracing::info!(session = %session_id, reason = %reason.to_plain(), "player kicked");
+        }
+        ProxyLoopOutcome::BackendKicked { reason } => {
+            tracing::info!(session = %session_id, reason = %reason.to_plain(), "backend kicked the player");
         }
     }
 }

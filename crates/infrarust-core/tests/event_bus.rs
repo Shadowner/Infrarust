@@ -441,7 +441,7 @@ async fn test_raw_packet_result_drop() {
 #[tokio::test]
 async fn test_lifecycle_events_flow() {
     use infrarust_api::events::lifecycle::PostLoginEvent;
-    use infrarust_api::types::{GameProfile, ProtocolVersion};
+    use infrarust_core::player::PlayerSession;
     use std::sync::atomic::AtomicU32;
 
     let bus = EventBusImpl::new();
@@ -453,15 +453,8 @@ async fn test_lifecycle_events_flow() {
         counter_clone.fetch_add(1, Ordering::SeqCst);
     });
 
-    let event = PostLoginEvent {
-        profile: GameProfile {
-            uuid: uuid::Uuid::nil(),
-            username: "TestPlayer".into(),
-            properties: vec![],
-        },
-        player_id: PlayerId::new(1),
-        protocol_version: ProtocolVersion::MINECRAFT_1_21,
-    };
+    let (player, _commands) = PlayerSession::new_test(true);
+    let event = PostLoginEvent::new(Arc::new(player));
 
     let _ = bus.fire(event).await;
 

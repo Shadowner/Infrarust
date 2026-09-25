@@ -266,14 +266,31 @@ Limits on plugin event listeners. A listener that panics is skipped and the even
 | `handler_timeout` | duration | `"10s"` | Longest an async listener may run for a regular event before it is cancelled |
 | `slow_handler_threshold` | duration | `"1s"` | Listeners running longer than this are logged as slow |
 | `packet_handler_timeout` | duration | `"10s"` | Longest an async raw packet listener may run before it is cancelled |
+| `disconnect_deadline` | duration | `"15s"` | Longest the `DisconnectEvent` dispatch for one player may take, all listeners included. The player is removed from the registry when it ends or at the deadline. Also bounds how long a duplicate login waits for the previous session to end |
 
-All three must be greater than zero. Synchronous listeners can't be cancelled; one that overruns is reported as slow.
+All four must be greater than zero. Synchronous listeners can't be cancelled; one that overruns is reported as slow.
 
 ```toml
 [events]
 handler_timeout = "10s"
 slow_handler_threshold = "1s"
 packet_handler_timeout = "10s"
+disconnect_deadline = "15s"
+```
+
+### `[auth]`
+
+Player authentication and identity.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `session_url` | string | `"https://sessionserver.mojang.com/session/minecraft/hasJoined"` | Session server `client_only` mode verifies joining players against. Any Yggdrasil-compatible `hasJoined` endpoint works |
+| `offline_uuid` | string | `"offline"` | UUID of players the session server does not verify (offline and passthrough servers, `ForceOffline`). `"offline"`: always the name-based offline UUID. `"client"`: the UUID from the client's login start packet when it sends one (1.19.1+), otherwise the name-based offline UUID. Never random |
+
+```toml
+[auth]
+session_url = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
+offline_uuid = "offline"
 ```
 
 ### `[wasm]`
@@ -587,6 +604,7 @@ enable_audit_log = true
 handler_timeout = "10s"
 slow_handler_threshold = "1s"
 packet_handler_timeout = "10s"
+disconnect_deadline = "15s"
 
 [wasm]
 memory_limit_mb = 64

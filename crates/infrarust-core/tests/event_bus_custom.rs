@@ -14,7 +14,8 @@ use infrarust_api::events::connection::{
     ServerPreConnectEvent, ServerSwitchEvent,
 };
 use infrarust_api::events::lifecycle::{
-    DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PostLoginEvent, PreLoginEvent,
+    DisconnectEvent, GameProfileRequestEvent, LoginEvent, OnlineAuthFailed, PermissionsSetupEvent,
+    PostLoginEvent, PreLoginEvent,
 };
 use infrarust_api::events::named::{NamedEvent, NamedEventResponse};
 use infrarust_api::events::packet::RawPacketEvent;
@@ -213,8 +214,13 @@ async fn a_failing_handler_names_the_plugin_that_fired_the_event() {
 
 type Probe = (&'static str, fn() -> TypeId);
 
-const BUILTIN_NAMES: [Probe; 17] = [
+const BUILTIN_NAMES: [Probe; 19] = [
     ("PreLoginEvent", TypeId::of::<PreLoginEvent>),
+    (
+        "GameProfileRequestEvent",
+        TypeId::of::<GameProfileRequestEvent>,
+    ),
+    ("LoginEvent", TypeId::of::<LoginEvent>),
     ("PostLoginEvent", TypeId::of::<PostLoginEvent>),
     ("PermissionsSetupEvent", TypeId::of::<PermissionsSetupEvent>),
     ("OnlineAuthFailed", TypeId::of::<OnlineAuthFailed>),

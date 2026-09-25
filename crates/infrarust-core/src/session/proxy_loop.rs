@@ -46,13 +46,23 @@ pub enum ProxyLoopOutcome {
     ClientDisconnected,
     /// Backend closed its connection.
     /// In Phase 2A: cleanup. In Phase 4+: server switch / limbo.
-    BackendDisconnected { reason: Option<String> },
+    BackendDisconnected {
+        reason: Option<String>,
+    },
     /// Global proxy shutdown.
     Shutdown,
     /// I/O or protocol error.
     Error(CoreError),
     /// Server switch requested by plugin/command — handler should perform the switch.
-    SwitchRequested { target: ServerId },
+    SwitchRequested {
+        target: ServerId,
+    },
+    Kicked {
+        reason: Component,
+    },
+    BackendKicked {
+        reason: Component,
+    },
 }
 
 /// Action to take after processing a backend → client packet.
@@ -345,7 +355,9 @@ async fn kick(
     if let Err(e) = client.disconnect(reason, registry).await {
         tracing::debug!("failed to send the kick reason: {e}");
     }
-    ProxyLoopOutcome::ClientDisconnected
+    ProxyLoopOutcome::Kicked {
+        reason: reason.clone(),
+    }
 }
 
 /// Queues injected frames from a codec filter's FrameOutput.

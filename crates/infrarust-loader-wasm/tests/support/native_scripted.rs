@@ -183,23 +183,23 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
             e.set_result(result);
         }),
         EventName::PostLogin => bus.subscribe(at, move |e: &mut PostLoginEvent| {
-            let id = e.player_id.as_u64().to_string();
+            let id = e.player_id().as_u64().to_string();
             let uuid = e.profile.uuid.to_string();
             let protocol = e.protocol_version.raw().to_string();
             seen.record(&[&id, &e.profile.username, &uuid, &protocol]);
         }),
         EventName::Disconnect => bus.subscribe(at, move |e: &mut DisconnectEvent| {
-            let id = e.player_id.as_u64().to_string();
+            let id = e.player_id().as_u64().to_string();
             let last = e.last_server.as_ref().map_or("-", ServerId::as_str);
-            seen.record(&[&id, &e.username, last]);
+            seen.record(&[&id, e.username(), last]);
         }),
         EventName::OnlineAuthFailed => bus.subscribe(at, move |e: &mut OnlineAuthFailed| {
             seen.record(&[&e.username]);
         }),
         EventName::PermissionsSetup => bus.subscribe(at, move |e: &mut PermissionsSetupEvent| {
-            let id = e.player_id.as_u64().to_string();
+            let id = e.player_id().as_u64().to_string();
             let online = e.online_mode.to_string();
-            seen.record(&[&id, &e.profile.username, &online]);
+            seen.record(&[&id, &e.profile().username, &online]);
             if let Action::Custom(level) = &seen.action {
                 let level = if level == "admin" {
                     PermissionLevel::Admin

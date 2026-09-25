@@ -24,7 +24,7 @@ impl Plugin for HelloPlugin {
 
             ctx.event_bus()
                 .subscribe(EventPriority::NORMAL, |event: &mut DisconnectEvent| {
-                    tracing::info!("[HelloPlugin] {} left the proxy", event.username);
+                    tracing::info!("[HelloPlugin] {} left the proxy", event.username());
                 });
 
             ctx.event_bus()

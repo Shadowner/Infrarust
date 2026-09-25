@@ -506,11 +506,12 @@ async fn enable_slow_handler(
 }
 
 fn post_login() -> PostLoginEvent {
-    PostLoginEvent {
-        profile: nil_profile("Steve"),
-        player_id: PlayerId::new(1),
-        protocol_version: ProtocolVersion::MINECRAFT_1_21,
-    }
+    PostLoginEvent::new(support::session_player(
+        1,
+        nil_profile("Steve"),
+        ProtocolVersion::MINECRAFT_1_21.raw(),
+        "127.0.0.1:40000".parse().unwrap(),
+    ))
 }
 
 fn pre_connect() -> ServerPreConnectEvent {

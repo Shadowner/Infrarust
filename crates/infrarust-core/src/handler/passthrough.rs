@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use infrarust_api::event::ResultedEvent;
+use infrarust_api::events::lifecycle::DisconnectCause;
+use infrarust_api::player::Player;
 use infrarust_api::types::Component;
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
@@ -9,13 +11,15 @@ use infrarust_config::DomainRewrite;
 use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::version::ProtocolVersion;
-use infrarust_transport::{BackendConnector, select_forwarder};
+use infrarust_transport::{BackendConnector, ForwardEndReason, select_forwarder};
 
+use crate::auth::game_profile::offline_profile_uuid;
 use crate::error::CoreError;
 use crate::forwarding::{ForwardingData, ForwardingHandler, build_handshake_for_backend};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
-use crate::player::PlayerSession;
+use crate::player::lifecycle::PlayerLifecycle;
+use crate::player::{PlayerCommand, PlayerSession};
 use crate::services::ProxyServices;
 
 /// Handles passthrough proxy connections.
@@ -63,41 +67,71 @@ impl PassthroughHandler {
         let login_data = ctx.extensions.get::<LoginData>().cloned();
 
         let server_config = &routing.server_config;
+        let version = handshake.protocol_version;
+        let registry = &self.services.packet_registry;
 
-        // Build player_id and api_profile early for events
-        let player_uuid = login_data
-            .as_ref()
-            .and_then(|d| d.player_uuid)
-            .unwrap_or_else(uuid::Uuid::new_v4);
         let username = login_data
             .as_ref()
             .map(|d| d.username.clone())
             .unwrap_or_default();
-        let player_id = crate::player::next_player_id();
+        let player_uuid = offline_profile_uuid(
+            self.services.config.auth.offline_uuid,
+            &username,
+            login_data.as_ref().and_then(|d| d.player_uuid),
+        );
         let api_profile = infrarust_api::types::GameProfile {
             uuid: player_uuid,
             username: username.clone(),
             properties: vec![],
         };
 
+        let session_token = shutdown.child_token();
+        let (cmd_tx, mut cmd_rx) = PlayerSession::channel();
+        let player = Arc::new(PlayerSession::new(
+            crate::player::next_player_id(),
+            api_profile.clone(),
+            infrarust_api::types::ProtocolVersion::new(version.0),
+            ctx.client_addr(),
+            None,
+            false,
+            false,
+            cmd_tx,
+            session_token.clone(),
+            crate::permissions::default_checker(),
+            Arc::clone(&self.services.backend_load),
+        ));
+        let player_id = player.id();
+
+        let lifecycle = PlayerLifecycle::begin(&self.services, Arc::clone(&player)).await;
+        if session_token.is_cancelled() {
+            let reason = queued_kick(&mut cmd_rx);
+            if let Some(reason) = &reason {
+                super::helpers::send_login_disconnect(ctx.stream_mut(), reason, version, registry)
+                    .await
+                    .ok();
+            }
+            lifecycle.end(cancelled_cause(&shutdown, reason)).await;
+            return Ok(());
+        }
+
         let initial_server = infrarust_api::types::ServerId::new(routing.config_id.clone());
         let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(
             player_id,
-            api_profile.clone(),
+            api_profile,
             initial_server,
         );
         let pre_connect = self.services.event_bus.fire(pre_connect).await;
         match pre_connect.result() {
             infrarust_api::events::connection::ServerPreConnectResult::Allowed => {}
             infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
-                super::helpers::send_login_disconnect(
-                    ctx.stream_mut(),
-                    reason,
-                    handshake.protocol_version,
-                    &self.services.packet_registry,
-                )
-                .await
-                .ok();
+                super::helpers::send_login_disconnect(ctx.stream_mut(), reason, version, registry)
+                    .await
+                    .ok();
+                lifecycle
+                    .end(DisconnectCause::Kicked {
+                        reason: Some(reason.clone()),
+                    })
+                    .await;
                 return Ok(());
             }
             _ => {} // ConnectTo, SendToLimbo, VirtualBackend — Phase 4
@@ -130,9 +164,10 @@ impl PassthroughHandler {
                     "backend unreachable, sending disconnect to client"
                 );
                 let msg = Component::text(server_config.effective_disconnect_message());
-                self.send_kick_raw(ctx.stream_mut(), &msg, handshake.protocol_version)
+                self.send_kick_raw(ctx.stream_mut(), &msg, version)
                     .await
                     .ok();
+                lifecycle.end(DisconnectCause::Error).await;
                 return Ok(());
             }
         };
@@ -142,46 +177,32 @@ impl PassthroughHandler {
         let fwd_data = ForwardingData {
             real_ip: ctx.client_ip,
             uuid: player_uuid,
-            username: username.clone(),
+            username,
             properties: vec![], // No properties in passthrough (no Mojang auth)
-            protocol_version: handshake.protocol_version,
+            protocol_version: version,
             chat_session: None,
         };
-        self.forward_initial_packets(backend.stream_mut(), &handshake, server_config, &fwd_data)
-            .await?;
+        if let Err(e) = self
+            .forward_initial_packets(backend.stream_mut(), &handshake, server_config, &fwd_data)
+            .await
+        {
+            lifecycle.end(DisconnectCause::Error).await;
+            return Err(e);
+        }
 
+        let server_id = infrarust_api::types::ServerId::new(routing.config_id.clone());
         self.services.event_bus.fire_and_forget_arc(
             infrarust_api::events::connection::ServerConnectedEvent {
                 player_id,
-                server: infrarust_api::types::ServerId::new(routing.config_id.clone()),
+                server: server_id.clone(),
             },
         );
 
-        // Register session
-        let session_token = shutdown.child_token();
-        let (cmd_tx, _cmd_rx) = PlayerSession::channel();
-
-        let player_session = Arc::new(PlayerSession::new(
-            player_id,
-            api_profile,
-            infrarust_api::types::ProtocolVersion::new(handshake.protocol_version.0),
-            ctx.peer_addr,
-            Some(infrarust_api::types::ServerId::new(
-                routing.config_id.clone(),
-            )),
-            false, // active: Passthrough doesn't support packet injection
-            false, // online_mode: passthrough doesn't authenticate
-            cmd_tx,
-            session_token.clone(),
-            crate::permissions::default_checker(),
-            Arc::clone(&self.services.backend_load),
-        ));
-
-        player_session.set_connected_address(Some(backend.server_address().clone()));
+        player.set_current_server(server_id);
+        player.set_connected_address(Some(backend.server_address().clone()));
         ctx.extensions
             .remove::<crate::loadbalancer::PendingTicket>();
-        let session_guard = self.services.connection_registry.register(player_session);
-        let session_id = session_guard.uuid();
+        let session_id = player_uuid;
 
         tracing::info!(
             session = %session_id,
@@ -204,17 +225,13 @@ impl PassthroughHandler {
             .forward(client_stream, backend_stream, session_token.clone())
             .await;
 
-        super::helpers::fire_disconnect_event(
-            &self.services.event_bus,
-            player_id,
-            username,
-            Some(infrarust_api::types::ServerId::new(
-                routing.config_id.clone(),
-            )),
-        )
-        .await;
-
-        drop(session_guard);
+        let cause = match &result.reason {
+            ForwardEndReason::ClientClosed => DisconnectCause::ClientQuit,
+            ForwardEndReason::BackendClosed => DisconnectCause::BackendClosed { reason: None },
+            ForwardEndReason::Shutdown => cancelled_cause(&shutdown, queued_kick(&mut cmd_rx)),
+            _ => DisconnectCause::Error,
+        };
+        lifecycle.end(cause).await;
 
         // Record end metrics
         #[cfg(feature = "telemetry")]
@@ -361,5 +378,22 @@ impl PassthroughHandler {
         }
 
         Ok(())
+    }
+}
+
+fn queued_kick(commands: &mut tokio::sync::mpsc::Receiver<PlayerCommand>) -> Option<Component> {
+    while let Ok(command) = commands.try_recv() {
+        if let PlayerCommand::Kick(reason) = command {
+            return Some(reason);
+        }
+    }
+    None
+}
+
+fn cancelled_cause(shutdown: &CancellationToken, reason: Option<Component>) -> DisconnectCause {
+    if shutdown.is_cancelled() {
+        DisconnectCause::Shutdown
+    } else {
+        DisconnectCause::Kicked { reason }
     }
 }

@@ -89,12 +89,13 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 
 1. The proxy reads the client's handshake and login start packets.
 2. It fires a `PreLoginEvent`, giving plugins a chance to deny the connection.
-3. It performs Mojang authentication: sends an `EncryptionRequest` with the proxy's RSA public key, reads the `EncryptionResponse`, decrypts the shared secret, and verifies the session against `sessionserver.mojang.com`.
-4. On success, it sends `LoginSuccess` to the client with the player's UUID, username, and skin properties from Mojang.
-5. It fires a `PostLoginEvent`.
-6. For 1.20.2+, it waits for the client's `LoginAcknowledged` packet and transitions to the Configuration state. For older versions, it transitions directly to Play state.
-7. It connects to the backend in offline mode, replaying the login sequence.
-8. It enters the session loop, parsing and relaying packets in both directions.
+3. It performs Mojang authentication: sends an `EncryptionRequest` with the proxy's RSA public key, reads the `EncryptionResponse`, decrypts the shared secret, and verifies the session against `sessionserver.mojang.com`. If this fails, it fires `OnlineAuthFailed` and disconnects the client.
+4. It fires a `GameProfileRequestEvent`, where plugins may rewrite the profile, then checks bans against the final UUID. A banned player is disconnected while still in the login phase.
+5. It fires `PermissionsSetupEvent` and `LoginEvent`; a plugin can still refuse the player here.
+6. It sends `LoginSuccess` to the client with the final UUID, username, and skin properties. For 1.20.2+, it waits for the client's `LoginAcknowledged` packet and transitions to the Configuration state. For older versions, it transitions directly to Play state.
+7. It registers the player and fires a `PostLoginEvent`.
+8. It connects to the backend in offline mode, replaying the login sequence.
+9. It enters the session loop, parsing and relaying packets in both directions.
 
 Because the proxy parses every packet, sessions are marked as active. Plugins can inject packets into the stream, and the proxy can move the player to a different backend without dropping the client connection.
 
@@ -113,11 +114,13 @@ Client ──TCP──▶ Infrarust ──TCP──▶ Backend
          decrypt shared secret + verify token
          verify session with Mojang
                    │
+         GameProfileRequestEvent, ban check
+         PermissionsSetupEvent, LoginEvent (plugins can deny)
+                   │
          LoginSuccess ──▶ Client
+         (1.20.2+: waits for LoginAcknowledged)
                    │
          PostLoginEvent (plugins notified)
-                   │
-         (1.20.2+: waits for LoginAcknowledged)
                    │
          connects to backend (offline mode)
                    │

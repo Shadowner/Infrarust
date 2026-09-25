@@ -83,12 +83,14 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 
 1. The proxy reads the client's handshake and login start packets.
 2. It fires a `PreLoginEvent`, giving plugins a chance to deny the connection.
-3. It fires a `PostLoginEvent`. No RSA key exchange, no encryption, no Mojang session verification.
-4. It connects to the backend and forwards the raw handshake and login packets as received from the client.
-5. The backend handles the login completion (sends `LoginSuccess` to the client).
-6. The proxy enters the session loop, parsing and relaying packets in both directions.
+3. It fires a `GameProfileRequestEvent`, where plugins may rewrite the player's profile, then checks bans against the final profile. No RSA key exchange, no encryption, no Mojang session verification.
+4. It fires `PermissionsSetupEvent` and `LoginEvent`; a plugin can still refuse the player here.
+5. It registers the player and fires `PostLoginEvent`.
+6. It connects to the backend and forwards the raw handshake and login packets as received from the client.
+7. The backend handles the login completion (sends `LoginSuccess` to the client).
+8. The proxy enters the session loop, parsing and relaying packets in both directions.
 
-The proxy does not send `LoginSuccess` to the client during its own auth phase. The backend is responsible for completing the login sequence. If the player ends up in limbo instead (because limbo handlers are configured or a plugin redirects there), the proxy sends `LoginSuccess` itself before entering limbo.
+The proxy does not send `LoginSuccess` to the client during its own auth phase. The backend is responsible for completing the login sequence. If the player ends up in limbo instead (because limbo handlers are configured or a plugin redirects there), or a plugin rewrote the profile in `GameProfileRequestEvent`, the proxy sends `LoginSuccess` itself.
 
 ### Connection lifecycle
 
@@ -98,6 +100,8 @@ Client ──TCP──▶ Infrarust ──TCP──▶ Backend
          reads handshake + login start
                    │
          PreLoginEvent (plugins can deny)
+         GameProfileRequestEvent, ban check
+         PermissionsSetupEvent, LoginEvent (plugins can deny)
          PostLoginEvent
                    │
          forwards raw handshake + login
@@ -111,7 +115,7 @@ Client ──TCP──▶ Infrarust ──TCP──▶ Backend
 
 ### UUID generation
 
-Since there's no Mojang session, the player's UUID comes from the client's login start packet. If the client doesn't provide one, the proxy generates a random v4 UUID. This means the same username can have different UUIDs across connections. If you need stable UUIDs for cracked players, handle that on the backend or through a plugin.
+Since there's no Mojang session, the proxy derives the player's UUID from the name, the same way a vanilla server in offline mode does: the same name always gets the same UUID, whatever the client claims. Set [`[auth] offline_uuid = "client"`](../global#authentication) to use the UUID the client sends in its login start packet instead (1.19.1 and later, falling back to the name-based UUID). A plugin can also set any UUID in `GameProfileRequestEvent`.
 
 ## Differences from client-only
 

@@ -3,28 +3,42 @@
 use std::sync::{Arc, OnceLock};
 
 use infrarust_api::event::ResultedEvent;
-use infrarust_api::events::lifecycle::PreLoginResult;
-use infrarust_api::types::PlayerId;
+use infrarust_api::events::lifecycle::{OnlineAuthFailed, PreLoginResult};
+use infrarust_api::types::{GameProfile, PlayerId, ProfileProperty};
 use infrarust_protocol::packets::login::{CLoginSuccess, Property, SLoginAcknowledged};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
-use crate::auth::game_profile::offline_uuid;
+use crate::auth::game_profile::offline_profile_uuid;
 use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
 use crate::pipeline::types::LoginData;
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 
+pub(super) struct Authenticated {
+    pub profile: GameProfile,
+    pub online_mode: bool,
+}
+
 pub(super) struct AuthResult {
     pub player_id: PlayerId,
     pub player_uuid: uuid::Uuid,
     pub username: String,
-    pub api_profile: infrarust_api::types::GameProfile,
-    /// Whether LoginSuccess was sent to the client (true for ClientOnly).
-    pub login_completed: bool,
-    /// Whether this player authenticated via Mojang (online mode).
-    pub online_mode: bool,
+    pub api_profile: GameProfile,
+    pub rewritten: bool,
+}
+
+impl AuthResult {
+    pub(super) fn new(player_id: PlayerId, profile: GameProfile, rewritten: bool) -> Self {
+        Self {
+            player_id,
+            player_uuid: profile.uuid,
+            username: profile.username.clone(),
+            api_profile: profile,
+            rewritten,
+        }
+    }
 }
 
 pub(super) enum AuthStrategy {
@@ -40,27 +54,20 @@ impl AuthStrategy {
         }
     }
 
-    /// Runs authentication + PreLogin/PostLogin events.
-    ///
-    /// `Mojang`: PreLoginEvent -> RSA exchange -> LoginSuccess -> LoginAcknowledged -> PostLoginEvent.
-    /// `Offline`: PreLoginEvent -> PostLoginEvent (no packets exchanged, unless ForceOnline).
-    ///
-    /// ForceOnline (in Offline arm): delegates to Mojang auth if available.
-    /// ForceOffline (in Mojang arm): skips Mojang auth, generates offline UUID.
     pub(super) async fn authenticate(
         &self,
         client: &mut ClientBridge,
         login_data: Option<&LoginData>,
         services: &ProxyServices,
         version: ProtocolVersion,
-        peer_addr: std::net::SocketAddr,
+        remote_addr: std::net::SocketAddr,
         domain: &str,
-    ) -> Result<AuthResult, CoreError> {
+    ) -> Result<Authenticated, CoreError> {
         match self {
             Self::Mojang(auth) => {
                 let login_data = login_data.ok_or(CoreError::MissingExtension("LoginData"))?;
 
-                let pre_login_profile = infrarust_api::types::GameProfile {
+                let pre_login_profile = GameProfile {
                     uuid: uuid::Uuid::nil(),
                     username: login_data.username.clone(),
                     properties: vec![],
@@ -68,7 +75,7 @@ impl AuthStrategy {
                 let pre_login_result = fire_pre_login(
                     client,
                     pre_login_profile,
-                    peer_addr,
+                    remote_addr,
                     version,
                     domain,
                     services,
@@ -80,48 +87,27 @@ impl AuthStrategy {
                         username = %login_data.username,
                         "ForceOffline: skipping Mojang auth for client_only player"
                     );
-                    return build_offline_result(
-                        &login_data.username,
-                        login_data,
-                        services,
-                        version,
-                        false,
-                    );
+                    return Ok(Authenticated {
+                        profile: offline_profile(
+                            &login_data.username,
+                            login_data.player_uuid,
+                            services,
+                        ),
+                        online_mode: false,
+                    });
                 }
 
-                match run_mojang_auth_flow(auth, client, login_data, services, version).await {
-                    Ok(result) => Ok(result),
-                    Err(e) => {
-                        tracing::warn!(
-                            username = %login_data.username,
-                            error = %e,
-                            "Mojang auth failed — client will be disconnected"
-                        );
-                        services.event_bus.fire_and_forget_arc(
-                            infrarust_api::events::lifecycle::OnlineAuthFailed {
-                                username: login_data.username.clone(),
-                            },
-                        );
-                        Err(e)
-                    }
-                }
+                online_auth(auth, client, login_data, services).await
             }
             Self::Offline { mojang } => {
-                let player_uuid = login_data
-                    .and_then(|d| d.player_uuid)
-                    .unwrap_or_else(uuid::Uuid::new_v4);
                 let username = login_data.map(|d| d.username.clone()).unwrap_or_default();
-
-                let api_profile = infrarust_api::types::GameProfile {
-                    uuid: player_uuid,
-                    username: username.clone(),
-                    properties: vec![],
-                };
+                let profile =
+                    offline_profile(&username, login_data.and_then(|d| d.player_uuid), services);
 
                 let pre_login_result = fire_pre_login(
                     client,
-                    api_profile.clone(),
-                    peer_addr,
+                    profile.clone(),
+                    remote_addr,
                     version,
                     domain,
                     services,
@@ -136,46 +122,15 @@ impl AuthStrategy {
                             username = %login_data.username,
                             "ForceOnline: upgrading offline player to Mojang auth"
                         );
-                        match run_mojang_auth_flow(auth, client, login_data, services, version)
-                            .await
-                        {
-                            Ok(result) => return Ok(result),
-                            Err(e) => {
-                                tracing::warn!(
-                                    username = %login_data.username,
-                                    error = %e,
-                                    "ForceOnline auth failed — client will be disconnected"
-                                );
-                                services.event_bus.fire_and_forget_arc(
-                                    infrarust_api::events::lifecycle::OnlineAuthFailed {
-                                        username: login_data.username.clone(),
-                                    },
-                                );
-                                return Err(e);
-                            }
-                        }
+                        return online_auth(auth, client, login_data, services).await;
                     }
                     tracing::warn!(
                         "ForceOnline requested but no MojangAuth available, falling through to offline"
                     );
                 }
 
-                let player_id = crate::player::next_player_id();
-
-                services.event_bus.fire_and_forget_arc(
-                    infrarust_api::events::lifecycle::PostLoginEvent {
-                        profile: api_profile.clone(),
-                        player_id,
-                        protocol_version: infrarust_api::types::ProtocolVersion::new(version.0),
-                    },
-                );
-
-                Ok(AuthResult {
-                    player_id,
-                    player_uuid,
-                    username,
-                    api_profile,
-                    login_completed: false,
+                Ok(Authenticated {
+                    profile,
                     online_mode: false,
                 })
             }
@@ -183,24 +138,49 @@ impl AuthStrategy {
     }
 }
 
-/// Runs the full Mojang auth flow: RSA exchange → hasJoined → LoginSuccess → LoginAcknowledged.
-///
-/// Shared between the Mojang arm (normal) and the Offline arm (when ForceOnline).
-async fn run_mojang_auth_flow(
+fn offline_profile(
+    username: &str,
+    claimed: Option<uuid::Uuid>,
+    services: &ProxyServices,
+) -> GameProfile {
+    GameProfile {
+        uuid: offline_profile_uuid(services.config.auth.offline_uuid, username, claimed),
+        username: username.to_string(),
+        properties: vec![],
+    }
+}
+
+async fn online_auth(
     auth: &MojangAuth,
     client: &mut ClientBridge,
     login_data: &LoginData,
     services: &ProxyServices,
-    version: ProtocolVersion,
-) -> Result<AuthResult, CoreError> {
-    let game_profile = auth
+) -> Result<Authenticated, CoreError> {
+    let game_profile = match auth
         .authenticate(
             client,
             &login_data.username,
             login_data.profile_key.as_ref(),
             &services.packet_registry,
         )
-        .await?;
+        .await
+    {
+        Ok(profile) => profile,
+        Err(e) => {
+            tracing::warn!(
+                username = %login_data.username,
+                error = %e,
+                "online authentication failed, the client will be disconnected"
+            );
+            let _ = services
+                .event_bus
+                .fire(OnlineAuthFailed {
+                    username: login_data.username.clone(),
+                })
+                .await;
+            return Err(e);
+        }
+    };
 
     tracing::info!(
         username = %game_profile.name,
@@ -208,10 +188,31 @@ async fn run_mojang_auth_flow(
         "client authenticated"
     );
 
-    let player_uuid = game_profile.uuid().unwrap_or_else(|_| uuid::Uuid::new_v4());
-    let player_id = crate::player::next_player_id();
+    Ok(Authenticated {
+        profile: GameProfile {
+            uuid: game_profile.uuid().unwrap_or_else(|_| uuid::Uuid::new_v4()),
+            username: game_profile.name.clone(),
+            properties: game_profile
+                .properties
+                .iter()
+                .map(|p| ProfileProperty {
+                    name: p.name.clone(),
+                    value: p.value.clone(),
+                    signature: p.signature.clone(),
+                })
+                .collect(),
+        },
+        online_mode: true,
+    })
+}
 
-    let login_props: Vec<Property> = game_profile
+pub(super) async fn complete_login(
+    client: &mut ClientBridge,
+    profile: &GameProfile,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<(), CoreError> {
+    let properties: Vec<Property> = profile
         .properties
         .iter()
         .map(|p| Property {
@@ -220,105 +221,36 @@ async fn run_mojang_auth_flow(
             signature: p.signature.clone(),
         })
         .collect();
-
-    let api_profile = infrarust_api::types::GameProfile {
-        uuid: player_uuid,
-        username: game_profile.name.clone(),
-        properties: login_props
-            .iter()
-            .map(|p| infrarust_api::types::ProfileProperty {
-                name: p.name.clone(),
-                value: p.value.clone(),
-                signature: p.signature.clone(),
-            })
-            .collect(),
-    };
-
     send_login_success(
         client,
-        player_uuid,
-        &game_profile.name,
-        &login_props,
+        profile.uuid,
+        &profile.username,
+        &properties,
         version,
-        &services.packet_registry,
+        registry,
     )
     .await?;
 
-    services
-        .event_bus
-        .fire_and_forget_arc(infrarust_api::events::lifecycle::PostLoginEvent {
-            profile: api_profile.clone(),
-            player_id,
-            protocol_version: infrarust_api::types::ProtocolVersion::new(version.0),
-        });
-
     if version.no_less_than(ProtocolVersion::V1_20_2) {
-        consume_login_acknowledged(client, version, &services.packet_registry).await?;
+        consume_login_acknowledged(client, version, registry).await
     } else {
         client.set_state(ConnectionState::Play);
+        Ok(())
     }
-
-    Ok(AuthResult {
-        player_id,
-        player_uuid,
-        username: game_profile.name.clone(),
-        api_profile,
-        login_completed: true,
-        online_mode: true,
-    })
-}
-
-/// Builds an offline-mode AuthResult without sending any packets.
-///
-/// Used by the Mojang arm when ForceOffline is set.
-fn build_offline_result(
-    username: &str,
-    login_data: &LoginData,
-    services: &ProxyServices,
-    version: ProtocolVersion,
-    online_mode: bool,
-) -> Result<AuthResult, CoreError> {
-    let player_uuid = login_data
-        .player_uuid
-        .unwrap_or_else(|| offline_uuid(username));
-    let player_id = crate::player::next_player_id();
-
-    let api_profile = infrarust_api::types::GameProfile {
-        uuid: player_uuid,
-        username: username.to_string(),
-        properties: vec![],
-    };
-
-    services
-        .event_bus
-        .fire_and_forget_arc(infrarust_api::events::lifecycle::PostLoginEvent {
-            profile: api_profile.clone(),
-            player_id,
-            protocol_version: infrarust_api::types::ProtocolVersion::new(version.0),
-        });
-
-    Ok(AuthResult {
-        player_id,
-        player_uuid,
-        username: username.to_string(),
-        api_profile,
-        login_completed: false,
-        online_mode,
-    })
 }
 
 /// Fires PreLoginEvent; returns `Err` if the player is denied, otherwise the result.
 async fn fire_pre_login(
     client: &mut ClientBridge,
-    profile: infrarust_api::types::GameProfile,
-    peer_addr: std::net::SocketAddr,
+    profile: GameProfile,
+    remote_addr: std::net::SocketAddr,
     version: ProtocolVersion,
     domain: &str,
     services: &ProxyServices,
 ) -> Result<PreLoginResult, CoreError> {
     let pre_login = infrarust_api::events::lifecycle::PreLoginEvent::new(
         profile,
-        peer_addr,
+        remote_addr,
         infrarust_api::types::ProtocolVersion::new(version.0),
         domain.to_string(),
     );
@@ -334,7 +266,7 @@ async fn fire_pre_login(
     Ok(result)
 }
 
-pub(super) async fn send_login_success(
+async fn send_login_success(
     client: &mut ClientBridge,
     uuid: uuid::Uuid,
     username: &str,
@@ -361,7 +293,7 @@ pub(super) async fn send_login_success(
 }
 
 /// Consumes LoginAcknowledged from client, transitions to Config state.
-pub(super) async fn consume_login_acknowledged(
+async fn consume_login_acknowledged(
     client: &mut ClientBridge,
     version: ProtocolVersion,
     registry: &PacketRegistry,

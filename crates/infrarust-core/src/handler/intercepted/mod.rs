@@ -7,9 +7,14 @@ mod session_loop;
 use std::sync::Arc;
 
 use infrarust_api::event::ResultedEvent;
-use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
+use infrarust_api::events::lifecycle::{
+    DisconnectCause, GameProfileRequestEvent, LoginEvent, LoginResult, PermissionsSetupEvent,
+    PermissionsSetupResult,
+};
 use infrarust_api::permissions::PermissionChecker;
-use infrarust_api::types::Component;
+use infrarust_api::player::Player;
+use infrarust_api::types::{Component, GameProfile};
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_transport::BackendConnector;
@@ -20,10 +25,13 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::player::PlayerSession;
 use crate::player::commands::CommandInbox;
+use crate::player::lifecycle::PlayerLifecycle;
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::proxy_loop::ProxyLoopOutcome;
+use crate::util::text::decode_text_component;
 
-use auth::AuthStrategy;
+use auth::{AuthResult, AuthStrategy};
 use initial_connect::InitialMode;
 
 pub struct InterceptedHandler {
@@ -88,57 +96,121 @@ impl InterceptedHandler {
             .cloned();
 
         let version = handshake.protocol_version;
+        let api_version = infrarust_api::types::ProtocolVersion::new(version.0);
         let peer_addr = ctx.peer_addr;
+        let remote_addr = ctx.client_addr();
         let connection_info = ctx.connection_info();
+        let registry = &self.services.packet_registry;
 
         let mut client = ClientBridge::new(ctx.take_stream(), ctx.buffered_data.split(), version);
 
-        let auth_result = self
+        let authenticated = self
             .auth_strategy
             .authenticate(
                 &mut client,
                 login_data.as_ref(),
                 &self.services,
                 version,
-                peer_addr,
+                remote_addr,
                 &handshake.domain,
             )
             .await?;
+        let online_mode = authenticated.online_mode;
+
+        let request = self
+            .services
+            .event_bus
+            .fire(GameProfileRequestEvent::new(
+                authenticated.profile,
+                online_mode,
+                remote_addr,
+                Some(handshake.domain.clone()),
+                api_version,
+            ))
+            .await;
+        let rewritten = request.is_modified();
+        let profile = request.profile;
 
         if let Some(ban_entry) = self
             .services
             .ban_manager
-            .check_player(
-                &ctx.client_ip,
-                &auth_result.username,
-                Some(&auth_result.player_uuid),
-            )
+            .check_player(&ctx.client_ip, &profile.username, Some(&profile.uuid))
             .await?
         {
             tracing::info!(
                 ip = %ctx.client_ip,
-                username = %auth_result.username,
-                uuid = %auth_result.player_uuid,
+                username = %profile.username,
+                uuid = %profile.uuid,
                 ban_type = ban_entry.target.display_type(),
                 "connection rejected post-auth: player is banned"
             );
             client
-                .disconnect(
-                    &Component::text(ban_entry.kick_message()),
-                    &self.services.packet_registry,
-                )
+                .disconnect(&Component::text(ban_entry.kick_message()), registry)
                 .await
                 .ok();
             return Ok(());
         }
 
-        let mut login_completed = auth_result.login_completed;
+        let session_token = shutdown.child_token();
+        let (cmd_tx, cmd_rx) = PlayerSession::channel();
+        let player = Arc::new(PlayerSession::new(
+            crate::player::next_player_id(),
+            profile.clone(),
+            api_version,
+            remote_addr,
+            None,
+            true,
+            online_mode,
+            cmd_tx,
+            session_token.clone(),
+            self.default_permissions(&profile, online_mode),
+            Arc::clone(&self.services.backend_load),
+        ));
 
+        self.setup_permissions(&player, online_mode).await;
+
+        let login = self
+            .services
+            .event_bus
+            .fire(LoginEvent::new(
+                Arc::clone(&player) as Arc<dyn Player>,
+                online_mode,
+            ))
+            .await;
+        if let LoginResult::Denied { reason } = login.result() {
+            tracing::info!(username = %profile.username, "login denied by a plugin");
+            client.disconnect(reason, registry).await.ok();
+            return Ok(());
+        }
+
+        let mut login_completed = false;
+        if online_mode {
+            auth::complete_login(&mut client, &profile, version, registry).await?;
+            login_completed = true;
+        }
+
+        let lifecycle = PlayerLifecycle::begin(&self.services, Arc::clone(&player)).await;
+        let mut commands = CommandInbox::new(cmd_rx);
+        if let Some(reason) = commands.take_kick(&mut client, registry, false) {
+            client.disconnect(&reason, registry).await.ok();
+            lifecycle
+                .end(DisconnectCause::Kicked {
+                    reason: Some(reason),
+                })
+                .await;
+            return Ok(());
+        }
+        if session_token.is_cancelled() {
+            lifecycle.end(cancelled_cause(&shutdown)).await;
+            return Ok(());
+        }
+
+        let auth_result = AuthResult::new(player.id(), profile, rewritten);
         let mut pending_ticket = ctx
             .extensions
             .remove::<crate::loadbalancer::PendingTicket>();
 
-        let initial = initial_connect::resolve_initial_mode(
+        let initial = match initial_connect::resolve_initial_mode(
             &mut client,
             &auth_result,
             &mut login_completed,
@@ -151,62 +223,31 @@ impl InterceptedHandler {
             &self.backend_connector,
             &connection_info,
         )
-        .await?;
+        .await
+        {
+            Ok(initial) => initial,
+            Err(e) => {
+                lifecycle.end(DisconnectCause::Error).await;
+                return Err(e);
+            }
+        };
 
         let (initial_mode, target_server_id) = match initial {
             InitialMode::Connected { mode, server_id } => (*mode, server_id),
-            InitialMode::Denied => return Ok(()),
+            InitialMode::Denied(cause) => {
+                lifecycle.end(cause).await;
+                return Ok(());
+            }
         };
 
-        let default_checker: Arc<dyn PermissionChecker> = if auth_result.online_mode {
-            Arc::new(
-                self.services
-                    .permission_service
-                    .build_checker(auth_result.player_uuid),
-            )
-        } else {
-            crate::permissions::default_checker()
-        };
-
-        let perm_event = PermissionsSetupEvent::new(
-            auth_result.player_id,
-            auth_result.api_profile.clone(),
-            auth_result.online_mode,
-        );
-        let perm_event = self.services.event_bus.fire(perm_event).await;
-        let permission_checker =
-            if let PermissionsSetupResult::Custom(checker) = perm_event.result() {
-                checker.clone()
-            } else {
-                default_checker
-            };
-
-        let session_token = shutdown.child_token();
-        let (cmd_tx, cmd_rx) = PlayerSession::channel();
-
-        let player_session = Arc::new(PlayerSession::new(
-            auth_result.player_id,
-            auth_result.api_profile.clone(),
-            infrarust_api::types::ProtocolVersion::new(version.0),
-            ctx.peer_addr,
-            Some(target_server_id.clone()),
-            true, // active: intercepted modes support packet injection
-            auth_result.online_mode,
-            cmd_tx,
-            session_token.clone(),
-            permission_checker,
-            Arc::clone(&self.services.backend_load),
-        ));
-
+        player.set_current_server(target_server_id.clone());
         if let initial_connect::ConnectionMode::Backend(ref backend) = initial_mode {
-            player_session.set_connected_address(backend.server_address().cloned());
+            player.set_connected_address(backend.server_address().cloned());
         }
         // The session now owns the accounting for this address.
         drop(pending_ticket);
 
-        let session_guard = self.services.connection_registry.register(player_session);
-        let session_id = session_guard.uuid();
-
+        let session_id = auth_result.player_uuid;
         let mode_label = self.auth_strategy.mode_label();
         tracing::info!(
             session = %session_id,
@@ -222,14 +263,14 @@ impl InterceptedHandler {
         let (mut client_codec_chain, mut server_codec_chain) =
             crate::filter::codec_chain::build_codec_chains(
                 &self.services.codec_filter_registry,
-                infrarust_api::types::ProtocolVersion::new(version.0),
+                api_version,
                 auth_result.player_id.as_u64(),
-                ctx.peer_addr,
+                peer_addr,
                 Some(ctx.client_ip),
             );
 
+        #[cfg(feature = "telemetry")]
         let session_server = target_server_id.clone();
-        let mut commands = CommandInbox::new(cmd_rx);
         let outcome = session_loop::run_session_loop(
             &mut client,
             initial_mode,
@@ -241,7 +282,7 @@ impl InterceptedHandler {
             peer_addr,
             Some(ctx.client_ip),
             target_server_id,
-            &session_id,
+            &player,
             &self.services,
             &self.backend_connector,
             session_token,
@@ -251,26 +292,20 @@ impl InterceptedHandler {
         )
         .await;
 
-        if let Some(reason) = commands.take_kick(&mut client, &self.services.packet_registry, false)
-        {
-            client
-                .disconnect(&reason, &self.services.packet_registry)
-                .await
-                .ok();
-        }
+        let cause = match commands.take_kick(&mut client, registry, false) {
+            Some(reason) => {
+                client.disconnect(&reason, registry).await.ok();
+                DisconnectCause::Kicked {
+                    reason: Some(reason),
+                }
+            }
+            None => disconnect_cause(&outcome, &shutdown, version),
+        };
 
         client_codec_chain.close();
         server_codec_chain.close();
 
-        super::helpers::fire_disconnect_event(
-            &self.services.event_bus,
-            auth_result.player_id,
-            auth_result.username.clone(),
-            Some(session_server.clone()),
-        )
-        .await;
-
-        drop(session_guard);
+        lifecycle.end(cause).await;
 
         #[cfg(feature = "telemetry")]
         super::helpers::record_session_end(
@@ -283,5 +318,64 @@ impl InterceptedHandler {
         super::helpers::log_proxy_loop_outcome(&session_id, &outcome);
 
         Ok(())
+    }
+
+    fn default_permissions(
+        &self,
+        profile: &GameProfile,
+        online_mode: bool,
+    ) -> Arc<dyn PermissionChecker> {
+        if online_mode {
+            Arc::new(self.services.permission_service.build_checker(profile.uuid))
+        } else {
+            crate::permissions::default_checker()
+        }
+    }
+
+    async fn setup_permissions(&self, player: &Arc<PlayerSession>, online_mode: bool) {
+        let setup = self
+            .services
+            .event_bus
+            .fire(PermissionsSetupEvent::new(
+                Arc::clone(player) as Arc<dyn Player>,
+                online_mode,
+            ))
+            .await;
+        if let PermissionsSetupResult::Custom(checker) = setup.result() {
+            player.set_permission_checker(Arc::clone(checker));
+        }
+    }
+}
+
+fn cancelled_cause(shutdown: &CancellationToken) -> DisconnectCause {
+    if shutdown.is_cancelled() {
+        DisconnectCause::Shutdown
+    } else {
+        DisconnectCause::Kicked { reason: None }
+    }
+}
+
+fn disconnect_cause(
+    outcome: &ProxyLoopOutcome,
+    shutdown: &CancellationToken,
+    version: ProtocolVersion,
+) -> DisconnectCause {
+    match outcome {
+        ProxyLoopOutcome::ClientDisconnected => DisconnectCause::ClientQuit,
+        ProxyLoopOutcome::Kicked { reason } => DisconnectCause::Kicked {
+            reason: Some(reason.clone()),
+        },
+        ProxyLoopOutcome::BackendKicked { reason } => DisconnectCause::BackendClosed {
+            reason: Some(reason.clone()),
+        },
+        ProxyLoopOutcome::BackendDisconnected { reason } => DisconnectCause::BackendClosed {
+            reason: reason
+                .as_deref()
+                .map(|raw| decode_text_component(raw.as_bytes(), version, ConnectionState::Play)),
+        },
+        ProxyLoopOutcome::Shutdown => cancelled_cause(shutdown),
+        ProxyLoopOutcome::Error(_) | ProxyLoopOutcome::SwitchRequested { .. } => {
+            DisconnectCause::Error
+        }
     }
 }

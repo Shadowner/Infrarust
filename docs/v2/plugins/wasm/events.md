@@ -99,6 +99,8 @@ ctx.on::<ChatMessageEvent>(EventPriority::Normal, |event| {
 
 The SDK exposes 16 event types. Field names below match the generated bindings exactly. The `profile` field on the connection events is a `GameProfile` with `uuid`, `username`, and `properties`.
 
+The events arrive in the order described in the native [player lifecycle](../dev/events#player-lifecycle), and the same guarantees hold: `PostLoginEvent` runs once the player is registered, and every player who got it gets exactly one `DisconnectEvent`. The native `GameProfileRequestEvent` and `LoginEvent` are not part of contract 0.2.3, so WASM plugins do not receive them, and the WASM `DisconnectEvent` carries no disconnect cause.
+
 ### Observe-only events
 
 | Rust type | Key fields | Notes |

@@ -21,8 +21,9 @@ pub use connection::{
     ServerPreConnectResult, ServerSwitchEvent,
 };
 pub use lifecycle::{
-    DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult,
-    PostLoginEvent, PreLoginEvent, PreLoginResult,
+    DisconnectCause, DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult,
+    OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent,
+    PreLoginResult,
 };
 pub use named::{NamedEvent, NamedEventResponse};
 pub use packet::{PacketDirection, RawPacketEvent, RawPacketResult};

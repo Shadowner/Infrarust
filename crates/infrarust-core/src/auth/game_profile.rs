@@ -1,5 +1,6 @@
 //! Game profile types for Mojang authentication.
 
+use infrarust_config::OfflineUuidPolicy;
 use md5::{Digest, Md5};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -41,10 +42,47 @@ pub fn offline_uuid(username: &str) -> Uuid {
     uuid::Builder::from_md5_bytes(digest.into()).into_uuid()
 }
 
+pub fn offline_profile_uuid(
+    policy: OfflineUuidPolicy,
+    username: &str,
+    claimed: Option<Uuid>,
+) -> Uuid {
+    match (policy, claimed) {
+        (OfflineUuidPolicy::Client, Some(claimed)) => claimed,
+        _ => offline_uuid(username),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    #[test]
+    fn offline_profiles_ignore_the_claimed_uuid_by_default() {
+        let claimed = Uuid::from_u128(7);
+        assert_eq!(
+            offline_profile_uuid(OfflineUuidPolicy::Offline, "Steve", Some(claimed)),
+            offline_uuid("Steve")
+        );
+        assert_eq!(
+            offline_profile_uuid(OfflineUuidPolicy::Offline, "Steve", None),
+            offline_uuid("Steve")
+        );
+    }
+
+    #[test]
+    fn the_client_policy_trusts_a_claimed_uuid_only_when_one_is_sent() {
+        let claimed = Uuid::from_u128(7);
+        assert_eq!(
+            offline_profile_uuid(OfflineUuidPolicy::Client, "Steve", Some(claimed)),
+            claimed
+        );
+        assert_eq!(
+            offline_profile_uuid(OfflineUuidPolicy::Client, "Steve", None),
+            offline_uuid("Steve")
+        );
+    }
 
     #[test]
     fn offline_uuid_deterministic() {

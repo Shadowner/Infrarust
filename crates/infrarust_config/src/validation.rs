@@ -248,6 +248,10 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<(), ConfigError> 
             "events.packet_handler_timeout",
             config.events.packet_handler_timeout,
         ),
+        (
+            "events.disconnect_deadline",
+            config.events.disconnect_deadline,
+        ),
     ] {
         if value.is_zero() {
             return Err(ConfigError::Validation(format!(

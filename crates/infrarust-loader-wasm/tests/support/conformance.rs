@@ -10,8 +10,8 @@ use infrarust_api::events::connection::{
     ServerPreConnectResult, ServerSwitchEvent,
 };
 use infrarust_api::events::lifecycle::{
-    DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult,
-    PostLoginEvent, PreLoginEvent, PreLoginResult,
+    DisconnectCause, DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent,
+    PermissionsSetupResult, PostLoginEvent, PreLoginEvent, PreLoginResult,
 };
 use infrarust_api::events::proxy::{
     ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent, ProxyShutdownEvent,
@@ -19,6 +19,7 @@ use infrarust_api::events::proxy::{
 };
 use infrarust_api::loader::PluginContextFactory;
 use infrarust_api::permissions::PermissionLevel;
+use infrarust_api::player::Player;
 use infrarust_api::plugin::Plugin;
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{
@@ -97,6 +98,10 @@ fn motd() -> Component {
 
 fn player() -> PlayerId {
     PlayerId::new(PLAYER)
+}
+
+fn session() -> std::sync::Arc<dyn Player> {
+    super::session_player(PLAYER, profile(), PROTOCOL, remote())
 }
 
 pub fn fields(event: EventName) -> Vec<String> {
@@ -266,20 +271,15 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             pre_login(bus.fire(event).await.result())
         }
         EventName::PostLogin => {
-            bus.fire(PostLoginEvent {
-                profile: profile(),
-                player_id: player(),
-                protocol_version: protocol,
-            })
-            .await;
+            bus.fire(PostLoginEvent::new(session())).await;
             Outcome::same("none")
         }
         EventName::Disconnect => {
-            bus.fire(DisconnectEvent {
-                player_id: player(),
-                username: USERNAME.to_owned(),
-                last_server: Some(ServerId::new("lobby")),
-            })
+            bus.fire(DisconnectEvent::new(
+                session(),
+                Some(ServerId::new("lobby")),
+                DisconnectCause::ClientQuit,
+            ))
             .await;
             Outcome::same("none")
         }
@@ -291,7 +291,7 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             Outcome::same("none")
         }
         EventName::PermissionsSetup => {
-            let event = PermissionsSetupEvent::new(player(), profile(), true);
+            let event = PermissionsSetupEvent::new(session(), true);
             permissions(bus.fire(event).await.result())
         }
         EventName::ServerPreConnect => {

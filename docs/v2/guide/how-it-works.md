@@ -136,17 +136,17 @@ After both pipelines complete, the connection is dispatched to a handler based o
 
 Used by the forwarding modes: `passthrough`, `zero_copy`, and `server_only`. The handler:
 
-1. Fires a `ServerPreConnectEvent` through the event bus (a plugin can deny the connection here; redirect results such as send-to-limbo are ignored in passthrough and only acted on by the intercepted handler)
-2. Connects to the backend server using the addresses from the server config
-3. Forwards the raw handshake and login packets to the backend
-4. Registers a `PlayerSession` in the connection registry
+1. Registers a `PlayerSession` in the connection registry and fires `PostLoginEvent`
+2. Fires a `ServerPreConnectEvent` through the event bus (a plugin can deny the connection here; redirect results such as send-to-limbo are ignored in passthrough and only acted on by the intercepted handler)
+3. Connects to the backend server using the addresses from the server config
+4. Forwards the raw handshake and login packets to the backend
 5. Starts bidirectional forwarding between the client and backend TCP streams
 
 If `domain_rewrite` is configured, the handler re-encodes the handshake packet with the new domain before forwarding. Three rewrite modes exist: `none` (forward as-is), `explicit` (use a fixed string), and `from_backend` (use the host of the first backend address).
 
 The forwarder is selected based on proxy mode. On Linux with `zero_copy` mode, Infrarust uses `splice(2)` for kernel-level data transfer without copying bytes into userspace. Every other mode, including `zero_copy` on non-Linux platforms, uses `tokio::io::copy_bidirectional`.
 
-When either side closes the connection, the handler unregisters the session and fires a `DisconnectEvent`.
+When either side closes the connection, the handler fires a `DisconnectEvent` and then unregisters the session.
 
 ### Intercepted handler (client_only and offline)
 

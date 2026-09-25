@@ -8,20 +8,51 @@ outline: [2, 3]
 
 Infrarust fires events at key points in a player's lifecycle, from initial connection through disconnect. Your plugin subscribes to these events through the `EventBus`, and for resulted events, you can modify the outcome.
 
-## Event flow
+## Player lifecycle
 
-A player connection follows this path:
+The events a player goes through depend on the proxy mode of the server they join.
+
+### `offline` and `client_only`
+
+The proxy runs the login itself, so every step can be observed and most can be refused:
 
 ```
-PreLoginEvent → Authentication → PermissionsSetupEvent → PostLoginEvent
-    → PlayerChooseInitialServerEvent → ServerPreConnectEvent
-    → Backend connection → ServerConnectedEvent
-    → Play state (ChatMessageEvent, raw packet listeners)
-    → Server switch → ServerPreConnectEvent → ServerSwitchEvent
-    → DisconnectEvent
+PreLoginEvent ─────────────── Denied ──▶ disconnected during login
+  → authentication (client_only: encryption and session server)
+                            ─ failed ──▶ OnlineAuthFailed, disconnected
+  → GameProfileRequestEvent    the profile can be rewritten
+  → ban check (IP, name, final UUID) ─ banned ──▶ disconnected during login
+  → PermissionsSetupEvent
+  → LoginEvent ──────────────── Denied ──▶ disconnected during login
+  → client_only: LoginSuccess sent with the final profile
+  → player registered
+  → PostLoginEvent
+  → PlayerChooseInitialServerEvent → ServerPreConnectEvent
+  → backend connection → ServerConnectedEvent
+  → play (ChatMessageEvent, raw packets, switches: ServerPreConnectEvent → ServerSwitchEvent)
+  → DisconnectEvent
 ```
 
-If Mojang authentication fails at the Authentication step (a cracked client that cannot complete encryption), the proxy fires `OnlineAuthFailed` and disconnects the player instead of continuing the flow.
+### Passthrough, `zero_copy` and `server_only`
+
+The backend runs the login and the proxy only forwards bytes:
+
+```
+player registered → PostLoginEvent → ServerPreConnectEvent
+  → backend connection → ServerConnectedEvent → forwarding → DisconnectEvent
+```
+
+These modes do not fire `PreLoginEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent` or `LoginEvent` yet. Clients older than 1.7 (the legacy protocol) fire no player events.
+
+### Guarantees
+
+- Every event up to and including `PostLoginEvent` is awaited: the login waits for all listeners before it moves on.
+- A login that ends before `PostLoginEvent` (denied, banned, failed authentication) never creates a player, so no `DisconnectEvent` follows.
+- Once `PostLoginEvent` has fired, `DisconnectEvent` fires exactly once for that player, whatever ends the session: the client leaving, a kick, a denied or failed initial connection, the backend closing, a proxy shutdown or an error.
+- During `PostLoginEvent` the player is already in the player registry (`get_player_by_id`, `get_player` and `get_player_by_uuid` find it) and `current_server()` is `None`, because the player has not been routed yet.
+- A `player.disconnect(reason)` made during `PostLoginEvent` disconnects the client in the state it is in (the login phase for `offline`, before any server is chosen) with that reason, and the player's `DisconnectEvent` follows. Messages, titles and action bars sent during `PostLoginEvent` wait and reach the client once it has joined the game.
+- When a player logs in with a UUID that is already online, the proxy disconnects the first session with "You logged in from another location" and waits for its `DisconnectEvent` before the new session's `PostLoginEvent`, for at most `[events] disconnect_deadline`.
+- `DisconnectEvent` is awaited, and the player leaves the registry once its listeners are done. The whole dispatch is bounded by [`disconnect_deadline`](../../configuration/global#plugin-event-handlers) (15 seconds by default): listeners still running then are cancelled, and the player is removed anyway.
 
 ## Subscribing to events
 
@@ -44,7 +75,7 @@ For async work, use `subscribe_async`:
 ctx.event_bus().subscribe_async::<DisconnectEvent, _>(
     EventPriority::NORMAL,
     |event| Box::pin(async move {
-        save_player_data(event.player_id).await;
+        save_player_data(event.player_id()).await;
     }),
 );
 ```
@@ -77,7 +108,7 @@ Each listener sees modifications made by previous listeners. Use `EventPriority:
 
 Some events implement `ResultedEvent`. These have a result that controls what the proxy does next. Call `event.set_result()` to change the outcome, or use shortcut methods like `event.deny()`.
 
-Informational events (like `PostLoginEvent`) are fire-and-forget. You can read their fields but cannot change the proxy's behavior through them.
+Informational events (like `PostLoginEvent`) have no result. You can read their fields and act on the player they carry, but you cannot change what the proxy does next through them.
 
 ## Delivery
 
@@ -85,8 +116,8 @@ Every event goes through the same dispatch: listeners run one after another in p
 
 | Delivery | Events | What it means |
 |----------|--------|---------------|
-| Inline, awaited | `PreLoginEvent`, `PermissionsSetupEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `KickedFromServerEvent`, `ChatMessageEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. |
-| Detached, per player | `PostLoginEvent`, `OnlineAuthFailed`, `ServerConnectedEvent`, `ServerSwitchEvent` | Each event is dispatched in its own task. The player's connection does not wait for it, and there is no ordering guarantee between two of these events. |
+| Inline, awaited | `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `KickedFromServerEvent`, `ChatMessageEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
+| Detached, per player | `ServerConnectedEvent`, `ServerSwitchEvent` | Each event is dispatched in its own task. The player's connection does not wait for it, and there is no ordering guarantee between two of these events. |
 | Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
 
 Because the queue delivers one event at a time, a slow listener on a queued event delays the queued events behind it, up to `handler_timeout` per listener. A listener that panics does not stop the queue: the next event is still delivered.
@@ -101,8 +132,8 @@ Fired before authentication, when a player initiates a connection. This is your 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `profile` | `GameProfile` | The player's profile (may be incomplete in offline mode) |
-| `remote_addr` | `SocketAddr` | The connecting client's address |
+| `profile` | `GameProfile` | The player's profile. In `client_only` the UUID is nil until authentication; offline profiles follow [`[auth] offline_uuid`](../../configuration/global#authentication) |
+| `remote_addr` | `SocketAddr` | The client's address. Behind a load balancer that sends the PROXY protocol ([`receive_proxy_protocol`](../../configuration/global#proxy-protocol)), the address from the header |
 | `protocol_version` | `ProtocolVersion` | Protocol version reported by the client |
 | `server_domain` | `String` | The domain from the handshake packet |
 
@@ -129,7 +160,7 @@ ctx.event_bus().subscribe::<PreLoginEvent, _>(
 
 ### OnlineAuthFailed
 
-Fired when online-mode authentication fails, for example a cracked client that cannot complete the encryption handshake. This covers both forced online auth (`ForceOnline` returned from `PreLoginEvent` while the server is in offline mode) and the default online auth used by `client_only` mode. A plugin can listen for this to remember the username and return `ForceOffline` on the player's next connection attempt. Informational only.
+Fired when online-mode authentication fails, for example a cracked client that cannot complete the encryption handshake. This covers both forced online auth (`ForceOnline` returned from `PreLoginEvent` while the server is in offline mode) and the default online auth used by `client_only` mode. A plugin can listen for this to remember the username and return `ForceOffline` on the player's next connection attempt. Informational only, and awaited: the client is disconnected once the listeners are done.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -137,17 +168,51 @@ Fired when online-mode authentication fails, for example a cracked client that c
 
 `OnlineAuthFailed` is not re-exported from the prelude. Import it from its module: `use infrarust_api::events::lifecycle::OnlineAuthFailed;`.
 
+### GameProfileRequestEvent
+
+Fired right after authentication, before the proxy checks bans against the player's UUID and before the player exists. Change `profile` to give the player another UUID, name or properties, for example skin textures in offline mode. The profile left in the event when the last listener returns is the one the proxy uses from then on: for the UUID ban check, in the player registry and every later event, in the `LoginSuccess` the client receives, and in what forwarding sends to the backend.
+
+**Type:** Informational, with a mutable `profile`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `profile` | `GameProfile` | The profile the player will have. Change it to rewrite the player's identity |
+| `online_mode` | `bool` | Whether the session server verified the player |
+| `remote_addr` | `SocketAddr` | The client's address |
+| `virtual_host` | `Option<String>` | The domain from the handshake |
+| `protocol_version` | `ProtocolVersion` | The client's protocol version |
+
+`original()` returns the profile as authentication produced it, and `is_modified()` tells whether a listener changed it.
+
+```rust
+use infrarust_api::events::lifecycle::GameProfileRequestEvent;
+
+ctx.event_bus().subscribe::<GameProfileRequestEvent, _>(
+    EventPriority::NORMAL,
+    |event| {
+        if !event.online_mode {
+            event.profile.properties = skin_for(&event.profile.username);
+        }
+    },
+);
+```
+
+In `offline` mode the backend normally completes the login with the client. When a listener changes the profile, the proxy completes the login itself instead, as it does for Velocity forwarding, so that the client and the backend both see the new profile.
+
 ### PermissionsSetupEvent
 
-Fired after authentication, before the player session is fully built. This is the extension point for replacing the default permission checker with one backed by LuckPerms, a database, or any external permission system. If no listener provides a custom checker, the proxy keeps its built-in `ConfigPermissionChecker`, which reads admin UUIDs from `[permissions].admins`. See [permissions](../../configuration/security/permissions.md) for the two-level model (Player and Admin).
+Fired after the ban check, before `LoginEvent`. This is the extension point for replacing the default permission checker with one backed by LuckPerms, a database, or any external permission system. If no listener provides a custom checker, the proxy keeps its built-in `ConfigPermissionChecker`, which reads admin UUIDs from `[permissions].admins`. See [permissions](../../configuration/security/permissions.md) for the two-level model (Player and Admin).
+
+The player is built but not registered yet. The checker a listener sets applies to the player from then on, so `has_permission` already answers with it in `LoginEvent` and `PostLoginEvent`.
 
 **Type:** Resulted
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `player_id` | `PlayerId` | The player's session ID |
-| `profile` | `GameProfile` | The authenticated profile |
+| `player` | `Arc<dyn Player>` | The player being logged in |
 | `online_mode` | `bool` | Whether the player authenticated via Mojang |
+
+`player_id()` and `profile()` are shortcuts for `player.id()` and `player.profile()`.
 
 **Results** (`PermissionsSetupResult`):
 
@@ -171,43 +236,93 @@ ctx.event_bus().subscribe::<PermissionsSetupEvent, _>(
 
 Like `OnlineAuthFailed`, this type is reached through `infrarust_api::events::lifecycle`, not the prelude glob.
 
-### PostLoginEvent
+### LoginEvent
 
-Fired after a player has successfully authenticated. Informational only.
+Fired after `PermissionsSetupEvent`, just before the player is registered. It is the last point where a login can be refused: a denied player is disconnected during the login phase with the reason, is never registered, and fires neither `PostLoginEvent` nor `DisconnectEvent`. In `client_only` mode the client has not received `LoginSuccess` yet.
+
+**Type:** Resulted
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `profile` | `GameProfile` | The authenticated profile |
-| `player_id` | `PlayerId` | The player's session ID |
+| `player` | `Arc<dyn Player>` | The player being logged in |
+| `online_mode` | `bool` | Whether the player authenticated via Mojang |
+
+`player_id()` and `profile()` are shortcuts for `player.id()` and `player.profile()`.
+
+**Results** (`LoginResult`):
+
+| Variant | Description |
+|---------|-------------|
+| `Allowed` (default) | Let the player in |
+| `Denied { reason }` | Disconnect the player during login with this reason |
+
+```rust
+ctx.event_bus().subscribe::<LoginEvent, _>(
+    EventPriority::NORMAL,
+    |event| {
+        if !is_whitelisted(&event.profile().uuid) {
+            event.deny(Component::error("You are not whitelisted."));
+        }
+    },
+);
+```
+
+### PostLoginEvent
+
+Fired once the player is registered, before the proxy picks their first server. Informational and awaited: the proxy routes the player only after every listener has returned. See the [guarantees](#guarantees) for what a listener can rely on here.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `player` | `Arc<dyn Player>` | The player, already in the player registry |
+| `profile` | `GameProfile` | The player's final profile |
 | `protocol_version` | `ProtocolVersion` | The player's protocol version |
+
+`player_id()` is a shortcut for `player.id()`.
 
 ```rust
 ctx.event_bus().subscribe::<PostLoginEvent, _>(
     EventPriority::NORMAL,
     |event| {
-        tracing::info!("{} logged in ({})", event.profile.username, event.player_id);
+        tracing::info!("{} logged in ({:?})", event.profile.username, event.player_id());
+        let _ = event.player.send_message(Component::text("Welcome!"));
     },
 );
 ```
 
 ### DisconnectEvent
 
-Fired when a player disconnects. The proxy waits for all listeners to finish before cleaning up, so you can do async cleanup here.
+Fired exactly once for every player that got a `PostLoginEvent`, when their session ends. The proxy waits for all listeners, up to `[events] disconnect_deadline`, then removes the player from the registry, so async cleanup can still look the player up.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `player_id` | `PlayerId` | The disconnecting player |
-| `username` | `String` | The player's username |
-| `last_server` | `Option<ServerId>` | The server they were on, if any |
+| `player` | `Arc<dyn Player>` | The disconnecting player |
+| `last_server` | `Option<ServerId>` | The server they were on when the session ended, `None` if they never reached one |
+| `cause` | `DisconnectCause` | Why the session ended |
+
+`player_id()` and `username()` are shortcuts for `player.id()` and `player.profile().username`.
+
+**`DisconnectCause`** (`as_str()` gives the name in parentheses, `reason()` the message when there is one):
+
+| Variant | Description |
+|---------|-------------|
+| `ClientQuit` (`client_quit`) | The client closed the connection |
+| `Kicked { reason }` (`kicked`) | The proxy ended the session: `Player::disconnect`, a denied connection, a duplicate login. `reason` is what the client was shown |
+| `BackendClosed { reason }` (`backend_closed`) | The backend kicked the player or closed the connection and the player was not moved elsewhere |
+| `Shutdown` (`shutdown`) | The proxy is shutting down |
+| `Error` (`error`) | The session failed, for example an I/O error or an initial backend that could not be reached |
 
 ```rust
 ctx.event_bus().subscribe_async::<DisconnectEvent, _>(
     EventPriority::NORMAL,
     |event| Box::pin(async move {
-        tracing::info!("{} disconnected", event.username);
+        tracing::info!("{} disconnected ({})", event.username(), event.cause.as_str());
     }),
 );
 ```
+
+### WASM plugins
+
+WASM plugins (contract 0.2.3) receive `PreLoginEvent`, `OnlineAuthFailed`, `PermissionsSetupEvent`, `PostLoginEvent` and `DisconnectEvent` with the same fields as before, in the order above. `GameProfileRequestEvent` and `LoginEvent` are not delivered to WASM plugins yet, and the WASM `DisconnectEvent` has no cause.
 
 ## Connection events
 

@@ -96,7 +96,7 @@ When `true` (the default), the proxy announces its built-in `/ir` command tree t
 receive_proxy_protocol = false
 ```
 
-When `true`, the proxy expects incoming connections to start with a HAProxy PROXY protocol header (v1 or v2). Enable this if Infrarust sits behind a load balancer that sends proxy protocol, such as HAProxy or AWS NLB.
+When `true`, the proxy expects incoming connections to start with a HAProxy PROXY protocol header (v1 or v2). Enable this if Infrarust sits behind a load balancer that sends proxy protocol, such as HAProxy or AWS NLB. The address from the header is the player's address everywhere: IP bans and filters, `PreLoginEvent.remote_addr` and `Player::remote_addr()`.
 
 ::: warning
 Only enable this if your upstream actually sends proxy protocol headers. Regular Minecraft clients do not, and connections will fail if this is on without a proxy protocol source.
@@ -175,6 +175,7 @@ enable_audit_log = true
 handler_timeout = "10s"
 slow_handler_threshold = "1s"
 packet_handler_timeout = "10s"
+disconnect_deadline = "15s"
 ```
 
 `file` is the path to the JSON file where bans are stored. `purge_interval` controls how often expired bans are removed from the file. When `enable_audit_log` is `true`, every ban and unban operation is logged.
@@ -295,6 +296,7 @@ BungeeCord legacy forwarding sends the real IP in plain text in the handshake. A
 ```toml
 [auth]
 session_url = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
+offline_uuid = "offline"
 ```
 
 `session_url` is the endpoint `client_only` mode calls to verify a joining player. It defaults to Mojang's, so you only set it when your accounts live somewhere else.
@@ -302,6 +304,15 @@ session_url = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
 Point it at an [authlib-injector](https://github.com/yushijinhun/authlib-injector) deployment or any other Yggdrasil-compatible server to authenticate against that instead. Give the complete endpoint URL rather than just the host, since implementations differ in how they prefix their routes — most authlib-injector servers expose it under `/authlib-injector/sessionserver/session/minecraft/hasJoined`.
 
 The setting has no effect in any other proxy mode: `offline` never authenticates, and the forwarding modes leave authentication to the backend.
+
+`offline_uuid` decides the UUID of a player who is not verified by the session server: every player on an `offline` or passthrough server, and a `client_only` player let in with `ForceOffline`.
+
+| Value | UUID |
+|-------|------|
+| `"offline"` (default) | The name-based offline UUID, the one a vanilla server in offline mode computes: an MD5 UUID of `OfflinePlayer:<name>`. The same name always gets the same UUID |
+| `"client"` | The UUID the client sends in its login start packet (1.19.1 and later). Clients that send none get the name-based offline UUID |
+
+With `"offline"` a client cannot choose its own UUID. Use `"client"` only when the connection comes from something you trust to set it, such as another proxy in front of Infrarust. The UUID is never random: it is what plugins see in `PreLoginEvent`, `PostLoginEvent` and the player registry, what UUID bans match, and what forwarding sends to the backend.
 
 ::: warning
 Every player who reaches a `client_only` server is verified against this URL. Pointing it at a server you do not control means letting that server decide who may join.
@@ -353,6 +364,7 @@ Plugins can register custom permission checkers that extend or replace this list
 handler_timeout = "10s"
 slow_handler_threshold = "1s"
 packet_handler_timeout = "10s"
+disconnect_deadline = "15s"
 ```
 
 Limits on the event listeners that plugins register. A listener that panics is skipped and the event moves on to the next listener, so a buggy plugin can't take down a player's connection or the proxy. Whatever the listener changed on the event before it panicked is kept.
@@ -361,7 +373,9 @@ Limits on the event listeners that plugins register. A listener that panics is s
 
 `slow_handler_threshold` logs a warning for any listener that takes longer than this. Synchronous listeners can't be interrupted, so one that runs past `handler_timeout` finishes anyway and shows up as slow rather than timed out.
 
-Panics and timeouts are logged at error level, slow listeners at warn level, and each log line names the plugin and the event. All three values must be greater than zero.
+`disconnect_deadline` bounds the whole `DisconnectEvent` dispatch for one player, every listener included. When a player leaves, the proxy runs the `DisconnectEvent` listeners and removes the player from the registry once they are done, or once this deadline passes, whichever comes first. Listeners still running at the deadline are cancelled and a warning is logged. The same deadline bounds how long a second login with the same UUID waits for the first session to finish its `DisconnectEvent`. See [the player lifecycle](../plugins/dev/events#player-lifecycle).
+
+Panics and timeouts are logged at error level, slow listeners at warn level, and each log line names the plugin and the event. All four values must be greater than zero.
 
 ## WASM plugin sandbox
 

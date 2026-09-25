@@ -25,7 +25,7 @@ impl Plugin for StatsPlugin {
                 });
             ctx.event_bus()
                 .subscribe(EventPriority::NORMAL, |event: &mut DisconnectEvent| {
-                    tracing::info!("[stats] {}", core::leave_log(&event.username));
+                    tracing::info!("[stats] {}", core::leave_log(event.username()));
                 });
             ctx.command_manager().register(
                 core::COMMAND_NAME,

@@ -6,7 +6,8 @@ use infrarust_api::events::connection::{
     ServerPreConnectEvent, ServerSwitchEvent,
 };
 use infrarust_api::events::lifecycle::{
-    DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PostLoginEvent, PreLoginEvent,
+    DisconnectEvent, GameProfileRequestEvent, LoginEvent, OnlineAuthFailed, PermissionsSetupEvent,
+    PostLoginEvent, PreLoginEvent,
 };
 use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_api::events::proxy::{
@@ -14,8 +15,10 @@ use infrarust_api::events::proxy::{
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
 
-pub static BUILTIN_EVENTS: [TypeId; 18] = [
+pub static BUILTIN_EVENTS: [TypeId; 20] = [
     TypeId::of::<PreLoginEvent>(),
+    TypeId::of::<GameProfileRequestEvent>(),
+    TypeId::of::<LoginEvent>(),
     TypeId::of::<PostLoginEvent>(),
     TypeId::of::<PermissionsSetupEvent>(),
     TypeId::of::<OnlineAuthFailed>(),

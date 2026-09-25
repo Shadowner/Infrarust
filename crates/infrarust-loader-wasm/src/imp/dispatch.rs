@@ -185,15 +185,15 @@ fn ev_pre_login(e: &PreLoginEvent) -> wg::Event {
 fn ev_post_login(e: &PostLoginEvent) -> wg::Event {
     wg::Event::PostLogin(wg::PostLoginEvent {
         profile: convert::game_profile_to_wit(&e.profile),
-        player_id: e.player_id.as_u64(),
+        player_id: e.player_id().as_u64(),
         protocol_version: e.protocol_version.raw(),
     })
 }
 
 fn ev_disconnect(e: &DisconnectEvent) -> wg::Event {
     wg::Event::Disconnect(wg::DisconnectEvent {
-        player_id: e.player_id.as_u64(),
-        username: e.username.clone(),
+        player_id: e.player_id().as_u64(),
+        username: e.username().to_string(),
         last_server: e.last_server.as_ref().map(|s| s.as_str().to_string()),
     })
 }
@@ -206,8 +206,8 @@ fn ev_online_auth_failed(e: &OnlineAuthFailed) -> wg::Event {
 
 fn ev_permissions_setup(e: &PermissionsSetupEvent) -> wg::Event {
     wg::Event::PermissionsSetup(wg::PermissionsSetupEvent {
-        player_id: e.player_id.as_u64(),
-        profile: convert::game_profile_to_wit(&e.profile),
+        player_id: e.player_id().as_u64(),
+        profile: convert::game_profile_to_wit(e.profile()),
         online_mode: e.online_mode,
     })
 }

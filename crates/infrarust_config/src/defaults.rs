@@ -154,6 +154,10 @@ pub const fn event_packet_handler_timeout() -> Duration {
     Duration::from_secs(10)
 }
 
+pub const fn event_disconnect_deadline() -> Duration {
+    Duration::from_secs(15)
+}
+
 pub const fn wasm_epoch_tick() -> Duration {
     Duration::from_millis(50)
 }
