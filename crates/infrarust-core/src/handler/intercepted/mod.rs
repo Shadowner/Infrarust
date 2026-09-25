@@ -9,6 +9,7 @@ use std::sync::Arc;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
 use infrarust_api::permissions::PermissionChecker;
+use infrarust_api::types::Component;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_transport::BackendConnector;
@@ -121,7 +122,10 @@ impl InterceptedHandler {
                 "connection rejected post-auth: player is banned"
             );
             client
-                .disconnect(&ban_entry.kick_message(), &self.services.packet_registry)
+                .disconnect(
+                    &Component::text(ban_entry.kick_message()),
+                    &self.services.packet_registry,
+                )
                 .await
                 .ok();
             return Ok(());

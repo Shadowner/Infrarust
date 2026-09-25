@@ -20,6 +20,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
+use crate::util::text;
 
 const READ_CHUNK: usize = 16 * 1024;
 
@@ -217,40 +218,31 @@ impl ClientBridge {
     /// Returns `CoreError` on encoding or I/O errors.
     pub async fn disconnect(
         &mut self,
-        reason: &str,
+        reason: &Component,
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
-        let json = serde_json::json!({"text": reason}).to_string();
+        let version = self.protocol_version;
         match self.state {
             ConnectionState::Login => {
-                let pkt = CLoginDisconnect { reason: json };
+                let pkt = CLoginDisconnect {
+                    reason: text::json_for(reason, version),
+                };
                 self.send_packet(&pkt, registry).await.ok();
             }
             ConnectionState::Config => {
-                let reason_bytes = if self.protocol_version.less_than(ProtocolVersion::V1_20_3) {
-                    // 1.20.2: Chat component as VarInt-prefixed JSON string
-                    let mut buf = Vec::new();
-                    buf.write_string(&json)?;
-                    buf
+                let reason = if text::uses_nbt(version, ConnectionState::Config) {
+                    text::nbt_for(reason, version)
                 } else {
-                    // 1.20.3+: Network NBT text component
-                    Component::text(reason).to_nbt_network()
+                    let mut buf = Vec::new();
+                    buf.write_string(&text::json_for(reason, version))?;
+                    buf
                 };
-                let pkt = CConfigDisconnect {
-                    reason: reason_bytes,
-                };
+                let pkt = CConfigDisconnect { reason };
                 self.send_packet(&pkt, registry).await.ok();
             }
             ConnectionState::Play => {
-                let reason_bytes = if self.protocol_version.less_than(ProtocolVersion::V1_20_3) {
-                    // JSON bytes — CDisconnect.encode() adds the VarInt length prefix
-                    json.into_bytes()
-                } else {
-                    // 1.20.3+: Network NBT text component
-                    Component::text(reason).to_nbt_network()
-                };
                 let pkt = CDisconnect {
-                    reason: reason_bytes,
+                    reason: text::encode_text_component(reason, version, ConnectionState::Play),
                 };
                 self.send_packet(&pkt, registry).await.ok();
             }

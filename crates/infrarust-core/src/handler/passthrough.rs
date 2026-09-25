@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use infrarust_api::event::ResultedEvent;
+use infrarust_api::types::Component;
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
@@ -91,7 +92,7 @@ impl PassthroughHandler {
             infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
                 super::helpers::send_login_disconnect(
                     ctx.stream_mut(),
-                    &reason.to_json(),
+                    reason,
                     handshake.protocol_version,
                     &self.services.packet_registry,
                 )
@@ -128,8 +129,8 @@ impl PassthroughHandler {
                     error = %e,
                     "backend unreachable, sending disconnect to client"
                 );
-                let msg = server_config.effective_disconnect_message();
-                self.send_kick_raw(ctx.stream_mut(), msg, handshake.protocol_version)
+                let msg = Component::text(server_config.effective_disconnect_message());
+                self.send_kick_raw(ctx.stream_mut(), &msg, handshake.protocol_version)
                     .await
                     .ok();
                 return Ok(());
@@ -330,7 +331,7 @@ impl PassthroughHandler {
     async fn send_kick_raw(
         &self,
         stream: &mut tokio::net::TcpStream,
-        reason: &str,
+        reason: &Component,
         version: ProtocolVersion,
     ) -> Result<(), CoreError> {
         super::helpers::send_login_disconnect(

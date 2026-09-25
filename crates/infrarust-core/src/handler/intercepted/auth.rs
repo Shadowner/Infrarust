@@ -325,9 +325,8 @@ async fn fire_pre_login(
     let pre_login = services.event_bus.fire(pre_login).await;
     let result = pre_login.result().clone();
     if let PreLoginResult::Denied { reason } = &result {
-        let reason_json = reason.to_json();
         client
-            .disconnect(&reason_json, &services.packet_registry)
+            .disconnect(reason, &services.packet_registry)
             .await
             .ok();
         return Err(CoreError::ConnectionClosed);

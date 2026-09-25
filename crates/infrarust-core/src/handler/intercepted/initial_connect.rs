@@ -5,6 +5,7 @@ use std::sync::Arc;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
+use infrarust_api::types::Component;
 use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
@@ -62,7 +63,10 @@ async fn deny_no_limbo_handlers(
 ) -> Result<InitialMode, CoreError> {
     tracing::warn!("SendToLimbo at initial connect but no handlers resolved");
     client
-        .disconnect("No limbo handlers configured", &services.packet_registry)
+        .disconnect(
+            &Component::text("No limbo handlers configured"),
+            &services.packet_registry,
+        )
         .await
         .ok();
     Ok(InitialMode::Denied)
@@ -133,9 +137,8 @@ pub(super) async fn resolve_initial_mode(
         match pre_connect.result() {
             infrarust_api::events::connection::ServerPreConnectResult::Allowed => {}
             infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
-                let reason_json = reason.to_json();
                 client
-                    .disconnect(&reason_json, &services.packet_registry)
+                    .disconnect(reason, &services.packet_registry)
                     .await
                     .ok();
                 return Ok(InitialMode::Denied);
@@ -182,7 +185,10 @@ pub(super) async fn resolve_initial_mode(
                 "plugin redirected to an unknown server"
             );
             client
-                .disconnect("Unknown server", &services.packet_registry)
+                .disconnect(
+                    &Component::text("Unknown server"),
+                    &services.packet_registry,
+                )
                 .await
                 .ok();
             return Ok(InitialMode::Denied);
@@ -275,14 +281,15 @@ pub(super) async fn resolve_initial_mode(
                             handlers,
                             LimboEntryContext::KickedFromServer {
                                 server: target_server_id.clone(),
-                                reason: infrarust_api::types::Component::text(format!(
-                                    "Backend unreachable: {e}"
-                                )),
+                                reason: Component::text(format!("Backend unreachable: {e}")),
                             },
                         )
                     } else {
-                        let msg = server_config.effective_disconnect_message();
-                        client.disconnect(msg, &services.packet_registry).await.ok();
+                        let msg = Component::text(server_config.effective_disconnect_message());
+                        client
+                            .disconnect(&msg, &services.packet_registry)
+                            .await
+                            .ok();
                         return Ok(InitialMode::Denied);
                     }
                 } else {
@@ -291,8 +298,11 @@ pub(super) async fn resolve_initial_mode(
                         error = %e,
                         "backend unreachable, sending disconnect to client"
                     );
-                    let msg = server_config.effective_disconnect_message();
-                    client.disconnect(msg, &services.packet_registry).await.ok();
+                    let msg = Component::text(server_config.effective_disconnect_message());
+                    client
+                        .disconnect(&msg, &services.packet_registry)
+                        .await
+                        .ok();
                     return Ok(InitialMode::Denied);
                 }
             }
@@ -377,7 +387,10 @@ async fn connect_to_backend(
             .await
         {
             client
-                .disconnect("Backend refused connection", &services.packet_registry)
+                .disconnect(
+                    &Component::text("Backend refused connection"),
+                    &services.packet_registry,
+                )
                 .await
                 .ok();
             return Err(e);
@@ -437,7 +450,7 @@ async fn prepare_client_for_limbo(
     {
         tracing::warn!("limbo config phase failed: {e}");
         client
-            .disconnect(&e.to_string(), &services.packet_registry)
+            .disconnect(&Component::text(e.to_string()), &services.packet_registry)
             .await
             .ok();
         return Err(e);

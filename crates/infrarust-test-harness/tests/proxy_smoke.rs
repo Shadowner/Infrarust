@@ -448,7 +448,7 @@ async fn scripted_plugin_hooks(version: ProtocolVersion) {
         .disconnected()
         .unwrap();
     assert_eq!(denied.state, ConnectionState::Login);
-    assert!(denied.text.contains("No Mallory"), "{denied:?}");
+    assert_eq!(denied.text, "No Mallory", "{denied:?}");
     let pre_login = recorder
         .wait_for(|e| e.kind == EventKind::PreLogin && named(e, "Mallory"), T)
         .await

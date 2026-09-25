@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use infrarust_api::types::{PlayerId, ServerId};
+use infrarust_api::types::{Component, PlayerId, ServerId};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
@@ -64,13 +64,12 @@ pub(crate) fn log_proxy_loop_outcome(session_id: &Uuid, outcome: &ProxyLoopOutco
 /// Sends a login disconnect (kick) packet to a raw TCP stream.
 pub(crate) async fn send_login_disconnect(
     stream: &mut tokio::net::TcpStream,
-    reason: &str,
+    reason: &Component,
     version: ProtocolVersion,
     packet_registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let json_reason = serde_json::json!({"text": reason}).to_string();
     let packet = CLoginDisconnect {
-        reason: json_reason,
+        reason: crate::util::text::json_for(reason, version),
     };
 
     let packet_id = packet_registry
@@ -122,10 +121,59 @@ pub(crate) fn record_session_end(
 
 #[cfg(test)]
 mod tests {
+    use infrarust_api::types::{ClickEvent, NamedColor};
     use infrarust_protocol::{McBufReadExt, build_default_registry};
     use tokio::io::AsyncReadExt;
 
-    use super::{ProtocolVersion, send_login_disconnect};
+    use super::{Component, ProtocolVersion, send_login_disconnect};
+
+    async fn kick_payload(reason: &Component, version: ProtocolVersion) -> String {
+        let registry = build_default_registry();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut server, _) = listener.accept().await.unwrap();
+
+        send_login_disconnect(&mut server, reason, version, &registry)
+            .await
+            .unwrap_or_else(|e| panic!("no kick for protocol {}: {e}", version.0));
+        drop(server);
+
+        let mut bytes = Vec::new();
+        client.read_to_end(&mut bytes).await.unwrap();
+        let mut frame = bytes.as_slice();
+        let len = frame.read_var_int().unwrap().0 as usize;
+        assert_eq!(len, frame.len());
+        assert_eq!(frame.read_var_int().unwrap().0, 0x00);
+        frame.read_string().unwrap()
+    }
+
+    #[tokio::test]
+    async fn kick_reason_is_serialised_once_for_the_peer_version() {
+        let reason = Component::text("No entry")
+            .color(NamedColor::Red)
+            .click(ClickEvent::OpenUrl("https://example.com".into()));
+        let old: serde_json::Value =
+            serde_json::from_str(&kick_payload(&reason, ProtocolVersion::V1_21_4).await).unwrap();
+        assert_eq!(
+            old,
+            serde_json::json!({
+                "text": "No entry",
+                "color": "red",
+                "clickEvent": {"action": "open_url", "value": "https://example.com"}
+            })
+        );
+        let new: serde_json::Value =
+            serde_json::from_str(&kick_payload(&reason, ProtocolVersion::V1_21_11).await).unwrap();
+        assert_eq!(
+            new,
+            serde_json::json!({
+                "text": "No entry",
+                "color": "red",
+                "click_event": {"action": "open_url", "url": "https://example.com"}
+            })
+        );
+    }
 
     #[tokio::test]
     async fn kick_reaches_peers_below_the_first_mapping() {
@@ -142,7 +190,7 @@ mod tests {
             let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
             let (mut server, _) = listener.accept().await.unwrap();
 
-            send_login_disconnect(&mut server, "Banned", version, &registry)
+            send_login_disconnect(&mut server, &Component::text("Banned"), version, &registry)
                 .await
                 .unwrap_or_else(|e| panic!("no kick for protocol {}: {e}", version.0));
             drop(server);

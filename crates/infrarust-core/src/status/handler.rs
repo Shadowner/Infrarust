@@ -29,13 +29,12 @@ use super::relay::StatusRelayClient;
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
-use crate::event_bus::conversion::{
-    component_to_json_value, core_to_api_ping_response, merge_ping_event,
-};
+use crate::event_bus::conversion::{core_to_api_ping_response, merge_ping_event};
 use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, peek_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::registry::ConnectionRegistry;
+use crate::util::text::api_version;
 
 /// Handles modern (1.7+) status pings with relay, cache, and contextual MOTDs.
 pub struct StatusHandler {
@@ -125,14 +124,22 @@ impl StatusHandler {
             .await;
 
         let api_response = core_to_api_ping_response(&response);
-        let sent_description = component_to_json_value(&api_response.description);
+        let sent_description = api_response.description.clone();
         let remote_addr = SocketAddr::new(ctx.client_ip, ctx.peer_addr.port());
         let event = ProxyPingEvent {
             remote_addr,
             response: api_response,
         };
         let event = self.event_bus.fire(event).await;
-        merge_ping_event(&mut response, &sent_description, &event.response);
+        let client_version = handshake
+            .as_ref()
+            .map_or(ProtocolVersion(CURRENT_MC_PROTOCOL), |h| h.protocol_version);
+        merge_ping_event(
+            &mut response,
+            &sent_description,
+            &event.response,
+            api_version(client_version),
+        );
 
         let json = response
             .to_json()

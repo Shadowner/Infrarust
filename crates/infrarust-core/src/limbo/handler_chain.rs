@@ -279,7 +279,7 @@ mod tests {
         let reason = Component::text("go away");
         match process_handler_result(HandlerResult::Deny(reason)) {
             HandlerAction::Exit(LimboChainResult::Kick(r)) => {
-                assert_eq!(r.to_json(), Component::text("go away").to_json());
+                assert_eq!(r, Component::text("go away"));
             }
             other => panic!("expected Exit(Kick), got {other:?}"),
         }

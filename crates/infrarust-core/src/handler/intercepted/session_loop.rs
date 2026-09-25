@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
-use infrarust_api::types::PlayerId;
-use infrarust_protocol::version::ProtocolVersion;
+use infrarust_api::types::{Component, PlayerId};
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -20,6 +20,7 @@ use crate::player::PlayerCommand;
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
+use crate::util::text::decode_text_component;
 
 use super::initial_connect::ConnectionMode;
 
@@ -90,9 +91,8 @@ pub(super) async fn run_session_loop(
                             }
                             _ => {
                                 tracing::warn!("no limbo handlers configured, disconnecting");
-                                let reason = infrarust_api::types::Component::text(
-                                    "No limbo handlers configured for this server",
-                                );
+                                let reason =
+                                    Component::text("No limbo handlers configured for this server");
                                 if let Ok(frame) = crate::player::packets::build_disconnect(
                                     &reason,
                                     version,
@@ -141,11 +141,21 @@ pub(super) async fn run_session_loop(
                                 mode = ConnectionMode::Limbo(handlers, ctx);
                                 continue;
                             }
+                            SwitchAction::Denied(reason) => {
+                                tracing::info!(reason = %reason, "server switch denied by event");
+                                if let Ok(frame) = crate::player::packets::build_system_chat_message(
+                                    &reason,
+                                    version,
+                                    &services.packet_registry,
+                                ) {
+                                    let _ = client.write_frame(&frame).await;
+                                }
+                                continue;
+                            }
                             SwitchAction::Error(e) => {
                                 tracing::warn!("server switch failed: {e}");
-                                let error_msg = infrarust_api::types::Component::text(format!(
-                                    "Server switch failed: {e}"
-                                ));
+                                let error_msg =
+                                    Component::text(format!("Server switch failed: {e}"));
                                 if let Ok(frame) = crate::player::packets::build_system_chat_message(
                                     &error_msg,
                                     version,
@@ -255,6 +265,17 @@ pub(super) async fn run_session_loop(
                                 mode = ConnectionMode::Limbo(handlers, limbo_ctx);
                                 continue;
                             }
+                            SwitchAction::Denied(reason) => {
+                                tracing::info!(reason = %reason, "switch after limbo denied by event");
+                                if let Ok(frame) = crate::player::packets::build_disconnect(
+                                    &reason,
+                                    version,
+                                    &services.packet_registry,
+                                ) {
+                                    let _ = client.write_frame(&frame).await;
+                                }
+                                break ProxyLoopOutcome::ClientDisconnected;
+                            }
                             SwitchAction::Error(e) => {
                                 tracing::warn!("switch after limbo failed: {e}");
                                 break ProxyLoopOutcome::ClientDisconnected;
@@ -300,6 +321,7 @@ enum SwitchAction {
         infrarust_api::types::ServerId,
     ),
     Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
+    Denied(Component),
     Error(CoreError),
 }
 
@@ -340,6 +362,9 @@ async fn handle_switch(
         Ok(crate::session::server_switch::SwitchResult::Limbo(handlers, ctx)) => {
             SwitchAction::Limbo(handlers, ctx)
         }
+        Ok(crate::session::server_switch::SwitchResult::Denied(reason)) => {
+            SwitchAction::Denied(reason)
+        }
         Err(e) => SwitchAction::Error(e),
     }
 }
@@ -368,11 +393,14 @@ async fn handle_backend_disconnect(
     peer_addr: std::net::SocketAddr,
     real_ip: Option<std::net::IpAddr>,
 ) -> DisconnectAction {
-    let kick_reason = reason.as_deref().unwrap_or("Disconnected");
+    let kick_reason = reason.as_deref().map_or_else(
+        || Component::text("Disconnected"),
+        |raw| decode_text_component(raw.as_bytes(), version, ConnectionState::Play),
+    );
     let kicked = infrarust_api::events::connection::KickedFromServerEvent::new(
         player_id,
         current_server_id.clone(),
-        infrarust_api::types::Component::text(kick_reason),
+        kick_reason.clone(),
     );
     let kicked = services.event_bus.fire(kicked).await;
 
@@ -412,6 +440,12 @@ async fn handle_backend_disconnect(
                         DisconnectAction::SwitchLimbo(handlers, ctx)
                     }
                 }
+                SwitchAction::Denied(reason) => {
+                    tracing::info!(reason = %reason, "redirect after kick denied by event");
+                    DisconnectAction::Break(ProxyLoopOutcome::BackendDisconnected {
+                        reason: Some(reason.to_plain()),
+                    })
+                }
                 SwitchAction::Error(e) => {
                     tracing::warn!("redirect after kick failed: {e}");
                     DisconnectAction::Break(ProxyLoopOutcome::BackendDisconnected {
@@ -440,14 +474,13 @@ async fn handle_backend_disconnect(
                     handlers,
                     LimboEntryContext::KickedFromServer {
                         server: current_server_id.clone(),
-                        reason: infrarust_api::types::Component::text(kick_reason),
+                        reason: kick_reason,
                     },
                 )
             } else {
                 tracing::warn!("SendToLimbo but no limbo handlers resolved, disconnecting");
-                let kick_component = infrarust_api::types::Component::text(kick_reason);
                 if let Ok(frame) = crate::player::packets::build_disconnect(
-                    &kick_component,
+                    &kick_reason,
                     version,
                     &services.packet_registry,
                 ) {

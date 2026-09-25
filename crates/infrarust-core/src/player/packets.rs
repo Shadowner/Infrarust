@@ -14,9 +14,10 @@ use infrarust_protocol::packets::play::title::{
     CSetSubtitle, CSetTitle, CSetTitleTimes, CTitleLegacy,
 };
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::ProtocolVersion;
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
+use crate::util::text::{encode_text_component, json_for, nbt_for};
 
 /// Builds a system chat message packet frame.
 ///
@@ -29,15 +30,15 @@ pub fn build_system_chat_message(
 ) -> Result<PacketFrame, CoreError> {
     if version.less_than(ProtocolVersion::V1_19) {
         let packet = CChatMessageLegacy {
-            content: component.to_json(),
+            content: json_for(component, version),
             position: 1, // system message
         };
         return encode_packet(&packet, version, registry);
     }
     let packet = if version.less_than(ProtocolVersion::V1_20_3) {
-        CSystemChatMessage::from_json(&component.to_json(), false)
+        CSystemChatMessage::from_json(&json_for(component, version), false)
     } else {
-        CSystemChatMessage::from_nbt(component.to_nbt_network(), false)
+        CSystemChatMessage::from_nbt(nbt_for(component, version), false)
     };
     encode_packet(&packet, version, registry)
 }
@@ -58,15 +59,15 @@ pub fn build_action_bar(
             1
         };
         let packet = CChatMessageLegacy {
-            content: component.to_json(),
+            content: json_for(component, version),
             position,
         };
         return encode_packet(&packet, version, registry);
     }
     let packet = if version.less_than(ProtocolVersion::V1_20_3) {
-        CSystemChatMessage::from_json(&component.to_json(), true)
+        CSystemChatMessage::from_json(&json_for(component, version), true)
     } else {
-        CSystemChatMessage::from_nbt(component.to_nbt_network(), true)
+        CSystemChatMessage::from_nbt(nbt_for(component, version), true)
     };
     encode_packet(&packet, version, registry)
 }
@@ -79,10 +80,8 @@ pub fn build_disconnect(
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<PacketFrame, CoreError> {
-    let packet = if version.less_than(ProtocolVersion::V1_20_3) {
-        CDisconnect::from_json(&reason.to_json())
-    } else {
-        CDisconnect::from_nbt(reason.to_nbt_network())
+    let packet = CDisconnect {
+        reason: encode_text_component(reason, version, ConnectionState::Play),
     };
     encode_packet(&packet, version, registry)
 }
@@ -113,12 +112,12 @@ pub fn build_title_packets(
                 registry,
             )?,
             encode_packet(
-                &CTitleLegacy::SetSubtitle(title.subtitle.to_json()),
+                &CTitleLegacy::SetSubtitle(json_for(&title.subtitle, version)),
                 version,
                 registry,
             )?,
             encode_packet(
-                &CTitleLegacy::SetTitle(title.title.to_json()),
+                &CTitleLegacy::SetTitle(json_for(&title.title, version)),
                 version,
                 registry,
             )?,
@@ -137,17 +136,17 @@ pub fn build_title_packets(
 
     // 2. Subtitle (sent before title so it's visible when title appears)
     let subtitle = if version.less_than(ProtocolVersion::V1_20_3) {
-        CSetSubtitle::from_json(&title.subtitle.to_json())
+        CSetSubtitle::from_json(&json_for(&title.subtitle, version))
     } else {
-        CSetSubtitle::from_nbt(title.subtitle.to_nbt_network())
+        CSetSubtitle::from_nbt(nbt_for(&title.subtitle, version))
     };
     frames.push(encode_packet(&subtitle, version, registry)?);
 
     // 3. Title text (triggers the display)
     let title_pkt = if version.less_than(ProtocolVersion::V1_20_3) {
-        CSetTitle::from_json(&title.title.to_json())
+        CSetTitle::from_json(&json_for(&title.title, version))
     } else {
-        CSetTitle::from_nbt(title.title.to_nbt_network())
+        CSetTitle::from_nbt(nbt_for(&title.title, version))
     };
     frames.push(encode_packet(&title_pkt, version, registry)?);
 

@@ -70,8 +70,8 @@ async fn direct_lifecycle(version: ProtocolVersion) {
     assert_eq!(info.state, ConnectionState::Play);
     assert_eq!(info.text, "Server closed");
     assert_eq!(
-        info.json.is_some(),
-        version.less_than(ProtocolVersion::V1_20_3)
+        info.json,
+        Some(json!({ "text": "Server closed", "color": "red" }))
     );
     conn.closed(T).await.unwrap();
 }

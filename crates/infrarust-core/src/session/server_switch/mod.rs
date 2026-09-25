@@ -13,7 +13,7 @@ use std::sync::Arc;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
-use infrarust_api::types::{GameProfile, PlayerId, ServerId};
+use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
 use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
@@ -38,6 +38,7 @@ pub struct SwitchSuccess {
 pub enum SwitchResult {
     Backend(SwitchSuccess),
     Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
+    Denied(Component),
 }
 
 /// Performs a server switch: connects to a new backend, sends the appropriate
@@ -100,10 +101,7 @@ pub async fn perform_switch(
             redirect.clone()
         }
         infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
-            return Err(CoreError::Rejected(format!(
-                "switch denied: {}",
-                reason.to_json()
-            )));
+            return Ok(SwitchResult::Denied(reason.clone()));
         }
         infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo {
             limbo_handlers,

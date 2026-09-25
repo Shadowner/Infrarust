@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::types::{Component, LEGACY_SECTION};
 use infrarust_config::{MotdConfig, ServerAddress, ServerConfig};
 use infrarust_protocol::legacy::{
     LegacyPingVariant, build_legacy_kick, parse_legacy_handshake, parse_legacy_ping,
@@ -462,7 +463,8 @@ impl LegacyHandler {
             self.domain_router.resolve_route(&domain)
         else {
             tracing::debug!(domain = %domain, "legacy login: unknown domain");
-            self.send_legacy_kick(ctx, "Unknown server").await;
+            self.send_legacy_kick(ctx, &Component::text("Unknown server"))
+                .await;
             return Ok(());
         };
 
@@ -487,8 +489,8 @@ impl LegacyHandler {
                     error = %e,
                     "legacy login: backend unreachable"
                 );
-                let msg = server_config.effective_disconnect_message();
-                self.send_legacy_kick(ctx, msg).await;
+                let msg = Component::text(server_config.effective_disconnect_message());
+                self.send_legacy_kick(ctx, &msg).await;
                 return Ok(());
             }
         };
@@ -582,8 +584,8 @@ impl LegacyHandler {
         Ok(())
     }
 
-    async fn send_legacy_kick(&self, ctx: &mut ConnectionContext, reason: &str) {
-        if let Ok(kick_bytes) = build_legacy_kick(reason) {
+    async fn send_legacy_kick(&self, ctx: &mut ConnectionContext, reason: &Component) {
+        if let Ok(kick_bytes) = build_legacy_kick(&reason.to_legacy(LEGACY_SECTION)) {
             let _ = ctx.stream_mut().write_all(&kick_bytes).await;
             let _ = ctx.stream_mut().flush().await;
         }

@@ -12,7 +12,7 @@ use crate::status::response::ServerPingResponse;
 /// or array) while the API type uses a structured [`Component`].
 pub fn core_to_api_ping_response(core: &ServerPingResponse) -> PingResponse {
     PingResponse::new(
-        json_value_to_component(&core.description),
+        Component::from_json_value(&core.description),
         core.players.max,
         core.players.online,
         ProtocolVersion::new(core.version.protocol),
@@ -21,11 +21,12 @@ pub fn core_to_api_ping_response(core: &ServerPingResponse) -> PingResponse {
     )
 }
 
-/// Merges modifications from the API `PingResponse` back into the core
-/// response (including the lossy `description`), preserving `extra` fields
-/// (Forge/Fabric metadata).
-pub fn apply_api_to_core(core: &mut ServerPingResponse, api: &PingResponse) {
-    core.description = component_to_json_value(&api.description);
+pub fn apply_api_to_core(
+    core: &mut ServerPingResponse,
+    api: &PingResponse,
+    client: ProtocolVersion,
+) {
+    core.description = api.description.to_json_value_for(client);
     apply_api_scalars_to_core(core, api);
 }
 
@@ -41,79 +42,15 @@ pub fn apply_api_scalars_to_core(core: &mut ServerPingResponse, api: &PingRespon
 /// response.
 pub fn merge_ping_event(
     core: &mut ServerPingResponse,
-    sent_description: &serde_json::Value,
+    sent_description: &Component,
     api: &PingResponse,
+    client: ProtocolVersion,
 ) {
-    if &component_to_json_value(&api.description) == sent_description {
+    if api.description == *sent_description {
         apply_api_scalars_to_core(core, api);
     } else {
-        apply_api_to_core(core, api);
+        apply_api_to_core(core, api, client);
     }
-}
-
-/// Converts a `serde_json::Value` (Minecraft chat JSON) into a [`Component`].
-///
-/// Handles the three common MOTD formats:
-/// - Plain string: `"Hello"` → `Component::text("Hello")`
-/// - Chat object: `{"text":"Hello","color":"green"}` → structured Component
-/// - Array: `[{"text":"a"},{"text":"b"}]` → Component with extras
-/// - Anything else: serialized as text fallback
-pub fn json_value_to_component(value: &serde_json::Value) -> Component {
-    match value {
-        serde_json::Value::String(s) => Component::text(s.as_str()),
-        serde_json::Value::Object(map) => {
-            let text = map.get("text").and_then(|v| v.as_str()).unwrap_or_default();
-            let mut component = Component::text(text);
-
-            if let Some(color) = map.get("color").and_then(|v| v.as_str()) {
-                component = component.color(color);
-            }
-            if map.get("bold").and_then(serde_json::Value::as_bool) == Some(true) {
-                component = component.bold();
-            }
-            if map.get("italic").and_then(serde_json::Value::as_bool) == Some(true) {
-                component = component.italic();
-            }
-            if map.get("underlined").and_then(serde_json::Value::as_bool) == Some(true) {
-                component = component.underlined();
-            }
-            if map
-                .get("strikethrough")
-                .and_then(serde_json::Value::as_bool)
-                == Some(true)
-            {
-                component = component.strikethrough();
-            }
-            if map.get("obfuscated").and_then(serde_json::Value::as_bool) == Some(true) {
-                component = component.obfuscated();
-            }
-
-            // Recurse into "extra" array
-            if let Some(serde_json::Value::Array(extras)) = map.get("extra") {
-                for extra in extras {
-                    component = component.append(json_value_to_component(extra));
-                }
-            }
-
-            component
-        }
-        serde_json::Value::Array(arr) => {
-            // Array of components: first is root, rest are extras
-            let mut iter = arr.iter();
-            let mut root = iter.next().map(json_value_to_component).unwrap_or_default();
-            for extra in iter {
-                root = root.append(json_value_to_component(extra));
-            }
-            root
-        }
-        // Fallback: serialize to string
-        other => Component::text(other.to_string()),
-    }
-}
-
-/// Converts a [`Component`] into Minecraft chat JSON (`serde_json::Value`).
-pub fn component_to_json_value(component: &Component) -> serde_json::Value {
-    component.to_json_value_for(ProtocolVersion::MINECRAFT_1_20_2)
 }
 
 /// Converts `infrarust_server_manager::ServerState` to the API's
@@ -175,58 +112,6 @@ pub fn protocol_direction_to_api(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use infrarust_api::types::NamedColor;
-
-    #[test]
-    fn test_json_string_to_component() {
-        let value = serde_json::json!("Hello World");
-        let component = json_value_to_component(&value);
-        assert_eq!(component.as_text(), Some("Hello World"));
-        assert!(component.style.color.is_none());
-        assert!(component.children.is_empty());
-    }
-
-    #[test]
-    fn test_json_object_to_component() {
-        let value = serde_json::json!({"text": "Hello", "color": "gold", "bold": true});
-        let component = json_value_to_component(&value);
-        assert_eq!(component.as_text(), Some("Hello"));
-        assert_eq!(component.style.color, Some(NamedColor::Gold.into()));
-        assert_eq!(component.style.bold, Some(true));
-    }
-
-    #[test]
-    fn test_json_object_with_extra() {
-        let value = serde_json::json!({"text": "A", "extra": [{"text": "B"}, {"text": "C", "color": "red"}]});
-        let component = json_value_to_component(&value);
-        assert_eq!(component.as_text(), Some("A"));
-        assert_eq!(component.children.len(), 2);
-        assert_eq!(component.children[0].as_text(), Some("B"));
-        assert_eq!(component.children[1].as_text(), Some("C"));
-        assert_eq!(
-            component.children[1].style.color,
-            Some(NamedColor::Red.into())
-        );
-    }
-
-    #[test]
-    fn test_json_array_to_component() {
-        let value = serde_json::json!([{"text": "X"}, {"text": "Y"}]);
-        let component = json_value_to_component(&value);
-        assert_eq!(component.as_text(), Some("X"));
-        assert_eq!(component.children.len(), 1);
-        assert_eq!(component.children[0].as_text(), Some("Y"));
-    }
-
-    #[test]
-    fn test_component_to_json_roundtrip() {
-        let original = Component::text("Hello").color("green").bold();
-        let json = component_to_json_value(&original);
-        let back = json_value_to_component(&json);
-        assert_eq!(back.as_text(), Some("Hello"));
-        assert_eq!(back.style.color, Some(NamedColor::Green.into()));
-        assert_eq!(back.style.bold, Some(true));
-    }
 
     #[test]
     fn test_core_to_api_full_response() {
@@ -271,7 +156,6 @@ mod tests {
                 online: 42,
                 sample: vec![],
             },
-            // Fields the Component type cannot represent (hoverEvent/clickEvent/font).
             description: serde_json::json!({
                 "text": "Welcome",
                 "color": "gold",
@@ -292,9 +176,9 @@ mod tests {
         let original = core.description.clone();
 
         let api = core_to_api_ping_response(&core);
-        let sent = component_to_json_value(&api.description);
+        let sent = api.description.clone();
         // Simulate the event returning the response unmodified.
-        merge_ping_event(&mut core, &sent, &api);
+        merge_ping_event(&mut core, &sent, &api, ProtocolVersion::MINECRAFT_1_21_11);
 
         assert_eq!(
             core.description, original,
@@ -306,16 +190,47 @@ mod tests {
 
     #[test]
     fn merge_ping_event_applies_modified_description() {
-        // When a plugin changes the description, the change is applied (even
-        // though the Component form is lossy — that is the plugin's choice).
         let mut core = rich_response();
 
         let mut api = core_to_api_ping_response(&core);
-        let sent = component_to_json_value(&api.description);
+        let sent = api.description.clone();
         api.description = Component::text("Plugin MOTD");
 
-        merge_ping_event(&mut core, &sent, &api);
+        merge_ping_event(&mut core, &sent, &api, ProtocolVersion::MINECRAFT_1_20_2);
         assert_eq!(core.description["text"].as_str().unwrap(), "Plugin MOTD");
+    }
+
+    #[test]
+    fn edited_rich_motd_keeps_events_in_the_client_shape() {
+        let mut api = core_to_api_ping_response(&rich_response());
+        let sent = api.description.clone();
+        api.description = sent.clone().append(Component::text("?"));
+
+        let mut old = rich_response();
+        merge_ping_event(&mut old, &sent, &api, ProtocolVersion::MINECRAFT_1_21_4);
+        assert_eq!(
+            old.description,
+            serde_json::json!({
+                "text": "Welcome",
+                "color": "gold",
+                "hoverEvent": {"action": "show_text", "contents": "tooltip"},
+                "clickEvent": {"action": "open_url", "value": "https://example.com"},
+                "extra": [{"text": "!", "font": "minecraft:uniform"}, "?"]
+            })
+        );
+
+        let mut new = rich_response();
+        merge_ping_event(&mut new, &sent, &api, ProtocolVersion::MINECRAFT_1_21_11);
+        assert_eq!(
+            new.description,
+            serde_json::json!({
+                "text": "Welcome",
+                "color": "gold",
+                "hover_event": {"action": "show_text", "value": "tooltip"},
+                "click_event": {"action": "open_url", "url": "https://example.com"},
+                "extra": [{"text": "!", "font": "minecraft:uniform"}, "?"]
+            })
+        );
     }
 
     #[test]
@@ -325,11 +240,11 @@ mod tests {
         let original = core.description.clone();
 
         let mut api = core_to_api_ping_response(&core);
-        let sent = component_to_json_value(&api.description);
+        let sent = api.description.clone();
         api.max_players = 5;
         api.online_players = 1;
 
-        merge_ping_event(&mut core, &sent, &api);
+        merge_ping_event(&mut core, &sent, &api, ProtocolVersion::MINECRAFT_1_21_11);
         assert_eq!(core.players.max, 5);
         assert_eq!(core.players.online, 1);
         assert_eq!(core.description, original, "description must stay opaque");
@@ -370,7 +285,7 @@ mod tests {
             Some("data:image/png;base64,new".to_string()),
         );
 
-        apply_api_to_core(&mut core, &api);
+        apply_api_to_core(&mut core, &api, ProtocolVersion::MINECRAFT_1_20_2);
 
         // Modified fields
         assert_eq!(core.description["text"].as_str().unwrap(), "Modified");

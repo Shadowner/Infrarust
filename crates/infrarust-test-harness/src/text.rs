@@ -1,6 +1,6 @@
 use infrarust_api::types::Component;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
-use serde_json::Value;
+use serde_json::{Map, Number, Value};
 
 use crate::error::{HarnessError, HarnessResult};
 
@@ -46,8 +46,10 @@ pub fn component_text(raw: &[u8], version: ProtocolVersion) -> String {
 
 pub fn decode_component(raw: &[u8], version: ProtocolVersion) -> (String, Option<Value>) {
     if uses_nbt_components(version) {
-        let text = nbt_text(raw).unwrap_or_else(|_| String::from_utf8_lossy(raw).into_owned());
-        return (text, None);
+        return match read_network_nbt(raw) {
+            Ok(root) => (root_text(&root), Some(nbt_to_json(&root))),
+            Err(_) => (String::from_utf8_lossy(raw).into_owned(), None),
+        };
     }
     json_component_text(&String::from_utf8_lossy(raw))
 }
@@ -65,7 +67,7 @@ pub fn encode_component_json(json: &str, version: ProtocolVersion) -> HarnessRes
     }
     let component =
         Component::from_json(json).map_err(|e| HarnessError::Unexpected(e.to_string()))?;
-    Ok(component.to_nbt_network())
+    Ok(component.to_nbt_for(infrarust_api::types::ProtocolVersion::new(version.0)))
 }
 
 pub fn json_text(value: &Value) -> String {
@@ -94,10 +96,18 @@ fn push_json_text(value: &Value, out: &mut String) {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Nbt {
+    Byte(i8),
+    Short(i16),
+    Int(i32),
+    Long(i64),
+    Float(f32),
+    Double(f64),
+    ByteArray(Vec<i8>),
+    IntArray(Vec<i32>),
+    LongArray(Vec<i64>),
     String(String),
     List(Vec<Nbt>),
     Compound(Vec<(String, Nbt)>),
-    Scalar,
 }
 
 impl Nbt {
@@ -116,10 +126,47 @@ pub fn read_network_nbt(bytes: &[u8]) -> HarnessResult<Nbt> {
 }
 
 pub fn nbt_text(bytes: &[u8]) -> HarnessResult<String> {
-    let root = read_network_nbt(bytes)?;
+    Ok(root_text(&read_network_nbt(bytes)?))
+}
+
+pub fn nbt_component_json(bytes: &[u8]) -> HarnessResult<Value> {
+    Ok(nbt_to_json(&read_network_nbt(bytes)?))
+}
+
+pub fn component_json(raw: &[u8], version: ProtocolVersion) -> HarnessResult<Value> {
+    if uses_nbt_components(version) {
+        return nbt_component_json(raw);
+    }
+    serde_json::from_slice(raw)
+        .map_err(|e| HarnessError::Unexpected(format!("component JSON: {e}")))
+}
+
+pub fn nbt_to_json(node: &Nbt) -> Value {
+    match node {
+        Nbt::Byte(v) => Value::from(*v),
+        Nbt::Short(v) => Value::from(*v),
+        Nbt::Int(v) => Value::from(*v),
+        Nbt::Long(v) => Value::from(*v),
+        Nbt::Float(v) => Number::from_f64(f64::from(*v)).map_or(Value::Null, Value::Number),
+        Nbt::Double(v) => Number::from_f64(*v).map_or(Value::Null, Value::Number),
+        Nbt::ByteArray(items) => items.iter().copied().map(Value::from).collect(),
+        Nbt::IntArray(items) => items.iter().copied().map(Value::from).collect(),
+        Nbt::LongArray(items) => items.iter().copied().map(Value::from).collect(),
+        Nbt::String(s) => Value::String(s.clone()),
+        Nbt::List(items) => items.iter().map(nbt_to_json).collect(),
+        Nbt::Compound(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(k, v)| (k.clone(), nbt_to_json(v)))
+                .collect::<Map<String, Value>>(),
+        ),
+    }
+}
+
+fn root_text(root: &Nbt) -> String {
     let mut out = String::new();
-    push_nbt_text(&root, &mut out);
-    Ok(out)
+    push_nbt_text(root, &mut out);
+    out
 }
 
 fn push_nbt_text(node: &Nbt, out: &mut String) {
@@ -134,7 +181,15 @@ fn push_nbt_text(node: &Nbt, out: &mut String) {
                 extra.iter().for_each(|item| push_nbt_text(item, out));
             }
         }
-        Nbt::Scalar => {}
+        Nbt::Byte(_)
+        | Nbt::Short(_)
+        | Nbt::Int(_)
+        | Nbt::Long(_)
+        | Nbt::Float(_)
+        | Nbt::Double(_)
+        | Nbt::ByteArray(_)
+        | Nbt::IntArray(_)
+        | Nbt::LongArray(_) => {}
     }
 }
 
@@ -161,10 +216,15 @@ impl<'a> NbtReader<'a> {
         Ok(u16::from_be_bytes([b[0], b[1]]))
     }
 
+    fn array<const N: usize>(&mut self) -> HarnessResult<[u8; N]> {
+        let mut out = [0u8; N];
+        out.copy_from_slice(self.take(N)?);
+        Ok(out)
+    }
+
     fn len(&mut self) -> HarnessResult<usize> {
-        let b = self.take(4)?;
-        let n = i32::from_be_bytes([b[0], b[1], b[2], b[3]]);
-        Ok(usize::try_from(n.max(0)).unwrap_or(0))
+        let n = i32::from_be_bytes(self.array()?);
+        usize::try_from(n).map_err(|_| malformed("negative NBT length"))
     }
 
     fn string(&mut self) -> HarnessResult<String> {
@@ -172,13 +232,15 @@ impl<'a> NbtReader<'a> {
         Ok(String::from_utf8_lossy(self.take(len)?).into_owned())
     }
 
-    fn skip_array(&mut self, element_size: usize) -> HarnessResult<Nbt> {
+    fn elements<T, const N: usize>(
+        &mut self,
+        decode: impl Fn([u8; N]) -> T,
+    ) -> HarnessResult<Vec<T>> {
         let n = self.len()?;
-        let bytes = n
-            .checked_mul(element_size)
-            .ok_or_else(|| malformed("NBT array length overflow"))?;
-        self.take(bytes)?;
-        Ok(Nbt::Scalar)
+        if n.checked_mul(N).is_none_or(|bytes| bytes > self.buf.len()) {
+            return Err(malformed("NBT array longer than its payload"));
+        }
+        (0..n).map(|_| self.array().map(&decode)).collect()
     }
 
     fn payload(&mut self, tag: u8, depth: usize) -> HarnessResult<Nbt> {
@@ -186,11 +248,13 @@ impl<'a> NbtReader<'a> {
             return Err(malformed("NBT nested too deeply"));
         }
         match tag {
-            1 => self.take(1).map(|_| Nbt::Scalar),
-            2 => self.take(2).map(|_| Nbt::Scalar),
-            3 | 5 => self.take(4).map(|_| Nbt::Scalar),
-            4 | 6 => self.take(8).map(|_| Nbt::Scalar),
-            7 => self.skip_array(1),
+            1 => Ok(Nbt::Byte(i8::from_be_bytes(self.array()?))),
+            2 => Ok(Nbt::Short(i16::from_be_bytes(self.array()?))),
+            3 => Ok(Nbt::Int(i32::from_be_bytes(self.array()?))),
+            4 => Ok(Nbt::Long(i64::from_be_bytes(self.array()?))),
+            5 => Ok(Nbt::Float(f32::from_be_bytes(self.array()?))),
+            6 => Ok(Nbt::Double(f64::from_be_bytes(self.array()?))),
+            7 => self.elements(i8::from_be_bytes).map(Nbt::ByteArray),
             8 => self.string().map(Nbt::String),
             9 => {
                 let element = self.u8()?;
@@ -213,8 +277,8 @@ impl<'a> NbtReader<'a> {
                     fields.push((name, value));
                 }
             }
-            11 => self.skip_array(4),
-            12 => self.skip_array(8),
+            11 => self.elements(i32::from_be_bytes).map(Nbt::IntArray),
+            12 => self.elements(i64::from_be_bytes).map(Nbt::LongArray),
             other => Err(malformed(&format!("unknown NBT tag {other}"))),
         }
     }
@@ -243,10 +307,44 @@ mod tests {
         let component = Component::text("Kicked: ")
             .color("red")
             .append(Component::text("bye").bold());
+        let bytes = component.to_nbt_for(infrarust_api::types::ProtocolVersion::new(774));
+        assert_eq!(nbt_text(&bytes).unwrap(), "Kicked: bye");
+    }
+
+    #[test]
+    fn nbt_to_json_keeps_every_tag() {
+        let mut bytes = vec![0x0A];
+        bytes.extend_from_slice(&[0x08, 0x00, 0x04]);
+        bytes.extend_from_slice(b"text");
+        bytes.extend_from_slice(&[0x00, 0x02]);
+        bytes.extend_from_slice(b"hi");
+        bytes.extend_from_slice(&[0x01, 0x00, 0x04]);
+        bytes.extend_from_slice(b"bold");
+        bytes.push(0x01);
+        bytes.extend_from_slice(&[0x03, 0x00, 0x01, b'i']);
+        bytes.extend_from_slice(&(-7i32).to_be_bytes());
+        bytes.extend_from_slice(&[0x0B, 0x00, 0x01, b'a']);
+        bytes.extend_from_slice(&2i32.to_be_bytes());
+        bytes.extend_from_slice(&1i32.to_be_bytes());
+        bytes.extend_from_slice(&(-1i32).to_be_bytes());
+        bytes.extend_from_slice(&[0x09, 0x00, 0x05]);
+        bytes.extend_from_slice(b"extra");
+        bytes.push(0x08);
+        bytes.extend_from_slice(&1i32.to_be_bytes());
+        bytes.extend_from_slice(&[0x00, 0x01, b'!']);
+        bytes.push(0x00);
         assert_eq!(
-            nbt_text(&component.to_nbt_network()).unwrap(),
-            "Kicked: bye"
+            nbt_component_json(&bytes).unwrap(),
+            serde_json::json!({"text": "hi", "bold": 1, "i": -7, "a": [1, -1], "extra": ["!"]})
         );
+        assert_eq!(nbt_text(&bytes).unwrap(), "hi!");
+    }
+
+    #[test]
+    fn nbt_arrays_cannot_claim_more_than_the_payload() {
+        let mut bytes = vec![0x0B];
+        bytes.extend_from_slice(&i32::MAX.to_be_bytes());
+        assert!(read_network_nbt(&bytes).is_err());
     }
 
     #[test]

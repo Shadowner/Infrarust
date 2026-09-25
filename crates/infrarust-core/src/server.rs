@@ -11,7 +11,7 @@ use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
 use tracing::Instrument;
 
 use infrarust_api::events::proxy::ServerStateChangeEvent;
-use infrarust_api::types::ServerId;
+use infrarust_api::types::{Component, ServerId};
 use infrarust_server_manager::ServerManagerService;
 
 use crate::event_bus::conversion::convert_server_state;
@@ -523,7 +523,7 @@ impl ProxyServer {
                     .get::<HandshakeData>()
                     .is_some_and(|h| h.intent == ConnectionIntent::Status);
                 if !is_status {
-                    self.send_kick(&mut ctx, &msg).await.ok();
+                    self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
                 }
                 return Ok(());
             }
@@ -546,7 +546,7 @@ impl ProxyServer {
                     MiddlewareResult::Continue => {}
                     MiddlewareResult::ShortCircuit => return Ok(()),
                     MiddlewareResult::Reject(msg) => {
-                        self.send_kick(&mut ctx, &msg).await.ok();
+                        self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
                         return Ok(());
                     }
                 }
@@ -602,7 +602,11 @@ impl ProxyServer {
     }
 
     /// Sends a disconnect/kick packet to the client.
-    async fn send_kick(&self, ctx: &mut ConnectionContext, reason: &str) -> Result<(), CoreError> {
+    async fn send_kick(
+        &self,
+        ctx: &mut ConnectionContext,
+        reason: &Component,
+    ) -> Result<(), CoreError> {
         let version = ctx.extensions.get::<HandshakeData>().map_or(
             ProtocolVersion(infrarust_protocol::CURRENT_MC_PROTOCOL),
             |h| h.protocol_version,
