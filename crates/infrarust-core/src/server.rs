@@ -375,7 +375,11 @@ impl ProxyServer {
     /// # Errors
     /// Returns `CoreError` if the listener fails to bind.
     pub async fn run(self: Arc<Self>) -> Result<(), CoreError> {
-        // Bind listener
+        let listener = self.bind().await?;
+        self.serve(listener).await
+    }
+
+    pub async fn bind(&self) -> Result<Listener, CoreError> {
         let config = &self.services.config;
         let listener_config = ListenerConfig {
             bind: config.bind,
@@ -388,6 +392,11 @@ impl ProxyServer {
         let listener = Listener::bind(listener_config, self.shutdown.clone()).await?;
 
         tracing::info!(bind = %listener.local_addr()?, "proxy server listening");
+        Ok(listener)
+    }
+
+    pub async fn serve(self: Arc<Self>, listener: Listener) -> Result<(), CoreError> {
+        let config = &self.services.config;
 
         // Start server manager health check and monitoring
         if let Some(ref sm) = self.services.server_manager {

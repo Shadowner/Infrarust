@@ -6,21 +6,15 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
-use infrarust_api::events::proxy::{ProxyInitializeEvent, ProxyShutdownEvent};
 use infrarust_config::ProxyConfig;
-use infrarust_core::plugin::manager::{PluginManager, PluginServices};
-use infrarust_core::server::ProxyServer;
-use infrarust_core::services::ban_bridge::BanServiceBridge;
+use infrarust_core::runtime::{ProxyRuntime, proxy_info_from_config};
 use infrarust_core::services::config_service::ConfigServiceImpl;
-use infrarust_core::services::scheduler::SchedulerImpl;
-use infrarust_core::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};
 use infrarust_core::telemetry::formatter::InfrarustFormatter;
 
 mod migrate;
@@ -249,47 +243,6 @@ fn load_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
     Ok(config)
 }
 
-fn build_proxy_info(config: &ProxyConfig) -> infrarust_api::services::proxy_info::ProxyInfo {
-    use infrarust_api::services::proxy_info::{
-        KeepaliveInfo, ProxyInfo, RateLimitInfo, StatusCacheInfo, UnknownDomainBehavior,
-    };
-
-    ProxyInfo {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        bind: config.bind,
-        max_connections: config.max_connections,
-        connect_timeout: config.connect_timeout,
-        receive_proxy_protocol: config.receive_proxy_protocol,
-        worker_threads: config.worker_threads,
-        so_reuseport: config.so_reuseport,
-        rate_limit: RateLimitInfo {
-            max_connections: config.rate_limit.max_connections,
-            window: config.rate_limit.window,
-            status_max: config.rate_limit.status_max,
-            status_window: config.rate_limit.status_window,
-        },
-        status_cache: StatusCacheInfo {
-            ttl: config.status_cache.ttl,
-            max_entries: config.status_cache.max_entries,
-        },
-        keepalive: KeepaliveInfo {
-            time: config.keepalive.time,
-            interval: config.keepalive.interval,
-            retries: config.keepalive.retries,
-        },
-        telemetry_enabled: config.telemetry.as_ref().is_some_and(|t| t.enabled),
-        docker_enabled: config.docker.is_some(),
-        web_api_enabled: config.web.as_ref().is_some_and(|w| w.enable_api),
-        web_ui_enabled: config.web.as_ref().is_some_and(|w| w.webui_enabled()),
-        unknown_domain_behavior: match config.unknown_domain_behavior {
-            infrarust_config::UnknownDomainBehavior::DefaultMotd => {
-                UnknownDomainBehavior::DefaultMotd
-            }
-            infrarust_config::UnknownDomainBehavior::Drop => UnknownDomainBehavior::Drop,
-        },
-    }
-}
-
 async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
 
@@ -302,180 +255,45 @@ async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Re
     });
 
     let mut web_config = config.web.clone();
-    let plugins_dir = config.plugins_dir.clone();
-    let proxy_info = build_proxy_info(&config);
-    let plugin_cfgs = config.plugins.clone();
 
-    // Build the WASM engine before `config` is moved into the proxy server.
     #[cfg(feature = "wasm")]
     let wasm_engine = infrarust_loader_wasm::build_engine(&config)?;
 
-    // Build and run the proxy server
-    let mut server = ProxyServer::new(config, config_path, shutdown.clone())
-        .await
-        .context("failed to initialize proxy server")?;
-
     let static_loader = plugins::build_static_loader(web_config.as_mut())?;
     let static_ids = static_loader.registered_ids();
-    #[cfg_attr(not(feature = "wasm"), allow(unused_mut))]
-    let mut loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> =
-        vec![Box::new(static_loader)];
+    let proxy_info = proxy_info_from_config(&config, env!("CARGO_PKG_VERSION"));
+
+    let builder = ProxyRuntime::builder(config, config_path)
+        .shutdown_token(shutdown.clone())
+        .proxy_info(proxy_info)
+        .trusted_plugins(static_ids)
+        .loader(Box::new(static_loader));
 
     #[cfg(feature = "wasm")]
-    loaders.push(Box::new(infrarust_loader_wasm::WasmPluginLoader::new(
+    let builder = builder.loader(Box::new(infrarust_loader_wasm::WasmPluginLoader::new(
         wasm_engine,
     )));
 
-    let mut plugin_manager = PluginManager::new(loaders);
-    plugin_manager.set_disabled_plugins(
-        plugin_cfgs
-            .iter()
-            .filter(|(_, c)| !c.enabled)
-            .map(|(id, _)| id.clone())
-            .collect(),
-    );
-
-    let services = server.services();
-
-    plugin_manager
-        .discover_all(&plugins_dir)
+    let running = builder
+        .start()
         .await
-        .context("failed to discover plugins")?;
+        .context("failed to initialize proxy server")?;
 
-    let server_manager: Arc<dyn infrarust_api::services::server_manager::ServerManager> =
-        match &services.server_manager {
-            Some(sm) => Arc::new(ServerManagerBridge::new(Arc::clone(sm))),
-            None => Arc::new(NoopServerManager),
-        };
-
-    let transport_filter_registry =
-        Arc::new(infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new());
-
-    let plugin_registry = Arc::new(infrarust_core::plugin::PluginRegistryImpl::new());
-
-    let start_time = std::time::Instant::now();
-
-    infrarust_core::commands::register_builtin_commands(
-        &services.command_manager,
-        services,
-        Arc::clone(&plugin_registry)
-            as Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry>,
-        start_time,
-    );
-
-    let plugin_services = PluginServices {
-        event_bus: Arc::clone(&services.event_bus) as Arc<dyn infrarust_api::event::bus::EventBus>,
-        player_registry: Arc::clone(&services.player_registry)
-            as Arc<dyn infrarust_api::services::player_registry::PlayerRegistry>,
-        server_manager,
-        ban_service: Arc::new(BanServiceBridge::new(Arc::clone(&services.ban_manager))),
-        command_manager: Arc::clone(&services.command_manager)
-            as Arc<dyn infrarust_api::command::CommandManager>,
-        scheduler: Arc::new(SchedulerImpl::new()),
-        config_service: Arc::new(ConfigServiceImpl::new(
+    let services = running.services();
+    let console_services = Arc::new(infrarust_core::console::ConsoleServices::new(
+        Arc::clone(&services.player_registry),
+        Arc::clone(&services.connection_registry),
+        Arc::clone(&services.ban_manager),
+        services.server_manager.clone(),
+        Arc::new(ConfigServiceImpl::new(
             Arc::clone(&services.domain_router),
             services.config_path.clone(),
             Arc::clone(&services.config),
         )),
-        load_balancer_service: Arc::clone(&services.load_balancer_service) as _,
-        plugin_registry: Arc::clone(&plugin_registry)
-            as Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry>,
-        codec_filter_registry: Arc::clone(&services.codec_filter_registry),
-        transport_filter_registry: Arc::clone(&transport_filter_registry),
-        domain_router: Arc::clone(&services.domain_router),
-        proxy_shutdown: shutdown.clone(),
-        proxy_info,
-        plugins_dir,
-    };
-
-    use infrarust_core::plugin::PluginPermissions;
-    let mut plugin_configs: std::collections::HashMap<String, PluginPermissions> = plugin_cfgs
-        .into_iter()
-        .map(|(id, c)| {
-            (
-                id,
-                PluginPermissions {
-                    permissions: c.permissions,
-                    trusted: false,
-                },
-            )
-        })
-        .collect();
-    for id in static_ids {
-        plugin_configs
-            .entry(id)
-            .and_modify(|p| p.trusted = true)
-            .or_insert(PluginPermissions {
-                permissions: Vec::new(),
-                trusted: true,
-            });
-    }
-
-    let context_factory =
-        infrarust_core::plugin::PluginContextFactoryImpl::new(plugin_services, plugin_configs);
-
-    let errors = plugin_manager.load_and_enable_all(&context_factory).await;
-    if !errors.is_empty() {
-        tracing::warn!(count = errors.len(), "Some plugins failed to enable");
-    }
-
-    // Refresh the plugin registry snapshot so all plugins are visible via the API
-    plugin_registry.update_from(&plugin_manager.list_plugins(), &|id| {
-        plugin_manager.plugin_state(id).cloned()
-    });
-
-    // Collect limbo handlers registered by plugins and populate the registry
-    for handler in plugin_manager.collect_limbo_handlers() {
-        services.limbo_handler_registry.register(Arc::from(handler));
-    }
-
-    let plugin_providers = plugin_manager.collect_config_providers();
-    if !plugin_providers.is_empty() {
-        tracing::info!(
-            count = plugin_providers.len(),
-            "activating plugin config providers"
-        );
-        let results = infrarust_core::provider::plugin_adapter::activate_plugin_providers(
-            plugin_providers,
-            services.provider_event_sender.clone(),
-            &services.domain_router,
-            shutdown.clone(),
-        )
-        .await;
-        plugin_manager.store_provider_cleanup(results);
-    }
-
-    // Clone Arcs for console before releasing the immutable borrow on `server`
-    let console_player_registry = Arc::clone(&services.player_registry);
-    let console_connection_registry = Arc::clone(&services.connection_registry);
-    let console_ban_manager = Arc::clone(&services.ban_manager);
-    let console_server_manager = services.server_manager.clone();
-    let console_domain_router = Arc::clone(&services.domain_router);
-    let console_config_path = services.config_path.clone();
-    let console_config = Arc::clone(&services.config);
-    let console_permission_service = Arc::clone(&services.permission_service);
-
-    // Rebuild transport filter chain now that plugins may have registered filters
-    server.rebuild_transport_filter_chain(&transport_filter_registry);
-
-    // Wrap PluginManager in Arc<RwLock> for shared read access from console
-    let plugin_manager = Arc::new(tokio::sync::RwLock::new(plugin_manager));
-
-    // Start interactive console
-    let console_services = Arc::new(infrarust_core::console::ConsoleServices::new(
-        console_player_registry,
-        console_connection_registry,
-        console_ban_manager,
-        console_server_manager,
-        Arc::new(ConfigServiceImpl::new(
-            console_domain_router,
-            console_config_path,
-            console_config,
-        )),
-        Arc::clone(&plugin_manager),
-        console_permission_service,
+        Arc::clone(running.plugin_manager()),
+        Arc::clone(&services.permission_service),
         shutdown.clone(),
-        start_time,
+        running.start_time(),
     ));
 
     let console_task = infrarust_core::console::ConsoleTask::new(console_services);
@@ -492,44 +310,9 @@ async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Re
         tracing::info!("{label} accessible at: http://{}", web.bind);
     }
 
-    let server = Arc::new(server);
-
-    server.event_bus().fire(ProxyInitializeEvent).await;
-
-    Arc::clone(&server)
-        .run()
-        .await
-        .context("proxy server error")?;
-
+    let result = running.wait().await;
     console_handle.abort();
-
-    server.event_bus().fire(ProxyShutdownEvent).await;
-
-    plugin_manager.write().await.shutdown().await;
-
-    // Post-shutdown: drain active connections with a timeout
-    let remaining = server.registry().count();
-    if remaining > 0 {
-        tracing::info!(remaining, "waiting for active connections to drain");
-
-        let _ = tokio::time::timeout(Duration::from_secs(30), async {
-            loop {
-                let count = server.registry().count();
-                if count == 0 {
-                    tracing::info!("all connections drained");
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(250)).await;
-            }
-        })
-        .await
-        .inspect_err(|_| {
-            tracing::warn!(
-                remaining = server.registry().count(),
-                "drain timeout, forcing shutdown"
-            );
-        });
-    }
+    result.context("proxy server error")?;
 
     tracing::info!("infrarust stopped");
     Ok(())
