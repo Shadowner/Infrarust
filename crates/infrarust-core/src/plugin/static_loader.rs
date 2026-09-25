@@ -1,6 +1,5 @@
 //! [`StaticPluginLoader`] — loads plugins compiled into the binary via Cargo features.
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::RwLock;
 
@@ -42,13 +41,13 @@ where
 /// Plugins are registered explicitly via [`register()`](Self::register).
 /// The `plugin_dir` argument in [`discover()`](PluginLoader::discover) is ignored.
 pub struct StaticPluginLoader {
-    factories: RwLock<HashMap<String, Box<dyn PluginFactory>>>,
+    factories: RwLock<Vec<(String, Box<dyn PluginFactory>)>>,
 }
 
 impl StaticPluginLoader {
     pub fn new() -> Self {
         Self {
-            factories: RwLock::new(HashMap::new()),
+            factories: RwLock::new(Vec::new()),
         }
     }
 
@@ -62,10 +61,10 @@ impl StaticPluginLoader {
         let plugin_factory = FnPluginFactory { metadata, factory };
 
         let mut factories = self.factories.write().expect("lock poisoned");
-        if factories.contains_key(&id) {
+        if factories.iter().any(|(existing, _)| *existing == id) {
             panic!("Duplicate static plugin id: {id}");
         }
-        factories.insert(id, Box::new(plugin_factory));
+        factories.push((id, Box::new(plugin_factory)));
     }
 
     pub fn registered_count(&self) -> usize {
@@ -77,8 +76,8 @@ impl StaticPluginLoader {
         self.factories
             .read()
             .expect("lock poisoned")
-            .keys()
-            .cloned()
+            .iter()
+            .map(|(id, _)| id.clone())
             .collect()
     }
 }
@@ -100,7 +99,7 @@ impl PluginLoader for StaticPluginLoader {
     ) -> BoxFuture<'a, Result<Vec<PluginMetadata>, LoaderError>> {
         Box::pin(async {
             let factories = self.factories.read().expect("lock poisoned");
-            let metadatas = factories.values().map(|f| f.metadata()).collect();
+            let metadatas = factories.iter().map(|(_, f)| f.metadata()).collect();
             Ok(metadatas)
         })
     }
@@ -112,8 +111,9 @@ impl PluginLoader for StaticPluginLoader {
     ) -> BoxFuture<'a, Result<Box<dyn Plugin>, LoaderError>> {
         Box::pin(async move {
             let factories = self.factories.read().expect("lock poisoned");
-            let factory = factories
-                .get(plugin_id)
+            let (_, factory) = factories
+                .iter()
+                .find(|(id, _)| id == plugin_id)
                 .ok_or_else(|| LoaderError::PluginNotFound {
                     plugin_id: plugin_id.to_string(),
                 })?;
@@ -212,7 +212,27 @@ mod tests {
             unimplemented!("mock")
         }
 
-        fn register_limbo_handler(&self, _handler: Box<dyn infrarust_api::limbo::LimboHandler>) {
+        fn register_limbo_handler(
+            &self,
+            _handler: Box<dyn infrarust_api::limbo::LimboHandler>,
+        ) -> Result<
+            infrarust_api::limbo::LimboHandlerRegistration,
+            infrarust_api::limbo::LimboHandlerError,
+        > {
+            unimplemented!("mock")
+        }
+
+        fn scheduler_handle(&self) -> Arc<dyn infrarust_api::services::scheduler::Scheduler> {
+            unimplemented!("mock")
+        }
+
+        fn services(&self) -> &dyn infrarust_api::services::service_registry::ServiceRegistry {
+            unimplemented!("mock")
+        }
+
+        fn services_handle(
+            &self,
+        ) -> Arc<dyn infrarust_api::services::service_registry::ServiceRegistry> {
             unimplemented!("mock")
         }
 

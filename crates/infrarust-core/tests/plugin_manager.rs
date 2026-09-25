@@ -62,7 +62,27 @@ impl PluginContext for MockPluginContext {
     fn scheduler(&self) -> &dyn infrarust_api::services::scheduler::Scheduler {
         unimplemented!("mock")
     }
-    fn register_limbo_handler(&self, _handler: Box<dyn infrarust_api::limbo::LimboHandler>) {
+    fn register_limbo_handler(
+        &self,
+        _handler: Box<dyn infrarust_api::limbo::LimboHandler>,
+    ) -> Result<
+        infrarust_api::limbo::LimboHandlerRegistration,
+        infrarust_api::limbo::LimboHandlerError,
+    > {
+        unimplemented!("mock")
+    }
+
+    fn scheduler_handle(&self) -> Arc<dyn infrarust_api::services::scheduler::Scheduler> {
+        unimplemented!("mock")
+    }
+
+    fn services(&self) -> &dyn infrarust_api::services::service_registry::ServiceRegistry {
+        unimplemented!("mock")
+    }
+
+    fn services_handle(
+        &self,
+    ) -> Arc<dyn infrarust_api::services::service_registry::ServiceRegistry> {
         unimplemented!("mock")
     }
     fn register_config_provider(
@@ -594,4 +614,90 @@ async fn test_list_plugins() {
     let ids: Vec<&str> = list.iter().map(|m| m.id.as_str()).collect();
     assert!(ids.contains(&"alpha"));
     assert!(ids.contains(&"beta"));
+}
+
+#[tokio::test]
+async fn lifecycle_events_follow_enable_and_disable_order() {
+    use infrarust_api::event::EventPriority;
+    use infrarust_api::event::bus::{EventBus, EventBusExt};
+    use infrarust_api::events::plugin::{PluginDisabledEvent, PluginEnabledEvent};
+
+    let bus = Arc::new(EventBusImpl::new());
+    bus.start_dispatcher();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let listen: &dyn EventBus = bus.as_ref();
+    let on_enabled = Arc::clone(&seen);
+    listen.subscribe(EventPriority::NORMAL, move |e: &mut PluginEnabledEvent| {
+        on_enabled
+            .lock()
+            .unwrap()
+            .push(format!("+{}@{}", e.plugin_id, e.version));
+    });
+    let on_disabled = Arc::clone(&seen);
+    listen.subscribe(EventPriority::NORMAL, move |e: &mut PluginDisabledEvent| {
+        on_disabled
+            .lock()
+            .unwrap()
+            .push(format!("-{}", e.plugin_id));
+    });
+
+    let loader = StaticPluginLoader::new();
+    let counter = Arc::new(AtomicUsize::new(0));
+    register_mock(
+        &loader,
+        PluginMetadata::new("addon", "Addon", "2.0.0").depends_on("base"),
+        false,
+        Arc::clone(&counter),
+    );
+    register_mock(
+        &loader,
+        PluginMetadata::new("base", "Base", "1.0.0"),
+        false,
+        Arc::clone(&counter),
+    );
+    register_mock(
+        &loader,
+        PluginMetadata::new("broken", "Broken", "1.0.0"),
+        true,
+        Arc::clone(&counter),
+    );
+    register_mock(
+        &loader,
+        PluginMetadata::new("extra", "Extra", "1.0.0"),
+        false,
+        Arc::clone(&counter),
+    );
+
+    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    manager.set_event_bus(Arc::clone(&bus));
+    manager.discover_all(Path::new("plugins")).await.unwrap();
+    let errors = manager.load_and_enable_all(&MockPluginContextFactory).await;
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["+base@1.0.0", "+addon@2.0.0", "+extra@1.0.0"]
+    );
+
+    assert!(manager.disable_plugin("base").await.is_err());
+    assert!(manager.disable_plugin("broken").await.is_err());
+    manager.disable_plugin("extra").await.unwrap();
+    assert!(!manager.is_plugin_loaded("extra"));
+    assert!(matches!(
+        manager.plugin_state("extra"),
+        Some(PluginState::Disabled)
+    ));
+    assert!(manager.plugin_context("extra").is_none());
+
+    manager.shutdown().await;
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            "+base@1.0.0",
+            "+addon@2.0.0",
+            "+extra@1.0.0",
+            "-extra",
+            "-addon",
+            "-base"
+        ]
+    );
 }

@@ -89,12 +89,21 @@ fn denying(mut perms: PluginPermissions, denied: &[&str]) -> PluginPermissions {
 }
 
 fn limbo_handlers_after_register(ctx: &Arc<dyn PluginContext>) -> usize {
-    ctx.register_limbo_handler(Box::new(DummyLimbo));
-    ctx.as_any()
+    let registered = ctx.register_limbo_handler(Box::new(DummyLimbo));
+    let count = ctx
+        .as_any()
         .downcast_ref::<PluginContextImpl>()
         .expect("real PluginContextImpl")
-        .take_limbo_handlers()
-        .len()
+        .limbo_handlers()
+        .len();
+    assert_eq!(registered.is_ok(), count == 1, "{registered:?}");
+    if count == 0 {
+        assert_eq!(
+            registered.unwrap_err(),
+            infrarust_api::limbo::LimboHandlerError::MissingCapability
+        );
+    }
+    count
 }
 
 #[test]

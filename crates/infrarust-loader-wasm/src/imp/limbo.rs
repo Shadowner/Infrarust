@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::{HandlerResult, LimboHandler, LimboSession, SessionEndReason};
-use infrarust_api::types::{Component, PlayerId};
+use infrarust_api::types::PlayerId;
 use wasmtime::component::Resource;
 
 use crate::actor::InstanceRef;
@@ -34,7 +34,7 @@ impl WasmLimboHandler {
 }
 
 pub(crate) fn deny_unavailable() -> HandlerResult {
-    HandlerResult::Deny(Component::text("Limbo handler unavailable"))
+    HandlerResult::unavailable()
 }
 
 impl LimboHandler for WasmLimboHandler {

@@ -23,6 +23,9 @@ use infrarust_api::events::lifecycle::{
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
 use infrarust_api::events::named::{NamedEvent, NamedEventResponse};
 use infrarust_api::events::packet::RawPacketEvent;
+use infrarust_api::events::plugin::{
+    PluginDisabledEvent, PluginEnabledEvent, ServiceProvidedEvent, ServiceRemovedEvent,
+};
 use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
@@ -225,7 +228,7 @@ async fn a_failing_handler_names_the_plugin_that_fired_the_event() {
 
 type Probe = (&'static str, fn() -> TypeId);
 
-const BUILTIN_NAMES: [Probe; 26] = [
+const BUILTIN_NAMES: [Probe; 30] = [
     ("PreLoginEvent", TypeId::of::<PreLoginEvent>),
     (
         "GameProfileRequestEvent",
@@ -270,6 +273,10 @@ const BUILTIN_NAMES: [Probe; 26] = [
     ),
     ("LimboEnterEvent", TypeId::of::<LimboEnterEvent>),
     ("LimboExitEvent", TypeId::of::<LimboExitEvent>),
+    ("PluginEnabledEvent", TypeId::of::<PluginEnabledEvent>),
+    ("PluginDisabledEvent", TypeId::of::<PluginDisabledEvent>),
+    ("ServiceProvidedEvent", TypeId::of::<ServiceProvidedEvent>),
+    ("ServiceRemovedEvent", TypeId::of::<ServiceRemovedEvent>),
 ];
 
 const OPEN_API_EVENTS: [&str; 1] = ["NamedEvent"];

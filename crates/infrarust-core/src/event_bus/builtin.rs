@@ -14,6 +14,9 @@ use infrarust_api::events::lifecycle::{
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
 use infrarust_api::events::packet::RawPacketEvent;
+use infrarust_api::events::plugin::{
+    PluginDisabledEvent, PluginEnabledEvent, ServiceProvidedEvent, ServiceRemovedEvent,
+};
 use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
@@ -47,6 +50,10 @@ pub static BUILTIN_EVENTS: &[TypeId] = &[
     TypeId::of::<LimboEnterEvent>(),
     TypeId::of::<LimboExitEvent>(),
     TypeId::of::<RawPacketEvent>(),
+    TypeId::of::<PluginEnabledEvent>(),
+    TypeId::of::<PluginDisabledEvent>(),
+    TypeId::of::<ServiceProvidedEvent>(),
+    TypeId::of::<ServiceRemovedEvent>(),
 ];
 
 pub fn is_builtin_event(type_id: TypeId) -> bool {

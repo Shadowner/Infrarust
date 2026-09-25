@@ -1,6 +1,6 @@
 //! Topological sort for plugin dependency resolution (Kahn's algorithm).
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use infrarust_api::error::PluginError;
 use infrarust_api::plugin::PluginMetadata;
@@ -45,22 +45,31 @@ pub fn resolve_load_order(plugins: &[PluginMetadata]) -> Result<Vec<String>, Plu
     }
 
     // 3. Kahn's algorithm
-    let mut queue: VecDeque<&str> = in_degree
+    let position: HashMap<&str, usize> = plugins
         .iter()
-        .filter(|(_, deg)| **deg == 0)
-        .map(|(id, _)| *id)
+        .enumerate()
+        .map(|(at, plugin)| (plugin.id.as_str(), at))
+        .collect();
+    let mut ready: BTreeSet<usize> = plugins
+        .iter()
+        .enumerate()
+        .filter(|(_, plugin)| in_degree.get(plugin.id.as_str()) == Some(&0))
+        .map(|(at, _)| at)
         .collect();
 
     let mut sorted: Vec<String> = Vec::with_capacity(plugins.len());
 
-    while let Some(node) = queue.pop_front() {
+    while let Some(at) = ready.pop_first() {
+        let node = plugins[at].id.as_str();
         sorted.push(node.to_string());
         if let Some(deps) = dependents.get(node) {
             for &dep in deps {
                 if let Some(deg) = in_degree.get_mut(dep) {
                     *deg -= 1;
-                    if *deg == 0 {
-                        queue.push_back(dep);
+                    if *deg == 0
+                        && let Some(&dep_at) = position.get(dep)
+                    {
+                        ready.insert(dep_at);
                     }
                 }
             }
@@ -81,4 +90,36 @@ pub fn resolve_load_order(plugins: &[PluginMetadata]) -> Result<Vec<String>, Plu
     }
 
     Ok(sorted)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    fn ids(order: &[String]) -> Vec<&str> {
+        order.iter().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn independent_plugins_keep_their_discovery_order() {
+        let plugins: Vec<PluginMetadata> = (0..32)
+            .map(|i| PluginMetadata::new(format!("p{i:02}"), "p", "1.0.0"))
+            .collect();
+        let expected: Vec<String> = plugins.iter().map(|p| p.id.clone()).collect();
+        assert_eq!(resolve_load_order(&plugins).unwrap(), expected);
+    }
+
+    #[test]
+    fn a_dependency_only_moves_its_dependent() {
+        let plugins = vec![
+            PluginMetadata::new("lobby", "l", "1.0.0").optional_dependency("auth"),
+            PluginMetadata::new("stats", "s", "1.0.0"),
+            PluginMetadata::new("auth", "a", "1.0.0"),
+            PluginMetadata::new("hub", "h", "1.0.0").depends_on("stats"),
+        ];
+        let order = resolve_load_order(&plugins).unwrap();
+        assert_eq!(ids(&order), ["stats", "auth", "lobby", "hub"]);
+    }
 }

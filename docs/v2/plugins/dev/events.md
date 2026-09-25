@@ -209,7 +209,7 @@ Every event goes through the same dispatch: listeners run one after another in p
 | Delivery | Events | What it means |
 |----------|--------|---------------|
 | Inline, awaited | `ConnectionHandshakeEvent`, `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
-| Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `BanIssuedEvent`, `BanRevokedEvent`, `ConnectionRejectedEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
+| Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `BanIssuedEvent`, `BanRevokedEvent`, `ConnectionRejectedEvent`, `PluginEnabledEvent`, `PluginDisabledEvent`, `ServiceProvidedEvent`, `ServiceRemovedEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
 
 Because the queue delivers one event at a time, a slow listener on a queued event delays the queued events behind it, up to `handler_timeout` per listener. A listener that panics does not stop the queue: the next event is still delivered.
 
@@ -1067,6 +1067,62 @@ ctx.event_bus().subscribe::<BanIssuedEvent, _>(EventPriority::NORMAL, |event| {
 ```
 
 WASM plugins (contract 0.2.3) do not receive ban events.
+
+## Plugin events
+
+The plugin manager and the [service registry](./services) post these. They are queued like the other informational proxy events, and plugins can listen to them but not fire them.
+
+### PluginEnabledEvent
+
+Posted right after a plugin's `on_enable` succeeded, once per plugin, in enable order.
+
+**Type:** Informational
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `plugin_id` | `String` | The plugin that was enabled |
+| `version` | `String` | Its version from `PluginMetadata` |
+
+The manager waits for the event to be delivered before it enables the next plugin. A plugin sees its own `PluginEnabledEvent` and those of every plugin enabled after it. The plugins enabled before it are in the [plugin registry](./api#plugincontext).
+
+### PluginDisabledEvent
+
+Posted after a plugin was disabled and its resources cleaned up, on shutdown or by `disable_plugin`. On shutdown the events follow `ProxyShutdownEvent`, in reverse enable order.
+
+**Type:** Informational
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `plugin_id` | `String` | The plugin that was disabled |
+
+A plugin does not receive its own `PluginDisabledEvent`: its listeners are removed before the event is posted.
+
+### ServiceProvidedEvent
+
+Posted when a plugin provided a service through `ctx.services().provide`.
+
+**Type:** Informational
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `service` | `&'static str` | The Rust type name of the service, for logs |
+| `provider` | `String` | The plugin that provides it |
+
+`event.is::<T>()` tells whether the service is `T`:
+
+```rust
+ctx.event_bus().subscribe::<ServiceProvidedEvent, _>(EventPriority::NORMAL, |event| {
+    if event.is::<dyn LoginState>() {
+        tracing::info!("logins are now answered by {}", event.provider);
+    }
+});
+```
+
+### ServiceRemovedEvent
+
+Posted when a service was withdrawn through its `ServiceHandle`, or because its provider was disabled. It has the same fields and `is::<T>()` check as `ServiceProvidedEvent`. When a plugin is disabled, its `ServiceRemovedEvent`s come before its `PluginDisabledEvent`.
+
+WASM plugins (contract 0.2.3) do not receive plugin events.
 
 ## Custom events
 

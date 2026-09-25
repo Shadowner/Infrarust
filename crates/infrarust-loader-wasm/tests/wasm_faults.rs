@@ -163,16 +163,16 @@ fn break_the_log(data: &Path) -> PathBuf {
     log
 }
 
-fn limbo_handlers(env: &TestEnv, id: &str) -> Vec<Box<dyn LimboHandler>> {
+fn limbo_handlers(env: &TestEnv, id: &str) -> Vec<Arc<dyn LimboHandler>> {
     env.factory
         .create_context(id)
         .as_any()
         .downcast_ref::<PluginContextImpl>()
         .expect("PluginContextImpl")
-        .take_limbo_handlers()
+        .limbo_handlers()
 }
 
-fn named(handlers: &mut Vec<Box<dyn LimboHandler>>, name: &str) -> Box<dyn LimboHandler> {
+fn named(handlers: &mut Vec<Arc<dyn LimboHandler>>, name: &str) -> Arc<dyn LimboHandler> {
     let at = handlers
         .iter()
         .position(|handler| handler.name() == name)
@@ -447,6 +447,7 @@ async fn a_hold_owned_by_the_trapped_instance_is_released_with_the_fallback() {
     loader.discover(&plugins_dir).await.unwrap();
     let _plugin = load_enabled(&loader, &env.factory, "limbo-handler").await;
     let mut handlers = limbo_handlers(&env, "limbo-handler");
+    let registered = handlers.len();
     let gate = named(&mut handlers, "gate");
     let boom = named(&mut handlers, "boom");
 
@@ -477,10 +478,13 @@ async fn a_hold_owned_by_the_trapped_instance_is_released_with_the_fallback() {
         "the recovered instance serves the same handler"
     );
     assert!(next.completions().is_empty());
-    assert!(
-        limbo_handlers(&env, "limbo-handler").is_empty(),
+    let mut after = limbo_handlers(&env, "limbo-handler");
+    assert_eq!(
+        after.len(),
+        registered,
         "the recovered instance rebinds its handlers instead of registering them again"
     );
+    assert!(Arc::ptr_eq(&named(&mut after, "gate"), &gate));
 }
 
 #[tokio::test(flavor = "multi_thread")]

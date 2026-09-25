@@ -78,7 +78,7 @@ impl Plugin for HelloPlugin {
                 tracing::warn!("[HelloPlugin] /limbo was not registered: {e}");
             }
 
-            ctx.register_limbo_handler(Box::new(TestGateHandler));
+            ctx.register_limbo_handler(Box::new(TestGateHandler))?;
 
             let player_registry = ctx.player_registry_handle();
             ctx.scheduler().interval(

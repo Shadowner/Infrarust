@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use infrarust_api::command::CommandManager;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
-use infrarust_api::limbo::LimboHandler;
+use infrarust_api::limbo::{LimboHandler, LimboHandlerError, LimboHandlerRegistration};
 use infrarust_api::permissions::{
     Capability, CapabilitySet, PermissionNode, PermissionNodeError, PermissionNodeInfo,
     PermissionProvider, PermissionProviderRejected,
@@ -17,7 +17,8 @@ use infrarust_api::permissions::{
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::provider::PluginConfigProvider;
 use infrarust_api::services::proxy_info::ProxyInfo;
-use infrarust_api::services::scheduler::{Scheduler, TaskHandle};
+use infrarust_api::services::scheduler::Scheduler;
+use infrarust_api::services::service_registry::ServiceRegistry;
 use infrarust_api::services::{
     ban_service::{BanProvider, BanProviderRejected, BanService},
     config_service::ConfigService,
@@ -31,11 +32,14 @@ use crate::ban::BanManager;
 use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
+use crate::limbo::registry::LimboHandlerRegistry;
 use crate::permissions::PermissionService;
 use crate::provider::ProviderId;
 use crate::routing::DomainRouter;
 use crate::services::command_manager::CommandManagerImpl;
+use crate::services::scheduler::SchedulerImpl;
 
+use super::service_registry::{PluginServiceRegistry, ServiceRegistryImpl};
 use super::tracking::{TrackingCommandManager, TrackingEventBus, TrackingScheduler};
 
 /// Per-plugin context that aggregates all proxy services.
@@ -58,7 +62,8 @@ pub struct PluginContextImpl {
     plugin_registry: Arc<dyn PluginRegistry>,
     command_manager: Arc<TrackingCommandManager>,
     scheduler: Arc<TrackingScheduler>,
-    limbo_handlers: Mutex<Vec<Box<dyn LimboHandler>>>,
+    limbo_handlers: Arc<LimboHandlerRegistry>,
+    services: Arc<PluginServiceRegistry>,
     config_providers: Mutex<Vec<Box<dyn PluginConfigProvider>>>,
     codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     transport_filter_registry: Arc<TransportFilterRegistryImpl>,
@@ -69,8 +74,6 @@ pub struct PluginContextImpl {
     plugins_dir: PathBuf,
     capabilities: CapabilitySet,
 
-    // Shared tracking state (also held by the wrappers)
-    registered_tasks: Arc<Mutex<Vec<TaskHandle>>>,
     registered_provider_ids: Arc<Mutex<Vec<ProviderId>>>,
     registered_provider_tokens: Arc<Mutex<Vec<CancellationToken>>>,
 }
@@ -88,7 +91,7 @@ impl PluginContextImpl {
         load_balancer_service: Arc<dyn LoadBalancerService>,
         plugin_registry: Arc<dyn PluginRegistry>,
         command_manager: Arc<CommandManagerImpl>,
-        scheduler: Arc<dyn Scheduler>,
+        scheduler: Arc<SchedulerImpl>,
         codec_filter_registry: Arc<CodecFilterRegistryImpl>,
         transport_filter_registry: Arc<TransportFilterRegistryImpl>,
         domain_router: Arc<DomainRouter>,
@@ -97,16 +100,15 @@ impl PluginContextImpl {
         plugins_dir: PathBuf,
         capabilities: CapabilitySet,
     ) -> Self {
-        let registered_tasks = Arc::new(Mutex::new(Vec::new()));
-
         let tracking_bus = Arc::new(TrackingEventBus::new(event_bus, &plugin_id));
         let tracking_cmd = Arc::new(TrackingCommandManager::new(
             command_manager,
             plugin_id.clone(),
         ));
-        let tracking_sched = Arc::new(TrackingScheduler::new(
-            scheduler,
-            Arc::clone(&registered_tasks),
+        let tracking_sched = Arc::new(TrackingScheduler::new(scheduler, &plugin_id));
+        let services = Arc::new(PluginServiceRegistry::new(
+            Arc::new(ServiceRegistryImpl::default()),
+            &plugin_id,
         ));
 
         let config_service: Arc<dyn ConfigService> = if capabilities.has(Capability::ConfigWrite) {
@@ -131,7 +133,8 @@ impl PluginContextImpl {
             plugin_registry,
             command_manager: tracking_cmd,
             scheduler: tracking_sched,
-            limbo_handlers: Mutex::new(Vec::new()),
+            limbo_handlers: Arc::new(LimboHandlerRegistry::new()),
+            services,
             config_providers: Mutex::new(Vec::new()),
             codec_filter_registry,
             transport_filter_registry,
@@ -141,7 +144,6 @@ impl PluginContextImpl {
             plugin_id,
             plugins_dir,
             capabilities,
-            registered_tasks,
             registered_provider_ids: Arc::new(Mutex::new(Vec::new())),
             registered_provider_tokens: Arc::new(Mutex::new(Vec::new())),
         }
@@ -151,6 +153,22 @@ impl PluginContextImpl {
     pub fn with_permissions(mut self, permissions: Arc<PermissionService>) -> Self {
         self.permissions = permissions;
         self
+    }
+
+    #[must_use]
+    pub(crate) fn with_limbo_handlers(mut self, registry: Arc<LimboHandlerRegistry>) -> Self {
+        self.limbo_handlers = registry;
+        self
+    }
+
+    #[must_use]
+    pub fn with_services(mut self, registry: Arc<ServiceRegistryImpl>) -> Self {
+        self.services = Arc::new(PluginServiceRegistry::new(registry, &self.plugin_id));
+        self
+    }
+
+    pub fn tracked_tasks(&self) -> usize {
+        self.scheduler.tracked_count()
     }
 
     fn refresh_online_players(&self) {
@@ -168,10 +186,8 @@ impl PluginContextImpl {
         });
     }
 
-    /// Returns registered limbo handlers (consumed during proxy setup).
-    pub fn take_limbo_handlers(&self) -> Vec<Box<dyn LimboHandler>> {
-        let mut handlers = self.limbo_handlers.lock().expect("lock poisoned");
-        std::mem::take(&mut *handlers)
+    pub fn limbo_handlers(&self) -> Vec<Arc<dyn LimboHandler>> {
+        self.limbo_handlers.owned_by(&self.plugin_id)
     }
 
     pub fn take_config_providers(&self) -> Vec<Box<dyn PluginConfigProvider>> {
@@ -204,11 +220,9 @@ impl PluginContextImpl {
         // Unregister all commands
         self.command_manager.unregister_all();
 
-        // Cancel all scheduled tasks
-        let tasks = std::mem::take(&mut *self.registered_tasks.lock().expect("lock poisoned"));
-        for task in tasks {
-            self.scheduler.cancel(task);
-        }
+        self.scheduler.cancel_all();
+        self.limbo_handlers.unregister_owner(&self.plugin_id);
+        self.services.withdraw_all();
 
         let tokens = std::mem::take(
             &mut *self
@@ -356,20 +370,44 @@ impl PluginContext for PluginContextImpl {
         self.scheduler.as_ref()
     }
 
+    fn scheduler_handle(&self) -> Arc<dyn Scheduler> {
+        Arc::clone(&self.scheduler) as Arc<dyn Scheduler>
+    }
+
+    fn services(&self) -> &dyn ServiceRegistry {
+        self.services.as_ref()
+    }
+
+    fn services_handle(&self) -> Arc<dyn ServiceRegistry> {
+        Arc::clone(&self.services) as Arc<dyn ServiceRegistry>
+    }
+
     fn event_bus_handle(&self) -> Arc<dyn EventBus> {
         Arc::clone(&self.event_bus) as Arc<dyn EventBus>
     }
 
-    fn register_limbo_handler(&self, handler: Box<dyn LimboHandler>) {
+    fn register_limbo_handler(
+        &self,
+        handler: Box<dyn LimboHandler>,
+    ) -> Result<LimboHandlerRegistration, LimboHandlerError> {
         if !self.capabilities.has(Capability::Limbo) {
             tracing::warn!(
                 plugin = %self.plugin_id,
                 "register_limbo_handler denied: missing Limbo capability"
             );
-            return;
+            return Err(LimboHandlerError::MissingCapability);
         }
-        let mut handlers = self.limbo_handlers.lock().expect("lock poisoned");
-        handlers.push(handler);
+        let name = handler.name().to_string();
+        let id = self
+            .limbo_handlers
+            .register(&self.plugin_id, handler)
+            .inspect_err(|e| tracing::warn!(plugin = %self.plugin_id, "{e}"))?;
+        let registry = Arc::downgrade(&self.limbo_handlers);
+        Ok(LimboHandlerRegistration::new(name, move || {
+            registry
+                .upgrade()
+                .is_some_and(|registry| registry.unregister(id))
+        }))
     }
 
     fn plugin_registry(&self) -> &dyn PluginRegistry {

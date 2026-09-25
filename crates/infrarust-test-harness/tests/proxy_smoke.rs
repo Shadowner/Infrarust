@@ -385,7 +385,10 @@ async fn proxy_lifecycle_events() {
         .wait_for_kind(EventKind::ProxyInitialize, T)
         .await
         .unwrap();
-    assert_eq!(recorder.kinds(), vec![EventKind::ProxyInitialize]);
+    assert_eq!(
+        recorder.kinds(),
+        vec![EventKind::PluginEnabled, EventKind::ProxyInitialize]
+    );
 
     let session = proxy
         .client(ProtocolVersion(CURRENT))

@@ -5,17 +5,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use infrarust_api::error::PluginError;
+use infrarust_api::event::Event;
+use infrarust_api::events::plugin::{PluginDisabledEvent, PluginEnabledEvent};
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::{
     ban_service::BanService, config_service::ConfigService, load_balancer::LoadBalancerService,
     player_registry::PlayerRegistry, plugin_registry::PluginRegistry, proxy_info::ProxyInfo,
-    scheduler::Scheduler, server_manager::ServerManager,
+    server_manager::ServerManager,
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
+use crate::services::scheduler::SchedulerImpl;
 
 use super::PluginState;
 use super::context::PluginContextImpl;
@@ -30,7 +33,7 @@ pub struct PluginServices {
     pub server_manager: Arc<dyn ServerManager>,
     pub ban_service: Arc<dyn BanService>,
     pub command_manager: Arc<crate::services::command_manager::CommandManagerImpl>,
-    pub scheduler: Arc<dyn Scheduler>,
+    pub scheduler: Arc<SchedulerImpl>,
     pub config_service: Arc<dyn ConfigService>,
     pub load_balancer_service: Arc<dyn LoadBalancerService>,
     pub plugin_registry: Arc<dyn PluginRegistry>,
@@ -50,6 +53,7 @@ pub struct PluginManager {
     loader_mapping: HashMap<String, String>, // plugin_id -> loader_name
     loaded_loaders: Vec<String>,             // loaders whose on_load() succeeded
     disabled: HashSet<String>,               // plugin ids disabled via config
+    event_bus: Option<Arc<EventBusImpl>>,
 }
 
 struct LoadedPlugin {
@@ -69,6 +73,18 @@ impl PluginManager {
             loader_mapping: HashMap::new(),
             loaded_loaders: Vec::new(),
             disabled: HashSet::new(),
+            event_bus: None,
+        }
+    }
+
+    pub fn set_event_bus(&mut self, event_bus: Arc<EventBusImpl>) {
+        self.event_bus = Some(event_bus);
+    }
+
+    async fn announce<E: Event>(&self, event: E) {
+        if let Some(bus) = &self.event_bus {
+            bus.post(event);
+            bus.flush().await;
         }
     }
 
@@ -192,6 +208,11 @@ impl PluginManager {
                 Ok(()) => {
                     self.states.insert(plugin_id.clone(), PluginState::Enabled);
                     tracing::info!(plugin = %plugin_id, "Plugin enabled");
+                    self.announce(PluginEnabledEvent::new(
+                        plugin_id.clone(),
+                        metadata.version.clone(),
+                    ))
+                    .await;
 
                     self.plugins.push(LoadedPlugin {
                         plugin,
@@ -221,41 +242,11 @@ impl PluginManager {
         let plugins = std::mem::take(&mut self.plugins);
 
         for loaded in plugins.iter().rev() {
-            let state = self.states.get(&loaded.metadata.id);
-            if !matches!(state, Some(PluginState::Enabled)) {
-                continue;
-            }
-
-            tracing::info!(plugin = %loaded.metadata.id, "Disabling plugin");
-            self.states
-                .insert(loaded.metadata.id.clone(), PluginState::Disabled);
-
-            if let Err(e) = loaded.plugin.on_disable().await {
-                tracing::error!(
-                    plugin = %loaded.metadata.id,
-                    error = %e,
-                    "Plugin on_disable() failed"
-                );
-            }
-
-            // Cleanup is always executed, even if on_disable errored
-            if let Some(ctx_impl) = loaded.context.as_any().downcast_ref::<PluginContextImpl>() {
-                ctx_impl.cleanup();
-            }
+            self.disable_loaded(loaded).await;
         }
 
         for loaded in plugins.iter().rev() {
-            let loader = self.loaders.iter().find(|l| l.name() == loaded.loader_name);
-
-            if let Some(loader) = loader
-                && let Err(e) = loader.unload(&loaded.metadata.id).await
-            {
-                tracing::error!(
-                    plugin = %loaded.metadata.id,
-                    error = %e,
-                    "Loader unload failed"
-                );
-            }
+            self.unload(loaded).await;
         }
 
         let loaded = std::mem::take(&mut self.loaded_loaders);
@@ -268,16 +259,59 @@ impl PluginManager {
         }
     }
 
-    /// Collects all limbo handlers from enabled plugins.
-    /// Call exactly once after `load_and_enable_all()`.
-    pub fn collect_limbo_handlers(&self) -> Vec<Box<dyn infrarust_api::limbo::LimboHandler>> {
-        let mut all = Vec::new();
-        for loaded in &self.plugins {
-            if let Some(ctx_impl) = loaded.context.as_any().downcast_ref::<PluginContextImpl>() {
-                all.extend(ctx_impl.take_limbo_handlers());
-            }
+    pub async fn disable_plugin(&mut self, id: &str) -> Result<(), PluginError> {
+        let Some(at) = self.plugins.iter().position(|p| p.metadata.id == id) else {
+            return Err(PluginError::Custom(format!("plugin `{id}` is not enabled")));
+        };
+        if let Some(dependent) = self.plugins.iter().find(|p| {
+            p.metadata.id != id
+                && matches!(self.states.get(&p.metadata.id), Some(PluginState::Enabled))
+                && p.metadata
+                    .dependencies
+                    .iter()
+                    .any(|dep| dep.id == id && !dep.optional)
+        }) {
+            return Err(PluginError::Custom(format!(
+                "plugin `{id}` is required by `{}`",
+                dependent.metadata.id
+            )));
         }
-        all
+        let loaded = self.plugins.remove(at);
+        self.disable_loaded(&loaded).await;
+        self.unload(&loaded).await;
+        Ok(())
+    }
+
+    async fn disable_loaded(&mut self, loaded: &LoadedPlugin) {
+        let id = &loaded.metadata.id;
+        if !matches!(self.states.get(id), Some(PluginState::Enabled)) {
+            return;
+        }
+
+        tracing::info!(plugin = %id, "Disabling plugin");
+        self.states.insert(id.clone(), PluginState::Disabled);
+
+        if let Err(e) = loaded.plugin.on_disable().await {
+            tracing::error!(plugin = %id, error = %e, "Plugin on_disable() failed");
+        }
+
+        if let Some(ctx_impl) = loaded.context.as_any().downcast_ref::<PluginContextImpl>() {
+            ctx_impl.cleanup();
+        }
+        self.announce(PluginDisabledEvent::new(id.clone())).await;
+    }
+
+    async fn unload(&self, loaded: &LoadedPlugin) {
+        let loader = self.loaders.iter().find(|l| l.name() == loaded.loader_name);
+        if let Some(loader) = loader
+            && let Err(e) = loader.unload(&loaded.metadata.id).await
+        {
+            tracing::error!(
+                plugin = %loaded.metadata.id,
+                error = %e,
+                "Loader unload failed"
+            );
+        }
     }
 
     pub fn collect_config_providers(
@@ -317,6 +351,13 @@ impl PluginManager {
         }
     }
 
+    pub fn plugin_context(&self, id: &str) -> Option<Arc<dyn PluginContext>> {
+        self.plugins
+            .iter()
+            .find(|loaded| loaded.metadata.id == id)
+            .map(|loaded| Arc::clone(&loaded.context))
+    }
+
     pub fn is_plugin_loaded(&self, id: &str) -> bool {
         matches!(self.states.get(id), Some(PluginState::Enabled))
     }
@@ -343,6 +384,7 @@ mod tests {
     use infrarust_api::event::BoxFuture;
     use infrarust_api::event::bus::EventBus;
     use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
+    use infrarust_api::services::scheduler::Scheduler;
 
     use crate::plugin::context_factory::PluginContextFactory;
     use crate::plugin::static_loader::StaticPluginLoader;
@@ -421,7 +463,27 @@ mod tests {
             unimplemented!("mock")
         }
 
-        fn register_limbo_handler(&self, _handler: Box<dyn infrarust_api::limbo::LimboHandler>) {
+        fn register_limbo_handler(
+            &self,
+            _handler: Box<dyn infrarust_api::limbo::LimboHandler>,
+        ) -> Result<
+            infrarust_api::limbo::LimboHandlerRegistration,
+            infrarust_api::limbo::LimboHandlerError,
+        > {
+            unimplemented!("mock")
+        }
+
+        fn scheduler_handle(&self) -> Arc<dyn Scheduler> {
+            unimplemented!("mock")
+        }
+
+        fn services(&self) -> &dyn infrarust_api::services::service_registry::ServiceRegistry {
+            unimplemented!("mock")
+        }
+
+        fn services_handle(
+            &self,
+        ) -> Arc<dyn infrarust_api::services::service_registry::ServiceRegistry> {
             unimplemented!("mock")
         }
 

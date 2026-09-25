@@ -34,6 +34,15 @@ pub enum HandlerResult {
     },
 }
 
+pub const HANDLER_UNAVAILABLE: &str = "Limbo handler unavailable";
+
+impl HandlerResult {
+    #[must_use]
+    pub fn unavailable() -> Self {
+        Self::Deny(Component::text(HANDLER_UNAVAILABLE))
+    }
+}
+
 /// Why a player's limbo session ended. Passed to [`LimboHandler::on_session_end`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

@@ -336,10 +336,10 @@ Limbo handlers are chained. Each server configuration lists which limbo handlers
 ### Registering a limbo handler
 
 ```rust
-ctx.register_limbo_handler(Box::new(MyLimboHandler));
+ctx.register_limbo_handler(Box::new(MyLimboHandler))?;
 ```
 
-The handler's `name()` return value must match the name used in server configuration files.
+The handler's `name()` return value must match the name used in server configuration files. Names are unique across plugins, registration works at any time, and removing a handler releases the players it holds. See [Limbo handlers](./api#limbo-handlers).
 
 ## Filter ordering
 

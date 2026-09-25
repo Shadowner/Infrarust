@@ -29,16 +29,16 @@ fn limbo_env(plugins_dir: PathBuf, plugin_id: &str, grant: bool) -> PluginContex
     make_env_with(plugins_dir, options).factory
 }
 
-fn take_handlers(factory: &PluginContextFactoryImpl, id: &str) -> Vec<Box<dyn LimboHandler>> {
+fn take_handlers(factory: &PluginContextFactoryImpl, id: &str) -> Vec<Arc<dyn LimboHandler>> {
     factory
         .create_context(id)
         .as_any()
         .downcast_ref::<PluginContextImpl>()
         .expect("PluginContextImpl")
-        .take_limbo_handlers()
+        .limbo_handlers()
 }
 
-fn find_handler(handlers: Vec<Box<dyn LimboHandler>>, name: &str) -> Box<dyn LimboHandler> {
+fn find_handler(handlers: Vec<Arc<dyn LimboHandler>>, name: &str) -> Arc<dyn LimboHandler> {
     handlers
         .into_iter()
         .find(|h| h.name() == name)

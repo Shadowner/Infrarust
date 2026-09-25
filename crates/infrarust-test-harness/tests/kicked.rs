@@ -134,7 +134,8 @@ impl LimboHandler for Catch {
 fn catcher() -> (ScriptedPlugin, Held) {
     let (held, holds) = mpsc::unbounded_channel();
     let plugin = ScriptedPlugin::new("catcher").on_enable(move |ctx| {
-        ctx.register_limbo_handler(Box::new(Catch { held: held.clone() }));
+        ctx.register_limbo_handler(Box::new(Catch { held: held.clone() }))
+            .expect("the limbo handler registers");
     });
     (plugin, holds)
 }

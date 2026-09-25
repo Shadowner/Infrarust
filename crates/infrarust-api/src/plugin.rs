@@ -14,7 +14,7 @@ use crate::error::PluginError;
 use crate::event::BoxFuture;
 use crate::event::bus::EventBus;
 use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
-use crate::limbo::LimboHandler;
+use crate::limbo::{LimboHandler, LimboHandlerError, LimboHandlerRegistration};
 use crate::permissions::{
     PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
     PermissionProviderRejected,
@@ -28,6 +28,7 @@ use crate::services::{
     proxy_info::ProxyInfo,
     scheduler::Scheduler,
     server_manager::ServerManager,
+    service_registry::ServiceRegistry,
 };
 
 /// Metadata describing a plugin.
@@ -201,13 +202,22 @@ pub trait PluginContext: Send + Sync + private::Sealed {
 
     fn scheduler(&self) -> &dyn Scheduler;
 
+    fn scheduler_handle(&self) -> Arc<dyn Scheduler>;
+
+    fn services(&self) -> &dyn ServiceRegistry;
+
+    fn services_handle(&self) -> Arc<dyn ServiceRegistry>;
+
     fn event_bus_handle(&self) -> Arc<dyn EventBus>;
 
     /// Registers a limbo handler for this plugin.
     ///
     /// The handler's [`name()`](LimboHandler::name) must match the name
     /// referenced in server configuration `limbo_handlers` lists.
-    fn register_limbo_handler(&self, handler: Box<dyn LimboHandler>);
+    fn register_limbo_handler(
+        &self,
+        handler: Box<dyn LimboHandler>,
+    ) -> Result<LimboHandlerRegistration, LimboHandlerError>;
 
     /// Returns the codec filter registry for registering packet-level filters.
     ///

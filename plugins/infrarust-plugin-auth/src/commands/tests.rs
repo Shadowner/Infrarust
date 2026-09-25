@@ -7,7 +7,7 @@ use infrarust_api::types::PlayerId;
 
 use crate::account::Username;
 use crate::password;
-use crate::test_support::{MockPlayer, TestEnv, fast_config, limbo_session};
+use crate::test_support::{TestEnv, admin, fast_config, limbo_session, player};
 
 fn ctx(env: &TestEnv, player_id: u64, args: &[&str]) -> CommandContext {
     let sender = env
@@ -21,7 +21,7 @@ fn ctx(env: &TestEnv, player_id: u64, args: &[&str]) -> CommandContext {
 async fn changepassword_updates_hash_with_correct_old_password() {
     let env = TestEnv::new().await;
     env.create_account("Steve", Some("old-password-1")).await;
-    env.registry.add(MockPlayer::new(1, "Steve"));
+    env.registry.add(player(1, "Steve"));
 
     let cmd = super::changepassword::ChangePasswordCommand {
         handler: Arc::clone(&env.handler),
@@ -46,7 +46,7 @@ async fn changepassword_updates_hash_with_correct_old_password() {
 async fn changepassword_rejects_wrong_old_password() {
     let env = TestEnv::new().await;
     env.create_account("Steve", Some("old-password-1")).await;
-    let sender = MockPlayer::new(1, "Steve");
+    let sender = player(1, "Steve");
     env.registry.add(Arc::clone(&sender));
 
     let cmd = super::changepassword::ChangePasswordCommand {
@@ -73,7 +73,7 @@ async fn changepassword_rejects_wrong_old_password() {
 async fn unregister_deletes_account_with_correct_password() {
     let env = TestEnv::new().await;
     env.create_account("Steve", Some("hunter2hunter2")).await;
-    env.registry.add(MockPlayer::new(1, "Steve"));
+    env.registry.add(player(1, "Steve"));
 
     let cmd = super::unregister::UnregisterCommand {
         handler: Arc::clone(&env.handler),
@@ -87,8 +87,8 @@ async fn unregister_deletes_account_with_correct_password() {
 async fn forcelogin_force_completes_target_in_limbo() {
     let env = TestEnv::new().await;
     env.create_account("Steve", Some("hunter2hunter2")).await;
-    env.registry.add(MockPlayer::admin(1, "Admin"));
-    env.registry.add(MockPlayer::new(2, "Steve"));
+    env.registry.add(admin(1, "Admin"));
+    env.registry.add(player(2, "Steve"));
 
     let session = limbo_session(2, "Steve");
     env.handler.on_player_enter(&*session).await;
@@ -105,9 +105,9 @@ async fn forcelogin_force_completes_target_in_limbo() {
 #[tokio::test]
 async fn forcelogin_requires_admin() {
     let env = TestEnv::new().await;
-    let sender = MockPlayer::new(1, "Mallory");
+    let sender = player(1, "Mallory");
     env.registry.add(Arc::clone(&sender));
-    env.registry.add(MockPlayer::new(2, "Steve"));
+    env.registry.add(player(2, "Steve"));
 
     let session = limbo_session(2, "Steve");
     env.handler.on_player_enter(&*session).await;
@@ -128,7 +128,7 @@ async fn forceunregister_allows_config_listed_admin() {
     config.admin.admin_usernames = vec!["Console".to_string()];
     let env = TestEnv::with_config(config).await;
     env.create_account("Steve", Some("hunter2hunter2")).await;
-    let sender = MockPlayer::new(1, "Console");
+    let sender = player(1, "Console");
     env.registry.add(Arc::clone(&sender));
 
     let cmd = super::forceunregister::ForceUnregisterCommand {
@@ -144,7 +144,7 @@ async fn forceunregister_allows_config_listed_admin() {
 async fn forcechangepassword_sets_new_password() {
     let env = TestEnv::new().await;
     env.create_account("Steve", Some("old-password-1")).await;
-    env.registry.add(MockPlayer::admin(1, "Admin"));
+    env.registry.add(admin(1, "Admin"));
 
     let cmd = super::forcechangepassword::ForceChangePasswordCommand {
         handler: Arc::clone(&env.handler),
@@ -169,7 +169,7 @@ async fn cracked_sets_force_cracked() {
     let env = TestEnv::new().await;
     env.create_account("Notch", None).await;
     env.set_premium_info("Notch", false).await;
-    env.registry.add(MockPlayer::new(1, "Notch"));
+    env.registry.add(player(1, "Notch"));
 
     let cmd = super::cracked::CrackedCommand {
         handler: Arc::clone(&env.handler),
@@ -189,7 +189,7 @@ async fn premium_unsets_force_cracked() {
     let env = TestEnv::new().await;
     env.create_account("Notch", None).await;
     env.set_premium_info("Notch", true).await;
-    env.registry.add(MockPlayer::new(1, "Notch"));
+    env.registry.add(player(1, "Notch"));
 
     let cmd = super::premium::PremiumCommand {
         handler: Arc::clone(&env.handler),

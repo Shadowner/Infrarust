@@ -12,104 +12,137 @@ This page covers three levels of testing, from isolated unit tests to end-to-end
 
 ## Mock services
 
-`PluginContext` is the proxy's own type in production, but every service it hands out is a separate trait you can mock on its own. Each of those service traits is sealed through a public `private::Sealed` marker, so a test mock implements both the service trait and `Sealed`. Infrarust's own test suite ships no-op mocks for the three services that would otherwise need a storage backend, in `crates/infrarust-core/tests/mock_services/mod.rs`.
+The service traits a plugin receives (`Player`, `PlayerRegistry`, `BanService` and the rest) are sealed: only the proxy implements them in production. Tests still need stand-ins, so `infrarust-api` ships ready-made mocks behind its `test-util` feature. Turn it on for tests only:
+
+```toml
+[dependencies]
+infrarust-api = "2.0.0-beta.3"
+
+[dev-dependencies]
+infrarust-api = { version = "2.0.0-beta.3", features = ["test-util"] }
+```
+
+Everything lives in `infrarust_api::test_util`:
+
+| Mock | Stands in for | Records |
+|------|---------------|---------|
+| `MockPlayer` | `Player` | Messages, titles, action bars, packets, kicks, server switches, permission refreshes |
+| `MockPlayerRegistry` | `PlayerRegistry` | The players you add |
+| `MockBanService` | `BanService` | Bans in memory, every `check` it answered |
+| `MockPermissionChecker` | `PermissionChecker` | Every node it was asked about |
+| `RecordingLimboSession` | `LimboSession` | Messages, titles, action bars, `complete` calls |
+| `console()`, `console_with(checker)`, `player_source(&player)`, `command_context(source, label, args)` | `CommandSource`, `CommandContext` | |
+
+### MockPlayer
+
+A connected, active player on protocol 1.21 at `127.0.0.1:25565`, with the UUID built from its ID and no permissions. Builder methods change what the plugin sees:
+
+```rust
+use infrarust_api::prelude::*;
+use infrarust_api::test_util::MockPlayer;
+
+let steve = MockPlayer::new(1, "Steve")
+    .on_server("lobby")
+    .online_mode(true)
+    .with_permission("hub.use")
+    .into_arc();
+
+my_plugin.greet(steve.as_ref());
+
+assert_eq!(steve.sent_text(), "Welcome to the hub");
+assert!(steve.kicks().is_empty());
+```
+
+| Builder | Effect |
+|---------|--------|
+| `with_profile(GameProfile)` | Replace the UUID, username and properties |
+| `with_protocol_version(v)`, `with_remote_addr(addr)` | Client version and address |
+| `online_mode(bool)` | What `is_online_mode()` returns |
+| `on_server(id)` | What `current_server()` returns |
+| `passive()` | `is_active()` returns `false` and the `send_*` methods fail with `PlayerError::NotActive`, like a passthrough player |
+| `with_permission(node)`, `without_permission(node)`, `with_all_permissions()` | Grant or deny nodes. Wildcards such as `hub.*` work as in `PermissionMap` |
+| `with_permissions(Arc<MockPermissionChecker>)` | Share one checker between players |
+| `into_arc()` | `Arc::new(self)` |
+
+After `disconnect`, the player reports `is_connected() == false`, the reason is in `kicks()`, and further `send_*` calls fail with `PlayerError::Disconnected`. `switch_server` records the target in `switches()` and moves `current_server()` to it. `permissions()` returns the player's checker, so a test can change a node while the plugin runs.
 
 ### MockPlayerRegistry
 
-Returns empty results for all lookups:
+Answers lookups from the players you add, the way the proxy does: usernames match case-insensitively, `get_players_on_server` and `online_count_on` use each player's `current_server()`.
 
 ```rust
-use std::sync::Arc;
-use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::{PlayerId, ServerId};
+use infrarust_api::test_util::{MockPlayer, MockPlayerRegistry};
 
-pub struct MockPlayerRegistry;
+let steve = MockPlayer::new(1, "Steve").on_server("lobby").into_arc();
+let registry = Arc::new(MockPlayerRegistry::new().with(steve.clone()));
+registry.add(MockPlayer::new(2, "Alex").into_arc());
 
-impl infrarust_api::services::player_registry::private::Sealed
-    for MockPlayerRegistry {}
-
-impl PlayerRegistry for MockPlayerRegistry {
-    fn get_player(
-        &self, _username: &str,
-    ) -> Option<Arc<dyn infrarust_api::player::Player>> {
-        None
-    }
-    fn get_player_by_uuid(
-        &self, _uuid: &uuid::Uuid,
-    ) -> Option<Arc<dyn infrarust_api::player::Player>> {
-        None
-    }
-    fn get_player_by_id(
-        &self, _id: PlayerId,
-    ) -> Option<Arc<dyn infrarust_api::player::Player>> {
-        None
-    }
-    fn get_players_on_server(
-        &self, _server: &ServerId,
-    ) -> Vec<Arc<dyn infrarust_api::player::Player>> {
-        vec![]
-    }
-    fn get_all_players(
-        &self,
-    ) -> Vec<Arc<dyn infrarust_api::player::Player>> {
-        vec![]
-    }
-    fn online_count(&self) -> usize { 0 }
-    fn online_count_on(&self, _server: &ServerId) -> usize { 0 }
-}
+let plugin = AfkKicker::new(registry.clone() as Arc<dyn PlayerRegistry>);
 ```
+
+`add` replaces a player with the same ID, `remove(id)` takes one out, and `add_dyn` accepts any `Arc<dyn Player>`.
 
 ### MockBanService
 
-All operations succeed and report no bans:
+An in-memory ban store. `ban` stores an entry with an increasing ID (the source defaults to `BanSource::System`), `check` returns a `BanVerdict` for the first unexpired entry that matches the attempt, IP ranges included, and `list` pages with the entry ID as cursor.
 
 ```rust
-use infrarust_api::error::ServiceError;
-use infrarust_api::event::BoxFuture;
-use infrarust_api::services::ban_service::{
-    BanEntry, BanFeatures, BanPage, BanQuery, BanRequest, BanSource, BanTarget, BanVerdict,
-    LoginAttempt, UnbanRequest,
-};
+use infrarust_api::test_util::MockBanService;
 
-pub struct MockBanService;
+let bans = Arc::new(MockBanService::new());
+bans.ban(BanRequest::new(BanTarget::Username("griefer".into()))).await?;
 
-impl infrarust_api::services::ban_service::private::Sealed
-    for MockBanService {}
-
-impl infrarust_api::services::ban_service::BanService for MockBanService {
-    fn check<'a>(
-        &'a self, _attempt: &'a LoginAttempt,
-    ) -> BoxFuture<'a, Result<Option<BanVerdict>, ServiceError>> {
-        Box::pin(async { Ok(None) })
-    }
-    fn ban(
-        &self, request: BanRequest,
-    ) -> BoxFuture<'_, Result<BanEntry, ServiceError>> {
-        Box::pin(async move {
-            let source = request.source.unwrap_or(BanSource::System);
-            Ok(BanEntry::new("1", request.target, source))
-        })
-    }
-    fn unban(
-        &self, _request: UnbanRequest,
-    ) -> BoxFuture<'_, Result<Option<BanEntry>, ServiceError>> {
-        Box::pin(async { Ok(None) })
-    }
-    fn get<'a>(
-        &'a self, _target: &'a BanTarget,
-    ) -> BoxFuture<'a, Result<Option<BanEntry>, ServiceError>> {
-        Box::pin(async { Ok(None) })
-    }
-    fn list(
-        &self, _query: BanQuery,
-    ) -> BoxFuture<'_, Result<BanPage, ServiceError>> {
-        Box::pin(async { Ok(BanPage::default()) })
-    }
-    fn features(&self) -> BanFeatures {
-        BanFeatures::new()
-    }
-}
+let verdict = bans
+    .check(&LoginAttempt::pre_auth("10.0.0.1".parse()?, "Griefer"))
+    .await?;
+assert!(verdict.is_some());
+assert_eq!(bans.checks().len(), 1);
 ```
+
+`with_entry(entry)` and `insert(entry)` seed bans without going through `ban`, and `entries()` shows the store. `set_unavailable(true)` makes every call fail with `ServiceError::Unavailable`, to test what your plugin does when the ban store is down.
+
+### Permissions and command sources
+
+`MockPermissionChecker` wraps a `PermissionMap` and records the nodes it was asked about:
+
+```rust
+use infrarust_api::test_util::{MockPermissionChecker, command_context, console, console_with, player_source};
+
+let checker = Arc::new(MockPermissionChecker::new().grant("auth.admin.*").deny("auth.admin.purge"));
+let ctx = command_context(console_with(checker.clone()), "purge", "Steve");
+PurgeCommand.execute(ctx).await;
+assert_eq!(checker.checked(), ["auth.admin.purge"]);
+
+let steve = MockPlayer::new(1, "Steve").into_arc();
+PurgeCommand.execute(command_context(player_source(&steve), "purge", "Alex")).await;
+assert!(steve.sent_text().contains("permission"));
+```
+
+`MockPermissionChecker::allow_all()` grants everything, and `console()` is a console that holds every permission. Replies to the console go to the log, so use a player source when the test needs to read the reply.
+
+### RecordingLimboSession
+
+A `LimboSession` for testing a `LimboHandler` without the proxy. It is also reachable as `infrarust_api::limbo::test_util::RecordingLimboSession`.
+
+```rust
+use infrarust_api::test_util::RecordingLimboSession;
+
+let session = RecordingLimboSession::new(
+    PlayerId::new(1),
+    GameProfile { uuid: uuid::Uuid::nil(), username: "Steve".into(), properties: vec![] },
+    LimboEntryContext::InitialConnection { target_server: ServerId::new("lobby") },
+);
+
+assert!(matches!(handler.on_player_enter(session.as_ref()).await, HandlerResult::Hold));
+handler.on_command(session.as_ref(), "login", &["hunter2"]).await;
+assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+```
+
+The auth plugin's tests (`plugins/infrarust-plugin-auth/src/test_support.rs`) are built on these mocks.
+
+### Hand-written mocks
+
+The services without a mock in `test_util` (`ConfigService`, `ServerManager`, `LoadBalancerService`, `PluginRegistry`) are sealed through a public `private::Sealed` marker, so a test mock implements both the service trait and `Sealed`. Infrarust's own test suite has no-op versions in `crates/infrarust-core/tests/mock_services/mod.rs`.
 
 ### MockConfigService
 
@@ -205,6 +238,22 @@ impl PluginContext for MockPluginContext {
     ) -> Result<(), infrarust_api::services::ban_service::BanProviderRejected> {
         unimplemented!("mock")
     }
+    fn register_permission_provider(
+        &self,
+        _provider: Arc<dyn infrarust_api::permissions::PermissionProvider>,
+    ) -> Result<(), infrarust_api::permissions::PermissionProviderRejected> {
+        unimplemented!("mock")
+    }
+    fn register_permission_node(
+        &self, _node: infrarust_api::permissions::PermissionNode,
+    ) -> Result<(), infrarust_api::permissions::PermissionNodeError> {
+        unimplemented!("mock")
+    }
+    fn permission_nodes(
+        &self,
+    ) -> Vec<infrarust_api::permissions::PermissionNodeInfo> {
+        Vec::new()
+    }
     fn config_service(
         &self,
     ) -> &dyn infrarust_api::services::config_service::ConfigService {
@@ -213,6 +262,16 @@ impl PluginContext for MockPluginContext {
     fn config_service_handle(
         &self,
     ) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
+        unimplemented!("mock")
+    }
+    fn load_balancer_service(
+        &self,
+    ) -> &dyn infrarust_api::services::load_balancer::LoadBalancerService {
+        unimplemented!("mock")
+    }
+    fn load_balancer_service_handle(
+        &self,
+    ) -> Arc<dyn infrarust_api::services::load_balancer::LoadBalancerService> {
         unimplemented!("mock")
     }
     fn plugin_registry(
@@ -240,9 +299,27 @@ impl PluginContext for MockPluginContext {
     ) -> &dyn infrarust_api::services::scheduler::Scheduler {
         unimplemented!("mock")
     }
+    fn scheduler_handle(
+        &self,
+    ) -> Arc<dyn infrarust_api::services::scheduler::Scheduler> {
+        unimplemented!("mock")
+    }
+    fn services(
+        &self,
+    ) -> &dyn infrarust_api::services::ServiceRegistry {
+        unimplemented!("mock")
+    }
+    fn services_handle(
+        &self,
+    ) -> Arc<dyn infrarust_api::services::ServiceRegistry> {
+        unimplemented!("mock")
+    }
     fn register_limbo_handler(
         &self, _handler: Box<dyn infrarust_api::limbo::LimboHandler>,
-    ) {
+    ) -> Result<
+        infrarust_api::limbo::LimboHandlerRegistration,
+        infrarust_api::limbo::LimboHandlerError,
+    > {
         unimplemented!("mock")
     }
     fn register_config_provider(
@@ -403,12 +480,13 @@ let event_bus = Arc::new(EventBusImpl::new());
 
 let services = PluginServices {
     event_bus: Arc::clone(&event_bus),
-    player_registry: Arc::new(MockPlayerRegistry),
+    player_registry: Arc::new(MockPlayerRegistry::new()),
     server_manager: Arc::new(NoopServerManager),
-    ban_service: Arc::new(MockBanService),
+    ban_service: Arc::new(MockBanService::new()),
     command_manager: Arc::new(CommandManagerImpl::new()),
     scheduler: Arc::new(SchedulerImpl::new()),
     config_service: Arc::new(MockConfigService),
+    load_balancer_service: Arc::new(MockLoadBalancerService),
     plugin_registry: Arc::new(PluginRegistryImpl::new()),
     codec_filter_registry: Arc::new(
         infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
@@ -429,7 +507,7 @@ let factory = PluginContextFactoryImpl::new(
 );
 ```
 
-`PluginServices` has every field the proxy fills in, so a test has to supply all of them. `EventBusImpl`, `CommandManagerImpl`, `SchedulerImpl`, and `PluginRegistryImpl` are real implementations that work without any proxy infrastructure. `NoopServerManager` is a built-in stub for proxies without managed servers. `proxy_shutdown` is a `CancellationToken` the proxy triggers at shutdown, and `proxy_info` carries static metadata; both have sensible test defaults. The second argument to `PluginContextFactoryImpl::new` is a `HashMap<String, PluginPermissions>` mapping plugin IDs to their configured capabilities; an empty map gives every plugin the baseline grant set.
+`PluginServices` has every field the proxy fills in, so a test has to supply all of them. The `MockPlayerRegistry` and `MockBanService` from `infrarust_api::test_util` fit the `player_registry` and `ban_service` fields. `EventBusImpl`, `CommandManagerImpl`, `SchedulerImpl`, and `PluginRegistryImpl` are real implementations that work without any proxy infrastructure. `NoopServerManager` is a built-in stub for proxies without managed servers. `proxy_shutdown` is a `CancellationToken` the proxy triggers at shutdown, and `proxy_info` carries static metadata; both have sensible test defaults. The second argument to `PluginContextFactoryImpl::new` is a `HashMap<String, PluginPermissions>` mapping plugin IDs to their configured capabilities; an empty map gives every plugin the baseline grant set.
 
 ### Testing event handling
 
@@ -580,6 +658,47 @@ async fn test_listeners_removed_after_shutdown() {
 }
 ```
 
+## Testing scheduled work
+
+Scheduler tests should not sleep for real. Start the test with tokio's clock paused: time only moves when every task is waiting, and it jumps straight to the next timer, so a test that waits an hour takes microseconds and never flakes. It needs tokio's `test-util` feature in your dev-dependencies.
+
+```rust
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
+
+#[tokio::test(start_paused = true)]
+async fn the_reminder_repeats_until_the_plugin_is_disabled() {
+    let factory = factory();
+    let ctx = factory.create_context("reminders");
+    let runs = Arc::new(AtomicU32::new(0));
+    let counted = runs.clone();
+    ctx.scheduler().repeat(
+        Duration::from_secs(60),
+        None,
+        Box::new(move || {
+            let counted = counted.clone();
+            Box::pin(async move {
+                counted.fetch_add(1, Ordering::SeqCst);
+            })
+        }),
+    );
+
+    tokio::time::sleep(Duration::from_secs(150)).await;
+    assert_eq!(runs.load(Ordering::SeqCst), 2);
+
+    let real = ctx.as_any().downcast_ref::<PluginContextImpl>().unwrap();
+    real.cleanup();
+    assert_eq!(real.tracked_tasks(), 0);
+
+    tokio::time::sleep(Duration::from_secs(600)).await;
+    assert_eq!(runs.load(Ordering::SeqCst), 2);
+}
+```
+
+`factory()` builds a `PluginContextFactoryImpl` as in [Building PluginServices](#building-pluginservices). `cleanup()` is what the proxy runs when it disables the plugin, and `tracked_tasks()` counts the plugin's tasks that are still scheduled; finished tasks are not counted.
+
+Keep a margin between a timer and the moment you check it: the clock has millisecond resolution, so a check at exactly the deadline can land on either side.
+
 ## The StaticPluginLoader
 
 `StaticPluginLoader` is the registration mechanism for plugins compiled into the binary. It takes a `PluginMetadata` and a factory closure:
@@ -629,11 +748,14 @@ uuid = "1"
 
 | What you're testing | Mock level | Key types |
 |---|---|---|
+| Code that talks to players, bans or permissions | `infrarust_api::test_util` mocks | `MockPlayer`, `MockPlayerRegistry`, `MockBanService`, `MockPermissionChecker` |
+| A limbo handler | `RecordingLimboSession` | `LimboHandler::on_player_enter`, `completions()` |
 | `on_enable` / `on_disable` logic | `MockPluginContext` with `unimplemented!` stubs | `Plugin`, `PluginContext` |
 | Event subscription and dispatch | Real `EventBusImpl` + mock services | `EventBusExt::subscribe`, `EventBusImpl::fire` |
 | Command registration and dispatch | Real `CommandManagerImpl` behind `PluginContextFactoryImpl` | `CommandManager::register`, `CommandManagerImpl::dispatch(CommandSource::console(Arc::new(AllPermissionsChecker)), "name args")` |
 | Dependency ordering | `PluginContextFactoryImpl` + `PluginManager` | `PluginMetadata::depends_on` |
-| Cleanup after disable | Real `PluginContextFactoryImpl` with tracking wrappers | `PluginManager::shutdown` |
+| Cleanup after disable | Real `PluginContextFactoryImpl` with tracking wrappers | `PluginManager::shutdown`, `PluginManager::disable_plugin` |
+| Scheduled tasks | Real context, paused tokio clock | `#[tokio::test(start_paused = true)]`, `tracked_tasks()` |
 | Full lifecycle | `PluginServices` + `StaticPluginLoader` + `PluginManager` | All of the above |
 
 ::: tip

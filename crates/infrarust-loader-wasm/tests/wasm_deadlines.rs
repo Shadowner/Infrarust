@@ -127,13 +127,13 @@ async fn poll_once<F: Future + Unpin>(future: &mut F) -> Option<F::Output> {
     .await
 }
 
-fn ban_gate(env: &TestEnv) -> Box<dyn LimboHandler> {
+fn ban_gate(env: &TestEnv) -> Arc<dyn LimboHandler> {
     env.factory
         .create_context(FIXTURE)
         .as_any()
         .downcast_ref::<PluginContextImpl>()
         .expect("PluginContextImpl")
-        .take_limbo_handlers()
+        .limbo_handlers()
         .into_iter()
         .find(|handler| handler.name() == "ban-gate")
         .expect("the probe registers its ban-gate limbo handler")

@@ -33,7 +33,7 @@ discover_all()               load_and_enable_all()                shutdown()
 
 **Enabled.** The manager calls `plugin.on_enable(ctx)`. If it succeeds, state moves to `Enabled`. If it fails, state moves to `Error` and the context is cleaned up immediately.
 
-**Disabled.** During shutdown, the manager iterates plugins in reverse order. It calls `on_disable()`, then runs automatic cleanup regardless of whether `on_disable` succeeded.
+**Disabled.** During shutdown, the manager iterates plugins in reverse order. It calls `on_disable()`, then runs automatic cleanup regardless of whether `on_disable` succeeded. A single plugin can also be disabled while the proxy runs, see [Disabling one plugin](#disabling-one-plugin).
 
 **Unloaded.** After all plugins are disabled, the manager calls `loader.unload()` for each plugin to release loader-level resources, then `loader.on_shutdown()` once per loader (only for loaders whose `on_load()` succeeded) to tear down the runtime.
 
@@ -131,14 +131,14 @@ The dependency resolver in `crates/infrarust-core/src/plugin/dependency.rs` appl
 3. If an optional dependency is present, it still affects load order. The dependency loads first.
 4. Circular dependencies (A depends on B, B depends on A) are detected and rejected.
 
-The resolver uses Kahn's algorithm for topological sorting. Plugins with no dependencies load first, then plugins whose dependencies are satisfied, and so on.
+The resolver uses Kahn's algorithm for topological sorting. Plugins with no dependencies load first, then plugins whose dependencies are satisfied, and so on. Among plugins that are free to load, discovery order wins, so the same set of plugins always loads in the same order.
 
 ```rust
-// Example: three plugins with dependencies
+// Example: discovered as [auth, motd, database]
 //   auth depends on database
 //   motd has no dependencies
 //
-// Resolved order: [motd, database, auth] or [database, motd, auth]
+// Resolved order: [motd, database, auth]
 // database always loads before auth
 ```
 
@@ -155,7 +155,7 @@ When `load_and_enable_all()` runs, it first calls `on_load()` on every loader an
 3. Creates a per-plugin `PluginContext` via the context factory.
 4. Sets state to `Loading`.
 5. Calls `plugin.on_enable(ctx)`.
-6. On success: state becomes `Enabled`, the plugin is stored for later shutdown.
+6. On success: state becomes `Enabled`, the plugin is stored for later shutdown, and the proxy posts a `PluginEnabledEvent`.
 7. On failure: state becomes `Error(message)`, the context is immediately cleaned up, and the error is collected.
 
 Errors during loading or enabling don't stop other plugins. The manager collects all errors and continues with the next plugin in the load order.
@@ -168,8 +168,26 @@ Errors during loading or enabling don't stop other plugins. The manager collects
 2. Sets state to `Disabled`.
 3. Calls `plugin.on_disable()`. Errors are logged but don't stop the shutdown.
 4. Runs `cleanup()` on the plugin's context. This happens even if `on_disable` failed.
-5. After all plugins are disabled, calls `loader.unload()` for each plugin.
-6. Calls `loader.on_shutdown()` on each loader that booted successfully, in reverse order. Shutdown is idempotent, so calling it twice runs `on_shutdown()` only once.
+5. Posts a `PluginDisabledEvent`.
+6. After all plugins are disabled, calls `loader.unload()` for each plugin.
+7. Calls `loader.on_shutdown()` on each loader that booted successfully, in reverse order. Shutdown is idempotent, so calling it twice runs `on_shutdown()` only once.
+
+## Disabling one plugin
+
+`PluginManager::disable_plugin(id)` (and `RunningProxy::disable_plugin(id)`, which also refreshes the plugin registry) disables a single enabled plugin while the proxy keeps running. It runs the same steps as shutdown for that plugin: `on_disable()`, cleanup, `PluginDisabledEvent`, then `loader.unload()`.
+
+It refuses with an error when the plugin is not enabled, or when another enabled plugin lists it with `depends_on`. A plugin that declared it with `optional_dependency` does not block it, so such a plugin must cope with the dependency going away, for example by looking its [services](./services) up each time instead of caching them.
+
+## Lifecycle events
+
+The plugin manager posts two reserved events:
+
+| Event | Fields | Posted |
+|-------|--------|--------|
+| `PluginEnabledEvent` | `plugin_id`, `version` | Right after a plugin's `on_enable` succeeded |
+| `PluginDisabledEvent` | `plugin_id` | Right after a plugin's cleanup, on shutdown or `disable_plugin` |
+
+The manager waits for each event to be delivered before it moves to the next plugin, so the events arrive in enable and disable order. A plugin receives the `PluginEnabledEvent` of itself and of every plugin enabled after it; use the [plugin registry](./api#plugincontext) for those enabled before. A plugin never receives its own `PluginDisabledEvent`, because its listeners are removed in the cleanup that comes first. On shutdown, the disabled events are posted after `ProxyShutdownEvent`.
 
 ## Automatic resource cleanup
 
@@ -179,7 +197,9 @@ During cleanup (on disable or on enable failure), the context automatically:
 
 - Unsubscribes all event listeners registered through `ctx.event_bus()`
 - Unregisters all commands registered through `ctx.command_manager()` or its handle, and only those: a registration the proxy refused was never recorded
-- Cancels all scheduled tasks registered through `ctx.scheduler()`
+- Cancels all scheduled tasks registered through `ctx.scheduler()` or `ctx.scheduler_handle()`, async and blocking ones included
+- Removes its limbo handlers. A player one of them holds is released with the "Limbo handler unavailable" denial rather than left waiting
+- Withdraws every service it provided through `ctx.services()`, posting a `ServiceRemovedEvent` for each
 - Cancels config provider watch tokens
 - Removes active provider route entries from the domain router
 
@@ -218,7 +238,8 @@ Some of the available services:
 | `ban_service()` | `&dyn BanService` | Ban/unban players |
 | `config_service()` | `&dyn ConfigService` | Read proxy configuration |
 | `plugin_registry()` | `&dyn PluginRegistry` | Inspect other loaded plugins |
-| `register_limbo_handler()` | `()` | Register a limbo handler |
+| `register_limbo_handler()` | `Result<LimboHandlerRegistration, LimboHandlerError>` | Register a limbo handler, at any time |
+| `services()` | `&dyn ServiceRegistry` | Provide an API to other plugins or use theirs |
 | `register_config_provider()` | `()` | Register a config provider |
 | `codec_filters()` | `Option<&dyn CodecFilterRegistry>` | Register packet-level filters, `Some` only with the `CodecFilter` capability |
 | `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register TCP-level filters, `Some` only with the `TransportFilter` capability |
@@ -265,7 +286,7 @@ pub trait PluginLoader: Send + Sync {
 
 `discover()` runs before the context factory exists, so a loader cannot rely on its own hosted runtime to enumerate plugins. `on_load()` is where a runtime gets initialized, and `on_shutdown()` is where it is torn down. Both have default no-op implementations, so simple loaders only implement `name`, `discover`, `load`, and `unload`.
 
-Infrarust ships with a `StaticPluginLoader` that loads plugins compiled directly into the binary. Plugins are registered with a metadata struct and a factory closure. Its `discover()` ignores the plugin directory argument, and `register()` panics if you register two plugins with the same ID.
+Infrarust ships with a `StaticPluginLoader` that loads plugins compiled directly into the binary. Plugins are registered with a metadata struct and a factory closure. Its `discover()` ignores the plugin directory argument and returns the plugins in registration order, and `register()` panics if you register two plugins with the same ID.
 
 ```rust
 let loader = StaticPluginLoader::new();
@@ -296,7 +317,7 @@ Errors during the lifecycle surface as `PluginError` or `LoaderError` depending 
 
 | Variant | When |
 |---------|------|
-| `InitFailed(String)` | Dependency resolution failures (missing required dependency, circular dependency), loader discovery or `on_load` failures, and the message the manager records for a failed `load()`. |
+| `InitFailed(String)` | Dependency resolution failures (missing required dependency, circular dependency), loader discovery or `on_load` failures, and the message the manager records for a failed `load()`. `LimboHandlerError` and `ServiceError` convert into it, so `?` on a refused registration fails `on_enable`. |
 | `Custom(String)` | Anything else. `String` and `&str` convert into this variant via `From`, so a plugin can return `Err("reason".into())` from `on_enable`. |
 
 `discover_all()` returns a single `PluginError` on the first fatal problem (a duplicate ID, a loader discovery failure, or an unresolvable dependency graph), and no plugins load. `load_and_enable_all()` is more forgiving: it collects every error into a `Vec<PluginError>` and returns them. An error returned from a plugin's own `on_enable` is collected as-is, not re-wrapped. Each failed plugin is marked `PluginState::Error` while the remaining plugins continue loading.

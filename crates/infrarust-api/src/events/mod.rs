@@ -16,6 +16,7 @@ pub mod lifecycle;
 pub mod limbo;
 pub mod named;
 pub mod packet;
+pub mod plugin;
 pub mod proxy;
 
 pub use ban::{BanIssuedEvent, BanRevokedEvent};
@@ -38,6 +39,9 @@ pub use lifecycle::{
 pub use limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
 pub use named::{NamedEvent, NamedEventResponse};
 pub use packet::{PacketDirection, RawPacketEvent, RawPacketResult};
+pub use plugin::{
+    PluginDisabledEvent, PluginEnabledEvent, ServiceProvidedEvent, ServiceRemovedEvent,
+};
 pub use proxy::{
     BackendHealthEvent, ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,

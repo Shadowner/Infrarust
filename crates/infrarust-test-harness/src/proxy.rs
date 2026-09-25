@@ -482,6 +482,26 @@ impl TestProxy {
         .await
     }
 
+    pub async fn disable_plugin(&self, plugin_id: &str) -> HarnessResult<()> {
+        let running = self
+            .running
+            .as_ref()
+            .ok_or_else(|| HarnessError::setup("the proxy is already shut down"))?;
+        running
+            .disable_plugin(plugin_id)
+            .await
+            .map_err(|e| HarnessError::setup(format!("disable {plugin_id}: {e}")))
+    }
+
+    pub async fn plugin_context(&self, plugin_id: &str) -> Option<Arc<dyn PluginContext>> {
+        let running = self.running.as_ref()?;
+        running
+            .plugin_manager()
+            .read()
+            .await
+            .plugin_context(plugin_id)
+    }
+
     pub async fn shutdown(mut self) -> HarnessResult<()> {
         match self.running.take() {
             Some(running) => Ok(running.shutdown().await?),

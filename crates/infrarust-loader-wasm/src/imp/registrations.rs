@@ -68,7 +68,7 @@ pub(crate) struct Registrations {
 
 impl Registrations {
     pub(crate) fn bind_command(&self, name: &str, generation: u64, callback: u64) -> Bound {
-        bind(&self.commands, name, generation, callback)
+        bind(&self.commands, name, generation, callback, false)
     }
 
     pub(crate) fn unbind_command(&self, name: &str) {
@@ -76,7 +76,7 @@ impl Registrations {
     }
 
     pub(crate) fn bind_limbo(&self, name: &str, generation: u64, callback: u64) -> Bound {
-        bind(&self.limbo, name, generation, callback)
+        bind(&self.limbo, name, generation, callback, true)
     }
 
     pub(crate) fn sweep(&self, generation: u64) -> Vec<String> {
@@ -126,10 +126,13 @@ fn bind(
     name: &str,
     generation: u64,
     callback: u64,
+    same_generation_rebinds: bool,
 ) -> Bound {
     let mut map = lock(map);
     if let Some(binding) = map.get(name)
-        && binding.generation().is_none_or(|bound| bound < generation)
+        && binding.generation().is_none_or(|bound| {
+            bound < generation || (same_generation_rebinds && bound == generation)
+        })
     {
         binding.bind(generation, callback);
         return Bound::Rebound;
@@ -193,6 +196,17 @@ mod tests {
         let second = fresh(registrations.bind_command("greet", 1, 11));
         assert_eq!(first.callback_for(1), Some(10));
         assert_eq!(second.callback_for(1), Some(11));
+    }
+
+    #[test]
+    fn the_same_generation_registering_a_limbo_name_again_rebinds_it() {
+        let registrations = Registrations::default();
+        let gate = fresh(registrations.bind_limbo("gate", 1, 10));
+        assert!(matches!(
+            registrations.bind_limbo("gate", 1, 11),
+            Bound::Rebound
+        ));
+        assert_eq!(gate.callback_for(1), Some(11));
     }
 
     #[test]

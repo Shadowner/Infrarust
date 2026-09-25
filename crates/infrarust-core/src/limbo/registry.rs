@@ -1,50 +1,234 @@
-//! [`LimboHandlerRegistry`] — maps handler names to handler instances.
-//!
-//! Provides thread-safe registration and lookup of [`LimboHandler`] instances
-//! by name. Used by the limbo engine to resolve handler chains from config.
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
-use std::sync::Arc;
-
-use dashmap::DashMap;
-
-use infrarust_api::limbo::handler::LimboHandler;
+use infrarust_api::event::BoxFuture;
+use infrarust_api::limbo::handle::SessionHandle;
+use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
+use infrarust_api::limbo::registration::LimboHandlerError;
+use infrarust_api::limbo::session::LimboSession;
+use infrarust_api::types::PlayerId;
 
 use crate::error::CoreError;
 
-/// Thread-safe registry mapping handler names to [`LimboHandler`] instances.
-///
-/// Uses [`DashMap`] for concurrent read/write access without external locking.
+#[derive(Default)]
+struct Holds {
+    removed: bool,
+    sessions: HashMap<PlayerId, SessionHandle>,
+}
+
+struct ManagedHandler {
+    inner: Box<dyn LimboHandler>,
+    holds: Mutex<Holds>,
+}
+
+impl ManagedHandler {
+    fn holds(&self) -> MutexGuard<'_, Holds> {
+        self.holds.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn is_removed(&self) -> bool {
+        self.holds().removed
+    }
+
+    fn forget(&self, player: PlayerId) -> bool {
+        let mut holds = self.holds();
+        holds.sessions.remove(&player);
+        holds.removed
+    }
+
+    fn release(&self) -> usize {
+        let held = {
+            let mut holds = self.holds();
+            holds.removed = true;
+            std::mem::take(&mut holds.sessions)
+        };
+        let live: Vec<&SessionHandle> = held.values().filter(|h| !ended(h)).collect();
+        for handle in &live {
+            handle.complete(HandlerResult::unavailable());
+        }
+        live.len()
+    }
+}
+
+impl LimboHandler for ManagedHandler {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn on_player_enter<'a>(
+        &'a self,
+        session: &'a dyn LimboSession,
+    ) -> BoxFuture<'a, HandlerResult> {
+        Box::pin(async move {
+            if self.is_removed() {
+                return HandlerResult::unavailable();
+            }
+            let result = self.inner.on_player_enter(session).await;
+            if matches!(
+                result,
+                HandlerResult::Hold | HandlerResult::HoldWithTimeout { .. }
+            ) {
+                let mut holds = self.holds();
+                if holds.removed {
+                    return HandlerResult::unavailable();
+                }
+                holds.sessions.retain(|_, handle| !ended(handle));
+                holds.sessions.insert(session.player_id(), session.handle());
+            }
+            result
+        })
+    }
+
+    fn on_command<'a>(
+        &'a self,
+        session: &'a dyn LimboSession,
+        command: &'a str,
+        args: &'a [&'a str],
+    ) -> BoxFuture<'a, ()> {
+        if self.is_removed() {
+            return Box::pin(async {});
+        }
+        self.inner.on_command(session, command, args)
+    }
+
+    fn on_chat<'a>(&'a self, session: &'a dyn LimboSession, message: &'a str) -> BoxFuture<'a, ()> {
+        if self.is_removed() {
+            return Box::pin(async {});
+        }
+        self.inner.on_chat(session, message)
+    }
+
+    fn on_disconnect(&self, player_id: PlayerId) -> BoxFuture<'_, ()> {
+        if self.forget(player_id) {
+            return Box::pin(async {});
+        }
+        self.inner.on_disconnect(player_id)
+    }
+
+    fn on_session_end(&self, player_id: PlayerId, reason: SessionEndReason) -> BoxFuture<'_, ()> {
+        if self.forget(player_id) {
+            return Box::pin(async {});
+        }
+        self.inner.on_session_end(player_id, reason)
+    }
+}
+
+fn ended(handle: &SessionHandle) -> bool {
+    handle.cancellation_token().is_cancelled()
+}
+
+#[derive(Clone)]
+struct Entry {
+    id: u64,
+    owner: Arc<str>,
+    handler: Arc<ManagedHandler>,
+}
+
 pub struct LimboHandlerRegistry {
-    handlers: DashMap<String, Arc<dyn LimboHandler>>,
+    entries: RwLock<HashMap<String, Entry>>,
+    next_id: AtomicU64,
 }
 
 impl LimboHandlerRegistry {
-    /// Creates an empty registry.
     pub fn new() -> Self {
         Self {
-            handlers: DashMap::new(),
+            entries: RwLock::new(HashMap::new()),
+            next_id: AtomicU64::new(1),
         }
     }
 
-    /// Registers a handler, keyed by its [`LimboHandler::name()`].
-    ///
-    /// Overwrites any existing handler with the same name.
-    pub fn register(&self, handler: Arc<dyn LimboHandler>) {
-        self.handlers.insert(handler.name().to_string(), handler);
+    pub fn register(
+        &self,
+        owner: &str,
+        handler: Box<dyn LimboHandler>,
+    ) -> Result<u64, LimboHandlerError> {
+        let name = handler.name().to_string();
+        let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        if let Some(existing) = entries.get(&name) {
+            return Err(LimboHandlerError::NameTaken {
+                name,
+                owner: existing.owner.to_string(),
+            });
+        }
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        entries.insert(
+            name,
+            Entry {
+                id,
+                owner: Arc::from(owner),
+                handler: Arc::new(ManagedHandler {
+                    inner: handler,
+                    holds: Mutex::new(Holds::default()),
+                }),
+            },
+        );
+        Ok(id)
     }
 
-    /// Returns the handler registered under `name`, if any.
+    pub fn unregister(&self, id: u64) -> bool {
+        let removed = {
+            let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+            let name = entries
+                .iter()
+                .find(|(_, entry)| entry.id == id)
+                .map(|(name, _)| name.clone());
+            name.and_then(|name| entries.remove(&name))
+        };
+        match removed {
+            Some(entry) => {
+                release(&entry);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn unregister_owner(&self, owner: &str) -> usize {
+        let removed: Vec<Entry> = {
+            let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+            let names: Vec<String> = entries
+                .iter()
+                .filter(|(_, entry)| &*entry.owner == owner)
+                .map(|(name, _)| name.clone())
+                .collect();
+            names
+                .into_iter()
+                .filter_map(|name| entries.remove(&name))
+                .collect()
+        };
+        for entry in &removed {
+            release(entry);
+        }
+        removed.len()
+    }
+
     pub fn get(&self, name: &str) -> Option<Arc<dyn LimboHandler>> {
-        self.handlers
+        self.entries
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
             .get(name)
-            .map(|entry| Arc::clone(entry.value()))
+            .map(|entry| Arc::clone(&entry.handler) as Arc<dyn LimboHandler>)
     }
 
-    /// Resolves an ordered list of handler names into handler instances.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CoreError::Other`] if any name has no registered handler.
+    pub fn owner_of(&self, name: &str) -> Option<String> {
+        self.entries
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(name)
+            .map(|entry| entry.owner.to_string())
+    }
+
+    pub fn owned_by(&self, owner: &str) -> Vec<Arc<dyn LimboHandler>> {
+        self.entries
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .filter(|entry| &*entry.owner == owner)
+            .map(|entry| Arc::clone(&entry.handler) as Arc<dyn LimboHandler>)
+            .collect()
+    }
+
     pub fn resolve_handlers(
         &self,
         names: &[String],
@@ -72,6 +256,16 @@ impl LimboHandlerRegistry {
     }
 }
 
+fn release(entry: &Entry) {
+    let released = entry.handler.release();
+    tracing::debug!(
+        plugin = %entry.owner,
+        handler = %entry.handler.name(),
+        released,
+        "limbo handler removed"
+    );
+}
+
 impl Default for LimboHandlerRegistry {
     fn default() -> Self {
         Self::new()
@@ -82,13 +276,32 @@ impl Default for LimboHandlerRegistry {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+    use std::sync::atomic::AtomicUsize;
+
+    use infrarust_api::limbo::context::LimboEntryContext;
+    use infrarust_api::limbo::test_util::RecordingLimboSession;
+    use infrarust_api::types::{GameProfile, ServerId};
+
     use super::*;
-    use infrarust_api::event::BoxFuture;
-    use infrarust_api::limbo::handler::HandlerResult;
-    use infrarust_api::limbo::session::LimboSession;
 
     struct StubHandler {
         handler_name: &'static str,
+        result: HandlerResult,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl StubHandler {
+        fn new(handler_name: &'static str) -> Box<Self> {
+            Self::holding(handler_name, HandlerResult::Accept)
+        }
+
+        fn holding(handler_name: &'static str, result: HandlerResult) -> Box<Self> {
+            Box::new(Self {
+                handler_name,
+                result,
+                calls: Arc::new(AtomicUsize::new(0)),
+            })
+        }
     }
 
     impl LimboHandler for StubHandler {
@@ -100,58 +313,143 @@ mod tests {
             &'a self,
             _session: &'a dyn LimboSession,
         ) -> BoxFuture<'a, HandlerResult> {
-            Box::pin(async { HandlerResult::Accept })
+            let result = self.result.clone();
+            Box::pin(async move { result })
         }
+
+        fn on_session_end(
+            &self,
+            _player: PlayerId,
+            _reason: SessionEndReason,
+        ) -> BoxFuture<'_, ()> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {})
+        }
+    }
+
+    fn session(player: u64) -> Arc<RecordingLimboSession> {
+        RecordingLimboSession::new(
+            PlayerId::new(player),
+            GameProfile {
+                uuid: uuid::Uuid::nil(),
+                username: format!("p{player}"),
+                properties: vec![],
+            },
+            LimboEntryContext::InitialConnection {
+                target_server: ServerId::from("hub"),
+            },
+        )
+    }
+
+    fn is_unavailable(results: &[HandlerResult]) -> bool {
+        matches!(results, [HandlerResult::Deny(reason)] if reason.to_plain() == infrarust_api::limbo::HANDLER_UNAVAILABLE)
     }
 
     #[test]
     fn register_and_get() {
         let registry = LimboHandlerRegistry::new();
-        let handler: Arc<dyn LimboHandler> = Arc::new(StubHandler {
-            handler_name: "auth",
-        });
-
-        registry.register(handler);
-
-        let retrieved = registry.get("auth");
-        assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().name(), "auth");
-    }
-
-    #[test]
-    fn get_missing_returns_none() {
-        let registry = LimboHandlerRegistry::new();
+        registry.register("p", StubHandler::new("auth")).unwrap();
+        assert_eq!(registry.get("auth").unwrap().name(), "auth");
+        assert_eq!(registry.owner_of("auth").as_deref(), Some("p"));
         assert!(registry.get("nonexistent").is_none());
     }
 
     #[test]
-    fn register_overwrites_existing() {
+    fn a_taken_name_is_refused_and_the_first_registration_kept() {
         let registry = LimboHandlerRegistry::new();
+        registry
+            .register("first", StubHandler::new("auth"))
+            .unwrap();
+        assert_eq!(
+            registry.register("second", StubHandler::new("auth")),
+            Err(LimboHandlerError::NameTaken {
+                name: "auth".into(),
+                owner: "first".into(),
+            })
+        );
+        assert!(
+            registry
+                .register("first", StubHandler::new("auth"))
+                .is_err()
+        );
+        assert_eq!(registry.owner_of("auth").as_deref(), Some("first"));
+    }
 
-        let h1: Arc<dyn LimboHandler> = Arc::new(StubHandler {
-            handler_name: "auth",
-        });
-        let h2: Arc<dyn LimboHandler> = Arc::new(StubHandler {
-            handler_name: "auth",
-        });
-
-        registry.register(h1);
-        registry.register(h2);
-
-        // Should still resolve fine — the second registration wins.
+    #[test]
+    fn unregister_by_id_only_removes_that_registration() {
+        let registry = LimboHandlerRegistry::new();
+        let id = registry.register("p", StubHandler::new("auth")).unwrap();
+        assert!(registry.unregister(id));
+        assert!(!registry.unregister(id));
+        assert!(registry.get("auth").is_none());
+        let again = registry.register("q", StubHandler::new("auth")).unwrap();
+        assert!(!registry.unregister(id));
+        assert_ne!(again, id);
         assert!(registry.get("auth").is_some());
+    }
+
+    #[test]
+    fn unregister_owner_removes_every_handler_of_that_plugin() {
+        let registry = LimboHandlerRegistry::new();
+        registry.register("p", StubHandler::new("a")).unwrap();
+        registry.register("p", StubHandler::new("b")).unwrap();
+        registry.register("q", StubHandler::new("c")).unwrap();
+        assert_eq!(registry.owned_by("p").len(), 2);
+        assert_eq!(registry.unregister_owner("p"), 2);
+        assert!(registry.get("a").is_none() && registry.get("b").is_none());
+        assert!(registry.get("c").is_some());
+    }
+
+    #[tokio::test]
+    async fn removing_a_handler_releases_the_players_it_holds() {
+        let registry = LimboHandlerRegistry::new();
+        let stub = StubHandler::holding("gate", HandlerResult::Hold);
+        let session_ends = Arc::clone(&stub.calls);
+        registry.register("p", stub).unwrap();
+        let gate = registry.get("gate").unwrap();
+        let (held, left) = (session(1), session(2));
+        assert!(matches!(
+            gate.on_player_enter(held.as_ref()).await,
+            HandlerResult::Hold
+        ));
+        gate.on_player_enter(left.as_ref()).await;
+        gate.on_session_end(PlayerId::new(2), SessionEndReason::Released)
+            .await;
+
+        assert_eq!(registry.unregister_owner("p"), 1);
+
+        assert!(is_unavailable(&held.completions()));
+        assert!(left.completions().is_empty());
+        let late = session(3);
+        assert!(is_unavailable(&[gate.on_player_enter(late.as_ref()).await]));
+        gate.on_session_end(PlayerId::new(1), SessionEndReason::Kicked)
+            .await;
+        assert_eq!(session_ends.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_hold_whose_session_ended_without_notice_is_not_kept() {
+        let registry = LimboHandlerRegistry::new();
+        registry
+            .register("p", StubHandler::holding("gate", HandlerResult::Hold))
+            .unwrap();
+        let gate = registry.get("gate").unwrap();
+        let (moved_on, held) = (session(1), session(2));
+        gate.on_player_enter(moved_on.as_ref()).await;
+        moved_on.cancellation_token().cancel();
+        gate.on_player_enter(held.as_ref()).await;
+
+        registry.unregister_owner("p");
+
+        assert!(moved_on.completions().is_empty());
+        assert!(is_unavailable(&held.completions()));
     }
 
     #[test]
     fn resolve_handlers_all_present() {
         let registry = LimboHandlerRegistry::new();
-
-        registry.register(Arc::new(StubHandler {
-            handler_name: "auth",
-        }));
-        registry.register(Arc::new(StubHandler {
-            handler_name: "lobby",
-        }));
+        registry.register("p", StubHandler::new("auth")).unwrap();
+        registry.register("p", StubHandler::new("lobby")).unwrap();
 
         let names = vec!["auth".to_string(), "lobby".to_string()];
         let resolved = registry.resolve_handlers(&names).unwrap();
@@ -164,31 +462,17 @@ mod tests {
     #[test]
     fn resolve_handlers_missing_returns_error() {
         let registry = LimboHandlerRegistry::new();
-
-        registry.register(Arc::new(StubHandler {
-            handler_name: "auth",
-        }));
+        registry.register("p", StubHandler::new("auth")).unwrap();
 
         let names = vec!["auth".to_string(), "missing".to_string()];
-        let result = registry.resolve_handlers(&names);
-
-        assert!(result.is_err());
-        match result {
-            Err(e) => {
-                let err_msg = e.to_string();
-                assert!(
-                    err_msg.contains("missing"),
-                    "error should name the missing handler: {err_msg}"
-                );
-            }
-            Ok(_) => panic!("expected error for missing handler"),
-        }
+        let err = registry.resolve_handlers(&names).err().unwrap();
+        assert!(err.to_string().contains("missing"), "{err}");
+        assert_eq!(registry.resolve_handlers_lenient(&names).len(), 1);
     }
 
     #[test]
     fn resolve_empty_list() {
         let registry = LimboHandlerRegistry::new();
-        let resolved = registry.resolve_handlers(&[]).unwrap();
-        assert!(resolved.is_empty());
+        assert!(registry.resolve_handlers(&[]).unwrap().is_empty());
     }
 }

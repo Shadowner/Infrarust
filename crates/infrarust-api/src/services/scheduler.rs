@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::event::BoxFuture;
+
 pub mod private {
     /// Sealed — only the proxy implements [`Scheduler`](super::Scheduler).
     pub trait Sealed {}
@@ -44,6 +46,23 @@ pub trait Scheduler: Send + Sync + private::Sealed {
         task: Box<dyn Fn() + Send + Sync>,
     ) -> TaskHandle;
 
+    fn spawn(&self, task: BoxFuture<'static, ()>) -> TaskHandle;
+
+    fn delay_async(&self, duration: Duration, task: AsyncTask) -> TaskHandle;
+
+    fn repeat(
+        &self,
+        period: Duration,
+        initial_delay: Option<Duration>,
+        task: RepeatingTask,
+    ) -> TaskHandle;
+
+    fn spawn_blocking(&self, task: Box<dyn FnOnce() + Send>) -> TaskHandle;
+
     /// Cancels a scheduled task.
     fn cancel(&self, handle: TaskHandle);
 }
+
+pub type AsyncTask = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
+
+pub type RepeatingTask = Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;

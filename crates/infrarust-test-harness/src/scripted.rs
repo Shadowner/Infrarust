@@ -11,6 +11,7 @@ type DisableHook = Box<dyn Fn() + Send + Sync>;
 
 pub struct ScriptedPlugin {
     id: String,
+    dependencies: Vec<(String, bool)>,
     registrations: Vec<Registration>,
     enable_hooks: Vec<EnableHook>,
     disable_hooks: Vec<DisableHook>,
@@ -20,6 +21,7 @@ impl ScriptedPlugin {
     pub fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            dependencies: Vec::new(),
             registrations: Vec::new(),
             enable_hooks: Vec::new(),
             disable_hooks: Vec::new(),
@@ -28,6 +30,18 @@ impl ScriptedPlugin {
 
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    #[must_use]
+    pub fn depends_on(mut self, id: impl Into<String>) -> Self {
+        self.dependencies.push((id.into(), false));
+        self
+    }
+
+    #[must_use]
+    pub fn after(mut self, id: impl Into<String>) -> Self {
+        self.dependencies.push((id.into(), true));
+        self
     }
 
     #[must_use]
@@ -73,7 +87,16 @@ impl ScriptedPlugin {
 
 impl Plugin for ScriptedPlugin {
     fn metadata(&self) -> PluginMetadata {
-        PluginMetadata::new(self.id.clone(), self.id.clone(), "0.0.0")
+        self.dependencies.iter().fold(
+            PluginMetadata::new(self.id.clone(), self.id.clone(), "0.0.0"),
+            |metadata, (id, optional)| {
+                if *optional {
+                    metadata.optional_dependency(id.clone())
+                } else {
+                    metadata.depends_on(id.clone())
+                }
+            },
+        )
     }
 
     fn on_enable<'a>(

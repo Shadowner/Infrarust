@@ -166,7 +166,7 @@ impl Plugin for AuthPlugin {
                 premium_cache,
             ));
 
-            ctx.register_limbo_handler(Box::new(AuthLimbo(Arc::clone(&handler))));
+            ctx.register_limbo_handler(Box::new(AuthLimbo(Arc::clone(&handler))))?;
             commands::register_commands(ctx, Arc::clone(&handler));
 
             let save_cancel = CancellationToken::new();

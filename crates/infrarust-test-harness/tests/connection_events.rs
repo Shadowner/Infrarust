@@ -542,7 +542,8 @@ impl LimboHandler for Gate {
 fn gatekeeper() -> (ScriptedPlugin, mpsc::UnboundedReceiver<SessionHandle>) {
     let (held, holds) = mpsc::unbounded_channel();
     let plugin = ScriptedPlugin::new("gatekeeper").on_enable(move |ctx| {
-        ctx.register_limbo_handler(Box::new(Gate { held: held.clone() }));
+        ctx.register_limbo_handler(Box::new(Gate { held: held.clone() }))
+            .expect("the limbo handler registers");
     });
     (plugin, holds)
 }

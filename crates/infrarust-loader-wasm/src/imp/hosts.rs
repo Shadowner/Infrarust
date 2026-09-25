@@ -795,12 +795,14 @@ impl limbo::Host for PluginStoreState {
         else {
             return Ok(());
         };
-        ctx.register_limbo_handler(Box::new(crate::limbo::WasmLimboHandler::new(
+        if let Err(e) = ctx.register_limbo_handler(Box::new(crate::limbo::WasmLimboHandler::new(
             binding,
             name,
             instance,
             Arc::clone(self.registrations()),
-        )));
+        ))) {
+            tracing::warn!(plugin = %self.plugin_id, error = %e, "limbo handler refused");
+        }
         Ok(())
     }
 }

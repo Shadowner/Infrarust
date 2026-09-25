@@ -232,6 +232,7 @@ export default
               { text: 'Plugin API', link: '/plugins/dev/api' },
               { text: 'Bans API', link: '/plugins/dev/bans' },
               { text: 'Permissions API', link: '/plugins/dev/permissions' },
+              { text: 'Sharing Services', link: '/plugins/dev/services' },
               { text: 'Testing Plugins', link: '/plugins/dev/testing' },
             ],
           },

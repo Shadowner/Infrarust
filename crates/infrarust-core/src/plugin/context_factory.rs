@@ -9,7 +9,9 @@ pub use infrarust_api::loader::PluginContextFactory;
 
 use super::context::PluginContextImpl;
 use super::manager::PluginServices;
+use super::service_registry::ServiceRegistryImpl;
 use crate::ban::BanManager;
+use crate::limbo::registry::LimboHandlerRegistry;
 use crate::permissions::PermissionService;
 use crate::services::ban_bridge::PluginBanService;
 
@@ -28,6 +30,8 @@ pub struct PluginContextFactoryImpl {
     contexts: Mutex<HashMap<String, Weak<PluginContextImpl>>>,
     ban_providers: Option<Arc<BanManager>>,
     permissions: Option<Arc<PermissionService>>,
+    limbo_handlers: Arc<LimboHandlerRegistry>,
+    service_registry: Arc<ServiceRegistryImpl>,
 }
 
 impl PluginContextFactoryImpl {
@@ -35,13 +39,28 @@ impl PluginContextFactoryImpl {
         services: PluginServices,
         plugin_configs: HashMap<String, PluginPermissions>,
     ) -> Self {
+        let service_registry = Arc::new(ServiceRegistryImpl::new(Some(Arc::clone(
+            &services.event_bus,
+        ))));
         Self {
             services,
             plugin_configs,
             contexts: Mutex::new(HashMap::new()),
             ban_providers: None,
             permissions: None,
+            limbo_handlers: Arc::new(LimboHandlerRegistry::new()),
+            service_registry,
         }
+    }
+
+    #[must_use]
+    pub(crate) fn with_limbo_handlers(mut self, registry: Arc<LimboHandlerRegistry>) -> Self {
+        self.limbo_handlers = registry;
+        self
+    }
+
+    pub fn service_registry(&self) -> &Arc<ServiceRegistryImpl> {
+        &self.service_registry
     }
 
     #[must_use]
@@ -111,6 +130,9 @@ impl PluginContextFactory for PluginContextFactoryImpl {
         if let Some(permissions) = &self.permissions {
             ctx = ctx.with_permissions(Arc::clone(permissions));
         }
+        ctx = ctx
+            .with_limbo_handlers(Arc::clone(&self.limbo_handlers))
+            .with_services(Arc::clone(&self.service_registry));
         let ctx = Arc::new(ctx);
 
         cache.insert(plugin_id.to_string(), Arc::downgrade(&ctx));

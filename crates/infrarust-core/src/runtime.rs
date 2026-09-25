@@ -107,6 +107,7 @@ impl ProxyRuntimeBuilder {
         let mut server = ProxyServer::new(config, config_path, shutdown.clone()).await?;
 
         let mut plugin_manager = PluginManager::new(loaders);
+        plugin_manager.set_event_bus(Arc::clone(&server.services().event_bus));
         plugin_manager.set_disabled_plugins(
             plugin_cfgs
                 .iter()
@@ -145,7 +146,8 @@ impl ProxyRuntimeBuilder {
             plugin_permissions(plugin_cfgs, trusted),
         )
         .with_ban_providers(Arc::clone(&services.ban_manager))
-        .with_permissions(Arc::clone(&services.permission_service));
+        .with_permissions(Arc::clone(&services.permission_service))
+        .with_limbo_handlers(Arc::clone(&services.limbo_handler_registry));
 
         let errors = plugin_manager.load_and_enable_all(&context_factory).await;
         if !errors.is_empty() {
@@ -157,10 +159,6 @@ impl ProxyRuntimeBuilder {
         plugin_registry.update_from(&plugin_manager.list_plugins(), &|id| {
             plugin_manager.plugin_state(id).cloned()
         });
-
-        for handler in plugin_manager.collect_limbo_handlers() {
-            services.limbo_handler_registry.register(Arc::from(handler));
-        }
 
         activate_config_providers(&plugin_manager, services, server.background_token()).await;
 
@@ -185,7 +183,7 @@ impl ProxyRuntimeBuilder {
             server,
             plugin_manager,
             plugin_registry,
-            _context_factory: context_factory,
+            context_factory,
             serve_task,
             local_addr,
             start_time,
@@ -331,7 +329,7 @@ pub struct RunningProxy {
     server: Arc<ProxyServer>,
     plugin_manager: Arc<RwLock<PluginManager>>,
     plugin_registry: Arc<PluginRegistryImpl>,
-    _context_factory: PluginContextFactoryImpl,
+    context_factory: PluginContextFactoryImpl,
     serve_task: JoinHandle<Result<(), CoreError>>,
     local_addr: SocketAddr,
     start_time: Instant,
@@ -358,6 +356,20 @@ impl RunningProxy {
 
     pub fn plugin_registry(&self) -> &Arc<PluginRegistryImpl> {
         &self.plugin_registry
+    }
+
+    pub fn service_registry(&self) -> &Arc<crate::plugin::service_registry::ServiceRegistryImpl> {
+        self.context_factory.service_registry()
+    }
+
+    pub async fn disable_plugin(&self, id: &str) -> Result<(), infrarust_api::error::PluginError> {
+        let mut manager = self.plugin_manager.write().await;
+        manager.disable_plugin(id).await?;
+        self.plugin_registry
+            .update_from(&manager.list_plugins(), &|id| {
+                manager.plugin_state(id).cloned()
+            });
+        Ok(())
     }
 
     pub const fn start_time(&self) -> Instant {
@@ -521,6 +533,50 @@ mod tests {
             *log.lock().unwrap(),
             vec!["enable", "initialize", "shutdown", "disable"]
         );
+    }
+
+    struct LateGate;
+
+    impl infrarust_api::limbo::LimboHandler for LateGate {
+        fn name(&self) -> &str {
+            "late_gate"
+        }
+
+        fn on_player_enter<'a>(
+            &'a self,
+            _session: &'a dyn infrarust_api::limbo::LimboSession,
+        ) -> BoxFuture<'a, infrarust_api::limbo::HandlerResult> {
+            Box::pin(async { infrarust_api::limbo::HandlerResult::Hold })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_limbo_handler_registered_after_startup_reaches_the_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let log: Log = Arc::new(Mutex::new(Vec::new()));
+        let running = ProxyRuntime::builder(test_config(dir.path()), dir.path().join("i.toml"))
+            .loader(Box::new(recording_loader("late", &log)))
+            .trusted_plugins(["late".to_string()])
+            .start()
+            .await
+            .unwrap();
+
+        let ctx = running
+            .plugin_manager()
+            .read()
+            .await
+            .plugin_context("late")
+            .unwrap();
+        ctx.register_limbo_handler(Box::new(LateGate)).unwrap();
+
+        assert!(
+            running
+                .services()
+                .limbo_handler_registry
+                .get("late_gate")
+                .is_some()
+        );
+        running.shutdown().await.unwrap();
     }
 
     #[tokio::test]

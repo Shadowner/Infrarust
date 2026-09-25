@@ -59,7 +59,7 @@ impl Plugin for ServerWakePlugin {
                 state: Arc::clone(&state),
                 server_manager: ctx.server_manager_handle(),
                 config_service: ctx.config_service_handle(),
-            }));
+            }))?;
 
             let wake_state = Arc::clone(&state);
             ctx.event_bus()

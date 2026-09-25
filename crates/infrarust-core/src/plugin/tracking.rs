@@ -3,6 +3,7 @@
 use std::any::{Any, TypeId};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use infrarust_api::command::{
     CommandError, CommandHandler, CommandInfo, CommandManager, CommandRegistration, CommandSpec,
@@ -11,11 +12,12 @@ use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus, Fir
 use infrarust_api::event::{
     BoxFuture, ConnectionState, ListenerHandle, PacketDirection, PacketFilter,
 };
-use infrarust_api::services::scheduler::{Scheduler, TaskHandle};
+use infrarust_api::services::scheduler::{AsyncTask, RepeatingTask, Scheduler, TaskHandle};
 
 use crate::event_bus::EventBusImpl;
 use crate::event_bus::handler::HandlerKind;
 use crate::services::command_manager::CommandManagerImpl;
+use crate::services::scheduler::SchedulerImpl;
 
 /// Wraps an [`EventBus`] and records all [`ListenerHandle`]s for later cleanup.
 pub struct TrackingEventBus {
@@ -207,49 +209,77 @@ impl CommandManager for TrackingCommandManager {
     }
 }
 
-/// Wraps a [`Scheduler`] and records [`TaskHandle`]s for cleanup.
 pub struct TrackingScheduler {
-    inner: Arc<dyn Scheduler>,
-    tasks: Arc<Mutex<Vec<TaskHandle>>>,
+    inner: Arc<SchedulerImpl>,
+    owner: Arc<str>,
 }
 
 impl TrackingScheduler {
-    pub fn new(inner: Arc<dyn Scheduler>, tasks: Arc<Mutex<Vec<TaskHandle>>>) -> Self {
-        Self { inner, tasks }
+    pub fn new(inner: Arc<SchedulerImpl>, plugin_id: &str) -> Self {
+        Self {
+            inner,
+            owner: Arc::from(plugin_id),
+        }
+    }
+
+    pub fn tracked_count(&self) -> usize {
+        self.inner.owned_count(&self.owner)
+    }
+
+    pub fn cancel_all(&self) -> usize {
+        self.inner.cancel_owner(&self.owner)
     }
 }
 
 impl infrarust_api::services::scheduler::private::Sealed for TrackingScheduler {}
 
 impl Scheduler for TrackingScheduler {
-    fn delay(&self, duration: std::time::Duration, task: Box<dyn FnOnce() + Send>) -> TaskHandle {
-        let handle = self.inner.delay(duration, task);
-        self.tasks.lock().expect("lock poisoned").push(handle);
-        handle
+    fn delay(&self, duration: Duration, task: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.inner.delay_for(&self.owner, duration, task)
     }
 
-    fn interval(
-        &self,
-        period: std::time::Duration,
-        task: Box<dyn Fn() + Send + Sync>,
-    ) -> TaskHandle {
-        let handle = self.inner.interval(period, task);
-        self.tasks.lock().expect("lock poisoned").push(handle);
-        handle
+    fn interval(&self, period: Duration, task: Box<dyn Fn() + Send + Sync>) -> TaskHandle {
+        self.inner.interval_for(&self.owner, period, period, task)
     }
 
     fn interval_with_delay(
         &self,
-        period: std::time::Duration,
-        delay: std::time::Duration,
+        period: Duration,
+        delay: Duration,
         task: Box<dyn Fn() + Send + Sync>,
     ) -> TaskHandle {
-        let handle = self.inner.interval_with_delay(period, delay, task);
-        self.tasks.lock().expect("lock poisoned").push(handle);
-        handle
+        self.inner.interval_for(&self.owner, period, delay, task)
+    }
+
+    fn spawn(&self, task: BoxFuture<'static, ()>) -> TaskHandle {
+        self.inner.spawn_for(&self.owner, task)
+    }
+
+    fn delay_async(&self, duration: Duration, task: AsyncTask) -> TaskHandle {
+        self.inner.delay_async_for(&self.owner, duration, task)
+    }
+
+    fn repeat(
+        &self,
+        period: Duration,
+        initial_delay: Option<Duration>,
+        task: RepeatingTask,
+    ) -> TaskHandle {
+        self.inner
+            .repeat_for(&self.owner, period, initial_delay, task)
+    }
+
+    fn spawn_blocking(&self, task: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.inner.spawn_blocking_for(&self.owner, task)
     }
 
     fn cancel(&self, handle: TaskHandle) {
-        self.inner.cancel(handle);
+        if !self.inner.cancel_owned(&self.owner, handle) {
+            tracing::debug!(
+                plugin = %self.owner,
+                task = handle.as_u64(),
+                "cancel ignored: the task finished or belongs to another plugin"
+            );
+        }
     }
 }

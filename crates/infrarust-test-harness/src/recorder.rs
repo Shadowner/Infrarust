@@ -21,6 +21,9 @@ use infrarust_api::events::lifecycle::{
     PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent, PreLoginResult,
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
+use infrarust_api::events::plugin::{
+    PluginDisabledEvent, PluginEnabledEvent, ServiceProvidedEvent, ServiceRemovedEvent,
+};
 use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
@@ -64,10 +67,14 @@ pub enum EventKind {
     ConnectionRejected,
     LimboEnter,
     LimboExit,
+    PluginEnabled,
+    PluginDisabled,
+    ServiceProvided,
+    ServiceRemoved,
 }
 
 impl EventKind {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 30] = [
         Self::PreLogin,
         Self::GameProfileRequest,
         Self::Login,
@@ -94,6 +101,10 @@ impl EventKind {
         Self::ConnectionRejected,
         Self::LimboEnter,
         Self::LimboExit,
+        Self::PluginEnabled,
+        Self::PluginDisabled,
+        Self::ServiceProvided,
+        Self::ServiceRemoved,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -124,6 +135,10 @@ impl EventKind {
             Self::ConnectionRejected => "ConnectionRejected",
             Self::LimboEnter => "LimboEnter",
             Self::LimboExit => "LimboExit",
+            Self::PluginEnabled => "PluginEnabled",
+            Self::PluginDisabled => "PluginDisabled",
+            Self::ServiceProvided => "ServiceProvided",
+            Self::ServiceRemoved => "ServiceRemoved",
         }
     }
 }
@@ -335,6 +350,7 @@ impl Plugin for RecordingPlugin {
         ctx: &'a dyn PluginContext,
     ) -> BoxFuture<'a, Result<(), PluginError>> {
         subscribe_all(ctx.event_bus(), &self.recorder);
+        subscribe_plugin_events(ctx.event_bus(), &self.recorder);
         Box::pin(async { Ok(()) })
     }
 }
@@ -752,6 +768,41 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
                 "handlers": handlers,
                 "next_server": server(e.next_server.as_ref()),
             }),
+        )
+    });
+}
+
+fn subscribe_plugin_events(bus: &dyn EventBus, recorder: &Recorder) {
+    on::<PluginEnabledEvent>(bus, recorder, |e| {
+        (
+            EventKind::PluginEnabled,
+            None,
+            None,
+            json!({ "plugin": e.plugin_id, "version": e.version }),
+        )
+    });
+    on::<PluginDisabledEvent>(bus, recorder, |e| {
+        (
+            EventKind::PluginDisabled,
+            None,
+            None,
+            json!({ "plugin": e.plugin_id }),
+        )
+    });
+    on::<ServiceProvidedEvent>(bus, recorder, |e| {
+        (
+            EventKind::ServiceProvided,
+            None,
+            None,
+            json!({ "service": e.service, "provider": e.provider }),
+        )
+    });
+    on::<ServiceRemovedEvent>(bus, recorder, |e| {
+        (
+            EventKind::ServiceRemoved,
+            None,
+            None,
+            json!({ "service": e.service, "provider": e.provider }),
         )
     });
 }

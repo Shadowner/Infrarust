@@ -230,19 +230,20 @@ pub(super) async fn resolve_initial_mode(
     }
     let backend_targets = redirected_targets.as_ref().or(backend_targets);
 
-    if initial_mode.is_none() && !server_config.limbo_handlers.is_empty() {
-        prepare_client_for_limbo(client, auth_result, login_completed, version, services).await?;
-        if let Some(handlers) = resolve_limbo_lenient(
+    if initial_mode.is_none()
+        && !server_config.limbo_handlers.is_empty()
+        && let Some(handlers) = resolve_limbo_lenient(
             &services.limbo_handler_registry,
             &server_config.limbo_handlers,
-        ) {
-            initial_mode = Some(ConnectionMode::Limbo(
-                handlers,
-                LimboEntryContext::InitialConnection {
-                    target_server: target_server_id.clone(),
-                },
-            ));
-        }
+        )
+    {
+        prepare_client_for_limbo(client, auth_result, login_completed, version, services).await?;
+        initial_mode = Some(ConnectionMode::Limbo(
+            handlers,
+            LimboEntryContext::InitialConnection {
+                target_server: target_server_id.clone(),
+            },
+        ));
     }
 
     let mut pending = if approved {

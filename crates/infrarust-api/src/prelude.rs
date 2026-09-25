@@ -35,7 +35,7 @@ pub use crate::services::{
     BanQuery, BanRequest, BanService, BanSource, BanTarget, BanVerdict, ConfigService,
     ConfigWriteError, LbError, LoadBalancerService, LoginAttempt, LoginStage, PlayerRegistry,
     PluginRegistry, ProxyInfo, ProxyMode, Scheduler, ServerConfig, ServerManager, ServerState,
-    TaskHandle, UnbanRequest,
+    ServiceHandle, ServiceRegistry, ServiceRegistryExt, TaskHandle, UnbanRequest,
 };
 
 // Permissions and capabilities
@@ -47,7 +47,8 @@ pub use crate::permissions::{
 
 // Limbo
 pub use crate::limbo::{
-    HandlerResult, LimboEntryContext, LimboHandler, LimboSession, SessionEndReason, SessionHandle,
+    HandlerResult, LimboEntryContext, LimboHandler, LimboHandlerError, LimboHandlerRegistration,
+    LimboSession, SessionEndReason, SessionHandle,
 };
 
 // Virtual backend

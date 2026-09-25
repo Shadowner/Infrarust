@@ -6,6 +6,7 @@ pub mod dependency;
 pub mod loader;
 pub mod manager;
 pub mod plugin_registry_impl;
+pub mod service_registry;
 pub mod static_loader;
 pub mod tracking;
 

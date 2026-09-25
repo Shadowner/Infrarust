@@ -43,6 +43,9 @@ pub enum ServiceError {
     /// The service is temporarily unavailable.
     #[error("service unavailable: {0}")]
     Unavailable(String),
+
+    #[error("service `{service}` is already provided by `{by}`")]
+    AlreadyProvided { service: &'static str, by: String },
 }
 
 /// Errors that can occur during plugin lifecycle.
@@ -67,6 +70,18 @@ impl From<String> for PluginError {
 impl From<&str> for PluginError {
     fn from(s: &str) -> Self {
         Self::Custom(s.to_owned())
+    }
+}
+
+impl From<ServiceError> for PluginError {
+    fn from(e: ServiceError) -> Self {
+        Self::InitFailed(e.to_string())
+    }
+}
+
+impl From<crate::limbo::LimboHandlerError> for PluginError {
+    fn from(e: crate::limbo::LimboHandlerError) -> Self {
+        Self::InitFailed(e.to_string())
     }
 }
 

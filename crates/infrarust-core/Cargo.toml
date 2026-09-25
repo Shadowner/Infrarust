@@ -86,6 +86,7 @@ base64 = { workspace = true }
 flate2 = { workspace = true }
 
 [dev-dependencies]
+infrarust-api = { workspace = true, features = ["serde", "test-util"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tempfile = { workspace = true }
 divan = { workspace = true }

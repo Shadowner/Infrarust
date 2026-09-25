@@ -385,7 +385,8 @@ async fn limbo_commands_share_the_same_dispatch(version: ProtocolVersion) {
     let limbo = ScriptedPlugin::new("gate").on_enable(move |ctx| {
         ctx.register_limbo_handler(Box::new(RecordingLimbo {
             commands: tx.clone(),
-        }));
+        }))
+        .expect("the limbo handler registers");
     });
     let proxy = TestProxy::builder()
         .server(

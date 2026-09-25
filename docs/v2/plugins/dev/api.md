@@ -86,12 +86,15 @@ The `PluginContext` trait provides access to every service and registration meth
 | `load_balancer_service_handle()` | `Arc<dyn LoadBalancerService>` | Cloneable handle for closures |
 | `command_manager()` | `&dyn CommandManager` | Register and unregister commands |
 | `command_manager_handle()` | `Arc<dyn CommandManager>` | Owned handle for registering commands after `on_enable` |
-| `scheduler()` | `&dyn Scheduler` | Schedule delayed and recurring tasks |
+| `scheduler()` | `&dyn Scheduler` | Schedule delayed, recurring and async tasks |
+| `scheduler_handle()` | `Arc<dyn Scheduler>` | Cloneable handle for closures |
+| `services()` | `&dyn ServiceRegistry` | Provide an API to other plugins or use theirs, see [Sharing services](./services) |
+| `services_handle()` | `Arc<dyn ServiceRegistry>` | Cloneable handle for closures |
 | `plugin_registry()` | `&dyn PluginRegistry` | Read-only view of loaded plugins |
 | `plugin_registry_handle()` | `Arc<dyn PluginRegistry>` | Cloneable handle for closures |
 | `codec_filters()` | `Option<&dyn CodecFilterRegistry>` | Register packet-level filters (needs the `CodecFilter` capability) |
 | `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register TCP-level filters (needs the `TransportFilter` capability) |
-| `register_limbo_handler(handler)` | `()` | Register a limbo handler |
+| `register_limbo_handler(handler)` | `Result<LimboHandlerRegistration, LimboHandlerError>` | Register a limbo handler, see [Limbo handlers](#limbo-handlers) |
 | `register_config_provider(provider)` | `()` | Register a dynamic config provider |
 | `register_ban_provider(provider)` | `Result<(), BanProviderRejected>` | Become the ban provider. Needs `ban-provider` and `[ban] provider` naming this plugin, see [Bans](./bans) |
 | `register_permission_provider(provider)` | `Result<(), PermissionProviderRejected>` | Become the permission provider. Needs `permission-provider` and `[permissions] provider` naming this plugin, see [Permissions](./permissions) |
@@ -227,7 +230,7 @@ On a passive path (`Passthrough`, `ZeroCopy`, `ServerOnly`), the proxy only copi
 
 ## Scheduler
 
-Runs delayed one-shot tasks and recurring interval tasks on the proxy's async runtime.
+Runs one-shot, recurring and async tasks on the proxy's async runtime. Every task a plugin schedules through its context belongs to that plugin: it is cancelled when the plugin is disabled, and a plugin cannot cancel another plugin's task.
 
 ```rust
 use std::time::Duration;
@@ -240,7 +243,7 @@ let handle = ctx.scheduler().delay(
     }),
 );
 
-// Recurring: runs every 30 seconds
+// Recurring at a fixed rate: runs every 30 seconds
 let registry = ctx.player_registry_handle();
 let interval_handle = ctx.scheduler().interval(
     Duration::from_secs(30),
@@ -254,14 +257,74 @@ ctx.scheduler().cancel(handle);
 ctx.scheduler().cancel(interval_handle);
 ```
 
+The async variants take futures, so a task can await storage, HTTP calls or other services:
+
+```rust
+let storage = self.storage.clone();
+ctx.scheduler().repeat(
+    Duration::from_secs(60),
+    None,
+    Box::new(move || {
+        let storage = storage.clone();
+        Box::pin(async move {
+            if let Err(e) = storage.flush().await {
+                tracing::error!("auto-save failed: {e}");
+            }
+        })
+    }),
+);
+
+let bans = ctx.ban_service_handle();
+ctx.scheduler().spawn(Box::pin(async move {
+    let _ = bans.list_all().await;
+}));
+```
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `delay` | `(Duration, Box<dyn FnOnce() + Send>) -> TaskHandle` | Run once after a delay |
-| `interval` | `(Duration, Box<dyn Fn() + Send + Sync>) -> TaskHandle` | Run repeatedly at a fixed interval |
-| `interval_with_delay` | `(Duration, Duration, Box<dyn Fn() + Send + Sync>) -> TaskHandle` | Repeat at a fixed interval, after an initial delay |
-| `cancel` | `(TaskHandle)` | Cancel a scheduled task |
+| `interval` | `(Duration, Box<dyn Fn() + Send + Sync>) -> TaskHandle` | Run at a fixed rate, first run after one period |
+| `interval_with_delay` | `(Duration, Duration, Box<dyn Fn() + Send + Sync>) -> TaskHandle` | Run at a fixed rate, first run after the delay |
+| `spawn` | `(BoxFuture<'static, ()>) -> TaskHandle` | Run a future now |
+| `delay_async` | `(Duration, AsyncTask) -> TaskHandle` | Build and await a future once, after a delay |
+| `repeat` | `(Duration, Option<Duration>, RepeatingTask) -> TaskHandle` | Await a new future every period, never two at once |
+| `spawn_blocking` | `(Box<dyn FnOnce() + Send>) -> TaskHandle` | Run blocking code on the blocking thread pool |
+| `cancel` | `(TaskHandle)` | Cancel a task |
 
-`TaskHandle` is an opaque ID returned by `delay`, `interval`, and `interval_with_delay`. Store it if you need to cancel the task later.
+`AsyncTask` is `Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>` and `RepeatingTask` is `Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>`.
+
+How each kind runs:
+
+- `repeat` waits `period` after a run finishes before starting the next one, so runs never overlap and a slow run pushes the next one back. The first run starts after `initial_delay`, or after one `period` when it is `None`. `Some(Duration::ZERO)` runs it right away.
+- `interval` and `interval_with_delay` run at a fixed rate. The closure is synchronous, so keep it short; a tick missed because the runtime was busy is skipped, not replayed.
+- A period below 1 ms is raised to 1 ms.
+- A task that panics is logged with the plugin ID. The panic ends that run only: the scheduler keeps working, and a repeating task runs again at its next period.
+- `cancel` stops a sync task before its next run. An async task is dropped at its next `.await`. A `spawn_blocking` closure that already started runs to completion.
+
+`TaskHandle` is an opaque ID. The proxy forgets it once the task finishes, so a finished one-shot task leaves nothing behind. Cancelling a finished task, or a task scheduled by another plugin, does nothing.
+
+## Limbo handlers
+
+`register_limbo_handler` makes a [limbo handler](./architecture#layer-4-limbohandler) available to every server whose `limbo_handlers` list names it. It works at any time, not only during `on_enable`: a server resolves its handlers when a player arrives, so a handler registered later is used by the next player.
+
+```rust
+let registration = ctx.register_limbo_handler(Box::new(QueueHandler::new()))?;
+
+// later, to stop gating players
+registration.unregister();
+```
+
+| Outcome | Result |
+|---------|--------|
+| Registered | `Ok(LimboHandlerRegistration)` |
+| The plugin lacks the `Limbo` capability | `Err(LimboHandlerError::MissingCapability)` |
+| Another registration uses the same name | `Err(LimboHandlerError::NameTaken { name, owner })`. The first one stays |
+
+`LimboHandlerError` converts into `PluginError::InitFailed`, so `?` works inside `on_enable`.
+
+Dropping the `LimboHandlerRegistration` keeps the handler registered. `unregister()` removes it and returns `false` if it was already gone. Disabling the plugin removes all of its handlers.
+
+A removed handler fails closed. Every player it holds (its `on_player_enter` returned `Hold` or `HoldWithTimeout` and has not completed) is released with `HandlerResult::unavailable()`, a denial with the text "Limbo handler unavailable". A player who reaches the handler afterwards through a chain resolved before the removal is denied the same way. Players who arrive later skip the missing name, as they do for any name no plugin registered.
 
 ## ServerManager
 
@@ -584,4 +647,4 @@ Import everything you need with a single `use` statement:
 use infrarust_api::prelude::*;
 ```
 
-This brings in the common types, traits, events, services, and error types covered on this page, plus `Arc` from the standard library. A few items live outside the prelude: `DefaultPermissionChecker`, `AllPermissionsChecker` and `normalize_node` are in `infrarust_api::permissions`, and `ProxyInfo` and `PluginRegistry` are in `infrarust_api::services`. Import those directly when you need them.
+This brings in the common types, traits, events, services, and error types covered on this page, including `ServiceRegistryExt` for `provide` and `get`, plus `Arc` from the standard library. A few items live outside the prelude: `DefaultPermissionChecker`, `AllPermissionsChecker` and `normalize_node` are in `infrarust_api::permissions`, and `ProxyInfo` and `PluginRegistry` are in `infrarust_api::services`. Import those directly when you need them.

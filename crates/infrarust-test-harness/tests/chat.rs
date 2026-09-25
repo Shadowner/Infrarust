@@ -257,7 +257,8 @@ async fn next_chat(chats: &mut mpsc::UnboundedReceiver<String>) -> String {
 async fn limbo_chat_goes_through_the_event_first(version: ProtocolVersion) {
     let (tx, mut chats) = mpsc::unbounded_channel();
     let gate = ScriptedPlugin::new("gate").on_enable(move |ctx| {
-        ctx.register_limbo_handler(Box::new(ChatLimbo { chats: tx.clone() }));
+        ctx.register_limbo_handler(Box::new(ChatLimbo { chats: tx.clone() }))
+            .expect("the limbo handler registers");
     });
     let recorder = Recorder::new();
     let proxy = TestProxy::builder()

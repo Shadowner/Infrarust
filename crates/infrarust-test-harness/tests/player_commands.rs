@@ -48,7 +48,8 @@ fn holding_plugin(ended: &Ended) -> ScriptedPlugin {
     ScriptedPlugin::new("holder").on_enable(move |ctx| {
         ctx.register_limbo_handler(Box::new(HoldForever {
             ended: Arc::clone(&ended),
-        }));
+        }))
+        .expect("the limbo handler registers");
     })
 }
 
@@ -204,7 +205,8 @@ async fn kick_during_limbo_entry_keeps_its_reason(version: ProtocolVersion) {
             ctx.register_limbo_handler(Box::new(SlowGate {
                 entered: Arc::clone(&entered),
                 release: Arc::clone(&release),
-            }));
+            }))
+            .expect("the limbo handler registers");
         })
     };
     let proxy = TestProxy::builder()

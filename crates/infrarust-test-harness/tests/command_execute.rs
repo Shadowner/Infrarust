@@ -370,7 +370,8 @@ async fn limbo_commands_fire_no_command_event(version: ProtocolVersion) {
     let gate = ScriptedPlugin::new("gate").on_enable(move |ctx| {
         ctx.register_limbo_handler(Box::new(CommandLimbo {
             commands: tx.clone(),
-        }));
+        }))
+        .expect("the limbo handler registers");
     });
     let recorder = Recorder::new();
     let proxy = TestProxy::builder()
