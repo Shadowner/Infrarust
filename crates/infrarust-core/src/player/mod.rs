@@ -56,6 +56,7 @@ pub enum PlayerCommand {
 
 struct Routing {
     current: Option<ServerId>,
+    previous: Option<ServerId>,
     pending: Option<ServerId>,
 }
 
@@ -115,6 +116,7 @@ impl PlayerSession {
             remote_addr,
             routing: RwLock::new(Routing {
                 current: current_server,
+                previous: None,
                 pending: None,
             }),
             connected_address: RwLock::new(None),
@@ -168,8 +170,18 @@ impl PlayerSession {
     /// Updates the current server (called by the proxy loop on server switch).
     pub fn set_current_server(&self, server: ServerId) {
         let mut routing = self.routing.write().unwrap_or_else(PoisonError::into_inner);
-        routing.current = Some(server);
+        if routing.current.as_ref() != Some(&server) {
+            routing.previous = routing.current.replace(server);
+        }
         routing.pending = None;
+    }
+
+    pub(crate) fn previous_server(&self) -> Option<ServerId> {
+        self.routing
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .previous
+            .clone()
     }
 
     pub(crate) fn set_pending_server(&self, server: ServerId) {

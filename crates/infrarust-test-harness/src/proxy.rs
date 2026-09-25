@@ -16,6 +16,7 @@ use infrarust_core::server::ProxyServer;
 use infrarust_core::services::ProxyServices;
 use infrarust_protocol::version::ProtocolVersion;
 use tempfile::TempDir;
+use tokio::net::TcpSocket;
 use tokio_util::sync::CancellationToken;
 use toml::{Table, Value};
 
@@ -143,14 +144,16 @@ impl ServerSpec {
             .unwrap_or_else(|| vec![format!("{}.test", self.id)])
     }
 
-    fn into_table(self) -> HarnessResult<Table> {
+    fn into_table(self, reserved: &mut Vec<TcpSocket>) -> HarnessResult<Table> {
         let mut addresses: Vec<Value> = self
             .backends
             .iter()
             .map(|addr| Value::String(addr.to_string()))
             .collect();
         if self.unreachable {
-            addresses.push(Value::String(closed_address()?.to_string()));
+            let (addr, socket) = closed_address()?;
+            reserved.push(socket);
+            addresses.push(Value::String(addr.to_string()));
         }
         if addresses.is_empty() {
             return Err(HarnessError::setup(format!(
@@ -253,7 +256,8 @@ impl TestProxyBuilder {
         std::fs::create_dir(&servers_dir)?;
         std::fs::create_dir(&plugins_dir)?;
 
-        let routes = write_servers(servers, &servers_dir)?;
+        let mut reserved = Vec::new();
+        let routes = write_servers(servers, &servers_dir, &mut reserved)?;
 
         let mut table = Table::new();
         table.insert("bind".into(), Value::String("127.0.0.1:0".into()));
@@ -344,6 +348,7 @@ impl TestProxyBuilder {
             shutdown,
             routes,
             dir,
+            _reserved: reserved,
         })
     }
 }
@@ -355,6 +360,7 @@ pub struct TestProxy {
     addr: SocketAddr,
     routes: Vec<(String, String)>,
     dir: TempDir,
+    _reserved: Vec<TcpSocket>,
 }
 
 impl std::fmt::Debug for TestProxy {
@@ -500,14 +506,18 @@ async fn poll_until<T>(
     .map_err(|_| HarnessError::timeout(what, timeout))
 }
 
-fn write_servers(servers: Vec<ServerSpec>, dir: &Path) -> HarnessResult<Vec<(String, String)>> {
+fn write_servers(
+    servers: Vec<ServerSpec>,
+    dir: &Path,
+    reserved: &mut Vec<TcpSocket>,
+) -> HarnessResult<Vec<(String, String)>> {
     let mut routes: Vec<(String, String)> = Vec::new();
     for spec in servers {
         let id = spec.id.clone();
         if routes.iter().any(|(existing, _)| *existing == id) {
             return Err(HarnessError::setup(format!("duplicate server id {id}")));
         }
-        let table = spec.into_table()?;
+        let table = spec.into_table(reserved)?;
         let text = toml::to_string(&table).map_err(HarnessError::setup)?;
         let mut parsed: ServerConfig =
             toml::from_str(&text).map_err(|e| HarnessError::setup(format!("server {id}: {e}")))?;
@@ -567,9 +577,11 @@ impl Plugin for SpentPlugin {
     }
 }
 
-fn closed_address() -> HarnessResult<SocketAddr> {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
-    Ok(listener.local_addr()?)
+fn closed_address() -> HarnessResult<(SocketAddr, TcpSocket)> {
+    let socket = TcpSocket::new_v4()?;
+    socket.set_reuseaddr(false)?;
+    socket.bind(SocketAddr::from(([127, 0, 0, 1], 0)))?;
+    Ok((socket.local_addr()?, socket))
 }
 
 fn path_value(path: &Path) -> HarnessResult<Value> {

@@ -494,8 +494,7 @@ async fn a_refused_switch_keeps_the_player_where_they_are(version: ProtocolVersi
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
 
     player.switch_server(ServerId::new("b")).await.unwrap();
-    let failure = session.expect_system_text(T).await.unwrap();
-    assert!(failure.starts_with("Server switch failed"), "{failure}");
+    assert_eq!(session.expect_system_text(T).await.unwrap(), "full");
     let _refused = backend_b.next_connection(T).await.unwrap();
 
     let to_b = |e: &Recorded| e.detail["server"] == json!("b");

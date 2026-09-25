@@ -72,7 +72,7 @@ These hold for `offline` and `client_only`. Passthrough modes differ as describe
 
 - `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent` and `ServerPostConnectEvent` are awaited in the player's session, after `PostLoginEvent` and before `DisconnectEvent`. For one connection attempt they fire in that order.
 - `ServerPreConnectEvent` fires before the proxy opens any connection to the target, exactly once per attempt: the initial connection, every switch, a limbo handler sending the player to another server, a kicked player being redirected. A limbo gate on the chosen server does not fire it again when it lets the player through.
-- `ServerConnectedEvent` fires once the target backend accepted the login. It never fires for a backend that refused the login or never answered. A switch can still fail after it, for example when the backend closes during the configuration phase: no `ServerPostConnectEvent` follows and the player stays on the server they were on.
+- `ServerConnectedEvent` fires once the target backend accepted the login. It never fires for a backend that refused the login or never answered. A switch can still fail after it, for example when the backend closes during the configuration phase: no `ServerPostConnectEvent` follows and a [`KickedFromServerEvent`](#kickedfromserverevent) fires.
 - `ServerPostConnectEvent` fires once the server's `JoinGame` packet reached the client. From then on `current_server()` returns that server.
 - `previous_server` is the server the player was on when the attempt started: `None` for the initial connection, including after an initial limbo gate, and `Some(a)` for a switch from `a`.
 - `current_server()` stays `None` until the first `ServerPostConnectEvent`, also while a limbo gate holds the player before their first server. The player already counts toward that server in `PlayerRegistry::online_count_on` and `get_players_on_server`, in the status player count and in the server manager's idle detection.
@@ -345,7 +345,7 @@ Fired exactly once for every player that got a `PostLoginEvent`, when their sess
 |---------|-------------|
 | `ClientQuit` (`client_quit`) | The client closed the connection |
 | `Kicked { reason }` (`kicked`) | The proxy ended the session: `Player::disconnect`, a denied connection, a duplicate login. `reason` is what the client was shown |
-| `BackendClosed { reason }` (`backend_closed`) | The backend kicked the player or closed the connection and the player was not moved elsewhere |
+| `BackendClosed { reason }` (`backend_closed`) | The backend kicked the player or closed the connection and the player was not moved elsewhere. `reason` is what the client was shown, see [KickedFromServerEvent](#kickedfromserverevent) |
 | `Shutdown` (`shutdown`) | The proxy is shutting down. The client was shown "Proxy is shutting down" (`offline` and `client_only`). See [Proxy shutdown](#proxy-shutdown) |
 | `Error` (`error`) | The session failed, for example an I/O error or an initial backend that could not be reached |
 
@@ -482,31 +482,66 @@ ctx.event_bus().subscribe::<ServerPostConnectEvent, _>(
 
 ### KickedFromServerEvent
 
-Fired when a backend server kicks a player. You can decide what happens next: disconnect them, redirect them, send them to limbo, or just show a message.
+Fired when a backend server drops a player or cannot take them, before anything of it reaches the client. `offline` and `client_only` only. It fires for:
 
-**Type:** Resulted (default: `DisconnectPlayer`)
+- a disconnect packet from the server the player is playing on, or that server closing the connection;
+- a connection that fails before the player joined the server: the initial connection, a switch, a kick redirect or a limbo exit. The server cannot be reached, refuses the login, sends a disconnect during the configuration phase or before its `JoinGame`, or closes the connection.
+
+It does not fire when a `ServerPreConnectEvent` listener denies a connection, or for `Player::disconnect`.
+
+**Type:** Resulted. The proxy picks the default result for the situation, see [defaults](#kick-defaults).
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `player_id` | `PlayerId` | The kicked player |
-| `server` | `ServerId` | The server that kicked them |
-| `reason` | `Component` | The kick reason from the server |
+| `player` | `Arc<dyn Player>` | The player |
+| `server` | `ServerId` | The server that dropped the player, or that the player could not join |
+| `reason` | `Option<Component>` | The reason the server sent, parsed from its disconnect packet. `None` when it sent none |
+| `cause` | `KickCause` | How the server dropped the player |
+| `during_connect` | `bool` | `true` when the player had not joined `server` yet |
+| `previous_server` | `Option<ServerId>` | When `during_connect`, the player's `current_server()`: the server they are on, or the one that kicked them before a redirect, `None` before their first server. Otherwise the server they were on before `server` |
 
-**Results** (`KickedFromServerResult`):
+`player_id()` and `profile()` are shortcuts for `player.id()` and `player.profile()`.
+
+**`KickCause`** (`#[non_exhaustive]`, `as_str()` gives the name in parentheses):
 
 | Variant | Description |
 |---------|-------------|
-| `DisconnectPlayer { reason }` (default) | Disconnect from the proxy |
-| `RedirectTo(ServerId)` | Send to another server |
-| `SendToLimbo { limbo_handlers }` | Route through limbo handlers |
-| `Notify { message }` | Keep connected, show a message |
+| `Unreachable { error }` (`unreachable`) | The proxy could not connect, or the login or configuration phase did not finish in time. `error` describes the failure |
+| `LoginRefused` (`login_refused`) | The server answered the login with a disconnect |
+| `ConfigDisconnect` (`config_disconnect`) | The server sent a disconnect during the configuration phase (1.20.2+) |
+| `PlayDisconnect` (`play_disconnect`) | The server sent a disconnect in the play phase |
+| `ConnectionLost` (`connection_lost`) | The server closed the connection without a disconnect packet |
+
+**Results** (`KickedFromServerResult`, `#[non_exhaustive]`, the shortcut method in parentheses):
+
+| Variant | Description |
+|---------|-------------|
+| `DisconnectPlayer { reason }` (`disconnect(reason)`) | Disconnect the player. With `reason: None` the client gets the server's disconnect packet byte for byte, re-encoded only when the client is in another phase than the server was. When the server sent none, the client gets the server's `disconnect_message` |
+| `RedirectTo(ServerId)` (`redirect_to`) | Connect the player to another server |
+| `SendToLimbo { limbo_handlers }` (`send_to_limbo`) | Send the player to limbo. An empty list uses the `limbo_handlers` of `server` |
+| `Notify { message }` (`notify`) | Keep the player on the server they are on and send them `message` in chat. When they have no server to stay on, disconnect them with `message` |
+
+#### Kick defaults
+
+| Situation | Default result |
+|-----------|----------------|
+| The player was playing on `server` (`during_connect` is `false`) | `DisconnectPlayer { reason: None }`: the client sees the server's disconnect as the server sent it |
+| A switch failed and the player can stay on the server they are on | `Notify` with the server's reason, or its `disconnect_message` when it sent none |
+| A connection failed and the player has no server to stay on: the initial connection, a limbo exit, a redirect after a kick in the play phase | `SendToLimbo` with the `limbo_handlers` of `server` when it has some, otherwise `DisconnectPlayer { reason: None }` |
+
+During a switch the player stays on their server until the new one sends its `JoinGame`, with one exception on 1.20.2+: the client leaves the old server's world when the new server starts its configuration phase. A disconnect sent as the first configuration packet still leaves the player where they were. A later one, or a failure after the configuration phase, leaves them with no server to stay on.
+
+A `RedirectTo` goes through the [connection events](#server-connections): `ServerPreConnectEvent` fires with the cause `KickRedirect` and `previous_server` set to the player's current server, which is the server that kicked them after a kick in the play phase. If the redirect fails as well, a new `KickedFromServerEvent` fires for the redirect target. After three redirects in a row that failed, a fourth `RedirectTo` is handled as `DisconnectPlayer { reason: None }`.
+
+When the player ends up disconnected, the `DisconnectEvent` cause is `BackendClosed` with the reason the client was shown: the server's parsed reason, or your `reason` or `message`. It is `None` when the server sent no reason and the client got the `disconnect_message`. A server that could not be reached gives the cause `Error`. A limbo handler reached through `SendToLimbo` gets `LimboEntryContext::KickedFromServer` with the server's reason, or its `disconnect_message`.
 
 ```rust
 ctx.event_bus().subscribe::<KickedFromServerEvent, _>(
     EventPriority::NORMAL,
     |event| {
-        // If kicked from a game server, send to lobby instead of disconnecting
-        event.redirect_to(ServerId::new("lobby"));
+        if !event.during_connect && event.server != ServerId::new("lobby") {
+            event.redirect_to(ServerId::new("lobby"));
+        }
     },
 );
 ```
@@ -514,6 +549,8 @@ ctx.event_bus().subscribe::<KickedFromServerEvent, _>(
 ### WASM connection events
 
 WASM plugins (contract 0.2.3) keep the records they had. `server-pre-connect` carries `server` as `original-server`, and `server-connected` fires with `ServerConnectedEvent`, so it now waits for the backend to accept the login. `server-switch` fires from `ServerPostConnectEvent` when `switched_from()` is set, with the same `previous-server` and `new-server` fields. WASM plugins do not see `previous_server`, `cause`, or a join that is not a switch.
+
+`kicked-from-server` keeps `player-id`, `server` and `reason`. `reason` is the server's reason as component JSON, the `error` text when the server could not be reached, and an empty text component otherwise. `disconnect-player(reason)` disconnects with that reason; to show the server's own disconnect, leave the result as it is. WASM plugins do not see `cause`, `during_connect` or `previous_server`.
 
 ## Chat events
 

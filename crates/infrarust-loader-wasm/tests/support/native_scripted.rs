@@ -238,8 +238,11 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
             }
         }),
         EventName::KickedFromServer => bus.subscribe(at, move |e: &mut KickedFromServerEvent| {
-            let id = e.player_id.as_u64().to_string();
-            let reason = e.reason.to_json();
+            let id = e.player_id().as_u64().to_string();
+            let reason = e
+                .reason
+                .as_ref()
+                .map_or_else(|| Component::text("").to_json(), Component::to_json);
             seen.record(&[&id, e.server.as_str(), &reason]);
             let result = match &seen.action {
                 Action::Redirect(server) => {
@@ -252,7 +255,7 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
                     message: text(message),
                 },
                 Action::Disconnect(reason) => KickedFromServerResult::DisconnectPlayer {
-                    reason: text(reason),
+                    reason: Some(text(reason)),
                 },
                 _ => return,
             };

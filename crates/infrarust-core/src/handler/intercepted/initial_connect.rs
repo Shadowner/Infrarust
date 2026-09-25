@@ -25,11 +25,13 @@ use crate::player::PlayerSession;
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
 
 pub(super) enum ConnectionMode {
     Backend(BackendBridge),
     Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
+    Kicked(Kick),
 }
 
 pub(super) enum InitialMode {
@@ -262,7 +264,6 @@ pub(super) async fn resolve_initial_mode(
 
         let mut join = ServerJoin::new(player, target_server_id.clone());
         match connect_to_backend(
-            client,
             &mut join,
             auth_result,
             *login_completed,
@@ -281,54 +282,13 @@ pub(super) async fn resolve_initial_mode(
                 ConnectionMode::Backend(backend)
             }
             Err(e) => {
+                tracing::info!(
+                    server = %routing.config_id,
+                    error = %e,
+                    "initial backend connection failed"
+                );
                 pending = Pending::nothing();
-                if !server_config.limbo_handlers.is_empty() {
-                    tracing::info!(
-                        server = %routing.config_id,
-                        error = %e,
-                        "backend unreachable, falling back to limbo"
-                    );
-
-                    prepare_client_for_limbo(
-                        client,
-                        auth_result,
-                        login_completed,
-                        version,
-                        services,
-                    )
-                    .await?;
-                    if let Some(handlers) = resolve_limbo_lenient(
-                        &services.limbo_handler_registry,
-                        &server_config.limbo_handlers,
-                    ) {
-                        ConnectionMode::Limbo(
-                            handlers,
-                            LimboEntryContext::KickedFromServer {
-                                server: target_server_id.clone(),
-                                reason: Component::text(format!("Backend unreachable: {e}")),
-                            },
-                        )
-                    } else {
-                        let msg = Component::text(server_config.effective_disconnect_message());
-                        client
-                            .disconnect(&msg, &services.packet_registry)
-                            .await
-                            .ok();
-                        return Ok(InitialMode::Denied(DisconnectCause::Error));
-                    }
-                } else {
-                    tracing::warn!(
-                        server = %routing.config_id,
-                        error = %e,
-                        "backend unreachable, sending disconnect to client"
-                    );
-                    let msg = Component::text(server_config.effective_disconnect_message());
-                    client
-                        .disconnect(&msg, &services.packet_registry)
-                        .await
-                        .ok();
-                    return Ok(InitialMode::Denied(DisconnectCause::Error));
-                }
+                ConnectionMode::Kicked(Kick::failed(target_server_id.clone(), e, false))
             }
         }
     };
@@ -342,7 +302,6 @@ pub(super) async fn resolve_initial_mode(
 
 #[allow(clippy::too_many_arguments)]
 async fn connect_to_backend(
-    client: &mut ClientBridge,
     join: &mut ServerJoin,
     auth_result: &AuthResult,
     login_completed: bool,
@@ -399,19 +358,9 @@ async fn connect_to_backend(
             None
         };
 
-        if let Err(e) = backend
+        backend
             .consume_backend_login(&services.packet_registry, version, velocity_ctx)
-            .await
-        {
-            client
-                .disconnect(
-                    &Component::text("Backend refused connection"),
-                    &services.packet_registry,
-                )
-                .await
-                .ok();
-            return Err(e);
-        }
+            .await?;
 
         if version.no_less_than(ProtocolVersion::V1_20_2) {
             let ack = SLoginAcknowledged;

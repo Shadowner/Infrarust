@@ -14,7 +14,9 @@ use infrarust_api::types::{Component, PlayerId, RawPacket, ServerId};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_protocol::io::PacketFrame;
-use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfig};
+use infrarust_protocol::packets::config::{
+    CConfigDisconnect, CFinishConfig, SAcknowledgeFinishConfig,
+};
 use infrarust_protocol::packets::login::{
     CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged,
 };
@@ -37,6 +39,7 @@ use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::kick::BackendKick;
 use crate::session::server_join::ServerJoin;
 
 /// Result of the proxy loop, determining what happens after the loop ends.
@@ -61,8 +64,9 @@ pub enum ProxyLoopOutcome {
     Kicked {
         reason: Component,
     },
-    BackendKicked {
-        reason: Component,
+    BackendKick(Box<BackendKick>),
+    BackendClosed {
+        reason: Option<Component>,
     },
 }
 
@@ -72,8 +76,7 @@ pub enum ProxyLoopOutcome {
 enum BackendAction {
     /// Continue the loop normally.
     Continue,
-    /// Backend sent a disconnect packet.
-    Disconnected(Option<String>),
+    Kicked(Box<BackendKick>),
 }
 
 use super::chat_utils::{ChatAction, detect_chat_or_command};
@@ -178,7 +181,6 @@ async fn reach(milestone: Milestone, join: &mut Option<ServerJoin>, services: &P
 /// - `SetCompression`: activates compression on both bridges
 /// - `LoginSuccess`: transitions Login → Config (1.20.2+) or Play
 /// - `FinishConfig` / `AcknowledgeFinishConfig`: transitions Config → Play
-/// - `Disconnect`: forwards and terminates
 ///
 /// Codec filters are applied to every packet BEFORE the EventBus.
 /// In Play state, only `CDisconnect` is intercepted. All other packets
@@ -268,8 +270,10 @@ pub async fn proxy_loop(
                             Err(e) => result = Err(e),
                         }
                     }
+                    let mut backend_lost = false;
                     if result.is_ok() {
                         result = backend.flush().await;
+                        backend_lost = result.is_err();
                     }
                     if result.is_ok() {
                         result = client.flush().await;
@@ -277,12 +281,15 @@ pub async fn proxy_loop(
                     if let Err(e) = result {
                         let _ = backend.flush().await;
                         let _ = client.flush().await;
-                        if e.is_expected_disconnect() {
+                        if !e.is_expected_disconnect() {
+                            break ProxyLoopOutcome::Error(e);
+                        }
+                        if backend_lost {
                             break ProxyLoopOutcome::BackendDisconnected {
                                 reason: Some(e.to_string()),
                             };
                         }
-                        break ProxyLoopOutcome::Error(e);
+                        break ProxyLoopOutcome::ClientDisconnected;
                     }
                     if let Some(end) = settle_commands(client, registry, command_outcome).await {
                         break end;
@@ -347,8 +354,8 @@ pub async fn proxy_loop(
                             }
                             match action {
                                 BackendAction::Continue => {}
-                                BackendAction::Disconnected(reason) => {
-                                    break ProxyLoopOutcome::BackendDisconnected { reason };
+                                BackendAction::Kicked(kick) => {
+                                    break ProxyLoopOutcome::BackendKick(kick);
                                 }
                             }
                             if let Some(end) =
@@ -364,6 +371,12 @@ pub async fn proxy_loop(
                     }
                 }
                 Ok(None) => break ProxyLoopOutcome::BackendDisconnected { reason: None },
+                Err(e) if e.is_expected_disconnect() => {
+                    let _ = client.flush().await;
+                    break ProxyLoopOutcome::BackendDisconnected {
+                        reason: Some(e.to_string()),
+                    };
+                }
                 Err(e) => break ProxyLoopOutcome::Error(e),
             },
         }
@@ -734,8 +747,15 @@ async fn handle_backend_to_client(
             }
         }
 
-        let intercepted = Some(frame.id) == hot_ids.c_disconnect
-            || (Some(frame.id) == hot_ids.c_commands && services.config.announce_proxy_commands);
+        if Some(frame.id) == hot_ids.c_disconnect {
+            return Ok(BackendAction::Kicked(Box::new(BackendKick::new(
+                frame,
+                ConnectionState::Play,
+                version,
+            ))));
+        }
+        let intercepted =
+            Some(frame.id) == hot_ids.c_commands && services.config.announce_proxy_commands;
         if !intercepted {
             client.queue_frame(&frame)?;
             return Ok(BackendAction::Continue);
@@ -743,14 +763,6 @@ async fn handle_backend_to_client(
 
         match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
             Ok(DecodedPacket::Typed { id, packet }) => {
-                if let Some(disc) = packet.as_any().downcast_ref::<CDisconnect>() {
-                    client.queue_frame(&frame)?;
-                    let reason = disc
-                        .as_json()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| String::from_utf8_lossy(&disc.reason).to_string());
-                    return Ok(BackendAction::Disconnected(Some(reason)));
-                }
                 if let Some(commands) = packet.as_any().downcast_ref::<CCommands>() {
                     if services.config.announce_proxy_commands {
                         let mut modified = commands.clone();
@@ -834,18 +846,15 @@ async fn handle_backend_to_client(
                 return Ok(BackendAction::Continue);
             }
 
-            // LoginDisconnect
-            if let Some(disconnect) = packet.as_any().downcast_ref::<CLoginDisconnect>() {
-                client.queue_frame(&frame)?;
-                return Ok(BackendAction::Disconnected(Some(disconnect.reason.clone())));
-            }
-
-            // Play Disconnect (should not occur in Login/Config, but handle defensively)
-            if packet.as_any().downcast_ref::<CDisconnect>().is_some() {
-                client.queue_frame(&frame)?;
-                return Ok(BackendAction::Disconnected(Some(
-                    "backend disconnect".to_string(),
-                )));
+            if packet.as_any().downcast_ref::<CLoginDisconnect>().is_some()
+                || packet
+                    .as_any()
+                    .downcast_ref::<CConfigDisconnect>()
+                    .is_some()
+            {
+                return Ok(BackendAction::Kicked(Box::new(BackendKick::new(
+                    frame, state, version,
+                ))));
             }
 
             // FinishConfig — forward, state transition happens when client ACKs

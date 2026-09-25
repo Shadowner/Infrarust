@@ -207,6 +207,12 @@ impl ClientBridge {
         Ok(())
     }
 
+    pub async fn close_with(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
+        let written = self.write_frame(frame).await;
+        self.stream.shutdown().await.ok();
+        written
+    }
+
     /// Sends a disconnect packet and shuts down the connection.
     ///
     /// Uses the correct packet type and encoding for the current state and version:

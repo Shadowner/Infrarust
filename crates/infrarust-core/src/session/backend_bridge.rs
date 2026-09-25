@@ -21,6 +21,7 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use crate::auth::game_profile::offline_uuid;
 use crate::error::CoreError;
 use crate::pipeline::types::HandshakeData;
+use crate::session::kick::BackendKick;
 use crate::util::domain_rewrite::rewrite_handshake;
 
 const READ_CHUNK: usize = 16 * 1024;
@@ -317,12 +318,12 @@ impl BackendBridge {
                             break;
                         }
 
-                        if let Some(disconnect) = packet.as_any().downcast_ref::<CLoginDisconnect>()
-                        {
-                            return Err(CoreError::Rejected(format!(
-                                "backend refused login: {}",
-                                disconnect.reason
-                            )));
+                        if packet.as_any().downcast_ref::<CLoginDisconnect>().is_some() {
+                            return Err(CoreError::BackendKick(Box::new(BackendKick::new(
+                                frame,
+                                ConnectionState::Login,
+                                version,
+                            ))));
                         }
 
                         if let Some(request) = packet.as_any().downcast_ref::<CLoginPluginRequest>()

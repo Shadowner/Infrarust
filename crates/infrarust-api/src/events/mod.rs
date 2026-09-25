@@ -16,9 +16,9 @@ pub mod proxy;
 
 pub use chat::{ChatMessageEvent, ChatMessageResult};
 pub use connection::{
-    ConnectCause, KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
-    PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPostConnectEvent,
-    ServerPreConnectEvent, ServerPreConnectResult,
+    ConnectCause, KickCause, KickedFromServerEvent, KickedFromServerResult,
+    PlayerChooseInitialServerEvent, PlayerChooseInitialServerResult, ServerConnectedEvent,
+    ServerPostConnectEvent, ServerPreConnectEvent, ServerPreConnectResult,
 };
 pub use lifecycle::{
     DisconnectCause, DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult,

@@ -4,10 +4,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use infrarust_core::auth::game_profile::offline_uuid;
-use infrarust_protocol::codec::{McBufReadExt, VarInt};
+use infrarust_protocol::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
-use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfig};
+use infrarust_protocol::packets::config::{
+    CConfigDisconnect, CFinishConfig, SAcknowledgeFinishConfig,
+};
 use infrarust_protocol::packets::login::{
     CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged, SLoginStart,
 };
@@ -26,7 +28,7 @@ use uuid::Uuid;
 
 use crate::error::{HarnessError, HarnessResult};
 use crate::framing::{FrameReader, FrameWriter, FramedConn};
-use crate::text::encode_component_json;
+use crate::text::{encode_component_json, uses_nbt_components};
 use crate::wire;
 
 #[derive(Debug, Clone)]
@@ -504,14 +506,28 @@ impl BackendConn {
     }
 
     pub async fn kick_json(&mut self, json: &str) -> HarnessResult<()> {
-        if self.setup.state == ConnectionState::Login {
-            let packet = CLoginDisconnect {
-                reason: json.to_string(),
-            };
-            self.send_packet(&packet).await?;
-        } else {
-            let reason = encode_component_json(json, self.setup.version)?;
-            self.send_packet(&CDisconnect { reason }).await?;
+        let version = self.setup.version;
+        match self.setup.state {
+            ConnectionState::Login => {
+                let packet = CLoginDisconnect {
+                    reason: json.to_string(),
+                };
+                self.send_packet(&packet).await?;
+            }
+            ConnectionState::Config => {
+                let reason = if uses_nbt_components(version) {
+                    encode_component_json(json, version)?
+                } else {
+                    let mut reason = Vec::new();
+                    reason.write_string(json)?;
+                    reason
+                };
+                self.send_packet(&CConfigDisconnect { reason }).await?;
+            }
+            _ => {
+                let reason = encode_component_json(json, version)?;
+                self.send_packet(&CDisconnect { reason }).await?;
+            }
         }
         self.close().await;
         Ok(())

@@ -5,7 +5,7 @@ use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{EventPriority, ListenerHandle, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::connection::{
-    KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
+    KickCause, KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
     PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPostConnectEvent,
     ServerPreConnectEvent, ServerPreConnectResult,
 };
@@ -17,7 +17,7 @@ use infrarust_api::events::proxy::{
     ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent, ProxyShutdownEvent,
     ServerStateChangeEvent,
 };
-use infrarust_api::types::{ProtocolVersion, ServerId};
+use infrarust_api::types::{Component, ProtocolVersion, ServerId};
 
 use crate::actor::InstanceRef;
 
@@ -242,10 +242,15 @@ fn ev_server_switch(e: &ServerPostConnectEvent) -> Option<wg::Event> {
 }
 
 fn ev_kicked_from_server(e: &KickedFromServerEvent) -> wg::Event {
+    let reason = match (&e.reason, &e.cause) {
+        (Some(reason), _) => reason.clone(),
+        (None, KickCause::Unreachable { error }) => Component::text(error),
+        (None, _) => Component::text(""),
+    };
     wg::Event::KickedFromServer(wg::KickedFromServerEvent {
-        player_id: e.player_id.as_u64(),
+        player_id: e.player_id().as_u64(),
         server: e.server.as_str().to_string(),
-        reason: convert::component_to_wit(&e.reason),
+        reason: convert::component_to_wit(&reason),
     })
 }
 
@@ -327,7 +332,7 @@ fn apply_kicked_from_server(outcome: wg::EventOutcome, ev: &mut KickedFromServer
         let native = match r {
             wg::KickedFromServerResult::DisconnectPlayer(c) => {
                 KickedFromServerResult::DisconnectPlayer {
-                    reason: convert::component_from_wit(&c),
+                    reason: Some(convert::component_from_wit(&c)),
                 }
             }
             wg::KickedFromServerResult::RedirectTo(s) => {

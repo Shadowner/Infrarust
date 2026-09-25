@@ -20,7 +20,7 @@ use infrarust_api::events::proxy::{
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
-use infrarust_api::types::{GameProfile, PlayerId, ServerId};
+use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 use tokio::time::Instant;
@@ -416,6 +416,7 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
                 "last_server": e.last_server.as_ref().map(ServerId::as_str),
                 "cause": e.cause.as_str(),
                 "reason": e.cause.reason().map(ToString::to_string),
+                "reason_json": e.cause.reason().map(component_value),
             }),
         )
     });
@@ -494,7 +495,7 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
     on::<KickedFromServerEvent>(bus, recorder, |e| {
         let result = match e.result() {
             KickedFromServerResult::DisconnectPlayer { reason } => {
-                json!({ "disconnect_player": reason.to_string() })
+                json!({ "disconnect_player": reason.as_ref().map(ToString::to_string) })
             }
             KickedFromServerResult::RedirectTo(id) => json!({ "redirect_to": id.as_str() }),
             KickedFromServerResult::SendToLimbo { limbo_handlers } => {
@@ -507,11 +508,15 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
         };
         (
             EventKind::KickedFromServer,
-            Some(e.player_id),
-            None,
+            Some(e.player_id()),
+            Some(e.profile().username.clone()),
             json!({
                 "server": e.server.as_str(),
-                "reason": e.reason.to_string(),
+                "reason": e.reason.as_ref().map(component_value),
+                "cause": e.cause.as_str(),
+                "during_connect": e.during_connect,
+                "previous_server": server(e.previous_server.as_ref()),
+                "current_server": server(e.player.current_server().as_ref()),
                 "result": result,
             }),
         )
@@ -580,6 +585,10 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
             }),
         )
     });
+}
+
+pub fn component_value(component: &Component) -> Value {
+    serde_json::from_str(&component.to_json()).unwrap_or(Value::Null)
 }
 
 fn server(server: Option<&ServerId>) -> Value {

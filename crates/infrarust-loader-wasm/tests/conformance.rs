@@ -37,7 +37,7 @@ fn default_result(event: E) -> &'static str {
     match event {
         E::PreLogin | E::ServerPreConnect | E::PlayerChooseInitialServer => "allowed",
         E::PermissionsSetup => "use-default",
-        E::KickedFromServer => "disconnect:Kicked from server",
+        E::KickedFromServer => "disconnect",
         E::ProxyPing => "ping:A Minecraft Proxy v2",
         E::ChatMessage => "allow",
         _ => "none",

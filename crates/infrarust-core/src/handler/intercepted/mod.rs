@@ -15,7 +15,6 @@ use infrarust_api::permissions::PermissionChecker;
 use infrarust_api::player::Player;
 use infrarust_api::types::{Component, GameProfile};
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_transport::BackendConnector;
@@ -30,7 +29,6 @@ use crate::player::{PlayerSession, SHUTDOWN_REASON};
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::ProxyLoopOutcome;
-use crate::util::text::decode_text_component;
 
 use auth::{AuthResult, AuthStrategy};
 use initial_connect::InitialMode;
@@ -308,7 +306,7 @@ impl InterceptedHandler {
                     reason: Some(reason),
                 }
             }
-            None => disconnect_cause(&outcome, &shutdown, version),
+            None => disconnect_cause(&outcome, &shutdown),
         };
         announce_shutdown(&mut client, &cause, registry).await;
 
@@ -378,24 +376,21 @@ fn cancelled_cause(shutdown: &CancellationToken) -> DisconnectCause {
     }
 }
 
-fn disconnect_cause(
-    outcome: &ProxyLoopOutcome,
-    shutdown: &CancellationToken,
-    version: ProtocolVersion,
-) -> DisconnectCause {
+fn disconnect_cause(outcome: &ProxyLoopOutcome, shutdown: &CancellationToken) -> DisconnectCause {
     match outcome {
         ProxyLoopOutcome::ClientDisconnected => DisconnectCause::ClientQuit,
         ProxyLoopOutcome::Kicked { reason } => DisconnectCause::Kicked {
             reason: Some(reason.clone()),
         },
-        ProxyLoopOutcome::BackendKicked { reason } => DisconnectCause::BackendClosed {
-            reason: Some(reason.clone()),
+        ProxyLoopOutcome::BackendClosed { reason } => DisconnectCause::BackendClosed {
+            reason: reason.clone(),
         },
-        ProxyLoopOutcome::BackendDisconnected { reason } => DisconnectCause::BackendClosed {
-            reason: reason
-                .as_deref()
-                .map(|raw| decode_text_component(raw.as_bytes(), version, ConnectionState::Play)),
+        ProxyLoopOutcome::BackendKick(kick) => DisconnectCause::BackendClosed {
+            reason: Some(kick.reason.clone()),
         },
+        ProxyLoopOutcome::BackendDisconnected { .. } => {
+            DisconnectCause::BackendClosed { reason: None }
+        }
         ProxyLoopOutcome::Shutdown => cancelled_cause(shutdown),
         ProxyLoopOutcome::Error(_) | ProxyLoopOutcome::SwitchRequested { .. } => {
             DisconnectCause::Error

@@ -5,9 +5,9 @@ use std::path::Path;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::connection::{
-    ConnectCause, KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
-    PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPostConnectEvent,
-    ServerPreConnectEvent, ServerPreConnectResult,
+    ConnectCause, KickCause, KickedFromServerEvent, KickedFromServerResult,
+    PlayerChooseInitialServerEvent, PlayerChooseInitialServerResult, ServerConnectedEvent,
+    ServerPostConnectEvent, ServerPreConnectEvent, ServerPreConnectResult,
 };
 use infrarust_api::events::lifecycle::{
     DisconnectCause, DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent,
@@ -205,9 +205,10 @@ fn server_pre_connect(result: &ServerPreConnectResult) -> Outcome {
 
 fn kicked(result: &KickedFromServerResult) -> Outcome {
     match result {
-        KickedFromServerResult::DisconnectPlayer { reason } => {
-            Outcome::component("disconnect", reason)
-        }
+        KickedFromServerResult::DisconnectPlayer {
+            reason: Some(reason),
+        } => Outcome::component("disconnect", reason),
+        KickedFromServerResult::DisconnectPlayer { reason: None } => Outcome::same("disconnect"),
         KickedFromServerResult::RedirectTo(server) => {
             Outcome::same(format!("redirect:{}", server.as_str()))
         }
@@ -323,9 +324,13 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
         }
         EventName::KickedFromServer => {
             let event = KickedFromServerEvent::new(
-                player(),
+                session(),
                 ServerId::new("survival"),
-                Component::text(KICK_REASON),
+                Some(Component::text(KICK_REASON)),
+                KickCause::PlayDisconnect,
+                false,
+                Some(ServerId::new("lobby")),
+                KickedFromServerResult::default(),
             );
             kicked(bus.fire(event).await.result())
         }

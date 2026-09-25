@@ -43,8 +43,15 @@ pub(crate) fn log_proxy_loop_outcome(session_id: &Uuid, outcome: &ProxyLoopOutco
         ProxyLoopOutcome::Kicked { reason } => {
             tracing::info!(session = %session_id, reason = %reason.to_plain(), "player kicked");
         }
-        ProxyLoopOutcome::BackendKicked { reason } => {
-            tracing::info!(session = %session_id, reason = %reason.to_plain(), "backend kicked the player");
+        ProxyLoopOutcome::BackendKick(kick) => {
+            tracing::info!(session = %session_id, reason = %kick, "backend kicked the player");
+        }
+        ProxyLoopOutcome::BackendClosed { reason } => {
+            tracing::info!(
+                session = %session_id,
+                reason = reason.as_ref().map(Component::to_plain),
+                "backend dropped the player"
+            );
         }
     }
 }

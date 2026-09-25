@@ -168,61 +168,99 @@ impl ServerPostConnectEvent {
 
 impl Event for ServerPostConnectEvent {}
 
-/// Fired when a backend server kicks a player.
-///
-/// Listeners can decide whether to disconnect the player, redirect them
-/// to another server, send them to limbo, or just notify them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum KickCause {
+    Unreachable { error: String },
+    LoginRefused,
+    ConfigDisconnect,
+    PlayDisconnect,
+    ConnectionLost,
+}
+
+impl KickCause {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Unreachable { .. } => "unreachable",
+            Self::LoginRefused => "login_refused",
+            Self::ConfigDisconnect => "config_disconnect",
+            Self::PlayDisconnect => "play_disconnect",
+            Self::ConnectionLost => "connection_lost",
+        }
+    }
+}
+
+#[non_exhaustive]
 pub struct KickedFromServerEvent {
-    /// The player's session ID.
-    pub player_id: PlayerId,
-    /// The server that kicked the player.
+    pub player: Arc<dyn Player>,
     pub server: ServerId,
-    /// The kick reason from the backend server.
-    pub reason: Component,
+    pub reason: Option<Component>,
+    pub cause: KickCause,
+    pub during_connect: bool,
+    pub previous_server: Option<ServerId>,
     result: KickedFromServerResult,
 }
 
 impl KickedFromServerEvent {
-    pub fn new(player_id: PlayerId, server: ServerId, reason: Component) -> Self {
+    pub fn new(
+        player: Arc<dyn Player>,
+        server: ServerId,
+        reason: Option<Component>,
+        cause: KickCause,
+        during_connect: bool,
+        previous_server: Option<ServerId>,
+        result: KickedFromServerResult,
+    ) -> Self {
         Self {
-            player_id,
+            player,
             server,
             reason,
-            result: KickedFromServerResult::default(),
+            cause,
+            during_connect,
+            previous_server,
+            result,
         }
     }
 
-    /// Shortcut: redirect the player to another server.
+    pub fn player_id(&self) -> PlayerId {
+        self.player.id()
+    }
+
+    pub fn profile(&self) -> &GameProfile {
+        self.player.profile()
+    }
+
     pub fn redirect_to(&mut self, server: ServerId) {
         self.result = KickedFromServerResult::RedirectTo(server);
     }
+
+    pub fn disconnect(&mut self, reason: Component) {
+        self.result = KickedFromServerResult::DisconnectPlayer {
+            reason: Some(reason),
+        };
+    }
+
+    pub fn send_to_limbo(&mut self, limbo_handlers: Vec<String>) {
+        self.result = KickedFromServerResult::SendToLimbo { limbo_handlers };
+    }
+
+    pub fn notify(&mut self, message: Component) {
+        self.result = KickedFromServerResult::Notify { message };
+    }
 }
 
-/// The result of a [`KickedFromServerEvent`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum KickedFromServerResult {
-    /// Disconnect the player from the proxy entirely.
-    DisconnectPlayer {
-        /// The reason shown to the player.
-        reason: Component,
-    },
-    /// Redirect the player to a different server.
+    DisconnectPlayer { reason: Option<Component> },
     RedirectTo(ServerId),
-    /// Send the player to the limbo handler chain.
     SendToLimbo { limbo_handlers: Vec<String> },
-    /// Keep the player on the proxy but notify them of the kick.
-    Notify {
-        /// A message shown to the player.
-        message: Component,
-    },
+    Notify { message: Component },
 }
 
 impl Default for KickedFromServerResult {
     fn default() -> Self {
-        Self::DisconnectPlayer {
-            reason: Component::error("Kicked from server"),
-        }
+        Self::DisconnectPlayer { reason: None }
     }
 }
 
@@ -427,31 +465,78 @@ mod tests {
         assert_eq!(moved.switched_from(), Some(&lobby));
     }
 
-    #[test]
-    fn kicked_default_disconnects() {
-        let event = KickedFromServerEvent::new(
-            PlayerId::new(1),
+    fn kicked(result: KickedFromServerResult) -> KickedFromServerEvent {
+        KickedFromServerEvent::new(
+            steve(),
             ServerId::new("lobby"),
-            Component::text("Banned"),
-        );
-        assert!(matches!(
-            event.result(),
-            KickedFromServerResult::DisconnectPlayer { .. }
-        ));
+            Some(Component::text("Banned")),
+            KickCause::PlayDisconnect,
+            false,
+            None,
+            result,
+        )
     }
 
     #[test]
-    fn kicked_redirect() {
-        let mut event = KickedFromServerEvent::new(
-            PlayerId::new(1),
-            ServerId::new("lobby"),
-            Component::text("Restarting"),
-        );
-        event.redirect_to(ServerId::new("hub"));
-        assert!(matches!(
+    fn kicked_keeps_the_default_the_proxy_chose() {
+        let event = kicked(KickedFromServerResult::Notify {
+            message: Component::text("Banned"),
+        });
+        assert_eq!(
             event.result(),
-            KickedFromServerResult::RedirectTo(_)
-        ));
+            &KickedFromServerResult::Notify {
+                message: Component::text("Banned")
+            }
+        );
+        assert_eq!(event.player_id(), PlayerId::new(1));
+        assert_eq!(event.profile().username, "Steve");
+        assert_eq!(
+            KickedFromServerResult::default(),
+            KickedFromServerResult::DisconnectPlayer { reason: None }
+        );
+    }
+
+    #[test]
+    fn kicked_shortcuts() {
+        let mut event = kicked(KickedFromServerResult::default());
+        event.redirect_to(ServerId::new("hub"));
+        assert_eq!(
+            event.result(),
+            &KickedFromServerResult::RedirectTo(ServerId::new("hub"))
+        );
+        event.disconnect(Component::text("bye"));
+        assert_eq!(
+            event.result(),
+            &KickedFromServerResult::DisconnectPlayer {
+                reason: Some(Component::text("bye"))
+            }
+        );
+        event.send_to_limbo(vec!["queue".into()]);
+        assert_eq!(
+            event.result(),
+            &KickedFromServerResult::SendToLimbo {
+                limbo_handlers: vec!["queue".into()]
+            }
+        );
+        event.notify(Component::text("moved"));
+        assert_eq!(
+            event.result(),
+            &KickedFromServerResult::Notify {
+                message: Component::text("moved")
+            }
+        );
+    }
+
+    #[test]
+    fn kick_cause_names() {
+        let unreachable = KickCause::Unreachable {
+            error: "refused".into(),
+        };
+        assert_eq!(unreachable.as_str(), "unreachable");
+        assert_eq!(KickCause::LoginRefused.as_str(), "login_refused");
+        assert_eq!(KickCause::ConfigDisconnect.as_str(), "config_disconnect");
+        assert_eq!(KickCause::PlayDisconnect.as_str(), "play_disconnect");
+        assert_eq!(KickCause::ConnectionLost.as_str(), "connection_lost");
     }
 
     fn choose_initial_event() -> PlayerChooseInitialServerEvent {

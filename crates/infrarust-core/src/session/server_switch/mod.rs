@@ -16,6 +16,7 @@ use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::packets::login::SLoginAcknowledged;
+use infrarust_protocol::packets::play::disconnect::CDisconnect;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
 
@@ -26,7 +27,10 @@ use crate::player::PlayerSession;
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::kick::{BackendKick, Kick};
 use crate::session::server_join::{ServerJoin, pre_connect};
+
+use config_phase::PhaseError;
 
 const SWITCH_CONFIG_PHASE_TIMEOUT_SECS: u64 = 30;
 
@@ -38,11 +42,12 @@ pub struct SwitchSuccess {
     pub new_server_id: ServerId,
 }
 
-pub enum SwitchResult {
+pub(crate) enum SwitchResult {
     Backend(SwitchSuccess),
     Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
     Denied(Component),
     Unchanged,
+    Failed(Kick),
 }
 
 pub(crate) enum SwitchTarget {
@@ -169,7 +174,7 @@ pub(crate) async fn perform_switch(
         services.backend_health.as_ref(),
     );
 
-    let backend_conn = backend_connector
+    let backend_conn = match backend_connector
         .connect(
             effective_target.as_str(),
             &addresses,
@@ -178,66 +183,46 @@ pub(crate) async fn perform_switch(
             &connection_info,
         )
         .await
-        .map_err(|e| {
-            CoreError::Rejected(format!(
-                "failed to connect to {}: {e}",
-                effective_target.as_str()
-            ))
-        })?;
+    {
+        Ok(conn) => conn,
+        Err(e) => {
+            return Ok(SwitchResult::Failed(Kick::failed(
+                effective_target,
+                e.into(),
+                false,
+            )));
+        }
+    };
 
     let connected_address = backend_conn.server_address().clone();
     let mut new_backend = BackendBridge::new(backend_conn.into_stream(), version)
         .with_server_address(connected_address);
 
-    let handler = services.resolve_forwarding_handler(&server_config);
-    let fwd_data = ForwardingData {
-        real_ip: real_ip.unwrap_or(peer_addr.ip()),
-        uuid: api_profile.uuid,
-        username: game_profile_name.to_string(),
-        properties: api_profile.properties.clone(),
-        protocol_version: version,
-        chat_session: None,
-    };
-
-    if handler.modifies_handshake() {
-        let mut hs = build_handshake_for_backend(handshake_data, &server_config);
-        handler.apply_handshake(&mut hs, &fwd_data);
-        new_backend
-            .send_handshake_and_login(&hs, game_profile_name, &services.packet_registry)
-            .await?;
-    } else {
-        new_backend
-            .send_initial_packets_offline(
-                handshake_data,
-                &server_config,
-                game_profile_name,
-                &services.packet_registry,
-            )
-            .await?;
-    }
-
-    // 5. Consume backend login (SetCompression + LoginSuccess)
-    let velocity_ctx = services.forwarding_secret().map(|s| (&fwd_data, s));
-    new_backend
-        .consume_backend_login(&services.packet_registry, version, velocity_ctx)
-        .await?;
-
-    // 6. For 1.20.2+: send LoginAcknowledged to backend, transition to Config
-    if version.no_less_than(ProtocolVersion::V1_20_2) {
-        let ack = SLoginAcknowledged;
-        new_backend
-            .send_packet(&ack, &services.packet_registry)
-            .await?;
-        new_backend.set_state(ConnectionState::Config);
-        tracing::debug!("backend LoginAcknowledged → Config");
+    if let Err(e) = login_to_backend(
+        &mut new_backend,
+        handshake_data,
+        game_profile_name,
+        api_profile,
+        &server_config,
+        services,
+        peer_addr,
+        real_ip,
+        version,
+    )
+    .await
+    {
+        return Ok(SwitchResult::Failed(Kick::failed(
+            effective_target,
+            e,
+            false,
+        )));
     }
 
     let mut join = ServerJoin::new(session, effective_target.clone());
     join.connected(&services.event_bus).await;
 
-    // 8. Version-branched switch
+    let mut stranded = client.state() != ConnectionState::Play;
     let join_game_frame = if version.no_less_than(ProtocolVersion::V1_20_2) {
-        // 1.20.2+: config phase → JoinGame, bounded so a stalled/malicious client
         let session_token = session.shutdown_token().clone();
         let config_phase = tokio::time::timeout(
             std::time::Duration::from_secs(SWITCH_CONFIG_PHASE_TIMEOUT_SECS),
@@ -246,22 +231,65 @@ pub(crate) async fn perform_switch(
                 &mut new_backend,
                 &services.packet_registry,
                 version,
+                &mut stranded,
             ),
         );
-        tokio::select! {
+        let phase = tokio::select! {
             () = session_token.cancelled() => return Err(CoreError::ConnectionClosed),
-            result = config_phase => result
-                .map_err(|_| CoreError::Timeout("server switch config phase timed out".into()))??,
+            phase = config_phase => phase,
+        };
+        match phase {
+            Ok(Ok(frame)) => frame,
+            Ok(Err(PhaseError::Client(e))) => return Err(e),
+            Ok(Err(PhaseError::Backend(e))) => {
+                return Ok(SwitchResult::Failed(Kick::failed(
+                    effective_target,
+                    e,
+                    stranded,
+                )));
+            }
+            Err(_) => {
+                return Ok(SwitchResult::Failed(Kick::failed(
+                    effective_target,
+                    CoreError::Timeout("server switch config phase timed out".into()),
+                    stranded,
+                )));
+            }
         }
     } else {
-        // Pre-1.20.2: read JoinGame directly from new backend
-        new_backend
-            .read_frame()
-            .await?
-            .ok_or(CoreError::ConnectionClosed)?
+        let read = new_backend.read_frame().await;
+        match read {
+            Ok(Some(frame))
+                if services
+                    .packet_registry
+                    .get_packet_id::<CDisconnect>(version)
+                    == Some(frame.id) =>
+            {
+                let kick = BackendKick::new(frame, ConnectionState::Play, version);
+                return Ok(SwitchResult::Failed(Kick::failed(
+                    effective_target,
+                    CoreError::BackendKick(Box::new(kick)),
+                    stranded,
+                )));
+            }
+            Ok(Some(frame)) => frame,
+            Ok(None) => {
+                return Ok(SwitchResult::Failed(Kick::failed(
+                    effective_target,
+                    CoreError::ConnectionClosed,
+                    stranded,
+                )));
+            }
+            Err(e) => {
+                return Ok(SwitchResult::Failed(Kick::failed(
+                    effective_target,
+                    e,
+                    stranded,
+                )));
+            }
+        }
     };
 
-    // 9. Send switch packets to client (JoinGame + Respawn trick)
     switch_packets::send_switch_packets(
         client,
         &join_game_frame,
@@ -282,4 +310,58 @@ pub(crate) async fn perform_switch(
         new_backend,
         new_server_id: effective_target,
     }))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn login_to_backend(
+    new_backend: &mut BackendBridge,
+    handshake_data: &HandshakeData,
+    game_profile_name: &str,
+    profile: &infrarust_api::types::GameProfile,
+    server_config: &infrarust_config::ServerConfig,
+    services: &ProxyServices,
+    peer_addr: std::net::SocketAddr,
+    real_ip: Option<std::net::IpAddr>,
+    version: ProtocolVersion,
+) -> Result<(), CoreError> {
+    let handler = services.resolve_forwarding_handler(server_config);
+    let fwd_data = ForwardingData {
+        real_ip: real_ip.unwrap_or(peer_addr.ip()),
+        uuid: profile.uuid,
+        username: game_profile_name.to_string(),
+        properties: profile.properties.clone(),
+        protocol_version: version,
+        chat_session: None,
+    };
+
+    if handler.modifies_handshake() {
+        let mut hs = build_handshake_for_backend(handshake_data, server_config);
+        handler.apply_handshake(&mut hs, &fwd_data);
+        new_backend
+            .send_handshake_and_login(&hs, game_profile_name, &services.packet_registry)
+            .await?;
+    } else {
+        new_backend
+            .send_initial_packets_offline(
+                handshake_data,
+                server_config,
+                game_profile_name,
+                &services.packet_registry,
+            )
+            .await?;
+    }
+
+    let velocity_ctx = services.forwarding_secret().map(|s| (&fwd_data, s));
+    new_backend
+        .consume_backend_login(&services.packet_registry, version, velocity_ctx)
+        .await?;
+
+    if version.no_less_than(ProtocolVersion::V1_20_2) {
+        new_backend
+            .send_packet(&SLoginAcknowledged, &services.packet_registry)
+            .await?;
+        new_backend.set_state(ConnectionState::Config);
+        tracing::debug!("backend LoginAcknowledged → Config");
+    }
+    Ok(())
 }
