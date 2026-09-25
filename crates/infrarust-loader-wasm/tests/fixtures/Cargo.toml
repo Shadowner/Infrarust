@@ -16,6 +16,7 @@ members = [
     "codec-modify",
     "codec-stateful",
     "limbo-handler",
+    "slow-handler",
 ]
 
 [workspace.dependencies]

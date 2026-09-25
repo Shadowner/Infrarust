@@ -119,6 +119,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-slow-handler"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-trap-on-purpose"
 version = "0.0.0"
 dependencies = [

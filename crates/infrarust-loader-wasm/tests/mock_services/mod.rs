@@ -76,6 +76,36 @@ impl infrarust_api::services::ban_service::BanService for MockBanService {
     }
 }
 
+pub struct PendingBanService;
+
+impl infrarust_api::services::ban_service::private::Sealed for PendingBanService {}
+
+impl infrarust_api::services::ban_service::BanService for PendingBanService {
+    fn ban(
+        &self,
+        _target: BanTarget,
+        _reason: Option<String>,
+        _duration: Option<Duration>,
+    ) -> BoxFuture<'_, Result<(), ServiceError>> {
+        Box::pin(std::future::pending())
+    }
+    fn unban(&self, _target: &BanTarget) -> BoxFuture<'_, Result<bool, ServiceError>> {
+        Box::pin(std::future::pending())
+    }
+    fn is_banned(&self, _target: &BanTarget) -> BoxFuture<'_, Result<bool, ServiceError>> {
+        Box::pin(std::future::pending())
+    }
+    fn get_ban(
+        &self,
+        _target: &BanTarget,
+    ) -> BoxFuture<'_, Result<Option<BanEntry>, ServiceError>> {
+        Box::pin(std::future::pending())
+    }
+    fn get_all_bans(&self) -> BoxFuture<'_, Result<Vec<BanEntry>, ServiceError>> {
+        Box::pin(std::future::pending())
+    }
+}
+
 pub struct MockConfigService;
 
 impl infrarust_api::services::config_service::private::Sealed for MockConfigService {}

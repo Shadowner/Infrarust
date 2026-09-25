@@ -6,9 +6,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use infrarust_api::command::CommandManager;
 use infrarust_api::event::ResultedEvent;
@@ -16,22 +16,24 @@ use infrarust_api::events::connection::{ServerPreConnectEvent, ServerPreConnectR
 use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
+use infrarust_api::services::ban_service::BanService;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{GameProfile, PlayerId, ProtocolVersion, ServerId};
 use infrarust_config::ProxyConfig;
-use infrarust_core::event_bus::EventBusImpl;
-use infrarust_core::plugin::PluginContextFactoryImpl;
+use infrarust_core::event_bus::{EventBusConfig, EventBusImpl};
 use infrarust_core::plugin::manager::PluginServices;
+use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions};
 use infrarust_core::services::command_manager::CommandManagerImpl;
 use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_core::services::server_manager_bridge::NoopServerManager;
 use infrarust_loader_wasm::{WasmPluginLoader, build_engine};
+use tracing::instrument::WithSubscriber;
 
 mod mock_services;
 use mock_services::{
     CountingPlayerRegistry, MapConfigService, MockBanService, MockConfigService,
-    MockLoadBalancerService, MockPlayerRegistry, RecordingPlayerRegistry,
+    MockLoadBalancerService, MockPlayerRegistry, PendingBanService, RecordingPlayerRegistry,
 };
 
 const FIXTURE_DIR: &str = env!("INFRARUST_WASM_FIXTURE_DIR");
@@ -56,13 +58,31 @@ fn make_env(
     player_registry: Arc<dyn PlayerRegistry>,
     config_service: Arc<dyn ConfigService>,
 ) -> TestEnv {
-    let event_bus = Arc::new(EventBusImpl::new());
+    make_env_with(
+        plugins_dir,
+        player_registry,
+        config_service,
+        Arc::new(MockBanService),
+        EventBusConfig::default(),
+        HashMap::new(),
+    )
+}
+
+fn make_env_with(
+    plugins_dir: PathBuf,
+    player_registry: Arc<dyn PlayerRegistry>,
+    config_service: Arc<dyn ConfigService>,
+    ban_service: Arc<dyn BanService>,
+    bus_config: EventBusConfig,
+    plugin_configs: HashMap<String, PluginPermissions>,
+) -> TestEnv {
+    let event_bus = Arc::new(EventBusImpl::with_config(bus_config));
     let command_manager = Arc::new(CommandManagerImpl::new());
     let services = PluginServices {
         event_bus: Arc::clone(&event_bus),
         player_registry,
         server_manager: Arc::new(NoopServerManager),
-        ban_service: Arc::new(MockBanService),
+        ban_service,
         command_manager: Arc::clone(&command_manager) as Arc<dyn CommandManager>,
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service,
@@ -80,7 +100,7 @@ fn make_env(
         plugins_dir,
     };
     TestEnv {
-        factory: PluginContextFactoryImpl::new(services, HashMap::new()),
+        factory: PluginContextFactoryImpl::new(services, plugin_configs),
         event_bus,
         command_manager,
     }
@@ -603,5 +623,176 @@ async fn test_capability_denied_fails_to_load() {
     assert!(
         result.is_err(),
         "a plugin importing an ungranted gated interface must fail to instantiate"
+    );
+}
+
+const SLOW_HANDLER_TIMEOUT: Duration = Duration::from_millis(100);
+
+async fn enable_slow_handler(
+    loader: &WasmPluginLoader,
+    plugins_dir: &Path,
+) -> (TestEnv, Box<dyn Plugin>) {
+    let env = make_env_with(
+        plugins_dir.to_path_buf(),
+        Arc::new(MockPlayerRegistry),
+        Arc::new(MockConfigService),
+        Arc::new(PendingBanService),
+        EventBusConfig {
+            handler_timeout: SLOW_HANDLER_TIMEOUT,
+            ..EventBusConfig::default()
+        },
+        HashMap::from([(
+            "slow-handler".to_string(),
+            PluginPermissions {
+                permissions: vec!["ban".to_string()],
+                trusted: false,
+            },
+        )]),
+    );
+    loader.discover(plugins_dir).await.unwrap();
+    let plugin = load_enabled(loader, &env.factory, "slow-handler").await;
+    (env, plugin)
+}
+
+async fn fire_post_login_past_timeout(env: &TestEnv, plugins_dir: &Path) {
+    let started = Instant::now();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        env.event_bus.fire(PostLoginEvent {
+            profile: nil_profile("Steve"),
+            player_id: PlayerId::new(1),
+            protocol_version: ProtocolVersion::MINECRAFT_1_21,
+        }),
+    )
+    .await
+    .expect("the bus must cancel the handler at its timeout, not wait out the host call");
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= SLOW_HANDLER_TIMEOUT && elapsed < Duration::from_secs(5),
+        "fire returned after {elapsed:?}, expected about {SLOW_HANDLER_TIMEOUT:?}"
+    );
+    assert!(
+        !plugins_dir
+            .join("slow-handler")
+            .join("post-login.marker")
+            .exists(),
+        "the handler was cancelled inside its host call and never finished"
+    );
+}
+
+#[derive(Clone, Default)]
+struct ErrorLog(Arc<Mutex<Vec<String>>>);
+
+impl ErrorLog {
+    fn lines(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+struct EventText(String);
+
+impl tracing::field::Visit for EventText {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.0.push_str(&format!("{}={value:?} ", field.name()));
+    }
+}
+
+impl tracing::Subscriber for ErrorLog {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        *metadata.level() == tracing::Level::ERROR
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut text = EventText(String::new());
+        event.record(&mut text);
+        self.0.lock().unwrap().push(text.0);
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_handler_cancelled_mid_call_poisons_instance() {
+    let (_tmp, plugins_dir) = stage("slow-handler");
+    let loader = fresh_loader();
+    let (env, _plugin) = enable_slow_handler(&loader, &plugins_dir).await;
+    let data = plugins_dir.join("slow-handler");
+
+    fire_post_login_past_timeout(&env, &plugins_dir).await;
+
+    let errors = ErrorLog::default();
+    let (event, found, completions) = async {
+        let event = env
+            .event_bus
+            .fire(ServerPreConnectEvent::new(
+                PlayerId::new(1),
+                nil_profile("Steve"),
+                ServerId::new("lobby"),
+            ))
+            .await;
+        let found = env
+            .command_manager
+            .dispatch(None, "ping", &MockPlayerRegistry)
+            .await;
+        let completions = env.command_manager.tab_complete("ping ").await;
+        (event, found, completions)
+    }
+    .with_subscriber(errors.clone())
+    .await;
+
+    assert!(
+        matches!(event.result(), ServerPreConnectResult::Allowed),
+        "the next event must get no outcome from the abandoned instance"
+    );
+    assert!(
+        !data.join("pre-connect.marker").exists(),
+        "the next event handler must not run in the abandoned store"
+    );
+    assert!(found, "the host still routes the guest command");
+    assert!(
+        !data.join("command.marker").exists(),
+        "the command must not run in the abandoned store"
+    );
+    assert!(
+        completions.is_empty(),
+        "tab-complete must not run in the abandoned store"
+    );
+    let lines = errors.lines();
+    assert_eq!(
+        lines.iter().filter(|l| l.contains("abandoned")).count(),
+        1,
+        "the abandoned call is reported exactly once: {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|l| l.contains("trapped")),
+        "later calls are refused up front, not attempted and reported as traps: {lines:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_on_disable_skips_instance_cancelled_mid_call() {
+    let (_tmp, plugins_dir) = stage("slow-handler");
+    let loader = fresh_loader();
+    let (env, plugin) = enable_slow_handler(&loader, &plugins_dir).await;
+
+    fire_post_login_past_timeout(&env, &plugins_dir).await;
+
+    let disabled = tokio::time::timeout(Duration::from_secs(10), plugin.on_disable())
+        .await
+        .expect("on_disable must not hang on an abandoned instance");
+    assert!(
+        disabled.is_ok(),
+        "on_disable skips the guest call on an abandoned instance: {disabled:?}"
+    );
+    assert!(
+        !plugins_dir
+            .join("slow-handler")
+            .join("disable.marker")
+            .exists(),
+        "the guest on_disable must not run in the abandoned store"
     );
 }

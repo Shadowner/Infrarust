@@ -26,6 +26,7 @@ pub(crate) struct PluginStoreState {
     ctx: Option<Arc<dyn PluginContext>>,
     instance: Weak<Mutex<WasmInstance>>,
     poisoned: bool,
+    call_in_flight: Option<&'static str>,
     pub(crate) plugin_id: String,
     pub(crate) epoch_yields: u32,
     next_listener_id: u64,
@@ -72,8 +73,21 @@ impl PluginStoreState {
         self.instance = instance;
     }
 
-    pub(crate) fn is_poisoned(&self) -> bool {
+    pub(crate) fn is_poisoned(&mut self) -> bool {
+        if let Some(op) = self.call_in_flight.take() {
+            tracing::error!(plugin = %self.plugin_id, op,
+                "previous wasm guest call was abandoned mid-execution; poisoning instance");
+            self.poisoned = true;
+        }
         self.poisoned
+    }
+
+    pub(crate) fn begin_call(&mut self, op: &'static str) {
+        self.call_in_flight = Some(op);
+    }
+
+    pub(crate) fn end_call(&mut self) {
+        self.call_in_flight = None;
     }
 
     pub(crate) fn set_poisoned(&mut self) {
@@ -147,6 +161,7 @@ pub(crate) fn build_load_state(
         ctx: Some(ctx),
         instance: Weak::new(),
         poisoned: false,
+        call_in_flight: None,
         plugin_id,
         epoch_yields: 0,
         next_listener_id: 1,
@@ -164,6 +179,7 @@ pub(crate) fn build_probe_state(plugin_id: String) -> PluginStoreState {
         ctx: None,
         instance: Weak::new(),
         poisoned: false,
+        call_in_flight: None,
         plugin_id,
         epoch_yields: 0,
         next_listener_id: 1,

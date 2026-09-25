@@ -29,11 +29,14 @@ pub(crate) async fn call_guest<T>(
     let arc = instance.upgrade()?;
     let mut guard = arc.lock().await;
     let WasmInstance { store, bindings } = &mut *guard;
-    if store.data().is_poisoned() {
+    if store.data_mut().is_poisoned() {
         return None;
     }
     store.data_mut().reset_epoch_budget();
-    match call(store, bindings).await {
+    store.data_mut().begin_call(op);
+    let result = call(store, bindings).await;
+    store.data_mut().end_call();
+    match result {
         Ok(value) => Some(value),
         Err(trap) => {
             tracing::error!(plugin = %store.data().plugin_id, op, error = %trap,
@@ -89,11 +92,13 @@ impl Plugin for WasmPlugin {
             let mut guard = self.inner.lock().await;
             let WasmInstance { store, bindings } = &mut *guard;
             store.data_mut().reset_epoch_budget();
-            match bindings
+            store.data_mut().begin_call("on-enable");
+            let result = bindings
                 .infrarust_plugin_guest()
                 .call_on_enable(&mut *store)
-                .await
-            {
+                .await;
+            store.data_mut().end_call();
+            match result {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(message)) => {
                     tracing::warn!(plugin = %self.plugin_id, %message,
@@ -119,17 +124,19 @@ impl Plugin for WasmPlugin {
         Box::pin(async move {
             let mut guard = self.inner.lock().await;
             let WasmInstance { store, bindings } = &mut *guard;
-            if store.data().is_poisoned() {
+            if store.data_mut().is_poisoned() {
                 tracing::warn!(plugin = %self.plugin_id,
-                    "skipping on_disable for a poisoned (previously trapped) wasm plugin");
+                    "skipping on_disable for a poisoned wasm plugin (a previous call trapped or was abandoned)");
                 return Ok(());
             }
             store.data_mut().reset_epoch_budget();
-            match bindings
+            store.data_mut().begin_call("on-disable");
+            let result = bindings
                 .infrarust_plugin_guest()
                 .call_on_disable(&mut *store)
-                .await
-            {
+                .await;
+            store.data_mut().end_call();
+            match result {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(message)) => {
                     tracing::warn!(plugin = %self.plugin_id, %message,
