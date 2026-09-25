@@ -182,8 +182,9 @@ Events fall into categories:
 | Lifecycle | `PreLoginEvent`, `PostLoginEvent`, `DisconnectEvent`, `OnlineAuthFailed`, `PermissionsSetupEvent` |
 | Connection | `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerSwitchEvent`, `KickedFromServerEvent` |
 | Chat | `ChatMessageEvent` |
-| Proxy | `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `ConfigReloadEvent`, `ServerStateChangeEvent` |
-| Packet (Tier 3) | `RawPacketEvent` |
+| Proxy | `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `ConfigReloadEvent`, `ServerStateChangeEvent`, `BackendHealthEvent` |
+| Packet (Tier 3) | `RawPacketEvent` (packet subscriptions only) |
+| Plugin-defined | `NamedEvent` and your own event types, fired with `fire` ([custom events](./events#custom-events)) |
 
 The [events page](./events) documents each event's fields and result type.
 
@@ -263,6 +264,8 @@ ctx.event_bus().subscribe_packet_typed(
 ```
 
 The proxy skips event dispatch for packets that have no listeners registered, so unused packet subscriptions have zero overhead.
+
+`RawPacketEvent` is not an `Event`, so it cannot be passed to `subscribe` or `subscribe_async`. Packet subscriptions are the only way to receive it.
 
 ## Layer 4: LimboHandler
 

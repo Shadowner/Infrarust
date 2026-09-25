@@ -144,7 +144,7 @@ Two items in the WIT contract (`infrarust:plugin@0.2.3`) are present in the wire
 
 | WIT item | Status |
 | --- | --- |
-| `raw-packet` | Defined in the WIT contract, not yet exposed by the SDK. There is no `RawPacketEvent` Rust type to subscribe to. |
+| `raw-packet` | Defined in the WIT contract, not yet exposed by the SDK. There is no `RawPacketEvent` Rust type to subscribe to. A guest that subscribes to `raw-packet` through the raw host import gets a listener ID back, but the host registers no listener and logs a warning. |
 | `permissions-setup` result | The `PermissionsSetupEvent` is observe-only in the SDK. The contract's `custom(handler-id)` result maps to a separate custom permission-checker path rather than an event outcome. |
 
 :::warning

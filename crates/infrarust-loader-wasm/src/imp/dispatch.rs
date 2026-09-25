@@ -3,7 +3,7 @@
 
 use std::sync::Weak;
 
-use infrarust_api::event::bus::EventBusExt;
+use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{EventPriority, ListenerHandle, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::connection::{
@@ -15,12 +15,10 @@ use infrarust_api::events::lifecycle::{
     DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PostLoginEvent, PreLoginEvent,
     PreLoginResult,
 };
-use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_api::events::proxy::{
     ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent, ProxyShutdownEvent,
     ServerStateChangeEvent,
 };
-use infrarust_api::plugin::PluginContext;
 use infrarust_api::types::{ProtocolVersion, ServerId};
 use tokio::sync::Mutex;
 
@@ -35,14 +33,13 @@ pub(crate) fn priority_from_wit(p: wt::EventPriority) -> EventPriority {
 }
 
 pub(crate) fn register_event_handler(
-    ctx: &dyn PluginContext,
+    bus: &dyn EventBus,
     instance: Weak<Mutex<WasmInstance>>,
     kind: EventKind,
     priority: EventPriority,
     listener_id: u64,
-) -> ListenerHandle {
-    let bus = ctx.event_bus();
-    match kind {
+) -> Option<ListenerHandle> {
+    let handle = match kind {
         EventKind::PreLogin => bus.subscribe_async::<PreLoginEvent, _>(priority, move |ev| {
             let wit = ev_pre_login(ev);
             Box::pin(dispatch(instance.clone(), listener_id, wit, move |o| {
@@ -152,10 +149,9 @@ pub(crate) fn register_event_handler(
                 apply_chat_message(o, ev)
             }))
         }),
-        EventKind::RawPacket => {
-            bus.subscribe_async::<RawPacketEvent, _>(priority, move |_ev| Box::pin(async {}))
-        }
-    }
+        EventKind::RawPacket => return None,
+    };
+    Some(handle)
 }
 
 async fn dispatch<F: FnOnce(wg::EventOutcome)>(
@@ -386,5 +382,51 @@ fn apply_proxy_ping(outcome: wg::EventOutcome, ev: &mut ProxyPingEvent) {
             r.version_name,
             r.favicon,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use infrarust_core::event_bus::EventBusImpl;
+    use infrarust_core::plugin::tracking::TrackingEventBus;
+
+    use super::*;
+
+    fn guest_bus() -> TrackingEventBus {
+        TrackingEventBus::new(Arc::new(EventBusImpl::new()), "guest")
+    }
+
+    #[test]
+    fn a_raw_packet_subscription_registers_no_listener() {
+        let bus = guest_bus();
+
+        let handle = register_event_handler(
+            &bus,
+            Weak::new(),
+            EventKind::RawPacket,
+            EventPriority::NORMAL,
+            1,
+        );
+
+        assert_eq!(handle, None);
+        assert_eq!(bus.tracked_count(), 0);
+    }
+
+    #[test]
+    fn other_event_kinds_still_register_a_listener() {
+        let bus = guest_bus();
+
+        let handle = register_event_handler(
+            &bus,
+            Weak::new(),
+            EventKind::ConfigReload,
+            EventPriority::NORMAL,
+            1,
+        );
+
+        assert!(handle.is_some());
+        assert_eq!(bus.tracked_count(), 1);
     }
 }

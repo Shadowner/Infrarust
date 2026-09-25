@@ -6,8 +6,7 @@ use std::time::Duration;
 
 use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{
-    BoxFuture, ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection,
-    PacketFilter, ResultedEvent,
+    BoxFuture, ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection, PacketFilter,
 };
 use infrarust_api::events::packet::{RawPacketEvent, RawPacketResult};
 use infrarust_api::types::{PlayerId, RawPacket};

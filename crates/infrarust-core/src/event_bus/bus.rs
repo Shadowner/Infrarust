@@ -9,20 +9,22 @@ use std::any::{Any, TypeId, type_name};
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::task::Poll;
 use std::time::Duration;
 
 use futures_util::FutureExt;
-use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus};
+use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus, FireError};
 use infrarust_api::event::{
-    ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection, PacketFilter,
+    BoxFuture, ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection, PacketFilter,
 };
+use infrarust_api::events::named::NamedEvent;
 use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_config::EventsConfig;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Instant;
 
+use super::builtin::is_builtin_event;
 use super::diagnostic::{DiagnosticKind, HandlerDiagnostic, panic_message, short_type_name};
 use super::handler::{HandlerEntry, HandlerKind};
 
@@ -61,6 +63,17 @@ struct PacketKey {
     direction: PacketDirection,
 }
 
+enum Queued {
+    Event(PostedEvent),
+    Barrier(oneshot::Sender<()>),
+}
+
+struct PostedEvent {
+    type_id: TypeId,
+    event_type: &'static str,
+    event: Box<dyn Any + Send>,
+}
+
 /// The proxy's event bus implementation.
 ///
 /// Provides sequential handler dispatch with priority ordering,
@@ -94,6 +107,8 @@ pub struct EventBusImpl {
     config: EventBusConfig,
     diagnostics: broadcast::Sender<HandlerDiagnostic>,
     core_owner: Arc<str>,
+    queue: mpsc::UnboundedSender<Queued>,
+    undispatched: Mutex<Option<mpsc::UnboundedReceiver<Queued>>>,
 }
 
 impl EventBusImpl {
@@ -102,6 +117,7 @@ impl EventBusImpl {
     }
 
     pub fn with_config(config: EventBusConfig) -> Self {
+        let (queue, undispatched) = mpsc::unbounded_channel();
         Self {
             handlers: RwLock::new(HashMap::new()),
             packet_handlers: RwLock::new(HashMap::new()),
@@ -110,6 +126,8 @@ impl EventBusImpl {
             config,
             diagnostics: broadcast::channel(DIAGNOSTIC_CAPACITY).0,
             core_owner: Arc::from(CORE_OWNER),
+            queue,
+            undispatched: Mutex::new(Some(undispatched)),
         }
     }
 
@@ -139,9 +157,103 @@ impl EventBusImpl {
     /// Used for events whose result matters to the caller (e.g.
     /// `ProxyPingEvent`, `ProxyInitializeEvent`).
     pub async fn fire<E: Event>(&self, mut event: E) -> E {
-        let type_id = TypeId::of::<E>();
+        self.dispatch(
+            TypeId::of::<E>(),
+            type_name::<E>(),
+            &mut event,
+            &self.core_owner,
+        )
+        .await;
+        event
+    }
 
-        // Snapshot: clone the Arc, then release the lock immediately.
+    pub fn fire_and_forget_arc<E: Event + Send + 'static>(self: &Arc<Self>, event: E) {
+        let bus = Arc::clone(self);
+        tokio::spawn(async move {
+            let _ = bus.fire(event).await;
+        });
+    }
+
+    pub fn post<E: Event>(&self, event: E) {
+        let posted = PostedEvent {
+            type_id: TypeId::of::<E>(),
+            event_type: type_name::<E>(),
+            event: Box::new(event),
+        };
+        if self.queue.send(Queued::Event(posted)).is_err() {
+            tracing::warn!(
+                event = short_type_name(type_name::<E>()),
+                "the event dispatcher has stopped; a posted event was dropped"
+            );
+        }
+    }
+
+    pub fn start_dispatcher(self: &Arc<Self>) {
+        let undispatched = self
+            .undispatched
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(queue) = undispatched {
+            tokio::spawn(run_dispatcher(Arc::downgrade(self), queue));
+        }
+    }
+
+    pub async fn flush(&self) {
+        let (done, flushed) = oneshot::channel();
+        if self.queue.send(Queued::Barrier(done)).is_ok() {
+            let _ = flushed.await;
+        }
+    }
+
+    pub fn has_listeners<E: Event>(&self) -> bool {
+        let map = self
+            .handlers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        map.get(&TypeId::of::<E>())
+            .is_some_and(|entries| !entries.is_empty())
+    }
+
+    async fn dispatch_posted(self: Arc<Self>, mut posted: PostedEvent) {
+        self.dispatch(
+            posted.type_id,
+            posted.event_type,
+            &mut *posted.event,
+            &self.core_owner,
+        )
+        .await;
+    }
+
+    pub(crate) async fn fire_from(
+        &self,
+        fired_by: &Arc<str>,
+        event_type: &'static str,
+        event: &mut (dyn Any + Send),
+    ) -> Result<(), FireError> {
+        let type_id = (*event).type_id();
+        if is_builtin_event(type_id) {
+            tracing::warn!(
+                plugin = %fired_by,
+                event = short_type_name(event_type),
+                "refused to let a plugin fire a built-in proxy event"
+            );
+            return Err(FireError::Reserved);
+        }
+        if let Some(named) = event.downcast_mut::<NamedEvent>() {
+            named.source_plugin = fired_by.to_string();
+        }
+        self.dispatch(type_id, event_type, event, fired_by).await;
+        Ok(())
+    }
+
+    async fn dispatch(
+        &self,
+        type_id: TypeId,
+        event_type: &'static str,
+        event: &mut (dyn Any + Send),
+        fired_by: &Arc<str>,
+    ) {
         let snapshot = {
             let map = self
                 .handlers
@@ -156,28 +268,15 @@ impl EventBusImpl {
                 clock = self
                     .dispatch_one(
                         entry,
-                        &mut event,
-                        type_name::<E>(),
+                        &mut *event,
+                        event_type,
+                        fired_by,
                         self.config.handler_timeout,
                         clock,
                     )
                     .await;
             }
         }
-
-        event
-    }
-
-    /// Dispatches an event in a detached tokio task (fire-and-forget).
-    ///
-    /// The caller cannot observe the event after this call. Used for
-    /// informational events like `ServerStateChangeEvent` and
-    /// `ConfigReloadEvent`.
-    pub fn fire_and_forget_arc<E: Event + Send + 'static>(self: &Arc<Self>, event: E) {
-        let bus = Arc::clone(self);
-        tokio::spawn(async move {
-            let _ = bus.fire(event).await;
-        });
     }
 
     /// Internal helper: inserts a handler entry into the sorted vec for
@@ -254,6 +353,7 @@ impl EventBusImpl {
                         entry,
                         &mut *event,
                         type_name::<RawPacketEvent>(),
+                        &self.core_owner,
                         self.config.packet_handler_timeout,
                         clock,
                     )
@@ -267,6 +367,7 @@ impl EventBusImpl {
         entry: &HandlerEntry,
         event: &mut (dyn Any + Send),
         event_type: &'static str,
+        fired_by: &Arc<str>,
         timeout: Duration,
         started: Instant,
     ) -> Instant {
@@ -315,7 +416,7 @@ impl EventBusImpl {
         });
         match kind {
             Some(kind) => {
-                self.report(entry, event_type, kind, elapsed);
+                self.report(entry, event_type, fired_by, kind, elapsed);
                 Instant::now()
             }
             None => finished,
@@ -327,6 +428,7 @@ impl EventBusImpl {
         &self,
         entry: &HandlerEntry,
         event_type: &'static str,
+        fired_by: &Arc<str>,
         kind: DiagnosticKind,
         elapsed: Duration,
     ) {
@@ -335,6 +437,7 @@ impl EventBusImpl {
             DiagnosticKind::Panicked { message } => tracing::error!(
                 plugin = %entry.owner,
                 event,
+                fired_by = %fired_by,
                 elapsed = ?elapsed,
                 panic = %message,
                 "event handler panicked; the event continues to the next handler"
@@ -342,12 +445,14 @@ impl EventBusImpl {
             DiagnosticKind::TimedOut => tracing::error!(
                 plugin = %entry.owner,
                 event,
+                fired_by = %fired_by,
                 elapsed = ?elapsed,
                 "event handler timed out and was cancelled; the event continues to the next handler"
             ),
             DiagnosticKind::Slow => tracing::warn!(
                 plugin = %entry.owner,
                 event,
+                fired_by = %fired_by,
                 elapsed = ?elapsed,
                 threshold = ?self.config.slow_handler_threshold,
                 "event handler is slow"
@@ -355,6 +460,7 @@ impl EventBusImpl {
         }
         let _ = self.diagnostics.send(HandlerDiagnostic {
             owner: Arc::clone(&entry.owner),
+            fired_by: Arc::clone(fired_by),
             event,
             kind,
             elapsed,
@@ -519,6 +625,37 @@ impl EventBus for EventBusImpl {
 
     fn unsubscribe(&self, handle: ListenerHandle) -> bool {
         self.unsubscribe_owned(CORE_OWNER, handle)
+    }
+
+    fn fire_erased<'a>(
+        &'a self,
+        event_type: &'static str,
+        event: &'a mut (dyn Any + Send),
+    ) -> BoxFuture<'a, Result<(), FireError>> {
+        Box::pin(self.fire_from(&self.core_owner, event_type, event))
+    }
+}
+
+async fn run_dispatcher(bus: Weak<EventBusImpl>, mut queue: mpsc::UnboundedReceiver<Queued>) {
+    while let Some(queued) = queue.recv().await {
+        match queued {
+            Queued::Barrier(done) => {
+                let _ = done.send(());
+            }
+            Queued::Event(posted) => {
+                let Some(live) = bus.upgrade() else {
+                    return;
+                };
+                let event = short_type_name(posted.event_type);
+                if let Err(error) = tokio::spawn(live.dispatch_posted(posted)).await {
+                    tracing::error!(
+                        event,
+                        error = %error,
+                        "dispatching a posted event failed; the queue continues with the next event"
+                    );
+                }
+            }
+        }
     }
 }
 

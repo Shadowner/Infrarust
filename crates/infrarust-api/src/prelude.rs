@@ -14,7 +14,7 @@ pub use crate::types::{
 pub use crate::error::{PlayerError, PluginError, ServiceError};
 
 // Event system
-pub use crate::event::bus::{EventBus, EventBusExt};
+pub use crate::event::bus::{EventBus, EventBusExt, FireError};
 pub use crate::event::{
     BoxFuture, ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection,
     PacketFilter, ResultedEvent,

@@ -87,6 +87,7 @@ impl ProxyServer {
         let event_bus = Arc::new(EventBusImpl::with_config(EventBusConfig::from(
             &config.events,
         )));
+        event_bus.start_dispatcher();
 
         #[cfg(feature = "telemetry")]
         let proxy_metrics = Arc::new(crate::telemetry::ProxyMetrics::new());
@@ -194,7 +195,7 @@ impl ProxyServer {
             service.add_on_state_change(Arc::new(move |server_id, old, new| {
                 let api_old = convert_server_state(old);
                 let api_new = convert_server_state(new);
-                bus.fire_and_forget_arc(ServerStateChangeEvent {
+                bus.post(ServerStateChangeEvent {
                     server: ServerId::new(server_id),
                     old_state: api_old,
                     new_state: api_new,

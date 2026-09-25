@@ -10,6 +10,7 @@
 pub mod chat;
 pub mod connection;
 pub mod lifecycle;
+pub mod named;
 pub mod packet;
 pub mod proxy;
 
@@ -23,6 +24,7 @@ pub use lifecycle::{
     DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult,
     PostLoginEvent, PreLoginEvent, PreLoginResult,
 };
+pub use named::{NamedEvent, NamedEventResponse};
 pub use packet::{PacketDirection, RawPacketEvent, RawPacketResult};
 pub use proxy::{
     BackendHealthEvent, ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent,

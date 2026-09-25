@@ -89,6 +89,19 @@ pub trait EventBus: Send + Sync + private::Sealed {
 
     /// Removes a previously registered listener.
     fn unsubscribe(&self, handle: ListenerHandle) -> bool;
+
+    fn fire_erased<'a>(
+        &'a self,
+        event_type: &'static str,
+        event: &'a mut (dyn Any + Send),
+    ) -> BoxFuture<'a, Result<(), FireError>>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum FireError {
+    #[error("built-in proxy events can only be fired by the proxy")]
+    Reserved,
 }
 
 /// Extension trait providing typed event subscription methods.
@@ -141,6 +154,8 @@ pub trait EventBusExt {
             + Send
             + Sync
             + 'static;
+
+    fn fire<E: super::Event>(&self, event: E) -> BoxFuture<'_, Result<E, FireError>>;
 }
 
 impl EventBusExt for dyn EventBus + '_ {
@@ -221,5 +236,14 @@ impl EventBusExt for dyn EventBus + '_ {
                 }
             }),
         )
+    }
+
+    fn fire<E: super::Event>(&self, event: E) -> BoxFuture<'_, Result<E, FireError>> {
+        Box::pin(async move {
+            let mut event = event;
+            self.fire_erased(std::any::type_name::<E>(), &mut event)
+                .await?;
+            Ok(event)
+        })
     }
 }

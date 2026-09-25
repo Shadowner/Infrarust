@@ -16,7 +16,7 @@ A player connection follows this path:
 PreLoginEvent → Authentication → PermissionsSetupEvent → PostLoginEvent
     → PlayerChooseInitialServerEvent → ServerPreConnectEvent
     → Backend connection → ServerConnectedEvent
-    → Play state (ChatMessageEvent, RawPacketEvent)
+    → Play state (ChatMessageEvent, raw packet listeners)
     → Server switch → ServerPreConnectEvent → ServerSwitchEvent
     → DisconnectEvent
 ```
@@ -55,6 +55,8 @@ Both methods return a `ListenerHandle` you can pass to `event_bus().unsubscribe(
 
 A listener that panics is skipped: the proxy logs the panic with your plugin ID and passes the event on to the next listener. Anything the listener changed on the event before panicking is kept, so set the result last if a later step might fail.
 
+When the failing listener was handling an event that another plugin fired (see [custom events](#custom-events)), the log line and the handler diagnostic also carry `fired_by`, the ID of the plugin that fired it. For events the proxy fires, `fired_by` is `infrarust`.
+
 Async listeners also have a time limit, `handler_timeout` in the [`[events]`](../../configuration/global#plugin-event-handlers) section (10 seconds by default, `packet_handler_timeout` for raw packet listeners). A listener still running at the deadline is cancelled and the event continues without it. A listener that takes longer than `slow_handler_threshold` (1 second by default) is logged as slow. Synchronous listeners can't be interrupted, so keep blocking work out of them.
 
 ## Priority
@@ -76,6 +78,18 @@ Each listener sees modifications made by previous listeners. Use `EventPriority:
 Some events implement `ResultedEvent`. These have a result that controls what the proxy does next. Call `event.set_result()` to change the outcome, or use shortcut methods like `event.deny()`.
 
 Informational events (like `PostLoginEvent`) are fire-and-forget. You can read their fields but cannot change the proxy's behavior through them.
+
+## Delivery
+
+Every event goes through the same dispatch: listeners run one after another in priority order, with the panic isolation and timeouts described above. What differs is when that dispatch happens relative to the code that fired the event.
+
+| Delivery | Events | What it means |
+|----------|--------|---------------|
+| Inline, awaited | `PreLoginEvent`, `PermissionsSetupEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `KickedFromServerEvent`, `ChatMessageEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. |
+| Detached, per player | `PostLoginEvent`, `OnlineAuthFailed`, `ServerConnectedEvent`, `ServerSwitchEvent` | Each event is dispatched in its own task. The player's connection does not wait for it, and there is no ordering guarantee between two of these events. |
+| Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
+
+Because the queue delivers one event at a time, a slow listener on a queued event delays the queued events behind it, up to `handler_timeout` per listener. A listener that panics does not stop the queue: the next event is still delivered.
 
 ## Lifecycle events
 
@@ -352,7 +366,9 @@ ctx.event_bus().subscribe::<ChatMessageEvent, _>(
 
 A low-level event fired when a raw packet passes through the proxy during Play state. Use this only when higher-level events don't cover your use case.
 
-**Type:** Resulted
+`RawPacketEvent` does not implement `Event` or `ResultedEvent`, so `subscribe::<RawPacketEvent, _>` does not compile. The only way to receive raw packets is a packet subscription (`subscribe_packet_typed` or `subscribe_packet_async_typed`, shown below). Read and change the outcome with the event's own `result()`, `set_result()`, `drop_packet()` and `modify()` methods.
+
+WASM plugins cannot receive raw packets in the current contract version. A WASM plugin that subscribes to `raw-packet` gets a listener ID back, but no listener is registered and the proxy logs a warning naming the plugin.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -474,3 +490,85 @@ ctx.event_bus().subscribe::<ServerStateChangeEvent, _>(
     },
 );
 ```
+
+### BackendHealthEvent
+
+Fired when a backend address changes health state, for example when it stops accepting connections or recovers. Informational, delivered through the ordered queue.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `address` | `ServerAddress` | The backend address whose health changed |
+| `servers` | `Vec<ServerId>` | The servers that list this address |
+| `state` | `BackendState` | The new health state |
+
+## Custom events
+
+Plugins can define and fire their own events. Any type that implements `Event` works: listeners subscribe to it with `subscribe` or `subscribe_async` as usual, and the firing plugin calls `fire` on its event bus.
+
+```rust
+use infrarust_api::prelude::*;
+
+pub struct PartyInvite {
+    pub from: String,
+    pub to: String,
+    pub accepted: Option<bool>,
+}
+
+impl Event for PartyInvite {}
+```
+
+`fire` dispatches the event inline and returns it once every listener has run, so listeners can answer by writing into it:
+
+```rust
+ctx.event_bus().subscribe::<PartyInvite, _>(EventPriority::NORMAL, |invite| {
+    invite.accepted = Some(invite.to != "Mallory");
+});
+
+let bus = ctx.event_bus_handle();
+let invite = bus
+    .fire(PartyInvite {
+        from: "Steve".into(),
+        to: "Alex".into(),
+        accepted: None,
+    })
+    .await?;
+```
+
+`fire` returns `Result<E, FireError>`. The event types defined by `infrarust_api::events` belong to the proxy: firing one of them from a plugin returns `Err(FireError::Reserved)` and no listener runs, so a plugin cannot forge a `PreLoginEvent` or a `ConfigReloadEvent`. `NamedEvent` is the one exception, since it exists for plugins to fire.
+
+Two plugins exchange a custom event only if they use the same Rust type. Put the event types in a crate both plugins depend on.
+
+To fire from inside a listener, keep the `Arc<dyn EventBus>` returned by `ctx.event_bus_handle()` in the listener and call `fire` on it. A listener that fires an event waits for that event's listeners, and the time counts against its own `handler_timeout`.
+
+### NamedEvent
+
+`NamedEvent` is a general-purpose event identified by a string name, with an opaque payload. It needs no shared Rust type, only an agreement on the name and the payload format.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `String` | The message name listeners filter on |
+| `source_plugin` | `String` | The ID of the plugin that fired the event |
+| `content_type` | `String` | The payload format, for example `application/json` |
+| `payload` | `Bytes` | The message body |
+| `cancelled` | `bool` | Set by a listener through `cancel()` |
+| `response` | `Option<NamedEventResponse>` | Set by a listener through `respond(content_type, payload)` |
+
+Create one with `NamedEvent::new(name, content_type, payload)`. The proxy overwrites `source_plugin` with the ID of the firing plugin, so listeners can trust it. Every `NamedEvent` listener receives every named event, so check `name` first:
+
+```rust
+use infrarust_api::events::NamedEvent;
+
+ctx.event_bus().subscribe::<NamedEvent, _>(EventPriority::NORMAL, |event| {
+    if event.name != "economy:balance" {
+        return;
+    }
+    event.respond("text/plain", "42");
+});
+
+let answered = ctx
+    .event_bus_handle()
+    .fire(NamedEvent::new("economy:balance", "text/plain", "Steve"))
+    .await?;
+```
+
+WASM plugins cannot fire or subscribe to custom events or `NamedEvent` in the current contract version.

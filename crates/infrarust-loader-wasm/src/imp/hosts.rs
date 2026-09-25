@@ -63,14 +63,19 @@ impl event_bus::Host for PluginStoreState {
         let ctx = self.require_ctx()?;
         let native_priority = dispatch::priority_from_wit(priority);
         let listener_id = self.mint_listener_id();
-        let handle = dispatch::register_event_handler(
-            ctx.as_ref(),
+        match dispatch::register_event_handler(
+            ctx.event_bus(),
             instance,
             kind,
             native_priority,
             listener_id,
-        );
-        self.record_listener(listener_id, handle);
+        ) {
+            Some(handle) => self.record_listener(listener_id, handle),
+            None => tracing::warn!(
+                plugin = %self.plugin_id,
+                "raw packets are not available to WASM plugins in this contract version; the raw-packet subscription has no listener"
+            ),
+        }
         Ok(listener_id)
     }
 

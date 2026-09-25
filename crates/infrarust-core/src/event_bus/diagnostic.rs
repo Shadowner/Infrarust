@@ -5,6 +5,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandlerDiagnostic {
     pub owner: Arc<str>,
+    pub fired_by: Arc<str>,
     pub event: &'static str,
     pub kind: DiagnosticKind,
     pub elapsed: Duration,

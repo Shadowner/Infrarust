@@ -204,5 +204,5 @@ async fn on_config_change(
         tracing::warn!(error = %e, "failed to reload favicons after config change");
     }
 
-    event_bus.fire_and_forget_arc(ConfigReloadEvent);
+    event_bus.post(ConfigReloadEvent);
 }

@@ -77,7 +77,7 @@ impl HealthTransitionListener for HealthTransitionEvents {
             .map(|(_, config)| ServerId::new(config.effective_id()))
             .collect();
 
-        self.event_bus.fire_and_forget_arc(BackendHealthEvent {
+        self.event_bus.post(BackendHealthEvent {
             address: ApiServerAddress {
                 host: address.host.clone(),
                 port: address.port,

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use infrarust_api::event::bus::{EventBus, EventBusExt};
-use infrarust_api::event::{BoxFuture, Event, EventPriority, ResultedEvent};
+use infrarust_api::event::{BoxFuture, Event, EventPriority};
 
 use infrarust_core::event_bus::EventBusImpl;
 
