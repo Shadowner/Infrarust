@@ -40,21 +40,51 @@ PreLoginEvent ─────────────── Denied ──▶ dis
 
 ### Passthrough, `zero_copy` and `server_only`
 
-The backend runs the login and the proxy only forwards bytes:
+The backend runs the login and the proxy only forwards bytes. Until it forwards them, the proxy holds the client's handshake and login start and fires the same events as the modes above, in the same order:
 
 ```
-player registered → PostLoginEvent → PlayerChooseInitialServerEvent → ServerPreConnectEvent
-  → backend connection → ServerConnectedEvent → forwarding → DisconnectEvent
+PreLoginEvent ─────────────── Denied ──▶ disconnected during login
+  → GameProfileRequestEvent    online_mode is false
+  → ban check (IP, name, final UUID) ─ banned ──▶ disconnected during login
+  → PermissionsSetupEvent      online_mode is false
+  → LoginEvent ──────────────── Denied ──▶ disconnected during login
+  → player registered
+  → PostLoginEvent
+  → PlayerChooseInitialServerEvent
+  → ServerPreConnectEvent (cause: initial) ── Denied ──▶ disconnected during login
+  → backend connection ─── unreachable ──▶ KickedFromServerEvent
+  → ServerConnectedEvent       the login packets were sent to the backend
+  → forwarding
+  → DisconnectEvent
 ```
 
-These modes do not fire `PreLoginEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent` or `LoginEvent` yet. Clients older than 1.7 (the legacy protocol) fire no player events.
+`full` is not implemented yet and falls back to passthrough, so it follows this flow too. Nothing reaches the backend before `ServerConnectedEvent`: a player refused by any of these events never opens a backend connection. What differs from `offline` and `client_only`:
 
-The proxy never reads the backend's packets in these modes, which changes two things:
+- `PreLoginEvent`: `Denied` is honored. `ForceOffline` and `ForceOnline` are ignored and logged at debug level, since the backend runs its own login.
+- `GameProfileRequestEvent` fires with `online_mode: false` and the offline profile (see [`[auth] offline_uuid`](../../configuration/global#authentication)). The profile left in the event is the player's identity on the proxy: the UUID ban check, the player registry and every later event use it, and BungeeCord or BungeeGuard forwarding sends its UUID and properties (skin textures, for example) to the backend. The backend still runs its own login with the name the client sent, and the client receives the backend's `LoginSuccess`, so a changed name or UUID only exists on the proxy unless forwarding carries it.
+- `PermissionsSetupEvent` and `LoginEvent` fire with `online_mode: false`.
+- The player is not active: `is_active()` is `false`, and `send_message`, `send_title`, `send_action_bar`, `send_packet` and `switch_server` return `PlayerError::NotActive`. `disconnect` works: until the proxy has connected to the backend, the client gets the reason in a login disconnect; after that, the proxy closes the connection without a message.
+- `PlayerChooseInitialServerEvent`: `Redirect` is honored. `ServerPreConnectEvent`: `Allowed`, `ConnectTo` and `Denied` are honored.
+- `SendToLimbo`, from either event, disconnects the player with "Limbo is not available on this server" and logs a warning: limbo needs the proxy to run the login, which only `offline` and `client_only` do. The `DisconnectEvent` cause is `Kicked` with that reason.
+- A redirect (`Redirect`, `ConnectTo`, or `RedirectTo` from `KickedFromServerEvent`) must target a server in a forwarding mode. Forwarding the login to an `offline` or `client_only` server would skip the login the proxy runs for it, so the player is disconnected with "This server cannot be joined from here" and a warning is logged. An unknown server disconnects the player with "Unknown server".
+- `KickedFromServerEvent` fires only when the backend cannot be reached (`cause` is `Unreachable`), or the connection drops while the login packets are sent (`ConnectionLost`). `during_connect` is `true`, `reason` is `None` and `previous_server` is `None`. Nothing reached the client yet, so `RedirectTo` works: it goes through `ServerPreConnectEvent` with the cause `KickRedirect`, and after three redirects in a row that failed, the next one is handled as `DisconnectPlayer { reason: None }`. The default result is `DisconnectPlayer { reason: None }`, which shows the server's `disconnect_message`. `Notify` has no server to keep the player on and disconnects with its message. `SendToLimbo` is handled as `DisconnectPlayer { reason: None }` and logs a warning. When the player ends up disconnected, the `DisconnectEvent` cause is `Error` for an unreachable server and `BackendClosed` for a lost connection.
+
+The proxy never reads the backend's packets in these modes, which changes three things:
 
 - `ServerConnectedEvent` fires once the TCP connection to the backend is open and the login packets were forwarded, not when the backend accepts the login. A backend that then refuses the player still got a `ServerConnectedEvent`.
 - `ServerPostConnectEvent` never fires, because the proxy does not see the `JoinGame` packet. `current_server()` is set right after `ServerConnectedEvent`.
+- A backend that refuses the login, kicks the player or closes the connection ends the session with the `DisconnectEvent` cause `BackendClosed { reason: None }`. No `KickedFromServerEvent` fires, and the client gets whatever the backend sent.
 
-Only the `Denied` result of `ServerPreConnectEvent` is honored. The results of `PlayerChooseInitialServerEvent` and the other `ServerPreConnectEvent` results are ignored.
+### Clients older than 1.7
+
+Clients that speak the pre-1.7 protocol are always forwarded, since the proxy cannot run their login. A legacy login (the `0x02` handshake) goes through the same events as the forwarding modes above, with these differences:
+
+- `PreLoginEvent` carries the name from the legacy handshake, and its host as `server_domain`. `protocol_version` is the legacy protocol number (78 for 1.6.4). These numbers overlap the modern ones (47 is both 1.4.2 and 1.8).
+- Name and IP bans are checked before `PreLoginEvent`, as the login pipeline does for newer clients, and the final UUID after `GameProfileRequestEvent`.
+- Disconnects use the legacy kick packet, with the reason as legacy text: `Component::to_legacy('§')`.
+- The legacy handshake is forwarded as the client sent it: domain rewrite and player info forwarding do not apply, so the profile from `GameProfileRequestEvent` never reaches the backend.
+
+Legacy server list pings fire `ProxyPingEvent` with `legacy: true`, see [ProxyPingEvent](#proxypingevent).
 
 ### Guarantees
 
@@ -62,7 +92,7 @@ Only the `Denied` result of `ServerPreConnectEvent` is honored. The results of `
 - A login that ends before `PostLoginEvent` (denied, banned, failed authentication, disconnected by `player.disconnect` during an earlier event, or cut short by a proxy shutdown) never creates a player, so no `DisconnectEvent` follows.
 - Once `PostLoginEvent` has fired, `DisconnectEvent` fires exactly once for that player, whatever ends the session: the client leaving, a kick, a denied or failed initial connection, the backend closing, a proxy shutdown or an error.
 - During `PostLoginEvent` the player is already in the player registry (`get_player_by_id`, `get_player` and `get_player_by_uuid` find it) and `current_server()` is `None`, because the player has not been routed yet.
-- A `player.disconnect(reason)` made during `PostLoginEvent` disconnects the client in the state it is in (the login phase for `offline`, before any server is chosen) with that reason, and the player's `DisconnectEvent` follows. Messages, titles and action bars sent during `PostLoginEvent` wait and reach the client once it has joined the game.
+- A `player.disconnect(reason)` made during `PostLoginEvent` disconnects the client in the state it is in (the login phase for `offline` and the forwarding modes, before any server is chosen) with that reason, and the player's `DisconnectEvent` follows. In `offline` and `client_only`, messages, titles and action bars sent during `PostLoginEvent` wait and reach the client once it has joined the game.
 - When a player logs in with a UUID that is already online, the proxy disconnects the first session with "You logged in from another location" and waits for its `DisconnectEvent` before the new session's `PostLoginEvent`, for at most `[events] disconnect_deadline`.
 - `DisconnectEvent` is awaited, and the player leaves the registry once its listeners are done. The whole dispatch is bounded by [`disconnect_deadline`](../../configuration/global#plugin-event-handlers) (15 seconds by default): listeners still running then are cancelled, and the player is removed anyway.
 
@@ -181,8 +211,8 @@ Fired before authentication, when a player initiates a connection. This is your 
 |---------|-------------|
 | `Allowed` (default) | Proceed with normal authentication |
 | `Denied { reason }` | Kick the player with a message |
-| `ForceOffline` | Skip Mojang auth for this player |
-| `ForceOnline` | Force Mojang auth even if the server is in offline mode |
+| `ForceOffline` | Skip Mojang auth for this player. Ignored in the forwarding modes |
+| `ForceOnline` | Force Mojang auth even if the server is in offline mode. Ignored in the forwarding modes |
 
 ```rust
 ctx.event_bus().subscribe::<PreLoginEvent, _>(
@@ -237,6 +267,8 @@ ctx.event_bus().subscribe::<GameProfileRequestEvent, _>(
 
 In `offline` mode the backend normally completes the login with the client. When a listener changes the profile, the proxy completes the login itself instead, as it does for Velocity forwarding, so that the client and the backend both see the new profile.
 
+In the forwarding modes the backend runs its own login, so the new profile only reaches it through BungeeCord or BungeeGuard forwarding, see [passthrough](#passthrough-zero-copy-and-server-only).
+
 ### PermissionsSetupEvent
 
 Fired after the ban check, before `LoginEvent`. This is the extension point for replacing the default permission checker with one backed by LuckPerms, a database, or any external permission system. If no listener provides a custom checker, the proxy keeps its built-in `ConfigPermissionChecker`, which reads admin UUIDs from `[permissions].admins`. See [permissions](../../configuration/security/permissions.md) for the two-level model (Player and Admin).
@@ -276,7 +308,7 @@ Like `OnlineAuthFailed`, this type is reached through `infrarust_api::events::li
 
 ### LoginEvent
 
-Fired after `PermissionsSetupEvent`, just before the player is registered. It is the last point where a login can be refused: a denied player is disconnected during the login phase with the reason, is never registered, and fires neither `PostLoginEvent` nor `DisconnectEvent`. In `client_only` mode the client has not received `LoginSuccess` yet.
+Fired after `PermissionsSetupEvent`, just before the player is registered. It is the last point where a login can be refused: a denied player is disconnected during the login phase with the reason, is never registered, and fires neither `PostLoginEvent` nor `DisconnectEvent`. In `client_only` mode the client has not received `LoginSuccess` yet, and in the forwarding modes nothing was sent to the backend yet.
 
 **Type:** Resulted
 
@@ -345,7 +377,7 @@ Fired exactly once for every player that got a `PostLoginEvent`, when their sess
 |---------|-------------|
 | `ClientQuit` (`client_quit`) | The client closed the connection |
 | `Kicked { reason }` (`kicked`) | The proxy ended the session: `Player::disconnect`, a denied connection, a duplicate login. `reason` is what the client was shown |
-| `BackendClosed { reason }` (`backend_closed`) | The backend kicked the player or closed the connection and the player was not moved elsewhere. `reason` is what the client was shown, see [KickedFromServerEvent](#kickedfromserverevent) |
+| `BackendClosed { reason }` (`backend_closed`) | The backend kicked the player or closed the connection and the player was not moved elsewhere. `reason` is what the client was shown, see [KickedFromServerEvent](#kickedfromserverevent). Always `None` in the forwarding modes, where the proxy does not read the backend's packets |
 | `Shutdown` (`shutdown`) | The proxy is shutting down. The client was shown "Proxy is shutting down" (`offline` and `client_only`). See [Proxy shutdown](#proxy-shutdown) |
 | `Error` (`error`) | The session failed, for example an I/O error or an initial backend that could not be reached |
 
@@ -429,8 +461,9 @@ Fired before the proxy opens a connection to a backend server, once per connecti
 | `Allowed` (default) | Connect to `server` |
 | `ConnectTo(ServerId)` | Redirect to a different server |
 | `SendToLimbo { limbo_handlers }` | Route through limbo handlers |
-| `VirtualBackend(Box<dyn VirtualBackendHandler>)` | Route to a virtual backend handler |
 | `Denied { reason }` | Block the connection |
+
+Virtual backends are planned but not wired into the proxy, so no result routes to one. The `VirtualBackend` result was removed because the proxy never acted on it.
 
 ```rust
 ctx.event_bus().subscribe::<ServerPreConnectEvent, _>(
@@ -482,7 +515,7 @@ ctx.event_bus().subscribe::<ServerPostConnectEvent, _>(
 
 ### KickedFromServerEvent
 
-Fired when a backend server drops a player or cannot take them, before anything of it reaches the client. `offline` and `client_only` only. It fires for:
+Fired when a backend server drops a player or cannot take them, before anything of it reaches the client. In the forwarding modes it only fires for a backend that cannot be reached, see [passthrough](#passthrough-zero-copy-and-server-only). In `offline` and `client_only` it fires for:
 
 - a disconnect packet from the server the player is playing on, or that server closing the connection;
 - a connection that fails before the player joined the server: the initial connection, a switch, a kick redirect or a limbo exit. The server cannot be reached, refuses the login, sends a disconnect during the configuration phase or before its `JoinGame`, or closes the connection.
@@ -640,14 +673,24 @@ These events relate to the proxy itself rather than individual players.
 
 ### ProxyPingEvent
 
-Fired when a client pings the server list. You can modify the response to customize the MOTD, player count, version, and favicon.
+Fired when a client pings the server list, before the proxy answers. You can modify the response to customize the MOTD, player count, version, favicon and player sample. It fires for:
 
-The `ProxyPingEvent` does not implement `ResultedEvent`. Instead, mutate the `response` field directly.
+- a ping to a known domain, with the response relayed from the backend, or the cached, configured or synthetic one when the backend does not answer;
+- a ping to an unknown domain when [`unknown_domain_behavior`](../../configuration/global#unknown-domain-behavior) is `default_motd` (the default), with the response built from `[default_motd]`. With `drop`, the connection is closed and no event fires;
+- a ping from a client older than 1.7, with `legacy: true`. Legacy pings are always answered, with the `[default_motd]` response when the ping sends no host or an unknown one.
+
+The `ProxyPingEvent` does not implement `ResultedEvent`. Instead, mutate the `response` field directly. The event is awaited: a listener that runs past `handler_timeout` is cancelled, and the client gets the response as the listeners before it left it.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `remote_addr` | `SocketAddr` | The pinging client's address |
+| `remote_addr` | `SocketAddr` | The pinging client's address. Behind a load balancer that sends the PROXY protocol, the address from the header |
+| `server` | `Option<ServerId>` | The server the domain routes to. `None` for an unknown domain, or a legacy ping that sends no host |
+| `virtual_host` | `Option<String>` | The domain from the handshake, lowercased, without the Forge marker or trailing dot. `None` when a legacy ping sends no host |
+| `protocol_version` | `ProtocolVersion` | The client's protocol version. For a legacy ping, the pre-1.7 protocol number, or 0 for the ping formats that carry none (before 1.6) |
+| `legacy` | `bool` | `true` for a ping from a client older than 1.7 |
 | `response` | `PingResponse` | The response to send back (mutable) |
+
+`ProxyPingEvent::new` builds one, for tests.
 
 `PingResponse` fields:
 
@@ -659,6 +702,9 @@ The `ProxyPingEvent` does not implement `ResultedEvent`. Instead, mutate the `re
 | `protocol_version` | `ProtocolVersion` | The protocol version to report |
 | `version_name` | `String` | Version name string (e.g. "Infrarust 2.0") |
 | `favicon` | `Option<String>` | Base64-encoded 64x64 PNG, if any |
+| `player_sample` | `Vec<(String, Uuid)>` | The names shown when hovering over the player count, with their UUIDs. An entry the backend sent with an id that is not a UUID reads as the nil UUID |
+
+The proxy keeps the backend's own JSON for what no listener changed: an untouched `description` keeps its formatting and events as the backend sent them, and an untouched `player_sample` is relayed as sent. Fields the proxy does not model, such as Forge's `forgeData`, always pass through.
 
 ```rust
 ctx.event_bus().subscribe::<ProxyPingEvent, _>(
@@ -667,9 +713,16 @@ ctx.event_bus().subscribe::<ProxyPingEvent, _>(
         let resp = event.response_mut();
         resp.description = Component::text("My Minecraft Network").color("gold");
         resp.max_players = 500;
+        resp.player_sample = vec![("Join us!".into(), uuid::Uuid::nil())];
     },
 );
 ```
+
+WASM plugins (contract 0.2.3) receive `proxy-ping` with `remote-addr` and the response as before. They do not see `server`, `virtual_host`, `protocol_version`, `legacy` or `player_sample`, and the response a WASM listener returns keeps the `player_sample` set before it.
+
+#### Legacy pings
+
+A legacy ping answer only carries the MOTD, the player counts and, for clients from 1.4, the protocol number and version name. The response starts from the backend's legacy answer (relayed for a 1.6 ping with a host) or from the configuration, with the MOTD as plain text that keeps its `§` codes. A changed `description` is sent as `Component::to_legacy('§')`, an untouched one as it was. `favicon` and `player_sample` are ignored.
 
 ### ProxyInitializeEvent
 

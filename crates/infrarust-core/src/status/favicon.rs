@@ -145,6 +145,10 @@ impl FaviconCache {
         }
         self.default.clone()
     }
+
+    pub fn default_favicon(&self) -> Option<String> {
+        self.default.clone()
+    }
 }
 
 #[cfg(test)]

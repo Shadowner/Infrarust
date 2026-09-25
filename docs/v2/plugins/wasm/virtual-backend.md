@@ -118,7 +118,7 @@ The WIT contract (`infrarust:plugin@0.2.3`) reflects this. The world header in `
 // absent from event-outcome.
 ```
 
-The `server-pre-connect-result` variant in `guest.wit` has exactly four arms (`allowed`, `connect-to`, `send-to-limbo`, `denied`); there is no `virtual-backend` arm, so a guest has no way to return the marker the dispatch would need.
+The `server-pre-connect-result` variant in `guest.wit` has exactly four arms (`allowed`, `connect-to`, `send-to-limbo`, `denied`); there is no `virtual-backend` arm, so a guest has no way to return the marker the dispatch would need. The native `ServerPreConnectResult` has no such arm either: it was removed because the proxy never acted on it.
 
 ## The planned approach
 

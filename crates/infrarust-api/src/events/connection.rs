@@ -5,7 +5,6 @@ use std::sync::Arc;
 use crate::event::{Event, ResultedEvent};
 use crate::player::Player;
 use crate::types::{Component, GameProfile, PlayerId, ServerId};
-use crate::virtual_backend::VirtualBackendHandler;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -30,8 +29,7 @@ impl ConnectCause {
 /// Fired before the proxy connects a player to a backend server.
 ///
 /// Listeners can redirect the player to a different server, send them
-/// to a limbo handler, route them to a virtual backend, or deny the
-/// connection entirely.
+/// to a limbo handler, or deny the connection entirely.
 pub struct ServerPreConnectEvent {
     pub player: Arc<dyn Player>,
     pub server: ServerId,
@@ -76,7 +74,7 @@ impl ServerPreConnectEvent {
 }
 
 /// The result of a [`ServerPreConnectEvent`].
-#[derive(Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub enum ServerPreConnectResult {
     /// Allow the connection to the original server.
@@ -86,8 +84,6 @@ pub enum ServerPreConnectResult {
     ConnectTo(ServerId),
     /// Send the player to the limbo handler chain.
     SendToLimbo { limbo_handlers: Vec<String> },
-    /// Route the player to a virtual backend handler.
-    VirtualBackend(Box<dyn VirtualBackendHandler>),
     /// Deny the connection with a reason.
     Denied {
         /// The reason shown to the player.

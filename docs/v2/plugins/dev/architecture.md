@@ -227,7 +227,7 @@ pub enum PreLoginResult {
 }
 ```
 
-`ServerPreConnectEvent` lets you redirect players to another backend, send them to a limbo handler chain, or deny the connection entirely. Its result enum also has a `VirtualBackend` arm, but routing to a virtual backend is not wired into the proxy yet (see below).
+`ServerPreConnectEvent` lets you redirect players to another backend, send them to a limbo handler chain, or deny the connection entirely. Routing to a virtual backend is not wired into the proxy yet (see below).
 
 `ChatMessageEvent` lets you allow, deny, or modify messages.
 
@@ -381,7 +381,7 @@ Most plugins only need Tier 1. The auth plugin uses Tier 1 plus Tier 2 (events f
 
 ### Virtual backends (planned)
 
-A virtual backend is a proxy-hosted "server" that speaks raw Minecraft packets directly to the client. Unlike a limbo handler, where the proxy manages the protocol for you, a virtual backend handles everything itself: JoinGame, chunks, KeepAlive responses. The `VirtualBackendHandler` trait and the `ServerPreConnectResult::VirtualBackend` arm both exist in `infrarust_api`:
+A virtual backend is a proxy-hosted "server" that speaks raw Minecraft packets directly to the client. Unlike a limbo handler, where the proxy manages the protocol for you, a virtual backend handles everything itself: JoinGame, chunks, KeepAlive responses. The `VirtualBackendHandler` trait exists in `infrarust_api`:
 
 ```rust
 pub trait VirtualBackendHandler: Send + Sync {
@@ -394,7 +394,7 @@ pub trait VirtualBackendHandler: Send + Sync {
 }
 ```
 
-The proxy core does not act on the `VirtualBackend` result yet. Returning it from an event handler is a no-op on the current release, so treat virtual backends as planned, not available. Use a limbo handler for proxy-hosted screens today.
+The proxy cannot route a player to a virtual backend yet, and no event result selects one: the `ServerPreConnectResult::VirtualBackend` arm was removed because the proxy never acted on it. Treat virtual backends as planned, not available, and use a limbo handler for proxy-hosted screens today.
 
 ::: info Planned
 Virtual backend routing is not implemented in the proxy on v2.0.0-beta.3. The trait is published so the API can stabilize ahead of the runtime support.

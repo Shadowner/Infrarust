@@ -79,12 +79,15 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 ## How it works
 
 1. The proxy reads the client's handshake and login start packets.
-2. It fires `PlayerChooseInitialServerEvent` and `ServerPreConnectEvent`, giving plugins a chance to deny the connection. Passthrough honors only the deny result; redirect and limbo outcomes are ignored in this mode.
-3. It connects to one of the configured backend addresses.
-4. It forwards those initial packets to the backend, applying domain rewrite if configured, then fires `ServerConnectedEvent`. The proxy does not read the backend's answer, so this event does not mean the backend accepted the login, and no `ServerPostConnectEvent` follows.
-5. It registers a player session (with `active: false`, since passthrough can't inject packets).
-6. It starts two concurrent tasks: one copies bytes from client to backend, the other from backend to client. Both run through `tokio::io::copy`.
-7. When either side closes the connection, the write half of the other socket is shut down, the remaining bytes drain, and the session ends.
+2. It fires the login events (`PreLoginEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`) and checks bans. A plugin can refuse the player there, before any backend is contacted.
+3. It registers a player session (with `active: false`, since passthrough can't inject packets) and fires `PostLoginEvent`.
+4. It fires `PlayerChooseInitialServerEvent` and `ServerPreConnectEvent`. Plugins can deny the connection or send the player to another server in a forwarding mode. Limbo results disconnect the player, because limbo needs an intercepted mode.
+5. It connects to one of the target server's backend addresses. When none answers, it fires `KickedFromServerEvent`: a plugin can redirect the player to another server, otherwise the client gets the server's `disconnect_message`.
+6. It forwards the initial packets to the backend, applying domain rewrite and player info forwarding if configured, then fires `ServerConnectedEvent`. The proxy does not read the backend's answer, so this event does not mean the backend accepted the login, and no `ServerPostConnectEvent` follows.
+7. It starts two concurrent tasks: one copies bytes from client to backend, the other from backend to client. Both run through `tokio::io::copy`.
+8. When either side closes the connection, the write half of the other socket is shut down, the remaining bytes drain, the session ends and `DisconnectEvent` fires.
+
+See the [events reference](../../plugins/dev/events.md#passthrough-zero-copy-and-server-only) for what plugins can do at each step.
 
 The proxy never decrypts or parses packets after the handshake. The backend handles all authentication, encryption, and game logic.
 
@@ -95,7 +98,9 @@ Client ──TCP──▶ Infrarust ──TCP──▶ Backend
                    │
          reads handshake + login start
                    │
-         connects to backend
+         login events, player registered
+                   │
+         picks the server, connects to backend
                    │
          forwards initial packets
                    │

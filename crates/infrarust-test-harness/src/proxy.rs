@@ -22,6 +22,7 @@ use toml::{Table, Value};
 
 use crate::client::FakeClient;
 use crate::error::{HarnessError, HarnessResult};
+use crate::legacy::LegacyClient;
 use crate::session::FakeSessionServer;
 
 const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -441,6 +442,13 @@ impl TestProxy {
             .domain(server_id)
             .ok_or_else(|| HarnessError::setup(format!("no server {server_id} in this proxy")))?;
         Ok(FakeClient::new(self.addr, version).domain(domain))
+    }
+
+    pub fn legacy_client_for(&self, server_id: &str) -> HarnessResult<LegacyClient> {
+        let domain = self
+            .domain(server_id)
+            .ok_or_else(|| HarnessError::setup(format!("no server {server_id} in this proxy")))?;
+        Ok(LegacyClient::new(self.addr).hostname(domain))
     }
 
     pub fn connection_count(&self) -> usize {

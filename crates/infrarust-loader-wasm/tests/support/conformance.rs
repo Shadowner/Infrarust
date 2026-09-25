@@ -339,10 +339,14 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             initial_server(bus.fire(event).await.result())
         }
         EventName::ProxyPing => {
-            let event = ProxyPingEvent {
-                remote_addr: remote(),
-                response: PingResponse::new(motd(), 100, 7, protocol, "Infrarust".to_owned(), None),
-            };
+            let event = ProxyPingEvent::new(
+                remote(),
+                Some(ServerId::new("lobby")),
+                Some("play.example.com".to_owned()),
+                protocol,
+                false,
+                PingResponse::new(motd(), 100, 7, protocol, "Infrarust".to_owned(), None),
+            );
             ping(&bus.fire(event).await.response)
         }
         EventName::ProxyInitialize => {

@@ -3,111 +3,46 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
-use infrarust_api::types::{Component, LEGACY_SECTION};
-use infrarust_config::{MotdConfig, ServerAddress, ServerConfig};
+use infrarust_api::events::proxy::{PingResponse, ProxyPingEvent};
+use infrarust_api::types::{Component, LEGACY_SECTION, ServerId};
+use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_protocol::legacy::{
-    LegacyPingVariant, build_legacy_kick, parse_legacy_handshake, parse_legacy_ping,
+    LegacyPingRequest, LegacyPingVariant, parse_legacy_handshake, parse_legacy_ping,
 };
 use infrarust_protocol::{CURRENT_MC_PROTOCOL, CURRENT_MC_VERSION, LegacyPingResponse};
 
-use infrarust_server_manager::{ServerManagerService, ServerState};
-use infrarust_transport::{BackendConnector, select_forwarder};
+use infrarust_server_manager::ServerState;
+use infrarust_transport::BackendConnector;
 
+use super::forwarded::{Arrival, ForwardedLogin, Opening, Route, UNKNOWN_SERVER, Wire};
+use super::helpers::send_legacy_kick;
 use crate::error::CoreError;
-use crate::loadbalancer::{
-    BackendHealthView, BackendLoad, peek_backend_addresses, select_backend_addresses,
-};
+use crate::loadbalancer::{peek_backend_addresses, select_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
-use crate::registry::ConnectionRegistry;
-use crate::routing::DomainRouter;
+use crate::pipeline::types::RoutingData;
+use crate::services::ProxyServices;
+use crate::util::normalize_handshake;
 
-/// Handles legacy Minecraft connections (pre-1.7 clients).
-///
-/// Supports:
-/// - Legacy ping: Beta (0xFE), 1.4 (0xFE01), and 1.6 (0xFE01FA)
-/// - Legacy login: 0x02 handshake with passthrough proxying
+const DEFAULT_MOTD: &str = "An Infrarust Proxy";
+const LEGACY_REPLY_PREFIX: &str = "\u{a7}1\0";
+
 pub struct LegacyHandler {
-    domain_router: Arc<DomainRouter>,
-    default_motd: Option<MotdConfig>,
-    server_manager: Option<Arc<ServerManagerService>>,
-    connection_registry: Arc<ConnectionRegistry>,
+    services: ProxyServices,
     backend_connector: Arc<BackendConnector>,
-    backend_load: Arc<BackendLoad>,
-    health: Arc<dyn BackendHealthView>,
     shutdown: CancellationToken,
 }
 
-struct BackendLoadGuard {
-    load: Arc<BackendLoad>,
-    address: ServerAddress,
-}
-
-impl BackendLoadGuard {
-    fn acquire(load: &Arc<BackendLoad>, address: ServerAddress) -> Self {
-        load.acquire(&address);
-        Self {
-            load: Arc::clone(load),
-            address,
-        }
-    }
-}
-
-impl Drop for BackendLoadGuard {
-    fn drop(&mut self) {
-        self.load.release(&self.address);
-    }
-}
-
 impl LegacyHandler {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        domain_router: Arc<DomainRouter>,
-        default_motd: Option<MotdConfig>,
-        server_manager: Option<Arc<ServerManagerService>>,
-        connection_registry: Arc<ConnectionRegistry>,
+        services: ProxyServices,
         backend_connector: Arc<BackendConnector>,
-        backend_load: Arc<BackendLoad>,
-        health: Arc<dyn BackendHealthView>,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
-            domain_router,
-            default_motd,
-            server_manager,
-            connection_registry,
+            services,
             backend_connector,
-            backend_load,
-            health,
             shutdown,
         }
-    }
-
-    fn ordered_addresses(
-        &self,
-        config: &ServerConfig,
-        load_balancer: &dyn crate::loadbalancer::LoadBalancer,
-    ) -> Vec<ServerAddress> {
-        select_backend_addresses(
-            config,
-            load_balancer,
-            self.backend_load.as_ref(),
-            self.health.as_ref(),
-        )
-        .to_vec()
-    }
-
-    fn previewed_addresses(
-        &self,
-        config: &ServerConfig,
-        load_balancer: &dyn crate::loadbalancer::LoadBalancer,
-    ) -> Vec<ServerAddress> {
-        peek_backend_addresses(
-            config,
-            load_balancer,
-            self.backend_load.as_ref(),
-            self.health.as_ref(),
-        )
-        .to_vec()
     }
 
     /// Handles a legacy connection (ping or login).
@@ -130,7 +65,6 @@ impl LegacyHandler {
 
     async fn handle_ping(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
         let raw_data = self.read_legacy_ping_data(ctx).await?;
-
         let request = parse_legacy_ping(&raw_data)?;
 
         tracing::debug!(
@@ -139,44 +73,53 @@ impl LegacyHandler {
             "legacy ping parsed"
         );
 
-        // For Beta/V1_4 (no hostname), send a generic response
-        let hostname = match &request.hostname {
-            Some(h) => h.clone(),
-            None => {
-                let response = self.build_config_response(&request.variant, None);
-                ctx.stream_mut().write_all(&response).await?;
-                ctx.stream_mut().flush().await?;
-                return Ok(());
-            }
-        };
+        let virtual_host = request
+            .hostname
+            .as_deref()
+            .map(|host| normalize_handshake(host).to_lowercase());
+        let route = virtual_host
+            .as_deref()
+            .and_then(|host| self.services.domain_router.resolve_route(host));
 
-        let server_config = self.domain_router.resolve_route(&hostname.to_lowercase());
-
-        let response_bytes = match server_config {
+        let (server, response) = match route {
             Some((_provider_id, config, load_balancer)) => {
-                let addresses = self.previewed_addresses(&config, load_balancer.as_ref());
-                let full_ping = self.reconstruct_ping_packet(&raw_data);
-                match tokio::time::timeout(
+                let addresses = peek_backend_addresses(
+                    &config,
+                    load_balancer.as_ref(),
+                    self.services.backend_load.as_ref(),
+                    self.services.backend_health.as_ref(),
+                )
+                .to_vec();
+                let full_ping = reconstruct_ping_packet(&raw_data);
+                let response = match tokio::time::timeout(
                     std::time::Duration::from_secs(5),
                     self.forward_ping_to_backend(&full_ping, &config, &addresses, ctx),
                 )
                 .await
                 {
-                    Ok(Ok(bytes)) => bytes,
+                    Ok(Ok(response)) => response,
                     Ok(Err(e)) => {
                         tracing::debug!(error = %e, "ping passthrough failed, using fallback");
-                        self.build_config_response(&request.variant, Some(&config))
+                        self.config_response(Some(&config))
                     }
                     Err(_) => {
                         tracing::debug!("ping passthrough timed out, using fallback");
-                        self.build_config_response(&request.variant, Some(&config))
+                        self.config_response(Some(&config))
                     }
-                }
+                };
+                (Some(ServerId::new(config.effective_id())), response)
             }
-            None => self.build_config_response(&request.variant, None),
+            None => (None, self.config_response(None)),
         };
 
-        ctx.stream_mut().write_all(&response_bytes).await?;
+        let response = self
+            .fire_ping(ctx, server, virtual_host, &request, response)
+            .await;
+        let bytes = match request.variant {
+            LegacyPingVariant::Beta => response.build_beta_response()?,
+            LegacyPingVariant::V1_4 | LegacyPingVariant::V1_6 => response.build_v1_4_response()?,
+        };
+        ctx.stream_mut().write_all(&bytes).await?;
         ctx.stream_mut().flush().await?;
 
         tracing::debug!(
@@ -188,13 +131,51 @@ impl LegacyHandler {
         Ok(())
     }
 
+    async fn fire_ping(
+        &self,
+        ctx: &ConnectionContext,
+        server: Option<ServerId>,
+        virtual_host: Option<String>,
+        request: &LegacyPingRequest,
+        mut response: LegacyPingResponse,
+    ) -> LegacyPingResponse {
+        let sent = PingResponse::new(
+            Component::text(response.motd.clone()),
+            response.max_players,
+            response.online_players,
+            infrarust_api::types::ProtocolVersion::new(response.protocol_version),
+            response.server_version.clone(),
+            None,
+        );
+        let event = ProxyPingEvent::new(
+            ctx.client_addr(),
+            server,
+            virtual_host,
+            infrarust_api::types::ProtocolVersion::new(
+                request.protocol_version.map_or(0, i32::from),
+            ),
+            true,
+            sent.clone(),
+        );
+        let event = self.services.event_bus.fire(event).await;
+        let answered = &event.response;
+        if answered.description != sent.description {
+            response.motd = answered.description.to_legacy(LEGACY_SECTION);
+        }
+        response.max_players = answered.max_players;
+        response.online_players = answered.online_players;
+        response.protocol_version = answered.protocol_version.raw();
+        response.server_version.clone_from(&answered.version_name);
+        response
+    }
+
     async fn forward_ping_to_backend(
         &self,
         raw_ping: &[u8],
         config: &ServerConfig,
         addresses: &[ServerAddress],
         ctx: &ConnectionContext,
-    ) -> Result<Vec<u8>, CoreError> {
+    ) -> Result<LegacyPingResponse, CoreError> {
         let config_id = config.effective_id();
 
         let mut backend = self
@@ -203,7 +184,7 @@ impl LegacyHandler {
                 &config_id,
                 addresses,
                 config.timeouts.as_ref().map(|t| t.connect),
-                false, // No proxy protocol for legacy pings
+                false,
                 &ctx.connection_info(),
             )
             .await?;
@@ -211,74 +192,21 @@ impl LegacyHandler {
         backend.stream_mut().write_all(raw_ping).await?;
         backend.stream_mut().flush().await?;
 
-        let response = Self::read_legacy_kick_response(backend.stream_mut()).await?;
-
-        Ok(response)
+        let reply = read_legacy_kick_text(backend.stream_mut()).await?;
+        parse_legacy_reply(&reply)
     }
 
-    async fn read_legacy_kick_response(
-        stream: &mut tokio::net::TcpStream,
-    ) -> Result<Vec<u8>, CoreError> {
-        let mut packet_id = [0u8; 1];
-        stream.read_exact(&mut packet_id).await?;
-
-        if packet_id[0] != 0xFF {
-            return Err(CoreError::Protocol(
-                infrarust_protocol::ProtocolError::invalid(format!(
-                    "expected legacy kick 0xFF, got 0x{:02X}",
-                    packet_id[0]
-                )),
-            ));
-        }
-
-        let mut len_bytes = [0u8; 2];
-        stream.read_exact(&mut len_bytes).await?;
-        let str_len = u16::from_be_bytes(len_bytes) as usize;
-
-        if str_len > 32767 {
-            return Err(CoreError::Protocol(
-                infrarust_protocol::ProtocolError::invalid(format!(
-                    "legacy kick string length too large: {str_len}"
-                )),
-            ));
-        }
-
-        let byte_len = str_len * 2;
-        let mut payload = vec![0u8; byte_len];
-        stream.read_exact(&mut payload).await?;
-
-        let mut result = Vec::with_capacity(1 + 2 + byte_len);
-        result.push(0xFF);
-        result.extend_from_slice(&len_bytes);
-        result.extend_from_slice(&payload);
-
-        Ok(result)
-    }
-
-    fn reconstruct_ping_packet(&self, raw_data: &[u8]) -> Vec<u8> {
-        let mut packet = Vec::with_capacity(1 + raw_data.len());
-        packet.push(0xFE);
-        packet.extend_from_slice(raw_data);
-        packet
-    }
-
-    fn build_config_response(
-        &self,
-        variant: &LegacyPingVariant,
-        config: Option<&ServerConfig>,
-    ) -> Vec<u8> {
+    fn config_response(&self, config: Option<&ServerConfig>) -> LegacyPingResponse {
+        let registry = &self.services.connection_registry;
         let (motd, online, max) = if let Some(cfg) = config {
             let config_id = cfg.effective_id();
 
-            // Check server state
             if cfg.server_manager.is_some()
-                && let Some(ref sm) = self.server_manager
+                && let Some(ref sm) = self.services.server_manager
                 && let Some(state) = sm.get_state(&config_id)
                 && state != ServerState::Online
             {
-                return self
-                    .build_state_response(variant, cfg, state, &config_id)
-                    .unwrap_or_default();
+                return self.state_response(cfg, state, &config_id);
             }
 
             let motd = cfg
@@ -286,7 +214,7 @@ impl LegacyHandler {
                 .online
                 .as_ref()
                 .map_or_else(|| self.default_motd_text(), |m| m.text.clone());
-            let online = self.connection_registry.count_by_server(&config_id) as i32;
+            let online = registry.count_by_server(&config_id) as i32;
             let max = cfg
                 .motd
                 .online
@@ -296,37 +224,33 @@ impl LegacyHandler {
                 .cast_signed();
             (motd, online, max)
         } else {
-            let entry = self.default_motd.as_ref().and_then(|m| m.online.as_ref());
-            let motd = entry.map_or_else(|| "An Infrarust Proxy".to_string(), |e| e.text.clone());
-            let online = self.connection_registry.count() as i32;
+            let entry = self
+                .services
+                .config
+                .default_motd
+                .as_ref()
+                .and_then(|m| m.online.as_ref());
+            let motd = entry.map_or_else(|| DEFAULT_MOTD.to_string(), |e| e.text.clone());
+            let online = registry.count() as i32;
             let max = entry.and_then(|e| e.max_players).unwrap_or(0).cast_signed();
             (motd, online, max)
         };
 
-        let response = LegacyPingResponse {
+        LegacyPingResponse {
             protocol_version: CURRENT_MC_PROTOCOL,
             server_version: CURRENT_MC_VERSION.to_string(),
             motd,
             online_players: online,
             max_players: max,
-        };
-
-        let result = match variant {
-            LegacyPingVariant::Beta => response.build_beta_response(),
-            LegacyPingVariant::V1_4 | LegacyPingVariant::V1_6 => response.build_v1_4_response(),
-        };
-
-        result.unwrap_or_default()
+        }
     }
 
-    /// Builds a state-specific ping response (sleeping, starting, etc.).
-    fn build_state_response(
+    fn state_response(
         &self,
-        variant: &LegacyPingVariant,
         cfg: &ServerConfig,
         state: ServerState,
         config_id: &str,
-    ) -> Result<Vec<u8>, CoreError> {
+    ) -> LegacyPingResponse {
         let (motd_entry, default_text) = match state {
             ServerState::Sleeping => (
                 cfg.motd.sleeping.as_ref(),
@@ -338,27 +262,16 @@ impl LegacyHandler {
             _ => (None, "A Minecraft Server"),
         };
 
-        let motd = motd_entry.map_or_else(|| default_text.to_string(), |e| e.text.clone());
-        let online = self.connection_registry.count_by_server(config_id) as i32;
-        let max = motd_entry
-            .and_then(|e| e.max_players)
-            .unwrap_or(cfg.max_players)
-            .cast_signed();
-
-        let response = LegacyPingResponse {
+        LegacyPingResponse {
             protocol_version: CURRENT_MC_PROTOCOL,
             server_version: CURRENT_MC_VERSION.to_string(),
-            motd,
-            online_players: online,
-            max_players: max,
-        };
-
-        let bytes = match variant {
-            LegacyPingVariant::Beta => response.build_beta_response()?,
-            LegacyPingVariant::V1_4 | LegacyPingVariant::V1_6 => response.build_v1_4_response()?,
-        };
-
-        Ok(bytes)
+            motd: motd_entry.map_or_else(|| default_text.to_string(), |e| e.text.clone()),
+            online_players: self.services.connection_registry.count_by_server(config_id) as i32,
+            max_players: motd_entry
+                .and_then(|e| e.max_players)
+                .unwrap_or(cfg.max_players)
+                .cast_signed(),
+        }
     }
 
     /// Returns data AFTER the `0xFE` byte (which is in `buffered_data[0]`).
@@ -446,7 +359,6 @@ impl LegacyHandler {
         .await
         .map_err(|_| CoreError::Timeout("legacy handshake read timed out".into()))??;
 
-        // Parse (data after 0x02)
         let handshake = parse_legacy_handshake(&raw_data[1..])?;
 
         tracing::debug!(
@@ -457,68 +369,86 @@ impl LegacyHandler {
             "legacy login handshake"
         );
 
-        // Route to backend
-        let domain = handshake.hostname.to_lowercase();
+        let domain = normalize_handshake(&handshake.hostname).to_lowercase();
         let Some((_provider_id, server_config, load_balancer)) =
-            self.domain_router.resolve_route(&domain)
+            self.services.domain_router.resolve_route(&domain)
         else {
             tracing::debug!(domain = %domain, "legacy login: unknown domain");
-            self.send_legacy_kick(ctx, &Component::text("Unknown server"))
-                .await;
+            send_legacy_kick(ctx.stream_mut(), &Component::text(UNKNOWN_SERVER))
+                .await
+                .ok();
             return Ok(());
         };
 
-        let config_id = server_config.effective_id();
-
-        // Connect to backend
-        let backend = match self
-            .backend_connector
-            .connect(
-                &config_id,
-                &self.ordered_addresses(&server_config, load_balancer.as_ref()),
-                server_config.timeouts.as_ref().map(|t| t.connect),
-                server_config.send_proxy_protocol,
-                &ctx.connection_info(),
-            )
-            .await
+        if let Some(ban) = self
+            .services
+            .ban_manager
+            .check_player(&ctx.client_ip, &handshake.username, None)
+            .await?
         {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!(
-                    server = %config_id,
-                    error = %e,
-                    "legacy login: backend unreachable"
-                );
-                let msg = Component::text(server_config.effective_disconnect_message());
-                self.send_legacy_kick(ctx, &msg).await;
-                return Ok(());
-            }
+            tracing::info!(
+                ip = %ctx.client_ip,
+                username = %handshake.username,
+                ban_type = ban.target.display_type(),
+                "legacy connection rejected: player is banned"
+            );
+            send_legacy_kick(ctx.stream_mut(), &Component::text(ban.kick_message()))
+                .await
+                .ok();
+            return Ok(());
+        }
+
+        let addresses = select_backend_addresses(
+            &server_config,
+            load_balancer.as_ref(),
+            self.services.pending_backends.as_ref(),
+            self.services.backend_health.as_ref(),
+        )
+        .to_vec();
+        if let Some(first) = addresses.first() {
+            ctx.extensions
+                .insert(self.services.pending_backends.reserve(first));
+        }
+        let origin = Route {
+            routing: RoutingData {
+                config_id: server_config.effective_id(),
+                server_config,
+                load_balancer,
+            },
+            addresses,
+        };
+        let arrival = Arrival {
+            username: handshake.username.clone(),
+            claimed_uuid: None,
+            protocol_version: infrarust_api::types::ProtocolVersion::new(i32::from(
+                handshake.protocol_version,
+            )),
+            domain,
+        };
+        let login = ForwardedLogin {
+            services: &self.services,
+            connector: &self.backend_connector,
+            shutdown: &self.shutdown,
+            wire: Wire::Legacy,
+        };
+        let Some(ready) = login
+            .open(ctx, arrival, origin, Opening::Legacy(&raw_data))
+            .await?
+        else {
+            return Ok(());
         };
 
-        let _load = BackendLoadGuard::acquire(&self.backend_load, backend.server_address().clone());
-
-        // Forward the raw handshake bytes to backend
-        let mut backend = backend;
-        backend.stream_mut().write_all(&raw_data).await?;
-        backend.stream_mut().flush().await?;
-
+        let server = ready.server.clone();
         tracing::info!(
-            server = %config_id,
+            server = %server,
             username = %handshake.username,
             "legacy login: forwarding to backend"
         );
 
-        // Bidirectional forwarding
-        let client_stream = ctx.take_stream();
-        let backend_stream = backend.into_stream();
-        let forwarder = select_forwarder(server_config.proxy_mode);
-
-        let result = forwarder
-            .forward(client_stream, backend_stream, self.shutdown.child_token())
-            .await;
+        let result = ready.forward(ctx.take_stream()).await;
 
         tracing::info!(
-            server = %config_id,
+            server = %server,
             username = %handshake.username,
             c2b = result.client_to_backend,
             b2c = result.backend_to_client,
@@ -584,20 +514,92 @@ impl LegacyHandler {
         Ok(())
     }
 
-    async fn send_legacy_kick(&self, ctx: &mut ConnectionContext, reason: &Component) {
-        if let Ok(kick_bytes) = build_legacy_kick(&reason.to_legacy(LEGACY_SECTION)) {
-            let _ = ctx.stream_mut().write_all(&kick_bytes).await;
-            let _ = ctx.stream_mut().flush().await;
-        }
-    }
-
-    /// Returns the default MOTD text from config or the hardcoded fallback.
     fn default_motd_text(&self) -> String {
-        self.default_motd
+        self.services
+            .config
+            .default_motd
             .as_ref()
             .and_then(|m| m.online.as_ref())
-            .map_or_else(|| "An Infrarust Proxy".to_string(), |e| e.text.clone())
+            .map_or_else(|| DEFAULT_MOTD.to_string(), |e| e.text.clone())
     }
+}
+
+fn reconstruct_ping_packet(raw_data: &[u8]) -> Vec<u8> {
+    let mut packet = Vec::with_capacity(1 + raw_data.len());
+    packet.push(0xFE);
+    packet.extend_from_slice(raw_data);
+    packet
+}
+
+async fn read_legacy_kick_text(stream: &mut tokio::net::TcpStream) -> Result<String, CoreError> {
+    let mut packet_id = [0u8; 1];
+    stream.read_exact(&mut packet_id).await?;
+    if packet_id[0] != 0xFF {
+        return Err(CoreError::Protocol(
+            infrarust_protocol::ProtocolError::invalid(format!(
+                "expected legacy kick 0xFF, got 0x{:02X}",
+                packet_id[0]
+            )),
+        ));
+    }
+
+    let mut len_bytes = [0u8; 2];
+    stream.read_exact(&mut len_bytes).await?;
+    let str_len = usize::from(u16::from_be_bytes(len_bytes));
+    if str_len > 32767 {
+        return Err(CoreError::Protocol(
+            infrarust_protocol::ProtocolError::invalid(format!(
+                "legacy kick string length too large: {str_len}"
+            )),
+        ));
+    }
+
+    let mut payload = vec![0u8; str_len * 2];
+    stream.read_exact(&mut payload).await?;
+    let units: Vec<u16> = payload
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_be_bytes(*pair))
+        .collect();
+    String::from_utf16(&units).map_err(|_| {
+        CoreError::Protocol(infrarust_protocol::ProtocolError::invalid(
+            "legacy kick is not UTF-16",
+        ))
+    })
+}
+
+fn parse_legacy_reply(reply: &str) -> Result<LegacyPingResponse, CoreError> {
+    let invalid = || {
+        CoreError::Protocol(infrarust_protocol::ProtocolError::invalid(format!(
+            "unreadable legacy ping reply {reply:?}"
+        )))
+    };
+    let number = |value: &str| value.parse::<i32>().map_err(|_| invalid());
+    if let Some(fields) = reply.strip_prefix(LEGACY_REPLY_PREFIX) {
+        let parts: Vec<&str> = fields.split('\0').collect();
+        let [protocol, version, motd, online, max] = parts[..] else {
+            return Err(invalid());
+        };
+        return Ok(LegacyPingResponse {
+            protocol_version: number(protocol)?,
+            server_version: version.to_string(),
+            motd: motd.to_string(),
+            online_players: number(online)?,
+            max_players: number(max)?,
+        });
+    }
+    let mut parts = reply.rsplitn(3, LEGACY_SECTION);
+    let (Some(max), Some(online), Some(motd)) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(invalid());
+    };
+    Ok(LegacyPingResponse {
+        protocol_version: 0,
+        server_version: String::new(),
+        motd: motd.to_string(),
+        online_players: number(online)?,
+        max_players: number(max)?,
+    })
 }
 
 #[cfg(test)]
@@ -605,11 +607,11 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use std::net::{IpAddr, Ipv4Addr};
 
-    use infrarust_config::KeepaliveConfig;
     use tokio::net::{TcpListener, TcpStream};
 
     use super::*;
-    use crate::loadbalancer::{AddressConnectionCount, PassiveBackendHealth};
+    use crate::limbo::test_helpers::test_proxy_services;
+    use crate::loadbalancer::AddressConnectionCount;
     use crate::provider::ProviderId;
 
     fn utf16be(s: &str) -> Vec<u8> {
@@ -644,27 +646,21 @@ mod tests {
         let backend_addr = backend_listener.local_addr().unwrap();
         let address: ServerAddress = backend_addr.to_string().parse().unwrap();
 
-        let router = Arc::new(DomainRouter::new());
-        router.add(
+        let services = test_proxy_services();
+        services.domain_router.add(
             ProviderId::file("lobby"),
             toml::from_str(&format!(
                 "name = \"lobby\"\ndomains = [\"lobby.test\"]\naddresses = [\"{backend_addr}\"]\n"
             ))
             .unwrap(),
         );
-
-        let load = Arc::new(BackendLoad::new());
+        let load = Arc::clone(&services.backend_load);
         let handler = Arc::new(LegacyHandler::new(
-            router,
-            None,
-            None,
-            Arc::new(ConnectionRegistry::new()),
+            services,
             Arc::new(BackendConnector::new(
                 std::time::Duration::from_secs(2),
-                KeepaliveConfig::default(),
+                infrarust_config::KeepaliveConfig::default(),
             )),
-            Arc::clone(&load),
-            Arc::new(PassiveBackendHealth::new()) as _,
             CancellationToken::new(),
         ));
 
@@ -704,5 +700,22 @@ mod tests {
             0,
             "the count must be given back when the forward ends"
         );
+    }
+
+    #[test]
+    fn legacy_replies_are_read_in_both_formats() {
+        let modern =
+            parse_legacy_reply("\u{a7}1\u{0}78\u{0}1.6.4\u{0}\u{a7}6Hello\u{0}3\u{0}20").unwrap();
+        assert_eq!(modern.protocol_version, 78);
+        assert_eq!(modern.server_version, "1.6.4");
+        assert_eq!(modern.motd, "\u{a7}6Hello");
+        assert_eq!((modern.online_players, modern.max_players), (3, 20));
+
+        let beta = parse_legacy_reply("A \u{a7}cred server\u{a7}4\u{a7}10").unwrap();
+        assert_eq!(beta.motd, "A \u{a7}cred server");
+        assert_eq!((beta.online_players, beta.max_players), (4, 10));
+
+        assert!(parse_legacy_reply("\u{a7}1\u{0}78\u{0}1.6.4").is_err());
+        assert!(parse_legacy_reply("no separators").is_err());
     }
 }

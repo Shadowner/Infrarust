@@ -63,3 +63,6 @@ pub struct LoginData {
 /// Marker type inserted into extensions when a legacy ping is detected (first byte 0xFE).
 #[derive(Debug, Clone, Copy)]
 pub struct LegacyDetected;
+
+#[derive(Debug, Clone, Copy)]
+pub struct UnknownDomain;

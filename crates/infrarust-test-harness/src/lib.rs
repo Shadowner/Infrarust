@@ -2,6 +2,7 @@ pub mod backend;
 pub mod client;
 pub mod error;
 pub mod framing;
+pub mod legacy;
 pub mod proxy;
 pub mod recorder;
 pub mod scripted;
@@ -19,6 +20,10 @@ pub use error::{HarnessError, HarnessResult};
 pub use framing::{FrameReader, FrameWriter, FramedConn};
 pub use infrarust_protocol::io::PacketFrame;
 pub use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
+pub use legacy::{
+    FakeLegacyBackend, LegacyBackendConn, LegacyClient, LegacyHandshake, LegacyLogin, LegacyPing,
+    LegacySession,
+};
 pub use proxy::{ServerSpec, TestProxy, TestProxyBuilder};
 pub use recorder::{EventKind, RECORDER_PLUGIN_ID, Recorded, Recorder, RecordingPlugin};
 pub use scripted::ScriptedPlugin;

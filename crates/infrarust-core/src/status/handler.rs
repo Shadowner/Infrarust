@@ -4,7 +4,6 @@
 //! full decision tree: server manager states → relay → cache → stale
 //! fallback → synthetic MOTDs.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,6 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex as TokioMutex;
 
 use infrarust_api::events::proxy::ProxyPingEvent;
+use infrarust_api::types::ServerId;
 use infrarust_config::{MotdConfig, ServerConfig};
 use infrarust_protocol::io::{PacketDecoder, PacketEncoder};
 use infrarust_protocol::packets::status::{CPingResponse, CStatusResponse, SPingRequest};
@@ -123,20 +123,22 @@ impl StatusHandler {
             )
             .await;
 
-        let api_response = core_to_api_ping_response(&response);
-        let sent_description = api_response.description.clone();
-        let remote_addr = SocketAddr::new(ctx.client_ip, ctx.peer_addr.port());
-        let event = ProxyPingEvent {
-            remote_addr,
-            response: api_response,
-        };
-        let event = self.event_bus.fire(event).await;
         let client_version = handshake
             .as_ref()
             .map_or(ProtocolVersion(CURRENT_MC_PROTOCOL), |h| h.protocol_version);
+        let sent = core_to_api_ping_response(&response);
+        let event = ProxyPingEvent::new(
+            ctx.client_addr(),
+            routing.as_ref().map(|r| ServerId::new(r.config_id.clone())),
+            handshake.as_ref().map(|h| h.domain.clone()),
+            api_version(client_version),
+            false,
+            sent.clone(),
+        );
+        let event = self.event_bus.fire(event).await;
         merge_ping_event(
             &mut response,
-            &sent_description,
+            &sent,
             &event.response,
             api_version(client_version),
         );
@@ -164,7 +166,9 @@ impl StatusHandler {
         connection_registry: &ConnectionRegistry,
     ) -> ServerPingResponse {
         let Some(routing) = routing else {
-            return self.build_default_motd_response();
+            let mut response = self.build_default_motd_response();
+            response.favicon = self.favicon_cache.default_favicon();
+            return response;
         };
 
         let config = &routing.server_config;

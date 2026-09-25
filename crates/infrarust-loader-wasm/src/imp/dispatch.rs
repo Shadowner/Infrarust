@@ -384,14 +384,13 @@ fn apply_chat_message(outcome: wg::EventOutcome, ev: &mut ChatMessageEvent) {
 
 fn apply_proxy_ping(outcome: wg::EventOutcome, ev: &mut ProxyPingEvent) {
     if let wg::EventOutcome::ProxyPing(r) = outcome {
-        ev.response = PingResponse::new(
-            convert::component_from_wit(&r.description),
-            r.max_players,
-            r.online_players,
-            ProtocolVersion::new(r.protocol_version),
-            r.version_name,
-            r.favicon,
-        );
+        let response = &mut ev.response;
+        response.description = convert::component_from_wit(&r.description);
+        response.max_players = r.max_players;
+        response.online_players = r.online_players;
+        response.protocol_version = ProtocolVersion::new(r.protocol_version);
+        response.version_name = r.version_name;
+        response.favicon = r.favicon;
     }
 }
 
@@ -462,5 +461,34 @@ mod tests {
 
         assert!(handle.is_some());
         assert_eq!(bus.tracked_count(), 1);
+    }
+
+    #[test]
+    fn a_ping_outcome_keeps_the_player_sample() {
+        let notch = ("Notch".to_string(), uuid::Uuid::from_u128(7));
+        let mut response = PingResponse::new(
+            Component::text("motd"),
+            20,
+            1,
+            ProtocolVersion::new(774),
+            "Infrarust".into(),
+            None,
+        );
+        response.player_sample = vec![notch.clone()];
+        let mut event = ProxyPingEvent::new(
+            "127.0.0.1:25565".parse().unwrap(),
+            Some(ServerId::new("lobby")),
+            Some("lobby.test".into()),
+            ProtocolVersion::new(774),
+            false,
+            response,
+        );
+        let mut outcome = ping_response_to_wit(&event.response);
+        outcome.max_players = 99;
+
+        apply_proxy_ping(wg::EventOutcome::ProxyPing(outcome), &mut event);
+
+        assert_eq!(event.response.max_players, 99);
+        assert_eq!(event.response.player_sample, [notch]);
     }
 }

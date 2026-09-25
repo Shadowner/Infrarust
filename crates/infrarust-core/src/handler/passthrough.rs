@@ -1,35 +1,17 @@
 use std::sync::Arc;
 
-use infrarust_api::event::ResultedEvent;
-use infrarust_api::events::connection::{
-    ConnectCause, PlayerChooseInitialServerEvent, ServerConnectedEvent,
-};
-use infrarust_api::events::lifecycle::DisconnectCause;
 use infrarust_api::player::Player;
-use infrarust_api::types::Component;
-use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
-use infrarust_config::DomainRewrite;
-use infrarust_protocol::Packet;
-use infrarust_protocol::io::PacketEncoder;
-use infrarust_protocol::version::ProtocolVersion;
-use infrarust_transport::{BackendConnector, ForwardEndReason, select_forwarder};
+use infrarust_transport::BackendConnector;
 
-use crate::auth::game_profile::offline_profile_uuid;
+use super::forwarded::{Arrival, ForwardedLogin, Opening, Route, Wire};
 use crate::error::CoreError;
-use crate::forwarding::{ForwardingData, ForwardingHandler, build_handshake_for_backend};
+use crate::middleware::backend_selection::BackendTargets;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
-use crate::player::lifecycle::PlayerLifecycle;
-use crate::player::{PlayerCommand, PlayerSession, SHUTDOWN_REASON};
 use crate::services::ProxyServices;
-use crate::session::server_join::pre_connect;
 
-/// Handles passthrough proxy connections.
-///
-/// Connects to the backend, forwards initial packets (handshake + login start),
-/// registers the session, and starts bidirectional forwarding.
 pub struct PassthroughHandler {
     backend_connector: Arc<BackendConnector>,
     services: ProxyServices,
@@ -47,17 +29,12 @@ impl PassthroughHandler {
         }
     }
 
-    /// Sets the metrics collector (telemetry feature only).
     #[cfg(feature = "telemetry")]
     pub fn with_metrics(mut self, metrics: Arc<crate::telemetry::ProxyMetrics>) -> Self {
         self.metrics = Some(metrics);
         self
     }
 
-    /// Handles a login connection by forwarding to the backend.
-    ///
-    /// # Errors
-    /// Returns `CoreError` on backend connection failure or I/O errors.
     #[tracing::instrument(name = "proxy.session", skip_all, fields(mode = "passthrough"))]
     pub async fn handle(
         &self,
@@ -69,192 +46,60 @@ impl PassthroughHandler {
             .require_extension::<HandshakeData>("HandshakeData")?
             .clone();
         let login_data = ctx.extensions.get::<LoginData>().cloned();
-
-        let server_config = &routing.server_config;
-        let version = handshake.protocol_version;
-        let registry = &self.services.packet_registry;
-
-        let username = login_data
-            .as_ref()
-            .map(|d| d.username.clone())
-            .unwrap_or_default();
-        let player_uuid = offline_profile_uuid(
-            self.services.config.auth.offline_uuid,
-            &username,
-            login_data.as_ref().and_then(|d| d.player_uuid),
+        let addresses = BackendTargets::addresses_or_config(
+            ctx.extensions.get::<BackendTargets>(),
+            &routing.server_config,
         );
-        let api_profile = infrarust_api::types::GameProfile {
-            uuid: player_uuid,
-            username: username.clone(),
-            properties: vec![],
+
+        let arrival = Arrival {
+            username: login_data
+                .as_ref()
+                .map(|d| d.username.clone())
+                .unwrap_or_default(),
+            claimed_uuid: login_data.as_ref().and_then(|d| d.player_uuid),
+            protocol_version: infrarust_api::types::ProtocolVersion::new(
+                handshake.protocol_version.0,
+            ),
+            domain: handshake.domain.clone(),
         };
-
-        let session_token = shutdown.child_token();
-        let (cmd_tx, mut cmd_rx) = PlayerSession::channel();
-        let player = Arc::new(PlayerSession::new(
-            crate::player::next_player_id(),
-            api_profile,
-            infrarust_api::types::ProtocolVersion::new(version.0),
-            ctx.client_addr(),
-            None,
-            false,
-            false,
-            cmd_tx,
-            session_token.clone(),
-            crate::permissions::default_checker(),
-            Arc::clone(&self.services.backend_load),
-        ));
-
-        let lifecycle = PlayerLifecycle::begin(&self.services, Arc::clone(&player)).await;
-        if session_token.is_cancelled() {
-            let reason = queued_kick(&mut cmd_rx).or_else(|| {
-                shutdown
-                    .is_cancelled()
-                    .then(|| Component::text(SHUTDOWN_REASON))
-            });
-            if let Some(reason) = &reason {
-                super::helpers::send_login_disconnect(ctx.stream_mut(), reason, version, registry)
-                    .await
-                    .ok();
-            }
-            lifecycle.end(cancelled_cause(&shutdown, reason)).await;
-            return Ok(());
-        }
-
-        let initial_server = infrarust_api::types::ServerId::new(routing.config_id.clone());
-        self.services
-            .event_bus
-            .fire(PlayerChooseInitialServerEvent::new(
-                Arc::clone(&player) as Arc<dyn Player>,
-                initial_server.clone(),
-            ))
-            .await;
-        let pre_connect = pre_connect(
-            &self.services.event_bus,
-            &player,
-            initial_server.clone(),
-            ConnectCause::Initial,
-        )
-        .await;
-        match pre_connect.result() {
-            infrarust_api::events::connection::ServerPreConnectResult::Allowed => {}
-            infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
-                super::helpers::send_login_disconnect(ctx.stream_mut(), reason, version, registry)
-                    .await
-                    .ok();
-                lifecycle
-                    .end(DisconnectCause::Kicked {
-                        reason: Some(reason.clone()),
-                    })
-                    .await;
-                return Ok(());
-            }
-            _ => {}
-        }
-
-        // Connect to backend, in the order decided by the backend
-        // selection middleware (config order as fallback).
-        let target_addresses =
-            crate::middleware::backend_selection::BackendTargets::addresses_or_config(
-                ctx.extensions
-                    .get::<crate::middleware::backend_selection::BackendTargets>(),
-                server_config,
-            );
-        let backend = match self
-            .backend_connector
-            .connect(
-                &routing.config_id,
-                &target_addresses,
-                server_config.timeouts.as_ref().map(|t| t.connect),
-                server_config.send_proxy_protocol,
-                &ctx.connection_info(),
+        let login = ForwardedLogin {
+            services: &self.services,
+            connector: &self.backend_connector,
+            shutdown: &shutdown,
+            wire: Wire::Modern(handshake.protocol_version),
+        };
+        let Some(ready) = login
+            .open(
+                &mut ctx,
+                arrival,
+                Route { routing, addresses },
+                Opening::Modern(&handshake),
             )
-            .await
-        {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!(
-                    server = %routing.config_id,
-                    error = %e,
-                    "backend unreachable, sending disconnect to client"
-                );
-                let msg = Component::text(server_config.effective_disconnect_message());
-                self.send_kick_raw(ctx.stream_mut(), &msg, version)
-                    .await
-                    .ok();
-                lifecycle.end(DisconnectCause::Error).await;
-                return Ok(());
-            }
+            .await?
+        else {
+            return Ok(());
         };
 
-        // Forward initial packets to backend
-        let mut backend = backend;
-        let fwd_data = ForwardingData {
-            real_ip: ctx.client_ip,
-            uuid: player_uuid,
-            username,
-            properties: vec![], // No properties in passthrough (no Mojang auth)
-            protocol_version: version,
-            chat_session: None,
-        };
-        if let Err(e) = self
-            .forward_initial_packets(backend.stream_mut(), &handshake, server_config, &fwd_data)
-            .await
-        {
-            lifecycle.end(DisconnectCause::Error).await;
-            return Err(e);
-        }
-
-        self.services
-            .event_bus
-            .fire(ServerConnectedEvent::new(
-                Arc::clone(&player) as Arc<dyn Player>,
-                initial_server.clone(),
-                None,
-            ))
-            .await;
-
-        player.set_current_server(initial_server);
-        player.set_connected_address(Some(backend.server_address().clone()));
-        ctx.extensions
-            .remove::<crate::loadbalancer::PendingTicket>();
-        let session_id = player_uuid;
-
+        let session_id = ready.player.profile().uuid;
+        let server = ready.server.clone();
         tracing::info!(
             session = %session_id,
-            server = %routing.config_id,
-            username = ?login_data.as_ref().map(|d| &d.username),
+            server = %server,
+            username = %ready.player.profile().username,
             mode = "passthrough",
             "session started"
         );
 
-        // Record metrics
         #[cfg(feature = "telemetry")]
-        super::helpers::record_session_start(&self.metrics, &routing.config_id, "passthrough");
+        super::helpers::record_session_start(&self.metrics, server.as_str(), "passthrough");
 
-        // Bidirectional forward
-        let client_stream = ctx.take_stream();
-        let backend_stream = backend.into_stream();
-        let forwarder = select_forwarder(server_config.proxy_mode);
+        let result = ready.forward(ctx.take_stream()).await;
 
-        let result = forwarder
-            .forward(client_stream, backend_stream, session_token.clone())
-            .await;
-
-        let cause = match &result.reason {
-            ForwardEndReason::ClientClosed => DisconnectCause::ClientQuit,
-            ForwardEndReason::BackendClosed => DisconnectCause::BackendClosed { reason: None },
-            ForwardEndReason::Shutdown => cancelled_cause(&shutdown, queued_kick(&mut cmd_rx)),
-            _ => DisconnectCause::Error,
-        };
-        lifecycle.end(cause).await;
-
-        // Record end metrics
         #[cfg(feature = "telemetry")]
         super::helpers::record_session_end(
             &self.metrics,
             ctx.connection_duration(),
-            &routing.config_id,
+            server.as_str(),
             "passthrough",
         );
 
@@ -267,149 +112,5 @@ impl PassthroughHandler {
         );
 
         Ok(())
-    }
-
-    /// Forwards the initial handshake and login packets to the backend.
-    ///
-    /// Applies domain rewrite and forwarding data injection if configured.
-    async fn forward_initial_packets(
-        &self,
-        backend: &mut tokio::net::TcpStream,
-        handshake: &HandshakeData,
-        server_config: &infrarust_config::ServerConfig,
-        fwd_data: &ForwardingData,
-    ) -> Result<(), CoreError> {
-        let handler = self.services.resolve_forwarding_handler(server_config);
-
-        if matches!(handler, ForwardingHandler::Velocity(_)) {
-            tracing::warn!(
-                "Velocity forwarding is configured for server '{}' in passthrough mode. \
-                 Velocity requires packet parsing and cannot work with passthrough. \
-                 Falling back to BungeeCord legacy forwarding.",
-                server_config.effective_id()
-            );
-            let fallback =
-                ForwardingHandler::Legacy(crate::forwarding::legacy::LegacyForwardingHandler);
-            return self
-                .forward_with_forwarding(backend, handshake, server_config, fwd_data, &fallback)
-                .await;
-        }
-
-        if handler.modifies_handshake() {
-            return self
-                .forward_with_forwarding(backend, handshake, server_config, fwd_data, &handler)
-                .await;
-        }
-
-        match &server_config.domain_rewrite {
-            DomainRewrite::None => {
-                for raw in &handshake.raw_packets {
-                    backend.write_all(raw).await?;
-                }
-            }
-            DomainRewrite::Explicit(new_domain) => {
-                self.forward_with_rewritten_handshake(backend, handshake, new_domain)
-                    .await?;
-            }
-            DomainRewrite::FromBackend => {
-                if let Some(addr) = server_config.addresses.first() {
-                    self.forward_with_rewritten_handshake(backend, handshake, &addr.address.host)
-                        .await?;
-                } else {
-                    for raw in &handshake.raw_packets {
-                        backend.write_all(raw).await?;
-                    }
-                }
-            }
-            _ => {
-                for raw in &handshake.raw_packets {
-                    backend.write_all(raw).await?;
-                }
-            }
-        }
-
-        backend.flush().await?;
-        Ok(())
-    }
-
-    async fn forward_with_forwarding(
-        &self,
-        backend: &mut tokio::net::TcpStream,
-        handshake: &HandshakeData,
-        server_config: &infrarust_config::ServerConfig,
-        fwd_data: &ForwardingData,
-        handler: &ForwardingHandler,
-    ) -> Result<(), CoreError> {
-        let mut modified = build_handshake_for_backend(handshake, server_config);
-
-        handler.apply_handshake(&mut modified, fwd_data);
-
-        let mut payload = Vec::new();
-        modified.encode(&mut payload, handshake.protocol_version)?;
-
-        let mut encoder = PacketEncoder::new();
-        encoder.append_raw(0x00, &payload)?;
-        let bytes = encoder.take();
-        backend.write_all(&bytes).await?;
-
-        for raw in handshake.raw_packets.iter().skip(1) {
-            backend.write_all(raw).await?;
-        }
-
-        backend.flush().await?;
-        Ok(())
-    }
-
-    /// Sends a login disconnect packet directly to the client stream.
-    async fn send_kick_raw(
-        &self,
-        stream: &mut tokio::net::TcpStream,
-        reason: &Component,
-        version: ProtocolVersion,
-    ) -> Result<(), CoreError> {
-        super::helpers::send_login_disconnect(
-            stream,
-            reason,
-            version,
-            &self.services.packet_registry,
-        )
-        .await
-    }
-
-    /// Re-encodes the handshake packet with a new domain and forwards all packets.
-    #[allow(clippy::unused_self)] // Method for API consistency
-    async fn forward_with_rewritten_handshake(
-        &self,
-        backend: &mut tokio::net::TcpStream,
-        handshake: &HandshakeData,
-        new_domain: &str,
-    ) -> Result<(), CoreError> {
-        let encoded =
-            crate::util::domain_rewrite::encode_handshake_with_domain(handshake, new_domain)?;
-        backend.write_all(&encoded).await?;
-
-        // Forward remaining packets (login start etc.) as-is
-        for raw in handshake.raw_packets.iter().skip(1) {
-            backend.write_all(raw).await?;
-        }
-
-        Ok(())
-    }
-}
-
-fn queued_kick(commands: &mut tokio::sync::mpsc::Receiver<PlayerCommand>) -> Option<Component> {
-    while let Ok(command) = commands.try_recv() {
-        if let PlayerCommand::Kick(reason) = command {
-            return Some(reason);
-        }
-    }
-    None
-}
-
-fn cancelled_cause(shutdown: &CancellationToken, reason: Option<Component>) -> DisconnectCause {
-    if shutdown.is_cancelled() {
-        DisconnectCause::Shutdown
-    } else {
-        DisconnectCause::Kicked { reason }
     }
 }

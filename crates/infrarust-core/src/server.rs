@@ -40,7 +40,9 @@ use crate::middleware::telemetry::{ConnectionSpan, TelemetryMiddleware};
 use crate::pipeline::Pipeline;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
-use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected, RoutingData};
+use crate::pipeline::types::{
+    ConnectionIntent, HandshakeData, LegacyDetected, RoutingData, UnknownDomain,
+};
 use crate::player::SHUTDOWN_REASON;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::provider::file::FileProvider;
@@ -251,17 +253,6 @@ impl ProxyServer {
         #[cfg(feature = "telemetry")]
         let status_handler = status_handler.with_metrics(Arc::clone(&proxy_metrics));
 
-        let legacy_handler = LegacyHandler::new(
-            Arc::clone(&domain_router),
-            config.default_motd.clone(),
-            server_manager.as_ref().map(Arc::clone),
-            Arc::clone(&registry),
-            Arc::clone(&backend_connector),
-            Arc::clone(&backend_load),
-            Arc::clone(&backend_health) as _,
-            sessions.clone(),
-        );
-
         // Ban system
         let ban_storage = Arc::new(FileBanStorage::new(config.ban.file.clone()));
         ban_storage.load().await?;
@@ -346,6 +337,12 @@ impl ProxyServer {
             )
             .with_pending(Arc::clone(&pending_backends)),
         ));
+
+        let legacy_handler = LegacyHandler::new(
+            services.clone(),
+            Arc::clone(&backend_connector),
+            sessions.clone(),
+        );
 
         let passthrough_handler =
             PassthroughHandler::new(Arc::clone(&backend_connector), services.clone());
@@ -586,6 +583,8 @@ impl ProxyServer {
                     .is_some_and(|h| h.intent == ConnectionIntent::Status);
                 if !is_status {
                     self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
+                } else if ctx.extensions.contains::<UnknownDomain>() {
+                    self.answer_status(&mut ctx, &shutdown).await?;
                 }
                 return Ok(());
             }
@@ -597,16 +596,7 @@ impl ProxyServer {
             .intent;
 
         match intent {
-            ConnectionIntent::Status => {
-                let status = self
-                    .status_handler
-                    .handle(&mut ctx, &self.services.connection_registry);
-                tokio::select! {
-                    biased;
-                    () = shutdown.cancelled() => {}
-                    result = status => result?,
-                }
-            }
+            ConnectionIntent::Status => self.answer_status(&mut ctx, &shutdown).await?,
             ConnectionIntent::Login => {
                 let login = tokio::select! {
                     biased;
@@ -678,6 +668,21 @@ impl ProxyServer {
         }
 
         Ok(())
+    }
+
+    async fn answer_status(
+        &self,
+        ctx: &mut ConnectionContext,
+        shutdown: &CancellationToken,
+    ) -> Result<(), CoreError> {
+        let status = self
+            .status_handler
+            .handle(ctx, &self.services.connection_registry);
+        tokio::select! {
+            biased;
+            () = shutdown.cancelled() => Ok(()),
+            result = status => result,
+        }
     }
 
     /// Sends a disconnect/kick packet to the client.

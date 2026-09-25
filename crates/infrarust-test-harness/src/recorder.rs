@@ -448,7 +448,6 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
             ServerPreConnectResult::SendToLimbo { limbo_handlers } => {
                 json!({ "send_to_limbo": limbo_handlers })
             }
-            ServerPreConnectResult::VirtualBackend(_) => json!("virtual_backend"),
             ServerPreConnectResult::Denied { reason } => {
                 json!({ "denied": reason.to_string() })
             }
@@ -536,18 +535,29 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
         )
     });
     on::<ProxyPingEvent>(bus, recorder, |e| {
+        let sample: Vec<Value> = e
+            .response
+            .player_sample
+            .iter()
+            .map(|(name, id)| json!([name, id.to_string()]))
+            .collect();
         (
             EventKind::ProxyPing,
             None,
             None,
             json!({
                 "remote_addr": e.remote_addr.to_string(),
+                "server": server(e.server.as_ref()),
+                "virtual_host": e.virtual_host,
+                "protocol_version": e.protocol_version.raw(),
+                "legacy": e.legacy,
                 "description": e.response.description.to_string(),
                 "max_players": e.response.max_players,
                 "online_players": e.response.online_players,
-                "protocol_version": e.response.protocol_version.raw(),
+                "response_protocol_version": e.response.protocol_version.raw(),
                 "version_name": e.response.version_name,
                 "has_favicon": e.response.favicon.is_some(),
+                "player_sample": sample,
             }),
         )
     });

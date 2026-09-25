@@ -67,7 +67,7 @@ The first real protocol work. The middleware reads bytes from the TCP stream wit
 The first byte determines the client type:
 
 - `0xFE` indicates a legacy ping (Minecraft Beta through 1.6). The middleware inserts a `LegacyDetected` marker and short-circuits the pipeline. The legacy handler takes over from there.
-- `0x02` indicates a legacy login attempt (unsupported, also short-circuits).
+- `0x02` indicates a legacy login (1.6 and older). It also short-circuits: the legacy handler checks bans, fires the same player events as the passthrough handler, then forwards the login to the backend.
 - Any other value is treated as a modern Minecraft frame (1.7+).
 
 For modern clients, the middleware decodes the `SHandshake` packet (always packet ID `0x00`). This packet has been stable since Minecraft 1.7, so Infrarust can proxy any protocol version without knowing its specific packet layout.
@@ -136,11 +136,12 @@ After both pipelines complete, the connection is dispatched to a handler based o
 
 Used by the forwarding modes: `passthrough`, `zero_copy`, and `server_only`. The handler:
 
-1. Registers a `PlayerSession` in the connection registry and fires `PostLoginEvent`
-2. Fires `PlayerChooseInitialServerEvent` and `ServerPreConnectEvent` through the event bus (a plugin can deny the connection here; redirect results such as send-to-limbo are ignored in passthrough and only acted on by the intercepted handler)
-3. Connects to the backend server using the addresses from the server config
-4. Forwards the raw handshake and login packets to the backend and fires `ServerConnectedEvent`
-5. Starts bidirectional forwarding between the client and backend TCP streams
+1. Fires `PreLoginEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent` and `LoginEvent`, and checks bans against the final profile (a plugin can refuse the player here, before any backend is contacted)
+2. Registers a `PlayerSession` in the connection registry and fires `PostLoginEvent`
+3. Fires `PlayerChooseInitialServerEvent` and `ServerPreConnectEvent` through the event bus (a plugin can deny the connection or pick another server in a forwarding mode; send-to-limbo disconnects the player, since only the intercepted handler can hold a player in limbo)
+4. Connects to the backend server using the addresses from the server config, and fires `KickedFromServerEvent` when none answers, so a plugin can redirect the player
+5. Forwards the raw handshake and login packets to the backend and fires `ServerConnectedEvent`
+6. Starts bidirectional forwarding between the client and backend TCP streams
 
 If `domain_rewrite` is configured, the handler re-encodes the handshake packet with the new domain before forwarding. Three rewrite modes exist: `none` (forward as-is), `explicit` (use a fixed string), and `from_backend` (use the host of the first backend address).
 

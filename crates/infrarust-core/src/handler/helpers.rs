@@ -3,11 +3,12 @@
 #[cfg(feature = "telemetry")]
 use std::sync::Arc;
 
-use infrarust_api::types::Component;
+use infrarust_api::types::{Component, LEGACY_SECTION};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use infrarust_protocol::io::PacketEncoder;
+use infrarust_protocol::legacy::build_legacy_kick;
 use infrarust_protocol::packets::login::CLoginDisconnect;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_protocol::{Packet, PacketRegistry};
@@ -84,6 +85,16 @@ pub(crate) async fn send_login_disconnect(
     encoder.append_raw(packet_id, &payload)?;
     let bytes = encoder.take();
 
+    stream.write_all(&bytes).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
+pub(crate) async fn send_legacy_kick(
+    stream: &mut tokio::net::TcpStream,
+    reason: &Component,
+) -> Result<(), CoreError> {
+    let bytes = build_legacy_kick(&reason.to_legacy(LEGACY_SECTION))?;
     stream.write_all(&bytes).await?;
     stream.flush().await?;
     Ok(())
