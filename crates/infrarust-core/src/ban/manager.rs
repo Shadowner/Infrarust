@@ -45,6 +45,7 @@ pub struct BanManager {
     registered: RwLock<Option<Arc<dyn BanProvider>>>,
     connection_registry: Arc<ConnectionRegistry>,
     event_bus: Arc<EventBusImpl>,
+    check_timeout: Duration,
 }
 
 impl BanManager {
@@ -60,6 +61,7 @@ impl BanManager {
             registered: RwLock::new(None),
             connection_registry,
             event_bus,
+            check_timeout: infrarust_config::defaults::ban_check_timeout(),
         }
     }
 
@@ -106,7 +108,7 @@ impl BanManager {
         connection_registry: Arc<ConnectionRegistry>,
         event_bus: Arc<EventBusImpl>,
     ) -> Result<Self, CoreError> {
-        let manager = match &config.provider {
+        let mut manager = match &config.provider {
             BanProviderSelection::Builtin => Self::builtin(
                 Arc::new(FileBanStorage::new(config.file.clone())),
                 connection_registry,
@@ -121,6 +123,7 @@ impl BanManager {
                 Self::plugin(id.clone(), connection_registry, event_bus)
             }
         };
+        manager.check_timeout = config.check_timeout;
         if let Some(builtin) = &manager.builtin {
             builtin.load().await?;
         }
@@ -168,11 +171,26 @@ impl BanManager {
         };
         let canonical = attempt.ip.to_canonical();
         if canonical == attempt.ip {
-            return provider.check(attempt).await;
+            return self.timed_check(provider.as_ref(), attempt).await;
         }
         let mut attempt = attempt.clone();
         attempt.ip = canonical;
-        provider.check(&attempt).await
+        self.timed_check(provider.as_ref(), &attempt).await
+    }
+
+    async fn timed_check(
+        &self,
+        provider: &dyn BanProvider,
+        attempt: &LoginAttempt,
+    ) -> Result<Option<BanVerdict>, ServiceError> {
+        tokio::time::timeout(self.check_timeout, provider.check(attempt))
+            .await
+            .unwrap_or_else(|_| {
+                Err(ServiceError::Unavailable(format!(
+                    "the ban provider did not answer within {:?}",
+                    self.check_timeout
+                )))
+            })
     }
 
     pub async fn refusal(&self, attempt: &LoginAttempt) -> Option<Component> {
@@ -285,7 +303,7 @@ impl BanManager {
             .collect();
 
         for (session, attempt) in &sessions {
-            let message = match provider.check(attempt).await {
+            let message = match self.timed_check(provider, attempt).await {
                 Ok(Some(verdict)) => verdict.kick_message,
                 _ => BanVerdict::new(entry.clone()).kick_message,
             };

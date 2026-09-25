@@ -34,6 +34,9 @@ use infrarust_protocol::packets::play::commands::CCommands;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
 use infrarust_protocol::packets::play::join_game::CJoinGame;
 use infrarust_protocol::packets::play::keepalive::{CKeepAlive, SKeepAlive};
+use infrarust_protocol::packets::play::start_configuration::{
+    CStartConfiguration, SAcknowledgeConfiguration,
+};
 use infrarust_protocol::packets::play::tab_complete::{
     CTabCompleteResponse, STabCompleteRequest, TabCompleteMatch,
 };
@@ -129,6 +132,8 @@ struct HotIds {
     c_login_success: Option<i32>,
     c_keepalive: Option<i32>,
     s_keepalive: Option<i32>,
+    c_start_config: Option<i32>,
+    s_ack_config: Option<i32>,
     messages: MessageIds,
     presentation: PresentationIds,
 }
@@ -146,6 +151,8 @@ impl HotIds {
             c_login_success: registry.get_packet_id::<CLoginSuccess>(version),
             c_keepalive: registry.get_packet_id::<CKeepAlive>(version),
             s_keepalive: registry.get_packet_id::<SKeepAlive>(version),
+            c_start_config: registry.get_packet_id::<CStartConfiguration>(version),
+            s_ack_config: registry.get_packet_id::<SAcknowledgeConfiguration>(version),
             messages: MessageIds::resolve(registry, version),
             presentation: PresentationIds::resolve(registry, version),
         }
@@ -169,8 +176,8 @@ impl HotIds {
         }
     }
 
-    fn joins_game(&self, frame: &PacketFrame, backend: &BackendBridge, in_game: bool) -> bool {
-        !in_game && backend.state == ConnectionState::Play && Some(frame.id) == self.c_join_game
+    fn joins_game(&self, frame: &PacketFrame, reading: ConnectionState, in_game: bool) -> bool {
+        !in_game && reading == ConnectionState::Play && Some(frame.id) == self.c_join_game
     }
 }
 
@@ -186,6 +193,7 @@ struct LoopState {
     session: Option<Arc<PlayerSession>>,
     keepalives: VecDeque<(i64, Instant)>,
     config_closing: bool,
+    reconfiguring: bool,
 }
 
 impl LoopState {
@@ -194,6 +202,23 @@ impl LoopState {
             session,
             keepalives: VecDeque::new(),
             config_closing: false,
+            reconfiguring: false,
+        }
+    }
+
+    const fn client_reading(&self, client: &ClientBridge) -> ConnectionState {
+        if self.reconfiguring {
+            ConnectionState::Play
+        } else {
+            client.state()
+        }
+    }
+
+    const fn backend_reading(&self, backend: &BackendBridge) -> ConnectionState {
+        if self.reconfiguring {
+            ConnectionState::Config
+        } else {
+            backend.state
         }
     }
 
@@ -324,7 +349,7 @@ pub async fn proxy_loop(
     );
     let mut state = LoopState::new(session);
     let mut backend_tree: Option<CCommands> = None;
-    let mut in_game = client.state() == ConnectionState::Play;
+    let mut in_game = client.state() == ConnectionState::Play && join.is_none();
     if in_game {
         let outcome = commands.drain(client, registry, in_game);
         deliver(commands, client, backend, registry, &state, in_game);
@@ -459,7 +484,7 @@ pub async fn proxy_loop(
             },
             LoopEvent::Backend(frame) => match frame {
                 Ok(Some(frame)) => {
-                    let joins = hot_ids.joins_game(&frame, backend, in_game);
+                    let joins = hot_ids.joins_game(&frame, state.backend_reading(backend), in_game);
                     let mut milestone = hot_ids.milestone(&frame, backend, join.is_some());
                     let mut result = handle_backend_to_client(
                         client,
@@ -476,6 +501,7 @@ pub async fn proxy_loop(
                     )
                     .await;
                     in_game |= joins && result.is_ok();
+                    in_game &= !state.reconfiguring;
                     let mut command_outcome = commands.drain(client, registry, in_game);
                     while milestone.is_none()
                         && matches!(result, Ok(BackendAction::Continue))
@@ -483,7 +509,11 @@ pub async fn proxy_loop(
                     {
                         match backend.try_next_frame() {
                             Ok(Some(frame)) => {
-                                let joins = hot_ids.joins_game(&frame, backend, in_game);
+                                let joins = hot_ids.joins_game(
+                                    &frame,
+                                    state.backend_reading(backend),
+                                    in_game,
+                                );
                                 milestone = hot_ids.milestone(&frame, backend, join.is_some());
                                 result = handle_backend_to_client(
                                     client,
@@ -500,6 +530,7 @@ pub async fn proxy_loop(
                                 )
                                 .await;
                                 in_game |= joins && result.is_ok();
+                                in_game &= !state.reconfiguring;
                                 command_outcome = commands.drain(client, registry, in_game);
                             }
                             Ok(None) => break,
@@ -733,10 +764,19 @@ async fn handle_client_to_backend(
     loop_state: &mut LoopState,
 ) -> Result<(), CoreError> {
     let version = client.protocol_version;
-    let state = client.state();
+    let state = loop_state.client_reading(client);
 
     // In Play state: CodecFilter → chat/command → RawPacketEvent → forward
     if state == ConnectionState::Play {
+        if loop_state.reconfiguring && Some(frame.id) == hot_ids.s_ack_config {
+            backend.queue_frame(&frame)?;
+            backend.set_state(ConnectionState::Config);
+            loop_state.reconfiguring = false;
+            codec_chain.notify_state_change(protocol_state_to_api(ConnectionState::Config));
+            tracing::debug!("state transition: Play → Config (AcknowledgeConfiguration)");
+            return Ok(());
+        }
+
         if apply_codec_filter(codec_chain, &mut frame, backend)? {
             return Ok(()); // Frame consumed by filter
         }
@@ -962,7 +1002,7 @@ async fn handle_backend_to_client(
     loop_state: &mut LoopState,
 ) -> Result<BackendAction, CoreError> {
     let version = client.protocol_version;
-    let state = backend.state;
+    let state = loop_state.backend_reading(backend);
 
     // In Play state: CodecFilter → RawPacketEvent → disconnect detection
     if state == ConnectionState::Play {
@@ -1031,6 +1071,13 @@ async fn handle_backend_to_client(
                 ConnectionState::Play,
                 version,
             ))));
+        }
+        if Some(frame.id) == hot_ids.c_start_config {
+            client.queue_frame(&frame)?;
+            client.set_state(ConnectionState::Config);
+            loop_state.reconfiguring = true;
+            tracing::debug!("state transition: Play → Config (backend StartConfiguration)");
+            return Ok(BackendAction::Continue);
         }
         let intercepted =
             Some(frame.id) == hot_ids.c_commands && services.config.announce_proxy_commands;
@@ -1139,34 +1186,20 @@ async fn handle_backend_to_client(
                 return Ok(BackendAction::Continue);
             }
 
-            if state == ConnectionState::Config
-                && !hot_ids.presentation.is_player_request(&frame, state)
-            {
-                let is_known_packs = registry
-                    .get_packet_id::<infrarust_protocol::CKnownPacks>(version)
-                    .is_some_and(|id| id == frame.id);
-
-                if is_known_packs {
-                    services
-                        .registry_codec_cache
-                        .collect_known_packs_frame(version, frame.clone());
-                } else {
-                    services
-                        .registry_codec_cache
-                        .collect_registry_frame(version, frame.clone());
-                }
+            if state == ConnectionState::Config {
+                services
+                    .registry_codec_cache
+                    .collect_config_frame(registry, version, &frame);
             }
 
             // All other typed packets: forward
             client.queue_frame(&frame)?;
         }
         Ok(DecodedPacket::Opaque { .. }) => {
-            if state == ConnectionState::Config
-                && !hot_ids.presentation.is_player_request(&frame, state)
-            {
+            if state == ConnectionState::Config {
                 services
                     .registry_codec_cache
-                    .collect_registry_frame(version, frame.clone());
+                    .collect_config_frame(registry, version, &frame);
             }
             client.queue_frame(&frame)?;
         }

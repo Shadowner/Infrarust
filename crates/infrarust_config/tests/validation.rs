@@ -420,6 +420,22 @@ fn test_proxy_zero_event_timeouts_are_invalid() {
 }
 
 #[test]
+fn test_proxy_ban_check_timeout_defaults_to_five_seconds_and_rejects_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("", dir.path());
+    assert_eq!(config.ban.check_timeout, std::time::Duration::from_secs(5));
+    let config = proxy_from_toml("[ban]\ncheck_timeout = \"250ms\"", dir.path());
+    assert_eq!(
+        config.ban.check_timeout,
+        std::time::Duration::from_millis(250)
+    );
+    assert!(validate_proxy_config(&config).is_ok());
+    let config = proxy_from_toml("[ban]\ncheck_timeout = \"0s\"", dir.path());
+    let err = validate_proxy_config(&config).unwrap_err().to_string();
+    assert!(err.contains("ban.check_timeout"), "{err}");
+}
+
+#[test]
 fn test_proxy_default_wasm_section_is_valid() {
     let dir = tempfile::tempdir().unwrap();
     let config = proxy_from_toml("", dir.path());

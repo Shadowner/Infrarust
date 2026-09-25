@@ -788,6 +788,86 @@ async fn the_admin_api_reports_a_switch_but_not_a_first_join(version: ProtocolVe
 
 version_matrix!(the_admin_api_reports_a_switch_but_not_a_first_join; p47 = 47, p764 = 764, p774 = 774);
 
+async fn next_leave(events: &mut broadcast::Receiver<ApiEvent>) -> Value {
+    loop {
+        let event = tokio::time::timeout(T, events.recv())
+            .await
+            .expect("a player.leave event")
+            .unwrap();
+        if event.event_type() == "player.leave" {
+            let mut value = serde_json::to_value(&event).unwrap();
+            value["data"]["timestamp"] = json!("-");
+            return value;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_admin_api_says_why_a_player_left() {
+    let version = ProtocolVersion(CURRENT);
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let (events, mut received) = broadcast::channel(64);
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .plugin(sse_bridge(events))
+        .start()
+        .await
+        .unwrap();
+
+    let mut steve = proxy
+        .client(version)
+        .login(STEVE)
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let _steve_conn = backend.next_connection(T).await.unwrap();
+    let player = proxy.wait_for_player(STEVE, T).await.unwrap();
+    player.disconnect(Component::text("Go away")).await;
+    steve.expect_disconnect(T).await.unwrap();
+    assert_eq!(
+        next_leave(&mut received).await,
+        json!({
+            "type": "PlayerLeave",
+            "data": {
+                "player_id": player.id().as_u64(),
+                "username": STEVE,
+                "last_server": "lobby",
+                "cause": "kicked",
+                "reason": "Go away",
+                "timestamp": "-",
+            },
+        })
+    );
+
+    let alex = proxy
+        .client(version)
+        .login("Alex")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let _alex_conn = backend.next_connection(T).await.unwrap();
+    let player = proxy.wait_for_player("Alex", T).await.unwrap();
+    alex.quit().await;
+    assert_eq!(
+        next_leave(&mut received).await,
+        json!({
+            "type": "PlayerLeave",
+            "data": {
+                "player_id": player.id().as_u64(),
+                "username": "Alex",
+                "last_server": "lobby",
+                "cause": "client_quit",
+                "reason": null,
+                "timestamp": "-",
+            },
+        })
+    );
+
+    proxy.shutdown().await.unwrap();
+}
+
 fn sleeping_manager(workdir: &std::path::Path) -> impl FnOnce(&mut Table) + Send + 'static {
     let workdir = workdir.to_str().unwrap().to_string();
     move |table: &mut Table| {

@@ -271,6 +271,7 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<(), ConfigError> 
             "events.disconnect_deadline",
             config.events.disconnect_deadline,
         ),
+        ("ban.check_timeout", config.ban.check_timeout),
     ] {
         if value.is_zero() {
             return Err(ConfigError::Validation(format!(

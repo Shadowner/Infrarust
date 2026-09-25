@@ -4,13 +4,13 @@ use crate::packets::{
     CBossBar, CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CChunkData, CClearTitles,
     CCommands, CConfigCookieRequest, CConfigDisconnect, CConfigPluginMessage, CConfigResourcePack,
     CConfigResourcePackPop, CConfigResourcePackPush, CConfigStoreCookie, CConfigTransfer,
-    CCookieRequest, CDisconnect, CEncryptionRequest, CFinishConfig, CGameEvent, CJoinGame,
-    CKeepAlive, CKnownPacks, CLoginCookieRequest, CLoginDisconnect, CLoginPluginRequest,
+    CCookieRequest, CDisconnect, CEncryptionRequest, CFeatureFlags, CFinishConfig, CGameEvent,
+    CJoinGame, CKeepAlive, CKnownPacks, CLoginCookieRequest, CLoginDisconnect, CLoginPluginRequest,
     CLoginSuccess, CPingResponse, CPluginMessage, CRegistryData, CResourcePack, CResourcePackPop,
     CResourcePackPush, CRespawn, CSetCenterChunk, CSetCompression, CSetDefaultSpawnPosition,
     CSetSubtitle, CSetTitle, CSetTitleTimes, CStartConfiguration, CStatusResponse, CStoreCookie,
     CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse, CTabListHeaderFooter,
-    CTitleLegacy, CTransfer, Packet, PacketMapping, SAcknowledgeConfiguration,
+    CTitleLegacy, CTransfer, CUpdateTags, Packet, PacketMapping, SAcknowledgeConfiguration,
     SAcknowledgeFinishConfig, SChatAcknowledgement, SChatCommand, SChatCommandSigned, SChatMessage,
     SChatSessionUpdate, SClientInformation, SConfigClientInformation, SConfigCookieResponse,
     SConfigPluginMessage, SConfigResourcePackResponse, SCookieResponse, SEncryptionResponse,
@@ -74,6 +74,8 @@ packet_table! {
     CConfigDisconnect,
     CFinishConfig,
     CRegistryData,
+    CFeatureFlags,
+    CUpdateTags,
     CKnownPacks,
     CConfigResourcePack,
     CConfigResourcePackPush,
@@ -184,6 +186,6 @@ mod tests {
                 descriptor.name
             );
         }
-        assert_eq!(DEFAULT_PACKETS.len(), 75);
+        assert_eq!(DEFAULT_PACKETS.len(), 77);
     }
 }

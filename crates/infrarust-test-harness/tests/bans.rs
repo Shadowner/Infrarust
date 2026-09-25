@@ -13,8 +13,8 @@ use infrarust_api::services::ban_service::{
 };
 use infrarust_api::types::Component;
 use infrarust_core::auth::game_profile::offline_uuid;
-use infrarust_core::ban::FileBanStorage;
 use infrarust_core::ban::storage::BanStorage;
+use infrarust_core::ban::{BAN_CHECK_UNAVAILABLE, FileBanStorage};
 use infrarust_core::console::ConsoleServices;
 use infrarust_core::console::commands::register_all;
 use infrarust_core::console::dispatcher::CommandDispatcher;
@@ -35,6 +35,7 @@ const GUARD: &str = "guard";
 struct GuardProvider {
     entries: Mutex<Vec<BanEntry>>,
     attempts: Mutex<Vec<LoginAttempt>>,
+    stuck: bool,
 }
 
 impl GuardProvider {
@@ -49,6 +50,14 @@ impl GuardProvider {
         Arc::new(Self {
             entries: Mutex::new(entries),
             attempts: Mutex::default(),
+            stuck: false,
+        })
+    }
+
+    fn stuck() -> Arc<Self> {
+        Arc::new(Self {
+            stuck: true,
+            ..Self::default()
         })
     }
 
@@ -72,6 +81,9 @@ impl BanProvider for GuardProvider {
         attempt: &'a LoginAttempt,
     ) -> BoxFuture<'a, Result<Option<BanVerdict>, ServiceError>> {
         self.attempts.lock().unwrap().push(attempt.clone());
+        if self.stuck {
+            return Box::pin(std::future::pending());
+        }
         let verdict = self
             .entries
             .lock()
@@ -348,6 +360,46 @@ async fn the_selected_plugin_refuses_a_profile_after_authentication() {
     assert_eq!(recorder.count(EventKind::PreLogin), 1);
     assert_eq!(recorder.count(EventKind::PostLogin), 0);
     assert_eq!(proxy.connection_count(), 0);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_provider_that_never_answers_refuses_logins_and_answers_pings() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let recorder = Recorder::new();
+    let provider = GuardProvider::stuck();
+    let (plugin, _guard) = guard_plugin(&provider);
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .plugin(plugin)
+        .plugin(recorder.plugin())
+        .patch_config(|table| {
+            select_provider(table, GUARD);
+            ban_table(table).insert("check_timeout".into(), Value::String("200ms".into()));
+        })
+        .start()
+        .await
+        .unwrap();
+
+    let info = proxy
+        .client(VERSION)
+        .login("Steve")
+        .await
+        .unwrap()
+        .disconnected()
+        .unwrap();
+
+    assert_eq!(info.state, ConnectionState::Login, "{info:?}");
+    assert_eq!(info.text, BAN_CHECK_UNAVAILABLE);
+    assert_eq!(recorder.count(EventKind::PostLogin), 0);
+    let status = proxy.client(VERSION).status().await.unwrap();
+    assert_eq!(
+        status.json["description"]["text"],
+        json!("Infrarust fake backend")
+    );
+    let stages: Vec<LoginStage> = provider.attempts().iter().map(|a| a.stage).collect();
+    assert!(stages.contains(&LoginStage::Status), "{stages:?}");
 
     proxy.shutdown().await.unwrap();
 }

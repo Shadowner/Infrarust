@@ -6,13 +6,18 @@ use std::time::Duration;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
 use infrarust_api::limbo::session::LimboSession;
+use infrarust_api::player::Player;
 use infrarust_api::types::{Component, PlayerId, ServerId};
+use infrarust_core::test_support::join_game_frame;
+use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfig};
 use infrarust_protocol::packets::play::chat::SChatMessage;
+use infrarust_protocol::packets::play::{CStartConfiguration, SAcknowledgeConfiguration};
 use tokio::sync::Notify;
 
 use infrarust_test_harness::{
-    ConnectionState, DEFAULT_TIMEOUT, FakeBackend, HarnessError, LoginBehavior, LoginOutcome,
-    ProtocolVersion, ScriptedPlugin, ServerSpec, TestProxy, version_matrix,
+    BackendConn, ClientSession, ConnectionState, DEFAULT_TIMEOUT, FakeBackend, HarnessError,
+    LoginBehavior, LoginOutcome, ProtocolVersion, ScriptedPlugin, ServerSpec, TestProxy,
+    version_matrix,
 };
 
 const T: Duration = DEFAULT_TIMEOUT;
@@ -431,3 +436,88 @@ async fn passthrough_disconnect_closes_the_connection(version: ProtocolVersion) 
 }
 
 version_matrix!(passthrough_disconnect_closes_the_connection; p47 = 47, p764 = 764, p774 = 774);
+
+struct Reconfiguring {
+    proxy: TestProxy,
+    session: ClientSession,
+    conn: BackendConn,
+    player: Arc<dyn Player>,
+}
+
+async fn reconfiguring(version: ProtocolVersion) -> Reconfiguring {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .start()
+        .await
+        .unwrap();
+    let session = proxy
+        .client(version)
+        .login("Steve")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let mut conn = backend.next_connection(T).await.unwrap();
+    let player = proxy.wait_for_player("Steve", T).await.unwrap();
+    conn.send_packet(&CStartConfiguration).await.unwrap();
+    conn.expect::<SAcknowledgeConfiguration>(T).await.unwrap();
+    Reconfiguring {
+        proxy,
+        session,
+        conn,
+        player,
+    }
+}
+
+async fn a_message_during_backend_reconfiguration_waits_for_play(version: ProtocolVersion) {
+    let Reconfiguring {
+        proxy,
+        mut session,
+        mut conn,
+        player,
+    } = reconfiguring(version).await;
+
+    player
+        .send_message(Component::text("back in play"))
+        .unwrap();
+    conn.send_packet(&CFinishConfig).await.unwrap();
+    conn.expect::<SAcknowledgeFinishConfig>(T).await.unwrap();
+    conn.send_frame(&join_game_frame(version).unwrap())
+        .await
+        .unwrap();
+
+    session.expect_join(T).await.unwrap();
+    assert_eq!(session.expect_system_text(T).await.unwrap(), "back in play");
+    session.chat("still connected").await.unwrap();
+    assert_eq!(
+        conn.expect::<SChatMessage>(T).await.unwrap().message,
+        "still connected"
+    );
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_message_during_backend_reconfiguration_waits_for_play; p764 = 764, p766 = 766, p774 = 774);
+
+async fn a_kick_during_backend_reconfiguration_uses_config_disconnect(version: ProtocolVersion) {
+    let Reconfiguring {
+        proxy,
+        mut session,
+        conn,
+        player,
+    } = reconfiguring(version).await;
+
+    tokio::time::timeout(T, player.disconnect(Component::text("Reconfig bye")))
+        .await
+        .expect("disconnect must not block");
+
+    let info = session.expect_disconnect(T).await.unwrap();
+    assert_eq!(info.state, ConnectionState::Config, "{info:?}");
+    assert_eq!(info.text, "Reconfig bye", "{info:?}");
+    conn.closed(T).await.unwrap();
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_kick_during_backend_reconfiguration_uses_config_disconnect; p764 = 764, p766 = 766, p774 = 774);

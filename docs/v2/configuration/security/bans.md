@@ -39,6 +39,7 @@ ban:
 | `file` | path | `bans.json` | Path to the JSON file where the built-in provider stores bans |
 | `purge_interval` | duration | `5m` | How often the built-in provider cleans up expired bans |
 | `enable_audit_log` | bool | `true` | Track ban/unban operations in the ban file |
+| `check_timeout` | duration | `5s` | How long a login or ping waits for the provider's answer. Must be greater than zero. |
 
 All options are optional. The defaults above apply if you omit the `[ban]` section entirely. `file`, `purge_interval` and `enable_audit_log` only matter with the built-in provider.
 
@@ -50,7 +51,7 @@ All options are optional. The defaults above apply if you omit the `[ban]` secti
 | `none` | No ban checks: everyone may join. Ban commands, the admin API and plugins get a "bans are disabled" error. The ban file is not read. |
 | any other value | The plugin with that id provides bans. The ban file is not read; the plugin keeps bans wherever it wants. |
 
-With a plugin provider, the plugin has to register itself when it is enabled. If it does not (it failed to load, it is disabled, or the id is misspelled), Infrarust logs an error at startup and **refuses every login** with "Your ban status cannot be checked right now. Please try again later." until it does. Server list pings are still answered. The same applies while the plugin reports that its storage is unreachable.
+With a plugin provider, the plugin has to register itself when it is enabled. If it does not (it failed to load, it is disabled, or the id is misspelled), Infrarust logs an error at startup and **refuses every login** with "Your ban status cannot be checked right now. Please try again later." until it does. Server list pings are still answered. The same applies while the plugin reports that its storage is unreachable, and to a check that gets no answer within `check_timeout`.
 
 This is deliberate: you told the proxy that this plugin decides who is banned, and letting everyone in without it would quietly lift every ban it holds. If you want no ban checks, say so with `provider = "none"`.
 

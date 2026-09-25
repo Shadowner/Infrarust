@@ -122,6 +122,10 @@ pub const fn ban_audit_log() -> bool {
     true
 }
 
+pub const fn ban_check_timeout() -> Duration {
+    Duration::from_secs(5)
+}
+
 pub fn docker_endpoint() -> String {
     "unix:///var/run/docker.sock".to_string()
 }

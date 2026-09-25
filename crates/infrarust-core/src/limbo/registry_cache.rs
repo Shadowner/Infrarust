@@ -5,6 +5,8 @@ use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
 use infrarust_protocol::io::PacketFrame;
+use infrarust_protocol::packets::config::{CFeatureFlags, CKnownPacks, CRegistryData, CUpdateTags};
+use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
@@ -29,20 +31,23 @@ impl RegistryCodecCache {
         }
     }
 
-    pub fn collect_registry_frame(&self, version: ProtocolVersion, frame: PacketFrame) {
-        let frame = PacketFrame::new(frame.id, Bytes::copy_from_slice(&frame.payload));
-        let mut map = self.captured.write().expect("registry cache lock poisoned");
-        let entry = map.entry(version).or_insert_with(|| CapturedFrames {
-            registry_frames: Vec::new(),
-            known_packs_frame: None,
-            finalized: false,
-        });
-        if !entry.finalized {
-            entry.registry_frames.push(frame);
+    pub fn collect_config_frame(
+        &self,
+        registry: &PacketRegistry,
+        version: ProtocolVersion,
+        frame: &PacketFrame,
+    ) {
+        let id = Some(frame.id);
+        let known_packs = registry.get_packet_id::<CKnownPacks>(version) == id;
+        let shared = [
+            registry.get_packet_id::<CRegistryData>(version),
+            registry.get_packet_id::<CFeatureFlags>(version),
+            registry.get_packet_id::<CUpdateTags>(version),
+        ]
+        .contains(&id);
+        if !known_packs && !shared {
+            return;
         }
-    }
-
-    pub fn collect_known_packs_frame(&self, version: ProtocolVersion, frame: PacketFrame) {
         let frame = PacketFrame::new(frame.id, Bytes::copy_from_slice(&frame.payload));
         let mut map = self.captured.write().expect("registry cache lock poisoned");
         let entry = map.entry(version).or_insert_with(|| CapturedFrames {
@@ -50,8 +55,13 @@ impl RegistryCodecCache {
             known_packs_frame: None,
             finalized: false,
         });
-        if !entry.finalized {
+        if entry.finalized {
+            return;
+        }
+        if known_packs {
             entry.known_packs_frame = Some(frame);
+        } else {
+            entry.registry_frames.push(frame);
         }
     }
 
@@ -92,6 +102,7 @@ impl RegistryCodecCache {
             let map = self.captured.read().expect("registry cache lock poisoned");
             if let Some(entry) = map.get(&version)
                 && entry.finalized
+                && !entry.registry_frames.is_empty()
             {
                 return Ok(entry.known_packs_frame.clone());
             }

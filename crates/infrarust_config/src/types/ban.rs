@@ -25,6 +25,10 @@ pub struct BanConfig {
     /// Enables the audit log (tracks ban/unban operations).
     #[serde(default = "defaults::ban_audit_log")]
     pub enable_audit_log: bool,
+
+    #[serde(default = "defaults::ban_check_timeout")]
+    #[serde(with = "humantime_serde")]
+    pub check_timeout: Duration,
 }
 
 impl Default for BanConfig {
@@ -34,6 +38,7 @@ impl Default for BanConfig {
             file: defaults::ban_file(),
             purge_interval: defaults::ban_purge_interval(),
             enable_audit_log: defaults::ban_audit_log(),
+            check_timeout: defaults::ban_check_timeout(),
         }
     }
 }

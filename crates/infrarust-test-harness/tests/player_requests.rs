@@ -14,6 +14,9 @@ use infrarust_api::player::{
     BossBar, ConnectionResult, MAX_COOKIE_SIZE, Player, ResourcePackRequest,
 };
 use infrarust_api::types::{Component, ServerId};
+use infrarust_protocol::packets::config::{
+    CConfigPluginMessage, CFeatureFlags, CRegistryData, CUpdateTags,
+};
 use infrarust_protocol::packets::cookie::CConfigStoreCookie;
 use infrarust_protocol::packets::cookie::{
     CConfigCookieRequest, CCookieRequest, SConfigCookieResponse, SCookieResponse,
@@ -30,6 +33,9 @@ use infrarust_test_harness::{
 const T: Duration = DEFAULT_TIMEOUT;
 const SEED_KEY: &str = "infrarust:seed";
 const SEED: &[u8] = b"seeded";
+const PRIVATE_CHANNEL: &str = "alex:private";
+const CONFIG_REPORT_DETAILS: i32 = 0x0F;
+const CONFIG_SERVER_LINKS: i32 = 0x10;
 
 fn system_text(frame: &PacketFrame, version: ProtocolVersion) -> Option<String> {
     if wire::is::<CSystemChatMessage>(frame, version) {
@@ -773,3 +779,111 @@ async fn a_backends_configuration_requests_are_not_replayed_to_limbo_players() {
 
     proxy.shutdown().await.unwrap();
 }
+
+async fn only_what_limbo_needs_is_replayed_to_other_players(version: ProtocolVersion) {
+    let backend = FakeBackend::builder().hold_config().spawn().await.unwrap();
+    let holder = ScriptedPlugin::new("holder").on_enable(|ctx| {
+        ctx.register_limbo_handler(Box::new(Hold)).unwrap();
+    });
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .server(
+            ServerSpec::offline("hub")
+                .unreachable()
+                .limbo_handlers(["hold"]),
+        )
+        .plugin(holder)
+        .start()
+        .await
+        .unwrap();
+
+    let first = proxy.client_for("lobby", version).unwrap();
+    let login = tokio::spawn(async move { first.login("Alex").await });
+    let mut conn = backend.next_connection(T).await.unwrap();
+    let kept = [
+        wire::encode(
+            &CFeatureFlags {
+                data: b"alex flags".to_vec(),
+            },
+            version,
+        )
+        .unwrap(),
+        wire::encode(
+            &CRegistryData {
+                data: b"alex registry".to_vec(),
+            },
+            version,
+        )
+        .unwrap(),
+        wire::encode(
+            &CUpdateTags {
+                data: b"alex tags".to_vec(),
+            },
+            version,
+        )
+        .unwrap(),
+    ];
+    conn.send_packet(&CConfigPluginMessage {
+        channel: PRIVATE_CHANNEL.into(),
+        data: b"for alex only".to_vec(),
+    })
+    .await
+    .unwrap();
+    for frame in &kept {
+        conn.send_frame(frame).await.unwrap();
+    }
+    let player_specific = version.no_less_than(ProtocolVersion::V1_21);
+    if player_specific {
+        for id in [CONFIG_REPORT_DETAILS, CONFIG_SERVER_LINKS] {
+            conn.send_frame(&PacketFrame::new(id, Bytes::from_static(&[0])))
+                .await
+                .unwrap();
+        }
+    }
+    conn.finish_config(T).await.unwrap();
+    let _first = tokio::time::timeout(T, login)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .joined()
+        .unwrap();
+
+    let second = proxy
+        .client_for("hub", version)
+        .unwrap()
+        .login("Steve")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let replayed = second.config_frames();
+    let leaked: Vec<String> = replayed
+        .iter()
+        .filter_map(|frame| {
+            if wire::is::<CConfigPluginMessage>(frame, version) {
+                let message = wire::decode::<CConfigPluginMessage>(frame, version).unwrap();
+                return (message.channel == PRIVATE_CHANNEL).then_some(message.channel);
+            }
+            (player_specific && [CONFIG_REPORT_DETAILS, CONFIG_SERVER_LINKS].contains(&frame.id))
+                .then(|| format!("0x{:02X}", frame.id))
+        })
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "another player's configuration reached a limbo player: {leaked:?}"
+    );
+    for frame in &kept {
+        assert!(
+            replayed
+                .iter()
+                .any(|seen| seen.id == frame.id && seen.payload == frame.payload),
+            "limbo lost the captured 0x{:02X}: {replayed:?}",
+            frame.id
+        );
+    }
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(only_what_limbo_needs_is_replayed_to_other_players; p764 = 764, p766 = 766, p774 = 774);

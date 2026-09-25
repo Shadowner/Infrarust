@@ -48,11 +48,10 @@ impl Plugin for HelloPlugin {
             //     .subscribe(EventPriority::NORMAL, |event: &mut PlayerChooseInitialServerEvent| {
             //         tracing::info!(
             //             "[HelloPlugin] {} connecting to {} — redirecting to limbo",
-            //             event.profile.username,
+            //             event.profile().username,
+            //             event.initial_server,
             //         );
-            //         event.set_result(PlayerChooseInitialServerResult::Allowed {
-            //             limbo_handlers: vec!["test-gate".to_string()],
-            //         });
+            //         event.send_to_limbo(vec!["test-gate".to_string()]);
             //     });
 
             // Catch kicks → send to limbo instead of disconnecting
@@ -60,10 +59,10 @@ impl Plugin for HelloPlugin {
             //     .subscribe(EventPriority::NORMAL, |event: &mut KickedFromServerEvent| {
             //         tracing::info!(
             //             "[HelloPlugin] {} was kicked from {} — catching in limbo",
-            //             event.player_id,
+            //             event.profile().username,
             //             event.server,
             //         );
-            //         event.set_result(KickedFromServerResult::SendToLimbo { limbo_handlers: vec![] });
+            //         event.send_to_limbo(vec!["test-gate".to_string()]);
             //     });
 
             let commands = ctx.command_manager();

@@ -76,6 +76,8 @@ pub enum ApiEvent {
         player_id: u64,
         username: String,
         last_server: Option<String>,
+        cause: String,
+        reason: Option<String>,
         timestamp: String,
     },
     PlayerSwitch {

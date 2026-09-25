@@ -631,6 +631,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
             enable_audit_log: b
                 .enable_audit_log
                 .unwrap_or_else(crate::defaults::ban_audit_log),
+            check_timeout: crate::defaults::ban_check_timeout(),
         })
         .unwrap_or_default();
 

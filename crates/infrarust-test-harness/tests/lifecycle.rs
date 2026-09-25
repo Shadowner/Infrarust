@@ -645,6 +645,43 @@ async fn a_post_login_message_arrives_after_join(version: ProtocolVersion) {
 
 version_matrix!(a_post_login_message_arrives_after_join; p47 = 47, p764 = 764, p774 = 774);
 
+async fn a_client_only_post_login_message_arrives_after_join(version: ProtocolVersion) {
+    let sessions = FakeSessionServer::spawn().await.unwrap();
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let greeter =
+        ScriptedPlugin::new("greeter").on::<PostLoginEvent>(EventPriority::NORMAL, |event| {
+            event
+                .player
+                .send_message(Component::text("Welcome aboard"))
+                .unwrap();
+        });
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::client_only("lobby").backend(backend.addr()))
+        .session_server(&sessions)
+        .plugin(greeter)
+        .start()
+        .await
+        .unwrap();
+
+    let mut session = proxy
+        .client(version)
+        .login("Alex")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+
+    assert_eq!(
+        session.expect_system_text(T).await.unwrap(),
+        "Welcome aboard"
+    );
+    session.quit().await;
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_client_only_post_login_message_arrives_after_join;
+    p47 = 47, p763 = 763, p764 = 764, p774 = 774);
+
 const FORWARDED_SOURCE: &str = "203.0.113.7:51234";
 
 async fn real_ip_comes_from_the_proxy_protocol_header(version: ProtocolVersion) {

@@ -9,14 +9,13 @@ use infrarust_api::player::{Player, ResourcePackStatus, cookie_key};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::cookie::{
-    CConfigCookieRequest, CConfigStoreCookie, CCookieRequest, SConfigCookieResponse,
-    SCookieResponse,
+    CConfigCookieRequest, CCookieRequest, SConfigCookieResponse, SCookieResponse,
 };
 use infrarust_protocol::packets::play::boss_bar::{BossBarAction, CBossBar};
 use infrarust_protocol::packets::play::transfer::{CConfigTransfer, CTransfer};
 use infrarust_protocol::packets::resource_pack::{
-    CConfigResourcePack, CConfigResourcePackPop, CConfigResourcePackPush, CResourcePack,
-    ResourcePackResult, SConfigResourcePackResponse, SResourcePackResponse,
+    CConfigResourcePack, CResourcePack, ResourcePackResult, SConfigResourcePackResponse,
+    SResourcePackResponse,
 };
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
@@ -44,7 +43,6 @@ pub(crate) struct PresentationIds {
     play: Ids,
     config: Ids,
     backend_boss_bar: Option<i32>,
-    config_player_only: [Option<i32>; 6],
 }
 
 fn legacy_packs(version: ProtocolVersion) -> bool {
@@ -77,19 +75,7 @@ impl PresentationIds {
             backend_boss_bar: registry
                 .get_packet_id::<CBossBar>(version)
                 .filter(|_| version.less_than(ProtocolVersion::V1_20_2)),
-            config_player_only: [
-                registry.get_packet_id::<CConfigCookieRequest>(version),
-                registry.get_packet_id::<CConfigStoreCookie>(version),
-                registry.get_packet_id::<CConfigResourcePack>(version),
-                registry.get_packet_id::<CConfigResourcePackPush>(version),
-                registry.get_packet_id::<CConfigResourcePackPop>(version),
-                registry.get_packet_id::<CConfigTransfer>(version),
-            ],
         }
-    }
-
-    pub(crate) fn is_player_request(&self, frame: &PacketFrame, state: ConnectionState) -> bool {
-        state == ConnectionState::Config && self.config_player_only.contains(&Some(frame.id))
     }
 
     const fn ids(&self, state: ConnectionState) -> Option<&Ids> {

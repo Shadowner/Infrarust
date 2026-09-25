@@ -7,8 +7,9 @@ pub mod resource_pack;
 pub mod status;
 
 pub use config::{
-    CConfigDisconnect, CConfigPluginMessage, CFinishConfig, CKnownPacks, CRegistryData, KnownPack,
-    SAcknowledgeFinishConfig, SConfigClientInformation, SConfigPluginMessage, SKnownPacks,
+    CConfigDisconnect, CConfigPluginMessage, CFeatureFlags, CFinishConfig, CKnownPacks,
+    CRegistryData, CUpdateTags, KnownPack, SAcknowledgeFinishConfig, SConfigClientInformation,
+    SConfigPluginMessage, SKnownPacks,
 };
 pub use cookie::{
     CConfigCookieRequest, CConfigStoreCookie, CCookieRequest, CLoginCookieRequest, CStoreCookie,

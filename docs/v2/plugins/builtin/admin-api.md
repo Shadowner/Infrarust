@@ -364,6 +364,19 @@ Available event types:
 
 Omit the `types` parameter to receive all events. The stream sends a keep-alive comment every 15 seconds.
 
+`player.leave` says why the player left. `cause` is `client_quit`, `kicked`, `backend_closed`, `shutdown` or `error`. `reason` is the plain text of the kick or backend message, or `null` when there was none:
+
+```json
+{
+  "player_id": 42,
+  "username": "Steve",
+  "last_server": "lobby",
+  "cause": "kicked",
+  "reason": "You have been banned",
+  "timestamp": "2025-01-15T10:30:00Z"
+}
+```
+
 `backend.health_change` carries the address, every server that lists it, and the new state:
 
 ```json

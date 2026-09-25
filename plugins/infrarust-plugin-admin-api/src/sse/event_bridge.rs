@@ -48,6 +48,8 @@ impl EventBridge {
                     player_id: event.player_id().as_u64(),
                     username: event.username().to_string(),
                     last_server: event.last_server.as_ref().map(|s| s.as_str().to_string()),
+                    cause: event.cause.as_str().to_string(),
+                    reason: event.cause.reason().map(ToString::to_string),
                     timestamp: now_iso8601(),
                 });
             });

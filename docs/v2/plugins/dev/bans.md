@@ -45,7 +45,7 @@ Only the plugin whose id matches `provider` becomes active. Any other plugin tha
 
 ### When the selected plugin is missing
 
-If `provider` names a plugin that never registers a provider (it failed to load, is disabled, or the id is misspelled), the proxy logs an error at startup and **refuses logins** with "Your ban status cannot be checked right now" until the provider registers. The same happens while a registered provider's `check` returns an error, and after the provider plugin is disabled at runtime.
+If `provider` names a plugin that never registers a provider (it failed to load, is disabled, or the id is misspelled), the proxy logs an error at startup and **refuses logins** with "Your ban status cannot be checked right now" until the provider registers. The same happens while a registered provider's `check` returns an error or does not answer within `[ban] check_timeout` (5 s by default), and after the provider plugin is disabled at runtime.
 
 This is fail-closed, on purpose:
 

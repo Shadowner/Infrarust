@@ -97,6 +97,35 @@ impl Packet for CRegistryData {
 }
 
 define_twin_packets! {
+    states: {
+        #[derive(PartialEq, Eq)]
+        CFeatureFlags: Config / Clientbound = ids![
+            V1_20_2 => 0x07,
+            V1_20_3 => 0x08,
+            V1_20_5 => 0x0C,
+        ],
+        #[derive(PartialEq, Eq)]
+        CUpdateTags: Config / Clientbound = ids![
+            V1_20_2 => 0x08,
+            V1_20_3 => 0x09,
+            V1_20_5 => 0x0D,
+        ],
+    },
+    encode_only: true,
+    fields: {
+        pub data: Vec<u8>,
+    },
+    shared_impl: {},
+    decode(r, _version): {
+        Ok(Self { data: r.read_remaining()? })
+    },
+    encode(self, w, _version): {
+        w.write_all(&self.data)?;
+        Ok(())
+    },
+}
+
+define_twin_packets! {
     clientbound: CKnownPacks,
     serverbound: SKnownPacks,
     state: ConnectionState::Config,
