@@ -21,18 +21,20 @@ pub use legacy::{
     detect as detect_legacy, parse_legacy_ping,
 };
 pub use packets::{
-    CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CChunkData, CCommands,
-    CConfigDisconnect, CConfigPluginMessage, CDisconnect, CEncryptionRequest, CFinishConfig,
-    CGameEvent, CJoinGame, CKeepAlive, CKnownPacks, CLoginDisconnect, CLoginPluginRequest,
-    CLoginSuccess, CPingResponse, CPluginMessage, CRegistryData, CRespawn, CSetCenterChunk,
-    CSetCompression, CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes,
-    CStartConfiguration, CStatusResponse, CSynchronizePlayerPosition, CSystemChatMessage,
-    CTabCompleteResponse, CTitleLegacy, CTransfer, DimensionInfo, EncryptionProof, ErasedPacket,
-    KnownPack, Packet, PacketMapping, ProfileKey, Property, SAcknowledgeConfiguration,
-    SAcknowledgeFinishConfig, SChatCommand, SChatMessage, SChatSessionUpdate, SConfigPluginMessage,
-    SEncryptionResponse, SHandshake, SKeepAlive, SKnownPacks, SLoginAcknowledged,
-    SLoginPluginResponse, SLoginStart, SPingRequest, SPluginMessage, SStatusRequest,
-    STabCompleteRequest,
+    ArgumentSignature, CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CChunkData,
+    CCommands, CConfigDisconnect, CConfigPluginMessage, CDisconnect, CEncryptionRequest,
+    CFinishConfig, CGameEvent, CJoinGame, CKeepAlive, CKnownPacks, CLoginDisconnect,
+    CLoginPluginRequest, CLoginSuccess, CPingResponse, CPluginMessage, CRegistryData, CRespawn,
+    CSetCenterChunk, CSetCompression, CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle,
+    CSetTitleTimes, CStartConfiguration, CStatusResponse, CSynchronizePlayerPosition,
+    CSystemChatMessage, CTabCompleteResponse, CTitleLegacy, CTransfer, ClientInformation,
+    DimensionInfo, EncryptionProof, ErasedPacket, KnownPack, LastSeenMessages, Packet,
+    PacketMapping, PreviousMessage, PreviousMessages, ProfileKey, Property,
+    SAcknowledgeConfiguration, SAcknowledgeFinishConfig, SChatAcknowledgement, SChatCommand,
+    SChatCommandSigned, SChatMessage, SChatSessionUpdate, SClientInformation,
+    SConfigClientInformation, SConfigPluginMessage, SEncryptionResponse, SHandshake, SKeepAlive,
+    SKnownPacks, SLoginAcknowledged, SLoginPluginResponse, SLoginStart, SPingRequest,
+    SPluginMessage, SStatusRequest, STabCompleteRequest,
 };
 pub use registry::{DecodedPacket, PacketRegistry, build_default_registry};
 pub use version::{ConnectionState, Direction, ProtocolVersion};

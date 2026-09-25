@@ -33,6 +33,7 @@ cipher = { workspace = true }
 
 [dev-dependencies]
 divan = { workspace = true }
+proptest = "1.10"
 
 [[bench]]
 name = "frame_codec"

@@ -2196,6 +2196,7 @@ dependencies = [
  "divan",
  "flate2",
  "libdeflater",
+ "proptest",
  "thiserror 2.0.18",
  "uuid",
 ]

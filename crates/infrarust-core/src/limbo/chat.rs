@@ -62,7 +62,7 @@ mod tests {
 
         let pkt = SChatCommand {
             command: "login password".to_string(),
-            remaining: vec![],
+            ..SChatCommand::default()
         };
         let frame = build_frame(&pkt, version, &registry);
 
@@ -83,7 +83,7 @@ mod tests {
 
         let pkt = SChatCommand {
             command: "help".to_string(),
-            remaining: vec![],
+            ..SChatCommand::default()
         };
         let frame = build_frame(&pkt, version, &registry);
 
@@ -104,7 +104,7 @@ mod tests {
 
         let pkt = SChatMessage {
             message: "hello".to_string(),
-            remaining: vec![],
+            ..SChatMessage::default()
         };
         let frame = build_frame(&pkt, version, &registry);
 

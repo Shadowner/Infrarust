@@ -61,40 +61,53 @@ DEC config clientbound 776 0x02
 DEC config clientbound 776 0x03
 DEC config clientbound 776 0x07
 DEC config clientbound 776 0x0E
+DEC config serverbound 764 0x00
 DEC config serverbound 764 0x01
 DEC config serverbound 764 0x02
+DEC config serverbound 765 0x00
 DEC config serverbound 765 0x01
 DEC config serverbound 765 0x02
+DEC config serverbound 766 0x00
 DEC config serverbound 766 0x02
 DEC config serverbound 766 0x03
 DEC config serverbound 766 0x07
+DEC config serverbound 767 0x00
 DEC config serverbound 767 0x02
 DEC config serverbound 767 0x03
 DEC config serverbound 767 0x07
+DEC config serverbound 768 0x00
 DEC config serverbound 768 0x02
 DEC config serverbound 768 0x03
 DEC config serverbound 768 0x07
+DEC config serverbound 769 0x00
 DEC config serverbound 769 0x02
 DEC config serverbound 769 0x03
 DEC config serverbound 769 0x07
+DEC config serverbound 770 0x00
 DEC config serverbound 770 0x02
 DEC config serverbound 770 0x03
 DEC config serverbound 770 0x07
+DEC config serverbound 771 0x00
 DEC config serverbound 771 0x02
 DEC config serverbound 771 0x03
 DEC config serverbound 771 0x07
+DEC config serverbound 772 0x00
 DEC config serverbound 772 0x02
 DEC config serverbound 772 0x03
 DEC config serverbound 772 0x07
+DEC config serverbound 773 0x00
 DEC config serverbound 773 0x02
 DEC config serverbound 773 0x03
 DEC config serverbound 773 0x07
+DEC config serverbound 774 0x00
 DEC config serverbound 774 0x02
 DEC config serverbound 774 0x03
 DEC config serverbound 774 0x07
+DEC config serverbound 775 0x00
 DEC config serverbound 775 0x02
 DEC config serverbound 775 0x03
 DEC config serverbound 775 0x07
+DEC config serverbound 776 0x00
 DEC config serverbound 776 0x02
 DEC config serverbound 776 0x03
 DEC config serverbound 776 0x07
@@ -416,55 +429,73 @@ DEC login serverbound 776 0x01
 DEC login serverbound 776 0x02
 DEC login serverbound 776 0x03
 DEC play clientbound   4 0x00
+DEC play clientbound   4 0x02
 DEC play clientbound   4 0x40
 DEC play clientbound   5 0x00
+DEC play clientbound   5 0x02
 DEC play clientbound   5 0x40
 DEC play clientbound  47 0x00
+DEC play clientbound  47 0x02
 DEC play clientbound  47 0x40
+DEC play clientbound 107 0x0F
 DEC play clientbound 107 0x1A
 DEC play clientbound 107 0x1F
+DEC play clientbound 109 0x0F
 DEC play clientbound 109 0x1A
 DEC play clientbound 109 0x1F
+DEC play clientbound 110 0x0F
 DEC play clientbound 110 0x1A
 DEC play clientbound 110 0x1F
+DEC play clientbound 335 0x0F
 DEC play clientbound 335 0x1A
 DEC play clientbound 335 0x1F
+DEC play clientbound 338 0x0F
 DEC play clientbound 338 0x1A
 DEC play clientbound 338 0x1F
+DEC play clientbound 340 0x0F
 DEC play clientbound 340 0x1A
 DEC play clientbound 340 0x1F
+DEC play clientbound 393 0x0E
 DEC play clientbound 393 0x10
 DEC play clientbound 393 0x11
 DEC play clientbound 393 0x1B
 DEC play clientbound 393 0x21
+DEC play clientbound 477 0x0E
 DEC play clientbound 477 0x10
 DEC play clientbound 477 0x11
 DEC play clientbound 477 0x1A
 DEC play clientbound 477 0x20
+DEC play clientbound 573 0x0F
 DEC play clientbound 573 0x11
 DEC play clientbound 573 0x12
 DEC play clientbound 573 0x1B
 DEC play clientbound 573 0x21
+DEC play clientbound 735 0x0E
 DEC play clientbound 735 0x10
 DEC play clientbound 735 0x11
 DEC play clientbound 735 0x1A
 DEC play clientbound 735 0x20
+DEC play clientbound 751 0x0E
 DEC play clientbound 751 0x0F
 DEC play clientbound 751 0x10
 DEC play clientbound 751 0x19
 DEC play clientbound 751 0x1F
+DEC play clientbound 754 0x0E
 DEC play clientbound 754 0x0F
 DEC play clientbound 754 0x10
 DEC play clientbound 754 0x19
 DEC play clientbound 754 0x1F
+DEC play clientbound 755 0x0F
 DEC play clientbound 755 0x11
 DEC play clientbound 755 0x12
 DEC play clientbound 755 0x1A
 DEC play clientbound 755 0x21
+DEC play clientbound 757 0x0F
 DEC play clientbound 757 0x11
 DEC play clientbound 757 0x12
 DEC play clientbound 757 0x1A
 DEC play clientbound 757 0x21
+DEC play clientbound 758 0x0F
 DEC play clientbound 758 0x11
 DEC play clientbound 758 0x12
 DEC play clientbound 758 0x1A
@@ -473,147 +504,299 @@ DEC play clientbound 759 0x0E
 DEC play clientbound 759 0x0F
 DEC play clientbound 759 0x17
 DEC play clientbound 759 0x1E
+DEC play clientbound 759 0x5F
 DEC play clientbound 760 0x0E
 DEC play clientbound 760 0x0F
 DEC play clientbound 760 0x19
 DEC play clientbound 760 0x20
+DEC play clientbound 760 0x62
 DEC play clientbound 761 0x0D
 DEC play clientbound 761 0x0E
 DEC play clientbound 761 0x17
 DEC play clientbound 761 0x1F
+DEC play clientbound 761 0x60
 DEC play clientbound 762 0x0F
 DEC play clientbound 762 0x10
 DEC play clientbound 762 0x1A
 DEC play clientbound 762 0x23
+DEC play clientbound 762 0x64
 DEC play clientbound 763 0x0F
 DEC play clientbound 763 0x10
 DEC play clientbound 763 0x1A
 DEC play clientbound 763 0x23
+DEC play clientbound 763 0x64
 DEC play clientbound 764 0x10
 DEC play clientbound 764 0x11
 DEC play clientbound 764 0x1B
 DEC play clientbound 764 0x24
+DEC play clientbound 764 0x67
 DEC play clientbound 765 0x10
 DEC play clientbound 765 0x11
 DEC play clientbound 765 0x1B
 DEC play clientbound 765 0x24
+DEC play clientbound 765 0x69
 DEC play clientbound 766 0x10
 DEC play clientbound 766 0x11
 DEC play clientbound 766 0x1D
 DEC play clientbound 766 0x26
+DEC play clientbound 766 0x6C
 DEC play clientbound 767 0x10
 DEC play clientbound 767 0x11
 DEC play clientbound 767 0x1D
 DEC play clientbound 767 0x26
+DEC play clientbound 767 0x6C
 DEC play clientbound 768 0x10
 DEC play clientbound 768 0x11
 DEC play clientbound 768 0x1D
 DEC play clientbound 768 0x27
+DEC play clientbound 768 0x73
 DEC play clientbound 769 0x10
 DEC play clientbound 769 0x11
 DEC play clientbound 769 0x1D
 DEC play clientbound 769 0x27
+DEC play clientbound 769 0x73
 DEC play clientbound 770 0x0F
 DEC play clientbound 770 0x10
 DEC play clientbound 770 0x1C
 DEC play clientbound 770 0x26
+DEC play clientbound 770 0x72
 DEC play clientbound 771 0x0F
 DEC play clientbound 771 0x10
 DEC play clientbound 771 0x1C
 DEC play clientbound 771 0x26
+DEC play clientbound 771 0x72
 DEC play clientbound 772 0x0F
 DEC play clientbound 772 0x10
 DEC play clientbound 772 0x1C
 DEC play clientbound 772 0x26
+DEC play clientbound 772 0x72
 DEC play clientbound 773 0x0F
 DEC play clientbound 773 0x10
 DEC play clientbound 773 0x20
 DEC play clientbound 773 0x2B
+DEC play clientbound 773 0x77
 DEC play clientbound 774 0x0F
 DEC play clientbound 774 0x10
 DEC play clientbound 774 0x20
 DEC play clientbound 774 0x2B
+DEC play clientbound 774 0x77
 DEC play clientbound 775 0x0F
 DEC play clientbound 775 0x10
 DEC play clientbound 775 0x20
 DEC play clientbound 775 0x2C
+DEC play clientbound 775 0x79
 DEC play clientbound 776 0x0F
 DEC play clientbound 776 0x10
 DEC play clientbound 776 0x20
 DEC play clientbound 776 0x2C
+DEC play clientbound 776 0x79
 DEC play serverbound   4 0x00
+DEC play serverbound   4 0x01
+DEC play serverbound   4 0x15
 DEC play serverbound   5 0x00
+DEC play serverbound   5 0x01
+DEC play serverbound   5 0x15
 DEC play serverbound  47 0x00
+DEC play serverbound  47 0x01
+DEC play serverbound  47 0x15
+DEC play serverbound 107 0x02
+DEC play serverbound 107 0x04
 DEC play serverbound 107 0x0B
+DEC play serverbound 109 0x02
+DEC play serverbound 109 0x04
 DEC play serverbound 109 0x0B
+DEC play serverbound 110 0x02
+DEC play serverbound 110 0x04
 DEC play serverbound 110 0x0B
+DEC play serverbound 335 0x03
+DEC play serverbound 335 0x05
 DEC play serverbound 335 0x0C
+DEC play serverbound 338 0x02
+DEC play serverbound 338 0x04
 DEC play serverbound 338 0x0B
+DEC play serverbound 340 0x02
+DEC play serverbound 340 0x04
 DEC play serverbound 340 0x0B
+DEC play serverbound 393 0x02
+DEC play serverbound 393 0x04
 DEC play serverbound 393 0x05
 DEC play serverbound 393 0x0E
+DEC play serverbound 477 0x03
+DEC play serverbound 477 0x05
 DEC play serverbound 477 0x06
 DEC play serverbound 477 0x0F
+DEC play serverbound 573 0x03
+DEC play serverbound 573 0x05
 DEC play serverbound 573 0x06
 DEC play serverbound 573 0x0F
+DEC play serverbound 735 0x03
+DEC play serverbound 735 0x05
 DEC play serverbound 735 0x06
 DEC play serverbound 735 0x10
+DEC play serverbound 751 0x03
+DEC play serverbound 751 0x05
 DEC play serverbound 751 0x06
 DEC play serverbound 751 0x10
+DEC play serverbound 754 0x03
+DEC play serverbound 754 0x05
 DEC play serverbound 754 0x06
 DEC play serverbound 754 0x10
+DEC play serverbound 755 0x03
+DEC play serverbound 755 0x05
 DEC play serverbound 755 0x06
 DEC play serverbound 755 0x0F
+DEC play serverbound 757 0x03
+DEC play serverbound 757 0x05
 DEC play serverbound 757 0x06
 DEC play serverbound 757 0x0F
+DEC play serverbound 758 0x03
+DEC play serverbound 758 0x05
 DEC play serverbound 758 0x06
 DEC play serverbound 758 0x0F
+DEC play serverbound 759 0x03
+DEC play serverbound 759 0x04
+DEC play serverbound 759 0x07
 DEC play serverbound 759 0x08
 DEC play serverbound 759 0x11
+DEC play serverbound 760 0x03
+DEC play serverbound 760 0x04
+DEC play serverbound 760 0x05
+DEC play serverbound 760 0x08
 DEC play serverbound 760 0x09
 DEC play serverbound 760 0x12
+DEC play serverbound 761 0x03
+DEC play serverbound 761 0x04
+DEC play serverbound 761 0x05
+DEC play serverbound 761 0x07
 DEC play serverbound 761 0x08
 DEC play serverbound 761 0x11
+DEC play serverbound 761 0x20
+DEC play serverbound 762 0x03
+DEC play serverbound 762 0x04
+DEC play serverbound 762 0x05
+DEC play serverbound 762 0x06
+DEC play serverbound 762 0x08
 DEC play serverbound 762 0x09
 DEC play serverbound 762 0x12
+DEC play serverbound 763 0x03
+DEC play serverbound 763 0x04
+DEC play serverbound 763 0x05
+DEC play serverbound 763 0x06
+DEC play serverbound 763 0x08
 DEC play serverbound 763 0x09
 DEC play serverbound 763 0x12
+DEC play serverbound 764 0x03
+DEC play serverbound 764 0x04
+DEC play serverbound 764 0x05
+DEC play serverbound 764 0x06
+DEC play serverbound 764 0x09
 DEC play serverbound 764 0x0A
 DEC play serverbound 764 0x0B
 DEC play serverbound 764 0x14
+DEC play serverbound 765 0x03
+DEC play serverbound 765 0x04
+DEC play serverbound 765 0x05
+DEC play serverbound 765 0x06
+DEC play serverbound 765 0x09
 DEC play serverbound 765 0x0A
 DEC play serverbound 765 0x0B
 DEC play serverbound 765 0x15
+DEC play serverbound 766 0x03
+DEC play serverbound 766 0x04
+DEC play serverbound 766 0x05
+DEC play serverbound 766 0x06
+DEC play serverbound 766 0x07
+DEC play serverbound 766 0x0A
 DEC play serverbound 766 0x0B
 DEC play serverbound 766 0x0C
 DEC play serverbound 766 0x18
+DEC play serverbound 767 0x03
+DEC play serverbound 767 0x04
+DEC play serverbound 767 0x05
+DEC play serverbound 767 0x06
+DEC play serverbound 767 0x07
+DEC play serverbound 767 0x0A
 DEC play serverbound 767 0x0B
 DEC play serverbound 767 0x0C
 DEC play serverbound 767 0x18
+DEC play serverbound 768 0x04
+DEC play serverbound 768 0x05
+DEC play serverbound 768 0x06
+DEC play serverbound 768 0x07
+DEC play serverbound 768 0x08
+DEC play serverbound 768 0x0C
 DEC play serverbound 768 0x0D
 DEC play serverbound 768 0x0E
 DEC play serverbound 768 0x1A
+DEC play serverbound 769 0x04
+DEC play serverbound 769 0x05
+DEC play serverbound 769 0x06
+DEC play serverbound 769 0x07
+DEC play serverbound 769 0x08
+DEC play serverbound 769 0x0C
 DEC play serverbound 769 0x0D
 DEC play serverbound 769 0x0E
 DEC play serverbound 769 0x1A
+DEC play serverbound 770 0x04
+DEC play serverbound 770 0x05
+DEC play serverbound 770 0x06
+DEC play serverbound 770 0x07
+DEC play serverbound 770 0x08
+DEC play serverbound 770 0x0C
 DEC play serverbound 770 0x0D
 DEC play serverbound 770 0x0E
 DEC play serverbound 770 0x1A
+DEC play serverbound 771 0x05
+DEC play serverbound 771 0x06
+DEC play serverbound 771 0x07
+DEC play serverbound 771 0x08
+DEC play serverbound 771 0x09
+DEC play serverbound 771 0x0D
 DEC play serverbound 771 0x0E
 DEC play serverbound 771 0x0F
 DEC play serverbound 771 0x1B
+DEC play serverbound 772 0x05
+DEC play serverbound 772 0x06
+DEC play serverbound 772 0x07
+DEC play serverbound 772 0x08
+DEC play serverbound 772 0x09
+DEC play serverbound 772 0x0D
 DEC play serverbound 772 0x0E
 DEC play serverbound 772 0x0F
 DEC play serverbound 772 0x1B
+DEC play serverbound 773 0x05
+DEC play serverbound 773 0x06
+DEC play serverbound 773 0x07
+DEC play serverbound 773 0x08
+DEC play serverbound 773 0x09
+DEC play serverbound 773 0x0D
 DEC play serverbound 773 0x0E
 DEC play serverbound 773 0x0F
 DEC play serverbound 773 0x1B
+DEC play serverbound 774 0x05
+DEC play serverbound 774 0x06
+DEC play serverbound 774 0x07
+DEC play serverbound 774 0x08
+DEC play serverbound 774 0x09
+DEC play serverbound 774 0x0D
 DEC play serverbound 774 0x0E
 DEC play serverbound 774 0x0F
 DEC play serverbound 774 0x1B
+DEC play serverbound 775 0x06
+DEC play serverbound 775 0x07
+DEC play serverbound 775 0x08
+DEC play serverbound 775 0x09
+DEC play serverbound 775 0x0A
+DEC play serverbound 775 0x0E
 DEC play serverbound 775 0x0F
 DEC play serverbound 775 0x10
 DEC play serverbound 775 0x1C
+DEC play serverbound 776 0x06
+DEC play serverbound 776 0x07
+DEC play serverbound 776 0x08
+DEC play serverbound 776 0x09
+DEC play serverbound 776 0x0A
+DEC play serverbound 776 0x0E
 DEC play serverbound 776 0x0F
 DEC play serverbound 776 0x10
 DEC play serverbound 776 0x1C
@@ -825,40 +1008,53 @@ ENC config clientbound 776 CFinishConfig 0x03
 ENC config clientbound 776 CKnownPacks 0x0E
 ENC config clientbound 776 CRegistryData 0x07
 ENC config serverbound 764 SAcknowledgeFinishConfig 0x02
+ENC config serverbound 764 SConfigClientInformation 0x00
 ENC config serverbound 764 SConfigPluginMessage 0x01
 ENC config serverbound 765 SAcknowledgeFinishConfig 0x02
+ENC config serverbound 765 SConfigClientInformation 0x00
 ENC config serverbound 765 SConfigPluginMessage 0x01
 ENC config serverbound 766 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 766 SConfigClientInformation 0x00
 ENC config serverbound 766 SConfigPluginMessage 0x02
 ENC config serverbound 766 SKnownPacks 0x07
 ENC config serverbound 767 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 767 SConfigClientInformation 0x00
 ENC config serverbound 767 SConfigPluginMessage 0x02
 ENC config serverbound 767 SKnownPacks 0x07
 ENC config serverbound 768 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 768 SConfigClientInformation 0x00
 ENC config serverbound 768 SConfigPluginMessage 0x02
 ENC config serverbound 768 SKnownPacks 0x07
 ENC config serverbound 769 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 769 SConfigClientInformation 0x00
 ENC config serverbound 769 SConfigPluginMessage 0x02
 ENC config serverbound 769 SKnownPacks 0x07
 ENC config serverbound 770 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 770 SConfigClientInformation 0x00
 ENC config serverbound 770 SConfigPluginMessage 0x02
 ENC config serverbound 770 SKnownPacks 0x07
 ENC config serverbound 771 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 771 SConfigClientInformation 0x00
 ENC config serverbound 771 SConfigPluginMessage 0x02
 ENC config serverbound 771 SKnownPacks 0x07
 ENC config serverbound 772 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 772 SConfigClientInformation 0x00
 ENC config serverbound 772 SConfigPluginMessage 0x02
 ENC config serverbound 772 SKnownPacks 0x07
 ENC config serverbound 773 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 773 SConfigClientInformation 0x00
 ENC config serverbound 773 SConfigPluginMessage 0x02
 ENC config serverbound 773 SKnownPacks 0x07
 ENC config serverbound 774 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 774 SConfigClientInformation 0x00
 ENC config serverbound 774 SConfigPluginMessage 0x02
 ENC config serverbound 774 SKnownPacks 0x07
 ENC config serverbound 775 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 775 SConfigClientInformation 0x00
 ENC config serverbound 775 SConfigPluginMessage 0x02
 ENC config serverbound 775 SKnownPacks 0x07
 ENC config serverbound 776 SAcknowledgeFinishConfig 0x03
+ENC config serverbound 776 SConfigClientInformation 0x00
 ENC config serverbound 776 SConfigPluginMessage 0x02
 ENC config serverbound 776 SKnownPacks 0x07
 ENC handshake serverbound   4 SHandshake 0x00
@@ -1406,7 +1602,6 @@ ENC play clientbound 758 CSetTitleTimes 0x5B
 ENC play clientbound 758 CSynchronizePlayerPosition 0x39
 ENC play clientbound 758 CTabCompleteResponse 0x11
 ENC play clientbound 758 CTitleLegacy 0x4F
-ENC play clientbound 759 CChatMessageLegacy 0x0F
 ENC play clientbound 759 CChunkData 0x1F
 ENC play clientbound 759 CCommands 0x0F
 ENC play clientbound 759 CDisconnect 0x17
@@ -1424,7 +1619,6 @@ ENC play clientbound 759 CSynchronizePlayerPosition 0x36
 ENC play clientbound 759 CSystemChatMessage 0x5F
 ENC play clientbound 759 CTabCompleteResponse 0x0E
 ENC play clientbound 759 CTitleLegacy 0x4F
-ENC play clientbound 760 CChatMessageLegacy 0x0F
 ENC play clientbound 760 CChunkData 0x21
 ENC play clientbound 760 CCommands 0x0F
 ENC play clientbound 760 CDisconnect 0x19
@@ -1442,7 +1636,6 @@ ENC play clientbound 760 CSynchronizePlayerPosition 0x39
 ENC play clientbound 760 CSystemChatMessage 0x62
 ENC play clientbound 760 CTabCompleteResponse 0x0E
 ENC play clientbound 760 CTitleLegacy 0x4F
-ENC play clientbound 761 CChatMessageLegacy 0x0F
 ENC play clientbound 761 CChunkData 0x20
 ENC play clientbound 761 CCommands 0x0E
 ENC play clientbound 761 CDisconnect 0x17
@@ -1460,7 +1653,6 @@ ENC play clientbound 761 CSynchronizePlayerPosition 0x38
 ENC play clientbound 761 CSystemChatMessage 0x60
 ENC play clientbound 761 CTabCompleteResponse 0x0D
 ENC play clientbound 761 CTitleLegacy 0x4F
-ENC play clientbound 762 CChatMessageLegacy 0x0F
 ENC play clientbound 762 CChunkData 0x24
 ENC play clientbound 762 CCommands 0x10
 ENC play clientbound 762 CDisconnect 0x1A
@@ -1478,7 +1670,6 @@ ENC play clientbound 762 CSynchronizePlayerPosition 0x3C
 ENC play clientbound 762 CSystemChatMessage 0x64
 ENC play clientbound 762 CTabCompleteResponse 0x0F
 ENC play clientbound 762 CTitleLegacy 0x4F
-ENC play clientbound 763 CChatMessageLegacy 0x0F
 ENC play clientbound 763 CChunkData 0x24
 ENC play clientbound 763 CCommands 0x10
 ENC play clientbound 763 CDisconnect 0x1A
@@ -1496,7 +1687,6 @@ ENC play clientbound 763 CSynchronizePlayerPosition 0x3C
 ENC play clientbound 763 CSystemChatMessage 0x64
 ENC play clientbound 763 CTabCompleteResponse 0x0F
 ENC play clientbound 763 CTitleLegacy 0x4F
-ENC play clientbound 764 CChatMessageLegacy 0x0F
 ENC play clientbound 764 CChunkBatchFinished 0x0C
 ENC play clientbound 764 CChunkBatchStart 0x0D
 ENC play clientbound 764 CChunkData 0x25
@@ -1517,7 +1707,6 @@ ENC play clientbound 764 CSynchronizePlayerPosition 0x3E
 ENC play clientbound 764 CSystemChatMessage 0x67
 ENC play clientbound 764 CTabCompleteResponse 0x10
 ENC play clientbound 764 CTitleLegacy 0x4F
-ENC play clientbound 765 CChatMessageLegacy 0x0F
 ENC play clientbound 765 CChunkBatchFinished 0x0C
 ENC play clientbound 765 CChunkBatchStart 0x0D
 ENC play clientbound 765 CChunkData 0x25
@@ -1538,7 +1727,6 @@ ENC play clientbound 765 CSynchronizePlayerPosition 0x40
 ENC play clientbound 765 CSystemChatMessage 0x69
 ENC play clientbound 765 CTabCompleteResponse 0x10
 ENC play clientbound 765 CTitleLegacy 0x4F
-ENC play clientbound 766 CChatMessageLegacy 0x0F
 ENC play clientbound 766 CChunkBatchFinished 0x0C
 ENC play clientbound 766 CChunkBatchStart 0x0D
 ENC play clientbound 766 CChunkData 0x27
@@ -1560,7 +1748,6 @@ ENC play clientbound 766 CSystemChatMessage 0x6C
 ENC play clientbound 766 CTabCompleteResponse 0x10
 ENC play clientbound 766 CTitleLegacy 0x4F
 ENC play clientbound 766 CTransfer 0x73
-ENC play clientbound 767 CChatMessageLegacy 0x0F
 ENC play clientbound 767 CChunkBatchFinished 0x0C
 ENC play clientbound 767 CChunkBatchStart 0x0D
 ENC play clientbound 767 CChunkData 0x27
@@ -1582,7 +1769,6 @@ ENC play clientbound 767 CSystemChatMessage 0x6C
 ENC play clientbound 767 CTabCompleteResponse 0x10
 ENC play clientbound 767 CTitleLegacy 0x4F
 ENC play clientbound 767 CTransfer 0x73
-ENC play clientbound 768 CChatMessageLegacy 0x0F
 ENC play clientbound 768 CChunkBatchFinished 0x0C
 ENC play clientbound 768 CChunkBatchStart 0x0D
 ENC play clientbound 768 CChunkData 0x28
@@ -1604,7 +1790,6 @@ ENC play clientbound 768 CSystemChatMessage 0x73
 ENC play clientbound 768 CTabCompleteResponse 0x10
 ENC play clientbound 768 CTitleLegacy 0x4F
 ENC play clientbound 768 CTransfer 0x7A
-ENC play clientbound 769 CChatMessageLegacy 0x0F
 ENC play clientbound 769 CChunkBatchFinished 0x0C
 ENC play clientbound 769 CChunkBatchStart 0x0D
 ENC play clientbound 769 CChunkData 0x28
@@ -1626,7 +1811,6 @@ ENC play clientbound 769 CSystemChatMessage 0x73
 ENC play clientbound 769 CTabCompleteResponse 0x10
 ENC play clientbound 769 CTitleLegacy 0x4F
 ENC play clientbound 769 CTransfer 0x7A
-ENC play clientbound 770 CChatMessageLegacy 0x0F
 ENC play clientbound 770 CChunkBatchFinished 0x0B
 ENC play clientbound 770 CChunkBatchStart 0x0C
 ENC play clientbound 770 CChunkData 0x27
@@ -1648,7 +1832,6 @@ ENC play clientbound 770 CSystemChatMessage 0x72
 ENC play clientbound 770 CTabCompleteResponse 0x0F
 ENC play clientbound 770 CTitleLegacy 0x4F
 ENC play clientbound 770 CTransfer 0x7A
-ENC play clientbound 771 CChatMessageLegacy 0x0F
 ENC play clientbound 771 CChunkBatchFinished 0x0B
 ENC play clientbound 771 CChunkBatchStart 0x0C
 ENC play clientbound 771 CChunkData 0x27
@@ -1670,7 +1853,6 @@ ENC play clientbound 771 CSystemChatMessage 0x72
 ENC play clientbound 771 CTabCompleteResponse 0x0F
 ENC play clientbound 771 CTitleLegacy 0x4F
 ENC play clientbound 771 CTransfer 0x7A
-ENC play clientbound 772 CChatMessageLegacy 0x0F
 ENC play clientbound 772 CChunkBatchFinished 0x0B
 ENC play clientbound 772 CChunkBatchStart 0x0C
 ENC play clientbound 772 CChunkData 0x27
@@ -1692,7 +1874,6 @@ ENC play clientbound 772 CSystemChatMessage 0x72
 ENC play clientbound 772 CTabCompleteResponse 0x0F
 ENC play clientbound 772 CTitleLegacy 0x4F
 ENC play clientbound 772 CTransfer 0x7A
-ENC play clientbound 773 CChatMessageLegacy 0x0F
 ENC play clientbound 773 CChunkBatchFinished 0x0B
 ENC play clientbound 773 CChunkBatchStart 0x0C
 ENC play clientbound 773 CChunkData 0x2C
@@ -1714,7 +1895,6 @@ ENC play clientbound 773 CSystemChatMessage 0x77
 ENC play clientbound 773 CTabCompleteResponse 0x0F
 ENC play clientbound 773 CTitleLegacy 0x4F
 ENC play clientbound 773 CTransfer 0x7F
-ENC play clientbound 774 CChatMessageLegacy 0x0F
 ENC play clientbound 774 CChunkBatchFinished 0x0B
 ENC play clientbound 774 CChunkBatchStart 0x0C
 ENC play clientbound 774 CChunkData 0x2C
@@ -1736,7 +1916,6 @@ ENC play clientbound 774 CSystemChatMessage 0x77
 ENC play clientbound 774 CTabCompleteResponse 0x0F
 ENC play clientbound 774 CTitleLegacy 0x4F
 ENC play clientbound 774 CTransfer 0x7F
-ENC play clientbound 775 CChatMessageLegacy 0x0F
 ENC play clientbound 775 CChunkBatchFinished 0x0B
 ENC play clientbound 775 CChunkBatchStart 0x0C
 ENC play clientbound 775 CChunkData 0x2C
@@ -1758,7 +1937,6 @@ ENC play clientbound 775 CSystemChatMessage 0x79
 ENC play clientbound 775 CTabCompleteResponse 0x0F
 ENC play clientbound 775 CTitleLegacy 0x4F
 ENC play clientbound 775 CTransfer 0x81
-ENC play clientbound 776 CChatMessageLegacy 0x0F
 ENC play clientbound 776 CChunkBatchFinished 0x0B
 ENC play clientbound 776 CChunkBatchStart 0x0C
 ENC play clientbound 776 CChunkData 0x2C
@@ -1781,178 +1959,248 @@ ENC play clientbound 776 CTabCompleteResponse 0x0F
 ENC play clientbound 776 CTitleLegacy 0x4F
 ENC play clientbound 776 CTransfer 0x81
 ENC play serverbound   4 SChatMessage 0x01
+ENC play serverbound   4 SClientInformation 0x15
 ENC play serverbound   4 SKeepAlive 0x00
 ENC play serverbound   4 SPluginMessage 0x17
 ENC play serverbound   5 SChatMessage 0x01
+ENC play serverbound   5 SClientInformation 0x15
 ENC play serverbound   5 SKeepAlive 0x00
 ENC play serverbound   5 SPluginMessage 0x17
 ENC play serverbound  47 SChatMessage 0x01
+ENC play serverbound  47 SClientInformation 0x15
 ENC play serverbound  47 SKeepAlive 0x00
 ENC play serverbound  47 SPluginMessage 0x17
 ENC play serverbound 107 SChatMessage 0x02
+ENC play serverbound 107 SClientInformation 0x04
 ENC play serverbound 107 SKeepAlive 0x0B
 ENC play serverbound 107 SPluginMessage 0x09
 ENC play serverbound 109 SChatMessage 0x02
+ENC play serverbound 109 SClientInformation 0x04
 ENC play serverbound 109 SKeepAlive 0x0B
 ENC play serverbound 109 SPluginMessage 0x09
 ENC play serverbound 110 SChatMessage 0x02
+ENC play serverbound 110 SClientInformation 0x04
 ENC play serverbound 110 SKeepAlive 0x0B
 ENC play serverbound 110 SPluginMessage 0x09
 ENC play serverbound 335 SChatMessage 0x03
+ENC play serverbound 335 SClientInformation 0x05
 ENC play serverbound 335 SKeepAlive 0x0C
 ENC play serverbound 335 SPluginMessage 0x0A
 ENC play serverbound 338 SChatMessage 0x02
+ENC play serverbound 338 SClientInformation 0x04
 ENC play serverbound 338 SKeepAlive 0x0B
 ENC play serverbound 338 SPluginMessage 0x09
 ENC play serverbound 340 SChatMessage 0x02
+ENC play serverbound 340 SClientInformation 0x04
 ENC play serverbound 340 SKeepAlive 0x0B
 ENC play serverbound 340 SPluginMessage 0x09
 ENC play serverbound 393 SChatMessage 0x02
+ENC play serverbound 393 SClientInformation 0x04
 ENC play serverbound 393 SKeepAlive 0x0E
 ENC play serverbound 393 SPluginMessage 0x0A
 ENC play serverbound 393 STabCompleteRequest 0x05
 ENC play serverbound 477 SChatMessage 0x03
+ENC play serverbound 477 SClientInformation 0x05
 ENC play serverbound 477 SKeepAlive 0x0F
 ENC play serverbound 477 SPluginMessage 0x0B
 ENC play serverbound 477 STabCompleteRequest 0x06
 ENC play serverbound 573 SChatMessage 0x03
+ENC play serverbound 573 SClientInformation 0x05
 ENC play serverbound 573 SKeepAlive 0x0F
 ENC play serverbound 573 SPluginMessage 0x0B
 ENC play serverbound 573 STabCompleteRequest 0x06
 ENC play serverbound 735 SChatMessage 0x03
+ENC play serverbound 735 SClientInformation 0x05
 ENC play serverbound 735 SKeepAlive 0x10
 ENC play serverbound 735 SPluginMessage 0x0B
 ENC play serverbound 735 STabCompleteRequest 0x06
 ENC play serverbound 751 SChatMessage 0x03
+ENC play serverbound 751 SClientInformation 0x05
 ENC play serverbound 751 SKeepAlive 0x10
 ENC play serverbound 751 SPluginMessage 0x0B
 ENC play serverbound 751 STabCompleteRequest 0x06
 ENC play serverbound 754 SChatMessage 0x03
+ENC play serverbound 754 SClientInformation 0x05
 ENC play serverbound 754 SKeepAlive 0x10
 ENC play serverbound 754 SPluginMessage 0x0B
 ENC play serverbound 754 STabCompleteRequest 0x06
 ENC play serverbound 755 SChatMessage 0x03
+ENC play serverbound 755 SClientInformation 0x05
 ENC play serverbound 755 SKeepAlive 0x0F
 ENC play serverbound 755 SPluginMessage 0x0A
 ENC play serverbound 755 STabCompleteRequest 0x06
 ENC play serverbound 757 SChatMessage 0x03
+ENC play serverbound 757 SClientInformation 0x05
 ENC play serverbound 757 SKeepAlive 0x0F
 ENC play serverbound 757 SPluginMessage 0x0A
 ENC play serverbound 757 STabCompleteRequest 0x06
 ENC play serverbound 758 SChatMessage 0x03
+ENC play serverbound 758 SClientInformation 0x05
 ENC play serverbound 758 SKeepAlive 0x0F
 ENC play serverbound 758 SPluginMessage 0x0A
 ENC play serverbound 758 STabCompleteRequest 0x06
-ENC play serverbound 759 SChatCommand 0x04
-ENC play serverbound 759 SChatMessage 0x05
+ENC play serverbound 759 SChatCommand 0x03
+ENC play serverbound 759 SChatMessage 0x04
+ENC play serverbound 759 SClientInformation 0x07
 ENC play serverbound 759 SKeepAlive 0x11
 ENC play serverbound 759 SPluginMessage 0x0C
 ENC play serverbound 759 STabCompleteRequest 0x08
+ENC play serverbound 760 SChatAcknowledgement 0x03
 ENC play serverbound 760 SChatCommand 0x04
 ENC play serverbound 760 SChatMessage 0x05
+ENC play serverbound 760 SClientInformation 0x08
 ENC play serverbound 760 SKeepAlive 0x12
 ENC play serverbound 760 SPluginMessage 0x0D
 ENC play serverbound 760 STabCompleteRequest 0x09
+ENC play serverbound 761 SChatAcknowledgement 0x03
 ENC play serverbound 761 SChatCommand 0x04
 ENC play serverbound 761 SChatMessage 0x05
+ENC play serverbound 761 SChatSessionUpdate 0x20
+ENC play serverbound 761 SClientInformation 0x07
 ENC play serverbound 761 SKeepAlive 0x11
 ENC play serverbound 761 SPluginMessage 0x0C
 ENC play serverbound 761 STabCompleteRequest 0x08
+ENC play serverbound 762 SChatAcknowledgement 0x03
 ENC play serverbound 762 SChatCommand 0x04
 ENC play serverbound 762 SChatMessage 0x05
+ENC play serverbound 762 SChatSessionUpdate 0x06
+ENC play serverbound 762 SClientInformation 0x08
 ENC play serverbound 762 SKeepAlive 0x12
 ENC play serverbound 762 SPluginMessage 0x0D
 ENC play serverbound 762 STabCompleteRequest 0x09
+ENC play serverbound 763 SChatAcknowledgement 0x03
 ENC play serverbound 763 SChatCommand 0x04
 ENC play serverbound 763 SChatMessage 0x05
+ENC play serverbound 763 SChatSessionUpdate 0x06
+ENC play serverbound 763 SClientInformation 0x08
 ENC play serverbound 763 SKeepAlive 0x12
 ENC play serverbound 763 SPluginMessage 0x0D
 ENC play serverbound 763 STabCompleteRequest 0x09
 ENC play serverbound 764 SAcknowledgeConfiguration 0x0B
+ENC play serverbound 764 SChatAcknowledgement 0x03
 ENC play serverbound 764 SChatCommand 0x04
-ENC play serverbound 764 SChatMessage 0x06
+ENC play serverbound 764 SChatMessage 0x05
+ENC play serverbound 764 SChatSessionUpdate 0x06
+ENC play serverbound 764 SClientInformation 0x09
 ENC play serverbound 764 SKeepAlive 0x14
 ENC play serverbound 764 SPluginMessage 0x0F
 ENC play serverbound 764 STabCompleteRequest 0x0A
 ENC play serverbound 765 SAcknowledgeConfiguration 0x0B
+ENC play serverbound 765 SChatAcknowledgement 0x03
 ENC play serverbound 765 SChatCommand 0x04
-ENC play serverbound 765 SChatMessage 0x06
+ENC play serverbound 765 SChatMessage 0x05
+ENC play serverbound 765 SChatSessionUpdate 0x06
+ENC play serverbound 765 SClientInformation 0x09
 ENC play serverbound 765 SKeepAlive 0x15
 ENC play serverbound 765 SPluginMessage 0x10
 ENC play serverbound 765 STabCompleteRequest 0x0A
 ENC play serverbound 766 SAcknowledgeConfiguration 0x0C
+ENC play serverbound 766 SChatAcknowledgement 0x03
 ENC play serverbound 766 SChatCommand 0x04
+ENC play serverbound 766 SChatCommandSigned 0x05
 ENC play serverbound 766 SChatMessage 0x06
+ENC play serverbound 766 SChatSessionUpdate 0x07
+ENC play serverbound 766 SClientInformation 0x0A
 ENC play serverbound 766 SKeepAlive 0x18
 ENC play serverbound 766 SPluginMessage 0x12
 ENC play serverbound 766 STabCompleteRequest 0x0B
 ENC play serverbound 767 SAcknowledgeConfiguration 0x0C
+ENC play serverbound 767 SChatAcknowledgement 0x03
 ENC play serverbound 767 SChatCommand 0x04
+ENC play serverbound 767 SChatCommandSigned 0x05
 ENC play serverbound 767 SChatMessage 0x06
 ENC play serverbound 767 SChatSessionUpdate 0x07
+ENC play serverbound 767 SClientInformation 0x0A
 ENC play serverbound 767 SKeepAlive 0x18
 ENC play serverbound 767 SPluginMessage 0x12
 ENC play serverbound 767 STabCompleteRequest 0x0B
 ENC play serverbound 768 SAcknowledgeConfiguration 0x0E
+ENC play serverbound 768 SChatAcknowledgement 0x04
 ENC play serverbound 768 SChatCommand 0x05
+ENC play serverbound 768 SChatCommandSigned 0x06
 ENC play serverbound 768 SChatMessage 0x07
 ENC play serverbound 768 SChatSessionUpdate 0x08
+ENC play serverbound 768 SClientInformation 0x0C
 ENC play serverbound 768 SKeepAlive 0x1A
 ENC play serverbound 768 SPluginMessage 0x14
 ENC play serverbound 768 STabCompleteRequest 0x0D
 ENC play serverbound 769 SAcknowledgeConfiguration 0x0E
+ENC play serverbound 769 SChatAcknowledgement 0x04
 ENC play serverbound 769 SChatCommand 0x05
+ENC play serverbound 769 SChatCommandSigned 0x06
 ENC play serverbound 769 SChatMessage 0x07
 ENC play serverbound 769 SChatSessionUpdate 0x08
+ENC play serverbound 769 SClientInformation 0x0C
 ENC play serverbound 769 SKeepAlive 0x1A
 ENC play serverbound 769 SPluginMessage 0x14
 ENC play serverbound 769 STabCompleteRequest 0x0D
 ENC play serverbound 770 SAcknowledgeConfiguration 0x0E
+ENC play serverbound 770 SChatAcknowledgement 0x04
 ENC play serverbound 770 SChatCommand 0x05
+ENC play serverbound 770 SChatCommandSigned 0x06
 ENC play serverbound 770 SChatMessage 0x07
 ENC play serverbound 770 SChatSessionUpdate 0x08
+ENC play serverbound 770 SClientInformation 0x0C
 ENC play serverbound 770 SKeepAlive 0x1A
 ENC play serverbound 770 SPluginMessage 0x14
 ENC play serverbound 770 STabCompleteRequest 0x0D
 ENC play serverbound 771 SAcknowledgeConfiguration 0x0F
+ENC play serverbound 771 SChatAcknowledgement 0x05
 ENC play serverbound 771 SChatCommand 0x06
+ENC play serverbound 771 SChatCommandSigned 0x07
 ENC play serverbound 771 SChatMessage 0x08
 ENC play serverbound 771 SChatSessionUpdate 0x09
+ENC play serverbound 771 SClientInformation 0x0D
 ENC play serverbound 771 SKeepAlive 0x1B
 ENC play serverbound 771 SPluginMessage 0x15
 ENC play serverbound 771 STabCompleteRequest 0x0E
 ENC play serverbound 772 SAcknowledgeConfiguration 0x0F
+ENC play serverbound 772 SChatAcknowledgement 0x05
 ENC play serverbound 772 SChatCommand 0x06
+ENC play serverbound 772 SChatCommandSigned 0x07
 ENC play serverbound 772 SChatMessage 0x08
 ENC play serverbound 772 SChatSessionUpdate 0x09
+ENC play serverbound 772 SClientInformation 0x0D
 ENC play serverbound 772 SKeepAlive 0x1B
 ENC play serverbound 772 SPluginMessage 0x15
 ENC play serverbound 772 STabCompleteRequest 0x0E
 ENC play serverbound 773 SAcknowledgeConfiguration 0x0F
+ENC play serverbound 773 SChatAcknowledgement 0x05
 ENC play serverbound 773 SChatCommand 0x06
+ENC play serverbound 773 SChatCommandSigned 0x07
 ENC play serverbound 773 SChatMessage 0x08
 ENC play serverbound 773 SChatSessionUpdate 0x09
+ENC play serverbound 773 SClientInformation 0x0D
 ENC play serverbound 773 SKeepAlive 0x1B
 ENC play serverbound 773 SPluginMessage 0x15
 ENC play serverbound 773 STabCompleteRequest 0x0E
 ENC play serverbound 774 SAcknowledgeConfiguration 0x0F
+ENC play serverbound 774 SChatAcknowledgement 0x05
 ENC play serverbound 774 SChatCommand 0x06
+ENC play serverbound 774 SChatCommandSigned 0x07
 ENC play serverbound 774 SChatMessage 0x08
 ENC play serverbound 774 SChatSessionUpdate 0x09
+ENC play serverbound 774 SClientInformation 0x0D
 ENC play serverbound 774 SKeepAlive 0x1B
 ENC play serverbound 774 SPluginMessage 0x15
 ENC play serverbound 774 STabCompleteRequest 0x0E
 ENC play serverbound 775 SAcknowledgeConfiguration 0x10
+ENC play serverbound 775 SChatAcknowledgement 0x06
 ENC play serverbound 775 SChatCommand 0x07
+ENC play serverbound 775 SChatCommandSigned 0x08
 ENC play serverbound 775 SChatMessage 0x09
 ENC play serverbound 775 SChatSessionUpdate 0x0A
+ENC play serverbound 775 SClientInformation 0x0E
 ENC play serverbound 775 SKeepAlive 0x1C
 ENC play serverbound 775 SPluginMessage 0x16
 ENC play serverbound 775 STabCompleteRequest 0x0F
 ENC play serverbound 776 SAcknowledgeConfiguration 0x10
+ENC play serverbound 776 SChatAcknowledgement 0x06
 ENC play serverbound 776 SChatCommand 0x07
+ENC play serverbound 776 SChatCommandSigned 0x08
 ENC play serverbound 776 SChatMessage 0x09
 ENC play serverbound 776 SChatSessionUpdate 0x0A
+ENC play serverbound 776 SClientInformation 0x0E
 ENC play serverbound 776 SKeepAlive 0x1C
 ENC play serverbound 776 SPluginMessage 0x16
 ENC play serverbound 776 STabCompleteRequest 0x0F

@@ -6,7 +6,7 @@ pub mod status;
 
 pub use config::{
     CConfigDisconnect, CConfigPluginMessage, CFinishConfig, CKnownPacks, CRegistryData, KnownPack,
-    SAcknowledgeFinishConfig, SConfigPluginMessage, SKnownPacks,
+    SAcknowledgeFinishConfig, SConfigClientInformation, SConfigPluginMessage, SKnownPacks,
 };
 pub use handshake::SHandshake;
 pub use login::{
@@ -15,12 +15,14 @@ pub use login::{
     SLoginPluginResponse, SLoginStart,
 };
 pub use play::{
-    CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CChunkData, CCommands, CDisconnect,
-    CGameEvent, CJoinGame, CKeepAlive, CPluginMessage, CRespawn, CSetCenterChunk,
-    CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes, CStartConfiguration,
-    CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse, CTitleLegacy, CTransfer,
-    DimensionInfo, SAcknowledgeConfiguration, SChatCommand, SChatMessage, SChatSessionUpdate,
-    SKeepAlive, SPluginMessage, STabCompleteRequest,
+    ArgumentSignature, CChatMessageLegacy, CChunkBatchFinished, CChunkBatchStart, CChunkData,
+    CCommands, CDisconnect, CGameEvent, CJoinGame, CKeepAlive, CPluginMessage, CRespawn,
+    CSetCenterChunk, CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes,
+    CStartConfiguration, CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse,
+    CTitleLegacy, CTransfer, ClientInformation, DimensionInfo, LastSeenMessages, PreviousMessage,
+    PreviousMessages, SAcknowledgeConfiguration, SChatAcknowledgement, SChatCommand,
+    SChatCommandSigned, SChatMessage, SChatSessionUpdate, SClientInformation, SKeepAlive,
+    SPluginMessage, STabCompleteRequest,
 };
 pub use status::{CPingResponse, CStatusResponse, SPingRequest, SStatusRequest};
 

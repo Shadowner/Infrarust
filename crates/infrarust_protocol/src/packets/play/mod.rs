@@ -3,6 +3,7 @@ pub mod chat;
 pub mod chat_session;
 pub mod chunk_batch;
 pub mod chunk_data;
+pub mod client_information;
 pub mod commands;
 pub(crate) mod common;
 pub mod dimension;
@@ -21,10 +22,14 @@ pub mod title;
 pub mod transfer;
 
 pub use center_chunk::CSetCenterChunk;
-pub use chat::{CChatMessageLegacy, CSystemChatMessage, SChatCommand, SChatMessage};
+pub use chat::{
+    ArgumentSignature, CChatMessageLegacy, CSystemChatMessage, LastSeenMessages, PreviousMessage,
+    PreviousMessages, SChatAcknowledgement, SChatCommand, SChatCommandSigned, SChatMessage,
+};
 pub use chat_session::SChatSessionUpdate;
 pub use chunk_batch::{CChunkBatchFinished, CChunkBatchStart};
 pub use chunk_data::CChunkData;
+pub use client_information::{ClientInformation, SClientInformation};
 pub use commands::CCommands;
 pub use dimension::{DimensionInfo, extract_dimension_from_join_game};
 pub use disconnect::CDisconnect;

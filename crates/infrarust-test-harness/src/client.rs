@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_core::auth::mojang::minecraft_server_hash;
-use infrarust_protocol::codec::{McBufReadExt, McBufWriteExt, VarInt};
+use infrarust_protocol::codec::{McBufReadExt, VarInt};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::config::{
@@ -482,7 +482,8 @@ impl ClientSession {
     pub async fn chat(&self, message: &str) -> HarnessResult<()> {
         let packet = SChatMessage {
             message: message.to_string(),
-            remaining: chat_trailer(self.version)?,
+            timestamp: now_millis(),
+            ..SChatMessage::default()
         };
         self.send_packet(&packet).await
     }
@@ -494,7 +495,8 @@ impl ClientSession {
         }
         let packet = SChatCommand {
             command: command.to_string(),
-            remaining: command_trailer(self.version)?,
+            timestamp: now_millis(),
+            ..SChatCommand::default()
         };
         self.send_packet(&packet).await
     }
@@ -606,54 +608,4 @@ fn now_millis() -> i64 {
         .ok()
         .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
         .unwrap_or(0)
-}
-
-fn write_acknowledgements(buf: &mut Vec<u8>, version: ProtocolVersion) -> HarnessResult<()> {
-    buf.write_var_int(&VarInt(0))?;
-    buf.extend_from_slice(&[0; 3]);
-    if version.no_less_than(ProtocolVersion::V1_21_5) {
-        buf.write_u8(0)?;
-    }
-    Ok(())
-}
-
-fn chat_trailer(version: ProtocolVersion) -> HarnessResult<Vec<u8>> {
-    let mut buf = Vec::new();
-    if version.less_than(ProtocolVersion::V1_19) {
-        return Ok(buf);
-    }
-    buf.write_i64_be(now_millis())?;
-    buf.write_i64_be(0)?;
-    if version.less_than(ProtocolVersion::V1_19_3) {
-        buf.write_var_int(&VarInt(0))?;
-        buf.write_bool(false)?;
-        if version.no_less_than(ProtocolVersion::V1_19_1) {
-            buf.write_var_int(&VarInt(0))?;
-            buf.write_bool(false)?;
-        }
-    } else {
-        buf.write_bool(false)?;
-        write_acknowledgements(&mut buf, version)?;
-    }
-    Ok(buf)
-}
-
-fn command_trailer(version: ProtocolVersion) -> HarnessResult<Vec<u8>> {
-    let mut buf = Vec::new();
-    if version.no_less_than(ProtocolVersion::V1_20_5) {
-        return Ok(buf);
-    }
-    buf.write_i64_be(now_millis())?;
-    buf.write_i64_be(0)?;
-    buf.write_var_int(&VarInt(0))?;
-    if version.less_than(ProtocolVersion::V1_19_3) {
-        buf.write_bool(false)?;
-        if version.no_less_than(ProtocolVersion::V1_19_1) {
-            buf.write_var_int(&VarInt(0))?;
-            buf.write_bool(false)?;
-        }
-    } else {
-        write_acknowledgements(&mut buf, version)?;
-    }
-    Ok(buf)
 }

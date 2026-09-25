@@ -8,8 +8,9 @@ use crate::packets::{
     CSetCompression, CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes,
     CStartConfiguration, CStatusResponse, CSynchronizePlayerPosition, CSystemChatMessage,
     CTabCompleteResponse, CTitleLegacy, CTransfer, Packet, PacketMapping,
-    SAcknowledgeConfiguration, SAcknowledgeFinishConfig, SChatCommand, SChatMessage,
-    SChatSessionUpdate, SConfigPluginMessage, SEncryptionResponse, SHandshake, SKeepAlive,
+    SAcknowledgeConfiguration, SAcknowledgeFinishConfig, SChatAcknowledgement, SChatCommand,
+    SChatCommandSigned, SChatMessage, SChatSessionUpdate, SClientInformation,
+    SConfigClientInformation, SConfigPluginMessage, SEncryptionResponse, SHandshake, SKeepAlive,
     SKnownPacks, SLoginAcknowledged, SLoginPluginResponse, SLoginStart, SPingRequest,
     SPluginMessage, SStatusRequest, STabCompleteRequest,
 };
@@ -62,6 +63,7 @@ packet_table! {
     SConfigPluginMessage,
     SAcknowledgeFinishConfig,
     SKnownPacks,
+    SConfigClientInformation,
     CConfigPluginMessage,
     CConfigDisconnect,
     CFinishConfig,
@@ -94,7 +96,10 @@ packet_table! {
     SKeepAlive,
     SChatMessage,
     SChatCommand,
+    SChatCommandSigned,
+    SChatAcknowledgement,
     SChatSessionUpdate,
+    SClientInformation,
     SPluginMessage,
 }
 
@@ -155,6 +160,6 @@ mod tests {
                 descriptor.name
             );
         }
-        assert_eq!(DEFAULT_PACKETS.len(), 51);
+        assert_eq!(DEFAULT_PACKETS.len(), 55);
     }
 }
