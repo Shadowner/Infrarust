@@ -1,5 +1,6 @@
 //! Game profile types for Mojang authentication.
 
+use md5::{Digest, Md5};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -35,14 +36,9 @@ impl GameProfile {
     }
 }
 
-/// Generates an offline-mode UUID from a username.
-///
-/// Matches vanilla Minecraft's `UUID.nameUUIDFromBytes("OfflinePlayer:" + name)`.
-/// This is a UUID v3 (MD5-based) with no namespace prefix — equivalent to
-/// using a nil UUID as namespace in the `uuid` crate.
 pub fn offline_uuid(username: &str) -> Uuid {
-    let input = format!("OfflinePlayer:{username}");
-    Uuid::new_v3(&Uuid::nil(), input.as_bytes())
+    let digest = Md5::digest(format!("OfflinePlayer:{username}").as_bytes());
+    uuid::Builder::from_md5_bytes(digest.into()).into_uuid()
 }
 
 #[cfg(test)]
@@ -65,12 +61,15 @@ mod tests {
     }
 
     #[test]
-    fn offline_uuid_known_value() {
-        // Vanilla Minecraft offline UUID for "Notch"
-        // Java's UUID.nameUUIDFromBytes("OfflinePlayer:Notch".getBytes())
-        let uuid = offline_uuid("Notch");
-        // The UUID should be version 3 and variant RFC 4122
-        assert_eq!(uuid.get_version_num(), 3);
+    fn offline_uuid_matches_java_name_uuid_from_bytes() {
+        for (name, expected) in [
+            ("Notch", "b50ad385-829d-3141-a216-7e7d7539ba7f"),
+            ("jeb_", "a762f560-4fce-3236-812a-b80efff0b62b"),
+            ("Été", "31870ee5-f805-3d77-87f7-0fefd0b0dc3b"),
+            ("Steve", "5627dd98-e6be-3c21-b8a8-e92344183641"),
+        ] {
+            assert_eq!(offline_uuid(name).to_string(), expected, "{name}");
+        }
     }
 
     #[test]

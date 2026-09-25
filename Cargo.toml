@@ -92,6 +92,7 @@ aes = "0.9.1"
 cfb8 = "0.9.1"
 cipher = "0.5.2"
 rsa = { version = "0.9.10", features = ["sha1", "sha2"] }
+md-5 = "0.10.6"
 sha1 = "0.11.0"
 sha2 = "0.11.0"
 hmac = "0.13.0"
