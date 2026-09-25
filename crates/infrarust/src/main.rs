@@ -258,6 +258,8 @@ async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Re
 
     #[cfg(feature = "wasm")]
     let wasm_engine = infrarust_loader_wasm::build_engine(&config)?;
+    #[cfg(feature = "wasm")]
+    let wasm_config = infrarust_loader_wasm::WasmLoaderConfig::from_proxy_config(&config);
 
     let static_loader = plugins::build_static_loader(web_config.as_mut())?;
     let static_ids = static_loader.registered_ids();
@@ -272,6 +274,7 @@ async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Re
     #[cfg(feature = "wasm")]
     let builder = builder.loader(Box::new(infrarust_loader_wasm::WasmPluginLoader::new(
         wasm_engine,
+        wasm_config,
     )));
 
     let running = builder

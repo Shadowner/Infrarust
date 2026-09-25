@@ -276,21 +276,63 @@ slow_handler_threshold = "1s"
 packet_handler_timeout = "10s"
 ```
 
-### `[plugins.<id>]`
+### `[wasm]`
 
-Per-plugin configuration, keyed by plugin ID. Plugins are WASM components; if `path` is omitted the plugin is discovered from `plugins_dir`.
+Sandbox limits for every WASM plugin. Each plugin handles one call at a time; its calls wait in a queue of `queue_capacity` entries.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `path` | string | none | Explicit path to the plugin `.wasm` file. Omit to load it from `plugins_dir` |
-| `permissions` | array of strings | `[]` | Permissions granted to this plugin |
-| `enabled` | boolean | none | Whether the plugin is enabled. Treated as enabled when unset |
+| `epoch_tick` | duration | `"50ms"` | How often the sandbox clock ticks. CPU budgets are counted in ticks, rounded up. Proxy-wide only |
+| `memory_limit_mb` | integer | `64` | Linear-memory cap per plugin, in MiB. Growing past it traps the plugin |
+| `cpu_budget` | duration | `"3s"` | CPU time one call into a plugin may use before it traps. Waiting on a host call does not count |
+| `codec_cpu_budget` | duration | `"800ms"` | CPU time for one codec filter call (`create`, `filter`, connection hooks) before it traps |
+| `host_call_timeout` | duration | `"30s"` | Longest a ban-service or server-manager call made by a plugin may take. On expiry the plugin receives a `service-error` |
+| `max_call_duration` | duration | `"60s"` | Wall-clock limit on one call into a plugin, host calls included. Past it the call is abandoned and the plugin is poisoned |
+| `queue_capacity` | integer | `1024` | Calls that may wait for a busy plugin. A call arriving at a full queue is refused immediately and logged as a rate-limited warning |
+
+Validation: `epoch_tick` must be between `1ms` and `1s`; `memory_limit_mb` between 1 and 4096; `cpu_budget` and `codec_cpu_budget` at least one `epoch_tick` and at most `1h`; `host_call_timeout` and `max_call_duration` greater than zero and at most `1h`; `queue_capacity` between 1 and 1048576. A `host_call_timeout` or `cpu_budget` longer than `max_call_duration` is accepted with a warning.
+
+A call that has started runs to the end even if its caller stops waiting, so an event listener cut off by `[events] handler_timeout` does not poison the plugin. A call still queued when its caller gives up is skipped.
+
+```toml
+[wasm]
+epoch_tick = "50ms"
+memory_limit_mb = 64
+cpu_budget = "3s"
+codec_cpu_budget = "800ms"
+host_call_timeout = "30s"
+max_call_duration = "60s"
+queue_capacity = 1024
+```
+
+### `[plugins.<id>]`
+
+Per-plugin configuration, keyed by plugin ID. WASM plugins are discovered from `plugins_dir`.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `path` | string | none | Accepted for compatibility. WASM plugins are always loaded from `plugins_dir` |
+| `permissions` | array of strings | `[]` | Capabilities granted on top of the baseline |
+| `deny` | array of strings | `[]` | Capabilities removed after the baseline and `permissions` are applied. A capability in both lists is denied. Also applies to compiled-in plugins |
+| `enabled` | boolean | `true` | Set to `false` to skip the plugin |
+
+Capability names are kebab-case (`player-write`, `codec-filter`, ...); unknown names in either list are ignored with a warning. See [Capabilities & Sandbox](../plugins/wasm/capabilities#capability-matrix).
 
 ```toml
 [plugins.auth]
-path = "./plugins/auth.wasm"
 permissions = ["limbo", "command"]
+deny = ["player-write"]
 enabled = true
+```
+
+#### `[plugins.<id>.wasm]`
+
+Overrides the `[wasm]` limits for one plugin. Accepts `memory_limit_mb`, `cpu_budget`, `codec_cpu_budget`, `host_call_timeout`, `max_call_duration` and `queue_capacity` (not `epoch_tick`, which is proxy-wide). A key left out keeps the `[wasm]` value. The same validation applies to the resulting limits.
+
+```toml
+[plugins.auth.wasm]
+memory_limit_mb = 128
+max_call_duration = "10s"
 ```
 
 ---
@@ -546,6 +588,12 @@ handler_timeout = "10s"
 slow_handler_threshold = "1s"
 packet_handler_timeout = "10s"
 
+[wasm]
+memory_limit_mb = 64
+cpu_budget = "3s"
+max_call_duration = "60s"
+queue_capacity = 1024
+
 [default_motd.offline]
 text = "§cNo server found for this domain"
 version_name = "Infrarust"
@@ -587,9 +635,12 @@ admins = ["Notch"]
 player_commands = ["list", "find"]
 
 [plugins.auth]
-path = "./plugins/auth.wasm"
 permissions = ["limbo", "command"]
+deny = ["player-write"]
 enabled = true
+
+[plugins.auth.wasm]
+memory_limit_mb = 128
 ```
 
 A server file (`servers/survival.toml`) using most options:

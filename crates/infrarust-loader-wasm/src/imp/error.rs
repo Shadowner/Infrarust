@@ -10,6 +10,9 @@ pub enum WasmLoaderError {
     #[error("wasmtime engine error: {0}")]
     Engine(wasmtime::Error),
 
+    #[error("invalid wasm configuration: {0}")]
+    Config(String),
+
     /// AOT precompilation of a component failed.
     #[error("failed to precompile component at {path}: {reason}")]
     Precompile { path: PathBuf, reason: String },
@@ -41,6 +44,13 @@ pub enum WasmLoaderError {
     /// A guest export trapped (panic/OOB/epoch interrupt/resource limit) during a call.
     #[error("wasm guest '{plugin_id}' trapped during {op}: {reason}")]
     Trap {
+        plugin_id: String,
+        op: &'static str,
+        reason: String,
+    },
+
+    #[error("wasm guest '{plugin_id}' could not run {op}: {reason}")]
+    CallFailed {
         plugin_id: String,
         op: &'static str,
         reason: String,

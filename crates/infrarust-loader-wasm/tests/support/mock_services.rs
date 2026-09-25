@@ -74,33 +74,108 @@ impl infrarust_api::services::ban_service::BanService for MockBanService {
     }
 }
 
-pub struct PendingBanService;
+pub struct Gate {
+    entered: tokio::sync::Notify,
+    open: tokio::sync::watch::Sender<bool>,
+}
 
-impl infrarust_api::services::ban_service::private::Sealed for PendingBanService {}
+impl Gate {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            entered: tokio::sync::Notify::new(),
+            open: tokio::sync::watch::channel(false).0,
+        })
+    }
 
-impl infrarust_api::services::ban_service::BanService for PendingBanService {
+    pub async fn entered(&self) {
+        self.entered.notified().await;
+    }
+
+    pub fn open(&self) {
+        self.open.send_replace(true);
+    }
+
+    async fn pass(&self) {
+        self.entered.notify_one();
+        let mut open = self.open.subscribe();
+        let _ = open.wait_for(|open| *open).await;
+    }
+}
+
+pub struct GatedBanService {
+    pub gate: Arc<Gate>,
+}
+
+impl infrarust_api::services::ban_service::private::Sealed for GatedBanService {}
+
+impl infrarust_api::services::ban_service::BanService for GatedBanService {
     fn ban(
         &self,
         _target: BanTarget,
         _reason: Option<String>,
         _duration: Option<Duration>,
     ) -> BoxFuture<'_, Result<(), ServiceError>> {
-        Box::pin(std::future::pending())
+        Box::pin(async {
+            self.gate.pass().await;
+            Ok(())
+        })
     }
     fn unban(&self, _target: &BanTarget) -> BoxFuture<'_, Result<bool, ServiceError>> {
-        Box::pin(std::future::pending())
+        Box::pin(async {
+            self.gate.pass().await;
+            Ok(false)
+        })
     }
     fn is_banned(&self, _target: &BanTarget) -> BoxFuture<'_, Result<bool, ServiceError>> {
-        Box::pin(std::future::pending())
+        Box::pin(async {
+            self.gate.pass().await;
+            Ok(false)
+        })
     }
     fn get_ban(
         &self,
         _target: &BanTarget,
     ) -> BoxFuture<'_, Result<Option<BanEntry>, ServiceError>> {
-        Box::pin(std::future::pending())
+        Box::pin(async {
+            self.gate.pass().await;
+            Ok(None)
+        })
     }
     fn get_all_bans(&self) -> BoxFuture<'_, Result<Vec<BanEntry>, ServiceError>> {
-        Box::pin(std::future::pending())
+        Box::pin(async {
+            self.gate.pass().await;
+            Ok(vec![])
+        })
+    }
+}
+
+pub struct PanickingBanService;
+
+impl infrarust_api::services::ban_service::private::Sealed for PanickingBanService {}
+
+impl infrarust_api::services::ban_service::BanService for PanickingBanService {
+    fn ban(
+        &self,
+        _target: BanTarget,
+        _reason: Option<String>,
+        _duration: Option<Duration>,
+    ) -> BoxFuture<'_, Result<(), ServiceError>> {
+        Box::pin(async { panic!("ban service panicked on purpose") })
+    }
+    fn unban(&self, _target: &BanTarget) -> BoxFuture<'_, Result<bool, ServiceError>> {
+        Box::pin(async { panic!("ban service panicked on purpose") })
+    }
+    fn is_banned(&self, _target: &BanTarget) -> BoxFuture<'_, Result<bool, ServiceError>> {
+        Box::pin(async { panic!("ban service panicked on purpose") })
+    }
+    fn get_ban(
+        &self,
+        _target: &BanTarget,
+    ) -> BoxFuture<'_, Result<Option<BanEntry>, ServiceError>> {
+        Box::pin(async { panic!("ban service panicked on purpose") })
+    }
+    fn get_all_bans(&self) -> BoxFuture<'_, Result<Vec<BanEntry>, ServiceError>> {
+        Box::pin(async { panic!("ban service panicked on purpose") })
     }
 }
 

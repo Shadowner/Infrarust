@@ -153,3 +153,31 @@ pub const fn event_slow_handler_threshold() -> Duration {
 pub const fn event_packet_handler_timeout() -> Duration {
     Duration::from_secs(10)
 }
+
+pub const fn wasm_epoch_tick() -> Duration {
+    Duration::from_millis(50)
+}
+
+pub const fn wasm_memory_limit_mb() -> u32 {
+    64
+}
+
+pub const fn wasm_cpu_budget() -> Duration {
+    Duration::from_secs(3)
+}
+
+pub const fn wasm_codec_cpu_budget() -> Duration {
+    Duration::from_millis(800)
+}
+
+pub const fn wasm_host_call_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+pub const fn wasm_max_call_duration() -> Duration {
+    Duration::from_secs(60)
+}
+
+pub const fn wasm_queue_capacity() -> usize {
+    1024
+}

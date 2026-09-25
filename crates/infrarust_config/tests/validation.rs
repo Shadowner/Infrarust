@@ -2,7 +2,7 @@
 
 use infrarust_config::{
     ProxyConfig, ServerConfig, validate_proxy_config, validate_server_config,
-    validate_server_configs,
+    validate_server_configs, validate_wasm_config, wasm_warnings,
 };
 
 fn from_toml(toml: &str) -> ServerConfig {
@@ -417,4 +417,71 @@ fn test_proxy_zero_event_timeouts_are_invalid() {
         let err = validate_proxy_config(&config).unwrap_err().to_string();
         assert!(err.contains(&format!("events.{key}")), "{err}");
     }
+}
+
+#[test]
+fn test_proxy_default_wasm_section_is_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("", dir.path());
+    assert!(validate_proxy_config(&config).is_ok());
+    assert!(wasm_warnings(&config).is_empty());
+}
+
+#[test]
+fn test_proxy_zero_or_absurd_wasm_values_are_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    for (line, key) in [
+        ("epoch_tick = \"0s\"", "wasm.epoch_tick"),
+        ("epoch_tick = \"2s\"", "wasm.epoch_tick"),
+        ("memory_limit_mb = 0", "wasm.memory_limit_mb"),
+        ("memory_limit_mb = 4097", "wasm.memory_limit_mb"),
+        ("cpu_budget = \"0s\"", "wasm.cpu_budget"),
+        ("cpu_budget = \"10ms\"", "wasm.cpu_budget"),
+        ("cpu_budget = \"2h\"", "wasm.cpu_budget"),
+        ("codec_cpu_budget = \"0s\"", "wasm.codec_cpu_budget"),
+        ("host_call_timeout = \"0s\"", "wasm.host_call_timeout"),
+        ("host_call_timeout = \"2h\"", "wasm.host_call_timeout"),
+        ("max_call_duration = \"0s\"", "wasm.max_call_duration"),
+        ("queue_capacity = 0", "wasm.queue_capacity"),
+        ("queue_capacity = 2000000", "wasm.queue_capacity"),
+    ] {
+        let config = proxy_from_toml(&format!("[wasm]\n{line}"), dir.path());
+        let err = validate_proxy_config(&config).expect_err(line).to_string();
+        assert!(err.contains(key), "{line}: {err}");
+    }
+}
+
+#[test]
+fn test_proxy_invalid_plugin_wasm_override_names_the_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml(
+        "[plugins.chatty.wasm]\nqueue_capacity = 0\n\n[plugins.quiet.wasm]\nqueue_capacity = 8",
+        dir.path(),
+    );
+    let err = validate_wasm_config(&config).unwrap_err().to_string();
+    assert!(err.contains("plugins.chatty.wasm.queue_capacity"), "{err}");
+}
+
+#[test]
+fn test_proxy_budget_shorter_than_the_epoch_tick_is_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml(
+        "[wasm]\nepoch_tick = \"100ms\"\n\n[plugins.p.wasm]\ncodec_cpu_budget = \"50ms\"",
+        dir.path(),
+    );
+    let err = validate_wasm_config(&config).unwrap_err().to_string();
+    assert!(err.contains("plugins.p.wasm.codec_cpu_budget"), "{err}");
+}
+
+#[test]
+fn test_proxy_host_call_timeout_past_max_call_duration_is_a_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("[plugins.p.wasm]\nmax_call_duration = \"5s\"", dir.path());
+    assert!(validate_proxy_config(&config).is_ok());
+    let warnings = wasm_warnings(&config);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].starts_with("plugins.p.wasm: host_call_timeout"),
+        "{warnings:?}"
+    );
 }

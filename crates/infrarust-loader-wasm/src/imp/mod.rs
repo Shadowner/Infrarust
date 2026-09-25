@@ -4,9 +4,11 @@
 //! Modules are `pub(crate)` and glob re-exported from `lib.rs` so internal
 //! `crate::xxx` paths keep resolving at the crate root.
 
+pub(crate) mod actor;
 pub(crate) mod bindings;
 pub(crate) mod cache;
 pub(crate) mod codec;
+pub(crate) mod config;
 pub(crate) mod consts;
 pub(crate) mod convert;
 pub(crate) mod dispatch;
@@ -23,6 +25,7 @@ pub(crate) mod proxies;
 pub(crate) mod resources;
 pub(crate) mod store_state;
 
+pub use config::WasmLoaderConfig;
 pub use engine::build_engine;
 pub use error::WasmLoaderError;
 pub use loader::WasmPluginLoader;

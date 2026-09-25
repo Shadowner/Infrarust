@@ -13,7 +13,7 @@ use super::CodecInstantiator;
 use super::bindings::exports::infrarust::plugin::codec_filter::Guest as CodecGuest;
 use super::convert;
 use super::store_state::CodecStoreState;
-use crate::consts::CODEC_EPOCH_DEADLINE_TICKS;
+
 pub(crate) struct WasmCodecFilterFactory {
     instantiator: Arc<CodecInstantiator>,
     factory_id: u64,
@@ -60,6 +60,7 @@ pub(crate) struct WasmCodecFilterInstance {
     guest: CodecGuest,
     handle: ResourceAny,
     plugin_id: String,
+    deadline_ticks: u64,
     poisoned: bool,
 }
 
@@ -69,12 +70,14 @@ impl WasmCodecFilterInstance {
         guest: CodecGuest,
         handle: ResourceAny,
         plugin_id: String,
+        deadline_ticks: u64,
     ) -> Self {
         Self {
             store,
             guest,
             handle,
             plugin_id,
+            deadline_ticks,
             poisoned: false,
         }
     }
@@ -95,7 +98,7 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
         if self.poisoned {
             return CodecVerdict::Pass;
         }
-        self.store.set_epoch_deadline(CODEC_EPOCH_DEADLINE_TICKS);
+        self.store.set_epoch_deadline(self.deadline_ticks);
         match self.guest.filter_instance().call_filter(
             &mut self.store,
             self.handle,
@@ -114,7 +117,7 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
         if self.poisoned {
             return;
         }
-        self.store.set_epoch_deadline(CODEC_EPOCH_DEADLINE_TICKS);
+        self.store.set_epoch_deadline(self.deadline_ticks);
         let wit_state = convert::connection_state_to_wit(new_state);
         if let Err(trap) = self.guest.filter_instance().call_on_state_change(
             &mut self.store,
@@ -129,7 +132,7 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
         if self.poisoned {
             return;
         }
-        self.store.set_epoch_deadline(CODEC_EPOCH_DEADLINE_TICKS);
+        self.store.set_epoch_deadline(self.deadline_ticks);
         if let Err(trap) = self.guest.filter_instance().call_on_compression_change(
             &mut self.store,
             self.handle,
@@ -143,7 +146,7 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
         if self.poisoned {
             return;
         }
-        self.store.set_epoch_deadline(CODEC_EPOCH_DEADLINE_TICKS);
+        self.store.set_epoch_deadline(self.deadline_ticks);
         if let Err(trap) = self
             .guest
             .filter_instance()
@@ -155,7 +158,7 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
 
     fn on_close(&mut self) {
         if !self.poisoned {
-            self.store.set_epoch_deadline(CODEC_EPOCH_DEADLINE_TICKS);
+            self.store.set_epoch_deadline(self.deadline_ticks);
             if let Err(trap) = self
                 .guest
                 .filter_instance()
@@ -164,7 +167,6 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
                 self.poison("on-close", &trap);
             }
         }
-        // Release the guest-side resource (runs its destructor); the store drops next.
         let _ = self.handle.resource_drop(&mut self.store);
     }
 }

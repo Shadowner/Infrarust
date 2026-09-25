@@ -4,8 +4,11 @@
 mod support;
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use infrarust_api::event::ResultedEvent;
@@ -20,12 +23,12 @@ use infrarust_loader_wasm::WasmPluginLoader;
 use tracing::instrument::WithSubscriber;
 
 use support::mock_services::{
-    CountingPlayerRegistry, MapConfigService, MockPlayerRegistry, PendingBanService,
-    RecordingPlayerRegistry,
+    CountingPlayerRegistry, Gate, GatedBanService, MapConfigService, MockPlayerRegistry,
+    PanickingBanService, RecordingPlayerRegistry,
 };
 use support::{
-    EnvOptions, TestEnv, add_fixture, fresh_loader, load_enabled, make_env, make_env_with,
-    nil_profile, read_log, stage, write_script,
+    EnvOptions, TestEnv, add_fixture, fresh_loader, load_enabled, loader_from_toml, make_env,
+    make_env_with, nil_profile, read_log, stage, write_script,
 };
 
 fn make_factory(plugins_dir: &Path) -> PluginContextFactoryImpl {
@@ -378,18 +381,103 @@ async fn test_capability_denied_fails_to_load() {
     );
 }
 
-const SLOW_HANDLER_TIMEOUT: Duration = Duration::from_millis(100);
+#[tokio::test(flavor = "multi_thread")]
+async fn test_per_plugin_memory_limit_applies_to_that_plugin_only() {
+    let (_tmp, plugins_dir) = stage("scripted");
+    add_fixture(&plugins_dir, "scripted-peer", "scripted-peer");
+    write_script(&plugins_dir, "scripted", "");
+    write_script(&plugins_dir, "scripted-peer", "");
+    let loader = loader_from_toml("[plugins.scripted.wasm]\nmemory_limit_mb = 1\n");
+    let factory = make_factory(&plugins_dir);
+    loader.discover(&plugins_dir).await.unwrap();
 
-async fn enable_slow_handler(
+    let refused = loader.load("scripted", &factory).await;
+    let err = refused
+        .err()
+        .expect("a 1 MiB cap cannot hold the fixture's initial linear memory");
+    let message = err.to_string();
+    assert!(
+        message.contains("scripted") && message.contains("growing memory"),
+        "{message}"
+    );
+
+    let _peer = load_enabled(&loader, &factory, "scripted-peer").await;
+    assert_eq!(
+        read_log(&plugins_dir.join("scripted-peer")),
+        ["enable"],
+        "a plugin without an override keeps the 64 MiB default"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_denied_baseline_capability_is_refused_like_an_ungranted_one() {
+    let (_tmp, plugins_dir) = stage("host-caller");
+    let loader = fresh_loader();
+    let env = make_env_with(
+        plugins_dir.clone(),
+        EnvOptions::default().deny("host-caller", "config-read"),
+    );
+    loader.discover(&plugins_dir).await.unwrap();
+
+    let err = loader
+        .load("host-caller", &env.factory)
+        .await
+        .err()
+        .expect("config-read is baseline, but denied it must not be linked");
+    let message = err.to_string();
+    assert!(message.contains("lacks the capability"), "{message}");
+    assert!(
+        message.contains("infrarust:plugin/config-service"),
+        "{message}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_denied_player_write_stops_messages_to_players() {
+    let (_tmp, plugins_dir) = stage("stats");
+    let loader = fresh_loader();
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let env = make_env_with(
+        plugins_dir.clone(),
+        EnvOptions {
+            player_registry: Arc::new(RecordingPlayerRegistry {
+                count: 7,
+                sent: Arc::clone(&sent),
+            }),
+            ..EnvOptions::default()
+        }
+        .deny("stats", "player-write"),
+    );
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "stats").await;
+
+    assert!(
+        env.command_manager
+            .dispatch(Some(PlayerId::new(1)), "count", &MockPlayerRegistry)
+            .await
+    );
+    assert!(
+        sent.lock().unwrap().is_empty(),
+        "player-write is denied, so the reply never reaches the player"
+    );
+}
+
+const SLOW_HANDLER_TIMEOUT: Duration = Duration::from_millis(500);
+const PATIENT_HANDLER_TIMEOUT: Duration = Duration::from_secs(30);
+const PROMPTLY: Duration = Duration::from_secs(10);
+
+async fn enable_slow_handler_with(
     loader: &WasmPluginLoader,
     plugins_dir: &Path,
+    ban_service: Arc<dyn infrarust_api::services::ban_service::BanService>,
+    handler_timeout: Duration,
 ) -> (TestEnv, Box<dyn Plugin>) {
     let env = make_env_with(
         plugins_dir.to_path_buf(),
         EnvOptions {
-            ban_service: Arc::new(PendingBanService),
+            ban_service,
             bus_config: EventBusConfig {
-                handler_timeout: SLOW_HANDLER_TIMEOUT,
+                handler_timeout,
                 ..EventBusConfig::default()
             },
             ..EnvOptions::default()
@@ -401,38 +489,91 @@ async fn enable_slow_handler(
     (env, plugin)
 }
 
-async fn fire_post_login_past_timeout(env: &TestEnv, plugins_dir: &Path) {
-    let started = Instant::now();
-    tokio::time::timeout(
-        Duration::from_secs(10),
-        env.event_bus.fire(PostLoginEvent {
-            profile: nil_profile("Steve"),
-            player_id: PlayerId::new(1),
-            protocol_version: ProtocolVersion::MINECRAFT_1_21,
+async fn enable_slow_handler(
+    loader: &WasmPluginLoader,
+    plugins_dir: &Path,
+    gate: &Arc<Gate>,
+) -> (TestEnv, Box<dyn Plugin>) {
+    enable_slow_handler_with(
+        loader,
+        plugins_dir,
+        Arc::new(GatedBanService {
+            gate: Arc::clone(gate),
         }),
+        SLOW_HANDLER_TIMEOUT,
     )
     .await
-    .expect("the bus must cancel the handler at its timeout, not wait out the host call");
+}
+
+fn post_login() -> PostLoginEvent {
+    PostLoginEvent {
+        profile: nil_profile("Steve"),
+        player_id: PlayerId::new(1),
+        protocol_version: ProtocolVersion::MINECRAFT_1_21,
+    }
+}
+
+fn pre_connect() -> ServerPreConnectEvent {
+    ServerPreConnectEvent::new(
+        PlayerId::new(1),
+        nil_profile("Steve"),
+        ServerId::new("lobby"),
+    )
+}
+
+fn outcome(event: &ServerPreConnectEvent) -> String {
+    match event.result() {
+        ServerPreConnectResult::Allowed => "allowed".to_string(),
+        ServerPreConnectResult::ConnectTo(server) => format!("connect-to:{}", server.as_str()),
+        _ => "other".to_string(),
+    }
+}
+
+async fn poll_once<F: Future + Unpin>(future: &mut F) -> Option<F::Output> {
+    std::future::poll_fn(|cx| {
+        Poll::Ready(match Pin::new(&mut *future).poll(cx) {
+            Poll::Ready(output) => Some(output),
+            Poll::Pending => None,
+        })
+    })
+    .await
+}
+
+async fn fire_post_login_past_timeout(env: &TestEnv) {
+    let started = Instant::now();
+    tokio::time::timeout(PROMPTLY, env.event_bus.fire(post_login()))
+        .await
+        .expect("the bus must give up on the handler at its timeout, not wait out the host call");
     let elapsed = started.elapsed();
     assert!(
-        elapsed >= SLOW_HANDLER_TIMEOUT && elapsed < Duration::from_secs(5),
+        elapsed >= SLOW_HANDLER_TIMEOUT && elapsed < PROMPTLY,
         "fire returned after {elapsed:?}, expected about {SLOW_HANDLER_TIMEOUT:?}"
-    );
-    assert!(
-        !plugins_dir
-            .join("slow-handler")
-            .join("post-login.marker")
-            .exists(),
-        "the handler was cancelled inside its host call and never finished"
     );
 }
 
-#[derive(Clone, Default)]
-struct ErrorLog(Arc<Mutex<Vec<String>>>);
+#[derive(Clone)]
+struct LogCapture {
+    level: tracing::Level,
+    lines: Arc<Mutex<Vec<String>>>,
+}
 
-impl ErrorLog {
+impl LogCapture {
+    fn at(level: tracing::Level) -> Self {
+        Self {
+            level,
+            lines: Arc::default(),
+        }
+    }
+
     fn lines(&self) -> Vec<String> {
-        self.0.lock().unwrap().clone()
+        self.lines.lock().unwrap().clone()
+    }
+
+    fn matching(&self, needle: &str) -> Vec<String> {
+        self.lines()
+            .into_iter()
+            .filter(|line| line.contains(needle))
+            .collect()
     }
 }
 
@@ -444,9 +585,9 @@ impl tracing::field::Visit for EventText {
     }
 }
 
-impl tracing::Subscriber for ErrorLog {
+impl tracing::Subscriber for LogCapture {
     fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
-        *metadata.level() == tracing::Level::ERROR
+        *metadata.level() <= self.level
     }
     fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
         tracing::span::Id::from_u64(1)
@@ -454,92 +595,340 @@ impl tracing::Subscriber for ErrorLog {
     fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
     fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
     fn event(&self, event: &tracing::Event<'_>) {
-        let mut text = EventText(String::new());
+        let mut text = EventText(format!("{} ", event.metadata().level()));
         event.record(&mut text);
-        self.0.lock().unwrap().push(text.0);
+        self.lines.lock().unwrap().push(text.0);
     }
     fn enter(&self, _: &tracing::span::Id) {}
     fn exit(&self, _: &tracing::span::Id) {}
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_handler_cancelled_mid_call_poisons_instance() {
+async fn test_handler_timeout_lets_the_guest_call_finish_and_keeps_the_instance_healthy() {
     let (_tmp, plugins_dir) = stage("slow-handler");
-    let loader = fresh_loader();
-    let (env, _plugin) = enable_slow_handler(&loader, &plugins_dir).await;
     let data = plugins_dir.join("slow-handler");
+    let loader = fresh_loader();
+    let gate = Gate::new();
+    let errors = LogCapture::at(tracing::Level::ERROR);
 
-    fire_post_login_past_timeout(&env, &plugins_dir).await;
+    async {
+        let (env, _plugin) = enable_slow_handler(&loader, &plugins_dir, &gate).await;
 
-    let errors = ErrorLog::default();
-    let (event, found, completions) = async {
-        let event = env
-            .event_bus
-            .fire(ServerPreConnectEvent::new(
-                PlayerId::new(1),
-                nil_profile("Steve"),
-                ServerId::new("lobby"),
-            ))
-            .await;
-        let found = env
-            .command_manager
-            .dispatch(None, "ping", &MockPlayerRegistry)
-            .await;
-        let completions = env.command_manager.tab_complete("ping ").await;
-        (event, found, completions)
+        fire_post_login_past_timeout(&env).await;
+        gate.entered().await;
+        assert!(
+            read_log(&data).is_empty(),
+            "the guest is still parked in its host call after the bus gave up"
+        );
+
+        gate.open();
+        assert!(
+            env.command_manager
+                .dispatch(None, "ping", &MockPlayerRegistry)
+                .await
+        );
+        assert_eq!(
+            read_log(&data),
+            ["post-login answered", "command"],
+            "the timed-out handler finished inside the plugin, then the next call ran"
+        );
+
+        let event = env.event_bus.fire(pre_connect()).await;
+        assert_eq!(
+            outcome(&event),
+            "connect-to:backend-1",
+            "the next event is handled normally"
+        );
+        assert_eq!(
+            env.command_manager.tab_complete("ping ").await,
+            ["pong".to_string()]
+        );
     }
     .with_subscriber(errors.clone())
     .await;
 
+    for needle in ["poison", "abandoned", "trapped"] {
+        assert!(
+            errors.matching(needle).is_empty(),
+            "a caller timeout must not poison the instance: {:?}",
+            errors.lines()
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_on_disable_runs_the_guest_after_a_timed_out_handler_returns() {
+    let (_tmp, plugins_dir) = stage("slow-handler");
+    let data = plugins_dir.join("slow-handler");
+    let loader = fresh_loader();
+    let gate = Gate::new();
+    let (env, plugin) = enable_slow_handler(&loader, &plugins_dir, &gate).await;
+
+    fire_post_login_past_timeout(&env).await;
+    gate.entered().await;
+
+    let mut disabling = plugin.on_disable();
     assert!(
-        matches!(event.result(), ServerPreConnectResult::Allowed),
-        "the next event must get no outcome from the abandoned instance"
+        poll_once(&mut disabling).await.is_none(),
+        "on_disable waits behind the handler still parked in its host call"
     );
-    assert!(
-        !data.join("pre-connect.marker").exists(),
-        "the next event handler must not run in the abandoned store"
-    );
-    assert!(found, "the host still routes the guest command");
-    assert!(
-        !data.join("command.marker").exists(),
-        "the command must not run in the abandoned store"
-    );
-    assert!(
-        completions.is_empty(),
-        "tab-complete must not run in the abandoned store"
-    );
-    let lines = errors.lines();
+    gate.open();
+    let disabled = tokio::time::timeout(PROMPTLY, disabling)
+        .await
+        .expect("on_disable completes once the parked host call returns");
+
+    assert!(disabled.is_ok(), "{disabled:?}");
     assert_eq!(
-        lines.iter().filter(|l| l.contains("abandoned")).count(),
-        1,
-        "the abandoned call is reported exactly once: {lines:?}"
-    );
-    assert!(
-        !lines.iter().any(|l| l.contains("trapped")),
-        "later calls are refused up front, not attempted and reported as traps: {lines:?}"
+        read_log(&data),
+        ["post-login answered", "disable"],
+        "on_disable waited for the timed-out handler, then ran the guest in the same instance"
     );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_on_disable_skips_instance_cancelled_mid_call() {
+async fn test_full_queue_fails_fast_without_waiting_for_the_plugin() {
     let (_tmp, plugins_dir) = stage("slow-handler");
-    let loader = fresh_loader();
-    let (env, plugin) = enable_slow_handler(&loader, &plugins_dir).await;
+    let data = plugins_dir.join("slow-handler");
+    let loader = loader_from_toml("[plugins.slow-handler.wasm]\nqueue_capacity = 1\n");
+    let gate = Gate::new();
+    let warnings = LogCapture::at(tracing::Level::WARN);
 
-    fire_post_login_past_timeout(&env, &plugins_dir).await;
+    async {
+        let (env, _plugin) = enable_slow_handler_with(
+            &loader,
+            &plugins_dir,
+            Arc::new(GatedBanService {
+                gate: Arc::clone(&gate),
+            }),
+            PATIENT_HANDLER_TIMEOUT,
+        )
+        .await;
 
-    let disabled = tokio::time::timeout(Duration::from_secs(10), plugin.on_disable())
+        let mut parked = Box::pin(env.event_bus.fire(post_login()));
+        assert!(poll_once(&mut parked).await.is_none());
+        gate.entered().await;
+        let mut queued = Box::pin(env.event_bus.fire(pre_connect()));
+        assert!(
+            poll_once(&mut queued).await.is_none(),
+            "the second call waits in the queue behind the parked one"
+        );
+
+        for _ in 0..3 {
+            let rejected = tokio::time::timeout(PROMPTLY, env.event_bus.fire(pre_connect()))
+                .await
+                .expect("a full queue must not make the caller wait for the parked guest");
+            assert_eq!(
+                outcome(&rejected),
+                "allowed",
+                "a rejected call has no outcome"
+            );
+        }
+        let found = tokio::time::timeout(
+            PROMPTLY,
+            env.command_manager
+                .dispatch(None, "ping", &MockPlayerRegistry),
+        )
         .await
-        .expect("on_disable must not hang on an abandoned instance");
+        .expect("a command to a saturated plugin returns without waiting");
+        assert!(found);
+
+        gate.open();
+        let queued = tokio::time::timeout(PROMPTLY, queued).await.unwrap();
+        tokio::time::timeout(PROMPTLY, parked).await.unwrap();
+        assert_eq!(
+            outcome(&queued),
+            "connect-to:backend-1",
+            "the call that fit in the queue still ran"
+        );
+        assert_eq!(
+            read_log(&data),
+            ["post-login answered", "pre-connect"],
+            "the rejected calls never reached the guest"
+        );
+    }
+    .with_subscriber(warnings.clone())
+    .await;
+
+    let full = warnings.matching("queue is full");
+    assert_eq!(full.len(), 1, "the warning is rate-limited: {full:?}");
     assert!(
-        disabled.is_ok(),
-        "on_disable skips the guest call on an abandoned instance: {disabled:?}"
+        full[0].contains("slow-handler") && full[0].contains("handle-event"),
+        "the warning names the plugin and the operation: {full:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_whose_caller_gave_up_while_queued_is_skipped() {
+    let (_tmp, plugins_dir) = stage("slow-handler");
+    let data = plugins_dir.join("slow-handler");
+    let loader = fresh_loader();
+    let gate = Gate::new();
+    let debug = LogCapture::at(tracing::Level::DEBUG);
+
+    async {
+        let (env, _plugin) = enable_slow_handler(&loader, &plugins_dir, &gate).await;
+
+        fire_post_login_past_timeout(&env).await;
+        gate.entered().await;
+        let abandoned = env.event_bus.fire(pre_connect()).await;
+        assert_eq!(
+            outcome(&abandoned),
+            "allowed",
+            "the bus gave up on the queued call"
+        );
+
+        gate.open();
+        assert!(
+            env.command_manager
+                .dispatch(None, "ping", &MockPlayerRegistry)
+                .await
+        );
+        assert_eq!(
+            read_log(&data),
+            ["post-login answered", "command"],
+            "the guest never saw the event whose caller gave up while it was queued"
+        );
+    }
+    .with_subscriber(debug.clone())
+    .await;
+
+    let skipped = debug.matching("stopped waiting");
+    assert_eq!(skipped.len(), 1, "{:?}", debug.lines());
+    assert!(skipped[0].contains("handle-event"), "{skipped:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_unload_stops_the_plugin_task() {
+    let (_tmp, plugins_dir) = stage("slow-handler");
+    let data = plugins_dir.join("slow-handler");
+    let loader = fresh_loader();
+    let gate = Gate::new();
+    let (env, plugin) = enable_slow_handler(&loader, &plugins_dir, &gate).await;
+    let context = Arc::downgrade(&env.factory.create_context("slow-handler"));
+
+    loader.unload("slow-handler").await.expect("unload ok");
+    assert!(
+        context.upgrade().is_none(),
+        "the plugin task ended and dropped its store along with the plugin context"
+    );
+
+    let found = tokio::time::timeout(
+        PROMPTLY,
+        env.command_manager
+            .dispatch(None, "ping", &MockPlayerRegistry),
+    )
+    .await
+    .expect("a call into an unloaded plugin returns promptly");
+    assert!(found, "the host still routes the command");
+    let event = tokio::time::timeout(PROMPTLY, env.event_bus.fire(pre_connect()))
+        .await
+        .expect("an event for an unloaded plugin returns promptly");
+    assert_eq!(outcome(&event), "allowed");
+    assert!(
+        tokio::time::timeout(PROMPTLY, plugin.on_disable())
+            .await
+            .expect("on_disable of an unloaded plugin returns promptly")
+            .is_ok()
+    );
+    assert!(read_log(&data).is_empty(), "no guest code ran after unload");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_past_max_call_duration_poisons_the_instance() {
+    let (_tmp, plugins_dir) = stage("slow-handler");
+    let data = plugins_dir.join("slow-handler");
+    let loader = loader_from_toml("[plugins.slow-handler.wasm]\nmax_call_duration = \"200ms\"\n");
+    let gate = Gate::new();
+    let errors = LogCapture::at(tracing::Level::ERROR);
+
+    async {
+        let (env, plugin) = enable_slow_handler(&loader, &plugins_dir, &gate).await;
+
+        tokio::time::timeout(PROMPTLY, env.event_bus.fire(post_login()))
+            .await
+            .expect("max_call_duration cuts off a guest call parked in a host call");
+        let event = env.event_bus.fire(pre_connect()).await;
+        assert_eq!(
+            outcome(&event),
+            "allowed",
+            "an instance whose call was cut off gives no outcome"
+        );
+        assert!(
+            env.command_manager
+                .dispatch(None, "ping", &MockPlayerRegistry)
+                .await
+        );
+        let disabled = tokio::time::timeout(PROMPTLY, plugin.on_disable())
+            .await
+            .expect("on_disable must not hang on a poisoned instance");
+        assert!(disabled.is_ok(), "{disabled:?}");
+        assert!(
+            read_log(&data).is_empty(),
+            "no guest code ran after the call was cut off"
+        );
+    }
+    .with_subscriber(errors.clone())
+    .await;
+
+    assert_eq!(
+        errors.matching("max_call_duration").len(),
+        1,
+        "{:?}",
+        errors.lines()
+    );
+    assert_eq!(
+        errors.matching("abandoned mid-execution").len(),
+        1,
+        "the unfinished call poisons the instance once: {:?}",
+        errors.lines()
     );
     assert!(
-        !plugins_dir
-            .join("slow-handler")
-            .join("disable.marker")
-            .exists(),
-        "the guest on_disable must not run in the abandoned store"
+        errors.matching("trapped").is_empty(),
+        "later calls are refused up front, not attempted: {:?}",
+        errors.lines()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_host_panic_inside_a_guest_call_poisons_the_instance() {
+    let (_tmp, plugins_dir) = stage("slow-handler");
+    let data = plugins_dir.join("slow-handler");
+    let loader = fresh_loader();
+    let errors = LogCapture::at(tracing::Level::ERROR);
+
+    async {
+        let (env, plugin) = enable_slow_handler_with(
+            &loader,
+            &plugins_dir,
+            Arc::new(PanickingBanService),
+            PATIENT_HANDLER_TIMEOUT,
+        )
+        .await;
+
+        tokio::time::timeout(PROMPTLY, env.event_bus.fire(post_login()))
+            .await
+            .expect("a panicking host call must not hang the caller");
+        let event = env.event_bus.fire(pre_connect()).await;
+        assert_eq!(outcome(&event), "allowed");
+        let disabled = tokio::time::timeout(PROMPTLY, plugin.on_disable())
+            .await
+            .expect("on_disable must not hang");
+        assert!(disabled.is_ok(), "{disabled:?}");
+        assert!(read_log(&data).is_empty());
+    }
+    .with_subscriber(errors.clone())
+    .await;
+
+    assert_eq!(
+        errors.matching("panicked in a host function").len(),
+        1,
+        "{:?}",
+        errors.lines()
+    );
+    assert_eq!(
+        errors.matching("abandoned mid-execution").len(),
+        1,
+        "{:?}",
+        errors.lines()
     );
 }

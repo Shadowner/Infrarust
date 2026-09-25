@@ -223,7 +223,7 @@ Only mutate when you mean to. A read-only filter that returns `Pass` adds no cop
 
 `filter` runs synchronously for every frame on every connection that the filter applies to. A per-packet filter completes in microseconds. Treat it as a hot path: avoid allocations you do not need, and do not block.
 
-Each guest call (`create`, `filter`, and the lifecycle hooks) gets an epoch deadline of `CODEC_EPOCH_DEADLINE_TICKS = 16` ticks, reset before every call. A tick is about 50 ms, so this is roughly 16 epochs of pure CPU headroom that only a runaway filter can exceed. When a call exceeds it, the guest traps.
+Each guest call (`create`, `filter`, and the lifecycle hooks) gets an epoch deadline worth `codec_cpu_budget` (the `[wasm]` table, 800 ms by default, which is 16 ticks of 50 ms), reset before every call. That is pure CPU headroom that only a runaway filter can exceed. When a call exceeds it, the guest traps.
 
 :::warning
 The codec filter has no async runtime and no `.await`. It is single-threaded guest code. Keep per-packet work small.

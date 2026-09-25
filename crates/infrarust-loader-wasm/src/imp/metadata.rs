@@ -5,6 +5,7 @@ use wasmtime::component::Component;
 use wasmtime::{Engine, Store};
 
 use crate::bindings::Plugin as PluginBindings;
+use crate::config::SandboxLimits;
 use crate::error::WasmLoaderError;
 use crate::linker::build_probe_linker;
 use crate::store_state::{PluginStoreState, build_probe_state, install_epoch_control};
@@ -13,10 +14,11 @@ pub(crate) async fn extract_metadata(
     engine: &Engine,
     component: &Component,
     path: &Path,
+    sandbox: &SandboxLimits,
 ) -> Result<PluginMetadata, WasmLoaderError> {
     let probe_id = path.display().to_string();
-    let mut store = Store::new(engine, build_probe_state(probe_id.clone()));
-    install_epoch_control(&mut store);
+    let mut store = Store::new(engine, build_probe_state(probe_id.clone(), sandbox));
+    install_epoch_control(&mut store, sandbox.max_epoch_yields);
     store.limiter(|s: &mut PluginStoreState| s.limits_mut() as &mut dyn wasmtime::ResourceLimiter);
 
     let linker = build_probe_linker(engine, &probe_id)?;

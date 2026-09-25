@@ -1,22 +1,20 @@
-//! Per-plugin store data: WASI context, resource table, capabilities, the captured
-//! native plugin context, the resource-limiter backing, and epoch-control wiring.
-
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
+use std::time::Duration;
 
 use infrarust_api::event::ListenerHandle;
 use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
-use tokio::sync::Mutex;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
+use crate::actor::InstanceRef;
 use crate::codec::CodecInstantiator;
-use crate::consts::{EPOCH_DEADLINE_TICKS, MAX_EPOCH_YIELDS_BEFORE_TRAP, MEMORY_LIMIT};
+use crate::config::SandboxLimits;
+use crate::consts::EPOCH_DEADLINE_TICKS;
 use crate::error::WasmLoaderError;
-use crate::plugin::WasmInstance;
 
 pub(crate) struct PluginStoreState {
     table: ResourceTable,
@@ -24,11 +22,12 @@ pub(crate) struct PluginStoreState {
     limits: StoreLimits,
     capabilities: CapabilitySet,
     ctx: Option<Arc<dyn PluginContext>>,
-    instance: Weak<Mutex<WasmInstance>>,
+    instance: InstanceRef,
     poisoned: bool,
     call_in_flight: Option<&'static str>,
     pub(crate) plugin_id: String,
     pub(crate) epoch_yields: u32,
+    host_call_timeout: Duration,
     next_listener_id: u64,
     listeners: HashMap<u64, ListenerHandle>,
     codec: Option<Arc<CodecInstantiator>>,
@@ -51,8 +50,6 @@ impl PluginStoreState {
         self.ctx.as_ref()
     }
 
-    /// Canonical guard for host functions that need the native context: absent
-    /// ctx (probe store, off the load path) raises a guest trap.
     pub(crate) fn require_ctx(&self) -> wasmtime::Result<Arc<dyn PluginContext>> {
         self.ctx.clone().ok_or_else(|| {
             wasmtime::Error::msg(
@@ -61,15 +58,19 @@ impl PluginStoreState {
         })
     }
 
+    pub(crate) fn host_call_timeout(&self) -> Duration {
+        self.host_call_timeout
+    }
+
     pub(crate) fn capabilities(&self) -> &CapabilitySet {
         &self.capabilities
     }
 
-    pub(crate) fn instance_ref(&self) -> Weak<Mutex<WasmInstance>> {
+    pub(crate) fn instance_ref(&self) -> InstanceRef {
         self.instance.clone()
     }
 
-    pub(crate) fn set_instance_ref(&mut self, instance: Weak<Mutex<WasmInstance>>) {
+    pub(crate) fn set_instance_ref(&mut self, instance: InstanceRef) {
         self.instance = instance;
     }
 
@@ -111,6 +112,12 @@ impl PluginStoreState {
     pub(crate) fn codec_instantiator(&self) -> Option<&Arc<CodecInstantiator>> {
         self.codec.as_ref()
     }
+
+    #[cfg(test)]
+    pub(crate) fn with_capabilities(mut self, capabilities: CapabilitySet) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
 }
 
 impl WasiView for PluginStoreState {
@@ -122,9 +129,9 @@ impl WasiView for PluginStoreState {
     }
 }
 
-fn default_limits() -> StoreLimits {
+fn store_limits(sandbox: &SandboxLimits) -> StoreLimits {
     StoreLimitsBuilder::new()
-        .memory_size(MEMORY_LIMIT)
+        .memory_size(sandbox.memory_bytes)
         .trap_on_grow_failure(true)
         .build()
 }
@@ -141,8 +148,6 @@ fn build_wasi_ctx(data_dir: &Path) -> Result<WasiCtx, WasmLoaderError> {
             path: data_dir.to_path_buf(),
             source: std::io::Error::other(e.to_string()),
         })?;
-    // TODO(WASM-2): widen with inherit_network()/extra preopens when the Network /
-    // FilesystemExtended capabilities are granted.
     Ok(builder.build())
 }
 
@@ -152,48 +157,51 @@ pub(crate) fn build_load_state(
     capabilities: CapabilitySet,
     data_dir: &Path,
     codec: Option<Arc<CodecInstantiator>>,
+    sandbox: &SandboxLimits,
 ) -> Result<PluginStoreState, WasmLoaderError> {
     Ok(PluginStoreState {
         table: ResourceTable::new(),
         wasi: build_wasi_ctx(data_dir)?,
-        limits: default_limits(),
+        limits: store_limits(sandbox),
         capabilities,
         ctx: Some(ctx),
-        instance: Weak::new(),
+        instance: InstanceRef::detached(),
         poisoned: false,
         call_in_flight: None,
         plugin_id,
         epoch_yields: 0,
+        host_call_timeout: sandbox.host_call_timeout,
         next_listener_id: 1,
         listeners: HashMap::new(),
         codec,
     })
 }
 
-pub(crate) fn build_probe_state(plugin_id: String) -> PluginStoreState {
+pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> PluginStoreState {
     PluginStoreState {
         table: ResourceTable::new(),
         wasi: WasiCtxBuilder::new().build(),
-        limits: default_limits(),
+        limits: store_limits(sandbox),
         capabilities: CapabilitySet::default(),
         ctx: None,
-        instance: Weak::new(),
+        instance: InstanceRef::detached(),
         poisoned: false,
         call_in_flight: None,
         plugin_id,
         epoch_yields: 0,
+        host_call_timeout: sandbox.host_call_timeout,
         next_listener_id: 1,
         listeners: HashMap::new(),
         codec: None,
     }
 }
 
-pub(crate) fn install_epoch_control(store: &mut Store<PluginStoreState>) {
+pub(crate) fn install_epoch_control(store: &mut Store<PluginStoreState>, max_epoch_yields: u32) {
     store.set_epoch_deadline(EPOCH_DEADLINE_TICKS);
-    store.epoch_deadline_callback(|mut ctx| {
+    store.epoch_deadline_callback(move |mut ctx| {
         let state = ctx.data_mut();
         state.epoch_yields += 1;
-        if state.epoch_yields > MAX_EPOCH_YIELDS_BEFORE_TRAP {
+        if state.epoch_yields > max_epoch_yields {
             tracing::warn!(
                 plugin = %state.plugin_id,
                 yields = state.epoch_yields,

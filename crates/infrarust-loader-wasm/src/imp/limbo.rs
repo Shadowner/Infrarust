@@ -1,22 +1,20 @@
-use std::sync::Weak;
-
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::{HandlerResult, LimboHandler, LimboSession, SessionEndReason};
 use infrarust_api::types::{Component, PlayerId};
-use tokio::sync::Mutex;
 use wasmtime::component::Resource;
 
+use crate::actor::InstanceRef;
 use crate::convert;
-use crate::plugin::{WasmInstance, call_guest};
+use crate::plugin::call_guest;
 
 pub(crate) struct WasmLimboHandler {
     handler_id: u64,
     name: String,
-    instance: Weak<Mutex<WasmInstance>>,
+    instance: InstanceRef,
 }
 
 impl WasmLimboHandler {
-    pub(crate) fn new(handler_id: u64, name: String, instance: Weak<Mutex<WasmInstance>>) -> Self {
+    pub(crate) fn new(handler_id: u64, name: String, instance: InstanceRef) -> Self {
         Self {
             handler_id,
             name,

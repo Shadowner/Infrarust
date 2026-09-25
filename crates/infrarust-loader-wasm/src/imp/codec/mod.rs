@@ -15,7 +15,7 @@ use linker::build_codec_linker;
 use proxies::WasmCodecFilterInstance;
 use store_state::CodecStoreState;
 
-use crate::consts::CODEC_EPOCH_DEADLINE_TICKS;
+use crate::config::SandboxLimits;
 use crate::error::WasmLoaderError;
 
 pub(crate) struct CodecInstantiator {
@@ -23,6 +23,8 @@ pub(crate) struct CodecInstantiator {
     pre: InstancePre<CodecStoreState>,
     indices: GuestIndices,
     plugin_id: String,
+    memory_bytes: usize,
+    deadline_ticks: u64,
 }
 
 impl CodecInstantiator {
@@ -30,6 +32,7 @@ impl CodecInstantiator {
         engine: Engine,
         component: &Component,
         plugin_id: String,
+        sandbox: &SandboxLimits,
     ) -> Result<Self, WasmLoaderError> {
         let linker = build_codec_linker(&engine, component, &plugin_id)?;
         let pre = linker
@@ -42,6 +45,8 @@ impl CodecInstantiator {
             pre,
             indices,
             plugin_id,
+            memory_bytes: sandbox.memory_bytes,
+            deadline_ticks: sandbox.codec_deadline_ticks,
         })
     }
 
@@ -54,8 +59,8 @@ impl CodecInstantiator {
         factory_id: u64,
         init: &CodecSessionInit,
     ) -> Result<WasmCodecFilterInstance, WasmLoaderError> {
-        let mut store = Store::new(&self.engine, CodecStoreState::new());
-        store.set_epoch_deadline(CODEC_EPOCH_DEADLINE_TICKS);
+        let mut store = Store::new(&self.engine, CodecStoreState::new(self.memory_bytes));
+        store.set_epoch_deadline(self.deadline_ticks);
         store.limiter(|s: &mut CodecStoreState| {
             s.limits_mut() as &mut dyn wasmtime::ResourceLimiter
         });
@@ -76,6 +81,7 @@ impl CodecInstantiator {
             guest,
             handle,
             self.plugin_id.clone(),
+            self.deadline_ticks,
         ))
     }
 }

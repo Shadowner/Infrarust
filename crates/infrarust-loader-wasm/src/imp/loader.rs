@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::loader::{LoaderError, PluginContextFactory, PluginLoader};
@@ -9,8 +9,10 @@ use infrarust_api::plugin::{Plugin, PluginMetadata};
 use wasmtime::component::Component;
 use wasmtime::{Engine, Store};
 
+use crate::actor::PluginActor;
 use crate::bindings::Plugin as PluginBindings;
 use crate::cache::AotCache;
+use crate::config::WasmLoaderConfig;
 use crate::consts::CACHE_SUBDIR;
 use crate::epoch::EpochTicker;
 use crate::error::WasmLoaderError;
@@ -21,8 +23,9 @@ use crate::store_state::{PluginStoreState, build_load_state, install_epoch_contr
 
 pub struct WasmPluginLoader {
     engine: Engine,
+    config: WasmLoaderConfig,
     discovered: RwLock<HashMap<String, DiscoveredWasm>>,
-    // RAII guard: never read, but its `Drop` stops the epoch-ticker thread.
+    actors: Mutex<HashMap<String, Weak<PluginActor>>>,
     #[allow(dead_code)]
     ticker: EpochTicker,
 }
@@ -34,11 +37,13 @@ struct DiscoveredWasm {
 }
 
 impl WasmPluginLoader {
-    pub fn new(engine: Engine) -> Self {
-        let ticker = EpochTicker::spawn(engine.clone());
+    pub fn new(engine: Engine, config: WasmLoaderConfig) -> Self {
+        let ticker = EpochTicker::spawn(engine.clone(), config.epoch_tick());
         Self {
             engine,
+            config,
             discovered: RwLock::new(HashMap::new()),
+            actors: Mutex::new(HashMap::new()),
             ticker,
         }
     }
@@ -79,9 +84,14 @@ impl PluginLoader for WasmPluginLoader {
                         .map_err(|e| e.into_loader_error(&label))?
                 };
 
-                let metadata = extract_metadata(&self.engine, &component, &path)
-                    .await
-                    .map_err(|e| e.into_loader_error(&label))?;
+                let metadata = extract_metadata(
+                    &self.engine,
+                    &component,
+                    &path,
+                    &self.config.default_sandbox(),
+                )
+                .await
+                .map_err(|e| e.into_loader_error(&label))?;
 
                 metadatas.push(metadata.clone());
                 discovered.insert(
@@ -117,6 +127,7 @@ impl PluginLoader for WasmPluginLoader {
             let ctx = context_factory.create_context(plugin_id);
             let capabilities = ctx.capabilities().clone();
             let data_dir = ctx.data_dir();
+            let sandbox = self.config.sandbox_for(plugin_id);
 
             let linker = build_linker(&self.engine, plugin_id, &capabilities)
                 .map_err(|e| e.into_loader_error(plugin_id))?;
@@ -126,6 +137,7 @@ impl PluginLoader for WasmPluginLoader {
                     self.engine.clone(),
                     &entry.component,
                     plugin_id.to_owned(),
+                    &sandbox,
                 )
                 .map_err(|e| e.into_loader_error(plugin_id))?;
                 Some(Arc::new(instantiator))
@@ -133,10 +145,17 @@ impl PluginLoader for WasmPluginLoader {
                 None
             };
 
-            let state = build_load_state(plugin_id.to_owned(), ctx, capabilities, &data_dir, codec)
-                .map_err(|e| e.into_loader_error(plugin_id))?;
+            let state = build_load_state(
+                plugin_id.to_owned(),
+                ctx,
+                capabilities,
+                &data_dir,
+                codec,
+                &sandbox,
+            )
+            .map_err(|e| e.into_loader_error(plugin_id))?;
             let mut store = Store::new(&self.engine, state);
-            install_epoch_control(&mut store);
+            install_epoch_control(&mut store, sandbox.max_epoch_yields);
             store.limiter(|s: &mut PluginStoreState| {
                 s.limits_mut() as &mut dyn wasmtime::ResourceLimiter
             });
@@ -145,12 +164,26 @@ impl PluginLoader for WasmPluginLoader {
                 .await
                 .map_err(|e| map_instantiate_error(plugin_id, &e).into_loader_error(plugin_id))?;
 
-            Ok(Box::new(WasmPlugin::new(entry.metadata, store, bindings)) as Box<dyn Plugin>)
+            let actor = PluginActor::spawn(store, bindings, &sandbox);
+            self.actors
+                .lock()
+                .expect("actors lock poisoned")
+                .insert(plugin_id.to_owned(), Arc::downgrade(&actor));
+            Ok(Box::new(WasmPlugin::new(entry.metadata, actor)) as Box<dyn Plugin>)
         })
     }
 
     fn unload<'a>(&'a self, plugin_id: &'a str) -> BoxFuture<'a, Result<(), LoaderError>> {
         Box::pin(async move {
+            let actor = self
+                .actors
+                .lock()
+                .expect("actors lock poisoned")
+                .remove(plugin_id)
+                .and_then(|actor| actor.upgrade());
+            if let Some(actor) = actor {
+                actor.shutdown().await;
+            }
             tracing::debug!(plugin = %plugin_id, "wasm plugin unloaded");
             Ok(())
         })

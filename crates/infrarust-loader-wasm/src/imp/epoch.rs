@@ -1,9 +1,10 @@
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use wasmtime::Engine;
 
-use crate::consts::EPOCH_TICK_INTERVAL;
+const MIN_TICK: Duration = Duration::from_millis(1);
 
 pub(crate) struct EpochTicker {
     stop_tx: Option<Sender<()>>,
@@ -11,13 +12,13 @@ pub(crate) struct EpochTicker {
 }
 
 impl EpochTicker {
-    pub(crate) fn spawn(engine: Engine) -> Self {
+    pub(crate) fn spawn(engine: Engine, tick: Duration) -> Self {
+        let tick = tick.max(MIN_TICK);
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let handle = std::thread::Builder::new()
             .name("infrarust-wasm-epoch".to_owned())
             .spawn(move || {
-                while let Err(RecvTimeoutError::Timeout) = stop_rx.recv_timeout(EPOCH_TICK_INTERVAL)
-                {
+                while let Err(RecvTimeoutError::Timeout) = stop_rx.recv_timeout(tick) {
                     engine.increment_epoch();
                 }
             })

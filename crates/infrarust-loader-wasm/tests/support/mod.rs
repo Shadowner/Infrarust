@@ -62,12 +62,18 @@ impl EnvOptions {
     pub fn grant(mut self, plugin_id: &str, permission: &str) -> Self {
         self.grants
             .entry(plugin_id.to_owned())
-            .or_insert_with(|| PluginPermissions {
-                permissions: Vec::new(),
-                trusted: false,
-            })
+            .or_default()
             .permissions
             .push(permission.to_owned());
+        self
+    }
+
+    pub fn deny(mut self, plugin_id: &str, capability: &str) -> Self {
+        self.grants
+            .entry(plugin_id.to_owned())
+            .or_default()
+            .deny
+            .push(capability.to_owned());
         self
     }
 }
@@ -129,9 +135,15 @@ pub fn write_script(plugins_dir: &Path, plugin_id: &str, script: &str) {
 
 #[cfg(feature = "wasm")]
 pub fn fresh_loader() -> infrarust_loader_wasm::WasmPluginLoader {
-    let config: infrarust_config::ProxyConfig = toml::from_str("").expect("default proxy config");
+    loader_from_toml("")
+}
+
+#[cfg(feature = "wasm")]
+pub fn loader_from_toml(proxy_toml: &str) -> infrarust_loader_wasm::WasmPluginLoader {
+    let config: infrarust_config::ProxyConfig = toml::from_str(proxy_toml).expect("proxy config");
     infrarust_loader_wasm::WasmPluginLoader::new(
         infrarust_loader_wasm::build_engine(&config).expect("build engine"),
+        infrarust_loader_wasm::WasmLoaderConfig::from_proxy_config(&config),
     )
 }
 

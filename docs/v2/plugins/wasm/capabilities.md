@@ -1,6 +1,6 @@
 ---
 title: Capabilities & Sandbox
-description: The capability model, the baseline-vs-opt-in matrix, and the CPU, memory, and filesystem sandbox enforced on every WASM plugin.
+description: The capability model, the baseline-vs-opt-in matrix, revoking capabilities with deny, and the CPU, memory, call-queue and filesystem sandbox enforced on every WASM plugin.
 outline: [2, 3]
 ---
 
@@ -8,7 +8,7 @@ outline: [2, 3]
 
 A WASM plugin starts with no access to the host. It receives a fixed baseline of capabilities, and the proxy operator grants anything beyond that in config. Each capability maps to one host interface. If the capability is absent, the interface is omitted from the linker, and any plugin that imports it fails to instantiate.
 
-This page covers the capability enum, the baseline-vs-opt-in split, how granting works, and the CPU, memory, and filesystem limits the runtime enforces.
+This page covers the capability enum, the baseline-vs-opt-in split, how granting and revoking work, and the CPU, memory, call-queue, and filesystem limits the runtime enforces.
 
 ## The capability model
 
@@ -122,6 +122,30 @@ pub fn from_config_strings(strings: &[String]) -> (Self, Vec<String>) {
 
 You do not list the baseline capabilities; they are always present. List only the opt-ins. See [Deploying](./deploying) for where this block lives and how rejected strings are reported.
 
+## Revoking capabilities
+
+`deny` takes capabilities away. It is applied after the baseline and the grants, so it can remove a baseline capability, and a capability that appears in both `permissions` and `deny` ends up denied.
+
+```toml
+[plugins.my-plugin]
+permissions = ["ban"]
+deny = ["player-write", "scheduler"]
+```
+
+`CapabilitySet::from_config` builds the set in that order, and the context factory uses it for every WASM plugin:
+
+```rust
+pub fn from_config(grants: &[String], denies: &[String]) -> (Self, Vec<String>) {
+    let (mut set, mut rejected) = Self::from_config_strings(grants);
+    rejected.extend(set.revoke_config_strings(denies));
+    (set, rejected)
+}
+```
+
+Unknown names in `deny` are reported with the same warning as unknown grants. `deny` also applies to compiled-in plugins: they start from every capability and lose the ones listed.
+
+A denied capability behaves exactly like one that was never granted. Denying `event-bus`, `player-read`, `command`, `scheduler` or `config-read` removes the matching interface from the linker, so a plugin that imports it fails to load (see below). Denying `player-write` keeps `player-registry` linked but refuses the calls that act on a player; see [Method-level gating](#method-level-gating).
+
 ## What a missing capability does
 
 The linker decides which host interfaces a plugin can import. `build_linker` always links `log` and `limbo`, then conditionally links the rest based on the granted set:
@@ -159,78 +183,81 @@ Because the host omits `ban-service` from the linker, `load()` returns `Err`. Th
 
 Some methods inside a linked interface need an extra capability. `player.send-packet` requires `raw-packet` even though `player-read` and `player-write` are baseline. The interface is present, so the call resolves; without `raw-packet` the host returns a `player-error` (`send-failed: "missing capability: raw-packet"`) rather than sending.
 
+The methods that act on a player need `player-write`. It is baseline, so this only matters when it is denied:
+
+| Method | Without `player-write` |
+|--------|------------------------|
+| `send-message`, `send-title`, `send-action-bar` | `player-error` `send-failed: "missing capability: player-write"` |
+| `switch-server` | `player-error` `switch-failed: "missing capability: player-write"` |
+| `disconnect` | Ignored, with a warning in the proxy log (the call has no error channel) |
+
+Reading a player (`id`, `profile`, `current-server`, and so on) only needs `player-read`.
+
 ## The sandbox
 
-Every WASM plugin runs under three limits enforced by the wasmtime runtime: a CPU budget, a linear-memory cap, and a filesystem view. The numbers are hardcoded today; wiring them to `ProxyConfig` is a TODO (`consts.rs` carries the `TODO(config)` markers).
+Every WASM plugin runs under limits enforced by the wasmtime runtime: a CPU budget, a linear-memory cap, a wall-clock limit per call, a bounded call queue, and a filesystem view. The numbers come from the `[wasm]` table of `infrarust.toml`, and `[plugins.<id>.wasm]` overrides them for one plugin. The defaults:
+
+| Key | Default | Applies to |
+|-----|---------|------------|
+| `epoch_tick` | `50ms` | The whole proxy: how often the epoch thread ticks |
+| `cpu_budget` | `3s` | CPU time per guest call before an `Interrupt` trap |
+| `codec_cpu_budget` | `800ms` | CPU time per codec filter call before a trap |
+| `memory_limit_mb` | `64` | Linear memory per plugin instance |
+| `host_call_timeout` | `30s` | One ban-service or server-manager call made by the guest |
+| `max_call_duration` | `60s` | Wall-clock time of one guest call, host calls included |
+| `queue_capacity` | `1024` | Calls waiting for a busy plugin |
+
+```toml
+[wasm]
+cpu_budget = "2s"
+
+[plugins.heavy-plugin.wasm]
+memory_limit_mb = 256
+queue_capacity = 4096
+```
+
+The ranges accepted at startup are listed in [Global Settings](../../configuration/global#wasm-plugin-sandbox).
 
 ```mermaid
 flowchart LR
     G[Guest call] --> E{Epoch tick}
-    E -->|under budget| Y[Yield, re-grant ticks]
-    E -->|over budget| T[Interrupt trap]
+    E -->|under cpu_budget| Y[Yield, re-grant a tick]
+    E -->|over cpu_budget| T[Interrupt trap]
     G --> M{memory.grow}
-    M -->|under 64 MB| OK[Allocate]
-    M -->|over 64 MB| MT[Trap on grow]
+    M -->|under memory_limit_mb| OK[Allocate]
+    M -->|over memory_limit_mb| MT[Trap on grow]
+    G --> W{Wall clock}
+    W -->|past max_call_duration| A[Call abandoned]
     T --> P[Poison instance]
     MT --> P
+    A --> P
 ```
 
 ### CPU budget (epoch interruption)
 
-A dedicated OS thread bumps the engine epoch on a fixed interval. Each store is given a deadline measured in those ticks; when the deadline fires, the callback either re-grants ticks (a cooperative yield) or interrupts the guest with a hard trap.
+A dedicated OS thread bumps the engine epoch every `epoch_tick`. Each guest call gets one tick before the deadline callback fires; the callback then either re-grants a tick (a cooperative yield) or, once the call has used `cpu_budget` worth of ticks, interrupts the guest with a hard trap. The budget is converted to ticks by rounding up, so the defaults give 60 yields of 50 ms.
 
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `EPOCH_TICK_INTERVAL` | `50 ms` | How often the epoch thread ticks |
-| `EPOCH_DEADLINE_TICKS` | `1` | Ticks granted before the deadline callback first fires, re-granted on each yield |
-| `MAX_EPOCH_YIELDS_BEFORE_TRAP` | `60` | Yields tolerated per call before the hard `Interrupt` trap (about 3 s of pure spin) |
+A plugin that spins past the budget is interrupted and its instance is poisoned. The yield counter resets at the start of each call, so well-behaved plugins that return promptly never approach the limit.
 
-```rust
-// crates/infrarust-loader-wasm/src/store_state.rs
-store.epoch_deadline_callback(|mut ctx| {
-    let state = ctx.data_mut();
-    state.epoch_yields += 1;
-    if state.epoch_yields > MAX_EPOCH_YIELDS_BEFORE_TRAP {
-        Ok(UpdateDeadline::Interrupt)
-    } else {
-        Ok(UpdateDeadline::Yield(EPOCH_DEADLINE_TICKS))
-    }
-});
-```
-
-A plugin that spins without yielding past the budget is interrupted and its instance is poisoned. The yield counter resets at the start of each call, so well-behaved plugins that return promptly never approach the limit.
-
-Codec filters run on a separate, tighter per-call budget, since each filter call is synchronous and must complete in microseconds:
-
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `CODEC_EPOCH_DEADLINE_TICKS` | `16` | Ticks granted to a single synchronous codec call before a hard trap |
-
-The 16-tick headroom is reset before every `create`/`filter`/lifecycle call. A normal per-packet filter finishes in microseconds, so only a runaway filter can exhaust it. See [Codec Filters](./codec-filters) for the filter contract.
+Codec filters run on their own budget, `codec_cpu_budget`, since each filter call is synchronous and normally finishes in microseconds. It is re-armed before every `create`/`filter`/lifecycle call; with the defaults that is 16 ticks. See [Codec Filters](./codec-filters) for the filter contract.
 
 ::: info Host calls have their own timeout
-Epoch interruption cannot preempt a guest parked inside a host `.await` (such as a ban lookup or a server start). Each async host call is wrapped in a 30 s `HOST_CALL_TIMEOUT`; on expiry the guest sees a `service-error` instead of hanging.
+Epoch interruption cannot preempt a guest parked inside a host `.await` (such as a ban lookup or a server start), and that waiting time does not count against `cpu_budget`. Each such host call is wrapped in `host_call_timeout`; on expiry the guest sees a `service-error` instead of hanging.
 :::
 
 ### Memory cap
 
-Each instance is built with a `StoreLimits` that caps linear memory and traps on a growth that would exceed it:
+Each instance is built with a `StoreLimits` that caps linear memory at `memory_limit_mb` and traps on a growth that would exceed it. The cap also applies to the memory a component declares up front, so a limit smaller than the component's initial memory makes it fail to load. Instance, table, and memory *counts* keep wasmtime's defaults; only memory growth is bounded. Codec filter instances get the same cap as their plugin.
 
-```rust
-// crates/infrarust-loader-wasm/src/store_state.rs
-fn default_limits() -> StoreLimits {
-    StoreLimitsBuilder::new()
-        .memory_size(MEMORY_LIMIT)    // 64 MB
-        .trap_on_grow_failure(true)
-        .build()
-}
-```
+### One call at a time
 
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `MEMORY_LIMIT` | `64 MB` (`64 * 1024 * 1024`) | Linear-memory cap per plugin instance |
+Each plugin instance is owned by its own task. Every call into the guest (events, commands, tab completion, scheduled tasks, limbo callbacks, `on_enable` and `on_disable`) is sent to that task as a job and runs to the end before the next one starts.
 
-A `memory.grow` that crosses 64 MB traps. Instance, table, and memory *counts* keep wasmtime's defaults; only memory growth is bounded.
+- A job that has started always runs to completion, even if the caller stops waiting. When the event bus gives up on a listener after `[events] handler_timeout`, the event moves on without the plugin's answer, but the guest call finishes and the instance stays healthy.
+- A job whose caller has already given up by the time it reaches the front of the queue is skipped; the guest never sees it.
+- At most `queue_capacity` jobs wait. When the queue is full, a new call is refused immediately rather than waiting: an event gets no answer from the plugin, a command does nothing, a tab completion returns no suggestions. A warning naming the plugin and the operation is logged, at most once every 5 seconds per plugin.
+- `max_call_duration` is the safety net for a call that never returns, for instance one that makes many slow host calls in a row. The call is abandoned and the instance is poisoned, because wasmtime cannot re-enter a component whose call was cut off.
+- `on_disable` is the last job: jobs queued behind it are dropped, and the task stops once it has run. Unloading a plugin stops its task the same way and drops the instance.
 
 ### Filesystem and WASI
 
@@ -246,11 +273,12 @@ There is no network access, no inherited stdio, and no second preopen. Outbound 
 
 ## Trap, poison, fail-closed
 
-A trap from any of the limits above does not just abort the current call. The runtime marks the instance poisoned, and every later call into that plugin returns an error instead of running guest code. This is the fail-closed rule: a misbehaving plugin is fenced off rather than retried into the same fault. The full state machine is on [Lifecycle](./lifecycle).
+A trap from any of the limits above does not just abort the current call. The runtime marks the instance poisoned, and every later call into that plugin returns an error instead of running guest code. A call that never finished (cut off by `max_call_duration`, or interrupted by a panic in a host function) poisons the instance the same way. This is the fail-closed rule: a misbehaving plugin is fenced off rather than retried into the same fault. A caller that merely stopped waiting does not poison anything. The full state machine is on [Lifecycle](./lifecycle).
 
 ## See also
 
-- [Deploying](./deploying): where the `permissions` config block lives and how rejected strings surface.
+- [Deploying](./deploying): where the `permissions` and `deny` config keys live and how rejected strings surface.
+- [Global Settings](../../configuration/global#wasm-plugin-sandbox): the `[wasm]` table and its accepted ranges.
 - [Lifecycle](./lifecycle): trap, poison, and fail-closed semantics in full.
 - [Architecture](./architecture): how the linker, store, and engine fit together.
 - [Services](./services): the host interfaces each capability unlocks.

@@ -1,8 +1,6 @@
 //! Event dispatch: marshals native events into the unified guest `handle-event`
 //! export and applies the returned outcome back onto the (6 modifiable) events.
 
-use std::sync::Weak;
-
 use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{EventPriority, ListenerHandle, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
@@ -20,13 +18,14 @@ use infrarust_api::events::proxy::{
     ServerStateChangeEvent,
 };
 use infrarust_api::types::{ProtocolVersion, ServerId};
-use tokio::sync::Mutex;
+
+use crate::actor::InstanceRef;
 
 use crate::bindings::exports::infrarust::plugin::guest as wg;
 use crate::bindings::infrarust::plugin::event_bus::EventKind;
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::convert;
-use crate::plugin::{WasmInstance, call_guest};
+use crate::plugin::call_guest;
 
 pub(crate) fn priority_from_wit(p: wt::EventPriority) -> EventPriority {
     EventPriority::custom(p)
@@ -34,7 +33,7 @@ pub(crate) fn priority_from_wit(p: wt::EventPriority) -> EventPriority {
 
 pub(crate) fn register_event_handler(
     bus: &dyn EventBus,
-    instance: Weak<Mutex<WasmInstance>>,
+    instance: InstanceRef,
     kind: EventKind,
     priority: EventPriority,
     listener_id: u64,
@@ -155,7 +154,7 @@ pub(crate) fn register_event_handler(
 }
 
 async fn dispatch<F: FnOnce(wg::EventOutcome)>(
-    instance: Weak<Mutex<WasmInstance>>,
+    instance: InstanceRef,
     listener_id: u64,
     wit: wg::Event,
     apply: F,
@@ -404,7 +403,7 @@ mod tests {
 
         let handle = register_event_handler(
             &bus,
-            Weak::new(),
+            InstanceRef::detached(),
             EventKind::RawPacket,
             EventPriority::NORMAL,
             1,
@@ -420,7 +419,7 @@ mod tests {
 
         let handle = register_event_handler(
             &bus,
-            Weak::new(),
+            InstanceRef::detached(),
             EventKind::ConfigReload,
             EventPriority::NORMAL,
             1,

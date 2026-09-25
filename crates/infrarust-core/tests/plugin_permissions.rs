@@ -78,8 +78,14 @@ fn factory(entries: Vec<(&str, PluginPermissions)>) -> PluginContextFactoryImpl 
 fn perms(strings: &[&str], trusted: bool) -> PluginPermissions {
     PluginPermissions {
         permissions: strings.iter().map(|s| (*s).to_string()).collect(),
+        deny: Vec::new(),
         trusted,
     }
+}
+
+fn denying(mut perms: PluginPermissions, denied: &[&str]) -> PluginPermissions {
+    perms.deny = denied.iter().map(|s| (*s).to_string()).collect();
+    perms
 }
 
 fn limbo_handlers_after_register(ctx: &Arc<dyn PluginContext>) -> usize {
@@ -204,4 +210,35 @@ fn data_dir_is_idempotent() {
         dir.join("state.json").exists(),
         "a second call must not disturb what the plugin already wrote"
     );
+}
+
+#[test]
+fn denied_capabilities_are_removed_after_baseline_and_grants() {
+    let f = factory(vec![(
+        "p",
+        denying(
+            perms(&["ban", "limbo"], false),
+            &["player-write", "ban", "not-a-capability"],
+        ),
+    )]);
+    let caps = f.create_context("p").capabilities().clone();
+    assert!(
+        !caps.has(Capability::PlayerWrite),
+        "baseline capability denied"
+    );
+    assert!(!caps.has(Capability::Ban), "a deny wins over a grant");
+    assert!(caps.has(Capability::Limbo), "other grants are kept");
+    assert!(
+        caps.has(Capability::EventBus),
+        "other baseline capabilities are kept"
+    );
+}
+
+#[test]
+fn denied_capabilities_are_removed_from_trusted_plugins_too() {
+    let f = factory(vec![("t", denying(perms(&[], true), &["codec-filter"]))]);
+    let ctx = f.create_context("t");
+    assert!(!ctx.capabilities().has(Capability::CodecFilter));
+    assert!(ctx.codec_filters().is_none());
+    assert!(ctx.capabilities().has(Capability::ServerManage));
 }

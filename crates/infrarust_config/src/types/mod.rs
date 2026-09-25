@@ -16,6 +16,7 @@ mod rate_limit;
 mod server_manager;
 mod status;
 mod telemetry;
+mod wasm;
 mod web;
 
 pub use address::{DomainRewrite, ServerAddress};
@@ -36,6 +37,7 @@ pub use server_manager::{
 };
 pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
 pub use telemetry::{MetricsConfig, ResourceConfig, TelemetryConfig, TracesConfig};
+pub use wasm::{PluginWasmConfig, WasmConfig, WasmLimits};
 pub use web::WebConfig;
 
 /// Default Minecraft port.

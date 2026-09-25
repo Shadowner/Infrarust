@@ -243,6 +243,7 @@ fn plugin_permissions(
                 id,
                 PluginPermissions {
                     permissions: c.permissions,
+                    deny: c.deny,
                     trusted: false,
                 },
             )
@@ -254,6 +255,7 @@ fn plugin_permissions(
             .and_modify(|p| p.trusted = true)
             .or_insert(PluginPermissions {
                 permissions: Vec::new(),
+                deny: Vec::new(),
                 trusted: true,
             });
     }
@@ -545,6 +547,8 @@ mod tests {
             PluginConfig {
                 path: None,
                 permissions: Vec::new(),
+                deny: Vec::new(),
+                wasm: None,
                 enabled: false,
             },
         );

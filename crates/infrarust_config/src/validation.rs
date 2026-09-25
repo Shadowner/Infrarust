@@ -2,11 +2,12 @@
 
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::time::Duration;
 
 use crate::error::ConfigError;
 use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
-use crate::types::BalanceStrategy;
+use crate::types::{BalanceStrategy, WasmLimits};
 
 /// Validates a single server configuration.
 ///
@@ -255,6 +256,8 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<(), ConfigError> 
         }
     }
 
+    validate_wasm_config(config)?;
+
     if config.rate_limit.enabled {
         if config.rate_limit.window.is_zero() {
             return Err(ConfigError::Validation(
@@ -341,5 +344,118 @@ fn validate_web_bind(bind: &str, proxy_bind: SocketAddr) -> Result<(), ConfigErr
         }
     }
 
+    Ok(())
+}
+
+const WASM_MIN_EPOCH_TICK: Duration = Duration::from_millis(1);
+const WASM_MAX_EPOCH_TICK: Duration = Duration::from_secs(1);
+const WASM_MAX_DURATION: Duration = Duration::from_secs(3600);
+const WASM_MAX_MEMORY_MB: u32 = 4096;
+const WASM_MAX_QUEUE_CAPACITY: usize = 1 << 20;
+
+pub fn validate_wasm_config(config: &ProxyConfig) -> Result<(), ConfigError> {
+    let tick = config.wasm.epoch_tick;
+    if !(WASM_MIN_EPOCH_TICK..=WASM_MAX_EPOCH_TICK).contains(&tick) {
+        return Err(ConfigError::Validation(format!(
+            "wasm.epoch_tick must be between {} and {} (got {})",
+            humantime::format_duration(WASM_MIN_EPOCH_TICK),
+            humantime::format_duration(WASM_MAX_EPOCH_TICK),
+            humantime::format_duration(tick)
+        )));
+    }
+    validate_wasm_limits("wasm", &config.wasm.limits(), tick)?;
+    let mut ids: Vec<&String> = config.plugins.keys().collect();
+    ids.sort();
+    for id in ids {
+        let overrides = config.plugins[id].wasm.as_ref();
+        if overrides.is_some() {
+            let limits = config.wasm.limits_for(overrides);
+            validate_wasm_limits(&format!("plugins.{id}.wasm"), &limits, tick)?;
+        }
+    }
+    for warning in wasm_warnings(config) {
+        tracing::warn!("{warning}");
+    }
+    Ok(())
+}
+
+pub fn wasm_warnings(config: &ProxyConfig) -> Vec<String> {
+    let mut scopes = vec![("wasm".to_string(), config.wasm.limits())];
+    let mut ids: Vec<&String> = config.plugins.keys().collect();
+    ids.sort();
+    for id in ids {
+        let overrides = config.plugins[id].wasm.as_ref();
+        if overrides.is_some() {
+            scopes.push((
+                format!("plugins.{id}.wasm"),
+                config.wasm.limits_for(overrides),
+            ));
+        }
+    }
+    let mut warnings = Vec::new();
+    for (scope, limits) in scopes {
+        if limits.host_call_timeout > limits.max_call_duration {
+            warnings.push(format!(
+                "{scope}: host_call_timeout ({}) is longer than max_call_duration ({}); \
+                 a slow host call will be cut off by max_call_duration and disable the plugin \
+                 instead of returning a service error to it",
+                humantime::format_duration(limits.host_call_timeout),
+                humantime::format_duration(limits.max_call_duration)
+            ));
+        }
+        if limits.cpu_budget > limits.max_call_duration {
+            warnings.push(format!(
+                "{scope}: cpu_budget ({}) is longer than max_call_duration ({}); \
+                 max_call_duration stops a busy guest call first",
+                humantime::format_duration(limits.cpu_budget),
+                humantime::format_duration(limits.max_call_duration)
+            ));
+        }
+    }
+    warnings
+}
+
+fn validate_wasm_limits(
+    scope: &str,
+    limits: &WasmLimits,
+    tick: Duration,
+) -> Result<(), ConfigError> {
+    if !(1..=WASM_MAX_MEMORY_MB).contains(&limits.memory_limit_mb) {
+        return Err(ConfigError::Validation(format!(
+            "{scope}.memory_limit_mb must be between 1 and {WASM_MAX_MEMORY_MB} (got {})",
+            limits.memory_limit_mb
+        )));
+    }
+    for (key, budget) in [
+        ("cpu_budget", limits.cpu_budget),
+        ("codec_cpu_budget", limits.codec_cpu_budget),
+    ] {
+        if budget < tick || budget > WASM_MAX_DURATION {
+            return Err(ConfigError::Validation(format!(
+                "{scope}.{key} must be between wasm.epoch_tick ({}) and {} (got {})",
+                humantime::format_duration(tick),
+                humantime::format_duration(WASM_MAX_DURATION),
+                humantime::format_duration(budget)
+            )));
+        }
+    }
+    for (key, value) in [
+        ("host_call_timeout", limits.host_call_timeout),
+        ("max_call_duration", limits.max_call_duration),
+    ] {
+        if value.is_zero() || value > WASM_MAX_DURATION {
+            return Err(ConfigError::Validation(format!(
+                "{scope}.{key} must be greater than zero and at most {} (got {})",
+                humantime::format_duration(WASM_MAX_DURATION),
+                humantime::format_duration(value)
+            )));
+        }
+    }
+    if !(1..=WASM_MAX_QUEUE_CAPACITY).contains(&limits.queue_capacity) {
+        return Err(ConfigError::Validation(format!(
+            "{scope}.queue_capacity must be between 1 and {WASM_MAX_QUEUE_CAPACITY} (got {})",
+            limits.queue_capacity
+        )));
+    }
     Ok(())
 }

@@ -14,6 +14,7 @@ use super::manager::PluginServices;
 pub struct PluginPermissions {
     /// Granted capability strings from config (kebab-case, e.g. `["codec-filter", "raw-packet"]`).
     pub permissions: Vec<String>,
+    pub deny: Vec<String>,
     pub trusted: bool,
 }
 
@@ -49,19 +50,20 @@ impl PluginContextFactory for PluginContextFactoryImpl {
             .cloned()
             .unwrap_or_default();
 
-        let capabilities = if perms.trusted {
-            CapabilitySet::native_trusted()
+        let (capabilities, rejected) = if perms.trusted {
+            let mut set = CapabilitySet::native_trusted();
+            let unknown = set.revoke_config_strings(&perms.deny);
+            (set, unknown)
         } else {
-            let (set, rejected) = CapabilitySet::from_config_strings(&perms.permissions);
-            for cap in &rejected {
-                tracing::warn!(
-                    plugin = %plugin_id,
-                    capability = %cap,
-                    "ignoring plugin capability: unknown or not grantable via config"
-                );
-            }
-            set
+            CapabilitySet::from_config(&perms.permissions, &perms.deny)
         };
+        for cap in &rejected {
+            tracing::warn!(
+                plugin = %plugin_id,
+                capability = %cap,
+                "ignoring plugin capability: unknown or not grantable via config"
+            );
+        }
 
         let ctx = Arc::new(PluginContextImpl::new(
             plugin_id.to_string(),

@@ -1,22 +1,20 @@
 //! Marker + proxy bridge for guest-registered command and scheduler callbacks.
 
-use std::sync::Weak;
-
 use infrarust_api::command::{CommandContext, CommandHandler};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::PlayerId;
-use tokio::sync::Mutex;
 
-use crate::plugin::{WasmInstance, call_guest};
+use crate::actor::InstanceRef;
+use crate::plugin::call_guest;
 
 pub(crate) struct WasmCommandHandler {
     callback_id: u64,
-    instance: Weak<Mutex<WasmInstance>>,
+    instance: InstanceRef,
 }
 
 impl WasmCommandHandler {
-    pub(crate) fn new(callback_id: u64, instance: Weak<Mutex<WasmInstance>>) -> Self {
+    pub(crate) fn new(callback_id: u64, instance: InstanceRef) -> Self {
         Self {
             callback_id,
             instance,
@@ -68,7 +66,7 @@ impl CommandHandler for WasmCommandHandler {
     }
 }
 
-pub(crate) fn dispatch_scheduled_task(instance: Weak<Mutex<WasmInstance>>, callback_id: u64) {
+pub(crate) fn dispatch_scheduled_task(instance: InstanceRef, callback_id: u64) {
     tokio::spawn(async move {
         let _ = call_guest(instance, "on-scheduled-task", move |store, bindings| {
             Box::pin(async move {

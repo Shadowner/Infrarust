@@ -1,6 +1,6 @@
 ---
 title: Global Settings
-description: Reference for infrarust.toml. Bind address, workers, timeouts, rate limits, keepalive, bans, forwarding, ip_filter, web admin API, permissions, and other proxy-wide settings.
+description: Reference for infrarust.toml. Bind address, workers, timeouts, rate limits, keepalive, bans, forwarding, ip_filter, web admin API, permissions, WASM plugin limits, and other proxy-wide settings.
 outline: [2, 3]
 ---
 
@@ -363,16 +363,66 @@ Limits on the event listeners that plugins register. A listener that panics is s
 
 Panics and timeouts are logged at error level, slow listeners at warn level, and each log line names the plugin and the event. All three values must be greater than zero.
 
+## WASM plugin sandbox
+
+```toml
+[wasm]
+epoch_tick = "50ms"
+memory_limit_mb = 64
+cpu_budget = "3s"
+codec_cpu_budget = "800ms"
+host_call_timeout = "30s"
+max_call_duration = "60s"
+queue_capacity = 1024
+```
+
+Limits that apply to every WASM plugin. Each plugin runs in its own sandbox and handles one call at a time: its event listeners, commands, scheduled tasks and limbo callbacks wait in a queue and run in order.
+
+| Key | What it limits |
+|-----|----------------|
+| `epoch_tick` | How often the sandbox clock ticks. CPU budgets are counted in ticks and rounded up to a whole number of them. Proxy-wide only. |
+| `memory_limit_mb` | Linear memory of one plugin, in MiB. A plugin that grows past it traps. |
+| `cpu_budget` | CPU time one call into a plugin may use before it traps. Time spent waiting on a host call (a ban lookup, a server start) does not count. |
+| `codec_cpu_budget` | The same budget for each codec filter call (`create`, `filter` and the connection hooks). |
+| `host_call_timeout` | How long one ban-service or server-manager call made by a plugin may take. When it runs out the plugin gets a `service-error` and carries on. |
+| `max_call_duration` | Wall-clock limit on one call into a plugin, host calls included. A call still running at this limit is abandoned and the plugin is poisoned. |
+| `queue_capacity` | How many calls may wait for a busy plugin. When the queue is full a new call is refused on the spot: an event gets no answer from that plugin and a command does nothing. The refusal is logged as a warning, at most once every 5 seconds per plugin. |
+
+A plugin call that has started always runs to the end, even when its caller stops waiting. If the event bus gives up on a WASM listener after `[events] handler_timeout`, the event moves on without that plugin's answer, the call finishes inside the plugin, and the plugin stays healthy. A call that is still queued when its caller gives up is dropped without running.
+
+A trap (a panic in the plugin, a memory or CPU overrun) poisons the plugin: later calls are refused and its `on_disable` is skipped. See [Capabilities & Sandbox](../plugins/wasm/capabilities#the-sandbox).
+
+Startup fails when a value is out of range:
+
+- `epoch_tick` must be between `1ms` and `1s`.
+- `memory_limit_mb` must be between 1 and 4096.
+- `cpu_budget` and `codec_cpu_budget` must be at least one `epoch_tick` and at most `1h`.
+- `host_call_timeout` and `max_call_duration` must be greater than zero and at most `1h`.
+- `queue_capacity` must be between 1 and 1048576.
+
+The proxy logs a warning, without refusing to start, when `host_call_timeout` or `cpu_budget` is longer than `max_call_duration`: the wall-clock limit then cuts the call off first and poisons the plugin instead of handing it a `service-error` or a CPU trap.
+
 ## Plugins
 
 ```toml
 [plugins.my_plugin]
-path = "./plugins/my_plugin.wasm"
-permissions = ["event_handler"]
+permissions = ["ban", "limbo"]
+deny = ["player-write"]
 enabled = true
+
+[plugins.my_plugin.wasm]
+memory_limit_mb = 128
+queue_capacity = 256
 ```
 
-Plugin configurations are keyed by plugin ID. Each entry can specify a `path` to the plugin binary, a list of `permissions`, and whether the plugin is `enabled` (defaults to `true` when omitted). WASM plugins are loaded from `plugins_dir` by default; `path` overrides the location for that specific plugin.
+Plugin configurations are keyed by plugin ID.
+
+- `permissions` grants capabilities on top of the baseline every WASM plugin receives.
+- `deny` removes capabilities. It is applied after the baseline and the grants, so it can take away a baseline capability such as `player-write`, and a capability listed in both `permissions` and `deny` is denied. It also applies to compiled-in plugins.
+- `enabled` skips the plugin when set to `false` (defaults to `true` when omitted).
+- `[plugins.<id>.wasm]` overrides the `[wasm]` limits for that plugin. It accepts every key of `[wasm]` except `epoch_tick`; keys it leaves out keep the proxy-wide value.
+
+Unknown capability names in `permissions` or `deny` are ignored with a warning. The capability strings are listed in [Capabilities & Sandbox](../plugins/wasm/capabilities#capability-matrix). `path` is accepted for compatibility; WASM plugins are always discovered in `plugins_dir`.
 
 ## Full example
 
@@ -410,6 +460,15 @@ retries = 3
 file = "bans.json"
 purge_interval = "300s"
 enable_audit_log = true
+
+[wasm]
+epoch_tick = "50ms"
+memory_limit_mb = 64
+cpu_budget = "3s"
+codec_cpu_budget = "800ms"
+host_call_timeout = "30s"
+max_call_duration = "60s"
+queue_capacity = 1024
 
 # [telemetry]
 # enabled = true

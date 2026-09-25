@@ -14,19 +14,32 @@ use crate::bindings::infrarust::plugin::{
     ban_service, codec_registry, command_manager, config_service, event_bus, limbo, log,
     player_registry, scheduler, server_manager, types as wt,
 };
-use crate::consts::{HOST_CALL_TIMEOUT, PLAYER_SWITCH_TIMEOUT};
+use crate::consts::PLAYER_SWITCH_TIMEOUT;
 use crate::store_state::PluginStoreState;
 use crate::{convert, dispatch, proxies};
 
 async fn await_service<T>(
+    limit: Duration,
     fut: impl Future<Output = Result<T, ServiceError>> + Send,
 ) -> Result<T, wt::ServiceError> {
-    match timeout(HOST_CALL_TIMEOUT, fut).await {
+    match timeout(limit, fut).await {
         Ok(Ok(value)) => Ok(value),
         Ok(Err(e)) => Err(convert::service_error_to_wit(e)),
         Err(_) => Err(wt::ServiceError::Unavailable(
             "host call timed out".to_string(),
         )),
+    }
+}
+
+impl PluginStoreState {
+    fn deny_player_write(
+        &self,
+        error: impl FnOnce(String) -> wt::PlayerError,
+    ) -> Option<wt::PlayerError> {
+        if self.capabilities().has(Capability::PlayerWrite) {
+            return None;
+        }
+        Some(error("missing capability: player-write".to_string()))
     }
 }
 
@@ -208,15 +221,18 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
         reason: String,
     ) -> wasmtime::Result<()> {
+        if !self.capabilities().has(Capability::PlayerWrite) {
+            tracing::warn!(plugin = %self.plugin_id,
+                "player disconnect denied: missing capability player-write");
+            return Ok(());
+        }
         let player = self.resolve_player(&self_)?;
         let component = convert::component_from_wit(&reason);
         let plugin_id = self.plugin_id.clone();
+        let limit = self.host_call_timeout();
         tokio::spawn(async move {
             let player_id = player.id().as_u64();
-            if timeout(HOST_CALL_TIMEOUT, player.disconnect(component))
-                .await
-                .is_err()
-            {
+            if timeout(limit, player.disconnect(component)).await.is_err() {
                 tracing::warn!(plugin = %plugin_id, player = player_id,
                     "player disconnect requested by plugin timed out");
             }
@@ -229,6 +245,9 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
         message: String,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
+        if let Some(denied) = self.deny_player_write(wt::PlayerError::SendFailed) {
+            return Ok(Err(denied));
+        }
         let player = self.resolve_player(&self_)?;
         let component = convert::component_from_wit(&message);
         Ok(player
@@ -241,6 +260,9 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
         title: wt::TitleData,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
+        if let Some(denied) = self.deny_player_write(wt::PlayerError::SendFailed) {
+            return Ok(Err(denied));
+        }
         let player = self.resolve_player(&self_)?;
         Ok(player
             .send_title(convert::title_data_from_wit(title))
@@ -252,6 +274,9 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
         message: String,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
+        if let Some(denied) = self.deny_player_write(wt::PlayerError::SendFailed) {
+            return Ok(Err(denied));
+        }
         let player = self.resolve_player(&self_)?;
         Ok(player
             .send_action_bar(convert::component_from_wit(&message))
@@ -279,6 +304,9 @@ impl player_registry::HostPlayer for PluginStoreState {
         self_: Resource<PlayerHandle>,
         target: String,
     ) -> wasmtime::Result<Result<(), wt::PlayerError>> {
+        if let Some(denied) = self.deny_player_write(wt::PlayerError::SwitchFailed) {
+            return Ok(Err(denied));
+        }
         let player = self.resolve_player(&self_)?;
         let target = ServerId::from(target);
         Ok(
@@ -333,13 +361,13 @@ impl server_manager::Host for PluginStoreState {
     async fn start(&mut self, server: String) -> wasmtime::Result<Result<(), wt::ServiceError>> {
         let ctx = self.require_ctx()?;
         let sid = ServerId::from(server);
-        Ok(await_service(ctx.server_manager().start(&sid)).await)
+        Ok(await_service(self.host_call_timeout(), ctx.server_manager().start(&sid)).await)
     }
 
     async fn stop(&mut self, server: String) -> wasmtime::Result<Result<(), wt::ServiceError>> {
         let ctx = self.require_ctx()?;
         let sid = ServerId::from(server);
-        Ok(await_service(ctx.server_manager().stop(&sid)).await)
+        Ok(await_service(self.host_call_timeout(), ctx.server_manager().stop(&sid)).await)
     }
 
     async fn get_all_servers(&mut self) -> wasmtime::Result<Vec<(String, wt::ServerState)>> {
@@ -367,7 +395,11 @@ impl ban_service::Host for PluginStoreState {
             )));
         };
         let duration = duration_ms.map(Duration::from_millis);
-        Ok(await_service(ctx.ban_service().ban(native_target, reason, duration)).await)
+        Ok(await_service(
+            self.host_call_timeout(),
+            ctx.ban_service().ban(native_target, reason, duration),
+        )
+        .await)
     }
 
     async fn unban(
@@ -380,7 +412,7 @@ impl ban_service::Host for PluginStoreState {
                 "invalid ban target".to_string(),
             )));
         };
-        Ok(await_service(ctx.ban_service().unban(&t)).await)
+        Ok(await_service(self.host_call_timeout(), ctx.ban_service().unban(&t)).await)
     }
 
     async fn is_banned(
@@ -393,7 +425,7 @@ impl ban_service::Host for PluginStoreState {
                 "invalid ban target".to_string(),
             )));
         };
-        Ok(await_service(ctx.ban_service().is_banned(&t)).await)
+        Ok(await_service(self.host_call_timeout(), ctx.ban_service().is_banned(&t)).await)
     }
 
     async fn get_ban(
@@ -406,18 +438,22 @@ impl ban_service::Host for PluginStoreState {
                 "invalid ban target".to_string(),
             )));
         };
-        Ok(await_service(ctx.ban_service().get_ban(&t))
-            .await
-            .map(|opt| opt.as_ref().map(convert::ban_entry_to_wit)))
+        Ok(
+            await_service(self.host_call_timeout(), ctx.ban_service().get_ban(&t))
+                .await
+                .map(|opt| opt.as_ref().map(convert::ban_entry_to_wit)),
+        )
     }
 
     async fn get_all_bans(
         &mut self,
     ) -> wasmtime::Result<Result<Vec<wt::BanEntry>, wt::ServiceError>> {
         let ctx = self.require_ctx()?;
-        Ok(await_service(ctx.ban_service().get_all_bans())
-            .await
-            .map(|bans| bans.iter().map(convert::ban_entry_to_wit).collect()))
+        Ok(
+            await_service(self.host_call_timeout(), ctx.ban_service().get_all_bans())
+                .await
+                .map(|bans| bans.iter().map(convert::ban_entry_to_wit).collect()),
+        )
     }
 }
 
@@ -729,7 +765,7 @@ mod tests {
 
     use infrarust_api::error::PlayerError;
     use infrarust_api::event::BoxFuture;
-    use infrarust_api::permissions::PermissionLevel;
+    use infrarust_api::permissions::{CapabilitySet, PermissionLevel};
     use infrarust_api::player::Player;
     use infrarust_api::types::{
         Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, TitleData,
@@ -737,11 +773,12 @@ mod tests {
 
     use super::*;
     use crate::bindings::infrarust::plugin::player_registry::{Host as _, HostPlayer as _};
+    use crate::config::SandboxLimits;
     use crate::store_state::build_probe_state;
 
     #[tokio::test]
     async fn get_player_by_uuid_traps_on_malformed_uuid() {
-        let mut state = build_probe_state("test".to_string());
+        let mut state = build_probe_state("test".to_string(), &SandboxLimits::default());
         let err = state
             .get_player_by_uuid("not-a-uuid".to_string())
             .await
@@ -823,7 +860,8 @@ mod tests {
 
     #[tokio::test]
     async fn switch_server_gives_up_long_before_the_host_call_timeout() {
-        let mut state = build_probe_state("test".to_string());
+        let mut state = build_probe_state("test".to_string(), &SandboxLimits::default())
+            .with_capabilities(CapabilitySet::baseline());
         let handle = state
             .push_player(Arc::new(StalledPlayer::new()))
             .expect("the resource table accepts a player");
@@ -843,5 +881,35 @@ mod tests {
             elapsed < Duration::from_secs(1),
             "held the instance lock for {elapsed:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn player_write_calls_are_refused_without_the_capability() {
+        let mut state = build_probe_state("test".to_string(), &SandboxLimits::default())
+            .with_capabilities(CapabilitySet::baseline().without(Capability::PlayerWrite));
+        let player = Arc::new(StalledPlayer::new());
+
+        let handle = state.push_player(player.clone()).unwrap();
+        let switched = state
+            .switch_server(handle, "lobby".to_string())
+            .await
+            .unwrap();
+        assert!(
+            matches!(&switched, Err(wt::PlayerError::SwitchFailed(m)) if m.contains("player-write")),
+            "{switched:?}"
+        );
+
+        let handle = state.push_player(player.clone()).unwrap();
+        let sent = state.send_message(handle, "hi".to_string()).await.unwrap();
+        assert!(
+            matches!(&sent, Err(wt::PlayerError::SendFailed(m)) if m.contains("player-write")),
+            "{sent:?}"
+        );
+
+        let handle = state.push_player(player).unwrap();
+        state
+            .disconnect(handle, "bye".to_string())
+            .await
+            .expect("a denied disconnect is ignored, not a trap");
     }
 }

@@ -20,5 +20,5 @@ pub use server::ServerConfig;
 pub use types::*;
 pub use validation::{
     balance_warnings, validate_proxy_config, validate_proxy_document, validate_server_config,
-    validate_server_configs,
+    validate_server_configs, validate_wasm_config, wasm_warnings,
 };

@@ -123,7 +123,7 @@ The guest sees blocking calls. The `Plugin` trait is synchronous:
 fn on_enable(&self, ctx: &Context) -> Result<(), String>;
 ```
 
-Several host imports are async on the host side. `start` and `stop` on `server-manager` and every `ban-service` function suspend the guest fiber: the host drives the async work to completion and resumes the guest with the result. To the guest it looks like an ordinary function that returns a value. Each of those calls runs under a host timeout (`HOST_CALL_TIMEOUT`) and returns a `service-error` if it expires.
+Several host imports are async on the host side. `start` and `stop` on `server-manager` and every `ban-service` function suspend the guest fiber: the host drives the async work to completion and resumes the guest with the result. To the guest it looks like an ordinary function that returns a value. Each of those calls runs under a host timeout (`host_call_timeout` in the `[wasm]` table, 30 s by default) and returns a `service-error` if it expires.
 
 `disconnect` and `switch-server` on the `player` resource are also marked host-async in the contract, but the host spawns them and returns immediately. The guest does not wait for the disconnect or the switch to finish, and these two calls are not bounded by the host timeout.
 

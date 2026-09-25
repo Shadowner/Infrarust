@@ -41,7 +41,7 @@ mod bench {
     use infrarust_core::services::command_manager::CommandManagerImpl;
     use infrarust_core::services::scheduler::SchedulerImpl;
     use infrarust_core::services::server_manager_bridge::NoopServerManager;
-    use infrarust_loader_wasm::{WasmPluginLoader, build_engine};
+    use infrarust_loader_wasm::{WasmLoaderConfig, WasmPluginLoader, build_engine};
 
     use super::mock_services::{
         MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
@@ -131,13 +131,17 @@ mod bench {
             "codec-modify".to_string(),
             PluginPermissions {
                 permissions: vec!["codec-filter".to_string()],
+                deny: Vec::new(),
                 trusted: false,
             },
         );
         let factory = PluginContextFactoryImpl::new(services, configs);
 
         let config: ProxyConfig = toml::from_str("").unwrap();
-        let loader = WasmPluginLoader::new(build_engine(&config).unwrap());
+        let loader = WasmPluginLoader::new(
+            build_engine(&config).unwrap(),
+            WasmLoaderConfig::from_proxy_config(&config),
+        );
         loader.discover(&plugins_dir).await.unwrap();
         let plugin = loader.load("codec-modify", &factory).await.unwrap();
         let ctx = factory.create_context("codec-modify");

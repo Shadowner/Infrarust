@@ -43,3 +43,29 @@ fn test_empty_defaults() {
     let proxy_config: ProxyConfig = toml::from_str(proxy_toml).unwrap();
     assert!(proxy_config.plugins.is_empty());
 }
+
+#[test]
+fn test_plugin_deny_list_and_wasm_overrides() {
+    let config: ProxyConfig = toml::from_str(
+        r#"
+        [plugins.locked]
+        permissions = ["ban"]
+        deny = ["player-write", "scheduler"]
+
+        [plugins.locked.wasm]
+        memory_limit_mb = 16
+        "#,
+    )
+    .unwrap();
+    let locked = &config.plugins["locked"];
+    assert_eq!(locked.permissions, vec!["ban"]);
+    assert_eq!(locked.deny, vec!["player-write", "scheduler"]);
+    assert_eq!(
+        locked.wasm.as_ref().and_then(|w| w.memory_limit_mb),
+        Some(16)
+    );
+
+    let plain: ProxyConfig = toml::from_str("[plugins.plain]\n").unwrap();
+    assert!(plain.plugins["plain"].deny.is_empty());
+    assert!(plain.plugins["plain"].wasm.is_none());
+}

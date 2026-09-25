@@ -1,16 +1,14 @@
 use wasmtime::{StoreLimits, StoreLimitsBuilder};
 
-use crate::consts::MEMORY_LIMIT;
-
 pub(crate) struct CodecStoreState {
     limits: StoreLimits,
 }
 
 impl CodecStoreState {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(memory_bytes: usize) -> Self {
         Self {
             limits: StoreLimitsBuilder::new()
-                .memory_size(MEMORY_LIMIT)
+                .memory_size(memory_bytes)
                 .trap_on_grow_failure(true)
                 .build(),
         }

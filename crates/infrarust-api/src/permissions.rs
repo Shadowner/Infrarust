@@ -173,9 +173,19 @@ impl CapabilitySet {
         self.granted.insert(cap);
     }
 
+    pub fn remove(&mut self, cap: Capability) {
+        self.granted.remove(&cap);
+    }
+
     #[must_use]
     pub fn with(mut self, cap: Capability) -> Self {
         self.granted.insert(cap);
+        self
+    }
+
+    #[must_use]
+    pub fn without(mut self, cap: Capability) -> Self {
+        self.granted.remove(&cap);
         self
     }
 
@@ -209,6 +219,25 @@ impl CapabilitySet {
                 Some(cap) => set.insert(cap),
             }
         }
+        (set, rejected)
+    }
+
+    #[must_use]
+    pub fn revoke_config_strings(&mut self, strings: &[String]) -> Vec<String> {
+        let mut unknown = Vec::new();
+        for s in strings {
+            match Capability::from_kebab(s) {
+                Some(cap) => self.remove(cap),
+                None => unknown.push(s.clone()),
+            }
+        }
+        unknown
+    }
+
+    #[must_use]
+    pub fn from_config(grants: &[String], denies: &[String]) -> (Self, Vec<String>) {
+        let (mut set, mut rejected) = Self::from_config_strings(grants);
+        rejected.extend(set.revoke_config_strings(denies));
         (set, rejected)
     }
 }
@@ -306,5 +335,31 @@ mod tests {
         assert_eq!(rejected.len(), 2);
         assert!(rejected.contains(&"ban-all".to_string()));
         assert!(rejected.contains(&"transport-filter".to_string()));
+    }
+
+    #[test]
+    fn from_config_revokes_denies_after_baseline_and_grants() {
+        let (set, rejected) = CapabilitySet::from_config(
+            &["ban".to_string(), "limbo".to_string()],
+            &[
+                "player-write".to_string(),
+                "ban".to_string(),
+                "not-a-capability".to_string(),
+            ],
+        );
+        assert!(!set.has(Capability::PlayerWrite));
+        assert!(!set.has(Capability::Ban));
+        assert!(set.has(Capability::Limbo));
+        assert!(set.has(Capability::EventBus));
+        assert_eq!(rejected, vec!["not-a-capability".to_string()]);
+    }
+
+    #[test]
+    fn revoke_config_strings_can_strip_a_trusted_set() {
+        let mut set = CapabilitySet::native_trusted();
+        let unknown = set.revoke_config_strings(&["transport-filter".to_string()]);
+        assert!(unknown.is_empty());
+        assert!(!set.has(Capability::TransportFilter));
+        assert!(set.has(Capability::CodecFilter));
     }
 }

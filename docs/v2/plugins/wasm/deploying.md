@@ -1,12 +1,12 @@
 ---
 title: Deploying & Configuring Plugins
-description: Install a WASM plugin into Infrarust and grant it capabilities through the TOML configuration.
+description: Install a WASM plugin into Infrarust, grant or deny it capabilities, and tune its sandbox limits through the TOML configuration.
 outline: [2, 3]
 ---
 
 # Deploying & Configuring Plugins
 
-A WASM plugin is a single `.wasm` file. You drop it into the plugins directory and the proxy compiles, sandboxes, and loads it at startup. Capabilities beyond the baseline set are granted per plugin in `infrarust.toml`.
+A WASM plugin is a single `.wasm` file. You drop it into the plugins directory and the proxy compiles, sandboxes, and loads it at startup. Capabilities beyond the baseline set are granted per plugin in `infrarust.toml`, where you can also deny capabilities and change the sandbox limits.
 
 ## Where plugins live
 
@@ -51,12 +51,14 @@ Plugin settings live in a `[plugins.<plugin-id>]` table. The table is keyed by t
 permissions = ["ban", "server-manage"]  # [!code focus]
 ```
 
-The `PluginConfig` table accepts three keys:
+The `PluginConfig` table accepts these keys:
 
 | Key | Type | Default | Applies to |
 |-----|------|---------|------------|
 | `permissions` | list of strings | `[]` | All plugins. Opt-in capability strings (kebab-case). |
-| `enabled` | bool | unset | Parsed but not yet enforced; removing the file is the current way to skip a plugin. |
+| `deny` | list of strings | `[]` | All plugins. Capabilities to remove, applied after the baseline and `permissions`. |
+| `enabled` | bool | `true` | All plugins. `false` skips the plugin at startup. |
+| `wasm` | table | none | WASM plugins. Per-plugin sandbox limits, see [Sandbox limits](#sandbox-limits). |
 | `path` | string | none | Native plugins only. WASM plugins omit it. |
 
 ::: warning
@@ -90,6 +92,18 @@ Capability strings are kebab-case. An unknown string, or one that is not grantab
 # Baseline caps are implicit; list only the opt-ins you need.
 permissions = ["limbo", "ban"]
 ```
+
+To take a capability away, including a baseline one, list it in `deny`. `deny` is applied last, so it wins over `permissions`:
+
+```toml
+[plugins.my_plugin]
+permissions = ["ban"]
+deny = ["player-write"]
+```
+
+With this, the plugin can look players up but cannot message, move or kick them.
+
+A denied capability behaves as if it had never been granted: a denied interface such as `config-read` makes a plugin that imports it fail to load, and a denied `player-write` makes the player-acting calls return a `player-error`. Details in [Capabilities](./capabilities#revoking-capabilities).
 
 ::: info
 Native (compiled-in) plugins are trusted and receive every capability. WASM plugins receive the baseline plus whatever opt-ins you declare. The full table of capabilities, what each unlocks, and which host interfaces they map to is in [Capabilities](./capabilities).
@@ -125,7 +139,7 @@ One exception: the `limbo` interface is always linked regardless of the `limbo` 
 
 ### A trap poisons the plugin
 
-If the guest traps during `on_enable` (a panic, an out-of-bounds access, or a CPU-time overrun), the host marks the instance poisoned and reports the failure. A poisoned plugin is effectively disabled: its `on_disable` is skipped rather than re-entering trapped guest code.
+If the guest traps during `on_enable` (a panic, an out-of-bounds access, or a CPU-time overrun), the host marks the instance poisoned and reports the failure. A poisoned plugin is effectively disabled: its `on_disable` is skipped rather than re-entering trapped guest code. The same happens later on if any call traps or runs past `max_call_duration`.
 
 ## The AOT cache
 
@@ -137,16 +151,32 @@ The cache key is the content hash of the `.wasm` plus a wasmtime version tag plu
 The `.cache` directory is safe to delete. The proxy recreates it on the next startup by recompiling from the `.wasm` files. You never place a `.cwasm` there by hand.
 :::
 
-## Sandbox summary
+## Sandbox limits
 
 Each plugin runs in an isolated wasmtime instance with hard limits:
 
 | Resource | Limit |
 |----------|-------|
-| CPU | Cooperative epoch interruption; a runaway guest call traps instead of blocking the proxy. |
-| Memory | Linear memory is capped per instance (64 MiB). |
+| CPU | Cooperative epoch interruption; a guest call that uses more than `cpu_budget` (3 s) traps instead of blocking the proxy. |
+| Memory | Linear memory is capped per instance at `memory_limit_mb` (64 MiB). |
+| Call time | One call may run for `max_call_duration` (60 s), host calls included; each ban or server-manager call is capped at `host_call_timeout` (30 s). |
+| Call queue | The plugin handles one call at a time; up to `queue_capacity` (1024) calls wait, further calls are refused immediately. |
 | Filesystem | One preopened directory, `plugins_dir/<plugin-id>`, mounted as `/`. No other host paths are reachable. |
 | Network | No outbound access in the current build. |
+
+The defaults come from the `[wasm]` table of `infrarust.toml`. Override them for one plugin under `[plugins.<id>.wasm]`:
+
+```toml
+[wasm]
+cpu_budget = "3s"
+queue_capacity = 1024
+
+[plugins.my_plugin.wasm]
+memory_limit_mb = 128
+queue_capacity = 4096
+```
+
+Every `[wasm]` key except `epoch_tick` can be overridden; keys left out keep the proxy-wide value. See [Global Settings](../../configuration/global#wasm-plugin-sandbox) for each key and its accepted range.
 
 Capabilities gate which host services a plugin can call; the sandbox gates how much machine it can consume. The two together mean a misbehaving plugin cannot stall the proxy or read files outside its own data directory. Capability details are in [Capabilities](./capabilities).
 

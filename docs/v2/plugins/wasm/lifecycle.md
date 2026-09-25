@@ -167,61 +167,27 @@ fn on_enable(&self, ctx: &Context) -> Result<(), String> {
 
 Codec filters and limbo handlers are registered through their own registrar hooks (`register_codec_filters`, `register_limbo_handlers`), each gated by the matching opt-in capability.
 
-The host resets the per-call epoch budget before invoking `on_enable`. The three outcomes:
+`on_enable` runs as the first job of the plugin's task, with a fresh epoch budget. The three outcomes:
 
 | Guest result | Host action |
 |--------------|-------------|
 | `Ok(())` | Plugin is enabled |
 | `Err(message)` | Returned as `PluginError::InitFailed(message)`; plugin not enabled |
-| Trap | Instance is poisoned (`set_poisoned()`); returned as a trap error |
-
-```rust
-// on_enable in plugin.rs
-store.data_mut().reset_epoch_budget();
-match bindings.infrarust_plugin_guest().call_on_enable(&mut *store).await {
-    Ok(Ok(()))      => Ok(()),
-    Ok(Err(message)) => Err(PluginError::InitFailed(message)),
-    Err(trap) => {
-        store.data_mut().set_poisoned(); // [!code focus]
-        Err(/* Trap error */)
-    }
-}
-```
+| Trap | Instance is poisoned; returned as a trap error carrying the trap message |
 
 ## Dispatch
 
-After enabling, events and registered callbacks re-enter the guest. Each call into the guest resets the epoch budget first, so a single long callback cannot exhaust a budget left over from an earlier call.
+After enabling, events and registered callbacks re-enter the guest. Each plugin instance is owned by one task that runs calls one at a time, in the order they arrive, from a queue of `queue_capacity` entries (`[wasm]` in `infrarust.toml`, default 1024). A call that finds the queue full is refused immediately and logged as a rate-limited warning. A call that has started runs to the end even if its caller stops waiting; a queued call whose caller has already given up is skipped. See [Capabilities & Sandbox](./capabilities#one-call-at-a-time).
 
-CPU time is bounded by an epoch deadline. A dedicated OS thread bumps the engine epoch every `EPOCH_TICK_INTERVAL` (50 ms). On each deadline the callback either grants another tick (cooperative yield) or, once `MAX_EPOCH_YIELDS_BEFORE_TRAP` (60) yields have accrued in one call, interrupts the guest with a trap.
+Each call into the guest resets the epoch budget first, so a single long callback cannot exhaust a budget left over from an earlier call. A dedicated OS thread bumps the engine epoch every `epoch_tick` (50 ms by default). On each deadline the callback either grants another tick (cooperative yield) or, once the call has used `cpu_budget` (3 s by default, 60 ticks), interrupts the guest with a trap. A call that is still running after `max_call_duration` (60 s by default), host calls included, is abandoned and the instance is poisoned.
 
-```rust
-// install_epoch_control in store_state.rs
-state.epoch_yields += 1;
-if state.epoch_yields > MAX_EPOCH_YIELDS_BEFORE_TRAP {
-    Ok(UpdateDeadline::Interrupt)        // ~3 s of pure spin -> hard trap
-} else {
-    Ok(UpdateDeadline::Yield(EPOCH_DEADLINE_TICKS))
-}
-```
-
-A synchronous codec `filter` call gets a larger one-shot budget (`CODEC_EPOCH_DEADLINE_TICKS`, 16 ticks), reset before every `create`/`filter`/lifecycle call. See [Events](./events) for the dispatched event kinds and [Limbo](./limbo) for limbo callbacks.
+A synchronous codec `filter` call gets its own budget, `codec_cpu_budget` (800 ms by default, 16 ticks), re-armed before every `create`/`filter`/lifecycle call. See [Events](./events) for the dispatched event kinds and [Limbo](./limbo) for limbo callbacks.
 
 ## Disable
 
-`on_disable` is called on unload or proxy shutdown. The host first checks whether the instance is poisoned; a poisoned instance skips the guest call entirely and returns `Ok(())`.
+`on_disable` is called on proxy shutdown. It is queued behind any call still running, and it is the last job of the plugin's task: calls queued behind it are dropped and the task stops once it has run, dropping the instance.
 
-```rust
-// on_disable in plugin.rs
-if store.data().is_poisoned() {
-    tracing::warn!(plugin = %self.plugin_id,
-        "skipping on_disable for a poisoned (previously trapped) wasm plugin");
-    return Ok(()); // [!code focus]
-}
-store.data_mut().reset_epoch_budget();
-// ... call_on_disable ...
-```
-
-For a healthy instance the budget is reset and the guest `on_disable` runs. An `Err(message)` is surfaced as `PluginError::Custom(message)`; a trap during `on_disable` is logged and returned as a `Custom` error but does not change the poisoned state, since the instance is being torn down.
+If the instance is poisoned, the guest call is skipped and `on_disable` returns `Ok(())` with a warning. For a healthy instance the budget is reset and the guest `on_disable` runs. An `Err(message)` is surfaced as `PluginError::Custom(message)`; a trap during `on_disable` is logged and returned as a `Custom` error.
 
 ## Trap and the poisoning model
 
@@ -230,8 +196,10 @@ Any guest trap poisons the instance. The poison flag lives on the store state (`
 - A guest panic.
 - An out-of-bounds memory or table access.
 - The epoch interrupt after the CPU budget is exceeded.
-- A memory-grow failure (the store traps on grow failure once the 64 MiB cap is hit).
+- A memory-grow failure (the store traps on grow failure once `memory_limit_mb`, 64 MiB by default, is hit).
 - Use of a dropped or invalid resource handle.
+
+A call that did not finish poisons the instance the same way: one cut off by `max_call_duration`, or one interrupted by a panic in a host function. A caller that stops waiting (for example the event bus after `[events] handler_timeout`) does not: the call keeps running inside the plugin and the instance stays healthy.
 
 The model is fail-closed: once an instance is poisoned, `on_disable` is skipped and the instance is not asked to run cleanup that could trap again or observe inconsistent state. A poisoned instance is not reused for further dispatch.
 
@@ -253,7 +221,7 @@ The guest owns resource handles it acquires (for example a limbo session handle)
 
 ## Hot reload
 
-Hot reload of a changed `*.wasm` without a proxy restart is not implemented. `unload` currently logs and returns `Ok(())`; it does not re-run discovery or swap a live instance. Replacing a plugin requires a restart, which re-runs discovery and rebuilds the cache when the bytes or version tags change.
+Hot reload of a changed `*.wasm` without a proxy restart is not implemented. `unload` stops the plugin's task and drops its instance; later calls into the plugin return without running guest code. It does not re-run discovery or swap in a new instance. Replacing a plugin requires a restart, which re-runs discovery and rebuilds the cache when the bytes or version tags change.
 
 ## See also
 
