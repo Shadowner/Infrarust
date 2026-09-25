@@ -254,7 +254,10 @@ impl Player for RecordingPlayer {
         Box::pin(async {})
     }
     fn send_message(&self, message: Component) -> Result<(), PlayerError> {
-        self.sent.lock().expect("sent lock").push(message.text);
+        self.sent
+            .lock()
+            .expect("sent lock")
+            .push(message.as_text().unwrap_or_default().to_owned());
         Ok(())
     }
     fn send_title(&self, _title: TitleData) -> Result<(), PlayerError> {

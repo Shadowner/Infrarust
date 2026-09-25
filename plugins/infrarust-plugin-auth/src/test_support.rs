@@ -60,11 +60,7 @@ pub fn limbo_session_with(id: u64, profile: GameProfile) -> Arc<RecordingLimboSe
 }
 
 pub fn flatten(component: &Component) -> String {
-    let mut out = component.text.clone();
-    for child in &component.extra {
-        out.push_str(&flatten(child));
-    }
-    out
+    component.to_plain()
 }
 
 pub fn session_text(session: &RecordingLimboSession) -> String {

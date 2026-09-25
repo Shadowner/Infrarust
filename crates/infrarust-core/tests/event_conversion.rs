@@ -2,7 +2,7 @@
 //! Tests for core ↔ API ping response conversion.
 
 use infrarust_api::events::proxy::PingResponse;
-use infrarust_api::types::{Component, ProtocolVersion};
+use infrarust_api::types::{Component, NamedColor, ProtocolVersion};
 
 use infrarust_core::event_bus::conversion::{
     apply_api_to_core, component_to_json_value, core_to_api_ping_response, json_value_to_component,
@@ -36,8 +36,8 @@ fn test_core_to_api_full_response() {
     let core = make_core_response();
     let api = core_to_api_ping_response(&core);
 
-    assert_eq!(api.description.text, "A Minecraft Server");
-    assert_eq!(api.description.color.as_deref(), Some("gold"));
+    assert_eq!(api.description.as_text(), Some("A Minecraft Server"));
+    assert_eq!(api.description.style.color, Some(NamedColor::Gold.into()));
     assert_eq!(api.max_players, 100);
     assert_eq!(api.online_players, 42);
     assert_eq!(api.protocol_version.raw(), 769);
@@ -63,7 +63,7 @@ fn test_core_to_api_minimal_response() {
     };
 
     let api = core_to_api_ping_response(&core);
-    assert_eq!(api.description.text, "");
+    assert_eq!(api.description.as_text(), Some(""));
     assert_eq!(api.max_players, 0);
     assert!(api.favicon.is_none());
 }
@@ -121,8 +121,8 @@ fn test_core_to_api_string_description() {
     };
 
     let api = core_to_api_ping_response(&core);
-    assert_eq!(api.description.text, "Plain text MOTD");
-    assert!(api.description.color.is_none());
+    assert_eq!(api.description.as_text(), Some("Plain text MOTD"));
+    assert!(api.description.style.color.is_none());
 }
 
 #[test]
@@ -148,12 +148,15 @@ fn test_core_to_api_object_description() {
     };
 
     let api = core_to_api_ping_response(&core);
-    assert_eq!(api.description.text, "Hello");
-    assert_eq!(api.description.color.as_deref(), Some("green"));
-    assert_eq!(api.description.bold, Some(true));
-    assert_eq!(api.description.extra.len(), 1);
-    assert_eq!(api.description.extra[0].text, " World");
-    assert_eq!(api.description.extra[0].color.as_deref(), Some("white"));
+    assert_eq!(api.description.as_text(), Some("Hello"));
+    assert_eq!(api.description.style.color, Some(NamedColor::Green.into()));
+    assert_eq!(api.description.style.bold, Some(true));
+    assert_eq!(api.description.children.len(), 1);
+    assert_eq!(api.description.children[0].as_text(), Some(" World"));
+    assert_eq!(
+        api.description.children[0].style.color,
+        Some(NamedColor::White.into())
+    );
 }
 
 #[test]
@@ -166,10 +169,10 @@ fn test_component_to_json_roundtrip() {
     let json = component_to_json_value(&original);
     let back = json_value_to_component(&json);
 
-    assert_eq!(back.text, "Hello");
-    assert_eq!(back.color.as_deref(), Some("gold"));
-    assert_eq!(back.bold, Some(true));
-    assert_eq!(back.extra.len(), 1);
-    assert_eq!(back.extra[0].text, " World");
-    assert_eq!(back.extra[0].color.as_deref(), Some("white"));
+    assert_eq!(back.as_text(), Some("Hello"));
+    assert_eq!(back.style.color, Some(NamedColor::Gold.into()));
+    assert_eq!(back.style.bold, Some(true));
+    assert_eq!(back.children.len(), 1);
+    assert_eq!(back.children[0].as_text(), Some(" World"));
+    assert_eq!(back.children[0].style.color, Some(NamedColor::White.into()));
 }

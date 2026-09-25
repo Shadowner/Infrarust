@@ -12,7 +12,9 @@ mod raw_packet;
 mod server_id;
 
 pub use component::{
-    ClickEvent, Component, ComponentParseError, HoverEvent, TitleData, format_placeholders,
+    ClickEvent, Component, ComponentParseError, Content, Decoration, HoverEvent, IntoTextColor,
+    LEGACY_AMPERSAND, LEGACY_SECTION, MAX_COMPONENT_DEPTH, MAX_NBT_DEPTH, NamedColor, NbtSource,
+    ObjectContent, Style, TextColor, TitleData, format_placeholders,
 };
 pub use extensions::Extensions;
 pub use player_id::PlayerId;

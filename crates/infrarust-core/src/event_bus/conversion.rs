@@ -113,45 +113,7 @@ pub fn json_value_to_component(value: &serde_json::Value) -> Component {
 
 /// Converts a [`Component`] into Minecraft chat JSON (`serde_json::Value`).
 pub fn component_to_json_value(component: &Component) -> serde_json::Value {
-    let mut map = serde_json::Map::new();
-
-    map.insert(
-        "text".to_string(),
-        serde_json::Value::String(component.text.clone()),
-    );
-
-    if let Some(ref color) = component.color {
-        map.insert(
-            "color".to_string(),
-            serde_json::Value::String(color.clone()),
-        );
-    }
-    if component.bold == Some(true) {
-        map.insert("bold".to_string(), serde_json::Value::Bool(true));
-    }
-    if component.italic == Some(true) {
-        map.insert("italic".to_string(), serde_json::Value::Bool(true));
-    }
-    if component.underlined == Some(true) {
-        map.insert("underlined".to_string(), serde_json::Value::Bool(true));
-    }
-    if component.strikethrough == Some(true) {
-        map.insert("strikethrough".to_string(), serde_json::Value::Bool(true));
-    }
-    if component.obfuscated == Some(true) {
-        map.insert("obfuscated".to_string(), serde_json::Value::Bool(true));
-    }
-
-    if !component.extra.is_empty() {
-        let extras: Vec<serde_json::Value> = component
-            .extra
-            .iter()
-            .map(component_to_json_value)
-            .collect();
-        map.insert("extra".to_string(), serde_json::Value::Array(extras));
-    }
-
-    serde_json::Value::Object(map)
+    component.to_json_value_for(ProtocolVersion::MINECRAFT_1_20_2)
 }
 
 /// Converts `infrarust_server_manager::ServerState` to the API's
@@ -213,43 +175,47 @@ pub fn protocol_direction_to_api(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use infrarust_api::types::NamedColor;
 
     #[test]
     fn test_json_string_to_component() {
         let value = serde_json::json!("Hello World");
         let component = json_value_to_component(&value);
-        assert_eq!(component.text, "Hello World");
-        assert!(component.color.is_none());
-        assert!(component.extra.is_empty());
+        assert_eq!(component.as_text(), Some("Hello World"));
+        assert!(component.style.color.is_none());
+        assert!(component.children.is_empty());
     }
 
     #[test]
     fn test_json_object_to_component() {
         let value = serde_json::json!({"text": "Hello", "color": "gold", "bold": true});
         let component = json_value_to_component(&value);
-        assert_eq!(component.text, "Hello");
-        assert_eq!(component.color.as_deref(), Some("gold"));
-        assert_eq!(component.bold, Some(true));
+        assert_eq!(component.as_text(), Some("Hello"));
+        assert_eq!(component.style.color, Some(NamedColor::Gold.into()));
+        assert_eq!(component.style.bold, Some(true));
     }
 
     #[test]
     fn test_json_object_with_extra() {
         let value = serde_json::json!({"text": "A", "extra": [{"text": "B"}, {"text": "C", "color": "red"}]});
         let component = json_value_to_component(&value);
-        assert_eq!(component.text, "A");
-        assert_eq!(component.extra.len(), 2);
-        assert_eq!(component.extra[0].text, "B");
-        assert_eq!(component.extra[1].text, "C");
-        assert_eq!(component.extra[1].color.as_deref(), Some("red"));
+        assert_eq!(component.as_text(), Some("A"));
+        assert_eq!(component.children.len(), 2);
+        assert_eq!(component.children[0].as_text(), Some("B"));
+        assert_eq!(component.children[1].as_text(), Some("C"));
+        assert_eq!(
+            component.children[1].style.color,
+            Some(NamedColor::Red.into())
+        );
     }
 
     #[test]
     fn test_json_array_to_component() {
         let value = serde_json::json!([{"text": "X"}, {"text": "Y"}]);
         let component = json_value_to_component(&value);
-        assert_eq!(component.text, "X");
-        assert_eq!(component.extra.len(), 1);
-        assert_eq!(component.extra[0].text, "Y");
+        assert_eq!(component.as_text(), Some("X"));
+        assert_eq!(component.children.len(), 1);
+        assert_eq!(component.children[0].as_text(), Some("Y"));
     }
 
     #[test]
@@ -257,9 +223,9 @@ mod tests {
         let original = Component::text("Hello").color("green").bold();
         let json = component_to_json_value(&original);
         let back = json_value_to_component(&json);
-        assert_eq!(back.text, "Hello");
-        assert_eq!(back.color.as_deref(), Some("green"));
-        assert_eq!(back.bold, Some(true));
+        assert_eq!(back.as_text(), Some("Hello"));
+        assert_eq!(back.style.color, Some(NamedColor::Green.into()));
+        assert_eq!(back.style.bold, Some(true));
     }
 
     #[test]
@@ -285,7 +251,7 @@ mod tests {
         };
 
         let api = core_to_api_ping_response(&core);
-        assert_eq!(api.description.text, "A Minecraft Server");
+        assert_eq!(api.description.as_text(), Some("A Minecraft Server"));
         assert_eq!(api.max_players, 100);
         assert_eq!(api.online_players, 42);
         assert_eq!(api.protocol_version.raw(), 769);

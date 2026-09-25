@@ -27,6 +27,7 @@ uuid = { workspace = true }
 [dev-dependencies]
 # Doctest-only (crate-level plugin example).
 tracing = { workspace = true }
+proptest = "1.10"
 
 [features]
 default = []

@@ -39,7 +39,7 @@ pub enum PlayerCommand {
     /// Send a system chat message to the player.
     SendMessage(Component),
     /// Display a title on the player's screen.
-    SendTitle(TitleData),
+    SendTitle(Box<TitleData>),
     /// Display a message in the action bar.
     SendActionBar(Component),
     /// Send a raw packet to the player's client.
@@ -265,7 +265,7 @@ impl Player for PlayerSession {
     }
 
     fn send_title(&self, title: TitleData) -> Result<(), PlayerError> {
-        self.try_send_command(PlayerCommand::SendTitle(title))
+        self.try_send_command(PlayerCommand::SendTitle(Box::new(title)))
     }
 
     fn send_action_bar(&self, message: Component) -> Result<(), PlayerError> {
