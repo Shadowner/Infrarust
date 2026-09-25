@@ -68,6 +68,10 @@ impl AuthHandler {
         &self.config
     }
 
+    pub(crate) fn player_registry(&self) -> &dyn PlayerRegistry {
+        self.player_registry.as_ref()
+    }
+
     pub(crate) fn force_complete_session(&self, player_id: PlayerId) -> bool {
         if let Some(mut entry) = self.sessions.get_mut(&player_id) {
             entry.force_completed = true;

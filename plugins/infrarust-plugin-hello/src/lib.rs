@@ -62,19 +62,17 @@ impl Plugin for HelloPlugin {
             //         event.set_result(KickedFromServerResult::SendToLimbo { limbo_handlers: vec![] });
             //     });
 
-            ctx.command_manager().register(
-                "hello",
-                &["hi", "hey"],
-                "Says hello to the player",
-                Box::new(HelloCommand),
-            );
-
-            ctx.command_manager().register(
-                "limbo",
-                &[],
-                "Sends you to the limbo test gate",
-                Box::new(LimboCommand),
-            );
+            let commands = ctx.command_manager();
+            let hello = CommandSpec::new("hello")
+                .aliases(["hi", "hey"])
+                .description("Says hello to the player");
+            if let Err(e) = commands.register(hello, Box::new(HelloCommand)) {
+                tracing::warn!("[HelloPlugin] /hello was not registered: {e}");
+            }
+            let limbo = CommandSpec::new("limbo").description("Sends you to the limbo test gate");
+            if let Err(e) = commands.register(limbo, Box::new(LimboCommand)) {
+                tracing::warn!("[HelloPlugin] /limbo was not registered: {e}");
+            }
 
             ctx.register_limbo_handler(Box::new(TestGateHandler));
 
@@ -107,22 +105,14 @@ impl Plugin for HelloPlugin {
 struct HelloCommand;
 
 impl CommandHandler for HelloCommand {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        player_registry: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(id) = ctx.player_id
-                && let Some(player) = player_registry.get_player_by_id(id)
-            {
-                let _ = player.send_message(
-                    Component::text("Hello from Infrarust! ")
-                        .color("gold")
-                        .bold()
-                        .append(Component::text("Welcome to the proxy.").color("gray")),
-                );
-            }
+            ctx.source.send_message(
+                Component::text("Hello from Infrarust! ")
+                    .color("gold")
+                    .bold()
+                    .append(Component::text("Welcome to the proxy.").color("gray")),
+            );
         })
     }
 }
@@ -130,15 +120,9 @@ impl CommandHandler for HelloCommand {
 struct LimboCommand;
 
 impl CommandHandler for LimboCommand {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        player_registry: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(id) = ctx.player_id
-                && let Some(player) = player_registry.get_player_by_id(id)
-            {
+            if let Some(player) = ctx.source.player() {
                 let _ =
                     player.send_message(Component::text("Sending you to limbo...").color("yellow"));
                 // "$limbo" is a sentinel that the connection handler recognizes

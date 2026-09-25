@@ -204,6 +204,10 @@ mod tests {
             unimplemented!("mock")
         }
 
+        fn command_manager_handle(&self) -> Arc<dyn infrarust_api::command::CommandManager> {
+            unimplemented!("mock")
+        }
+
         fn scheduler(&self) -> &dyn infrarust_api::services::scheduler::Scheduler {
             unimplemented!("mock")
         }

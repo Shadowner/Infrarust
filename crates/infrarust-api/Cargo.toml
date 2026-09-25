@@ -22,11 +22,10 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio-util = { workspace = true, features = ["rt"] }
+tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-# Doctest-only (crate-level plugin example).
-tracing = { workspace = true }
 proptest = "1.10"
 
 [features]

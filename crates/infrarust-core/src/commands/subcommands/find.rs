@@ -1,4 +1,4 @@
-use infrarust_api::command::CommandContext;
+use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::message::ProxyMessage;
 use infrarust_api::services::player_registry::PlayerRegistry;
@@ -27,34 +27,29 @@ impl SubcommandHandler for FindSubcommand {
         services: &'a CommandServices,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player_id) = ctx.player_id else {
-                return;
-            };
-            let Some(sender) = services.player_registry.get_player_by_id(player_id) else {
-                return;
-            };
+            let sender = &ctx.source;
 
             let Some(target_name) = args.first() else {
-                let _ = sender.send_message(ProxyMessage::error("Usage: /ir find <player>"));
+                sender.send_message(ProxyMessage::error("Usage: /ir find <player>"));
                 return;
             };
 
             match services.player_registry.get_player(target_name) {
                 Some(target) => match target.current_server() {
                     Some(server) => {
-                        let _ = sender.send_message(ProxyMessage::success(&format!(
+                        sender.send_message(ProxyMessage::success(&format!(
                             "{target_name} is on server: {}",
                             server.as_str()
                         )));
                     }
                     None => {
-                        let _ = sender.send_message(ProxyMessage::info(&format!(
+                        sender.send_message(ProxyMessage::info(&format!(
                             "{target_name} is online but not on any server."
                         )));
                     }
                 },
                 None => {
-                    let _ = sender.send_message(ProxyMessage::error(&format!(
+                    sender.send_message(ProxyMessage::error(&format!(
                         "Player '{target_name}' is not online."
                     )));
                 }
@@ -65,7 +60,7 @@ impl SubcommandHandler for FindSubcommand {
     fn tab_complete<'a>(
         &'a self,
         args: &'a [String],
-        _cursor: u32,
+        _source: &'a CommandSource,
         services: &'a CommandServices,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async move {

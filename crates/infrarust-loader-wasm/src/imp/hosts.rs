@@ -2,6 +2,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use infrarust_api::command::CommandSpec;
 use infrarust_api::error::ServiceError;
 use infrarust_api::filter::{FilterMetadata, FilterPriority};
 use infrarust_api::permissions::Capability;
@@ -620,9 +621,23 @@ impl command_manager::Host for PluginStoreState {
             return Ok(());
         };
         let handler = Box::new(proxies::WasmCommandHandler::new(binding, instance));
-        let alias_refs: Vec<&str> = aliases.iter().map(String::as_str).collect();
-        ctx.command_manager()
-            .register(&name, &alias_refs, &description, handler);
+        let spec = CommandSpec::new(name.as_str())
+            .aliases(aliases)
+            .description(description);
+        match ctx.command_manager().register(spec, handler) {
+            Ok(registration) if !registration.rejected_aliases.is_empty() => {
+                let reason = format!(
+                    "aliases {:?} are taken or invalid and were skipped",
+                    registration.rejected_aliases
+                );
+                self.report_command_refusal(&name, &reason);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                self.registrations().unbind_command(&name);
+                self.report_command_refusal(&name, &format!("refused, {e}"));
+            }
+        }
         Ok(())
     }
 
@@ -630,9 +645,13 @@ impl command_manager::Host for PluginStoreState {
         if self.lacks(Capability::Command, "command-manager.unregister") {
             return Ok(());
         }
-        self.registrations().unbind_command(&name);
-        if let Some(ctx) = self.ctx() {
-            ctx.command_manager().unregister(&name);
+        let Some(ctx) = self.ctx().cloned() else {
+            self.registrations().unbind_command(&name);
+            return Ok(());
+        };
+        match ctx.command_manager().unregister(&name) {
+            Ok(()) => self.registrations().unbind_command(&name),
+            Err(e) => self.report_command_refusal(&name, &format!("unregister refused, {e}")),
         }
         Ok(())
     }

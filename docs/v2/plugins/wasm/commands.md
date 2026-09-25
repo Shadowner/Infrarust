@@ -69,7 +69,7 @@ pub struct CommandInvocation {
 }
 ```
 
-`args` holds the tokens after the command name. `player` is the [player id](./services) of the sender, or `None` when the command came from the proxy console.
+`args` holds the tokens after the command name. `player` is the [player id](./services) of the sender, or `None` when the command came from the proxy console. The console runs a plugin command when the line is not one of its own commands; `<plugin-id>:<name>` always works there.
 
 ```rust
 ctx.command("ping", |invocation| {
@@ -111,6 +111,21 @@ ctx.command("stop-event", |_| {
 ```
 
 Registering a name the plugin already registered replaces the earlier command and drops its closures.
+
+## Name conflicts and ownership
+
+The host keeps one command table for every plugin, native and WASM alike, and applies the same rules to both:
+
+- Every command is also reachable as `<plugin-id>:<name>`, for example `greet:greet`. That form always runs your command.
+- The built-in names and aliases (`infrarust`, `ir`) are reserved.
+- A bare name goes to the first plugin that registers it. If another plugin already owns the name, your registration is refused.
+- An alias that is reserved or already taken is skipped; the command keeps its other names.
+
+The `command-manager.register` import has no error result in contract 0.2.3, so `register()` cannot tell you about a refusal. A refused registration does nothing: the host logs a warning naming the plugin and the command, rate-limited so a guest that retries in a loop cannot flood the log, and the guest handler never runs. Skipped aliases are logged the same way. Pick names that are unlikely to clash, and tell operators about the `<plugin-id>:<name>` form.
+
+`unregister_command` goes through the same ownership check on the host: it can only remove commands this plugin registered, even if the guest passes another plugin's name.
+
+WASM commands have no permission node in contract 0.2.3, so they appear in every player's command tree. Check the caller inside the handler when a command needs to be restricted.
 
 ## Under the hood
 

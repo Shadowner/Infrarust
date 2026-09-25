@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use infrarust_api::command::{CommandContext, CommandHandler};
+use infrarust_api::command::{CommandContext, CommandHandler, CommandSpec};
 use infrarust_api::error::PluginError;
 use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{BoxFuture, EventPriority, ResultedEvent};
@@ -21,7 +21,6 @@ use infrarust_api::events::proxy::{
 };
 use infrarust_api::permissions::{PermissionChecker, PermissionLevel};
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
-use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{Component, PlayerId, ServerId};
 
@@ -62,15 +61,14 @@ impl Plugin for ScriptedPlugin {
                         priority,
                         action,
                     } => subscribe(ctx.event_bus(), log.clone(), event, priority, action),
-                    Directive::Cmd { name } => ctx.command_manager().register(
-                        &name.clone(),
-                        &[],
-                        "",
-                        Box::new(ScriptedCommand {
+                    Directive::Cmd { name } => {
+                        let spec = CommandSpec::new(name.as_str());
+                        let command = Box::new(ScriptedCommand {
                             name,
                             log: log.clone(),
-                        }),
-                    ),
+                        });
+                        let _ = ctx.command_manager().register(spec, command);
+                    }
                 }
             }
             script::append(&log, "enable");
@@ -95,13 +93,9 @@ struct ScriptedCommand {
 }
 
 impl CommandHandler for ScriptedCommand {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        _players: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let player = ctx.player_id.map(PlayerId::as_u64);
+            let player = ctx.source.player_id().map(PlayerId::as_u64);
             let line = script::command_line(&self.name, &ctx.args, player);
             script::observe(&self.log, &line, &Action::Record);
         })

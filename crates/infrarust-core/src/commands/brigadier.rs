@@ -3,6 +3,8 @@ use std::collections::HashSet;
 use infrarust_protocol::packets::play::commands::{CCommands, CommandNode, string_parser};
 use infrarust_protocol::version::ProtocolVersion;
 
+use crate::services::command_manager::ProxyTree;
+
 const ASK_SERVER: Option<&str> = Some("minecraft:ask_server");
 const SINGLE_WORD: i32 = 0;
 const GREEDY_PHRASE: i32 = 2;
@@ -13,12 +15,39 @@ fn push_node(nodes: &mut Vec<CommandNode>, base: i32, node: CommandNode) -> i32 
     idx
 }
 
+const LITERAL: u8 = 0x01;
+
+fn drop_shadowed_roots(commands: &mut CCommands, shadowed: &HashSet<String>) {
+    let CCommands { nodes, root_index } = commands;
+    let Some(root) = usize::try_from(*root_index)
+        .ok()
+        .filter(|&i| i < nodes.len())
+    else {
+        return;
+    };
+    let children = std::mem::take(&mut nodes[root].children);
+    nodes[root].children = children
+        .into_iter()
+        .filter(|&child| {
+            let node = usize::try_from(child).ok().and_then(|i| nodes.get(i));
+            !node.is_some_and(|node| {
+                node.node_type() == LITERAL
+                    && node
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| shadowed.contains(&name.to_lowercase()))
+            })
+        })
+        .collect();
+}
+
 pub fn inject_proxy_commands(
     commands: &mut CCommands,
     version: ProtocolVersion,
-    plugin_commands: &[(String, String)],
+    tree: &ProxyTree,
     visible_subcommands: Option<&HashSet<String>>,
 ) {
+    drop_shadowed_roots(commands, &tree.shadowed);
     let base = commands.nodes.len() as i32;
     let root = commands.root_index;
 
@@ -203,19 +232,20 @@ pub fn inject_proxy_commands(
         commands.nodes[root as usize].children.push(ir_idx);
     }
 
-    for (cmd_name, _) in plugin_commands {
-        let cmd_idx = commands.nodes.len() as i32;
-        commands
-            .nodes
-            .push(CommandNode::literal_executable(cmd_name));
+    for labels in &tree.commands {
         let args_idx = commands.nodes.len() as i32;
         commands.nodes.push(CommandNode::argument(
             "args",
             string_parser(GREEDY_PHRASE, version),
             ASK_SERVER,
         ));
-        commands.nodes[cmd_idx as usize].children.push(args_idx);
-        commands.nodes[root as usize].children.push(cmd_idx);
+        for label in labels {
+            let cmd_idx = commands.nodes.len() as i32;
+            let mut node = CommandNode::literal_executable(label);
+            node.children.push(args_idx);
+            commands.nodes.push(node);
+            commands.nodes[root as usize].children.push(cmd_idx);
+        }
     }
 }
 
@@ -224,6 +254,24 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
     use infrarust_protocol::packets::play::commands::CommandNode;
+
+    fn tree(commands: &[&[&str]]) -> ProxyTree {
+        let commands: Vec<Vec<String>> = commands
+            .iter()
+            .map(|labels| labels.iter().map(ToString::to_string).collect())
+            .collect();
+        let mut shadowed: HashSet<String> = commands.iter().flatten().cloned().collect();
+        shadowed.extend(["infrarust".to_string(), "ir".to_string()]);
+        ProxyTree { commands, shadowed }
+    }
+
+    fn root_names(cmds: &CCommands) -> Vec<&str> {
+        cmds.nodes[cmds.root_index as usize]
+            .children
+            .iter()
+            .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
+            .collect()
+    }
 
     fn make_empty_tree() -> CCommands {
         CCommands {
@@ -242,7 +290,12 @@ mod tests {
     #[test]
     fn inject_adds_infrarust_and_ir_to_root() {
         let mut cmds = make_empty_tree();
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[], None);
+        inject_proxy_commands(
+            &mut cmds,
+            ProtocolVersion::V1_21,
+            &ProxyTree::default(),
+            None,
+        );
         let root = &cmds.nodes[0];
         let names: Vec<&str> = root
             .children
@@ -256,7 +309,12 @@ mod tests {
     #[test]
     fn ir_redirects_to_infrarust() {
         let mut cmds = make_empty_tree();
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[], None);
+        inject_proxy_commands(
+            &mut cmds,
+            ProtocolVersion::V1_21,
+            &ProxyTree::default(),
+            None,
+        );
         let ir = cmds
             .nodes
             .iter()
@@ -273,7 +331,12 @@ mod tests {
     #[test]
     fn infrarust_has_all_subcommands() {
         let mut cmds = make_empty_tree();
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[], None);
+        inject_proxy_commands(
+            &mut cmds,
+            ProtocolVersion::V1_21,
+            &ProxyTree::default(),
+            None,
+        );
         let infrarust = cmds
             .nodes
             .iter()
@@ -307,7 +370,12 @@ mod tests {
     #[test]
     fn server_arg_has_ask_server_suggestions() {
         let mut cmds = make_empty_tree();
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[], None);
+        inject_proxy_commands(
+            &mut cmds,
+            ProtocolVersion::V1_21,
+            &ProxyTree::default(),
+            None,
+        );
         let server_node = cmds
             .nodes
             .iter()
@@ -324,10 +392,7 @@ mod tests {
     #[test]
     fn plugin_commands_injected_at_root() {
         let mut cmds = make_empty_tree();
-        let plugin_cmds = vec![
-            ("hello".to_string(), "hello-plugin".to_string()),
-            ("forcelogin".to_string(), "auth".to_string()),
-        ];
+        let plugin_cmds = tree(&[&["hello", "hello-plugin:hello"], &["forcelogin"]]);
         inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &plugin_cmds, None);
         let root = &cmds.nodes[0];
         let names: Vec<&str> = root
@@ -356,7 +421,12 @@ mod tests {
     #[test]
     fn plugin_node_subtree_exists() {
         let mut cmds = make_empty_tree();
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[], None);
+        inject_proxy_commands(
+            &mut cmds,
+            ProtocolVersion::V1_21,
+            &ProxyTree::default(),
+            None,
+        );
         let infrarust = cmds
             .nodes
             .iter()
@@ -390,7 +460,12 @@ mod tests {
     fn round_trip_after_injection() {
         use infrarust_protocol::packets::Packet;
         let mut cmds = make_empty_tree();
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[], None);
+        inject_proxy_commands(
+            &mut cmds,
+            ProtocolVersion::V1_21,
+            &ProxyTree::default(),
+            None,
+        );
         let mut buf = Vec::new();
         cmds.encode(&mut buf, ProtocolVersion::V1_21).unwrap();
         let decoded = CCommands::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
@@ -405,7 +480,12 @@ mod tests {
         visible.insert("help".to_string());
         visible.insert("list".to_string());
 
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[], Some(&visible));
+        inject_proxy_commands(
+            &mut cmds,
+            ProtocolVersion::V1_21,
+            &ProxyTree::default(),
+            Some(&visible),
+        );
 
         let infrarust = cmds
             .nodes
@@ -430,7 +510,12 @@ mod tests {
         let mut cmds = make_empty_tree();
         let visible = HashSet::new();
 
-        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &[], Some(&visible));
+        inject_proxy_commands(
+            &mut cmds,
+            ProtocolVersion::V1_21,
+            &ProxyTree::default(),
+            Some(&visible),
+        );
 
         let root = &cmds.nodes[0];
         let names: Vec<&str> = root
@@ -446,7 +531,7 @@ mod tests {
     fn plugin_commands_visible_even_with_empty_subcommands() {
         let mut cmds = make_empty_tree();
         let visible = HashSet::new();
-        let plugin_cmds = vec![("hello".to_string(), "test-plugin".to_string())];
+        let plugin_cmds = tree(&[&["hello"]]);
 
         inject_proxy_commands(
             &mut cmds,
@@ -463,5 +548,64 @@ mod tests {
             .collect();
         assert!(!names.contains(&"infrarust"));
         assert!(names.contains(&"hello"));
+    }
+
+    #[test]
+    fn a_backend_root_named_like_a_proxy_command_is_replaced() {
+        let mut cmds = make_empty_tree();
+        cmds.nodes.push(CommandNode::literal_executable("Hello"));
+        cmds.nodes.push(CommandNode::literal_executable("gamemode"));
+        cmds.nodes.push(CommandNode::literal_executable("ir"));
+        cmds.nodes[0].children.extend([1, 2, 3]);
+
+        inject_proxy_commands(
+            &mut cmds,
+            ProtocolVersion::V1_21,
+            &tree(&[&["hello", "hi", "p:hello"]]),
+            None,
+        );
+
+        let mut names = root_names(&cmds);
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            ["gamemode", "hello", "hi", "infrarust", "ir", "p:hello"]
+        );
+    }
+
+    #[test]
+    fn every_label_of_a_command_shares_one_args_node() {
+        let mut cmds = make_empty_tree();
+        inject_proxy_commands(
+            &mut cmds,
+            ProtocolVersion::V1_21,
+            &tree(&[&["hello", "hi", "p:hello"]]),
+            None,
+        );
+        let children: HashSet<Vec<i32>> = ["hello", "hi", "p:hello"]
+            .iter()
+            .map(|label| {
+                cmds.nodes
+                    .iter()
+                    .find(|n| n.name.as_deref() == Some(*label))
+                    .unwrap()
+                    .children
+                    .clone()
+            })
+            .collect();
+        assert_eq!(children.len(), 1);
+    }
+
+    #[test]
+    fn shadowed_but_hidden_labels_leave_no_root() {
+        let mut cmds = make_empty_tree();
+        cmds.nodes.push(CommandNode::literal_executable("secret"));
+        cmds.nodes[0].children.push(1);
+        let mut hidden = tree(&[]);
+        hidden.shadowed.insert("secret".into());
+
+        inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &hidden, None);
+
+        assert!(!root_names(&cmds).contains(&"secret"));
     }
 }

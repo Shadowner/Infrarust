@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use infrarust_api::command::{CommandContext, CommandHandler};
 use infrarust_api::event::BoxFuture;
-use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::Component;
 
 use crate::account::Username;
@@ -15,16 +14,11 @@ pub struct ChangePasswordCommand {
 }
 
 impl CommandHandler for ChangePasswordCommand {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        player_registry: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player_id) = ctx.player_id else {
-                return;
-            };
-            let Some(player) = player_registry.get_player_by_id(player_id) else {
+            let Some(player) = ctx.source.player() else {
+                ctx.source
+                    .send_message(Component::error("Only players can use this command."));
                 return;
             };
 

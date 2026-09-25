@@ -28,17 +28,12 @@ impl SubcommandHandler for ListSubcommand {
         services: &'a CommandServices,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player_id) = ctx.player_id else {
-                return;
-            };
-            let Some(player) = services.player_registry.get_player_by_id(player_id) else {
-                return;
-            };
+            let player = &ctx.source;
 
             let configs = services.config_service.get_all_server_configs();
 
             if configs.is_empty() {
-                let _ = player.send_message(ProxyMessage::info("No servers configured."));
+                player.send_message(ProxyMessage::info("No servers configured."));
                 return;
             }
 
@@ -51,8 +46,7 @@ impl SubcommandHandler for ListSubcommand {
                 .map(|sm| sm.get_all_managed().into_iter().collect())
                 .unwrap_or_default();
 
-            let _ =
-                player.send_message(ProxyMessage::info(&format!("Servers ({}):", configs.len())));
+            player.send_message(ProxyMessage::info(&format!("Servers ({}):", configs.len())));
 
             for cfg in &configs {
                 let id = cfg.id.as_str();
@@ -63,7 +57,7 @@ impl SubcommandHandler for ListSubcommand {
                     .map(format_state_indicator)
                     .unwrap_or_else(|| "-".to_string());
 
-                let _ = player.send_message(ProxyMessage::detail(&format!(
+                player.send_message(ProxyMessage::detail(&format!(
                     "  {state_str} {id}  ({players} player{})",
                     if players == 1 { "" } else { "s" }
                 )));

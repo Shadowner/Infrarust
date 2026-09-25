@@ -2,9 +2,8 @@
 
 use std::sync::Arc;
 
-use infrarust_api::command::{CommandContext, CommandHandler};
+use infrarust_api::command::{CommandContext, CommandHandler, SuggestContext, Suggestion};
 use infrarust_api::event::BoxFuture;
-use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::PlayerId;
 
 use crate::actor::InstanceRef;
@@ -23,15 +22,11 @@ impl WasmCommandHandler {
 }
 
 impl CommandHandler for WasmCommandHandler {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        _player_registry: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         let instance = self.instance.clone();
         let binding = Arc::clone(&self.binding);
         Box::pin(async move {
-            let player = ctx.player_id.map(PlayerId::as_u64);
+            let player = ctx.source.player_id().map(PlayerId::as_u64);
             let _ = call_guest(instance, "handle-command", move |store, bindings| {
                 Box::pin(async move {
                     let Some(callback_id) = binding.callback_for(store.data().generation()) else {
@@ -47,13 +42,10 @@ impl CommandHandler for WasmCommandHandler {
         })
     }
 
-    fn tab_complete<'a>(
-        &'a self,
-        partial_args: Vec<String>,
-        cursor: u32,
-    ) -> BoxFuture<'a, Vec<String>> {
+    fn suggest<'a>(&'a self, ctx: SuggestContext) -> BoxFuture<'a, Vec<Suggestion>> {
         let instance = self.instance.clone();
         let binding = Arc::clone(&self.binding);
+        let cursor = u32::try_from(ctx.raw_args.len()).unwrap_or(u32::MAX);
         Box::pin(async move {
             call_guest(instance, "tab-complete", move |store, bindings| {
                 Box::pin(async move {
@@ -62,12 +54,15 @@ impl CommandHandler for WasmCommandHandler {
                     };
                     bindings
                         .infrarust_plugin_guest()
-                        .call_tab_complete(&mut *store, callback_id, &partial_args, cursor)
+                        .call_tab_complete(&mut *store, callback_id, &ctx.args, cursor)
                         .await
                 })
             })
             .await
             .unwrap_or_default()
+            .into_iter()
+            .map(Suggestion::new)
+            .collect()
         })
     }
 }

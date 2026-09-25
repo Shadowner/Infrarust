@@ -27,22 +27,17 @@ impl SubcommandHandler for VersionSubcommand {
         services: &'a CommandServices,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player_id) = ctx.player_id else {
-                return;
-            };
-            let Some(player) = services.player_registry.get_player_by_id(player_id) else {
-                return;
-            };
+            let player = &ctx.source;
 
             let version = env!("CARGO_PKG_VERSION");
             let players = services.player_registry.online_count();
             let uptime = format_uptime(services.start_time.elapsed());
 
-            let _ = player.send_message(ProxyMessage::info(&format!("Infrarust v{version}")));
-            let _ = player.send_message(ProxyMessage::detail(&format!(
+            player.send_message(ProxyMessage::info(&format!("Infrarust v{version}")));
+            player.send_message(ProxyMessage::detail(&format!(
                 "  Players online: {players}"
             )));
-            let _ = player.send_message(ProxyMessage::detail(&format!("  Uptime: {uptime}")));
+            player.send_message(ProxyMessage::detail(&format!("  Uptime: {uptime}")));
         })
     }
 }

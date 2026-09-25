@@ -245,7 +245,9 @@ impl Supervisor {
             Ok(()) => {
                 let ctx = self.factory.ctx();
                 for name in self.factory.registrations().sweep(generation) {
-                    ctx.command_manager().unregister(&name);
+                    if let Err(e) = ctx.command_manager().unregister(&name) {
+                        tracing::debug!(plugin = %self.factory.plugin_id(), "stale command already gone: {e}");
+                    }
                 }
                 tracing::info!(plugin = %self.factory.plugin_id(), generation,
                     "wasm plugin recovered: a fresh instance is enabled");

@@ -178,7 +178,7 @@ Each plugin gets its own `PluginContext` backed by a `PluginContextImpl` that wr
 During cleanup (on disable or on enable failure), the context automatically:
 
 - Unsubscribes all event listeners registered through `ctx.event_bus()`
-- Unregisters all commands registered through `ctx.command_manager()`
+- Unregisters all commands registered through `ctx.command_manager()` or its handle, and only those: a registration the proxy refused was never recorded
 - Cancels all scheduled tasks registered through `ctx.scheduler()`
 - Cancels config provider watch tokens
 - Removes active provider route entries from the domain router
@@ -211,6 +211,7 @@ Some of the available services:
 |--------|---------|---------|
 | `event_bus()` | `&dyn EventBus` | Subscribe to events |
 | `command_manager()` | `&dyn CommandManager` | Register console/player commands |
+| `command_manager_handle()` | `Arc<dyn CommandManager>` | Owned handle for registering commands after `on_enable` |
 | `scheduler()` | `&dyn Scheduler` | Schedule delayed or repeating tasks |
 | `player_registry()` | `&dyn PlayerRegistry` | Look up connected players |
 | `server_manager()` | `&dyn ServerManager` | Query and manage backend servers |

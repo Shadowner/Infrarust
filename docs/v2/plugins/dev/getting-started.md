@@ -139,18 +139,20 @@ ctx.event_bus()
 
 ## Registering a command
 
-Commands are registered through `ctx.command_manager()`. You provide a name, optional aliases, a description, and a handler struct that implements `CommandHandler`.
+Commands are registered through `ctx.command_manager()`. You describe the command with a `CommandSpec` (name, aliases, description) and pass a handler struct that implements `CommandHandler`.
 
 Add the command registration inside `on_enable`, after the event subscriptions:
 
 ```rust
-ctx.command_manager().register(
-    "greet",
-    &["hi", "hey"],
-    "Sends a greeting to the player",
-    Box::new(GreetCommand),
-);
+let greet = CommandSpec::new("greet")
+    .aliases(["hi", "hey"])
+    .description("Sends a greeting to the player");
+if let Err(e) = ctx.command_manager().register(greet, Box::new(GreetCommand)) {
+    tracing::warn!("[GreetPlugin] /greet was not registered: {e}");
+}
 ```
+
+Registration fails when another plugin already owns the name. Your command is always reachable as `greet:greet` too, with your plugin id as the prefix.
 
 Then define the handler struct outside the `impl Plugin` block:
 
@@ -158,28 +160,20 @@ Then define the handler struct outside the `impl Plugin` block:
 struct GreetCommand;
 
 impl CommandHandler for GreetCommand {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        player_registry: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(id) = ctx.player_id
-                && let Some(player) = player_registry.get_player_by_id(id)
-            {
-                let _ = player.send_message(
-                    Component::text("Hello from Infrarust! ") // [!code focus]
-                        .color("gold")
-                        .bold()
-                        .append(Component::text("Welcome to the proxy.").color("gray")),
-                );
-            }
+            ctx.source.send_message(
+                Component::text("Hello from Infrarust! ") // [!code focus]
+                    .color("gold")
+                    .bold()
+                    .append(Component::text("Welcome to the proxy.").color("gray")),
+            );
         })
     }
 }
 ```
 
-`CommandContext` carries the `player_id` (if a player ran it, `None` for console) and parsed `args`. The `PlayerRegistry` lets you look up the player and send messages, switch servers, or disconnect them.
+`CommandContext` carries the `source` that ran the command (a player or the console) and the parsed `args`. `ctx.source.send_message()` replies to whoever ran it, and `ctx.source.player()` gives you the player to switch servers or disconnect.
 
 ## Adding on_disable
 
@@ -264,12 +258,12 @@ impl Plugin for GreetPlugin {
                     tracing::info!("[GreetPlugin] {} left", event.username());
                 });
 
-            ctx.command_manager().register(
-                "greet",
-                &["hi", "hey"],
-                "Sends a greeting to the player",
-                Box::new(GreetCommand),
-            );
+            let greet = CommandSpec::new("greet")
+                .aliases(["hi", "hey"])
+                .description("Sends a greeting to the player");
+            if let Err(e) = ctx.command_manager().register(greet, Box::new(GreetCommand)) {
+                tracing::warn!("[GreetPlugin] /greet was not registered: {e}");
+            }
 
             tracing::info!("[GreetPlugin] Enabled");
             Ok(())
@@ -287,22 +281,14 @@ impl Plugin for GreetPlugin {
 struct GreetCommand;
 
 impl CommandHandler for GreetCommand {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        player_registry: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(id) = ctx.player_id
-                && let Some(player) = player_registry.get_player_by_id(id)
-            {
-                let _ = player.send_message(
-                    Component::text("Hello from Infrarust! ")
-                        .color("gold")
-                        .bold()
-                        .append(Component::text("Welcome to the proxy.").color("gray")),
-                );
-            }
+            ctx.source.send_message(
+                Component::text("Hello from Infrarust! ")
+                    .color("gold")
+                    .bold()
+                    .append(Component::text("Welcome to the proxy.").color("gray")),
+            );
         })
     }
 }

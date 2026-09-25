@@ -174,6 +174,8 @@ pub trait PluginContext: Send + Sync + private::Sealed {
 
     fn command_manager(&self) -> &dyn CommandManager;
 
+    fn command_manager_handle(&self) -> Arc<dyn CommandManager>;
+
     fn scheduler(&self) -> &dyn Scheduler;
 
     fn event_bus_handle(&self) -> Arc<dyn EventBus>;

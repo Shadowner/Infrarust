@@ -27,32 +27,30 @@ impl Plugin for StatsPlugin {
                 .subscribe(EventPriority::NORMAL, |event: &mut DisconnectEvent| {
                     tracing::info!("[stats] {}", core::leave_log(event.username()));
                 });
-            ctx.command_manager().register(
-                core::COMMAND_NAME,
-                core::COMMAND_ALIASES,
-                core::COMMAND_DESCRIPTION,
-                Box::new(CountCommand),
-            );
+            let spec = CommandSpec::new(core::COMMAND_NAME)
+                .aliases(core::COMMAND_ALIASES.iter().copied())
+                .description(core::COMMAND_DESCRIPTION);
+            let handler = Box::new(CountCommand {
+                players: ctx.player_registry_handle(),
+            });
+            if let Err(e) = ctx.command_manager().register(spec, handler) {
+                tracing::warn!("[stats] /{} was not registered: {e}", core::COMMAND_NAME);
+            }
             Ok(())
         })
     }
 }
 
-struct CountCommand;
+struct CountCommand {
+    players: Arc<dyn PlayerRegistry>,
+}
 
 impl CommandHandler for CountCommand {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        players: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let online = u32::try_from(players.online_count()).unwrap_or(u32::MAX);
-            if let Some(id) = ctx.player_id
-                && let Some(player) = players.get_player_by_id(id)
-            {
-                let _ = player.send_message(Component::text(core::format_count(online)));
-            }
+            let online = u32::try_from(self.players.online_count()).unwrap_or(u32::MAX);
+            ctx.source
+                .send_message(Component::text(core::format_count(online)));
         })
     }
 }

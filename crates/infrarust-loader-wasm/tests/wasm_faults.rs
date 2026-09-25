@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use infrarust_api::command::CommandSource;
 use infrarust_api::event::{Event, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::lifecycle::{PostLoginEvent, PreLoginEvent, PreLoginResult};
@@ -19,12 +20,13 @@ use infrarust_api::services::ban_service::BanService;
 use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
 use infrarust_core::event_bus::{EventBusConfig, EventBusImpl};
 use infrarust_core::plugin::context::PluginContextImpl;
+use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutcome};
 use infrarust_loader_wasm::WasmPluginLoader;
 use tracing::Level;
 use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
-use support::mock_services::{Gate, GatedBanService, MockPlayerRegistry, PanickingBanService};
+use support::mock_services::{Gate, GatedBanService, PanickingBanService};
 use support::{
     EnvOptions, TestEnv, fresh_loader, load_enabled, loader_from_toml, make_env, make_env_with,
     nil_profile, read_log, script, stage, write_script,
@@ -129,13 +131,9 @@ fn listeners<E: Event>(bus: &EventBusImpl, owner: &str) -> usize {
 }
 
 async fn dispatch(env: &TestEnv, line: &str) -> bool {
-    tokio::time::timeout(
-        PROMPTLY,
-        env.command_manager
-            .dispatch(None, line, &MockPlayerRegistry),
-    )
-    .await
-    .expect("a command returns promptly")
+    tokio::time::timeout(PROMPTLY, dispatch_line(&env.command_manager, line))
+        .await
+        .expect("a command returns promptly")
 }
 
 async fn let_the_backoff_pass() {
@@ -553,4 +551,8 @@ async fn a_fault_in_the_first_on_enable_fails_the_enable_without_a_restart() {
             logs.lines()
         );
     }
+}
+
+async fn dispatch_line(commands: &CommandManagerImpl, line: &str) -> bool {
+    commands.dispatch(CommandSource::Console, line).await == DispatchOutcome::Executed
 }

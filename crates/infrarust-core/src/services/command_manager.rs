@@ -1,208 +1,290 @@
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, PoisonError, RwLock};
 
-use infrarust_api::command::{CommandContext, CommandHandler, CommandManager};
-use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::PlayerId;
+use tokio::sync::watch;
 
-struct RegisteredCommand {
+use infrarust_api::command::{
+    CommandContext, CommandError, CommandHandler, CommandInfo, CommandRegistration, CommandSource,
+    CommandSpec, SuggestContext, Suggestion, split_label,
+};
+use infrarust_api::message::ProxyMessage;
+
+pub const COMMAND_DENIED: &str = "You don't have permission to use this command.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchOutcome {
+    Executed,
+    Denied,
+    Unknown,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ProxyTree {
+    pub commands: Vec<Vec<String>>,
+    pub shadowed: HashSet<String>,
+}
+
+#[derive(Clone)]
+struct Entry {
     handler: Arc<dyn CommandHandler>,
-    aliases: Vec<String>,
-    description: String,
-    is_builtin: bool,
-    plugin_id: String,
+    spec: CommandSpec,
+    owner: Option<String>,
+}
+
+impl Entry {
+    fn namespaced(&self) -> Option<String> {
+        self.owner
+            .as_deref()
+            .map(|owner| namespaced(owner, &self.spec.name))
+    }
+
+    fn labels(&self) -> Vec<String> {
+        let mut labels = vec![self.spec.name.clone()];
+        labels.extend(self.spec.aliases.iter().cloned());
+        labels.extend(self.namespaced());
+        labels
+    }
+
+    fn info(&self) -> CommandInfo {
+        CommandInfo::new(self.spec.clone(), self.owner.clone())
+    }
+}
+
+#[derive(Default)]
+struct Table {
+    commands: HashMap<String, Entry>,
+    labels: HashMap<String, String>,
+}
+
+impl Table {
+    fn resolve(&self, label: &str) -> Option<&Entry> {
+        let key = self.labels.get(&label.to_lowercase())?;
+        self.commands.get(key)
+    }
+
+    fn remove(&mut self, key: &str) -> Option<Entry> {
+        let entry = self.commands.remove(key)?;
+        self.labels.retain(|_, target| target != key);
+        Some(entry)
+    }
+
+    fn claim(&self, label: &str, key: &str) -> Result<(), CommandError> {
+        match self.labels.get(label) {
+            None => Ok(()),
+            Some(existing) if existing == key => Ok(()),
+            Some(existing) => match self
+                .commands
+                .get(existing)
+                .and_then(|entry| entry.owner.clone())
+            {
+                None => Err(CommandError::Reserved(label.to_string())),
+                Some(plugin) => Err(CommandError::OwnedBy {
+                    name: label.to_string(),
+                    plugin,
+                }),
+            },
+        }
+    }
 }
 
 pub struct CommandManagerImpl {
-    commands: RwLock<HashMap<String, RegisteredCommand>>,
-    aliases: RwLock<HashMap<String, String>>,
+    table: RwLock<Table>,
+    generation: watch::Sender<u64>,
 }
 
 impl CommandManagerImpl {
     pub fn new() -> Self {
         Self {
-            commands: RwLock::new(HashMap::new()),
-            aliases: RwLock::new(HashMap::new()),
+            table: RwLock::new(Table::default()),
+            generation: watch::Sender::new(0),
         }
     }
 
-    /// Returns `true` if the command was found and executed.
-    pub async fn dispatch(
-        &self,
-        player_id: Option<PlayerId>,
-        input: &str,
-        player_registry: &dyn PlayerRegistry,
-    ) -> bool {
-        let input = input.trim();
-        let (name, args_str) = match input.split_once(' ') {
-            Some((n, a)) => (n, a),
-            None => (input, ""),
-        };
-
-        let name_lower = name.to_lowercase();
-
-        let canonical = {
-            let aliases = self.aliases.read().expect("lock poisoned");
-            aliases.get(&name_lower).cloned().unwrap_or(name_lower)
-        };
-
-        let handler_exists = {
-            let commands = self.commands.read().expect("lock poisoned");
-            commands.contains_key(&canonical)
-        };
-
-        if !handler_exists {
-            return false;
-        }
-
-        let args: Vec<String> = if args_str.is_empty() {
-            vec![]
-        } else {
-            args_str.split_whitespace().map(String::from).collect()
-        };
-
-        let ctx = CommandContext {
-            player_id,
-            args,
-            raw: input.to_string(),
-        };
-
-        let handler = {
-            let commands = self.commands.read().expect("lock poisoned");
-            commands.get(&canonical).map(|cmd| Arc::clone(&cmd.handler))
-        };
-
-        match handler {
-            Some(handler) => {
-                handler.execute(ctx, player_registry).await;
-                true
-            }
-            None => false,
-        }
+    pub fn subscribe(&self) -> watch::Receiver<u64> {
+        self.generation.subscribe()
     }
 
-    pub fn register_builtin(
-        &self,
-        name: &str,
-        aliases: &[&str],
-        description: &str,
-        handler: Box<dyn CommandHandler>,
-    ) {
-        let name_lower = name.to_lowercase();
-        let alias_list: Vec<String> = aliases.iter().map(|a| a.to_lowercase()).collect();
+    pub fn generation(&self) -> u64 {
+        *self.generation.borrow()
+    }
 
+    fn bump(&self) {
+        self.generation.send_modify(|generation| *generation += 1);
+    }
+
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, Table> {
+        self.table.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, Table> {
+        self.table.write().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn register_builtin(&self, spec: CommandSpec, handler: Box<dyn CommandHandler>) {
+        let Some(name) = normalize(&spec.name) else {
+            tracing::error!(name = %spec.name, "invalid built-in command name");
+            return;
+        };
+        let aliases: Vec<String> = spec.aliases.iter().filter_map(|a| normalize(a)).collect();
         {
-            let mut alias_map = self.aliases.write().expect("lock poisoned");
-            for alias in &alias_list {
-                alias_map.insert(alias.clone(), name_lower.clone());
+            let mut table = self.write();
+            table.remove(&name);
+            for label in std::iter::once(&name).chain(&aliases) {
+                if let Some(previous) = table.labels.insert(label.clone(), name.clone())
+                    && previous != name
+                {
+                    tracing::warn!(label = %label, displaced = %previous, "built-in command label replaced another command");
+                }
             }
-        }
-
-        {
-            let mut commands = self.commands.write().expect("lock poisoned");
-            commands.insert(
-                name_lower,
-                RegisteredCommand {
+            let mut spec = spec;
+            spec.aliases = aliases;
+            spec.name.clone_from(&name);
+            table.commands.insert(
+                name,
+                Entry {
                     handler: Arc::from(handler),
-                    aliases: alias_list,
-                    description: description.to_string(),
-                    is_builtin: true,
-                    plugin_id: String::new(),
+                    spec,
+                    owner: None,
                 },
             );
         }
+        self.bump();
     }
 
-    pub fn list_commands(&self) -> Vec<(String, String)> {
-        let commands = self.commands.read().expect("lock poisoned");
-        commands
-            .iter()
-            .map(|(name, cmd)| (name.clone(), cmd.description.clone()))
-            .collect()
-    }
-
-    pub fn list_plugin_commands(&self) -> Vec<(String, String)> {
-        let commands = self.commands.read().expect("lock poisoned");
-        commands
-            .iter()
-            .filter(|(_, cmd)| !cmd.is_builtin)
-            .map(|(name, cmd)| (name.clone(), cmd.plugin_id.clone()))
-            .collect()
-    }
-
-    pub fn find_plugin_command(
+    pub fn register_owned(
         &self,
-        plugin_id: &str,
-        command_name: &str,
-    ) -> Option<Arc<dyn CommandHandler>> {
-        let name_lower = command_name.to_lowercase();
-        let commands = self.commands.read().expect("lock poisoned");
-        commands
-            .get(&name_lower)
-            .filter(|cmd| cmd.plugin_id == plugin_id)
-            .map(|cmd| Arc::clone(&cmd.handler))
-    }
+        owner: &str,
+        spec: CommandSpec,
+        handler: Box<dyn CommandHandler>,
+    ) -> Result<CommandRegistration, CommandError> {
+        let name =
+            normalize(&spec.name).ok_or_else(|| CommandError::InvalidName(spec.name.clone()))?;
+        let key = namespaced(owner, &name);
+        let registration = {
+            let mut table = self.write();
+            table.claim(&name, &key)?;
+            table.remove(&key);
 
-    pub fn commands_for_plugin(&self, plugin_id: &str) -> Vec<(String, String)> {
-        let commands = self.commands.read().expect("lock poisoned");
-        commands
-            .iter()
-            .filter(|(_, cmd)| cmd.plugin_id == plugin_id)
-            .map(|(name, cmd)| (name.clone(), cmd.description.clone()))
-            .collect()
-    }
-
-    pub fn is_plugin_command(&self, name: &str) -> bool {
-        let name_lower = name.to_lowercase();
-        let commands = self.commands.read().expect("lock poisoned");
-        commands.get(&name_lower).is_some_and(|cmd| !cmd.is_builtin)
-    }
-
-    pub async fn tab_complete(&self, input: &str) -> Vec<String> {
-        self.tab_complete_for_player(input, None).await
-    }
-
-    pub async fn tab_complete_for_player(
-        &self,
-        input: &str,
-        player_id: Option<PlayerId>,
-    ) -> Vec<String> {
-        let input = input.trim_start();
-        let (name, rest) = match input.split_once(' ') {
-            Some((n, r)) => (n, r),
-            None => (input, ""),
-        };
-
-        let cursor = u32::try_from(rest.len()).unwrap_or(u32::MAX);
-
-        let name_lower = name.to_lowercase();
-        let canonical = {
-            let aliases = self.aliases.read().expect("lock poisoned");
-            aliases.get(&name_lower).cloned().unwrap_or(name_lower)
-        };
-
-        let handler = {
-            let commands = self.commands.read().expect("lock poisoned");
-            commands.get(&canonical).map(|cmd| Arc::clone(&cmd.handler))
-        };
-
-        match handler {
-            Some(handler) => {
-                let partial_args: Vec<String> = if rest.is_empty() {
-                    vec![]
-                } else if rest.ends_with(' ') {
-                    let mut args: Vec<String> = rest.split_whitespace().map(String::from).collect();
-                    args.push(String::new());
-                    args
-                } else {
-                    rest.split_whitespace().map(String::from).collect()
-                };
-                handler
-                    .tab_complete_for(partial_args, cursor, player_id)
-                    .await
+            let mut aliases = Vec::new();
+            let mut rejected = Vec::new();
+            for requested in &spec.aliases {
+                match normalize(requested) {
+                    Some(alias) if alias == name || aliases.contains(&alias) => {}
+                    Some(alias) if table.labels.contains_key(&alias) => rejected.push(alias),
+                    Some(alias) => aliases.push(alias),
+                    None => rejected.push(requested.clone()),
+                }
             }
-            None => vec![],
+
+            for label in [&name, &key].into_iter().chain(&aliases) {
+                table.labels.insert(label.clone(), key.clone());
+            }
+            let mut spec = spec;
+            spec.name.clone_from(&name);
+            spec.aliases.clone_from(&aliases);
+            table.commands.insert(
+                key.clone(),
+                Entry {
+                    handler: Arc::from(handler),
+                    spec,
+                    owner: Some(owner.to_string()),
+                },
+            );
+            CommandRegistration::new(name, key, aliases, rejected)
+        };
+        self.bump();
+        Ok(registration)
+    }
+
+    pub fn unregister_owned(&self, owner: &str, name: &str) -> Result<String, CommandError> {
+        let removed = {
+            let mut table = self.write();
+            let key = match table.resolve(name) {
+                Some(entry) if entry.owner.as_deref() == Some(owner) => entry.namespaced(),
+                _ => None,
+            };
+            key.filter(|key| table.remove(key).is_some())
+        };
+        let key = removed.ok_or_else(|| CommandError::NotOwned(name.to_string()))?;
+        self.bump();
+        Ok(key)
+    }
+
+    pub fn list(&self) -> Vec<CommandInfo> {
+        let mut infos: Vec<CommandInfo> = self.read().commands.values().map(Entry::info).collect();
+        infos.sort_by(|a, b| a.name.cmp(&b.name).then(a.plugin_id.cmp(&b.plugin_id)));
+        infos
+    }
+
+    pub fn commands_for_plugin(&self, plugin_id: &str) -> Vec<CommandInfo> {
+        self.list()
+            .into_iter()
+            .filter(|info| info.plugin_id.as_deref() == Some(plugin_id))
+            .collect()
+    }
+
+    pub fn contains(&self, label: &str) -> bool {
+        self.read().resolve(label).is_some()
+    }
+
+    pub fn is_plugin_command(&self, label: &str) -> bool {
+        self.read()
+            .resolve(label)
+            .is_some_and(|entry| entry.owner.is_some())
+    }
+
+    pub fn tree_for(&self, source: Option<&CommandSource>) -> ProxyTree {
+        let table = self.read();
+        let mut entries: Vec<&Entry> = table
+            .commands
+            .values()
+            .filter(|entry| {
+                entry.owner.is_some() && source.is_some_and(|source| visible_to(entry, source))
+            })
+            .collect();
+        entries.sort_by_key(|entry| entry.namespaced());
+        ProxyTree {
+            commands: entries.into_iter().map(Entry::labels).collect(),
+            shadowed: table.labels.keys().cloned().collect(),
         }
+    }
+
+    fn resolve(&self, label: &str) -> Option<Entry> {
+        self.read().resolve(label).cloned()
+    }
+
+    pub async fn dispatch(&self, source: CommandSource, input: &str) -> DispatchOutcome {
+        let input = input.trim();
+        let (label, rest) = split_label(input);
+        if label.is_empty() {
+            return DispatchOutcome::Unknown;
+        }
+        let Some(entry) = self.resolve(label) else {
+            return DispatchOutcome::Unknown;
+        };
+        if !permitted(&entry, &source) {
+            source.send_message(ProxyMessage::error(COMMAND_DENIED));
+            return DispatchOutcome::Denied;
+        }
+        let mut ctx = CommandContext::new(source, label, rest.trim_start());
+        input.clone_into(&mut ctx.raw);
+        entry.handler.execute(ctx).await;
+        DispatchOutcome::Executed
+    }
+
+    pub async fn suggest(&self, source: CommandSource, input: &str) -> Option<Vec<Suggestion>> {
+        let input = input.trim_start();
+        let (label, rest) = input.split_once(char::is_whitespace)?;
+        let entry = self.resolve(label)?;
+        if !permitted(&entry, &source) {
+            return Some(Vec::new());
+        }
+        Some(
+            entry
+                .handler
+                .suggest(SuggestContext::new(source, label, rest))
+                .await,
+        )
     }
 }
 
@@ -212,88 +294,300 @@ impl Default for CommandManagerImpl {
     }
 }
 
-impl infrarust_api::command::private::Sealed for CommandManagerImpl {}
+fn permitted(entry: &Entry, source: &CommandSource) -> bool {
+    entry
+        .spec
+        .permission
+        .as_deref()
+        .is_none_or(|node| source.has_permission(node))
+}
 
-impl CommandManager for CommandManagerImpl {
-    fn register(
-        &self,
-        name: &str,
-        aliases: &[&str],
-        description: &str,
-        handler: Box<dyn CommandHandler>,
-    ) {
-        self.register_with_plugin_id(name, aliases, description, handler, "");
+fn visible_to(entry: &Entry, source: &CommandSource) -> bool {
+    !entry.spec.hidden && permitted(entry, source)
+}
+
+fn namespaced(owner: &str, name: &str) -> String {
+    format!("{}:{name}", owner.to_lowercase())
+}
+
+fn normalize(name: &str) -> Option<String> {
+    let name = name.trim();
+    let valid = !name.is_empty()
+        && !name.starts_with('/')
+        && !name
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == ':');
+    valid.then(|| name.to_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::sync::Mutex;
+
+    use infrarust_api::event::BoxFuture;
+
+    use super::*;
+
+    type Calls = Arc<Mutex<Vec<String>>>;
+
+    struct Recording {
+        tag: &'static str,
+        calls: Calls,
     }
 
-    fn register_with_plugin_id(
-        &self,
-        name: &str,
-        aliases: &[&str],
-        description: &str,
-        handler: Box<dyn CommandHandler>,
-        plugin_id: &str,
-    ) {
-        let name_lower = name.to_lowercase();
-
-        {
-            let commands = self.commands.read().expect("lock poisoned");
-            if let Some(existing) = commands.get(&name_lower)
-                && existing.is_builtin
-            {
-                tracing::warn!(
-                    "Plugin attempted to overwrite built-in command '{name}' — ignoring"
-                );
-                return;
-            }
+    impl CommandHandler for Recording {
+        fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
+            self.calls.lock().unwrap().push(format!(
+                "{}:{}:{}",
+                self.tag,
+                ctx.label,
+                ctx.args.join(",")
+            ));
+            Box::pin(async {})
         }
 
-        self.unregister(name);
-
-        let alias_list: Vec<String> = aliases.iter().map(|a| a.to_lowercase()).collect();
-
-        {
-            let mut alias_map = self.aliases.write().expect("lock poisoned");
-            for alias in &alias_list {
-                alias_map.insert(alias.clone(), name_lower.clone());
-            }
+        fn suggest<'a>(&'a self, ctx: SuggestContext) -> BoxFuture<'a, Vec<Suggestion>> {
+            Box::pin(
+                async move { vec![Suggestion::new(format!("{}-{}", self.tag, ctx.partial()))] },
+            )
         }
+    }
 
-        {
-            let mut commands = self.commands.write().expect("lock poisoned");
-            commands.insert(
-                name_lower,
-                RegisteredCommand {
-                    handler: Arc::from(handler),
-                    aliases: alias_list,
-                    description: description.to_string(),
-                    is_builtin: false,
-                    plugin_id: plugin_id.to_string(),
-                },
+    fn handler(tag: &'static str, calls: &Calls) -> Box<dyn CommandHandler> {
+        Box::new(Recording {
+            tag,
+            calls: Arc::clone(calls),
+        })
+    }
+
+    fn manager(calls: &Calls) -> CommandManagerImpl {
+        let manager = CommandManagerImpl::new();
+        manager.register_builtin(
+            CommandSpec::new("infrarust").alias("ir"),
+            handler("builtin", calls),
+        );
+        manager
+    }
+
+    fn taken(calls: &Calls) -> Vec<String> {
+        std::mem::take(&mut *calls.lock().unwrap())
+    }
+
+    #[tokio::test]
+    async fn a_second_plugin_cannot_shadow_or_unregister_the_first() {
+        let calls = Calls::default();
+        let m = manager(&calls);
+        m.register_owned("a", CommandSpec::new("hello"), handler("a", &calls))
+            .unwrap();
+
+        assert_eq!(
+            m.register_owned("b", CommandSpec::new("Hello"), handler("b", &calls)),
+            Err(CommandError::OwnedBy {
+                name: "hello".into(),
+                plugin: "a".into()
+            })
+        );
+        assert_eq!(
+            m.unregister_owned("b", "hello"),
+            Err(CommandError::NotOwned("hello".into()))
+        );
+        assert_eq!(
+            m.unregister_owned("b", "a:hello"),
+            Err(CommandError::NotOwned("a:hello".into()))
+        );
+
+        assert_eq!(
+            m.dispatch(CommandSource::Console, "hello x").await,
+            DispatchOutcome::Executed
+        );
+        assert_eq!(taken(&calls), ["a:hello:x"]);
+    }
+
+    #[tokio::test]
+    async fn builtin_names_and_aliases_are_reserved() {
+        let calls = Calls::default();
+        let m = manager(&calls);
+
+        assert_eq!(
+            m.register_owned("p", CommandSpec::new("IR"), handler("p", &calls)),
+            Err(CommandError::Reserved("ir".into()))
+        );
+        let registration = m
+            .register_owned(
+                "p",
+                CommandSpec::new("tool").aliases(["ir", "infrarust", "t", "bad name"]),
+                handler("p", &calls),
+            )
+            .unwrap();
+        assert_eq!(registration.aliases, ["t"]);
+        assert_eq!(
+            registration.rejected_aliases,
+            ["ir", "infrarust", "bad name"]
+        );
+
+        m.dispatch(CommandSource::Console, "ir").await;
+        m.dispatch(CommandSource::Console, "t").await;
+        assert_eq!(taken(&calls), ["builtin:ir:", "p:t:"]);
+    }
+
+    #[tokio::test]
+    async fn an_alias_clashing_with_another_plugin_is_skipped_not_stolen() {
+        let calls = Calls::default();
+        let m = manager(&calls);
+        m.register_owned(
+            "a",
+            CommandSpec::new("home").alias("h"),
+            handler("a", &calls),
+        )
+        .unwrap();
+        let registration = m
+            .register_owned(
+                "b",
+                CommandSpec::new("help2").alias("h"),
+                handler("b", &calls),
+            )
+            .unwrap();
+
+        assert_eq!(registration.rejected_aliases, ["h"]);
+        m.dispatch(CommandSource::Console, "h").await;
+        assert_eq!(taken(&calls), ["a:h:"]);
+    }
+
+    #[tokio::test]
+    async fn the_namespaced_name_always_reaches_the_owner() {
+        let calls = Calls::default();
+        let m = manager(&calls);
+        m.register_owned("A", CommandSpec::new("cmd"), handler("a", &calls))
+            .unwrap();
+        assert!(
+            m.register_owned("b", CommandSpec::new("cmd"), handler("b", &calls))
+                .is_err()
+        );
+
+        assert_eq!(
+            m.dispatch(CommandSource::Console, "a:cmd 1 2").await,
+            DispatchOutcome::Executed
+        );
+        assert_eq!(
+            m.dispatch(CommandSource::Console, "b:cmd").await,
+            DispatchOutcome::Unknown
+        );
+        assert_eq!(taken(&calls), ["a:a:cmd:1,2"]);
+    }
+
+    #[tokio::test]
+    async fn aliases_resolve_everywhere() {
+        let calls = Calls::default();
+        let m = manager(&calls);
+        m.register_owned(
+            "p",
+            CommandSpec::new("hello").alias("hi"),
+            handler("p", &calls),
+        )
+        .unwrap();
+
+        assert!(m.is_plugin_command("HI"));
+        assert!(m.is_plugin_command("p:hello"));
+        assert!(!m.is_plugin_command("ir"));
+        assert!(m.contains("ir"));
+        assert_eq!(
+            m.suggest(CommandSource::Console, "hi wo").await,
+            Some(vec![Suggestion::new("p-wo")])
+        );
+        assert_eq!(m.suggest(CommandSource::Console, "nope x").await, None);
+        assert_eq!(m.suggest(CommandSource::Console, "hi").await, None);
+    }
+
+    #[tokio::test]
+    async fn unregistering_frees_every_label_and_bumps_the_generation() {
+        let calls = Calls::default();
+        let m = manager(&calls);
+        let before = m.generation();
+        m.register_owned(
+            "p",
+            CommandSpec::new("hello").alias("hi"),
+            handler("p", &calls),
+        )
+        .unwrap();
+        assert!(m.generation() > before);
+
+        let registered = m.generation();
+        m.unregister_owned("p", "hi").unwrap();
+        assert!(m.generation() > registered);
+        assert!(!m.contains("hello"));
+        assert!(!m.contains("hi"));
+        assert!(!m.contains("p:hello"));
+        m.register_owned("q", CommandSpec::new("hi"), handler("q", &calls))
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_same_plugin_can_replace_its_own_command() {
+        let calls = Calls::default();
+        let m = manager(&calls);
+        m.register_owned(
+            "p",
+            CommandSpec::new("hello").alias("hi"),
+            handler("old", &calls),
+        )
+        .unwrap();
+        m.register_owned("p", CommandSpec::new("hello"), handler("new", &calls))
+            .unwrap();
+
+        m.dispatch(CommandSource::Console, "hello").await;
+        assert_eq!(taken(&calls), ["new:hello:"]);
+        assert!(!m.contains("hi"));
+    }
+
+    #[test]
+    fn invalid_names_are_refused() {
+        let calls = Calls::default();
+        let m = manager(&calls);
+        for bad in ["", "  ", "two words", "a:b", "/slash"] {
+            assert_eq!(
+                m.register_owned("p", CommandSpec::new(bad), handler("p", &calls)),
+                Err(CommandError::InvalidName(bad.into())),
+                "{bad:?}"
             );
         }
     }
 
-    fn unregister(&self, name: &str) {
-        let name_lower = name.to_lowercase();
+    #[test]
+    fn the_tree_hides_hidden_and_forbidden_commands_but_shadows_all_labels() {
+        let calls = Calls::default();
+        let m = manager(&calls);
+        m.register_owned(
+            "p",
+            CommandSpec::new("open").alias("o"),
+            handler("p", &calls),
+        )
+        .unwrap();
+        m.register_owned(
+            "p",
+            CommandSpec::new("secret").hidden(true),
+            handler("p", &calls),
+        )
+        .unwrap();
+        m.register_owned(
+            "p",
+            CommandSpec::new("admin").permission("p.admin"),
+            handler("p", &calls),
+        )
+        .unwrap();
 
-        let alias_list = {
-            let commands = self.commands.read().expect("lock poisoned");
-            commands
-                .get(&name_lower)
-                .map(|cmd| cmd.aliases.clone())
-                .unwrap_or_default()
-        };
-
-        {
-            let mut alias_map = self.aliases.write().expect("lock poisoned");
-            for alias in &alias_list {
-                alias_map.remove(alias);
-            }
-        }
-
-        {
-            let mut commands = self.commands.write().expect("lock poisoned");
-            commands.remove(&name_lower);
+        let console = m.tree_for(Some(&CommandSource::Console));
+        assert!(m.tree_for(None).commands.is_empty());
+        assert_eq!(
+            console.commands,
+            [
+                vec!["admin".to_string(), "p:admin".into()],
+                vec!["open".to_string(), "o".into(), "p:open".into()],
+            ]
+        );
+        for label in ["infrarust", "ir", "secret", "p:secret", "admin", "o"] {
+            assert!(console.shadowed.contains(label), "{label}");
         }
     }
 }

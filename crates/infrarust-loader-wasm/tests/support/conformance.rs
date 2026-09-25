@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::Path;
 
+use infrarust_api::command::CommandSource;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::connection::{
@@ -26,8 +27,8 @@ use infrarust_api::types::{
     Component, GameProfile, HoverEvent, NamedColor, PlayerId, ProtocolVersion, ServerId,
 };
 use infrarust_core::event_bus::EventBusImpl;
+use infrarust_core::services::command_manager::DispatchOutcome;
 
-use super::mock_services::MockPlayerRegistry;
 use super::native_scripted::ScriptedPlugin;
 use super::script::{self, EventName};
 use super::{TestEnv, make_env, read_log, write_script};
@@ -535,8 +536,9 @@ async fn drive(
             StepKind::Command(line) => {
                 let found = env
                     .command_manager
-                    .dispatch(None, line, &MockPlayerRegistry)
-                    .await;
+                    .dispatch(CommandSource::Console, line)
+                    .await
+                    == DispatchOutcome::Executed;
                 Outcome::same(if found { "found" } else { "missing" })
             }
             StepKind::Disable => {

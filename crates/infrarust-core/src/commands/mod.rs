@@ -7,13 +7,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use infrarust_api::command::{CommandContext, CommandHandler};
+use infrarust_api::command::{
+    CommandContext, CommandHandler, CommandSource, CommandSpec, SuggestContext, Suggestion,
+};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::message::ProxyMessage;
 use infrarust_api::permissions::PermissionLevel;
-use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
-use infrarust_api::types::PlayerId;
 
 use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
@@ -43,11 +43,17 @@ pub(crate) trait SubcommandHandler: Send + Sync {
     fn tab_complete<'a>(
         &'a self,
         _args: &'a [String],
-        _cursor: u32,
+        _source: &'a CommandSource,
         _services: &'a CommandServices,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async { Vec::new() })
     }
+}
+
+pub(crate) fn source_level(source: &CommandSource) -> PermissionLevel {
+    source
+        .player()
+        .map_or(PermissionLevel::Admin, |player| player.permission_level())
 }
 
 pub(crate) struct CommandServices {
@@ -95,8 +101,8 @@ impl InfrarustRootCommand {
 
     async fn complete_for_level(
         &self,
-        partial_args: Vec<String>,
-        cursor: u32,
+        partial_args: &[String],
+        source: &CommandSource,
         level: PermissionLevel,
     ) -> Vec<String> {
         match partial_args.len() {
@@ -123,7 +129,7 @@ impl InfrarustRootCommand {
                     return vec![];
                 }
                 if let Some(sub) = self.subcommands.get(&sub_name) {
-                    sub.tab_complete(&partial_args[1..], cursor, &self.services)
+                    sub.tab_complete(&partial_args[1..], source, &self.services)
                         .await
                 } else {
                     vec![]
@@ -134,41 +140,24 @@ impl InfrarustRootCommand {
 }
 
 impl CommandHandler for InfrarustRootCommand {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        _player_registry: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let sub_name = ctx.args.first().map(|s| s.to_lowercase());
-
-            if let Some(player_id) = ctx.player_id
-                && let Some(player) = self.services.player_registry.get_player_by_id(player_id)
-            {
-                let level = player.permission_level();
-                match sub_name.as_deref() {
-                    Some(name) => {
-                        if !self
-                            .services
-                            .permission_service
-                            .is_command_allowed(name, level)
-                        {
-                            let _ = player.send_message(ProxyMessage::error(NO_PERMISSION));
-                            return;
-                        }
-                    }
-                    None => {
-                        if self
-                            .services
-                            .permission_service
-                            .visible_subcommands(level)
-                            .is_empty()
-                        {
-                            let _ = player.send_message(ProxyMessage::error(NO_PERMISSION));
-                            return;
-                        }
-                    }
-                }
+            let level = source_level(&ctx.source);
+            let allowed = match sub_name.as_deref() {
+                Some(name) => self
+                    .services
+                    .permission_service
+                    .is_command_allowed(name, level),
+                None => !self
+                    .services
+                    .permission_service
+                    .visible_subcommands(level)
+                    .is_empty(),
+            };
+            if !allowed {
+                ctx.source.send_message(ProxyMessage::error(NO_PERMISSION));
+                return;
             }
 
             match sub_name.as_deref() {
@@ -194,49 +183,14 @@ impl CommandHandler for InfrarustRootCommand {
         })
     }
 
-    fn tab_complete<'a>(
-        &'a self,
-        partial_args: Vec<String>,
-        cursor: u32,
-    ) -> BoxFuture<'a, Vec<String>> {
+    fn suggest<'a>(&'a self, ctx: SuggestContext) -> BoxFuture<'a, Vec<Suggestion>> {
         Box::pin(async move {
-            match partial_args.len() {
-                0 | 1 => {
-                    let prefix = partial_args.first().map(String::as_str).unwrap_or("");
-                    self.subcommands
-                        .keys()
-                        .filter(|name| name.starts_with(prefix))
-                        .cloned()
-                        .collect()
-                }
-                _ => {
-                    let sub_name = partial_args[0].to_lowercase();
-                    if let Some(sub) = self.subcommands.get(&sub_name) {
-                        sub.tab_complete(&partial_args[1..], cursor, &self.services)
-                            .await
-                    } else {
-                        vec![]
-                    }
-                }
-            }
-        })
-    }
-
-    fn tab_complete_for<'a>(
-        &'a self,
-        partial_args: Vec<String>,
-        cursor: u32,
-        player_id: Option<PlayerId>,
-    ) -> BoxFuture<'a, Vec<String>> {
-        Box::pin(async move {
-            let Some(level) = player_id
-                .and_then(|id| self.services.player_registry.get_player_by_id(id))
-                .map(|p| p.permission_level())
-            else {
-                return self.tab_complete(partial_args, cursor).await;
-            };
-
-            self.complete_for_level(partial_args, cursor, level).await
+            let level = source_level(&ctx.source);
+            self.complete_for_level(&ctx.args, &ctx.source, level)
+                .await
+                .into_iter()
+                .map(Suggestion::new)
+                .collect()
         })
     }
 }
@@ -277,9 +231,10 @@ pub fn register_builtin_commands(
         .register_subcommands(all, admin_only);
 
     command_manager.register_builtin(
-        "infrarust",
-        &["ir"],
-        "Infrarust proxy commands",
+        CommandSpec::new("infrarust")
+            .alias("ir")
+            .description("Infrarust proxy commands")
+            .usage("/ir <subcommand>"),
         Box::new(root_cmd),
     );
 }
@@ -331,7 +286,11 @@ mod tests {
     async fn tab_complete_hides_admin_subcommands_from_players() {
         let root = root_command(&["list", "help"], &["kick"]);
         let names = root
-            .complete_for_level(vec![String::new()], 0, PermissionLevel::Player)
+            .complete_for_level(
+                &[String::new()],
+                &CommandSource::Console,
+                PermissionLevel::Player,
+            )
             .await;
 
         assert!(names.contains(&"list".to_string()));
@@ -346,7 +305,11 @@ mod tests {
     async fn tab_complete_shows_admin_subcommands_to_admins() {
         let root = root_command(&["list", "help"], &["kick"]);
         let names = root
-            .complete_for_level(vec![String::new()], 0, PermissionLevel::Admin)
+            .complete_for_level(
+                &[String::new()],
+                &CommandSource::Console,
+                PermissionLevel::Admin,
+            )
             .await;
 
         assert!(names.contains(&"kick".to_string()));
@@ -358,8 +321,8 @@ mod tests {
         let root = root_command(&["list", "help"], &["kick"]);
         let suggestions = root
             .complete_for_level(
-                vec!["kick".to_string(), String::new()],
-                0,
+                &["kick".to_string(), String::new()],
+                &CommandSource::Console,
                 PermissionLevel::Player,
             )
             .await;

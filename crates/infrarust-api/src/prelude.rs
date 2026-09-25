@@ -48,7 +48,10 @@ pub use crate::limbo::{
 pub use crate::virtual_backend::{VirtualBackendHandler, VirtualBackendSession};
 
 // Commands
-pub use crate::command::{CommandContext, CommandHandler, CommandManager};
+pub use crate::command::{
+    CommandContext, CommandError, CommandHandler, CommandInfo, CommandManager, CommandRegistration,
+    CommandSource, CommandSpec, SuggestContext, Suggestion,
+};
 
 // Proxy messages
 pub use crate::message::ProxyMessage;

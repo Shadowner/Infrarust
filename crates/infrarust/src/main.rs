@@ -295,6 +295,7 @@ async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Re
         )),
         Arc::clone(running.plugin_manager()),
         Arc::clone(&services.permission_service),
+        Arc::clone(&services.command_manager),
         shutdown.clone(),
         running.start_time(),
     ));

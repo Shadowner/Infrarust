@@ -1,9 +1,12 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use infrarust_api::command::CommandSource;
+
 use super::ConsoleServices;
 use super::output::{CommandCategory, CommandOutput};
 use super::parser;
+use crate::services::command_manager::DispatchOutcome;
 
 pub trait ConsoleCommand: Send + Sync {
     fn name(&self) -> &str;
@@ -72,6 +75,8 @@ impl CommandDispatcher {
     }
 
     pub async fn dispatch(&self, line: &str, services: &ConsoleServices) -> CommandOutput {
+        let line = line.trim_start();
+        let line = line.strip_prefix('/').unwrap_or(line);
         let parsed = match parser::parse_line(line) {
             Some(p) => p,
             None => return CommandOutput::None,
@@ -84,9 +89,19 @@ impl CommandDispatcher {
             .iter()
             .find(|cmd| cmd.name() == name || cmd.aliases().iter().any(|a| *a == name));
 
-        match command {
-            Some(cmd) => cmd.execute(&parsed.args, services).await,
-            None => CommandOutput::Error(format!(
+        if let Some(cmd) = command {
+            return cmd.execute(&parsed.args, services).await;
+        }
+        match services
+            .command_manager
+            .dispatch(CommandSource::Console, line)
+            .await
+        {
+            DispatchOutcome::Executed => CommandOutput::None,
+            DispatchOutcome::Denied => {
+                CommandOutput::Error(format!("The console may not run '{name}'."))
+            }
+            DispatchOutcome::Unknown => CommandOutput::Error(format!(
                 "Unknown command: '{name}'. Type 'help' for available commands."
             )),
         }

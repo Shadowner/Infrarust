@@ -29,6 +29,14 @@ pub fn skip_nbt_compound(r: &mut &[u8]) -> ProtocolResult<()> {
     skip_compound_payload(r, 0)
 }
 
+pub fn skip_network_nbt(r: &mut &[u8]) -> ProtocolResult<()> {
+    let tag_type = r.read_u8()?;
+    if tag_type == TAG_END {
+        return Err(ProtocolError::invalid("network NBT starts with TAG_End"));
+    }
+    skip_tag_payload(r, tag_type, 0)
+}
+
 fn skip_compound_payload(r: &mut &[u8], depth: u32) -> ProtocolResult<()> {
     if depth > MAX_DEPTH {
         return Err(ProtocolError::invalid("NBT nesting depth exceeded"));

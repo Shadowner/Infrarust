@@ -1,4 +1,4 @@
-use infrarust_api::command::CommandContext;
+use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::message::ProxyMessage;
 use infrarust_api::permissions::PermissionLevel;
@@ -34,15 +34,10 @@ impl SubcommandHandler for BroadcastSubcommand {
         services: &'a CommandServices,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player_id) = ctx.player_id else {
-                return;
-            };
-            let Some(sender) = services.player_registry.get_player_by_id(player_id) else {
-                return;
-            };
+            let sender = &ctx.source;
 
             if args.is_empty() {
-                let _ = sender.send_message(ProxyMessage::error(
+                sender.send_message(ProxyMessage::error(
                     "Usage: /ir broadcast <message> [--server <name>]",
                 ));
                 return;
@@ -68,7 +63,7 @@ impl SubcommandHandler for BroadcastSubcommand {
             }
 
             if message_parts.is_empty() {
-                let _ = sender.send_message(ProxyMessage::error("No message provided."));
+                sender.send_message(ProxyMessage::error("No message provided."));
                 return;
             }
 
@@ -83,7 +78,7 @@ impl SubcommandHandler for BroadcastSubcommand {
                         .get_server_config(&server_id)
                         .is_none()
                     {
-                        let _ = sender.send_message(ProxyMessage::error(&format!(
+                        sender.send_message(ProxyMessage::error(&format!(
                             "Server '{server_name}' not found."
                         )));
                         return;
@@ -103,7 +98,7 @@ impl SubcommandHandler for BroadcastSubcommand {
                 .map(|s| format!(" on '{s}'"))
                 .unwrap_or_default();
 
-            let _ = sender.send_message(ProxyMessage::success(&format!(
+            sender.send_message(ProxyMessage::success(&format!(
                 "Broadcast sent to {count} player{}{scope}.",
                 if count == 1 { "" } else { "s" }
             )));
@@ -113,7 +108,7 @@ impl SubcommandHandler for BroadcastSubcommand {
     fn tab_complete<'a>(
         &'a self,
         args: &'a [String],
-        _cursor: u32,
+        _source: &'a CommandSource,
         services: &'a CommandServices,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async move {

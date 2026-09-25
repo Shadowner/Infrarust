@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use infrarust_api::command::CommandManager;
 use infrarust_api::services::ban_service::BanService;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
@@ -92,7 +91,7 @@ pub fn make_env_with(plugins_dir: PathBuf, options: EnvOptions) -> TestEnv {
         player_registry: options.player_registry,
         server_manager: Arc::new(NoopServerManager),
         ban_service: options.ban_service,
-        command_manager: Arc::clone(&command_manager) as Arc<dyn CommandManager>,
+        command_manager: Arc::clone(&command_manager),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: options.config_service,
         load_balancer_service: Arc::new(MockLoadBalancerService),

@@ -25,6 +25,7 @@ use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::provider::ProviderId;
 use crate::routing::DomainRouter;
+use crate::services::command_manager::CommandManagerImpl;
 
 use super::tracking::{TrackingCommandManager, TrackingEventBus, TrackingScheduler};
 
@@ -56,7 +57,6 @@ pub struct PluginContextImpl {
     capabilities: CapabilitySet,
 
     // Shared tracking state (also held by the wrappers)
-    registered_commands: Arc<Mutex<Vec<String>>>,
     registered_tasks: Arc<Mutex<Vec<TaskHandle>>>,
     registered_provider_ids: Arc<Mutex<Vec<ProviderId>>>,
     registered_provider_tokens: Arc<Mutex<Vec<CancellationToken>>>,
@@ -73,7 +73,7 @@ impl PluginContextImpl {
         config_service: Arc<dyn ConfigService>,
         load_balancer_service: Arc<dyn LoadBalancerService>,
         plugin_registry: Arc<dyn PluginRegistry>,
-        command_manager: Arc<dyn CommandManager>,
+        command_manager: Arc<CommandManagerImpl>,
         scheduler: Arc<dyn Scheduler>,
         codec_filter_registry: Arc<CodecFilterRegistryImpl>,
         transport_filter_registry: Arc<TransportFilterRegistryImpl>,
@@ -83,13 +83,11 @@ impl PluginContextImpl {
         plugins_dir: PathBuf,
         capabilities: CapabilitySet,
     ) -> Self {
-        let registered_commands = Arc::new(Mutex::new(Vec::new()));
         let registered_tasks = Arc::new(Mutex::new(Vec::new()));
 
         let tracking_bus = Arc::new(TrackingEventBus::new(event_bus, &plugin_id));
         let tracking_cmd = Arc::new(TrackingCommandManager::new(
             command_manager,
-            Arc::clone(&registered_commands),
             plugin_id.clone(),
         ));
         let tracking_sched = Arc::new(TrackingScheduler::new(
@@ -125,7 +123,6 @@ impl PluginContextImpl {
             plugin_id,
             plugins_dir,
             capabilities,
-            registered_commands,
             registered_tasks,
             registered_provider_ids: Arc::new(Mutex::new(Vec::new())),
             registered_provider_tokens: Arc::new(Mutex::new(Vec::new())),
@@ -157,16 +154,16 @@ impl PluginContextImpl {
             .push(token);
     }
 
+    pub fn tracked_commands(&self) -> Vec<String> {
+        self.command_manager.tracked()
+    }
+
     pub fn cleanup(&self) {
         // Unsubscribe all event listeners
         self.event_bus.unsubscribe_all();
 
         // Unregister all commands
-        let commands =
-            std::mem::take(&mut *self.registered_commands.lock().expect("lock poisoned"));
-        for cmd in commands {
-            self.command_manager.unregister(&cmd);
-        }
+        self.command_manager.unregister_all();
 
         // Cancel all scheduled tasks
         let tasks = std::mem::take(&mut *self.registered_tasks.lock().expect("lock poisoned"));
@@ -247,6 +244,10 @@ impl PluginContext for PluginContextImpl {
 
     fn command_manager(&self) -> &dyn CommandManager {
         self.command_manager.as_ref()
+    }
+
+    fn command_manager_handle(&self) -> Arc<dyn CommandManager> {
+        Arc::clone(&self.command_manager) as Arc<dyn CommandManager>
     }
 
     fn scheduler(&self) -> &dyn Scheduler {

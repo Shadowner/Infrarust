@@ -31,7 +31,7 @@ fn test_plugin_context_construction() {
     // the full infrastructure. This test verifies the type system works.
     let _event_bus: Arc<dyn infrarust_api::event::bus::EventBus> = event_bus;
     let _player_registry: Arc<dyn PlayerRegistry> = player_registry;
-    let _command_manager: Arc<dyn infrarust_api::command::CommandManager> = command_manager;
+    let _command_manager: Arc<CommandManagerImpl> = command_manager;
     let _scheduler: Arc<dyn Scheduler> = scheduler;
 }
 
@@ -59,9 +59,13 @@ async fn test_per_plugin_ids() {
     scheduler.cancel(handle);
 
     // Verify CommandManagerImpl register/unregister
-    use infrarust_api::command::CommandManager;
-    command_manager.register("test", &["t"], "A test command", Box::new(NoopHandler));
-    command_manager.unregister("test");
+    let spec = infrarust_api::command::CommandSpec::new("test").alias("t");
+    command_manager
+        .register_owned("test_plugin", spec, Box::new(NoopHandler))
+        .unwrap();
+    command_manager
+        .unregister_owned("test_plugin", "test")
+        .unwrap();
 
     let _ = event_bus;
     let _ = connection_registry;
@@ -73,7 +77,6 @@ impl infrarust_api::command::CommandHandler for NoopHandler {
     fn execute<'a>(
         &'a self,
         _ctx: infrarust_api::command::CommandContext,
-        _player_registry: &'a dyn PlayerRegistry,
     ) -> infrarust_api::event::BoxFuture<'a, ()> {
         Box::pin(async {})
     }

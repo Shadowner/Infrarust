@@ -7,15 +7,17 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use infrarust_api::command::CommandSource;
 use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::loader::PluginLoader;
 use infrarust_api::types::ProtocolVersion;
+use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutcome};
 use infrarust_loader_wasm::WasmPluginLoader;
 use tracing::Level;
 use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
-use support::mock_services::{CountingPlayerRegistry, MapConfigService, MockPlayerRegistry};
+use support::mock_services::{CountingPlayerRegistry, MapConfigService};
 use support::{
     EnvOptions, TestEnv, fresh_loader, load_enabled, loader_from_toml, make_env_with, nil_profile,
     read_log, stage, write_script,
@@ -216,9 +218,7 @@ async fn a_plugin_denied_events_and_commands_still_runs() {
         loader.discover(&plugins_dir).await.unwrap();
         let _plugin = load_enabled(&loader, &env.factory, "scripted").await;
         env.event_bus.fire(post_login()).await;
-        env.command_manager
-            .dispatch(None, "probe", &MockPlayerRegistry)
-            .await
+        dispatch_line(&env.command_manager, "probe").await
     }
     .with_subscriber(logs.clone())
     .await;
@@ -238,4 +238,8 @@ async fn a_plugin_denied_events_and_commands_still_runs() {
         assert_eq!(report.len(), 1, "{interface}: {lines:?}");
         assert!(report[0].contains(capability), "{report:?}");
     }
+}
+
+async fn dispatch_line(commands: &CommandManagerImpl, line: &str) -> bool {
+    commands.dispatch(CommandSource::Console, line).await == DispatchOutcome::Executed
 }

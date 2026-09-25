@@ -7,6 +7,7 @@
 //!
 //! Codec filters are applied to every packet BEFORE the EventBus.
 
+use infrarust_api::command::CommandSource;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::services::player_registry::PlayerRegistry;
@@ -37,10 +38,12 @@ use crate::filter::codec_chain::{CodecFilterChain, FilterResult};
 use crate::player::PlayerCommand;
 use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::services::ProxyServices;
+use crate::services::command_manager::DispatchOutcome;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::kick::BackendKick;
 use crate::session::server_join::ServerJoin;
+use crate::util::text::encode_text_component;
 
 /// Result of the proxy loop, determining what happens after the loop ends.
 #[derive(Debug)]
@@ -199,6 +202,8 @@ pub async fn proxy_loop(
     join: &mut Option<ServerJoin>,
 ) -> ProxyLoopOutcome {
     let hot_ids = HotIds::resolve(registry, client.protocol_version);
+    let mut tree_updates = services.command_manager.subscribe();
+    let mut backend_tree: Option<CCommands> = None;
     let mut in_game = client.state() == ConnectionState::Play;
     if in_game {
         let outcome = commands.drain(client, registry, in_game);
@@ -214,6 +219,7 @@ pub async fn proxy_loop(
             biased;
             Some(command) = commands.recv() => LoopEvent::Command(command),
             () = shutdown.cancelled() => LoopEvent::Shutdown,
+            Ok(()) = tree_updates.changed() => LoopEvent::CommandsChanged,
             event = next_frame(client, backend) => event,
         };
         match event {
@@ -227,6 +233,25 @@ pub async fn proxy_loop(
                 }
                 if let Some(end) = settle_commands(client, registry, outcome).await {
                     break end;
+                }
+            }
+            LoopEvent::CommandsChanged => {
+                if let Some(tree) = backend_tree.as_ref()
+                    && client.state() == ConnectionState::Play
+                    && let Some(frame) = command_tree_frame(
+                        tree,
+                        services,
+                        player_id,
+                        &hot_ids,
+                        client.protocol_version,
+                    )
+                {
+                    if let Err(e) = client.queue_frame(&frame) {
+                        tracing::warn!("failed to queue the refreshed command tree: {e}");
+                    }
+                    if let Err(e) = client.flush().await {
+                        tracing::warn!("failed to flush the refreshed command tree: {e}");
+                    }
                 }
             }
             LoopEvent::Shutdown => {
@@ -311,6 +336,7 @@ pub async fn proxy_loop(
                         player_id,
                         server_codec_chain,
                         &hot_ids,
+                        &mut backend_tree,
                     )
                     .await;
                     in_game |= joins && result.is_ok();
@@ -332,6 +358,7 @@ pub async fn proxy_loop(
                                     player_id,
                                     server_codec_chain,
                                     &hot_ids,
+                                    &mut backend_tree,
                                 )
                                 .await;
                                 in_game |= joins && result.is_ok();
@@ -386,6 +413,7 @@ pub async fn proxy_loop(
 enum LoopEvent {
     Command(PlayerCommand),
     Shutdown,
+    CommandsChanged,
     Client(Result<Option<PacketFrame>, CoreError>),
     Backend(Result<Option<PacketFrame>, CoreError>),
 }
@@ -419,6 +447,49 @@ async fn kick(
     }
     ProxyLoopOutcome::Kicked {
         reason: reason.clone(),
+    }
+}
+
+fn command_tree_frame(
+    tree: &CCommands,
+    services: &ProxyServices,
+    player_id: PlayerId,
+    hot_ids: &HotIds,
+    version: ProtocolVersion,
+) -> Option<PacketFrame> {
+    let id = hot_ids.c_commands?;
+    let player = services.player_registry.get_player_by_id(player_id);
+    let (proxy_tree, visible) = match player {
+        Some(player) => {
+            let visible = services
+                .permission_service
+                .visible_subcommands(player.permission_level());
+            (
+                services
+                    .command_manager
+                    .tree_for(Some(&CommandSource::Player(player))),
+                visible,
+            )
+        }
+        None => (
+            services.command_manager.tree_for(None),
+            std::collections::HashSet::new(),
+        ),
+    };
+    let mut modified = tree.clone();
+    crate::commands::brigadier::inject_proxy_commands(
+        &mut modified,
+        version,
+        &proxy_tree,
+        Some(&visible),
+    );
+    let mut buf = Vec::new();
+    match infrarust_protocol::packets::Packet::encode(&modified, &mut buf, version) {
+        Ok(()) => Some(PacketFrame::new(id, buf.into())),
+        Err(e) => {
+            tracing::warn!("failed to re-encode CCommands: {e}");
+            None
+        }
     }
 }
 
@@ -530,51 +601,40 @@ async fn handle_client_to_backend(
         }
 
         if Some(frame.id) == hot_ids.s_tab_request
+            && let Some(resp_id) = hot_ids.c_tab_response
             && let Ok(DecodedPacket::Typed { id: _, packet }) =
                 registry.decode_frame(&frame, state, Direction::Serverbound, version)
             && let Some(req) = packet.as_any().downcast_ref::<STabCompleteRequest>()
+            && let Some(input) = req.text.trim_start().strip_prefix('/')
+            && let Some(player) = services.player_registry.get_player_by_id(player_id)
+            && let Some(suggestions) = services
+                .command_manager
+                .suggest(CommandSource::Player(player), input)
+                .await
         {
-            let text = req.text.trim_start();
-            let should_intercept = if text.starts_with("/infrarust ") || text.starts_with("/ir ") {
-                true
-            } else {
-                let cmd_name = text
-                    .trim_start_matches('/')
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("");
-                !cmd_name.is_empty() && services.command_manager.is_plugin_command(cmd_name)
+            let text = req.text.as_str();
+            let start = text.rfind(' ').map_or(0, |i| i + 1);
+            let response = CTabCompleteResponse {
+                transaction_id: req.transaction_id,
+                start: i32::try_from(start).unwrap_or(i32::MAX),
+                length: i32::try_from(text.len() - start).unwrap_or(i32::MAX),
+                matches: suggestions
+                    .into_iter()
+                    .map(|suggestion| TabCompleteMatch {
+                        text: suggestion.text,
+                        tooltip: suggestion.tooltip.map(|tooltip| {
+                            encode_text_component(&tooltip, version, ConnectionState::Play)
+                        }),
+                    })
+                    .collect(),
             };
-
-            if should_intercept {
-                let cmd_input = text.trim_start_matches('/');
-                let suggestions = services
-                    .command_manager
-                    .tab_complete_for_player(cmd_input, Some(player_id))
-                    .await;
-                let last_space = text.rfind(' ').unwrap_or(0) + 1;
-                let response = CTabCompleteResponse {
-                    transaction_id: req.transaction_id,
-                    start: last_space as i32,
-                    length: (text.len() - last_space) as i32,
-                    matches: suggestions
-                        .into_iter()
-                        .map(|s| TabCompleteMatch {
-                            text: s,
-                            tooltip: None,
-                        })
-                        .collect(),
-                };
-                if let Some(resp_id) = hot_ids.c_tab_response {
-                    let mut buf = Vec::new();
-                    if infrarust_protocol::packets::Packet::encode(&response, &mut buf, version)
-                        .is_ok()
-                    {
-                        let resp_frame = PacketFrame::new(resp_id, buf.into());
-                        client.queue_frame(&resp_frame)?;
-                        return Ok(());
-                    }
+            let mut buf = Vec::new();
+            match infrarust_protocol::packets::Packet::encode(&response, &mut buf, version) {
+                Ok(()) => {
+                    client.queue_frame(&PacketFrame::new(resp_id, buf.into()))?;
+                    return Ok(());
                 }
+                Err(e) => tracing::warn!("failed to encode proxy command suggestions: {e}"),
             }
         }
 
@@ -587,15 +647,15 @@ async fn handle_client_to_backend(
         ) {
             match action {
                 ChatAction::Command(input) => {
-                    // CommandManager first
-                    let handled = services
-                        .command_manager
-                        .dispatch(Some(player_id), &input, services.player_registry.as_ref())
-                        .await;
-                    if handled {
-                        return Ok(()); // Command consumed, don't forward
+                    if let Some(player) = services.player_registry.get_player_by_id(player_id) {
+                        let outcome = services
+                            .command_manager
+                            .dispatch(CommandSource::Player(player), &input)
+                            .await;
+                        if outcome != DispatchOutcome::Unknown {
+                            return Ok(());
+                        }
                     }
-                    // Unknown command → forward normally to backend
                 }
                 ChatAction::Message(text) => {
                     // Fire ChatMessageEvent
@@ -708,6 +768,7 @@ async fn handle_backend_to_client(
     player_id: PlayerId,
     codec_chain: &mut CodecFilterChain,
     hot_ids: &HotIds,
+    backend_tree: &mut Option<CCommands>,
 ) -> Result<BackendAction, CoreError> {
     let version = client.protocol_version;
     let state = backend.state;
@@ -761,51 +822,18 @@ async fn handle_backend_to_client(
             return Ok(BackendAction::Continue);
         }
 
-        match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
-            Ok(DecodedPacket::Typed { id, packet }) => {
-                if let Some(commands) = packet.as_any().downcast_ref::<CCommands>() {
-                    if services.config.announce_proxy_commands {
-                        let mut modified = commands.clone();
-                        let plugin_cmds = services.command_manager.list_plugin_commands();
-                        let visible =
-                            services
-                                .player_registry
-                                .get_player_by_id(player_id)
-                                .map(|p| {
-                                    services
-                                        .permission_service
-                                        .visible_subcommands(p.permission_level())
-                                });
-                        crate::commands::brigadier::inject_proxy_commands(
-                            &mut modified,
-                            version,
-                            &plugin_cmds,
-                            visible.as_ref(),
-                        );
-                        let mut buf = Vec::new();
-                        if let Err(e) = infrarust_protocol::packets::Packet::encode(
-                            &modified, &mut buf, version,
-                        ) {
-                            tracing::warn!("failed to re-encode CCommands: {e}");
-                            client.queue_frame(&frame)?;
-                        } else {
-                            let new_frame = PacketFrame::new(id, buf.into());
-                            client.queue_frame(&new_frame)?;
-                        }
-                    } else {
-                        client.queue_frame(&frame)?;
-                    }
-                } else {
-                    client.queue_frame(&frame)?;
-                }
+        let tree = match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
+            Ok(DecodedPacket::Typed { packet, .. }) => {
+                packet.as_any().downcast_ref::<CCommands>().cloned()
             }
-            Ok(DecodedPacket::Opaque { .. }) => {
-                client.queue_frame(&frame)?;
-            }
-            Err(_) => {
-                // Should not happen with encode_only cleanup, but forward anyway
-                client.queue_frame(&frame)?;
-            }
+            Ok(DecodedPacket::Opaque { .. }) | Err(_) => None,
+        };
+        let injected = tree
+            .as_ref()
+            .and_then(|tree| command_tree_frame(tree, services, player_id, hot_ids, version));
+        client.queue_frame(injected.as_ref().unwrap_or(&frame))?;
+        if tree.is_some() {
+            *backend_tree = tree;
         }
         return Ok(BackendAction::Continue);
     }

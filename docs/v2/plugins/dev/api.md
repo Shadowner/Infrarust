@@ -85,6 +85,7 @@ The `PluginContext` trait provides access to every service and registration meth
 | `load_balancer_service()` | `&dyn LoadBalancerService` | Read per-address backend status, drain or reset an address |
 | `load_balancer_service_handle()` | `Arc<dyn LoadBalancerService>` | Cloneable handle for closures |
 | `command_manager()` | `&dyn CommandManager` | Register and unregister commands |
+| `command_manager_handle()` | `Arc<dyn CommandManager>` | Owned handle for registering commands after `on_enable` |
 | `scheduler()` | `&dyn Scheduler` | Schedule delayed and recurring tasks |
 | `plugin_registry()` | `&dyn PluginRegistry` | Read-only view of loaded plugins |
 | `plugin_registry_handle()` | `Arc<dyn PluginRegistry>` | Cloneable handle for closures |
@@ -438,19 +439,27 @@ Draining stops new sessions from reaching an address without closing the ones al
 
 ## CommandManager
 
-Register commands that players (or the console) can execute.
+Register commands that players and the console can run. The manager you get from the context is bound to your plugin: it registers commands under your plugin id and can only unregister your own commands.
 
 ```rust
-ctx.command_manager().register(
-    "hello",             // command name
-    &["hi", "hey"],      // aliases
-    "Says hello",        // description
-    Box::new(HelloCommand),
-);
+let spec = CommandSpec::new("hello")
+    .aliases(["hi", "hey"])
+    .description("Says hello")
+    .permission("hello.use");
 
-// Later, to remove it:
-ctx.command_manager().unregister("hello");
+match ctx.command_manager().register(spec, Box::new(HelloCommand)) {
+    Ok(registration) => tracing::info!("registered /{}", registration.namespaced),
+    Err(e) => tracing::warn!("/hello was not registered: {e}"),
+}
+
+let _ = ctx.command_manager().unregister("hello");
 ```
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `register(spec, handler)` | `Result<CommandRegistration, CommandError>` | Register a command; see the conflict rules on the [Commands page](./commands#names-aliases-and-conflicts) |
+| `unregister(name)` | `Result<(), CommandError>` | Remove one of your commands by name, alias, or `<plugin_id>:<name>` |
+| `list()` | `Vec<CommandInfo>` | Every registered command, built-ins and other plugins included |
 
 Implement `CommandHandler` for your command struct:
 
@@ -458,37 +467,21 @@ Implement `CommandHandler` for your command struct:
 struct HelloCommand;
 
 impl CommandHandler for HelloCommand {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        player_registry: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(id) = ctx.player_id {
-                if let Some(player) = player_registry.get_player_by_id(id) {
-                    let _ = player.send_message(
-                        Component::text("Hello!").color("gold"),
-                    );
-                }
-            }
+            ctx.source.send_message(Component::text("Hello!").color("gold"));
         })
     }
 
-    fn tab_complete<'a>(
-        &'a self,
-        _partial_args: Vec<String>,
-        _cursor: u32,
-    ) -> BoxFuture<'a, Vec<String>> {
-        Box::pin(async { vec!["world".into(), "proxy".into()] })
+    fn suggest<'a>(&'a self, _ctx: SuggestContext) -> BoxFuture<'a, Vec<Suggestion>> {
+        Box::pin(async { vec![Suggestion::new("world"), Suggestion::new("proxy")] })
     }
 }
 ```
 
-`execute` is required. `tab_complete` is async like `execute`, takes the partial arguments and a `cursor` byte offset, and has a default implementation that returns no suggestions. Override `tab_complete_for` instead if your suggestions depend on which player is typing; its default delegates to `tab_complete`.
+`execute` is required. `suggest` has a default that returns no suggestions.
 
-`CommandContext` provides `player_id` (`None` for console commands), `args` (split by whitespace), and `raw` (the full command string).
-
-`CommandManager::register` takes the name, an alias slice, a description, and the boxed handler. There is also a `register_with_plugin_id` variant that associates the command with a specific plugin for cleanup on unload.
+`CommandContext` provides `source` (a `CommandSource`: a player or the console), `label` (the name or alias typed), `args` (split by whitespace), `raw_args` (everything after the label), and `raw` (the whole command). `CommandSource` offers `name()`, `send_message()`, `has_permission()`, and `player()`. See the [Commands page](./commands) for permission nodes, hidden commands, and the client command tree.
 
 ## EventBus
 

@@ -1,8 +1,7 @@
-use infrarust_api::command::CommandContext;
+use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::message::ProxyMessage;
 use infrarust_api::services::config_service::ConfigService;
-use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::ServerId;
 
 use crate::commands::{CommandServices, SubcommandHandler};
@@ -29,10 +28,9 @@ impl SubcommandHandler for ServerSubcommand {
         services: &'a CommandServices,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player_id) = ctx.player_id else {
-                return;
-            };
-            let Some(player) = services.player_registry.get_player_by_id(player_id) else {
+            let Some(player) = ctx.source.player() else {
+                ctx.source
+                    .send_message(ProxyMessage::error("Only players can switch servers."));
                 return;
             };
 
@@ -80,7 +78,7 @@ impl SubcommandHandler for ServerSubcommand {
     fn tab_complete<'a>(
         &'a self,
         args: &'a [String],
-        _cursor: u32,
+        _source: &'a CommandSource,
         services: &'a CommandServices,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async move {

@@ -4,7 +4,9 @@ use std::any::{Any, TypeId};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use infrarust_api::command::{CommandHandler, CommandManager};
+use infrarust_api::command::{
+    CommandError, CommandHandler, CommandInfo, CommandManager, CommandRegistration, CommandSpec,
+};
 use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus, FireError};
 use infrarust_api::event::{
     BoxFuture, ConnectionState, ListenerHandle, PacketDirection, PacketFilter,
@@ -13,6 +15,7 @@ use infrarust_api::services::scheduler::{Scheduler, TaskHandle};
 
 use crate::event_bus::EventBusImpl;
 use crate::event_bus::handler::HandlerKind;
+use crate::services::command_manager::CommandManagerImpl;
 
 /// Wraps an [`EventBus`] and records all [`ListenerHandle`]s for later cleanup.
 pub struct TrackingEventBus {
@@ -145,23 +148,31 @@ impl EventBus for TrackingEventBus {
     }
 }
 
-/// Wraps a [`CommandManager`] and records registered command names for cleanup.
 pub struct TrackingCommandManager {
-    inner: Arc<dyn CommandManager>,
-    commands: Arc<Mutex<Vec<String>>>,
+    inner: Arc<CommandManagerImpl>,
+    commands: Mutex<Vec<String>>,
     plugin_id: String,
 }
 
 impl TrackingCommandManager {
-    pub fn new(
-        inner: Arc<dyn CommandManager>,
-        commands: Arc<Mutex<Vec<String>>>,
-        plugin_id: String,
-    ) -> Self {
+    pub fn new(inner: Arc<CommandManagerImpl>, plugin_id: String) -> Self {
         Self {
             inner,
-            commands,
+            commands: Mutex::new(Vec::new()),
             plugin_id,
+        }
+    }
+
+    pub fn tracked(&self) -> Vec<String> {
+        self.commands.lock().expect("lock poisoned").clone()
+    }
+
+    pub fn unregister_all(&self) {
+        let commands = std::mem::take(&mut *self.commands.lock().expect("lock poisoned"));
+        for key in commands {
+            if let Err(e) = self.inner.unregister_owned(&self.plugin_id, &key) {
+                tracing::debug!(plugin = %self.plugin_id, "command already gone at cleanup: {e}");
+            }
         }
     }
 }
@@ -171,21 +182,28 @@ impl infrarust_api::command::private::Sealed for TrackingCommandManager {}
 impl CommandManager for TrackingCommandManager {
     fn register(
         &self,
-        name: &str,
-        aliases: &[&str],
-        description: &str,
+        spec: CommandSpec,
         handler: Box<dyn CommandHandler>,
-    ) {
-        self.inner
-            .register_with_plugin_id(name, aliases, description, handler, &self.plugin_id);
+    ) -> Result<CommandRegistration, CommandError> {
+        let registration = self.inner.register_owned(&self.plugin_id, spec, handler)?;
+        let mut commands = self.commands.lock().expect("lock poisoned");
+        if !commands.contains(&registration.namespaced) {
+            commands.push(registration.namespaced.clone());
+        }
+        Ok(registration)
+    }
+
+    fn unregister(&self, name: &str) -> Result<(), CommandError> {
+        let key = self.inner.unregister_owned(&self.plugin_id, name)?;
         self.commands
             .lock()
             .expect("lock poisoned")
-            .push(name.to_string());
+            .retain(|tracked| *tracked != key);
+        Ok(())
     }
 
-    fn unregister(&self, name: &str) {
-        self.inner.unregister(name);
+    fn list(&self) -> Vec<CommandInfo> {
+        self.inner.list()
     }
 }
 

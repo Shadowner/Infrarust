@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
+use infrarust_api::command::{CommandContext, CommandHandler, CommandSource, CommandSpec};
+use infrarust_api::event::BoxFuture;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::connection::{
     ConnectCause, ServerPreConnectEvent, ServerPreConnectResult,
@@ -18,15 +20,16 @@ use infrarust_api::events::connection::{
 use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
+use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
 use infrarust_core::event_bus::EventBusConfig;
 use infrarust_core::plugin::PluginContextFactoryImpl;
+use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutcome};
 use infrarust_loader_wasm::WasmPluginLoader;
 use tracing::instrument::WithSubscriber;
 
 use support::mock_services::{
-    CountingPlayerRegistry, Gate, GatedBanService, MapConfigService, MockPlayerRegistry,
-    RecordingPlayerRegistry,
+    CountingPlayerRegistry, Gate, GatedBanService, MapConfigService, RecordingPlayerRegistry,
 };
 use support::{
     EnvOptions, TestEnv, add_fixture, fresh_loader, load_enabled, loader_from_toml, make_env,
@@ -225,11 +228,7 @@ async fn enable_command_plugin() -> CommandPluginEnv {
 async fn test_command_plugin_dispatch_reaches_guest() {
     let fx = enable_command_plugin().await;
 
-    let found = fx
-        .env
-        .command_manager
-        .dispatch(None, "greet world peace", &MockPlayerRegistry)
-        .await;
+    let found = dispatch_line(&fx.env.command_manager, "greet world peace").await;
     assert!(
         found,
         "the guest-registered 'greet' command should be found"
@@ -245,14 +244,14 @@ async fn test_command_plugin_dispatch_reaches_guest() {
 async fn test_command_plugin_tab_complete_reaches_guest() {
     let fx = enable_command_plugin().await;
 
-    let one = fx.env.command_manager.tab_complete("greet w").await;
+    let one = complete_line(&fx.env.command_manager, "greet w").await;
     assert_eq!(
         one,
         vec!["world".to_string()],
         "prefix 'w' completes to exactly 'world' through the guest completer"
     );
 
-    let all = fx.env.command_manager.tab_complete("greet ").await;
+    let all = complete_line(&fx.env.command_manager, "greet ").await;
     assert_eq!(
         all.len(),
         3,
@@ -265,20 +264,17 @@ async fn test_command_plugin_completer_can_register_a_command() {
     let fx = enable_command_plugin().await;
 
     assert_eq!(
-        fx.env.command_manager.tab_complete("nest ").await,
+        complete_line(&fx.env.command_manager, "nest ").await,
         vec!["registered".to_string()],
         "a completer registering a command must return its candidates, not trap"
     );
     assert_eq!(
-        fx.env.command_manager.tab_complete("nested ").await,
+        complete_line(&fx.env.command_manager, "nested ").await,
         vec!["inner".to_string()],
         "the command registered from the completer carries its own completer"
     );
     assert!(
-        fx.env
-            .command_manager
-            .dispatch(None, "nested", &MockPlayerRegistry)
-            .await,
+        dispatch_line(&fx.env.command_manager, "nested").await,
         "the command registered from the completer is dispatchable"
     );
     assert_eq!(
@@ -287,7 +283,7 @@ async fn test_command_plugin_completer_can_register_a_command() {
         "ran"
     );
     assert_eq!(
-        fx.env.command_manager.tab_complete("greet w").await,
+        complete_line(&fx.env.command_manager, "greet w").await,
         vec!["world".to_string()],
         "the instance is still healthy afterwards"
     );
@@ -298,43 +294,77 @@ async fn test_command_plugin_unregister_reaches_host() {
     let fx = enable_command_plugin().await;
     let marker = fx.plugins_dir.join("command-plugin").join("unnest.marker");
 
-    fx.env.command_manager.tab_complete("nest ").await;
-    assert!(
-        fx.env
-            .command_manager
-            .dispatch(None, "unnest", &MockPlayerRegistry)
-            .await
-    );
+    complete_line(&fx.env.command_manager, "nest ").await;
+    assert!(dispatch_line(&fx.env.command_manager, "unnest").await);
     assert_eq!(
         std::fs::read_to_string(&marker).expect("unnest ran"),
         "true",
         "the guest owned `nested` and removed it"
     );
     assert!(
-        !fx.env
-            .command_manager
-            .dispatch(None, "nested", &MockPlayerRegistry)
-            .await,
+        !dispatch_line(&fx.env.command_manager, "nested").await,
         "the host no longer routes `nested`"
     );
 
-    assert!(
-        fx.env
-            .command_manager
-            .dispatch(None, "unnest", &MockPlayerRegistry)
-            .await
-    );
+    assert!(dispatch_line(&fx.env.command_manager, "unnest").await);
     assert_eq!(
         std::fs::read_to_string(&marker).expect("unnest ran again"),
         "false",
         "a second unregister finds nothing to remove"
     );
     assert!(
-        fx.env
-            .command_manager
-            .dispatch(None, "greet again", &MockPlayerRegistry)
-            .await,
+        dispatch_line(&fx.env.command_manager, "greet again").await,
         "other commands are untouched"
+    );
+}
+
+struct NativeNested {
+    ran: Arc<Mutex<u32>>,
+}
+
+impl CommandHandler for NativeNested {
+    fn execute<'a>(&'a self, _ctx: CommandContext) -> BoxFuture<'a, ()> {
+        *self.ran.lock().unwrap() += 1;
+        Box::pin(async {})
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_guest_cannot_unregister_a_command_it_does_not_own() {
+    let fx = enable_command_plugin().await;
+    let ran = Arc::new(Mutex::new(0));
+    let native = fx.env.factory.create_context("native");
+    native
+        .command_manager()
+        .register(
+            CommandSpec::new("nested"),
+            Box::new(NativeNested {
+                ran: Arc::clone(&ran),
+            }),
+        )
+        .unwrap();
+
+    complete_line(&fx.env.command_manager, "nest ").await;
+    assert!(dispatch_line(&fx.env.command_manager, "unnest").await);
+    assert_eq!(
+        std::fs::read_to_string(fx.plugins_dir.join("command-plugin").join("unnest.marker"))
+            .expect("unnest ran"),
+        "true",
+        "the guest believes it registered `nested` and asked the host to remove it"
+    );
+
+    assert!(
+        dispatch_line(&fx.env.command_manager, "nested").await,
+        "the native plugin's `nested` survived the guest's unregister"
+    );
+    assert!(dispatch_line(&fx.env.command_manager, "native:nested").await);
+    assert_eq!(*ran.lock().unwrap(), 2);
+    assert!(
+        !fx.plugins_dir
+            .join("command-plugin")
+            .join("nested.marker")
+            .exists(),
+        "the guest's refused `nested` never ran"
     );
 }
 
@@ -343,24 +373,29 @@ async fn test_stats_count_command() {
     let (_tmp, plugins_dir) = stage("stats");
     let loader = fresh_loader();
     let sent = Arc::new(Mutex::new(Vec::new()));
+    let registry = Arc::new(RecordingPlayerRegistry {
+        count: 7,
+        sent: Arc::clone(&sent),
+    });
     let env = make_env_with(
         plugins_dir.clone(),
         EnvOptions {
-            player_registry: Arc::new(RecordingPlayerRegistry {
-                count: 7,
-                sent: Arc::clone(&sent),
-            }),
+            player_registry: Arc::clone(&registry) as _,
             ..EnvOptions::default()
         },
     );
     loader.discover(&plugins_dir).await.unwrap();
     let _plugin = load_enabled(&loader, &env.factory, "stats").await;
 
-    let found = env
+    let outcome = env
         .command_manager
-        .dispatch(Some(PlayerId::new(1)), "count", &MockPlayerRegistry)
+        .dispatch(player_source(&registry), "count")
         .await;
-    assert!(found, "the stats 'count' command should be registered");
+    assert_eq!(
+        outcome,
+        DispatchOutcome::Executed,
+        "the stats 'count' command should be registered"
+    );
 
     assert_eq!(
         sent.lock().unwrap().as_slice(),
@@ -402,13 +437,14 @@ async fn test_denied_player_write_stops_messages_to_players() {
     let (_tmp, plugins_dir) = stage("stats");
     let loader = fresh_loader();
     let sent = Arc::new(Mutex::new(Vec::new()));
+    let registry = Arc::new(RecordingPlayerRegistry {
+        count: 7,
+        sent: Arc::clone(&sent),
+    });
     let env = make_env_with(
         plugins_dir.clone(),
         EnvOptions {
-            player_registry: Arc::new(RecordingPlayerRegistry {
-                count: 7,
-                sent: Arc::clone(&sent),
-            }),
+            player_registry: Arc::clone(&registry) as _,
             ..EnvOptions::default()
         }
         .deny("stats", "player-write"),
@@ -416,10 +452,11 @@ async fn test_denied_player_write_stops_messages_to_players() {
     loader.discover(&plugins_dir).await.unwrap();
     let _plugin = load_enabled(&loader, &env.factory, "stats").await;
 
-    assert!(
+    assert_eq!(
         env.command_manager
-            .dispatch(Some(PlayerId::new(1)), "count", &MockPlayerRegistry)
-            .await
+            .dispatch(player_source(&registry), "count")
+            .await,
+        DispatchOutcome::Executed
     );
     assert!(
         sent.lock().unwrap().is_empty(),
@@ -594,11 +631,7 @@ async fn test_handler_timeout_lets_the_guest_call_finish_and_keeps_the_instance_
         );
 
         gate.open();
-        assert!(
-            env.command_manager
-                .dispatch(None, "ping", &MockPlayerRegistry)
-                .await
-        );
+        assert!(dispatch_line(&env.command_manager, "ping").await);
         assert_eq!(
             read_log(&data),
             ["post-login answered", "command"],
@@ -612,7 +645,7 @@ async fn test_handler_timeout_lets_the_guest_call_finish_and_keeps_the_instance_
             "the next event is handled normally"
         );
         assert_eq!(
-            env.command_manager.tab_complete("ping ").await,
+            complete_line(&env.command_manager, "ping ").await,
             ["pong".to_string()]
         );
     }
@@ -695,13 +728,9 @@ async fn test_full_queue_fails_fast_without_waiting_for_the_plugin() {
                 "a rejected call has no outcome"
             );
         }
-        let found = tokio::time::timeout(
-            PROMPTLY,
-            env.command_manager
-                .dispatch(None, "ping", &MockPlayerRegistry),
-        )
-        .await
-        .expect("a command to a saturated plugin returns without waiting");
+        let found = tokio::time::timeout(PROMPTLY, dispatch_line(&env.command_manager, "ping"))
+            .await
+            .expect("a command to a saturated plugin returns without waiting");
         assert!(found);
 
         gate.open();
@@ -750,11 +779,7 @@ async fn test_call_whose_caller_gave_up_while_queued_is_skipped() {
         );
 
         gate.open();
-        assert!(
-            env.command_manager
-                .dispatch(None, "ping", &MockPlayerRegistry)
-                .await
-        );
+        assert!(dispatch_line(&env.command_manager, "ping").await);
         assert_eq!(
             read_log(&data),
             ["post-login answered", "command"],
@@ -784,13 +809,9 @@ async fn test_unload_stops_the_plugin_task() {
         "the plugin task ended and dropped its store along with the plugin context"
     );
 
-    let found = tokio::time::timeout(
-        PROMPTLY,
-        env.command_manager
-            .dispatch(None, "ping", &MockPlayerRegistry),
-    )
-    .await
-    .expect("a call into an unloaded plugin returns promptly");
+    let found = tokio::time::timeout(PROMPTLY, dispatch_line(&env.command_manager, "ping"))
+        .await
+        .expect("a call into an unloaded plugin returns promptly");
     assert!(found, "the host still routes the command");
     let event = tokio::time::timeout(PROMPTLY, env.event_bus.fire(pre_connect()))
         .await
@@ -803,4 +824,26 @@ async fn test_unload_stops_the_plugin_task() {
             .is_ok()
     );
     assert!(read_log(&data).is_empty(), "no guest code ran after unload");
+}
+
+async fn dispatch_line(commands: &CommandManagerImpl, line: &str) -> bool {
+    commands.dispatch(CommandSource::Console, line).await == DispatchOutcome::Executed
+}
+
+async fn complete_line(commands: &CommandManagerImpl, input: &str) -> Vec<String> {
+    commands
+        .suggest(CommandSource::Console, input)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|suggestion| suggestion.text)
+        .collect()
+}
+
+fn player_source(registry: &RecordingPlayerRegistry) -> CommandSource {
+    CommandSource::Player(
+        registry
+            .get_player_by_id(PlayerId::new(1))
+            .expect("the recording registry knows every id"),
+    )
 }

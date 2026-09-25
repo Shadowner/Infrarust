@@ -14,7 +14,7 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, W
 use crate::actor::{CallKind, InstanceRef};
 use crate::codec::CodecInstantiator;
 use crate::config::SandboxLimits;
-use crate::consts::{DENIED_CALL_LOG_INTERVAL, EPOCH_DEADLINE_TICKS};
+use crate::consts::{COMMAND_REFUSAL_BURST, DENIED_CALL_LOG_INTERVAL, EPOCH_DEADLINE_TICKS};
 use crate::deadline::{Deadline, HostCallLimit};
 use crate::error::WasmLoaderError;
 use crate::rate_limit::RateLimit;
@@ -48,6 +48,7 @@ pub(crate) struct PluginStoreState {
     tasks: HashSet<u64>,
     codec: Option<Arc<CodecInstantiator>>,
     denials: HashMap<Capability, RateLimit>,
+    command_refusals: RateLimit,
 }
 
 impl PluginStoreState {
@@ -100,6 +101,14 @@ impl PluginStoreState {
             tracing::warn!(plugin = %self.plugin_id, call, capability = name, suppressed,
                 "wasm plugin call refused: missing capability `{name}`");
         }
+    }
+
+    pub(crate) fn report_command_refusal(&mut self, name: &str, reason: &str) {
+        let Some(suppressed) = self.command_refusals.admit(Instant::now()) else {
+            return;
+        };
+        tracing::warn!(plugin = %self.plugin_id, command = name, suppressed,
+            "wasm plugin command registration: {reason}");
     }
 
     pub(crate) fn instance_ref(&self, kind: CallKind) -> InstanceRef {
@@ -224,6 +233,7 @@ pub(crate) fn build_load_state(
         tasks: HashSet::new(),
         codec: setup.codec.clone(),
         denials: HashMap::new(),
+        command_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, COMMAND_REFUSAL_BURST),
     })
 }
 
@@ -246,6 +256,7 @@ pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> P
         tasks: HashSet::new(),
         codec: None,
         denials: HashMap::new(),
+        command_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, COMMAND_REFUSAL_BURST),
     }
 }
 

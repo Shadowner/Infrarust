@@ -131,6 +131,10 @@ Once running, Infrarust drops you into an interactive console. Type `help` to se
 | `clear` | `cls` | `clear` | Clear the screen |
 | `gc` | | `gc` | Run garbage collection |
 
+#### Plugin commands
+
+A line that is not one of the console commands above runs as a proxy command: a plugin command by its name, an alias, or its `<plugin_id>:<name>` form, or the built-in `ir` command. A leading `/` is ignored. The console holds every permission, and plugin replies appear as log lines under the `infrarust::console` target. When a plugin command shares a name with a console command, use the `<plugin_id>:<name>` form. `help` lists the plugin commands at the end.
+
 ---
 
 ## infrarust migrate

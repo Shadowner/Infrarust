@@ -5,6 +5,8 @@ use crate::error::ProtocolResult;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 use super::super::{Packet, PacketMapping};
+use super::common::write_text_component;
+use crate::nbt::skip_network_nbt;
 
 #[derive(Debug, Clone)]
 pub struct STabCompleteRequest {
@@ -62,7 +64,7 @@ pub struct CTabCompleteResponse {
 #[derive(Debug, Clone)]
 pub struct TabCompleteMatch {
     pub text: String,
-    pub tooltip: Option<String>,
+    pub tooltip: Option<Vec<u8>>,
 }
 
 impl Packet for CTabCompleteResponse {
@@ -83,7 +85,7 @@ impl Packet for CTabCompleteResponse {
         V1_21_5 => 0x0F,
     ];
 
-    fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
+    fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let transaction_id = r.read_var_int()?.0;
         let start = r.read_var_int()?.0;
         let length = r.read_var_int()?.0;
@@ -96,7 +98,7 @@ impl Packet for CTabCompleteResponse {
             let text = r.read_string()?;
             let has_tooltip = r.read_u8()? != 0;
             let tooltip = if has_tooltip {
-                Some(r.read_string()?)
+                Some(read_tooltip(r, version)?)
             } else {
                 None
             };
@@ -113,7 +115,7 @@ impl Packet for CTabCompleteResponse {
     fn encode(
         &self,
         mut w: &mut (impl Write + ?Sized),
-        _version: ProtocolVersion,
+        version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&VarInt(self.transaction_id))?;
         w.write_var_int(&VarInt(self.start))?;
@@ -124,7 +126,7 @@ impl Packet for CTabCompleteResponse {
             match &m.tooltip {
                 Some(tooltip) => {
                     w.write_u8(1)?;
-                    w.write_string(tooltip)?;
+                    write_text_component(w, tooltip, version, Self::NAME, "tooltip")?;
                 }
                 None => {
                     w.write_u8(0)?;
@@ -132,5 +134,61 @@ impl Packet for CTabCompleteResponse {
             }
         }
         Ok(())
+    }
+}
+
+fn read_tooltip(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Vec<u8>> {
+    if version.less_than(ProtocolVersion::V1_20_3) {
+        return Ok(r.read_string()?.into_bytes());
+    }
+    let start = *r;
+    skip_network_nbt(r)?;
+    Ok(start[..start.len() - r.len()].to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    fn round_trip(tooltip: Vec<u8>, version: ProtocolVersion) -> CTabCompleteResponse {
+        let response = CTabCompleteResponse {
+            transaction_id: 7,
+            start: 3,
+            length: 2,
+            matches: vec![
+                TabCompleteMatch {
+                    text: "alpha".into(),
+                    tooltip: Some(tooltip),
+                },
+                TabCompleteMatch {
+                    text: "beta".into(),
+                    tooltip: None,
+                },
+            ],
+        };
+        let mut buf = Vec::new();
+        response.encode(&mut buf, version).unwrap();
+        let mut slice = buf.as_slice();
+        let decoded = CTabCompleteResponse::decode(&mut slice, version).unwrap();
+        assert!(slice.is_empty());
+        decoded
+    }
+
+    #[test]
+    fn json_tooltips_round_trip_before_1_20_3() {
+        let json = br#"{"text":"hint"}"#.to_vec();
+        let decoded = round_trip(json.clone(), ProtocolVersion::V1_20_2);
+        assert_eq!(decoded.matches[0].tooltip.as_deref(), Some(json.as_slice()));
+        assert_eq!(decoded.matches[1].text, "beta");
+    }
+
+    #[test]
+    fn nbt_tooltips_round_trip_from_1_20_3() {
+        let nbt = vec![0x08, 0x00, 0x04, b'h', b'i', b'n', b't'];
+        let decoded = round_trip(nbt.clone(), ProtocolVersion::V1_20_3);
+        assert_eq!(decoded.matches[0].tooltip.as_deref(), Some(nbt.as_slice()));
+        assert_eq!(decoded.matches[1].text, "beta");
+        assert_eq!(decoded.matches[1].tooltip, None);
     }
 }

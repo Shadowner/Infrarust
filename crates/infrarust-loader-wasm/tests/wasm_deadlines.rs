@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
+use infrarust_api::command::CommandSource;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::connection::{
     ConnectCause, ServerPreConnectEvent, ServerPreConnectResult,
@@ -23,9 +24,10 @@ use infrarust_api::plugin::Plugin;
 use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
 use infrarust_core::event_bus::EventBusConfig;
 use infrarust_core::plugin::context::PluginContextImpl;
+use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutcome};
 use infrarust_loader_wasm::WasmPluginLoader;
 
-use support::mock_services::{Gate, GatedBanService, MockPlayerRegistry};
+use support::mock_services::{Gate, GatedBanService};
 use support::{
     EnvOptions, TestEnv, load_enabled, loader_from_toml, make_env_with, nil_profile, read_log,
     stage,
@@ -192,11 +194,7 @@ async fn a_call_whose_deadline_passed_while_queued_never_reaches_the_guest() {
     )
     .await;
 
-    let mut check = Box::pin(probe.env.command_manager.dispatch(
-        None,
-        "check",
-        &MockPlayerRegistry,
-    ));
+    let mut check = Box::pin(dispatch_line(&probe.env.command_manager, "check"));
     assert!(poll_once(&mut check).await.is_none());
     probe.gate.entered().await;
     let mut queued = Box::pin(probe.env.event_bus.fire(pre_connect()));
@@ -232,23 +230,11 @@ async fn a_command_host_call_errors_before_max_call_duration_instead_of_poisonin
     )
     .await;
 
-    let found = tokio::time::timeout(
-        PROMPTLY,
-        probe
-            .env
-            .command_manager
-            .dispatch(None, "check", &MockPlayerRegistry),
-    )
-    .await
-    .expect("the command returns once its host call runs out of time");
+    let found = tokio::time::timeout(PROMPTLY, dispatch_line(&probe.env.command_manager, "check"))
+        .await
+        .expect("the command returns once its host call runs out of time");
     assert!(found);
-    assert!(
-        probe
-            .env
-            .command_manager
-            .dispatch(None, "ping", &MockPlayerRegistry)
-            .await
-    );
+    assert!(dispatch_line(&probe.env.command_manager, "ping").await);
 
     assert_eq!(
         read_log(&probe.data),
@@ -285,4 +271,8 @@ async fn a_limbo_host_call_errors_before_max_call_duration_so_the_handler_decide
         ),
         other => panic!("expected the handler to deny, got {other:?}"),
     }
+}
+
+async fn dispatch_line(commands: &CommandManagerImpl, line: &str) -> bool {
+    commands.dispatch(CommandSource::Console, line).await == DispatchOutcome::Executed
 }

@@ -88,7 +88,7 @@ plugins_dir = "./plugins"
 announce_proxy_commands = true
 ```
 
-When `true` (the default), the proxy announces its built-in `/ir` command tree to clients via the Minecraft command graph packet. Set to `false` to hide the proxy command suggestions from the player's tab completion.
+When `true` (the default), the proxy adds its built-in `/ir` command tree and the plugin commands each player may run to the Minecraft command graph packet the backend sends, and replaces any backend command with the same name. When a plugin registers or removes a command, connected players get the updated tree right away. Set to `false` to hide the proxy command suggestions from the player's tab completion; the commands still run.
 
 ## Proxy protocol
 

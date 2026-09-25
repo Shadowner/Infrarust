@@ -10,7 +10,9 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::command::CommandSource;
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
+use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
@@ -25,6 +27,7 @@ use super::spawn::send_spawn_sequence;
 use super::virtual_session::VirtualSessionCore;
 use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::services::ProxyServices;
+use crate::services::command_manager::DispatchOutcome;
 use crate::session::client_bridge::ClientBridge;
 
 #[derive(Debug)]
@@ -206,12 +209,11 @@ async fn wait_for_hold(
                                     } else {
                                         format!("{name} {}", args.join(" "))
                                     };
-                                    let handled = services.command_manager.dispatch(
-                                        Some(core.player_id),
-                                        &input,
-                                        services.player_registry.as_ref(),
-                                    ).await;
-                                    if !handled {
+                                    let outcome = match services.player_registry.get_player_by_id(core.player_id) {
+                                        Some(player) => services.command_manager.dispatch(CommandSource::Player(player), &input).await,
+                                        None => DispatchOutcome::Unknown,
+                                    };
+                                    if outcome == DispatchOutcome::Unknown {
                                         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
                                         handler.on_command(session.as_ref(), &name, &args_refs).await;
                                     }

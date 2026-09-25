@@ -8,7 +8,6 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use infrarust_api::command::CommandManager;
 use infrarust_api::events::proxy::{ProxyInitializeEvent, ProxyShutdownEvent};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
@@ -211,7 +210,7 @@ fn plugin_services(
         player_registry: Arc::clone(&services.player_registry) as Arc<dyn PlayerRegistry>,
         server_manager,
         ban_service: Arc::new(BanServiceBridge::new(Arc::clone(&services.ban_manager))),
-        command_manager: Arc::clone(&services.command_manager) as Arc<dyn CommandManager>,
+        command_manager: Arc::clone(&services.command_manager),
         scheduler: Arc::new(SchedulerImpl::new()),
         config_service: Arc::new(ConfigServiceImpl::new(
             Arc::clone(&services.domain_router),

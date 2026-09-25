@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use infrarust_api::command::CommandManager;
 use infrarust_api::error::PluginError;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::{
@@ -30,7 +29,7 @@ pub struct PluginServices {
     pub player_registry: Arc<dyn PlayerRegistry>,
     pub server_manager: Arc<dyn ServerManager>,
     pub ban_service: Arc<dyn BanService>,
-    pub command_manager: Arc<dyn CommandManager>,
+    pub command_manager: Arc<crate::services::command_manager::CommandManagerImpl>,
     pub scheduler: Arc<dyn Scheduler>,
     pub config_service: Arc<dyn ConfigService>,
     pub load_balancer_service: Arc<dyn LoadBalancerService>,
@@ -339,6 +338,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    use infrarust_api::command::CommandManager;
     use infrarust_api::error::PluginError;
     use infrarust_api::event::BoxFuture;
     use infrarust_api::event::bus::EventBus;
@@ -410,6 +410,10 @@ mod tests {
         }
 
         fn command_manager(&self) -> &dyn CommandManager {
+            unimplemented!("mock")
+        }
+
+        fn command_manager_handle(&self) -> Arc<dyn CommandManager> {
             unimplemented!("mock")
         }
 

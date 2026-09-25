@@ -1,4 +1,4 @@
-use infrarust_api::command::CommandContext;
+use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::message::ProxyMessage;
 use infrarust_api::permissions::PermissionLevel;
@@ -33,21 +33,15 @@ impl SubcommandHandler for KickSubcommand {
         services: &'a CommandServices,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player_id) = ctx.player_id else {
-                return;
-            };
-            let Some(sender) = services.player_registry.get_player_by_id(player_id) else {
-                return;
-            };
+            let sender = &ctx.source;
 
             let Some(target_name) = args.first() else {
-                let _ =
-                    sender.send_message(ProxyMessage::error("Usage: /ir kick <player> [reason]"));
+                sender.send_message(ProxyMessage::error("Usage: /ir kick <player> [reason]"));
                 return;
             };
 
             let Some(target) = services.player_registry.get_player(target_name) else {
-                let _ = sender.send_message(ProxyMessage::error(&format!(
+                sender.send_message(ProxyMessage::error(&format!(
                     "Player '{target_name}' is not online."
                 )));
                 return;
@@ -61,7 +55,7 @@ impl SubcommandHandler for KickSubcommand {
 
             target.disconnect(Component::text(&reason)).await;
 
-            let _ = sender.send_message(ProxyMessage::success(&format!(
+            sender.send_message(ProxyMessage::success(&format!(
                 "Kicked {target_name}: {reason}"
             )));
         })
@@ -70,7 +64,7 @@ impl SubcommandHandler for KickSubcommand {
     fn tab_complete<'a>(
         &'a self,
         args: &'a [String],
-        _cursor: u32,
+        _source: &'a CommandSource,
         services: &'a CommandServices,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async move {

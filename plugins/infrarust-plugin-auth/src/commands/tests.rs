@@ -1,19 +1,20 @@
 use std::sync::Arc;
 
-use infrarust_api::command::{CommandContext, CommandHandler};
+use infrarust_api::command::{CommandContext, CommandHandler, CommandSource};
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
+use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::PlayerId;
 
 use crate::account::Username;
 use crate::password;
 use crate::test_support::{MockPlayer, TestEnv, fast_config, limbo_session};
 
-fn ctx(player_id: u64, args: &[&str]) -> CommandContext {
-    CommandContext {
-        player_id: Some(PlayerId::new(player_id)),
-        args: args.iter().map(ToString::to_string).collect(),
-        raw: String::new(),
-    }
+fn ctx(env: &TestEnv, player_id: u64, args: &[&str]) -> CommandContext {
+    let sender = env
+        .registry
+        .get_player_by_id(PlayerId::new(player_id))
+        .expect("the sender is registered");
+    CommandContext::new(CommandSource::Player(sender), "test", args.join(" "))
 }
 
 #[tokio::test]
@@ -25,11 +26,8 @@ async fn changepassword_updates_hash_with_correct_old_password() {
     let cmd = super::changepassword::ChangePasswordCommand {
         handler: Arc::clone(&env.handler),
     };
-    cmd.execute(
-        ctx(1, &["old-password-1", "new-password-2"]),
-        &*env.registry,
-    )
-    .await;
+    cmd.execute(ctx(&env, 1, &["old-password-1", "new-password-2"]))
+        .await;
 
     let account = env
         .storage
@@ -54,11 +52,8 @@ async fn changepassword_rejects_wrong_old_password() {
     let cmd = super::changepassword::ChangePasswordCommand {
         handler: Arc::clone(&env.handler),
     };
-    cmd.execute(
-        ctx(1, &["not-the-old-one", "new-password-2"]),
-        &*env.registry,
-    )
-    .await;
+    cmd.execute(ctx(&env, 1, &["not-the-old-one", "new-password-2"]))
+        .await;
 
     let account = env
         .storage
@@ -83,8 +78,7 @@ async fn unregister_deletes_account_with_correct_password() {
     let cmd = super::unregister::UnregisterCommand {
         handler: Arc::clone(&env.handler),
     };
-    cmd.execute(ctx(1, &["hunter2hunter2"]), &*env.registry)
-        .await;
+    cmd.execute(ctx(&env, 1, &["hunter2hunter2"])).await;
 
     assert!(!env.storage.has_account_blocking(&Username::new("Steve")));
 }
@@ -102,7 +96,7 @@ async fn forcelogin_force_completes_target_in_limbo() {
     let cmd = super::forcelogin::ForceLoginCommand {
         handler: Arc::clone(&env.handler),
     };
-    cmd.execute(ctx(1, &["Steve"]), &*env.registry).await;
+    cmd.execute(ctx(&env, 1, &["Steve"])).await;
 
     env.handler.on_chat(&*session, "ok").await;
     assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
@@ -121,7 +115,7 @@ async fn forcelogin_requires_admin() {
     let cmd = super::forcelogin::ForceLoginCommand {
         handler: Arc::clone(&env.handler),
     };
-    cmd.execute(ctx(1, &["Steve"]), &*env.registry).await;
+    cmd.execute(ctx(&env, 1, &["Steve"])).await;
 
     assert!(sender.sent_text().contains("permission"));
     env.handler.on_chat(&*session, "ok").await;
@@ -140,7 +134,7 @@ async fn forceunregister_allows_config_listed_admin() {
     let cmd = super::forceunregister::ForceUnregisterCommand {
         handler: Arc::clone(&env.handler),
     };
-    cmd.execute(ctx(1, &["Steve"]), &*env.registry).await;
+    cmd.execute(ctx(&env, 1, &["Steve"])).await;
 
     assert!(!env.storage.has_account_blocking(&Username::new("Steve")));
     assert!(sender.sent_text().contains("Account deleted"));
@@ -155,7 +149,7 @@ async fn forcechangepassword_sets_new_password() {
     let cmd = super::forcechangepassword::ForceChangePasswordCommand {
         handler: Arc::clone(&env.handler),
     };
-    cmd.execute(ctx(1, &["Steve", "new-password-2"]), &*env.registry)
+    cmd.execute(ctx(&env, 1, &["Steve", "new-password-2"]))
         .await;
 
     let account = env
@@ -180,7 +174,7 @@ async fn cracked_sets_force_cracked() {
     let cmd = super::cracked::CrackedCommand {
         handler: Arc::clone(&env.handler),
     };
-    cmd.execute(ctx(1, &[]), &*env.registry).await;
+    cmd.execute(ctx(&env, 1, &[])).await;
 
     let account = env
         .storage
@@ -200,7 +194,7 @@ async fn premium_unsets_force_cracked() {
     let cmd = super::premium::PremiumCommand {
         handler: Arc::clone(&env.handler),
     };
-    cmd.execute(ctx(1, &[]), &*env.registry).await;
+    cmd.execute(ctx(&env, 1, &[])).await;
 
     let account = env
         .storage

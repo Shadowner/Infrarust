@@ -45,7 +45,7 @@ impl ConsoleCommand for HelpCommand {
     fn execute<'a>(
         &'a self,
         args: &'a [&'a str],
-        _services: &'a ConsoleServices,
+        services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
             if let Some(cmd_name) = args.first() {
@@ -110,6 +110,24 @@ impl ConsoleCommand for HelpCommand {
                         } else {
                             cmd.description.clone()
                         }
+                    )));
+                }
+            }
+
+            let plugin_commands: Vec<_> = services
+                .command_manager
+                .list()
+                .into_iter()
+                .filter_map(|info| info.namespaced().map(|namespaced| (namespaced, info)))
+                .collect();
+            if !plugin_commands.is_empty() {
+                lines.push(OutputLine::Info(String::new()));
+                lines.push(OutputLine::Info("  Plugin commands".to_string()));
+                for (namespaced, info) in plugin_commands {
+                    lines.push(OutputLine::Info(format!(
+                        "    {:<25} {}",
+                        format!("{} ({namespaced})", info.name),
+                        info.description
                     )));
                 }
             }
