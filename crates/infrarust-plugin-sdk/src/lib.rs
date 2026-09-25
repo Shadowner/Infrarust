@@ -27,9 +27,11 @@ pub mod codec;
 pub mod component;
 pub mod context;
 pub mod event;
+mod host;
 pub mod limbo;
 pub mod log;
 pub mod plugin;
+mod registry;
 #[doc(hidden)]
 pub mod runtime;
 pub mod services;

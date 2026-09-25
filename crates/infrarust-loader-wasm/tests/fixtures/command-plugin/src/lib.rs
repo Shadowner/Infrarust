@@ -23,6 +23,24 @@ impl Plugin for CommandPlugin {
                 .collect()
         })
         .register();
+        ctx.command("nest", |_| {})
+            .description("Registers `nested` from inside its own completer")
+            .completer(|_partial, _cursor| {
+                Context::new()
+                    .command("nested", |_| {
+                        let _ = std::fs::write("nested.marker", b"ran");
+                    })
+                    .completer(|_partial, _cursor| vec!["inner".to_string()])
+                    .register();
+                vec!["registered".to_string()]
+            })
+            .register();
+        ctx.command("unnest", |_| {
+            let removed = Context::new().unregister_command("nested");
+            let _ = std::fs::write("unnest.marker", removed.to_string().as_bytes());
+        })
+        .description("Unregisters `nested` through the SDK")
+        .register();
         Ok(())
     }
 }

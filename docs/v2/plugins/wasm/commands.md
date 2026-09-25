@@ -98,6 +98,20 @@ The completer is `impl Fn(&[String], u32) -> Vec<String> + 'static`. It receives
 
 The completer is `Fn`, not `FnMut`: it cannot mutate captured state. The handler is `FnMut` and can. A command without a completer returns no candidates.
 
+## Unregister a command
+
+`ctx.unregister_command(name)` removes a command this plugin registered, both on the host and in the guest, and returns `true`. It returns `false` and leaves the host alone when the plugin never registered that name, so it cannot remove another plugin's command. Names match case-insensitively, like on the host. A handler or completer may unregister its own command; the closure is dropped once the running call returns.
+
+```rust
+ctx.command("event", |_| start_event()).register();
+ctx.command("stop-event", |_| {
+    Context::new().unregister_command("event");
+})
+.register();
+```
+
+Registering a name the plugin already registered replaces the earlier command and drops its closures.
+
 ## Under the hood
 
 The SDK assigns each command a callback id and registers the name through the `command-manager` host import, passing that id. The handler and completer closures stay in a per-instance table keyed by the id. When a player or the console runs the command, the host calls the guest `handle-command` export (or `tab-complete` for completion) with the same id, and the SDK dispatches to the stored closure.

@@ -3,7 +3,8 @@
 //! `RefCell` is the cheapest correct storage.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::rc::Rc;
+use std::thread::LocalKey;
 
 use crate::bindings::codec_filter::{
     CodecSessionInit, ConnectionState, FilterOutput, GuestFilterInstance,
@@ -17,33 +18,54 @@ use crate::context::{CommandInvocation, Context};
 use crate::event::{EventPriority, GuestEvent};
 use crate::limbo::{HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession};
 use crate::plugin::Plugin;
+use crate::registry::Registry;
 
-type EventClosure = Box<dyn FnMut(Event) -> EventOutcome>;
+type EventEntry = RefCell<dyn FnMut(Event) -> EventOutcome>;
 type CommandClosure = Box<dyn FnMut(CommandInvocation)>;
 type CompletionClosure = Box<dyn Fn(&[String], u32) -> Vec<String>>;
-type TaskClosure = Box<dyn FnMut()>;
+type OnceTask = Box<dyn FnOnce()>;
+type RepeatingTask = Box<dyn FnMut()>;
+type CodecConstructor = dyn Fn(&CodecSessionInit) -> Box<dyn CodecFilter>;
 
-thread_local! {
-    static EVENT_HANDLERS: RefCell<HashMap<u64, EventClosure>> = RefCell::new(HashMap::new());
-    static COMMANDS: RefCell<HashMap<u64, CommandClosure>> = RefCell::new(HashMap::new());
-    static COMPLETIONS: RefCell<HashMap<u64, CompletionClosure>> = RefCell::new(HashMap::new());
-    static TASKS: RefCell<HashMap<u64, TaskClosure>> = RefCell::new(HashMap::new());
-    static NEXT_ID: Cell<u64> = const { Cell::new(1) };
-    static PLUGIN: RefCell<Option<Box<dyn Plugin>>> = const { RefCell::new(None) };
-    static CODEC_FACTORIES: RefCell<Vec<FilterConstructor>> = RefCell::new(Vec::new());
-    static CODEC_DECLARED: Cell<bool> = const { Cell::new(false) };
-    static LIMBO_HANDLERS: RefCell<HashMap<u64, Box<dyn LimboHandler>>> = RefCell::new(HashMap::new());
-    static LIMBO_DECLARED: Cell<bool> = const { Cell::new(false) };
-    static EVENT_DISPATCHING: Cell<Option<u64>> = const { Cell::new(None) };
-    static EVENT_DISPATCH_CANCELLED: Cell<bool> = const { Cell::new(false) };
+struct CommandEntry {
+    name: String,
+    handler: RefCell<CommandClosure>,
+    completer: Option<CompletionClosure>,
 }
 
-fn next_id() -> u64 {
-    NEXT_ID.with(|c| {
+enum Task {
+    Once(Cell<Option<OnceTask>>),
+    Repeating(RefCell<RepeatingTask>),
+}
+
+struct TaskEntry {
+    host_handle: u64,
+    task: Task,
+}
+
+thread_local! {
+    static EVENTS: Registry<EventEntry> = const { Registry::new() };
+    static COMMANDS: Registry<CommandEntry> = const { Registry::new() };
+    static TASKS: Registry<TaskEntry> = const { Registry::new() };
+    static LIMBO_HANDLERS: Registry<dyn LimboHandler> = const { Registry::new() };
+    static CODEC_FACTORIES: Registry<CodecConstructor> = const { Registry::new() };
+    static NEXT_ID: Cell<u64> = const { Cell::new(1) };
+    static NEXT_CODEC_FACTORY: Cell<u64> = const { Cell::new(0) };
+    static PLUGIN: RefCell<Option<Box<dyn Plugin>>> = const { RefCell::new(None) };
+    static CODEC_DECLARED: Cell<bool> = const { Cell::new(false) };
+    static LIMBO_DECLARED: Cell<bool> = const { Cell::new(false) };
+}
+
+fn take_id(counter: &'static LocalKey<Cell<u64>>) -> u64 {
+    counter.with(|c| {
         let id = c.get();
         c.set(id + 1);
         id
     })
+}
+
+fn next_id() -> u64 {
+    take_id(&NEXT_ID)
 }
 
 /// Subscribe a typed handler for `E`, returning its `listener_id`. Each call adds
@@ -53,31 +75,33 @@ pub fn register_event<E: GuestEvent>(
     priority: EventPriority,
     mut handler: impl FnMut(&mut E) + 'static,
 ) -> u64 {
-    let closure: EventClosure = Box::new(move |ev| match E::from_event(ev) {
+    let entry: Rc<EventEntry> = Rc::new(RefCell::new(move |ev: Event| match E::from_event(ev) {
         Some(mut typed) => {
             handler(&mut typed);
             typed.into_outcome()
         }
         None => EventOutcome::None,
-    });
-    let handle = crate::bindings::event_bus::subscribe(E::KIND, priority.value());
-    EVENT_HANDLERS.with(|hs| hs.borrow_mut().insert(handle, closure));
-    handle
+    }));
+    let listener = crate::host::subscribe(E::KIND, priority.value());
+    EVENTS.with(|events| events.insert(listener, entry));
+    listener
 }
 
 /// Drop a single event handler by its `listener_id` (see [`register_event`]).
-pub fn unsubscribe_event(handle: u64) {
-    remove_event_handler(handle);
-    crate::bindings::event_bus::unsubscribe(handle);
+pub fn unsubscribe_event(listener: u64) {
+    let removed = EVENTS.with(|events| events.remove(listener));
+    crate::host::unsubscribe(listener);
+    drop(removed);
 }
 
-/// Tombstones the handle when it is the one currently dispatching (its closure
-/// is out of the map), so [`handle_event`] drops it instead of reinserting it.
-fn remove_event_handler(handle: u64) {
-    if EVENT_DISPATCHING.with(Cell::get) == Some(handle) {
-        EVENT_DISPATCH_CANCELLED.with(|c| c.set(true));
-    }
-    EVENT_HANDLERS.with(|hs| hs.borrow_mut().remove(&handle));
+pub fn handle_event(listener: u64, ev: Event) -> EventOutcome {
+    let Some(entry) = EVENTS.with(|events| events.get(listener)) else {
+        return EventOutcome::None;
+    };
+    let Ok(mut handler) = entry.try_borrow_mut() else {
+        return EventOutcome::None;
+    };
+    handler(ev)
 }
 
 pub fn register_command(
@@ -87,74 +111,101 @@ pub fn register_command(
     handler: CommandClosure,
     completer: Option<CompletionClosure>,
 ) {
+    let key = name.to_lowercase();
     let id = next_id();
-    COMMANDS.with(|c| c.borrow_mut().insert(id, handler));
-    if let Some(completer) = completer {
-        COMPLETIONS.with(|c| c.borrow_mut().insert(id, completer));
-    }
-    crate::bindings::command_manager::register(name, aliases, description, id);
+    let replaced = COMMANDS.with(|commands| {
+        let previous = commands.find(|entry| entry.name == key);
+        commands.insert(
+            id,
+            Rc::new(CommandEntry {
+                name: key,
+                handler: RefCell::new(handler),
+                completer,
+            }),
+        );
+        previous.and_then(|previous| commands.remove(previous))
+    });
+    crate::host::register_command(name, aliases, description, id);
+    drop(replaced);
 }
 
-pub fn schedule_delay(after_ms: u64, task: TaskClosure) -> u64 {
-    let id = next_id();
-    TASKS.with(|t| t.borrow_mut().insert(id, task));
-    crate::bindings::scheduler::delay(after_ms, id)
-}
-
-pub fn schedule_interval(period_ms: u64, task: TaskClosure) -> u64 {
-    let id = next_id();
-    TASKS.with(|t| t.borrow_mut().insert(id, task));
-    crate::bindings::scheduler::interval(period_ms, id)
-}
-
-/// Remove-call-reinsert so the handler can (un)subscribe without a `RefCell`
-/// re-borrow panic; a self-unsubscribe during the call is detected via the
-/// tombstone in [`remove_event_handler`] and drops the closure for good.
-pub fn handle_event(listener: u64, ev: Event) -> EventOutcome {
-    let closure = EVENT_HANDLERS.with(|hs| hs.borrow_mut().remove(&listener));
-    match closure {
-        Some(mut closure) => {
-            EVENT_DISPATCHING.with(|d| d.set(Some(listener)));
-            EVENT_DISPATCH_CANCELLED.with(|c| c.set(false));
-            let outcome = closure(ev);
-            EVENT_DISPATCHING.with(|d| d.set(None));
-            if !EVENT_DISPATCH_CANCELLED.with(Cell::take) {
-                EVENT_HANDLERS.with(|hs| {
-                    hs.borrow_mut().entry(listener).or_insert(closure);
-                });
-            }
-            outcome
-        }
-        None => EventOutcome::None,
-    }
+pub fn unregister_command(name: &str) -> bool {
+    let key = name.to_lowercase();
+    let removed = COMMANDS.with(|commands| {
+        commands
+            .find(|entry| entry.name == key)
+            .and_then(|id| commands.remove(id))
+    });
+    let Some(removed) = removed else {
+        return false;
+    };
+    crate::host::unregister_command(&key);
+    drop(removed);
+    true
 }
 
 pub fn handle_command(callback_id: u64, args: Vec<String>, player: Option<u64>) {
-    let task = COMMANDS.with(|c| c.borrow_mut().remove(&callback_id));
-    if let Some(mut handler) = task {
+    let Some(entry) = COMMANDS.with(|commands| commands.get(callback_id)) else {
+        return;
+    };
+    if let Ok(mut handler) = entry.handler.try_borrow_mut() {
         handler(CommandInvocation { args, player });
-        COMMANDS.with(|c| {
-            c.borrow_mut().entry(callback_id).or_insert(handler);
-        });
-    }
-}
-
-pub fn on_scheduled_task(callback_id: u64) {
-    let task = TASKS.with(|t| t.borrow_mut().remove(&callback_id));
-    if let Some(mut task) = task {
-        task();
-        TASKS.with(|t| {
-            t.borrow_mut().entry(callback_id).or_insert(task);
-        });
     }
 }
 
 pub fn tab_complete(callback_id: u64, partial: Vec<String>, cursor: u32) -> Vec<String> {
-    COMPLETIONS.with(|c| {
-        c.borrow()
-            .get(&callback_id)
-            .map_or_else(Vec::new, |f| f(&partial, cursor))
+    let Some(entry) = COMMANDS.with(|commands| commands.get(callback_id)) else {
+        return Vec::new();
+    };
+    entry
+        .completer
+        .as_ref()
+        .map_or_else(Vec::new, |complete| complete(&partial, cursor))
+}
+
+pub fn schedule_delay(after_ms: u64, task: OnceTask) -> u64 {
+    schedule(Task::Once(Cell::new(Some(task))), |id| {
+        crate::host::delay(after_ms, id)
     })
+}
+
+pub fn schedule_interval(period_ms: u64, task: RepeatingTask) -> u64 {
+    schedule(Task::Repeating(RefCell::new(task)), |id| {
+        crate::host::interval(period_ms, id)
+    })
+}
+
+fn schedule(task: Task, start_on_host: impl FnOnce(u64) -> u64) -> u64 {
+    let id = next_id();
+    let host_handle = start_on_host(id);
+    TASKS.with(|tasks| tasks.insert(id, Rc::new(TaskEntry { host_handle, task })));
+    id
+}
+
+pub fn cancel_task(id: u64) {
+    let Some(removed) = TASKS.with(|tasks| tasks.remove(id)) else {
+        return;
+    };
+    crate::host::cancel(removed.host_handle);
+}
+
+pub fn on_scheduled_task(callback_id: u64) {
+    let Some(entry) = TASKS.with(|tasks| tasks.get(callback_id)) else {
+        return;
+    };
+    match &entry.task {
+        Task::Once(slot) => {
+            TASKS.with(|tasks| tasks.remove(callback_id));
+            if let Some(task) = slot.take() {
+                task();
+            }
+        }
+        Task::Repeating(task) => {
+            if let Ok(mut task) = task.try_borrow_mut() {
+                task();
+            }
+        }
+    }
 }
 
 pub fn on_enable<P: Plugin + Default>() -> Result<(), String> {
@@ -181,14 +232,10 @@ pub fn register_codec_factory(
     metadata: crate::bindings::codec_registry::CodecFilterMetadata,
     constructor: FilterConstructor,
 ) {
-    let id = CODEC_FACTORIES.with(|f| {
-        let mut f = f.borrow_mut();
-        let id = u64::try_from(f.len()).unwrap_or(u64::MAX);
-        f.push(constructor);
-        id
-    });
+    let id = take_id(&NEXT_CODEC_FACTORY);
+    CODEC_FACTORIES.with(|factories| factories.insert(id, Rc::from(constructor)));
     if notify {
-        crate::bindings::codec_registry::register_codec_filter(&metadata, id);
+        crate::host::register_codec_filter(&metadata, id);
     }
 }
 fn declare_codec_filters<P: Plugin>(notify: bool) {
@@ -201,31 +248,20 @@ fn declare_codec_filters<P: Plugin>(notify: bool) {
 }
 
 pub fn register_limbo_handler(name: &str, handler: Box<dyn LimboHandler>) {
-    let id = insert_limbo_handler(handler);
-    crate::bindings::limbo::register_limbo_handler(name, id);
-}
-
-fn insert_limbo_handler(handler: Box<dyn LimboHandler>) -> u64 {
     let id = next_id();
-    LIMBO_HANDLERS.with(|h| h.borrow_mut().insert(id, handler));
-    id
+    LIMBO_HANDLERS.with(|handlers| handlers.insert(id, Rc::from(handler)));
+    crate::host::register_limbo_handler(name, id);
 }
 
-/// Remove-call-reinsert (like [`handle_event`]) so the handler can re-register
-/// from within its own callback without a `RefCell` re-borrow panic.
 fn with_limbo_handler<R>(
     handler: u64,
     missing: impl FnOnce() -> R,
     call: impl FnOnce(&dyn LimboHandler) -> R,
 ) -> R {
-    let Some(hdlr) = LIMBO_HANDLERS.with(|h| h.borrow_mut().remove(&handler)) else {
+    let Some(entry) = LIMBO_HANDLERS.with(|handlers| handlers.get(handler)) else {
         return missing();
     };
-    let out = call(hdlr.as_ref());
-    LIMBO_HANDLERS.with(|h| {
-        h.borrow_mut().entry(handler).or_insert(hdlr);
-    });
-    out
+    call(&*entry)
 }
 
 fn declare_limbo_handlers<P: Plugin>() {
@@ -290,11 +326,9 @@ pub fn limbo_on_session_end(
 }
 pub fn create_codec_filter<P: Plugin>(factory: u64, init: CodecSessionInit) -> FilterInstanceProxy {
     declare_codec_filters::<P>(false);
-    let inner = CODEC_FACTORIES.with(|f| {
-        f.borrow()
-            .get(usize::try_from(factory).unwrap_or(usize::MAX))
-            .map(|constructor| constructor(&init))
-    });
+    let inner = CODEC_FACTORIES
+        .with(|factories| factories.get(factory))
+        .map(|construct| construct(&init));
     FilterInstanceProxy::new(inner, CodecContext::from_init(&init))
 }
 
@@ -349,110 +383,4 @@ impl CodecFilter for PassthroughFilter {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::cell::Cell;
-    use std::rc::Rc;
-
-    use super::*;
-    use crate::limbo::{HandlerOutcome, LimboHandler, LimboSession};
-
-    struct Noop;
-    impl LimboHandler for Noop {
-        fn on_player_enter(&self, _session: &LimboSession) -> HandlerOutcome {
-            HandlerOutcome::Accept
-        }
-    }
-
-    struct Reregistering {
-        calls: Rc<Cell<u32>>,
-        registered_id: Rc<Cell<Option<u64>>>,
-    }
-    impl LimboHandler for Reregistering {
-        fn on_player_enter(&self, _session: &LimboSession) -> HandlerOutcome {
-            HandlerOutcome::Accept
-        }
-        fn on_disconnect(&self, _player_id: u64) {
-            self.calls.set(self.calls.get() + 1);
-            self.registered_id
-                .set(Some(insert_limbo_handler(Box::new(Noop))));
-        }
-    }
-
-    /// Re-registering a limbo handler from within a dispatched callback must not
-    /// re-borrow the handler map (previously a `BorrowMutError` panic → trap).
-    #[test]
-    fn limbo_callback_can_reregister_a_handler() {
-        let calls = Rc::new(Cell::new(0));
-        let registered_id = Rc::new(Cell::new(None));
-        let id = insert_limbo_handler(Box::new(Reregistering {
-            calls: Rc::clone(&calls),
-            registered_id: Rc::clone(&registered_id),
-        }));
-
-        limbo_on_disconnect(id, 1);
-        assert_eq!(calls.get(), 1);
-        let new_id = registered_id.get().expect("callback ran re-registration");
-        LIMBO_HANDLERS.with(|h| {
-            let map = h.borrow();
-            assert!(map.contains_key(&id), "dispatched handler reinserted");
-            assert!(map.contains_key(&new_id), "re-registered handler kept");
-        });
-
-        limbo_on_disconnect(id, 1);
-        assert_eq!(calls.get(), 2, "handler still dispatchable after reinsert");
-    }
-
-    struct DropFlag(Rc<Cell<bool>>);
-    impl Drop for DropFlag {
-        fn drop(&mut self) {
-            self.0.set(true);
-        }
-    }
-
-    /// A handler unsubscribing itself mid-dispatch must not be reinserted
-    /// (previously the closure leaked in the registry forever).
-    #[test]
-    fn self_unsubscribe_during_dispatch_drops_the_closure() {
-        let dropped = Rc::new(Cell::new(false));
-        let flag = DropFlag(Rc::clone(&dropped));
-        let id = 9001;
-        EVENT_HANDLERS.with(|hs| {
-            hs.borrow_mut().insert(
-                id,
-                Box::new(move |_| {
-                    let _ = &flag;
-                    remove_event_handler(id);
-                    EventOutcome::None
-                }),
-            );
-        });
-
-        let outcome = handle_event(id, Event::ProxyShutdown);
-        assert!(matches!(outcome, EventOutcome::None));
-        assert!(dropped.get(), "closure dropped, not reinserted");
-        EVENT_HANDLERS.with(|hs| assert!(!hs.borrow().contains_key(&id)));
-    }
-
-    #[test]
-    fn unsubscribing_another_handler_mid_dispatch_keeps_the_running_one() {
-        let (a, b) = (9101, 9102);
-        EVENT_HANDLERS.with(|hs| {
-            let mut hs = hs.borrow_mut();
-            hs.insert(
-                a,
-                Box::new(move |_| {
-                    remove_event_handler(b);
-                    EventOutcome::None
-                }),
-            );
-            hs.insert(b, Box::new(|_| EventOutcome::None));
-        });
-
-        handle_event(a, Event::ProxyShutdown);
-        EVENT_HANDLERS.with(|hs| {
-            let map = hs.borrow();
-            assert!(map.contains_key(&a), "running handler reinserted");
-            assert!(!map.contains_key(&b), "other handler removed");
-        });
-    }
-}
+mod tests;

@@ -476,6 +476,95 @@ async fn test_command_plugin_tab_complete_reaches_guest() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_command_plugin_completer_can_register_a_command() {
+    let (_tmp, plugins_dir) = stage("command-plugin");
+    let loader = fresh_loader();
+    let env = make_env(
+        plugins_dir.clone(),
+        Arc::new(MockPlayerRegistry),
+        Arc::new(MockConfigService),
+    );
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "command-plugin").await;
+
+    assert_eq!(
+        env.command_manager.tab_complete("nest ").await,
+        vec!["registered".to_string()],
+        "a completer registering a command must return its candidates, not trap"
+    );
+    assert_eq!(
+        env.command_manager.tab_complete("nested ").await,
+        vec!["inner".to_string()],
+        "the command registered from the completer carries its own completer"
+    );
+    assert!(
+        env.command_manager
+            .dispatch(None, "nested", &MockPlayerRegistry)
+            .await,
+        "the command registered from the completer is dispatchable"
+    );
+    assert_eq!(
+        std::fs::read_to_string(plugins_dir.join("command-plugin").join("nested.marker"))
+            .expect("nested command ran in the guest"),
+        "ran"
+    );
+    assert_eq!(
+        env.command_manager.tab_complete("greet w").await,
+        vec!["world".to_string()],
+        "the instance is still healthy afterwards"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_command_plugin_unregister_reaches_host() {
+    let (_tmp, plugins_dir) = stage("command-plugin");
+    let loader = fresh_loader();
+    let env = make_env(
+        plugins_dir.clone(),
+        Arc::new(MockPlayerRegistry),
+        Arc::new(MockConfigService),
+    );
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "command-plugin").await;
+    let marker = plugins_dir.join("command-plugin").join("unnest.marker");
+
+    env.command_manager.tab_complete("nest ").await;
+    assert!(
+        env.command_manager
+            .dispatch(None, "unnest", &MockPlayerRegistry)
+            .await
+    );
+    assert_eq!(
+        std::fs::read_to_string(&marker).expect("unnest ran"),
+        "true",
+        "the guest owned `nested` and removed it"
+    );
+    assert!(
+        !env.command_manager
+            .dispatch(None, "nested", &MockPlayerRegistry)
+            .await,
+        "the host no longer routes `nested`"
+    );
+
+    assert!(
+        env.command_manager
+            .dispatch(None, "unnest", &MockPlayerRegistry)
+            .await
+    );
+    assert_eq!(
+        std::fs::read_to_string(&marker).expect("unnest ran again"),
+        "false",
+        "a second unregister finds nothing to remove"
+    );
+    assert!(
+        env.command_manager
+            .dispatch(None, "greet again", &MockPlayerRegistry)
+            .await,
+        "other commands are untouched"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_stats_count_command() {
     let (_tmp, plugins_dir) = stage("stats");
     let loader = fresh_loader();

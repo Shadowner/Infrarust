@@ -77,7 +77,7 @@ impl Context {
     }
 
     /// Run `task` once after `after`. Returns a handle for [`cancel`](Self::cancel).
-    pub fn delay(&self, after: Duration, task: impl FnMut() + 'static) -> TaskHandle {
+    pub fn delay(&self, after: Duration, task: impl FnOnce() + 'static) -> TaskHandle {
         runtime::schedule_delay(millis(after), Box::new(task))
     }
 
@@ -87,7 +87,11 @@ impl Context {
     }
 
     pub fn cancel(&self, handle: TaskHandle) {
-        crate::bindings::scheduler::cancel(handle);
+        runtime::cancel_task(handle);
+    }
+
+    pub fn unregister_command(&self, name: &str) -> bool {
+        runtime::unregister_command(name)
     }
 
     #[must_use]

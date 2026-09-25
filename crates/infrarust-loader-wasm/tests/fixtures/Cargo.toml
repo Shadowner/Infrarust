@@ -19,14 +19,15 @@ members = [
 ]
 
 [workspace.dependencies]
-wit-bindgen = "0.51"
+wit-bindgen = "0.58"
 infrarust-plugin-sdk = { path = "../../../infrarust-plugin-sdk" }
 infrarust-plugin-macros = { path = "../../../infrarust-plugin-macros" }
 fixture-common = { path = "fixture-common" }
 
 [profile.release]
-opt-level = "s"
-lto = true
+opt-level = 1
+lto = false
+codegen-units = 16
 strip = true
 panic = "abort"
 

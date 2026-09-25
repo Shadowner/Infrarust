@@ -203,12 +203,12 @@ Two more host services register guest callbacks rather than reading state, and e
 Scheduling is baseline (`scheduler`). The methods are on `Context` and return a `TaskHandle` (a `u64`).
 
 ```rust
-pub fn delay(&self, after: Duration, task: impl FnMut() + 'static) -> TaskHandle;
+pub fn delay(&self, after: Duration, task: impl FnOnce() + 'static) -> TaskHandle;
 pub fn interval(&self, period: Duration, task: impl FnMut() + 'static) -> TaskHandle;
 pub fn cancel(&self, handle: TaskHandle);
 ```
 
-`delay` runs the closure once after the duration. `interval` runs it repeatedly. Both fire through the host's `on-scheduled-task` dispatch back into the plugin.
+`delay` runs the closure once after the duration and drops it right after. `interval` runs it repeatedly. Both fire through the host's `on-scheduled-task` dispatch back into the plugin. `cancel` stops the task on the host and drops the closure in the guest; calling it from inside the task's own callback is fine, and the closure is dropped once that call returns.
 
 ```rust
 use std::time::Duration;
