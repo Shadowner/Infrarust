@@ -3,7 +3,7 @@ use std::any::TypeId;
 use infrarust_api::events::chat::ChatMessageEvent;
 use infrarust_api::events::connection::{
     KickedFromServerEvent, PlayerChooseInitialServerEvent, ServerConnectedEvent,
-    ServerPreConnectEvent, ServerSwitchEvent,
+    ServerPostConnectEvent, ServerPreConnectEvent,
 };
 use infrarust_api::events::lifecycle::{
     DisconnectEvent, GameProfileRequestEvent, LoginEvent, OnlineAuthFailed, PermissionsSetupEvent,
@@ -26,7 +26,7 @@ pub static BUILTIN_EVENTS: [TypeId; 20] = [
     TypeId::of::<PlayerChooseInitialServerEvent>(),
     TypeId::of::<ServerPreConnectEvent>(),
     TypeId::of::<ServerConnectedEvent>(),
-    TypeId::of::<ServerSwitchEvent>(),
+    TypeId::of::<ServerPostConnectEvent>(),
     TypeId::of::<KickedFromServerEvent>(),
     TypeId::of::<ChatMessageEvent>(),
     TypeId::of::<ProxyPingEvent>(),

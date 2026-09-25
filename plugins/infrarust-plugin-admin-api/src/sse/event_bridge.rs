@@ -1,12 +1,9 @@
-use std::sync::Arc;
-
 use infrarust_api::event::EventPriority;
 use infrarust_api::event::bus::EventBusExt;
-use infrarust_api::events::connection::ServerSwitchEvent;
+use infrarust_api::events::connection::ServerPostConnectEvent;
 use infrarust_api::events::lifecycle::{DisconnectEvent, PostLoginEvent};
 use infrarust_api::events::proxy::{BackendHealthEvent, ConfigReloadEvent, ServerStateChangeEvent};
 use infrarust_api::plugin::PluginContext;
-use infrarust_api::services::player_registry::PlayerRegistry;
 use tokio::sync::broadcast;
 
 use crate::state::ApiEvent;
@@ -19,18 +16,11 @@ use crate::util::{format_address, now_iso8601};
 /// variants that SSE clients consume.
 pub struct EventBridge {
     event_tx: broadcast::Sender<ApiEvent>,
-    player_registry: Arc<dyn PlayerRegistry>,
 }
 
 impl EventBridge {
-    pub fn new(
-        event_tx: broadcast::Sender<ApiEvent>,
-        player_registry: Arc<dyn PlayerRegistry>,
-    ) -> Self {
-        Self {
-            event_tx,
-            player_registry,
-        }
+    pub fn new(event_tx: broadcast::Sender<ApiEvent>) -> Self {
+        Self { event_tx }
     }
 
     /// Registers all event listeners on the EventBus via the plugin context.
@@ -61,21 +51,17 @@ impl EventBridge {
                 });
             });
 
-        // ServerSwitchEvent → PlayerSwitch
         let tx = self.event_tx.clone();
-        let registry = Arc::clone(&self.player_registry);
         ctx.event_bus()
-            .subscribe::<ServerSwitchEvent, _>(EventPriority::LAST, move |event| {
-                let username = registry
-                    .get_player_by_id(event.player_id)
-                    .map(|p| p.profile().username.clone())
-                    .unwrap_or_else(|| format!("Player({})", event.player_id.as_u64()));
-
+            .subscribe::<ServerPostConnectEvent, _>(EventPriority::LAST, move |event| {
+                let Some(from) = event.switched_from() else {
+                    return;
+                };
                 let _ = tx.send(ApiEvent::PlayerSwitch {
-                    player_id: event.player_id.as_u64(),
-                    username,
-                    from_server: Some(event.previous_server.as_str().to_string()),
-                    to_server: event.new_server.as_str().to_string(),
+                    player_id: event.player_id().as_u64(),
+                    username: event.player.profile().username.clone(),
+                    from_server: Some(from.as_str().to_string()),
+                    to_server: event.server.as_str().to_string(),
                     timestamp: now_iso8601(),
                 });
             });

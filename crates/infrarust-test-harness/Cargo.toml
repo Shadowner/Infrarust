@@ -30,3 +30,4 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 infrarust-plugin-server-wake = { workspace = true }
+infrarust-plugin-admin-api = { workspace = true }

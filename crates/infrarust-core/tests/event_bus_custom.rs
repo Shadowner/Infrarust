@@ -11,7 +11,7 @@ use infrarust_api::event::{Event, EventPriority};
 use infrarust_api::events::chat::ChatMessageEvent;
 use infrarust_api::events::connection::{
     KickedFromServerEvent, PlayerChooseInitialServerEvent, ServerConnectedEvent,
-    ServerPreConnectEvent, ServerSwitchEvent,
+    ServerPostConnectEvent, ServerPreConnectEvent,
 };
 use infrarust_api::events::lifecycle::{
     DisconnectEvent, GameProfileRequestEvent, LoginEvent, OnlineAuthFailed, PermissionsSetupEvent,
@@ -231,7 +231,10 @@ const BUILTIN_NAMES: [Probe; 19] = [
     ),
     ("ServerPreConnectEvent", TypeId::of::<ServerPreConnectEvent>),
     ("ServerConnectedEvent", TypeId::of::<ServerConnectedEvent>),
-    ("ServerSwitchEvent", TypeId::of::<ServerSwitchEvent>),
+    (
+        "ServerPostConnectEvent",
+        TypeId::of::<ServerPostConnectEvent>,
+    ),
     ("KickedFromServerEvent", TypeId::of::<KickedFromServerEvent>),
     ("ChatMessageEvent", TypeId::of::<ChatMessageEvent>),
     ("ProxyPingEvent", TypeId::of::<ProxyPingEvent>),

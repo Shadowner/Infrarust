@@ -11,9 +11,10 @@ mod validation;
 use std::sync::Arc;
 
 use infrarust_api::event::ResultedEvent;
+use infrarust_api::events::connection::{ConnectCause, ServerPreConnectResult};
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
-use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
+use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
@@ -21,9 +22,11 @@ use infrarust_transport::BackendConnector;
 use crate::error::CoreError;
 use crate::forwarding::{ForwardingData, build_handshake_for_backend};
 use crate::pipeline::types::HandshakeData;
+use crate::player::PlayerSession;
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::server_join::{ServerJoin, pre_connect};
 
 const SWITCH_CONFIG_PHASE_TIMEOUT_SECS: u64 = 30;
 
@@ -39,22 +42,33 @@ pub enum SwitchResult {
     Backend(SwitchSuccess),
     Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
     Denied(Component),
+    Unchanged,
 }
 
-/// Performs a server switch: connects to a new backend, sends the appropriate
-/// packets to the client, and returns the new backend bridge.
-///
-/// The caller should replace its `BackendBridge` with the returned one and
-/// update the player session's `current_server`.
+pub(crate) enum SwitchTarget {
+    Unapproved {
+        server: ServerId,
+        cause: ConnectCause,
+    },
+    Approved(ServerId),
+}
+
+impl SwitchTarget {
+    const fn server(&self) -> &ServerId {
+        match self {
+            Self::Unapproved { server, .. } | Self::Approved(server) => server,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-pub async fn perform_switch(
+pub(crate) async fn perform_switch(
     client: &mut ClientBridge,
     current_server: &ServerId,
-    target: ServerId,
+    target: SwitchTarget,
     handshake_data: &HandshakeData,
     game_profile_name: &str,
-    player_id: PlayerId,
-    api_profile: &GameProfile,
+    session: &Arc<PlayerSession>,
     services: &ProxyServices,
     backend_connector: &BackendConnector,
     peer_addr: std::net::SocketAddr,
@@ -62,12 +76,13 @@ pub async fn perform_switch(
     protocol_version: ProtocolVersion,
 ) -> Result<SwitchResult, CoreError> {
     let version = protocol_version;
+    let api_profile = session.game_profile();
+    let requested = target.server().clone();
 
-    // 1. Resolve target server config + its load balancer
     let (server_config, load_balancer) = services
         .domain_router
-        .find_route_by_server_id(target.as_str())
-        .ok_or_else(|| CoreError::Rejected(format!("unknown server: {}", target.as_str())))?;
+        .find_route_by_server_id(requested.as_str())
+        .ok_or_else(|| CoreError::Rejected(format!("unknown server: {}", requested.as_str())))?;
 
     let current_config = services
         .domain_router
@@ -82,49 +97,51 @@ pub async fn perform_switch(
     validation::validate_switch_allowed(&current_config, &server_config)
         .map_err(|e| CoreError::Rejected(e.to_string()))?;
 
-    // 2. Fire ServerPreConnectEvent (awaited — can deny/redirect/send to limbo)
-    let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(
-        player_id,
-        api_profile.clone(),
-        target.clone(),
-    );
-    let pre_connect = services.event_bus.fire(pre_connect).await;
-
-    let effective_target = match pre_connect.result() {
-        infrarust_api::events::connection::ServerPreConnectResult::Allowed => target.clone(),
-        infrarust_api::events::connection::ServerPreConnectResult::ConnectTo(redirect) => {
-            tracing::info!(
-                original = %target,
-                redirect = %redirect,
-                "server switch redirected by event"
-            );
-            redirect.clone()
-        }
-        infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
-            return Ok(SwitchResult::Denied(reason.clone()));
-        }
-        infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo {
-            limbo_handlers,
-        } => {
-            tracing::info!("server switch redirected to limbo by event");
-            let handler_names = if limbo_handlers.is_empty() {
-                server_config.limbo_handlers.clone()
-            } else {
-                limbo_handlers.clone()
+    let effective_target = match target {
+        SwitchTarget::Approved(server) => server,
+        SwitchTarget::Unapproved { server, cause } => {
+            let pre_connect =
+                pre_connect(&services.event_bus, session, server.clone(), cause).await;
+            let effective = match pre_connect.result() {
+                ServerPreConnectResult::Allowed => server,
+                ServerPreConnectResult::ConnectTo(redirect) => {
+                    tracing::info!(
+                        original = %server,
+                        redirect = %redirect,
+                        "server switch redirected by event"
+                    );
+                    redirect.clone()
+                }
+                ServerPreConnectResult::Denied { reason } => {
+                    return Ok(SwitchResult::Denied(reason.clone()));
+                }
+                ServerPreConnectResult::SendToLimbo { limbo_handlers } => {
+                    tracing::info!("server switch redirected to limbo by event");
+                    let handler_names = if limbo_handlers.is_empty() {
+                        server_config.limbo_handlers.clone()
+                    } else {
+                        limbo_handlers.clone()
+                    };
+                    let handlers = services
+                        .limbo_handler_registry
+                        .resolve_handlers_lenient(&handler_names);
+                    let ctx = LimboEntryContext::PluginRedirect {
+                        from_server: Some(current_server.clone()),
+                    };
+                    return Ok(SwitchResult::Limbo(handlers, ctx));
+                }
+                _ => server,
             };
-            let handlers = services
-                .limbo_handler_registry
-                .resolve_handlers_lenient(&handler_names);
-            let ctx = LimboEntryContext::PluginRedirect {
-                from_server: Some(current_server.clone()),
-            };
-            return Ok(SwitchResult::Limbo(handlers, ctx));
+            if cause == ConnectCause::Switch && effective == *current_server {
+                return Ok(SwitchResult::Unchanged);
+            }
+            effective
         }
-        _ => target.clone(), // VirtualBackend — not implemented yet
     };
 
-    // Re-resolve if redirected
-    let (server_config, load_balancer) = if effective_target != target {
+    let (server_config, load_balancer) = if effective_target == requested {
+        (server_config, load_balancer)
+    } else {
         services
             .domain_router
             .find_route_by_server_id(effective_target.as_str())
@@ -134,11 +151,8 @@ pub async fn perform_switch(
                     effective_target.as_str()
                 ))
             })?
-    } else {
-        (server_config, load_balancer)
     };
 
-    // 3. Connect to new backend
     let connection_info = infrarust_transport::ConnectionInfo {
         peer_addr,
         real_ip,
@@ -218,22 +232,13 @@ pub async fn perform_switch(
         tracing::debug!("backend LoginAcknowledged → Config");
     }
 
-    // 7. Fire ServerConnectedEvent (fire-and-forget)
-    services.event_bus.fire_and_forget_arc(
-        infrarust_api::events::connection::ServerConnectedEvent {
-            player_id,
-            server: effective_target.clone(),
-        },
-    );
+    let mut join = ServerJoin::new(session, effective_target.clone());
+    join.connected(&services.event_bus).await;
 
     // 8. Version-branched switch
     let join_game_frame = if version.no_less_than(ProtocolVersion::V1_20_2) {
         // 1.20.2+: config phase → JoinGame, bounded so a stalled/malicious client
-        let session_token = services
-            .connection_registry
-            .find_by_id(player_id)
-            .map(|s| s.shutdown_token().clone())
-            .unwrap_or_default();
+        let session_token = session.shutdown_token().clone();
         let config_phase = tokio::time::timeout(
             std::time::Duration::from_secs(SWITCH_CONFIG_PHASE_TIMEOUT_SECS),
             config_phase::handle_config_phase_switch(
@@ -265,14 +270,7 @@ pub async fn perform_switch(
     )
     .await?;
 
-    // 10. Fire ServerSwitchEvent (fire-and-forget)
-    services
-        .event_bus
-        .fire_and_forget_arc(infrarust_api::events::connection::ServerSwitchEvent {
-            player_id,
-            previous_server: current_server.clone(),
-            new_server: effective_target.clone(),
-        });
+    join.joined(&services.event_bus).await;
 
     tracing::info!(
         previous = %current_server,

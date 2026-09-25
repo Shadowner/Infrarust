@@ -212,6 +212,7 @@ impl InterceptedHandler {
 
         let initial = match initial_connect::resolve_initial_mode(
             &mut client,
+            &player,
             &auth_result,
             &mut login_completed,
             &routing,
@@ -232,15 +233,19 @@ impl InterceptedHandler {
             }
         };
 
-        let (initial_mode, target_server_id) = match initial {
-            InitialMode::Connected { mode, server_id } => (*mode, server_id),
+        let (initial_mode, target_server_id, pending) = match initial {
+            InitialMode::Connected {
+                mode,
+                server_id,
+                pending,
+            } => (*mode, server_id, pending),
             InitialMode::Denied(cause) => {
                 lifecycle.end(cause).await;
                 return Ok(());
             }
         };
 
-        player.set_current_server(target_server_id.clone());
+        player.set_pending_server(target_server_id.clone());
         if let initial_connect::ConnectionMode::Backend(ref backend) = initial_mode {
             player.set_connected_address(backend.server_address().cloned());
         }
@@ -282,6 +287,7 @@ impl InterceptedHandler {
             peer_addr,
             Some(ctx.client_ip),
             target_server_id,
+            pending,
             &player,
             &self.services,
             &self.backend_connector,

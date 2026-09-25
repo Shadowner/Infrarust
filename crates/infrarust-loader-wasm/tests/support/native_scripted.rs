@@ -8,8 +8,8 @@ use infrarust_api::event::{BoxFuture, EventPriority, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::connection::{
     KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
-    PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPreConnectEvent,
-    ServerPreConnectResult, ServerSwitchEvent,
+    PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPostConnectEvent,
+    ServerPreConnectEvent, ServerPreConnectResult,
 };
 use infrarust_api::events::lifecycle::{
     DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult,
@@ -210,8 +210,8 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
             }
         }),
         EventName::ServerPreConnect => bus.subscribe(at, move |e: &mut ServerPreConnectEvent| {
-            let id = e.player_id.as_u64().to_string();
-            seen.record(&[&id, &e.profile.username, e.original_server.as_str()]);
+            let id = e.player_id().as_u64().to_string();
+            seen.record(&[&id, &e.profile().username, e.server.as_str()]);
             let result = match &seen.action {
                 Action::Allow => ServerPreConnectResult::Allowed,
                 Action::ConnectTo(server) => {
@@ -228,12 +228,14 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
             e.set_result(result);
         }),
         EventName::ServerConnected => bus.subscribe(at, move |e: &mut ServerConnectedEvent| {
-            let id = e.player_id.as_u64().to_string();
+            let id = e.player_id().as_u64().to_string();
             seen.record(&[&id, e.server.as_str()]);
         }),
-        EventName::ServerSwitch => bus.subscribe(at, move |e: &mut ServerSwitchEvent| {
-            let id = e.player_id.as_u64().to_string();
-            seen.record(&[&id, e.previous_server.as_str(), e.new_server.as_str()]);
+        EventName::ServerSwitch => bus.subscribe(at, move |e: &mut ServerPostConnectEvent| {
+            if let Some(previous) = e.switched_from() {
+                let id = e.player_id().as_u64().to_string();
+                seen.record(&[&id, previous.as_str(), e.server.as_str()]);
+            }
         }),
         EventName::KickedFromServer => bus.subscribe(at, move |e: &mut KickedFromServerEvent| {
             let id = e.player_id.as_u64().to_string();
@@ -258,8 +260,8 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
         }),
         EventName::PlayerChooseInitialServer => {
             bus.subscribe(at, move |e: &mut PlayerChooseInitialServerEvent| {
-                let id = e.player_id.as_u64().to_string();
-                seen.record(&[&id, &e.profile.username, e.initial_server.as_str()]);
+                let id = e.player_id().as_u64().to_string();
+                seen.record(&[&id, &e.profile().username, e.initial_server.as_str()]);
                 let result = match &seen.action {
                     Action::Allow => PlayerChooseInitialServerResult::Allowed,
                     Action::Redirect(server) => {

@@ -79,9 +79,9 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 ## How it works
 
 1. The proxy reads the client's handshake and login start packets.
-2. It fires a `ServerPreConnectEvent`, giving plugins a chance to deny the connection. Passthrough honors only the deny result; redirect and limbo outcomes are ignored in this mode.
+2. It fires `PlayerChooseInitialServerEvent` and `ServerPreConnectEvent`, giving plugins a chance to deny the connection. Passthrough honors only the deny result; redirect and limbo outcomes are ignored in this mode.
 3. It connects to one of the configured backend addresses.
-4. It forwards those initial packets to the backend, applying domain rewrite if configured.
+4. It forwards those initial packets to the backend, applying domain rewrite if configured, then fires `ServerConnectedEvent`. The proxy does not read the backend's answer, so this event does not mean the backend accepted the login, and no `ServerPostConnectEvent` follows.
 5. It registers a player session (with `active: false`, since passthrough can't inject packets).
 6. It starts two concurrent tasks: one copies bytes from client to backend, the other from backend to client. Both run through `tokio::io::copy`.
 7. When either side closes the connection, the write half of the other socket is shut down, the remaining bytes drain, and the session ends.

@@ -2133,6 +2133,7 @@ dependencies = [
  "bytes",
  "infrarust-api",
  "infrarust-core",
+ "infrarust-plugin-admin-api",
  "infrarust-plugin-server-wake",
  "infrarust_config",
  "infrarust_protocol",

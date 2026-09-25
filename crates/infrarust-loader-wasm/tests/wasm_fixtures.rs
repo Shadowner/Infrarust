@@ -12,7 +12,9 @@ use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use infrarust_api::event::ResultedEvent;
-use infrarust_api::events::connection::{ServerPreConnectEvent, ServerPreConnectResult};
+use infrarust_api::events::connection::{
+    ConnectCause, ServerPreConnectEvent, ServerPreConnectResult,
+};
 use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
@@ -516,9 +518,15 @@ fn post_login() -> PostLoginEvent {
 
 fn pre_connect() -> ServerPreConnectEvent {
     ServerPreConnectEvent::new(
-        PlayerId::new(1),
-        nil_profile("Steve"),
+        support::session_player(
+            1,
+            nil_profile("Steve"),
+            ProtocolVersion::MINECRAFT_1_21.raw(),
+            "127.0.0.1:40000".parse().unwrap(),
+        ),
         ServerId::new("lobby"),
+        None,
+        ConnectCause::Initial,
     )
 }
 

@@ -27,9 +27,14 @@ PreLoginEvent ─────────────── Denied ──▶ dis
   → client_only: LoginSuccess sent with the final profile
   → player registered
   → PostLoginEvent
-  → PlayerChooseInitialServerEvent → ServerPreConnectEvent
-  → backend connection → ServerConnectedEvent
-  → play (ChatMessageEvent, raw packets, switches: ServerPreConnectEvent → ServerSwitchEvent)
+  → PlayerChooseInitialServerEvent
+  → ServerPreConnectEvent (cause: initial)
+  → limbo gate, when the server or a listener asks for one
+  → backend login ────────────── refused ──▶ no ServerConnectedEvent
+  → ServerConnectedEvent       the backend accepted the login
+  → ServerPostConnectEvent     the server's JoinGame reached the client
+  → play (ChatMessageEvent, raw packets,
+          switches: ServerPreConnectEvent → ServerConnectedEvent → ServerPostConnectEvent)
   → DisconnectEvent
 ```
 
@@ -38,11 +43,18 @@ PreLoginEvent ─────────────── Denied ──▶ dis
 The backend runs the login and the proxy only forwards bytes:
 
 ```
-player registered → PostLoginEvent → ServerPreConnectEvent
+player registered → PostLoginEvent → PlayerChooseInitialServerEvent → ServerPreConnectEvent
   → backend connection → ServerConnectedEvent → forwarding → DisconnectEvent
 ```
 
 These modes do not fire `PreLoginEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent` or `LoginEvent` yet. Clients older than 1.7 (the legacy protocol) fire no player events.
+
+The proxy never reads the backend's packets in these modes, which changes two things:
+
+- `ServerConnectedEvent` fires once the TCP connection to the backend is open and the login packets were forwarded, not when the backend accepts the login. A backend that then refuses the player still got a `ServerConnectedEvent`.
+- `ServerPostConnectEvent` never fires, because the proxy does not see the `JoinGame` packet. `current_server()` is set right after `ServerConnectedEvent`.
+
+Only the `Denied` result of `ServerPreConnectEvent` is honored. The results of `PlayerChooseInitialServerEvent` and the other `ServerPreConnectEvent` results are ignored.
 
 ### Guarantees
 
@@ -53,6 +65,19 @@ These modes do not fire `PreLoginEvent`, `GameProfileRequestEvent`, `Permissions
 - A `player.disconnect(reason)` made during `PostLoginEvent` disconnects the client in the state it is in (the login phase for `offline`, before any server is chosen) with that reason, and the player's `DisconnectEvent` follows. Messages, titles and action bars sent during `PostLoginEvent` wait and reach the client once it has joined the game.
 - When a player logs in with a UUID that is already online, the proxy disconnects the first session with "You logged in from another location" and waits for its `DisconnectEvent` before the new session's `PostLoginEvent`, for at most `[events] disconnect_deadline`.
 - `DisconnectEvent` is awaited, and the player leaves the registry once its listeners are done. The whole dispatch is bounded by [`disconnect_deadline`](../../configuration/global#plugin-event-handlers) (15 seconds by default): listeners still running then are cancelled, and the player is removed anyway.
+
+### Server connections
+
+These hold for `offline` and `client_only`. Passthrough modes differ as described above.
+
+- `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent` and `ServerPostConnectEvent` are awaited in the player's session, after `PostLoginEvent` and before `DisconnectEvent`. For one connection attempt they fire in that order.
+- `ServerPreConnectEvent` fires before the proxy opens any connection to the target, exactly once per attempt: the initial connection, every switch, a limbo handler sending the player to another server, a kicked player being redirected. A limbo gate on the chosen server does not fire it again when it lets the player through.
+- `ServerConnectedEvent` fires once the target backend accepted the login. It never fires for a backend that refused the login or never answered. A switch can still fail after it, for example when the backend closes during the configuration phase: no `ServerPostConnectEvent` follows and the player stays on the server they were on.
+- `ServerPostConnectEvent` fires once the server's `JoinGame` packet reached the client. From then on `current_server()` returns that server.
+- `previous_server` is the server the player was on when the attempt started: `None` for the initial connection, including after an initial limbo gate, and `Some(a)` for a switch from `a`.
+- `current_server()` stays `None` until the first `ServerPostConnectEvent`, also while a limbo gate holds the player before their first server. The player already counts toward that server in `PlayerRegistry::online_count_on` and `get_players_on_server`, in the status player count and in the server manager's idle detection.
+- A switch to the server the player is already on does nothing and fires no event.
+- `DisconnectEvent::last_server` is the last server the player joined, `None` if they never got a `ServerPostConnectEvent`.
 
 ## Subscribing to events
 
@@ -116,8 +141,7 @@ Every event goes through the same dispatch: listeners run one after another in p
 
 | Delivery | Events | What it means |
 |----------|--------|---------------|
-| Inline, awaited | `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `KickedFromServerEvent`, `ChatMessageEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
-| Detached, per player | `ServerConnectedEvent`, `ServerSwitchEvent` | Each event is dispatched in its own task. The player's connection does not wait for it, and there is no ordering guarantee between two of these events. |
+| Inline, awaited | `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `ChatMessageEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
 | Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
 
 Because the queue delivers one event at a time, a slow listener on a queued event delays the queued events behind it, up to `handler_timeout` per listener. A listener that panics does not stop the queue: the next event is still delivered.
@@ -334,9 +358,10 @@ Fired after `PostLoginEvent`, before `ServerPreConnectEvent`. Allows you to over
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `player_id` | `PlayerId` | The connecting player |
-| `profile` | `GameProfile` | The player's profile |
+| `player` | `Arc<dyn Player>` | The connecting player. `current_server()` is `None` |
 | `initial_server` | `ServerId` | The server chosen by the domain router |
+
+`player_id()` and `profile()` are shortcuts for `player.id()` and `player.profile()`.
 
 **Results** (`PlayerChooseInitialServerResult`):
 
@@ -350,8 +375,7 @@ Fired after `PostLoginEvent`, before `ServerPreConnectEvent`. Allows you to over
 ctx.event_bus().subscribe::<PlayerChooseInitialServerEvent, _>(
     EventPriority::NORMAL,
     |event| {
-        // Send new players to the lobby
-        if is_first_join(&event.profile.uuid) {
+        if is_first_join(&event.profile().uuid) {
             event.set_result(PlayerChooseInitialServerResult::Redirect(
                 ServerId::new("lobby"),
             ));
@@ -362,21 +386,33 @@ ctx.event_bus().subscribe::<PlayerChooseInitialServerEvent, _>(
 
 ### ServerPreConnectEvent
 
-Fired before the proxy connects a player to a backend server. This fires on initial connection and on every server switch.
+Fired before the proxy opens a connection to a backend server, once per connection attempt. See [server connections](#server-connections) for when it fires.
 
 **Type:** Resulted
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `player_id` | `PlayerId` | The player |
-| `profile` | `GameProfile` | The player's profile |
-| `original_server` | `ServerId` | The target server |
+| `player` | `Arc<dyn Player>` | The player |
+| `server` | `ServerId` | The server the proxy is about to connect to |
+| `previous_server` | `Option<ServerId>` | The server the player is on, `None` before their first server |
+| `cause` | `ConnectCause` | Why the connection is attempted |
+
+`player_id()` and `profile()` are shortcuts for `player.id()` and `player.profile()`.
+
+**`ConnectCause`** (`#[non_exhaustive]`, `as_str()` gives the name in parentheses):
+
+| Variant | Description |
+|---------|-------------|
+| `Initial` (`initial`) | The player's first server after login, also when an initial limbo gate held them first |
+| `Switch` (`switch`) | `Player::switch_server`, a command or a plugin moves the player to another server |
+| `LimboExit` (`limbo_exit`) | A limbo handler sends the player to another server than the one it held them for, or back to a server after a kick sent them to limbo |
+| `KickRedirect` (`kick_redirect`) | A `KickedFromServerEvent` listener redirected the kicked player |
 
 **Results** (`ServerPreConnectResult`):
 
 | Variant | Description |
 |---------|-------------|
-| `Allowed` (default) | Connect to the original server |
+| `Allowed` (default) | Connect to `server` |
 | `ConnectTo(ServerId)` | Redirect to a different server |
 | `SendToLimbo { limbo_handlers }` | Route through limbo handlers |
 | `VirtualBackend(Box<dyn VirtualBackendHandler>)` | Route to a virtual backend handler |
@@ -386,7 +422,7 @@ Fired before the proxy connects a player to a backend server. This fires on init
 ctx.event_bus().subscribe::<ServerPreConnectEvent, _>(
     EventPriority::NORMAL,
     |event| {
-        if is_server_full(&event.original_server) {
+        if is_server_full(&event.server) {
             event.redirect_to(ServerId::new("fallback"));
         }
     },
@@ -395,22 +431,40 @@ ctx.event_bus().subscribe::<ServerPreConnectEvent, _>(
 
 ### ServerConnectedEvent
 
-Fired after a player has connected to a backend server. Informational.
+Fired once a backend server accepted the player's login. Informational and awaited. The player has not joined the server yet: `current_server()` still returns the server they were on, or `None` before their first server.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `player_id` | `PlayerId` | The player |
-| `server` | `ServerId` | The server they connected to |
+| `player` | `Arc<dyn Player>` | The player |
+| `server` | `ServerId` | The server that accepted the login |
+| `previous_server` | `Option<ServerId>` | The server the player is on, `None` before their first server |
 
-### ServerSwitchEvent
+`player_id()` is a shortcut for `player.id()`.
 
-Fired after a player switches from one server to another. Informational.
+### ServerPostConnectEvent
+
+Fired once the player joined a server: its `JoinGame` packet reached the client and `current_server()` returns `server`. Informational and awaited. Not fired in passthrough modes.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `player_id` | `PlayerId` | The player |
-| `previous_server` | `ServerId` | The server they left |
-| `new_server` | `ServerId` | The server they moved to |
+| `player` | `Arc<dyn Player>` | The player |
+| `server` | `ServerId` | The server the player joined |
+| `previous_server` | `Option<ServerId>` | The server the player was on, `None` for their first server |
+
+`player_id()` is a shortcut for `player.id()`. `switched_from()` returns the server the player left when this join moved them from another server, and `None` for their first server or a return to the same server.
+
+There is no separate switch event: a switch is a `ServerPostConnectEvent` whose `switched_from()` is set.
+
+```rust
+ctx.event_bus().subscribe::<ServerPostConnectEvent, _>(
+    EventPriority::NORMAL,
+    |event| {
+        if let Some(from) = event.switched_from() {
+            tracing::info!("{} moved from {from} to {}", event.player.profile().username, event.server);
+        }
+    },
+);
+```
 
 ### KickedFromServerEvent
 
@@ -442,6 +496,10 @@ ctx.event_bus().subscribe::<KickedFromServerEvent, _>(
     },
 );
 ```
+
+### WASM connection events
+
+WASM plugins (contract 0.2.3) keep the records they had. `server-pre-connect` carries `server` as `original-server`, and `server-connected` fires with `ServerConnectedEvent`, so it now waits for the backend to accept the login. `server-switch` fires from `ServerPostConnectEvent` when `switched_from()` is set, with the same `previous-server` and `new-server` fields. WASM plugins do not see `previous_server`, `cause`, or a join that is not a switch.
 
 ## Chat events
 

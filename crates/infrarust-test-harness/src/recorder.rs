@@ -8,8 +8,8 @@ use infrarust_api::event::{BoxFuture, Event, EventPriority, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::connection::{
     KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
-    PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPreConnectEvent,
-    ServerPreConnectResult, ServerSwitchEvent,
+    PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPostConnectEvent,
+    ServerPreConnectEvent, ServerPreConnectResult,
 };
 use infrarust_api::events::lifecycle::{
     DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult, OnlineAuthFailed,
@@ -41,7 +41,7 @@ pub enum EventKind {
     PlayerChooseInitialServer,
     ServerPreConnect,
     ServerConnected,
-    ServerSwitch,
+    ServerPostConnect,
     KickedFromServer,
     ChatMessage,
     ProxyPing,
@@ -64,7 +64,7 @@ impl EventKind {
         Self::PlayerChooseInitialServer,
         Self::ServerPreConnect,
         Self::ServerConnected,
-        Self::ServerSwitch,
+        Self::ServerPostConnect,
         Self::KickedFromServer,
         Self::ChatMessage,
         Self::ProxyPing,
@@ -87,7 +87,7 @@ impl EventKind {
             Self::PlayerChooseInitialServer => "PlayerChooseInitialServer",
             Self::ServerPreConnect => "ServerPreConnect",
             Self::ServerConnected => "ServerConnected",
-            Self::ServerSwitch => "ServerSwitch",
+            Self::ServerPostConnect => "ServerPostConnect",
             Self::KickedFromServer => "KickedFromServer",
             Self::ChatMessage => "ChatMessage",
             Self::ProxyPing => "ProxyPing",
@@ -430,11 +430,12 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
         };
         (
             EventKind::PlayerChooseInitialServer,
-            Some(e.player_id),
-            Some(e.profile.username.clone()),
+            Some(e.player_id()),
+            Some(e.profile().username.clone()),
             json!({
-                "profile": profile(&e.profile),
+                "profile": profile(e.profile()),
                 "initial_server": e.initial_server.as_str(),
+                "current_server": server(e.player.current_server().as_ref()),
                 "result": result,
             }),
         )
@@ -454,11 +455,14 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
         };
         (
             EventKind::ServerPreConnect,
-            Some(e.player_id),
-            Some(e.profile.username.clone()),
+            Some(e.player_id()),
+            Some(e.profile().username.clone()),
             json!({
-                "profile": profile(&e.profile),
-                "original_server": e.original_server.as_str(),
+                "profile": profile(e.profile()),
+                "server": e.server.as_str(),
+                "previous_server": server(e.previous_server.as_ref()),
+                "cause": e.cause.as_str(),
+                "current_server": server(e.player.current_server().as_ref()),
                 "result": result,
             }),
         )
@@ -466,19 +470,24 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
     on::<ServerConnectedEvent>(bus, recorder, |e| {
         (
             EventKind::ServerConnected,
-            Some(e.player_id),
-            None,
-            json!({ "server": e.server.as_str() }),
+            Some(e.player_id()),
+            Some(e.player.profile().username.clone()),
+            json!({
+                "server": e.server.as_str(),
+                "previous_server": server(e.previous_server.as_ref()),
+                "current_server": server(e.player.current_server().as_ref()),
+            }),
         )
     });
-    on::<ServerSwitchEvent>(bus, recorder, |e| {
+    on::<ServerPostConnectEvent>(bus, recorder, |e| {
         (
-            EventKind::ServerSwitch,
-            Some(e.player_id),
-            None,
+            EventKind::ServerPostConnect,
+            Some(e.player_id()),
+            Some(e.player.profile().username.clone()),
             json!({
-                "previous_server": e.previous_server.as_str(),
-                "new_server": e.new_server.as_str(),
+                "server": e.server.as_str(),
+                "previous_server": server(e.previous_server.as_ref()),
+                "current_server": server(e.player.current_server().as_ref()),
             }),
         )
     });
@@ -571,6 +580,10 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
             }),
         )
     });
+}
+
+fn server(server: Option<&ServerId>) -> Value {
+    server.map_or(Value::Null, |server| json!(server.as_str()))
 }
 
 fn profile(profile: &GameProfile) -> Value {

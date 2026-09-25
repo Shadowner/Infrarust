@@ -1,8 +1,31 @@
 //! Connection and server routing events.
 
+use std::sync::Arc;
+
 use crate::event::{Event, ResultedEvent};
+use crate::player::Player;
 use crate::types::{Component, GameProfile, PlayerId, ServerId};
 use crate::virtual_backend::VirtualBackendHandler;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ConnectCause {
+    Initial,
+    Switch,
+    LimboExit,
+    KickRedirect,
+}
+
+impl ConnectCause {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Initial => "initial",
+            Self::Switch => "switch",
+            Self::LimboExit => "limbo_exit",
+            Self::KickRedirect => "kick_redirect",
+        }
+    }
+}
 
 /// Fired before the proxy connects a player to a backend server.
 ///
@@ -10,23 +33,35 @@ use crate::virtual_backend::VirtualBackendHandler;
 /// to a limbo handler, route them to a virtual backend, or deny the
 /// connection entirely.
 pub struct ServerPreConnectEvent {
-    /// The player's session ID.
-    pub player_id: PlayerId,
-    /// The player's game profile.
-    pub profile: GameProfile,
-    /// The server the player was originally going to connect to.
-    pub original_server: ServerId,
+    pub player: Arc<dyn Player>,
+    pub server: ServerId,
+    pub previous_server: Option<ServerId>,
+    pub cause: ConnectCause,
     result: ServerPreConnectResult,
 }
 
 impl ServerPreConnectEvent {
-    pub fn new(player_id: PlayerId, profile: GameProfile, original_server: ServerId) -> Self {
+    pub fn new(
+        player: Arc<dyn Player>,
+        server: ServerId,
+        previous_server: Option<ServerId>,
+        cause: ConnectCause,
+    ) -> Self {
         Self {
-            player_id,
-            profile,
-            original_server,
+            player,
+            server,
+            previous_server,
+            cause,
             result: ServerPreConnectResult::default(),
         }
+    }
+
+    pub fn player_id(&self) -> PlayerId {
+        self.player.id()
+    }
+
+    pub fn profile(&self) -> &GameProfile {
+        self.player.profile()
     }
 
     /// Shortcut: redirect to a different server.
@@ -73,31 +108,65 @@ impl ResultedEvent for ServerPreConnectEvent {
     }
 }
 
-/// Fired after a player has successfully connected to a backend server.
-///
-/// Informational — the connection is already established.
+#[non_exhaustive]
 pub struct ServerConnectedEvent {
-    /// The player's session ID.
-    pub player_id: PlayerId,
-    /// The server the player connected to.
+    pub player: Arc<dyn Player>,
     pub server: ServerId,
+    pub previous_server: Option<ServerId>,
+}
+
+impl ServerConnectedEvent {
+    pub fn new(
+        player: Arc<dyn Player>,
+        server: ServerId,
+        previous_server: Option<ServerId>,
+    ) -> Self {
+        Self {
+            player,
+            server,
+            previous_server,
+        }
+    }
+
+    pub fn player_id(&self) -> PlayerId {
+        self.player.id()
+    }
 }
 
 impl Event for ServerConnectedEvent {}
 
-/// Fired after a player switches from one server to another.
-///
-/// Informational — the switch has already completed.
-pub struct ServerSwitchEvent {
-    /// The player's session ID.
-    pub player_id: PlayerId,
-    /// The server the player was previously on.
-    pub previous_server: ServerId,
-    /// The server the player is now on.
-    pub new_server: ServerId,
+#[non_exhaustive]
+pub struct ServerPostConnectEvent {
+    pub player: Arc<dyn Player>,
+    pub server: ServerId,
+    pub previous_server: Option<ServerId>,
 }
 
-impl Event for ServerSwitchEvent {}
+impl ServerPostConnectEvent {
+    pub fn new(
+        player: Arc<dyn Player>,
+        server: ServerId,
+        previous_server: Option<ServerId>,
+    ) -> Self {
+        Self {
+            player,
+            server,
+            previous_server,
+        }
+    }
+
+    pub fn player_id(&self) -> PlayerId {
+        self.player.id()
+    }
+
+    pub fn switched_from(&self) -> Option<&ServerId> {
+        self.previous_server
+            .as_ref()
+            .filter(|previous| **previous != self.server)
+    }
+}
+
+impl Event for ServerPostConnectEvent {}
 
 /// Fired when a backend server kicks a player.
 ///
@@ -176,10 +245,7 @@ impl ResultedEvent for KickedFromServerEvent {
 ///
 /// Use cases: lobby plugin, load balancer, queue system.
 pub struct PlayerChooseInitialServerEvent {
-    /// The player connecting.
-    pub player_id: PlayerId,
-    /// The player's game profile.
-    pub profile: GameProfile,
+    pub player: Arc<dyn Player>,
     /// The server resolved by the DomainRouter (default target).
     pub initial_server: ServerId,
     result: PlayerChooseInitialServerResult,
@@ -200,13 +266,20 @@ pub enum PlayerChooseInitialServerResult {
 }
 
 impl PlayerChooseInitialServerEvent {
-    pub fn new(player_id: PlayerId, profile: GameProfile, initial_server: ServerId) -> Self {
+    pub fn new(player: Arc<dyn Player>, initial_server: ServerId) -> Self {
         Self {
-            player_id,
-            profile,
+            player,
             initial_server,
             result: PlayerChooseInitialServerResult::default(),
         }
+    }
+
+    pub fn player_id(&self) -> PlayerId {
+        self.player.id()
+    }
+
+    pub fn profile(&self) -> &GameProfile {
+        self.player.profile()
     }
 
     /// Shortcut: redirect the player to a different server.
@@ -236,39 +309,122 @@ impl ResultedEvent for PlayerChooseInitialServerEvent {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use std::net::SocketAddr;
+    use std::time::SystemTime;
+
     use super::*;
-    use crate::types::GameProfile;
+    use crate::error::PlayerError;
+    use crate::event::BoxFuture;
+    use crate::permissions::PermissionLevel;
+    use crate::types::{ProtocolVersion, RawPacket, TitleData};
+
+    struct Steve(GameProfile);
+
+    impl crate::player::private::Sealed for Steve {}
+
+    impl Player for Steve {
+        fn id(&self) -> PlayerId {
+            PlayerId::new(1)
+        }
+        fn profile(&self) -> &GameProfile {
+            &self.0
+        }
+        fn protocol_version(&self) -> ProtocolVersion {
+            ProtocolVersion::MINECRAFT_1_21
+        }
+        fn remote_addr(&self) -> SocketAddr {
+            SocketAddr::from(([127, 0, 0, 1], 25565))
+        }
+        fn current_server(&self) -> Option<ServerId> {
+            None
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        fn is_active(&self) -> bool {
+            true
+        }
+        fn disconnect(&self, _reason: Component) -> BoxFuture<'_, ()> {
+            Box::pin(async {})
+        }
+        fn send_message(&self, _message: Component) -> Result<(), PlayerError> {
+            Ok(())
+        }
+        fn send_title(&self, _title: TitleData) -> Result<(), PlayerError> {
+            Ok(())
+        }
+        fn send_action_bar(&self, _message: Component) -> Result<(), PlayerError> {
+            Ok(())
+        }
+        fn send_packet(&self, _packet: RawPacket) -> Result<(), PlayerError> {
+            Ok(())
+        }
+        fn switch_server(&self, _target: ServerId) -> BoxFuture<'_, Result<(), PlayerError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn is_online_mode(&self) -> bool {
+            false
+        }
+        fn permission_level(&self) -> PermissionLevel {
+            PermissionLevel::Player
+        }
+        fn has_permission(&self, _permission: &str) -> bool {
+            false
+        }
+        fn connected_at(&self) -> SystemTime {
+            SystemTime::UNIX_EPOCH
+        }
+    }
+
+    fn steve() -> Arc<dyn Player> {
+        Arc::new(Steve(GameProfile {
+            uuid: uuid::Uuid::nil(),
+            username: "Steve".into(),
+            properties: vec![],
+        }))
+    }
+
+    fn pre_connect() -> ServerPreConnectEvent {
+        ServerPreConnectEvent::new(steve(), ServerId::new("lobby"), None, ConnectCause::Initial)
+    }
 
     #[test]
     fn server_pre_connect_default() {
-        let event = ServerPreConnectEvent::new(
-            PlayerId::new(1),
-            GameProfile {
-                uuid: uuid::Uuid::nil(),
-                username: "Steve".into(),
-                properties: vec![],
-            },
-            ServerId::new("lobby"),
-        );
+        let event = pre_connect();
         assert!(matches!(event.result(), ServerPreConnectResult::Allowed));
+        assert_eq!(event.player_id(), PlayerId::new(1));
+        assert_eq!(event.profile().username, "Steve");
     }
 
     #[test]
     fn server_pre_connect_redirect() {
-        let mut event = ServerPreConnectEvent::new(
-            PlayerId::new(1),
-            GameProfile {
-                uuid: uuid::Uuid::nil(),
-                username: "Steve".into(),
-                properties: vec![],
-            },
-            ServerId::new("lobby"),
-        );
+        let mut event = pre_connect();
         event.redirect_to(ServerId::new("survival"));
         assert!(matches!(
             event.result(),
             ServerPreConnectResult::ConnectTo(_)
         ));
+    }
+
+    #[test]
+    fn connect_cause_names() {
+        assert_eq!(ConnectCause::Initial.as_str(), "initial");
+        assert_eq!(ConnectCause::Switch.as_str(), "switch");
+        assert_eq!(ConnectCause::LimboExit.as_str(), "limbo_exit");
+        assert_eq!(ConnectCause::KickRedirect.as_str(), "kick_redirect");
+    }
+
+    #[test]
+    fn a_post_connect_is_a_switch_only_when_the_server_changed() {
+        let lobby = ServerId::new("lobby");
+        let survival = ServerId::new("survival");
+        let first = ServerPostConnectEvent::new(steve(), lobby.clone(), None);
+        let back = ServerPostConnectEvent::new(steve(), lobby.clone(), Some(lobby.clone()));
+        let moved = ServerPostConnectEvent::new(steve(), survival, Some(lobby.clone()));
+
+        assert_eq!(first.switched_from(), None);
+        assert_eq!(back.switched_from(), None);
+        assert_eq!(moved.switched_from(), Some(&lobby));
     }
 
     #[test]
@@ -299,15 +455,7 @@ mod tests {
     }
 
     fn choose_initial_event() -> PlayerChooseInitialServerEvent {
-        PlayerChooseInitialServerEvent::new(
-            PlayerId::new(1),
-            GameProfile {
-                uuid: uuid::Uuid::nil(),
-                username: "Steve".into(),
-                properties: vec![],
-            },
-            ServerId::new("lobby"),
-        )
+        PlayerChooseInitialServerEvent::new(steve(), ServerId::new("lobby"))
     }
 
     #[test]
@@ -317,6 +465,7 @@ mod tests {
             event.result(),
             PlayerChooseInitialServerResult::Allowed
         ));
+        assert_eq!(event.profile().username, "Steve");
     }
 
     #[test]

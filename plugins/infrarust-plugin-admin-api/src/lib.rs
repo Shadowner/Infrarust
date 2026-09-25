@@ -158,7 +158,7 @@ impl Plugin for AdminApiPlugin {
             });
 
             // Wire up EventBridge: proxy EventBus → broadcast::Sender<ApiEvent>
-            let bridge = EventBridge::new(event_tx.clone(), ctx.player_registry_handle());
+            let bridge = EventBridge::new(event_tx.clone());
             bridge.register_listeners(ctx);
 
             // Spawn recent-events buffer: reads broadcast and stores last 100 events

@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 const T: Duration = DEFAULT_TIMEOUT;
 
-const AWAITED_ORDER: [EventKind; 8] = [
+const AWAITED_ORDER: [EventKind; 10] = [
     EventKind::PreLogin,
     EventKind::GameProfileRequest,
     EventKind::PermissionsSetup,
@@ -33,6 +33,8 @@ const AWAITED_ORDER: [EventKind; 8] = [
     EventKind::PostLogin,
     EventKind::PlayerChooseInitialServer,
     EventKind::ServerPreConnect,
+    EventKind::ServerConnected,
+    EventKind::ServerPostConnect,
     EventKind::Disconnect,
 ];
 
@@ -72,13 +74,6 @@ async fn assert_awaited_order(
         .joined()
         .unwrap();
     let conn = backend.next_connection(T).await.unwrap();
-    let connected = recorder
-        .wait_for(
-            |e| e.kind == EventKind::ServerConnected && named(e, username),
-            T,
-        )
-        .await
-        .unwrap();
 
     session.quit().await;
     let disconnect = recorder
@@ -89,24 +84,12 @@ async fn assert_awaited_order(
     proxy.wait_for_connection_count(0, T).await.unwrap();
 
     let events = recorder.for_username(username);
-    let awaited: Vec<EventKind> = events
-        .iter()
-        .map(|e| e.kind)
-        .filter(|kind| *kind != EventKind::ServerConnected)
-        .collect();
+    let awaited: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
     assert_eq!(awaited, AWAITED_ORDER, "protocol {}", version.0);
     let player = disconnect.player.expect("Disconnect carries the player");
     for event in events.iter().filter(|e| e.player.is_some()) {
         assert_eq!(event.player, Some(player), "{}", event.kind);
     }
-    assert_eq!(connected.player, Some(player));
-    assert_eq!(
-        events
-            .iter()
-            .filter(|e| e.kind == EventKind::ServerConnected)
-            .count(),
-        1
-    );
     assert_eq!(disconnect.detail["cause"], json!("client_quit"));
     assert_eq!(disconnect.detail["last_server"], json!("lobby"));
     let post_login = &recorder.of(EventKind::PostLogin)[0];

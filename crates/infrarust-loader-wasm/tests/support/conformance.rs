@@ -5,9 +5,9 @@ use std::path::Path;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::connection::{
-    KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
-    PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPreConnectEvent,
-    ServerPreConnectResult, ServerSwitchEvent,
+    ConnectCause, KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
+    PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPostConnectEvent,
+    ServerPreConnectEvent, ServerPreConnectResult,
 };
 use infrarust_api::events::lifecycle::{
     DisconnectCause, DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent,
@@ -295,23 +295,29 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             permissions(bus.fire(event).await.result())
         }
         EventName::ServerPreConnect => {
-            let event = ServerPreConnectEvent::new(player(), profile(), ServerId::new("lobby"));
+            let event = ServerPreConnectEvent::new(
+                session(),
+                ServerId::new("lobby"),
+                None,
+                ConnectCause::Initial,
+            );
             server_pre_connect(bus.fire(event).await.result())
         }
         EventName::ServerConnected => {
-            bus.fire(ServerConnectedEvent {
-                player_id: player(),
-                server: ServerId::new("lobby"),
-            })
+            bus.fire(ServerConnectedEvent::new(
+                session(),
+                ServerId::new("lobby"),
+                None,
+            ))
             .await;
             Outcome::same("none")
         }
         EventName::ServerSwitch => {
-            bus.fire(ServerSwitchEvent {
-                player_id: player(),
-                previous_server: ServerId::new("lobby"),
-                new_server: ServerId::new("survival"),
-            })
+            bus.fire(ServerPostConnectEvent::new(
+                session(),
+                ServerId::new("survival"),
+                Some(ServerId::new("lobby")),
+            ))
             .await;
             Outcome::same("none")
         }
@@ -324,8 +330,7 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             kicked(bus.fire(event).await.result())
         }
         EventName::PlayerChooseInitialServer => {
-            let event =
-                PlayerChooseInitialServerEvent::new(player(), profile(), ServerId::new("hub"));
+            let event = PlayerChooseInitialServerEvent::new(session(), ServerId::new("hub"));
             initial_server(bus.fire(event).await.result())
         }
         EventName::ProxyPing => {

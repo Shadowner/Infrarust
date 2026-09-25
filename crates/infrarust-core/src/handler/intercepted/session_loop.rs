@@ -10,6 +10,7 @@ use infrarust_transport::BackendConnector;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::event::ResultedEvent;
+use infrarust_api::events::connection::ConnectCause;
 
 use crate::error::CoreError;
 use crate::filter::codec_chain::CodecFilterChain;
@@ -21,6 +22,8 @@ use crate::player::commands::CommandInbox;
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
+use crate::session::server_join::ServerJoin;
+use crate::session::server_switch::{SwitchResult, SwitchTarget};
 use crate::util::text::decode_text_component;
 
 use super::initial_connect::ConnectionMode;
@@ -39,7 +42,8 @@ pub(super) async fn run_session_loop(
     peer_addr: std::net::SocketAddr,
     real_ip: Option<std::net::IpAddr>,
     mut current_server_id: infrarust_api::types::ServerId,
-    session: &PlayerSession,
+    mut pending: Pending,
+    session: &Arc<PlayerSession>,
     services: &ProxyServices,
     backend_connector: &BackendConnector,
     session_token: CancellationToken,
@@ -53,6 +57,7 @@ pub(super) async fn run_session_loop(
         match mode {
             ConnectionMode::Backend(ref mut backend) => {
                 session.set_connected_address(backend.server_address().cloned());
+                pending.approved = None;
                 let outcome = proxy_loop(
                     client,
                     backend,
@@ -63,6 +68,7 @@ pub(super) async fn run_session_loop(
                     player_id,
                     client_codec_chain,
                     server_codec_chain,
+                    &mut pending.join,
                 )
                 .await;
 
@@ -105,15 +111,21 @@ pub(super) async fn run_session_loop(
                             }
                         }
                     }
+                    ProxyLoopOutcome::SwitchRequested { target } if target == current_server_id => {
+                        tracing::debug!(server = %target, "already on the requested server");
+                        continue;
+                    }
                     ProxyLoopOutcome::SwitchRequested { target } => {
                         match handle_switch(
                             client,
                             &current_server_id,
-                            target,
+                            SwitchTarget::Unapproved {
+                                server: target,
+                                cause: ConnectCause::Switch,
+                            },
                             handshake,
                             game_profile_name,
-                            player_id,
-                            api_profile,
+                            session,
                             services,
                             backend_connector,
                             peer_addr,
@@ -124,11 +136,12 @@ pub(super) async fn run_session_loop(
                         {
                             SwitchAction::Backend(new_backend, new_server) => {
                                 mode = ConnectionMode::Backend(new_backend);
-                                session.set_current_server(new_server.clone());
                                 current_server_id = new_server;
+                                pending.join = None;
                                 tracing::debug!("re-entering proxy loop after switch");
                                 continue;
                             }
+                            SwitchAction::Unchanged => continue,
                             SwitchAction::Limbo(handlers, ctx) => {
                                 if handlers.is_empty() {
                                     tracing::warn!(
@@ -173,7 +186,7 @@ pub(super) async fn run_session_loop(
                             &current_server_id,
                             handshake,
                             game_profile_name,
-                            api_profile,
+                            session,
                             version,
                             services,
                             backend_connector,
@@ -184,8 +197,8 @@ pub(super) async fn run_session_loop(
                         {
                             DisconnectAction::SwitchBackend(new_backend, new_server) => {
                                 mode = ConnectionMode::Backend(new_backend);
-                                session.set_current_server(new_server.clone());
                                 current_server_id = new_server;
+                                pending.join = None;
                                 continue;
                             }
                             DisconnectAction::SwitchLimbo(handlers, ctx) => {
@@ -200,6 +213,7 @@ pub(super) async fn run_session_loop(
             }
             ConnectionMode::Limbo(ref handlers, ref entry_ctx) => {
                 session.set_connected_address(None);
+                pending.join = None;
                 let exit = enter_limbo(
                     client,
                     handlers.clone(),
@@ -213,8 +227,13 @@ pub(super) async fn run_session_loop(
                 )
                 .await;
 
-                // Prevent re-entry into limbo after initial connection gate
-                let from_initial = matches!(entry_ctx, LimboEntryContext::InitialConnection { .. });
+                let gate_target = match entry_ctx {
+                    LimboEntryContext::InitialConnection { target_server } => {
+                        Some(target_server.clone())
+                    }
+                    _ => None,
+                };
+                let from_initial = gate_target.is_some();
 
                 match exit {
                     LimboExitResult::Completed | LimboExitResult::SwitchedTo(_) => {
@@ -222,14 +241,14 @@ pub(super) async fn run_session_loop(
                             LimboExitResult::SwitchedTo(ref s) => s.clone(),
                             _ => current_server_id.clone(),
                         };
+                        let target = pending.release(target, gate_target.as_ref());
                         match handle_switch(
                             client,
                             &current_server_id,
                             target,
                             handshake,
                             game_profile_name,
-                            player_id,
-                            api_profile,
+                            session,
                             services,
                             backend_connector,
                             peer_addr,
@@ -240,9 +259,13 @@ pub(super) async fn run_session_loop(
                         {
                             SwitchAction::Backend(new_backend, new_server) => {
                                 mode = ConnectionMode::Backend(new_backend);
-                                session.set_current_server(new_server.clone());
                                 current_server_id = new_server;
                                 continue;
+                            }
+                            SwitchAction::Unchanged => {
+                                break ProxyLoopOutcome::Error(CoreError::Other(
+                                    "a limbo exit kept no server to join".to_string(),
+                                ));
                             }
                             SwitchAction::Limbo(handlers, limbo_ctx) => {
                                 if from_initial || handlers.is_empty() {
@@ -310,6 +333,53 @@ pub(super) async fn run_session_loop(
     }
 }
 
+pub(super) struct Pending {
+    join: Option<ServerJoin>,
+    approved: Option<infrarust_api::types::ServerId>,
+}
+
+impl Pending {
+    pub(super) const fn join(join: ServerJoin) -> Self {
+        Self {
+            join: Some(join),
+            approved: None,
+        }
+    }
+
+    pub(super) const fn approved(server: infrarust_api::types::ServerId) -> Self {
+        Self {
+            join: None,
+            approved: Some(server),
+        }
+    }
+
+    pub(super) const fn nothing() -> Self {
+        Self {
+            join: None,
+            approved: None,
+        }
+    }
+
+    fn release(
+        &mut self,
+        target: infrarust_api::types::ServerId,
+        gate_target: Option<&infrarust_api::types::ServerId>,
+    ) -> SwitchTarget {
+        if self.approved.take().as_ref() == Some(&target) {
+            return SwitchTarget::Approved(target);
+        }
+        let cause = if gate_target == Some(&target) {
+            ConnectCause::Initial
+        } else {
+            ConnectCause::LimboExit
+        };
+        SwitchTarget::Unapproved {
+            server: target,
+            cause,
+        }
+    }
+}
+
 enum SwitchAction {
     Backend(
         crate::session::backend_bridge::BackendBridge,
@@ -317,6 +387,7 @@ enum SwitchAction {
     ),
     Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
     Denied(Component),
+    Unchanged,
     Error(CoreError),
 }
 
@@ -324,11 +395,10 @@ enum SwitchAction {
 async fn handle_switch(
     client: &mut ClientBridge,
     current_server: &infrarust_api::types::ServerId,
-    target: infrarust_api::types::ServerId,
+    target: SwitchTarget,
     handshake: &HandshakeData,
     game_profile_name: &str,
-    player_id: PlayerId,
-    api_profile: &infrarust_api::types::GameProfile,
+    session: &Arc<PlayerSession>,
     services: &ProxyServices,
     backend_connector: &BackendConnector,
     peer_addr: std::net::SocketAddr,
@@ -341,8 +411,7 @@ async fn handle_switch(
         target,
         handshake,
         game_profile_name,
-        player_id,
-        api_profile,
+        session,
         services,
         backend_connector,
         peer_addr,
@@ -351,15 +420,12 @@ async fn handle_switch(
     )
     .await
     {
-        Ok(crate::session::server_switch::SwitchResult::Backend(success)) => {
+        Ok(SwitchResult::Backend(success)) => {
             SwitchAction::Backend(success.new_backend, success.new_server_id)
         }
-        Ok(crate::session::server_switch::SwitchResult::Limbo(handlers, ctx)) => {
-            SwitchAction::Limbo(handlers, ctx)
-        }
-        Ok(crate::session::server_switch::SwitchResult::Denied(reason)) => {
-            SwitchAction::Denied(reason)
-        }
+        Ok(SwitchResult::Limbo(handlers, ctx)) => SwitchAction::Limbo(handlers, ctx),
+        Ok(SwitchResult::Denied(reason)) => SwitchAction::Denied(reason),
+        Ok(SwitchResult::Unchanged) => SwitchAction::Unchanged,
         Err(e) => SwitchAction::Error(e),
     }
 }
@@ -381,7 +447,7 @@ async fn handle_backend_disconnect(
     current_server_id: &infrarust_api::types::ServerId,
     handshake: &HandshakeData,
     game_profile_name: &str,
-    api_profile: &infrarust_api::types::GameProfile,
+    session: &Arc<PlayerSession>,
     version: ProtocolVersion,
     services: &ProxyServices,
     backend_connector: &BackendConnector,
@@ -414,11 +480,13 @@ async fn handle_backend_disconnect(
             match handle_switch(
                 client,
                 current_server_id,
-                server.clone(),
+                SwitchTarget::Unapproved {
+                    server: server.clone(),
+                    cause: ConnectCause::KickRedirect,
+                },
                 handshake,
                 game_profile_name,
-                player_id,
-                api_profile,
+                session,
                 services,
                 backend_connector,
                 peer_addr,
@@ -430,6 +498,9 @@ async fn handle_backend_disconnect(
                 SwitchAction::Backend(new_backend, new_server) => {
                     DisconnectAction::SwitchBackend(new_backend, new_server)
                 }
+                SwitchAction::Unchanged => DisconnectAction::Break(ProxyLoopOutcome::Error(
+                    CoreError::Other("a kick redirect kept no server to join".to_string()),
+                )),
                 SwitchAction::Limbo(handlers, ctx) => {
                     if handlers.is_empty() {
                         DisconnectAction::Break(ProxyLoopOutcome::Error(CoreError::Other(

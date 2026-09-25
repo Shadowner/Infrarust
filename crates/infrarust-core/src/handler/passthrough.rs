@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
 use infrarust_api::event::ResultedEvent;
+use infrarust_api::events::connection::{
+    ConnectCause, PlayerChooseInitialServerEvent, ServerConnectedEvent,
+};
 use infrarust_api::events::lifecycle::DisconnectCause;
 use infrarust_api::player::Player;
 use infrarust_api::types::Component;
@@ -21,6 +24,7 @@ use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::player::lifecycle::PlayerLifecycle;
 use crate::player::{PlayerCommand, PlayerSession};
 use crate::services::ProxyServices;
+use crate::session::server_join::pre_connect;
 
 /// Handles passthrough proxy connections.
 ///
@@ -89,7 +93,7 @@ impl PassthroughHandler {
         let (cmd_tx, mut cmd_rx) = PlayerSession::channel();
         let player = Arc::new(PlayerSession::new(
             crate::player::next_player_id(),
-            api_profile.clone(),
+            api_profile,
             infrarust_api::types::ProtocolVersion::new(version.0),
             ctx.client_addr(),
             None,
@@ -100,7 +104,6 @@ impl PassthroughHandler {
             crate::permissions::default_checker(),
             Arc::clone(&self.services.backend_load),
         ));
-        let player_id = player.id();
 
         let lifecycle = PlayerLifecycle::begin(&self.services, Arc::clone(&player)).await;
         if session_token.is_cancelled() {
@@ -115,12 +118,20 @@ impl PassthroughHandler {
         }
 
         let initial_server = infrarust_api::types::ServerId::new(routing.config_id.clone());
-        let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(
-            player_id,
-            api_profile,
-            initial_server,
-        );
-        let pre_connect = self.services.event_bus.fire(pre_connect).await;
+        self.services
+            .event_bus
+            .fire(PlayerChooseInitialServerEvent::new(
+                Arc::clone(&player) as Arc<dyn Player>,
+                initial_server.clone(),
+            ))
+            .await;
+        let pre_connect = pre_connect(
+            &self.services.event_bus,
+            &player,
+            initial_server.clone(),
+            ConnectCause::Initial,
+        )
+        .await;
         match pre_connect.result() {
             infrarust_api::events::connection::ServerPreConnectResult::Allowed => {}
             infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
@@ -134,7 +145,7 @@ impl PassthroughHandler {
                     .await;
                 return Ok(());
             }
-            _ => {} // ConnectTo, SendToLimbo, VirtualBackend — Phase 4
+            _ => {}
         }
 
         // Connect to backend, in the order decided by the backend
@@ -190,15 +201,16 @@ impl PassthroughHandler {
             return Err(e);
         }
 
-        let server_id = infrarust_api::types::ServerId::new(routing.config_id.clone());
-        self.services.event_bus.fire_and_forget_arc(
-            infrarust_api::events::connection::ServerConnectedEvent {
-                player_id,
-                server: server_id.clone(),
-            },
-        );
+        self.services
+            .event_bus
+            .fire(ServerConnectedEvent::new(
+                Arc::clone(&player) as Arc<dyn Player>,
+                initial_server.clone(),
+                None,
+            ))
+            .await;
 
-        player.set_current_server(server_id);
+        player.set_current_server(initial_server);
         player.set_connected_address(Some(backend.server_address().clone()));
         ctx.extensions
             .remove::<crate::loadbalancer::PendingTicket>();

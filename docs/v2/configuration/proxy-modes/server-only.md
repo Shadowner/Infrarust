@@ -57,9 +57,9 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 Server-only uses the same `PassthroughHandler` as passthrough and zero-copy modes. The steps are identical:
 
 1. The proxy reads the client's handshake and login start packets.
-2. It fires a `ServerPreConnectEvent`, giving plugins a chance to deny the connection. Redirect results (such as connect-to or limbo) are ignored in forwarding modes.
+2. It fires `PlayerChooseInitialServerEvent` and `ServerPreConnectEvent`, giving plugins a chance to deny the connection. Redirect results (such as connect-to or limbo) are ignored in forwarding modes.
 3. It connects to one of the configured backend addresses.
-4. It forwards those initial packets to the backend, applying domain rewrite if configured.
+4. It forwards those initial packets to the backend, applying domain rewrite if configured, then fires `ServerConnectedEvent`. The proxy does not read the backend's answer, so this event does not mean the backend accepted the login, and no `ServerPostConnectEvent` follows.
 5. It registers a player session with `active: false` (passthrough sessions can't inject packets).
 6. It starts bidirectional forwarding via `CopyForwarder`, which calls `tokio::io::copy` in two concurrent tasks.
 7. When either side closes, the write half of the other socket is shut down, the remaining bytes drain, and the session ends.

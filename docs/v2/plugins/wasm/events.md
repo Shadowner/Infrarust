@@ -109,8 +109,8 @@ The events arrive in the order described in the native [player lifecycle](../dev
 | `DisconnectEvent` | `player_id`, `username`, `last_server: Option<String>` | player left |
 | `OnlineAuthFailedEvent` | `username` | Mojang auth failed |
 | `PermissionsSetupEvent` | `player_id`, `profile`, `online_mode: bool` | see the note below |
-| `ServerConnectedEvent` | `player_id`, `server` | reached a backend |
-| `ServerSwitchEvent` | `player_id`, `previous_server`, `new_server` | moved between backends |
+| `ServerConnectedEvent` | `player_id`, `server` | a backend accepted the login |
+| `ServerSwitchEvent` | `player_id`, `previous_server`, `new_server` | joined a backend after leaving another one |
 | `ServerStateChangeEvent` | `server`, `old_state`, `new_state` | backend state changed |
 | `ProxyInitializeEvent` | none (unit) | proxy started |
 | `ProxyShutdownEvent` | none (unit) | proxy stopping |

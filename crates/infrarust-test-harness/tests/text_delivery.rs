@@ -55,7 +55,7 @@ fn tooltip_text(hover: &Value) -> String {
 
 fn deny_server(server: &'static str, reason: &'static str) -> ScriptedPlugin {
     ScriptedPlugin::new("gate").on::<ServerPreConnectEvent>(EventPriority::NORMAL, move |event| {
-        if event.original_server == ServerId::new(server) {
+        if event.server == ServerId::new(server) {
             event.deny(styled_denial(reason));
         }
     })

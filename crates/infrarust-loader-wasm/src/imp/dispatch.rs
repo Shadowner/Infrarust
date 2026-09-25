@@ -6,8 +6,8 @@ use infrarust_api::event::{EventPriority, ListenerHandle, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::connection::{
     KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
-    PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPreConnectEvent,
-    ServerPreConnectResult, ServerSwitchEvent,
+    PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPostConnectEvent,
+    ServerPreConnectEvent, ServerPreConnectResult,
 };
 use infrarust_api::events::lifecycle::{
     DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PostLoginEvent, PreLoginEvent,
@@ -80,9 +80,14 @@ pub(crate) fn register_event_handler(
             })
         }
         EventKind::ServerSwitch => {
-            bus.subscribe_async::<ServerSwitchEvent, _>(priority, move |ev| {
+            bus.subscribe_async::<ServerPostConnectEvent, _>(priority, move |ev| {
                 let wit = ev_server_switch(ev);
-                Box::pin(dispatch(instance.clone(), listener_id, wit, |_| {}))
+                let instance = instance.clone();
+                Box::pin(async move {
+                    if let Some(wit) = wit {
+                        dispatch(instance, listener_id, wit, |_| {}).await;
+                    }
+                })
             })
         }
         EventKind::KickedFromServer => {
@@ -214,25 +219,26 @@ fn ev_permissions_setup(e: &PermissionsSetupEvent) -> wg::Event {
 
 fn ev_server_pre_connect(e: &ServerPreConnectEvent) -> wg::Event {
     wg::Event::ServerPreConnect(wg::ServerPreConnectEvent {
-        player_id: e.player_id.as_u64(),
-        profile: convert::game_profile_to_wit(&e.profile),
-        original_server: e.original_server.as_str().to_string(),
+        player_id: e.player_id().as_u64(),
+        profile: convert::game_profile_to_wit(e.profile()),
+        original_server: e.server.as_str().to_string(),
     })
 }
 
 fn ev_server_connected(e: &ServerConnectedEvent) -> wg::Event {
     wg::Event::ServerConnected(wg::ServerConnectedEvent {
-        player_id: e.player_id.as_u64(),
+        player_id: e.player_id().as_u64(),
         server: e.server.as_str().to_string(),
     })
 }
 
-fn ev_server_switch(e: &ServerSwitchEvent) -> wg::Event {
-    wg::Event::ServerSwitch(wg::ServerSwitchEvent {
-        player_id: e.player_id.as_u64(),
-        previous_server: e.previous_server.as_str().to_string(),
-        new_server: e.new_server.as_str().to_string(),
-    })
+fn ev_server_switch(e: &ServerPostConnectEvent) -> Option<wg::Event> {
+    let previous = e.switched_from()?;
+    Some(wg::Event::ServerSwitch(wg::ServerSwitchEvent {
+        player_id: e.player_id().as_u64(),
+        previous_server: previous.as_str().to_string(),
+        new_server: e.server.as_str().to_string(),
+    }))
 }
 
 fn ev_kicked_from_server(e: &KickedFromServerEvent) -> wg::Event {
@@ -245,8 +251,8 @@ fn ev_kicked_from_server(e: &KickedFromServerEvent) -> wg::Event {
 
 fn ev_player_choose_initial_server(e: &PlayerChooseInitialServerEvent) -> wg::Event {
     wg::Event::PlayerChooseInitialServer(wg::PlayerChooseInitialServerEvent {
-        player_id: e.player_id.as_u64(),
-        profile: convert::game_profile_to_wit(&e.profile),
+        player_id: e.player_id().as_u64(),
+        profile: convert::game_profile_to_wit(e.profile()),
         initial_server: e.initial_server.as_str().to_string(),
     })
 }
@@ -411,6 +417,30 @@ mod tests {
 
         assert_eq!(handle, None);
         assert_eq!(bus.tracked_count(), 0);
+    }
+
+    fn post_connect(server: &str, previous: Option<&str>) -> ServerPostConnectEvent {
+        let (player, _commands) = infrarust_core::player::PlayerSession::new_test(true);
+        ServerPostConnectEvent::new(
+            Arc::new(player),
+            ServerId::new(server),
+            previous.map(ServerId::new),
+        )
+    }
+
+    #[test]
+    fn only_a_join_from_another_server_is_a_server_switch() {
+        assert!(ev_server_switch(&post_connect("lobby", None)).is_none());
+        assert!(ev_server_switch(&post_connect("lobby", Some("lobby"))).is_none());
+
+        let Some(wg::Event::ServerSwitch(record)) =
+            ev_server_switch(&post_connect("survival", Some("lobby")))
+        else {
+            panic!("a join from another server must reach server-switch listeners");
+        };
+        assert_eq!(record.player_id, 1);
+        assert_eq!(record.previous_server, "lobby");
+        assert_eq!(record.new_server, "survival");
     }
 
     #[test]

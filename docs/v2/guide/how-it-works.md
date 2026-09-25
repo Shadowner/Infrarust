@@ -137,9 +137,9 @@ After both pipelines complete, the connection is dispatched to a handler based o
 Used by the forwarding modes: `passthrough`, `zero_copy`, and `server_only`. The handler:
 
 1. Registers a `PlayerSession` in the connection registry and fires `PostLoginEvent`
-2. Fires a `ServerPreConnectEvent` through the event bus (a plugin can deny the connection here; redirect results such as send-to-limbo are ignored in passthrough and only acted on by the intercepted handler)
+2. Fires `PlayerChooseInitialServerEvent` and `ServerPreConnectEvent` through the event bus (a plugin can deny the connection here; redirect results such as send-to-limbo are ignored in passthrough and only acted on by the intercepted handler)
 3. Connects to the backend server using the addresses from the server config
-4. Forwards the raw handshake and login packets to the backend
+4. Forwards the raw handshake and login packets to the backend and fires `ServerConnectedEvent`
 5. Starts bidirectional forwarding between the client and backend TCP streams
 
 If `domain_rewrite` is configured, the handler re-encodes the handshake packet with the new domain before forwarding. Three rewrite modes exist: `none` (forward as-is), `explicit` (use a fixed string), and `from_backend` (use the host of the first backend address).

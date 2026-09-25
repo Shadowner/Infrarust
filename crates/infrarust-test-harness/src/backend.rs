@@ -115,16 +115,19 @@ impl FakeBackendBuilder {
         let addr = listener.local_addr()?;
         let (conn_tx, conn_rx) = mpsc::unbounded_channel();
         let status_requests = Arc::new(AtomicUsize::new(0));
+        let accepted = Arc::new(AtomicUsize::new(0));
         let accept_task = tokio::spawn(accept_loop(
             listener,
             Arc::new(self.config),
             conn_tx,
             Arc::clone(&status_requests),
+            Arc::clone(&accepted),
         ));
         Ok(FakeBackend {
             addr,
             connections: tokio::sync::Mutex::new(conn_rx),
             status_requests,
+            accepted,
             accept_task,
         })
     }
@@ -134,6 +137,7 @@ pub struct FakeBackend {
     addr: SocketAddr,
     connections: tokio::sync::Mutex<mpsc::UnboundedReceiver<BackendConn>>,
     status_requests: Arc<AtomicUsize>,
+    accepted: Arc<AtomicUsize>,
     accept_task: JoinHandle<()>,
 }
 
@@ -157,6 +161,14 @@ impl FakeBackend {
         self.status_requests.load(Ordering::SeqCst)
     }
 
+    pub fn accepted_connections(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    pub fn accept_counter(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.accepted)
+    }
+
     pub async fn next_connection(&self, timeout: Duration) -> HarnessResult<BackendConn> {
         let mut connections = self.connections.lock().await;
         tokio::time::timeout(timeout, connections.recv())
@@ -177,12 +189,14 @@ async fn accept_loop(
     config: Arc<BackendConfig>,
     conn_tx: mpsc::UnboundedSender<BackendConn>,
     status_requests: Arc<AtomicUsize>,
+    accepted_count: Arc<AtomicUsize>,
 ) {
     let mut tasks = JoinSet::new();
     loop {
         tokio::select! {
             accepted = listener.accept() => {
                 let Ok((stream, _)) = accepted else { continue };
+                accepted_count.fetch_add(1, Ordering::SeqCst);
                 let config = Arc::clone(&config);
                 let conn_tx = conn_tx.clone();
                 let status_requests = Arc::clone(&status_requests);

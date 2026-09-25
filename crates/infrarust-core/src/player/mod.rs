@@ -52,6 +52,11 @@ pub enum PlayerCommand {
     SwitchServer(ServerId),
 }
 
+struct Routing {
+    current: Option<ServerId>,
+    pending: Option<ServerId>,
+}
+
 /// Concrete implementation of [`Player`].
 ///
 /// Holds identity data and a command channel to the proxy loop.
@@ -62,7 +67,7 @@ pub struct PlayerSession {
     profile: GameProfile,
     protocol_version: ProtocolVersion,
     remote_addr: SocketAddr,
-    current_server: RwLock<Option<ServerId>>,
+    routing: RwLock<Routing>,
     connected_address: RwLock<Option<ServerAddress>>,
     backend_load: Arc<BackendLoad>,
     connected: AtomicBool,
@@ -106,7 +111,10 @@ impl PlayerSession {
             profile,
             protocol_version,
             remote_addr,
-            current_server: RwLock::new(current_server),
+            routing: RwLock::new(Routing {
+                current: current_server,
+                pending: None,
+            }),
             connected_address: RwLock::new(None),
             backend_load,
             connected: AtomicBool::new(true),
@@ -157,11 +165,21 @@ impl PlayerSession {
 
     /// Updates the current server (called by the proxy loop on server switch).
     pub fn set_current_server(&self, server: ServerId) {
-        let mut guard = self
-            .current_server
+        let mut routing = self.routing.write().unwrap_or_else(PoisonError::into_inner);
+        routing.current = Some(server);
+        routing.pending = None;
+    }
+
+    pub(crate) fn set_pending_server(&self, server: ServerId) {
+        self.routing
             .write()
-            .unwrap_or_else(PoisonError::into_inner);
-        *guard = Some(server);
+            .unwrap_or_else(PoisonError::into_inner)
+            .pending = Some(server);
+    }
+
+    pub(crate) fn counted_server(&self) -> Option<ServerId> {
+        let routing = self.routing.read().unwrap_or_else(PoisonError::into_inner);
+        routing.current.clone().or_else(|| routing.pending.clone())
     }
 
     pub fn set_connected_address(&self, address: Option<ServerAddress>) {
@@ -267,9 +285,10 @@ impl Player for PlayerSession {
     }
 
     fn current_server(&self) -> Option<ServerId> {
-        self.current_server
+        self.routing
             .read()
             .unwrap_or_else(PoisonError::into_inner)
+            .current
             .clone()
     }
 

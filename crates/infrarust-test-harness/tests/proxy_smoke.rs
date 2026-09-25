@@ -266,14 +266,17 @@ async fn switch_between_backends(version: ProtocolVersion) {
     conn_a.closed(T).await.unwrap();
 
     let switch = recorder
-        .wait_for_kind(EventKind::ServerSwitch, T)
+        .wait_for(
+            |e| e.kind == EventKind::ServerPostConnect && e.detail["server"] == json!("b"),
+            T,
+        )
         .await
         .unwrap();
     assert_eq!(switch.player, Some(player.id()));
     assert_eq!(switch.username.as_deref(), Some("Steve"));
     assert_eq!(
         switch.detail,
-        json!({ "previous_server": "a", "new_server": "b" })
+        json!({ "server": "b", "previous_server": "a", "current_server": "b" })
     );
     assert_eq!(player.current_server(), Some(ServerId::new("b")));
 
@@ -326,6 +329,7 @@ async fn recorder_sees_basic_lifecycle(version: ProtocolVersion) {
         EventKind::PostLogin,
         EventKind::ServerPreConnect,
         EventKind::ServerConnected,
+        EventKind::ServerPostConnect,
         EventKind::Disconnect,
     ] {
         recorder
@@ -344,10 +348,14 @@ async fn recorder_sees_basic_lifecycle(version: ProtocolVersion) {
     assert_eq!(pre_login.detail["protocol_version"], json!(version.0));
     assert_eq!(pre_login.detail["result"], json!("allowed"));
     let pre_connect = &recorder.of(EventKind::ServerPreConnect)[0];
-    assert_eq!(pre_connect.detail["original_server"], json!("lobby"));
+    assert_eq!(pre_connect.detail["server"], json!("lobby"));
+    assert_eq!(pre_connect.detail["cause"], json!("initial"));
     assert_eq!(pre_connect.detail["result"], json!("allowed"));
     let connected = &recorder.of(EventKind::ServerConnected)[0];
-    assert_eq!(connected.detail, json!({ "server": "lobby" }));
+    assert_eq!(
+        connected.detail,
+        json!({ "server": "lobby", "previous_server": null, "current_server": null })
+    );
     assert_eq!(disconnect.detail["last_server"], json!("lobby"));
 
     let order: Vec<EventKind> = recorder

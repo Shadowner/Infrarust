@@ -37,6 +37,7 @@ use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::server_join::ServerJoin;
 
 /// Result of the proxy loop, determining what happens after the loop ends.
 #[derive(Debug)]
@@ -108,6 +109,7 @@ struct HotIds {
     c_disconnect: Option<i32>,
     c_commands: Option<i32>,
     c_join_game: Option<i32>,
+    c_login_success: Option<i32>,
 }
 
 impl HotIds {
@@ -121,11 +123,51 @@ impl HotIds {
             c_disconnect: registry.get_packet_id::<CDisconnect>(version),
             c_commands: registry.get_packet_id::<CCommands>(version),
             c_join_game: registry.get_packet_id::<CJoinGame>(version),
+            c_login_success: registry.get_packet_id::<CLoginSuccess>(version),
+        }
+    }
+
+    fn milestone(
+        &self,
+        frame: &PacketFrame,
+        backend: &BackendBridge,
+        awaiting_join: bool,
+    ) -> Option<Milestone> {
+        if !awaiting_join {
+            return None;
+        }
+        match backend.state {
+            ConnectionState::Play if Some(frame.id) == self.c_join_game => Some(Milestone::Joined),
+            ConnectionState::Login if Some(frame.id) == self.c_login_success => {
+                Some(Milestone::LoggedIn)
+            }
+            _ => None,
         }
     }
 
     fn joins_game(&self, frame: &PacketFrame, backend: &BackendBridge, in_game: bool) -> bool {
         !in_game && backend.state == ConnectionState::Play && Some(frame.id) == self.c_join_game
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Milestone {
+    LoggedIn,
+    Joined,
+}
+
+async fn reach(milestone: Milestone, join: &mut Option<ServerJoin>, services: &ProxyServices) {
+    match milestone {
+        Milestone::LoggedIn => {
+            if let Some(join) = join.as_mut() {
+                join.connected(&services.event_bus).await;
+            }
+        }
+        Milestone::Joined => {
+            if let Some(join) = join.take() {
+                join.joined(&services.event_bus).await;
+            }
+        }
     }
 }
 
@@ -152,6 +194,7 @@ pub async fn proxy_loop(
     player_id: PlayerId,
     client_codec_chain: &mut CodecFilterChain,
     server_codec_chain: &mut CodecFilterChain,
+    join: &mut Option<ServerJoin>,
 ) -> ProxyLoopOutcome {
     let hot_ids = HotIds::resolve(registry, client.protocol_version);
     let mut in_game = client.state() == ConnectionState::Play;
@@ -251,6 +294,7 @@ pub async fn proxy_loop(
             LoopEvent::Backend(frame) => match frame {
                 Ok(Some(frame)) => {
                     let joins = hot_ids.joins_game(&frame, backend, in_game);
+                    let mut milestone = hot_ids.milestone(&frame, backend, join.is_some());
                     let mut result = handle_backend_to_client(
                         client,
                         backend,
@@ -264,12 +308,14 @@ pub async fn proxy_loop(
                     .await;
                     in_game |= joins && result.is_ok();
                     let mut command_outcome = commands.drain(client, registry, in_game);
-                    while matches!(result, Ok(BackendAction::Continue))
+                    while milestone.is_none()
+                        && matches!(result, Ok(BackendAction::Continue))
                         && matches!(command_outcome, CommandOutcome::Continue)
                     {
                         match backend.try_next_frame() {
                             Ok(Some(frame)) => {
                                 let joins = hot_ids.joins_game(&frame, backend, in_game);
+                                milestone = hot_ids.milestone(&frame, backend, join.is_some());
                                 result = handle_backend_to_client(
                                     client,
                                     backend,
@@ -295,6 +341,9 @@ pub async fn proxy_loop(
                             }
                             if let Err(e) = backend.flush().await {
                                 break ProxyLoopOutcome::Error(e);
+                            }
+                            if let Some(milestone) = milestone {
+                                reach(milestone, join, services).await;
                             }
                             match action {
                                 BackendAction::Continue => {}

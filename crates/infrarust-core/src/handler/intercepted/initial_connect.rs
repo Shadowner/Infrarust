@@ -3,24 +3,29 @@
 use std::sync::Arc;
 
 use infrarust_api::event::ResultedEvent;
+use infrarust_api::events::connection::ConnectCause;
 use infrarust_api::events::lifecycle::DisconnectCause;
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
+use infrarust_api::player::Player;
 use infrarust_api::types::Component;
 use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
 
 use super::auth::AuthResult;
+use super::session_loop::Pending;
 use crate::error::CoreError;
 use crate::forwarding::{ForwardingData, build_handshake_for_backend};
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::loadbalancer::PendingTicket;
 use crate::middleware::backend_selection::BackendTargets;
 use crate::pipeline::types::{HandshakeData, RoutingData};
+use crate::player::PlayerSession;
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::server_join::{ServerJoin, pre_connect};
 
 pub(super) enum ConnectionMode {
     Backend(BackendBridge),
@@ -31,6 +36,7 @@ pub(super) enum InitialMode {
     Connected {
         mode: Box<ConnectionMode>,
         server_id: infrarust_api::types::ServerId,
+        pending: Pending,
     },
     /// Disconnect already sent.
     Denied(DisconnectCause),
@@ -80,6 +86,7 @@ async fn deny_no_limbo_handlers(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn resolve_initial_mode(
     client: &mut ClientBridge,
+    player: &Arc<PlayerSession>,
     auth_result: &AuthResult,
     login_completed: &mut bool,
     routing: &RoutingData,
@@ -92,13 +99,10 @@ pub(super) async fn resolve_initial_mode(
     connection_info: &infrarust_transport::ConnectionInfo,
 ) -> Result<InitialMode, CoreError> {
     let server_config = &routing.server_config;
-    let player_id = auth_result.player_id;
-    let api_profile = &auth_result.api_profile;
 
     let initial_server = infrarust_api::types::ServerId::new(routing.config_id.clone());
     let choose = infrarust_api::events::connection::PlayerChooseInitialServerEvent::new(
-        player_id,
-        api_profile.clone(),
+        Arc::clone(player) as Arc<dyn Player>,
         initial_server.clone(),
     );
     let choose = services.event_bus.fire(choose).await;
@@ -132,13 +136,15 @@ pub(super) async fn resolve_initial_mode(
         _ => initial_server.clone(),
     };
 
-    if initial_mode.is_none() {
-        let pre_connect = infrarust_api::events::connection::ServerPreConnectEvent::new(
-            player_id,
-            api_profile.clone(),
+    let approved = initial_mode.is_none();
+    if approved {
+        let pre_connect = pre_connect(
+            &services.event_bus,
+            player,
             target_server_id.clone(),
-        );
-        let pre_connect = services.event_bus.fire(pre_connect).await;
+            ConnectCause::Initial,
+        )
+        .await;
         match pre_connect.result() {
             infrarust_api::events::connection::ServerPreConnectResult::Allowed => {}
             infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
@@ -237,6 +243,11 @@ pub(super) async fn resolve_initial_mode(
         }
     }
 
+    let mut pending = if approved {
+        Pending::approved(target_server_id.clone())
+    } else {
+        Pending::nothing()
+    };
     let mode = if let Some(limbo_mode) = initial_mode {
         limbo_mode
     } else {
@@ -249,8 +260,10 @@ pub(super) async fn resolve_initial_mode(
             ensure_login_complete(client, auth_result, login_completed, version, services).await?;
         }
 
+        let mut join = ServerJoin::new(player, target_server_id.clone());
         match connect_to_backend(
             client,
+            &mut join,
             auth_result,
             *login_completed,
             routing,
@@ -263,8 +276,12 @@ pub(super) async fn resolve_initial_mode(
         )
         .await
         {
-            Ok(backend) => ConnectionMode::Backend(backend),
+            Ok(backend) => {
+                pending = Pending::join(join);
+                ConnectionMode::Backend(backend)
+            }
             Err(e) => {
+                pending = Pending::nothing();
                 if !server_config.limbo_handlers.is_empty() {
                     tracing::info!(
                         server = %routing.config_id,
@@ -316,24 +333,17 @@ pub(super) async fn resolve_initial_mode(
         }
     };
 
-    if matches!(mode, ConnectionMode::Backend(_)) {
-        services.event_bus.fire_and_forget_arc(
-            infrarust_api::events::connection::ServerConnectedEvent {
-                player_id,
-                server: target_server_id.clone(),
-            },
-        );
-    }
-
     Ok(InitialMode::Connected {
         mode: Box::new(mode),
         server_id: target_server_id,
+        pending,
     })
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn connect_to_backend(
     client: &mut ClientBridge,
+    join: &mut ServerJoin,
     auth_result: &AuthResult,
     login_completed: bool,
     routing: &RoutingData,
@@ -409,6 +419,7 @@ async fn connect_to_backend(
             backend.set_state(ConnectionState::Config);
             tracing::debug!("backend LoginAcknowledged -> Config");
         }
+        join.connected(&services.event_bus).await;
     } else {
         backend
             .send_initial_packets(handshake, server_config)
@@ -596,8 +607,10 @@ mod tests {
             1
         );
 
+        let (player, _commands) = PlayerSession::new_test(true);
         let mode = resolve_initial_mode(
             &mut client,
+            &Arc::new(player),
             &auth_result,
             &mut false,
             &RoutingData {
@@ -619,7 +632,10 @@ mod tests {
         .await
         .unwrap();
 
-        let InitialMode::Connected { mode, server_id } = mode else {
+        let InitialMode::Connected {
+            mode, server_id, ..
+        } = mode
+        else {
             panic!("expected a backend connection");
         };
         assert_eq!(server_id.as_str(), "target");

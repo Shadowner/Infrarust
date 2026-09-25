@@ -87,11 +87,10 @@ impl ConnectionRegistry {
             .map(|r| Arc::clone(&r))
     }
 
-    /// Returns all sessions connected to the given server.
     pub fn find_by_server(&self, server_id: &str) -> Vec<Arc<PlayerSession>> {
         self.sessions
             .iter()
-            .filter(|r| r.current_server().is_some_and(|s| s.as_str() == server_id))
+            .filter(|r| r.counted_server().is_some_and(|s| s.as_str() == server_id))
             .map(|r| Arc::clone(&r))
             .collect()
     }
@@ -103,7 +102,7 @@ impl ConnectionRegistry {
     pub fn count_by_server(&self, server_id: &str) -> usize {
         self.sessions
             .iter()
-            .filter(|r| r.current_server().is_some_and(|s| s.as_str() == server_id))
+            .filter(|r| r.counted_server().is_some_and(|s| s.as_str() == server_id))
             .count()
     }
 
@@ -295,6 +294,27 @@ mod tests {
         assert_eq!(registry.count_by_server("lobby"), 2);
         assert_eq!(registry.count_by_server("survival"), 1);
         assert_eq!(registry.count_by_server("creative"), 0);
+    }
+
+    #[test]
+    fn a_pending_initial_server_counts_until_the_player_joins_one() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let (held, _rx) = PlayerSession::new_test(true);
+        let held = Arc::new(held);
+        let _guard = registry.register(Arc::clone(&held));
+        assert_eq!(registry.count_by_server("lobby"), 0);
+
+        held.set_pending_server(ServerId::new("lobby"));
+
+        assert_eq!(held.current_server(), None);
+        assert_eq!(registry.count_by_server("lobby"), 1);
+        assert_eq!(registry.find_by_server("lobby").len(), 1);
+
+        held.set_current_server(ServerId::new("survival"));
+
+        assert_eq!(registry.count_by_server("lobby"), 0);
+        assert_eq!(registry.count_by_server("survival"), 1);
+        assert!(registry.find_by_server("lobby").is_empty());
     }
 
     #[test]
