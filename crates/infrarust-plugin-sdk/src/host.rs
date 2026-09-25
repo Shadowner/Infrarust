@@ -4,12 +4,32 @@ pub(crate) use imp::*;
 mod imp {
     use crate::bindings::codec_registry::{self, CodecFilterMetadata};
     use crate::bindings::command_manager::{self, CommandRegistration, CommandSpec};
-    use crate::bindings::events::EventKind;
+    use crate::bindings::event_bus::PacketFilter;
+    use crate::bindings::events::{EventKind, NamedEventResult};
     use crate::bindings::types::HostError;
     use crate::bindings::{event_bus, limbo, scheduler};
 
     pub(crate) fn subscribe(kind: EventKind, priority: u8) -> Result<u64, HostError> {
         event_bus::subscribe(kind, priority)
+    }
+
+    pub(crate) fn subscribe_named(name: &str, priority: u8) -> Result<u64, HostError> {
+        event_bus::subscribe_named(name, priority)
+    }
+
+    pub(crate) fn subscribe_packets(
+        filters: &[PacketFilter],
+        priority: u8,
+    ) -> Result<u64, HostError> {
+        event_bus::subscribe_packets(filters, priority)
+    }
+
+    pub(crate) fn fire_named(
+        name: &str,
+        content_type: &str,
+        payload: &[u8],
+    ) -> Result<NamedEventResult, HostError> {
+        event_bus::fire_named(name, content_type, payload)
     }
 
     pub(crate) fn unsubscribe(listener: u64) -> Result<bool, HostError> {
@@ -62,13 +82,18 @@ mod imp {
 
     use crate::bindings::codec_registry::CodecFilterMetadata;
     use crate::bindings::command_manager::{CommandRegistration, CommandSpec};
-    use crate::bindings::events::EventKind;
+    use crate::bindings::event_bus::PacketFilter;
+    use crate::bindings::events::{EventKind, NamedEventResult};
     use crate::bindings::types::{ErrorKind, HostError};
 
     #[derive(Default)]
     pub(crate) struct FakeHost {
         next_handle: u64,
         pub(crate) listeners: HashMap<u64, EventKind>,
+        pub(crate) named: HashMap<u64, String>,
+        pub(crate) packets: HashMap<u64, Vec<PacketFilter>>,
+        pub(crate) fired: Vec<(String, String, Vec<u8>)>,
+        pub(crate) answer: Option<NamedEventResult>,
         pub(crate) commands: HashMap<String, u64>,
         pub(crate) tasks: HashMap<u64, (u64, bool)>,
         pub(crate) cancelled: Vec<u64>,
@@ -119,7 +144,49 @@ mod imp {
     }
 
     pub(crate) fn unsubscribe(listener: u64) -> Result<bool, HostError> {
-        Ok(with_fake(|host| host.listeners.remove(&listener).is_some()))
+        Ok(with_fake(|host| {
+            let event = host.listeners.remove(&listener).is_some();
+            let named = host.named.remove(&listener).is_some();
+            let packets = host.packets.remove(&listener).is_some();
+            event || named || packets
+        }))
+    }
+
+    pub(crate) fn subscribe_named(name: &str, _priority: u8) -> Result<u64, HostError> {
+        with_fake(|host| {
+            host.refuse("subscribe")?;
+            let handle = host.next_handle();
+            host.named.insert(handle, name.to_owned());
+            Ok(handle)
+        })
+    }
+
+    pub(crate) fn subscribe_packets(
+        filters: &[PacketFilter],
+        _priority: u8,
+    ) -> Result<u64, HostError> {
+        with_fake(|host| {
+            host.refuse("subscribe-packets")?;
+            let handle = host.next_handle();
+            host.packets.insert(handle, filters.to_vec());
+            Ok(handle)
+        })
+    }
+
+    pub(crate) fn fire_named(
+        name: &str,
+        content_type: &str,
+        payload: &[u8],
+    ) -> Result<NamedEventResult, HostError> {
+        with_fake(|host| {
+            host.refuse("fire-named")?;
+            host.fired
+                .push((name.to_owned(), content_type.to_owned(), payload.to_vec()));
+            Ok(host.answer.clone().unwrap_or(NamedEventResult {
+                cancelled: false,
+                response: None,
+            }))
+        })
     }
 
     pub(crate) fn register_command(

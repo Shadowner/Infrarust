@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use infrarust_api::event::ListenerHandle;
 use infrarust_api::permissions::{Capability, CapabilitySet};
+use infrarust_api::player::BossBarHandle;
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::scheduler::TaskHandle;
 use wasmtime::component::ResourceTable;
@@ -44,8 +45,9 @@ pub(crate) struct PluginStoreState {
     generation: u64,
     registrations: Arc<Registrations>,
     next_listener_id: u64,
-    listeners: HashMap<u64, ListenerHandle>,
+    listeners: HashMap<u64, Vec<ListenerHandle>>,
     tasks: HashSet<u64>,
+    boss_bars: HashMap<uuid::Uuid, BossBarHandle>,
     codec: Option<Arc<CodecInstantiator>>,
     denials: HashMap<Capability, RateLimit>,
     command_refusals: RateLimit,
@@ -130,12 +132,28 @@ impl PluginStoreState {
         id
     }
 
-    pub(crate) fn record_listener(&mut self, id: u64, handle: ListenerHandle) {
-        self.listeners.insert(id, handle);
+    pub(crate) fn record_listener(&mut self, id: u64, handles: Vec<ListenerHandle>) {
+        self.listeners.insert(id, handles);
     }
 
-    pub(crate) fn take_listener(&mut self, id: u64) -> Option<ListenerHandle> {
+    pub(crate) fn take_listener(&mut self, id: u64) -> Option<Vec<ListenerHandle>> {
         self.listeners.remove(&id)
+    }
+
+    pub(crate) fn boss_bar_count(&self) -> usize {
+        self.boss_bars.len()
+    }
+
+    pub(crate) fn record_boss_bar(&mut self, handle: BossBarHandle) {
+        self.boss_bars.insert(handle.id(), handle);
+    }
+
+    pub(crate) fn boss_bar(&self, id: uuid::Uuid) -> Option<&BossBarHandle> {
+        self.boss_bars.get(&id)
+    }
+
+    pub(crate) fn forget_boss_bar(&mut self, id: uuid::Uuid) -> Option<BossBarHandle> {
+        self.boss_bars.remove(&id)
     }
 
     pub(crate) fn record_task(&mut self, handle: u64) {
@@ -147,8 +165,11 @@ impl PluginStoreState {
     }
 
     pub(crate) fn release_host_resources(&mut self) {
-        let listeners: Vec<ListenerHandle> = self.listeners.drain().map(|(_, h)| h).collect();
+        let listeners: Vec<ListenerHandle> = self.listeners.drain().flat_map(|(_, h)| h).collect();
         let tasks: Vec<u64> = self.tasks.drain().collect();
+        for (_, bar) in self.boss_bars.drain() {
+            let _ = bar.hide();
+        }
         let Some(ctx) = self.ctx.as_ref() else {
             return;
         };
@@ -229,6 +250,7 @@ pub(crate) fn build_load_state(
         next_listener_id: 1,
         listeners: HashMap::new(),
         tasks: HashSet::new(),
+        boss_bars: HashMap::new(),
         codec: setup.codec.clone(),
         denials: HashMap::new(),
         command_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, COMMAND_REFUSAL_BURST),
@@ -252,6 +274,7 @@ pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> P
         next_listener_id: 1,
         listeners: HashMap::new(),
         tasks: HashSet::new(),
+        boss_bars: HashMap::new(),
         codec: None,
         denials: HashMap::new(),
         command_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, COMMAND_REFUSAL_BURST),

@@ -62,11 +62,13 @@ interface types {
         network,
         chat-intercept,
         ban-provider,
+        plugin-messaging,
     }
 
     enum connection-state { handshake, status, login, configuration, play }
     enum server-state { online, offline, starting, stopping, sleeping, crashed }
     enum proxy-mode { passthrough, zero-copy, client-only, offline, server-only }
+    enum packet-direction { serverbound, clientbound }
 
     record profile-property {
         name: string,
@@ -89,6 +91,37 @@ interface types {
     record server-address {
         host: string,
         port: u16,
+    }
+
+    record channel-id {
+        modern: option<string>,
+        legacy: option<string>,
+    }
+
+    enum chat-mode { enabled, commands-only, hidden }
+    enum main-hand { left, right }
+    enum particle-status { all, decreased, minimal }
+
+    flags skin-parts {
+        cape,
+        jacket,
+        left-sleeve,
+        right-sleeve,
+        left-pants,
+        right-pants,
+        hat,
+    }
+
+    record client-settings {
+        locale: string,
+        view-distance: u8,
+        chat-mode: chat-mode,
+        chat-colors: bool,
+        skin-parts: skin-parts,
+        main-hand: main-hand,
+        text-filtering: bool,
+        allow-listing: bool,
+        particle-status: particle-status,
     }
 
     record style {

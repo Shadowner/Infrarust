@@ -794,3 +794,136 @@ fn lifecycle_reasons_reach_the_plugin_and_errors_become_strings() {
         );
     });
 }
+
+fn named_event(name: &str, result: crate::bindings::events::NamedEventResult) -> Event {
+    Event::NamedEvent(crate::bindings::events::NamedEventEvent {
+        name: name.into(),
+        source_plugin: "relay".into(),
+        content_type: "text/plain".into(),
+        payload: b"ping".to_vec(),
+        result,
+    })
+}
+
+fn open_result() -> crate::bindings::events::NamedEventResult {
+    crate::bindings::events::NamedEventResult {
+        cancelled: false,
+        response: None,
+    }
+}
+
+#[test]
+fn a_named_listener_is_subscribed_by_name_and_answers_through_its_outcome() {
+    let subscription = Context::new()
+        .on_named("echo", EventPriority::Late, |event| {
+            let text = event.text().unwrap_or_default().to_owned();
+            event.respond_text(text.replace("ping", "pong"));
+        })
+        .expect("the host accepts the subscription");
+    let listener = subscription.id();
+    assert_eq!(
+        host::with_fake(|h| h.named.get(&listener).cloned()).as_deref(),
+        Some("echo")
+    );
+
+    let outcome = handle_event(listener, named_event("echo", open_result()));
+    let EventOutcome::NamedEvent(result) = outcome else {
+        panic!("a response answers named-event, got {outcome:?}");
+    };
+    assert!(!result.cancelled);
+    assert_eq!(result.response.map(|r| r.payload), Some(b"pong".to_vec()));
+
+    subscription.cancel();
+    assert!(host::with_fake(|h| !h.named.contains_key(&listener)));
+    assert_eq!(
+        handle_event(listener, named_event("echo", open_result())),
+        EventOutcome::Unchanged
+    );
+}
+
+#[test]
+fn fire_named_hands_the_bytes_to_the_host_and_returns_its_answer() {
+    host::with_fake(|h| {
+        h.answer = Some(crate::bindings::events::NamedEventResult {
+            cancelled: true,
+            response: Some(crate::bindings::events::NamedEventResponse {
+                content_type: "application/json".into(),
+                payload: b"{}".to_vec(),
+            }),
+        });
+    });
+    let outcome = Context::new()
+        .fire_named_text("chat:relay", "hello")
+        .expect("the host fires the event");
+    assert!(outcome.cancelled);
+    assert_eq!(
+        outcome.response.map(|r| (r.content_type, r.payload)),
+        Some(("application/json".to_owned(), b"{}".to_vec()))
+    );
+    assert_eq!(
+        host::with_fake(|h| h.fired.clone()),
+        [(
+            "chat:relay".to_owned(),
+            "text/plain".to_owned(),
+            b"hello".to_vec()
+        )]
+    );
+
+    refuse("fire-named");
+    let refused = Context::new()
+        .fire_named("x", "text/plain", b"")
+        .expect_err("a refused fire is an error");
+    assert_eq!(refused.kind(), ErrorKind::Conflict);
+}
+
+#[test]
+fn a_packet_listener_sends_its_filters_and_can_drop_packets() {
+    use crate::codec::ConnectionState;
+    use crate::event::{PacketFilter, RawPacketEvent};
+    use crate::types::PacketDirection;
+
+    let subscription = Context::new()
+        .on_packets(
+            &[PacketFilter::serverbound(5, ConnectionState::Play)],
+            EventPriority::Normal,
+            |event: &mut RawPacketEvent| {
+                if event.data.first() == Some(&0xff) {
+                    event.drop_packet();
+                }
+            },
+        )
+        .expect("the host accepts the packet subscription");
+    let listener = subscription.id();
+    let filters = host::with_fake(|h| h.packets.get(&listener).cloned()).unwrap();
+    assert_eq!(filters.len(), 1);
+    assert_eq!(filters[0].packet_id, 5);
+    assert_eq!(filters[0].direction, PacketDirection::Serverbound.to_wit());
+
+    let packet = |first: u8| {
+        Event::RawPacket(crate::bindings::events::RawPacketEvent {
+            player: 1,
+            direction: wt::PacketDirection::Serverbound,
+            packet: wt::RawPacket {
+                packet_id: 5,
+                data: vec![first],
+            },
+            result: crate::bindings::events::RawPacketResult::Pass,
+        })
+    };
+    assert_eq!(handle_event(listener, packet(1)), EventOutcome::Unchanged);
+    assert_eq!(
+        handle_event(listener, packet(0xff)),
+        EventOutcome::RawPacket(crate::bindings::events::RawPacketResult::Drop)
+    );
+
+    refuse("subscribe-packets");
+    assert!(
+        Context::new()
+            .on_packets(
+                &[PacketFilter::clientbound(1, ConnectionState::Play)],
+                EventPriority::Normal,
+                |_: &mut RawPacketEvent| {}
+            )
+            .is_err()
+    );
+}

@@ -10,7 +10,7 @@ Minecraft clients, backend servers and proxies talk to each other on named chann
 
 In the forwarding modes (`passthrough`, `zero_copy`, `server_only`) the proxy only copies bytes: no event fires, the client state getters below return `None` or an empty list (except `virtual_host()`, known from the handshake), and every send returns `PlayerError::NotActive`.
 
-WASM plugins (contract 0.2.3) have no plugin messaging. It comes with the next contract version; the 0.2.3 WIT does not change.
+WASM plugins (contract 0.3.0) use plugin messaging through the `messaging` interface and the `plugin-message` event, with the [`plugin-messaging`](../wasm/capabilities) capability. See [WASM services](../wasm/services#plugin-messaging).
 
 ## Channel identifiers
 

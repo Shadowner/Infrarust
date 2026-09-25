@@ -66,7 +66,8 @@ Additional capabilities that require an explicit grant:
 | `server-manage` | Start, stop, and query backend servers |
 | `ban` | Access the ban service |
 | `raw-packet` | Emit raw packets and receive `RawPacketEvent` |
-| `chat-intercept` | Read, deny and rewrite players' chat messages (WASM `chat-message` events) |
+| `chat-intercept` | Read, deny and rewrite players' chat messages and commands (WASM `chat-message` and `command-execute` events) |
+| `plugin-messaging` | Register plugin channels, send plugin messages and receive `plugin-message` events |
 | `codec-filter` | Register codec-level packet filters |
 | `limbo` | Provide limbo handlers (hold players in a void world) |
 | `config-write` | Rewrite the global `infrarust.toml` |

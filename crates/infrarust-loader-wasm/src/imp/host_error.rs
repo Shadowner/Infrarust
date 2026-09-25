@@ -1,7 +1,10 @@
 use infrarust_api::command::CommandError;
 use infrarust_api::error::{PlayerError, ServiceError};
 use infrarust_api::limbo::LimboHandlerError;
+use infrarust_api::messaging::MessagingError;
 use infrarust_api::permissions::Capability;
+use infrarust_api::services::config_service::ConfigWriteError;
+use infrarust_api::services::load_balancer::LbError;
 use infrarust_plugin_wit::arena::ArenaError;
 
 use crate::bindings::infrarust::plugin::types::{ErrorKind, HostError};
@@ -51,6 +54,9 @@ pub(crate) fn player_error(error: PlayerError) -> HostError {
         PlayerError::ServerNotFound(_) => ErrorKind::NotFound,
         PlayerError::MessageTooLarge { .. } => ErrorKind::InvalidArgument,
         PlayerError::SendFailed(_) | PlayerError::SwitchFailed(_) => ErrorKind::Unavailable,
+        PlayerError::Unsupported(_) => ErrorKind::Unsupported,
+        PlayerError::InvalidArgument(_) => ErrorKind::InvalidArgument,
+        PlayerError::Denied(_) => ErrorKind::PermissionDenied,
         _ => ErrorKind::Internal,
     };
     host_error(kind, error.to_string())
@@ -78,6 +84,33 @@ pub(crate) fn command_error(error: &CommandError) -> HostError {
         CommandError::Reserved(_) | CommandError::OwnedBy { .. } => ErrorKind::Conflict,
         CommandError::InvalidName(_) => ErrorKind::InvalidArgument,
         CommandError::NotOwned(_) => ErrorKind::NotFound,
+        _ => ErrorKind::Internal,
+    };
+    host_error(kind, error.to_string())
+}
+
+pub(crate) fn messaging_error(error: &MessagingError) -> HostError {
+    let kind = match error {
+        MessagingError::NoCarrier => ErrorKind::Unavailable,
+        MessagingError::TooLarge { .. } => ErrorKind::InvalidArgument,
+        _ => ErrorKind::Internal,
+    };
+    host_error(kind, error.to_string())
+}
+
+pub(crate) fn balancer_error(error: &LbError) -> HostError {
+    let kind = match error {
+        LbError::UnknownServer(_) | LbError::UnknownAddress { .. } => ErrorKind::NotFound,
+        _ => ErrorKind::Internal,
+    };
+    host_error(kind, error.to_string())
+}
+
+pub(crate) fn config_write_error(error: &ConfigWriteError) -> HostError {
+    let kind = match error {
+        ConfigWriteError::PermissionDenied => ErrorKind::PermissionDenied,
+        ConfigWriteError::Parse(_) | ConfigWriteError::Validation(_) => ErrorKind::InvalidArgument,
+        ConfigWriteError::Io(_) => ErrorKind::Unavailable,
         _ => ErrorKind::Internal,
     };
     host_error(kind, error.to_string())
@@ -115,6 +148,22 @@ mod tests {
         assert_eq!(
             missing_capability(Capability::Ban).message,
             "missing capability: ban"
+        );
+        assert_eq!(
+            player_error(PlayerError::Unsupported("transfers".into())).kind,
+            ErrorKind::Unsupported
+        );
+        assert_eq!(
+            player_error(PlayerError::InvalidArgument("key".into())).kind,
+            ErrorKind::InvalidArgument
+        );
+        assert_eq!(
+            messaging_error(&MessagingError::NoCarrier).kind,
+            ErrorKind::Unavailable
+        );
+        assert_eq!(
+            config_write_error(&ConfigWriteError::Validation("bad".into())).kind,
+            ErrorKind::InvalidArgument
         );
     }
 }

@@ -1,18 +1,43 @@
+mod admin;
 mod chat;
+mod client;
 mod connection;
+mod handshake;
+mod limbo;
 mod login;
+mod messaging;
+mod packet;
 mod proxy;
 
-pub use chat::{ChatMessageEvent, ChatMessageResult};
+pub use admin::{
+    BanIssuedEvent, BanRevokedEvent, BanSource, PluginDisabledEvent, PluginEnabledEvent,
+};
+pub use chat::{ChatMessageEvent, ChatMessageResult, CommandExecuteEvent, CommandExecuteResult};
+pub use client::{
+    PlayerChannelRegisterEvent, PlayerClientBrandEvent, PlayerResourcePackStatusEvent,
+    PlayerSettingsChangedEvent, PreTransferEvent, PreTransferResult, ResourcePackOrigin,
+    ResourcePackStatus, TransferOrigin,
+};
 pub use connection::{
     ConnectCause, KickCause, KickedFromServerEvent, KickedFromServerResult,
     PlayerChooseInitialServerEvent, PlayerChooseInitialServerResult, ServerConnectedEvent,
     ServerPostConnectEvent, ServerPreConnectEvent, ServerPreConnectResult,
 };
-pub use login::{
-    DisconnectCause, DisconnectEvent, OnlineAuthFailedEvent, PermissionsSetupEvent,
-    PermissionsSetupResult, PostLoginEvent, PreLoginEvent, PreLoginResult,
+pub use handshake::{
+    ConnectionHandshakeEvent, ConnectionHandshakeResult, ConnectionRejectedEvent, HandshakeIntent,
+    RejectReason,
 };
+pub use limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
+pub use login::{
+    DisconnectCause, DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult,
+    OnlineAuthFailedEvent, PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent,
+    PreLoginEvent, PreLoginResult,
+};
+pub use messaging::{
+    MessageEndpoint, MessagePhase, NamedEvent, NamedOutcome, NamedResponse, PluginMessageEvent,
+    PluginMessageResult,
+};
+pub use packet::{PacketFilter, RawPacketEvent, RawPacketResult};
 pub use proxy::{
     BackendHealthEvent, BackendState, ConfigReloadEvent, PingResponse, ProxyInitializeEvent,
     ProxyPingEvent, ProxyShutdownEvent, ServerStateChangeEvent,

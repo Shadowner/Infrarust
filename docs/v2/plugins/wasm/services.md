@@ -6,7 +6,7 @@ outline: [2, 3]
 
 # Host Services
 
-A WASM plugin reaches the proxy through host services. Each service is a set of associated functions on a unit struct (`Players`, `Servers`, `Bans`, `Config`) or a method on the [`Context`](./api-reference#the-guest-export) you receive in `on_enable`, and each one is gated by a [capability](./capabilities). Baseline capabilities are granted to every plugin; opt-in capabilities must be listed in the plugin's TOML `permissions`.
+A WASM plugin reaches the proxy through host services. Each service is a set of associated functions on a unit struct (`Players`, `Servers`, `Bans`, `Config`, `LoadBalancer`, `Messaging`, `Proxy`, `Plugins`) or a method on the [`Context`](./api-reference#the-guest-export) you receive in `on_enable`, and each one is gated by a [capability](./capabilities). Baseline capabilities are granted to every plugin; opt-in capabilities must be listed in the plugin's TOML `permissions`.
 
 ```rust
 use infrarust_plugin_sdk::prelude::*;
@@ -32,11 +32,18 @@ The service functions need no handle, so you can call them from a command, a sch
 | --- | --- | --- | --- |
 | Player lookups | `Players::get`, `by_name`, `by_uuid`, `list`, `on_server`, `count` | `player-read` | baseline |
 | Player permission check | `Player::has_permission` | `player-read` | baseline |
-| Player actions | `Player::send_message`, `send_title`, `send_action_bar`, `disconnect`, `switch_server` | `player-write` | baseline |
+| Player actions | `Player::send_message`, `send_title`, `clear_title`, `send_action_bar`, `set_player_list_header_footer`, `show_boss_bar`, `send_resource_pack`, `remove_resource_pack`, `disconnect`, `switch_server`, `connect`, `transfer`, `store_cookie`, `request_cookie`, `refresh_permissions` | `player-write` | baseline |
 | `Player::send_packet` | on the `Player` handle | `raw-packet` | opt-in |
 | Servers | `Servers::*` | `server-manage` | opt-in |
 | Bans | `Bans::*` | `ban` | opt-in |
-| Config | `Config::*` | `config-read` | baseline |
+| Config reads | `Config::get`, `server`, `servers`, `server_document`, `server_sources`, `proxy_document`, `effective_proxy_document` | `config-read` | baseline |
+| Config write | `Config::write_proxy_document` | `config-write` | opt-in |
+| Load balancer reads | `LoadBalancer::strategy`, `backends` | `config-read` | baseline |
+| Load balancer maintenance | `LoadBalancer::set_drained`, `reset_backend` | `server-manage` | opt-in |
+| Plugin messaging | `Messaging::*` | `plugin-messaging` | opt-in |
+| Named events | `ctx.on_named`, `ctx.fire_named` | `event-bus` | baseline |
+| Proxy information | `Proxy::details`, `version`, `granted_capabilities`, `has_capability` | always available | always |
+| Plugin registry | `Plugins::list`, `get`, `is_loaded` | always available | always |
 | Commands | `ctx.command(name)` | `command` | baseline |
 | Codec filters | `Plugin::register_codec_filters` | `codec-filter` | opt-in |
 | Scheduler | `ctx.delay` / `ctx.interval` / `ctx.interval_with_delay` | `scheduler` | baseline |
@@ -118,6 +125,8 @@ The lookups are the contract's infallible reads: without `player-read` they answ
 | `virtual_host` | `Option<String>` | The address the client connected to |
 | `client_brand` | `Option<String>` | The client brand, once the client sent it |
 | `ping` | `Option<Duration>` | Latest round-trip time |
+| `settings` | `Option<ClientSettings>` | Locale, view distance, chat mode, skin parts, main hand, filtering, listing, particles, once the client sent them |
+| `known_channels` | `Vec<String>` | Plugin channels the client registered |
 
 ### The Player handle
 
@@ -140,11 +149,40 @@ ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
 | `send_action_bar` | `fn send_action_bar(&self, message: impl Into<Component>) -> Result<(), Error>` | `player-write` |
 | `disconnect` | `fn disconnect(&self, reason: impl Into<Component>) -> Result<(), Error>` | `player-write` |
 | `switch_server` | `fn switch_server(&self, server: impl Into<ServerId>) -> Result<(), Error>` | `player-write` |
+| `connect` | `fn connect(&self, server: impl Into<ServerId>) -> Result<ConnectionResult, Error>` | `player-write` |
+| `set_player_list_header_footer` | `fn set_player_list_header_footer(&self, header: impl Into<Component>, footer: impl Into<Component>) -> Result<(), Error>` | `player-write` |
+| `clear_title`, `reset_title` | `fn clear_title(&self) -> Result<(), Error>` | `player-write` |
+| `show_boss_bar` | `fn show_boss_bar(&self, bar: &BossBar) -> Result<BossBarHandle, Error>` | `player-write` |
+| `send_resource_pack` | `fn send_resource_pack(&self, pack: &ResourcePackRequest) -> Result<(), Error>` | `player-write` |
+| `remove_resource_pack` | `fn remove_resource_pack(&self, id: Option<Uuid>) -> Result<(), Error>` | `player-write` |
+| `transfer` | `fn transfer(&self, host: impl Into<String>, port: u16) -> Result<(), Error>` | `player-write` |
+| `store_cookie` | `fn store_cookie(&self, key: &str, data: &[u8]) -> Result<(), Error>` | `player-write` |
+| `request_cookie` | `fn request_cookie(&self, key: &str) -> Result<Option<Vec<u8>>, Error>` | `player-write` |
+| `refresh_permissions` | `fn refresh_permissions(&self) -> Result<(), Error>` | `player-write` |
 | `send_packet` | `fn send_packet(&self, packet_id: i32, data: Vec<u8>) -> Result<(), Error>` | `raw-packet` |
 
 :::info
-`disconnect` queues the kick and returns at once. `switch_server` hands the request to the player's session and waits at most 250 ms for the session to take it, less when the calling handler's deadline is closer; if it can't, it returns `Timeout`. `has_permission` answers after the permission provider and the node's default.
+`disconnect` queues the kick and returns at once. `switch_server` hands the request to the player's session and waits at most 250 ms for the session to take it, less when the calling handler's deadline is closer; if it can't, it returns `Timeout`. `connect` waits for the outcome of the switch instead and answers a `ConnectionResult` (`Success`, `AlreadyConnected`, `Denied(reason)`, `Failed(reason)` or `Cancelled`); `transfer`, `request_cookie` and `refresh_permissions` also wait for their answer. All four follow [Slow services and deadlines](#slow-services-and-deadlines). `has_permission` answers after the permission provider and the node's default.
 :::
+
+`connect` runs the whole switch on the player's session, which fires `ServerPreConnectEvent` and the other connection events. A plugin that listens to one of those events cannot answer it while it is itself waiting in `connect`: the event bus gives up on that listener after `[events] handler_timeout` and the switch goes on without it. A plugin that listens to connection events should move players with `switch_server`, which does not wait for the switch.
+
+`transfer` needs a 1.20.5+ client and fires `PreTransferEvent` first; an older client answers `Unsupported`. The plugin that calls `transfer` does not get a say in its own `PreTransferEvent`: see [Firing an event you listen to](./events#named-events). Cookie keys are `namespace:path` (a bare path means `minecraft:`), and a cookie holds at most 5120 bytes. A resource pack carries its own `Uuid` so you can remove it later; `hash` must be the 40 hexadecimal characters of the pack's SHA-1, and a bad one returns `InvalidArgument`.
+
+A boss bar stays until you hide it or the player leaves. `show_boss_bar` returns a `BossBarHandle` you keep to change it:
+
+```rust
+let bar = player.show_boss_bar(
+    &BossBar::new("Restart in 5 minutes")
+        .color(BossBarColor::Red)
+        .overlay(BossBarOverlay::Notched10),
+)?;
+bar.set_progress(0.5)?;
+bar.set_title("Restart in 2 minutes")?;
+bar.hide()?;
+```
+
+`set_title`, `set_progress`, `set_style(color, overlay)` and `set_flags` update it, `hide` removes it; a bar the plugin already hid answers `NotFound`. A plugin shows at most 256 bars at once, a further one returns `Conflict`, and the bars of a plugin instance that is unloaded or recovered are hidden with it.
 
 ## Servers
 
@@ -211,7 +249,7 @@ Bans::ban(BanRequest::new(target).reason("griefing").duration(Duration::from_sec
 
 ## Slow services and deadlines
 
-`start`, `stop` and every `Bans` function wait for the proxy's answer, and that answer can be slow: a ban list kept in a remote database, a server that takes a while to boot. The host bounds each of these calls so that a slow service becomes an error your code can act on, rather than an answer that arrives after the proxy stopped listening.
+`start`, `stop`, every `Bans` function, `Player::connect`, `transfer`, `request_cookie`, `refresh_permissions` and `ctx.fire_named` wait for the proxy's answer, and that answer can be slow: a ban list kept in a remote database, a server that takes a while to boot. The host bounds each of these calls so that a slow service becomes an error your code can act on, rather than an answer that arrives after the proxy stopped listening.
 
 Every call into your plugin carries a deadline, set when the proxy makes the call:
 
@@ -260,6 +298,87 @@ impl Config {
 
 ```rust
 let greeting = Config::get("greeting")?.unwrap_or_else(|| "Welcome".to_string());
+```
+
+The documents mirror the native `ConfigService`, with every secret field redacted:
+
+```rust
+impl Config {
+    pub fn server_document(server: &ServerId) -> Result<Option<String>, Error>;
+    pub fn server_sources() -> Result<Vec<ServerSource>, Error>;
+    pub fn proxy_document() -> Result<String, Error>;
+    pub fn effective_proxy_document() -> Result<String, Error>;
+    pub fn write_proxy_document(document: &str) -> Result<(), Error>;
+}
+```
+
+`server_document` is the full TOML of one server, whatever provider supplied it. `server_sources` says where each server came from (`provider_id`, `provider_type`) and whether a plugin may rewrite it (`editable`). `proxy_document` is the global configuration file as written, `effective_proxy_document` the configuration the proxy runs on, with CLI overrides and defaults applied.
+
+`write_proxy_document` replaces the configuration file and needs the opt-in `config-write` capability. Secret fields the document leaves out or carries redacted keep their value on disk, so a document read with `proxy_document` can be edited and written back. The file is validated first: a document that does not parse or that the proxy refuses returns `InvalidArgument`, a failed write `Unavailable`. Nothing changes in the running proxy; the new file applies on restart.
+
+## Load balancer
+
+`LoadBalancer` mirrors the native `LoadBalancerService`. The reads need `config-read`, the maintenance calls the opt-in `server-manage`.
+
+```rust
+impl LoadBalancer {
+    pub fn strategy(server: &ServerId) -> Result<Option<String>, Error>;
+    pub fn backends(server: &ServerId) -> Result<Vec<BackendStatus>, Error>;
+    pub fn set_drained(server: &ServerId, address: &ServerAddress, drained: bool) -> Result<(), Error>;
+    pub fn reset_backend(server: &ServerId, address: &ServerAddress) -> Result<(), Error>;
+}
+```
+
+A `BackendStatus` has the `address`, its configured `weight` and the `effective_weight` after slow start, its `state` (`Healthy`, `Probing`, `Unhealthy`, `Draining`), `active_connections`, `healthy_since`, `ejections` and `last_failure_ago`. Draining never closes an established session; `reset_backend` clears the failure history of an address. An unknown server or address returns `NotFound`.
+
+## Plugin messaging
+
+`Messaging` needs the opt-in `plugin-messaging` capability. A `ChannelId` names a channel by its modern id (`namespace:name`), its legacy name (before 1.13), or both; the host validates it and returns `InvalidArgument` for a malformed one.
+
+```rust
+impl Messaging {
+    pub fn register(channel: &ChannelId) -> Result<(), Error>;
+    pub fn unregister(channel: &ChannelId) -> Result<bool, Error>;
+    pub fn channels() -> Result<Vec<ChannelId>, Error>;
+    pub fn send_to_player(player: PlayerId, channel: &ChannelId, data: &[u8]) -> Result<(), Error>;
+    pub fn send_to_backend(player: PlayerId, channel: &ChannelId, data: &[u8]) -> Result<(), Error>;
+    pub fn send_to_server(server: &ServerId, channel: &ChannelId, data: &[u8]) -> Result<u32, Error>;
+}
+```
+
+Registering a channel is what makes the proxy fire [`PluginMessageEvent`](./events#plugin-messages) for it. `send_to_player` sends to the client, `send_to_backend` to the backend that player is on, and `send_to_server` through any player connected to that server; it answers how many players could carry the message and returns `Unavailable` when none is there. A message to a backend is limited to 32767 bytes, one to a client to 1 MiB.
+
+```rust
+let channel = ChannelId::modern("myplugin:sync");
+Messaging::register(&channel)?;
+Messaging::send_to_server(&ServerId::from("lobby"), &channel, b"refresh")?;
+```
+
+## Proxy information and plugins
+
+`Proxy` and `Plugins` are always available and read-only.
+
+```rust
+impl Proxy {
+    pub fn details() -> ProxyDetails;
+    pub fn version() -> String;
+    pub fn granted_capabilities() -> Vec<Capability>;
+    pub fn has_capability(capability: Capability) -> bool;
+}
+
+impl Plugins {
+    pub fn list() -> Vec<PluginInfo>;
+    pub fn get(id: &str) -> Option<PluginInfo>;
+    pub fn is_loaded(id: &str) -> bool;
+}
+```
+
+`ProxyDetails` mirrors the native `ProxyInfo`: the version, the bind address, the connection limits and timeouts, the rate limits, the status cache and keepalive settings, which optional features are on, and what happens to an unknown domain. `granted_capabilities` lists what this plugin was granted, so a plugin can switch a feature off instead of failing a call. A `PluginInfo` has the `id`, `name`, `version`, `authors`, `description`, `state` and `dependencies` of each loaded plugin.
+
+```rust
+if Proxy::has_capability(Capability::Ban) && Plugins::is_loaded("auth") {
+    info!("running on Infrarust {}", Proxy::version());
+}
 ```
 
 ## Commands and codec filters

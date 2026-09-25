@@ -3,7 +3,9 @@ use std::time::Duration;
 use crate::bindings::guest as wg;
 use crate::command::CommandBuilder;
 use crate::error::Error;
-use crate::event::{EventPriority, GuestEvent};
+use crate::event::{
+    EventPriority, GuestEvent, NamedEvent, NamedOutcome, PacketFilter, RawPacketEvent,
+};
 use crate::runtime;
 use crate::types::millis;
 
@@ -138,6 +140,53 @@ impl Context {
         handler: impl FnMut(&mut E) + 'static,
     ) -> Result<EventSubscription, Error> {
         runtime::register_event::<E>(priority, handler).map(|id| EventSubscription { id })
+    }
+
+    pub fn on_named(
+        &self,
+        name: impl Into<String>,
+        priority: EventPriority,
+        handler: impl FnMut(&mut NamedEvent) + 'static,
+    ) -> Result<EventSubscription, Error> {
+        let name = name.into();
+        runtime::register_listener::<NamedEvent>(
+            |priority| crate::host::subscribe_named(&name, priority),
+            priority,
+            handler,
+        )
+        .map(|id| EventSubscription { id })
+    }
+
+    pub fn fire_named(
+        &self,
+        name: &str,
+        content_type: &str,
+        payload: &[u8],
+    ) -> Result<NamedOutcome, Error> {
+        Ok(NamedOutcome::from_wit(crate::host::fire_named(
+            name,
+            content_type,
+            payload,
+        )?))
+    }
+
+    pub fn fire_named_text(&self, name: &str, text: &str) -> Result<NamedOutcome, Error> {
+        self.fire_named(name, "text/plain", text.as_bytes())
+    }
+
+    pub fn on_packets(
+        &self,
+        filters: &[PacketFilter],
+        priority: EventPriority,
+        handler: impl FnMut(&mut RawPacketEvent) + 'static,
+    ) -> Result<EventSubscription, Error> {
+        let filters: Vec<_> = filters.iter().map(|filter| filter.to_wit()).collect();
+        runtime::register_listener::<RawPacketEvent>(
+            |priority| crate::host::subscribe_packets(&filters, priority),
+            priority,
+            handler,
+        )
+        .map(|id| EventSubscription { id })
     }
 
     pub fn command(&self, name: impl Into<String>) -> CommandBuilder {

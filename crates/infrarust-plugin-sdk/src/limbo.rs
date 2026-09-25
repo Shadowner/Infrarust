@@ -98,7 +98,7 @@ pub enum EntryContext {
 }
 
 impl EntryContext {
-    fn from_wit(c: WitEntryContext) -> Self {
+    pub(crate) fn from_wit(c: WitEntryContext) -> Self {
         match c {
             WitEntryContext::InitialConnection(server) => {
                 Self::InitialConnection(ServerId::from(server))

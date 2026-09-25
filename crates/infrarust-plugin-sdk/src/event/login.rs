@@ -240,6 +240,126 @@ impl GuestEvent for PermissionsSetupEvent {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum LoginResult {
+    Allowed,
+    Denied(Component),
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct LoginEvent {
+    pub player: PlayerRef,
+    pub online_mode: bool,
+    result: ResultCell<LoginResult>,
+}
+
+impl LoginEvent {
+    #[must_use]
+    pub const fn result(&self) -> &LoginResult {
+        self.result.get()
+    }
+
+    pub fn set_result(&mut self, result: LoginResult) {
+        self.result.set(result);
+    }
+
+    pub fn allow(&mut self) {
+        self.set_result(LoginResult::Allowed);
+    }
+
+    pub fn deny(&mut self, reason: impl Into<Component>) {
+        self.set_result(LoginResult::Denied(reason.into()));
+    }
+}
+
+impl GuestEvent for LoginEvent {
+    const KIND: EventKind = EventKind::Login;
+
+    fn from_event(ev: Event) -> Option<Self> {
+        let Event::Login(e) = ev else { return None };
+        Some(Self {
+            player: PlayerRef::from_wit(e.player),
+            online_mode: e.online_mode,
+            result: ResultCell::new(match e.result {
+                we::LoginResult::Allowed => LoginResult::Allowed,
+                we::LoginResult::Denied(reason) => LoginResult::Denied(from_host(reason)),
+            }),
+        })
+    }
+
+    fn into_outcome(self) -> EventOutcome {
+        self.result
+            .into_changed()
+            .map_or(EventOutcome::Unchanged, |r| {
+                EventOutcome::Login(match r {
+                    LoginResult::Allowed => we::LoginResult::Allowed,
+                    LoginResult::Denied(reason) => we::LoginResult::Denied(reason.to_arena()),
+                })
+            })
+    }
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct GameProfileRequestEvent {
+    pub original: GameProfile,
+    pub online_mode: bool,
+    pub remote_addr: SocketAddr,
+    pub virtual_host: Option<String>,
+    pub protocol: i32,
+    profile: ResultCell<GameProfile>,
+}
+
+impl GameProfileRequestEvent {
+    #[must_use]
+    pub const fn profile(&self) -> &GameProfile {
+        self.profile.get()
+    }
+
+    pub fn set_profile(&mut self, profile: GameProfile) {
+        self.profile.set(profile);
+    }
+
+    pub fn profile_mut(&mut self) -> &mut GameProfile {
+        self.profile.get_mut()
+    }
+
+    #[must_use]
+    pub fn is_modified(&self) -> bool {
+        *self.profile.get() != self.original
+    }
+}
+
+impl GuestEvent for GameProfileRequestEvent {
+    const KIND: EventKind = EventKind::GameProfileRequest;
+
+    fn from_event(ev: Event) -> Option<Self> {
+        let Event::GameProfileRequest(e) = ev else {
+            return None;
+        };
+        Some(Self {
+            original: GameProfile::from_wit(e.original),
+            online_mode: e.online_mode,
+            remote_addr: socket_from_wit(e.remote_addr),
+            virtual_host: e.virtual_host,
+            protocol: e.protocol,
+            profile: ResultCell::new(GameProfile::from_wit(e.result.profile)),
+        })
+    }
+
+    fn into_outcome(self) -> EventOutcome {
+        self.profile
+            .into_changed()
+            .map_or(EventOutcome::Unchanged, |profile| {
+                EventOutcome::GameProfileRequest(we::GameProfileRequestResult {
+                    profile: profile.to_wit(),
+                })
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,5 +432,62 @@ mod tests {
             DisconnectCause::from_wit(we::DisconnectCause::Shutdown).reason(),
             None
         );
+    }
+
+    #[test]
+    fn a_login_deny_becomes_the_outcome() {
+        let mut event = LoginEvent::from_event(Event::Login(we::LoginEvent {
+            player: wt::PlayerRef {
+                id: 1,
+                uuid: wt::Uuid { hi: 0, lo: 1 },
+                username: "Steve".into(),
+            },
+            online_mode: true,
+            result: we::LoginResult::Allowed,
+        }))
+        .unwrap();
+        assert_eq!(event.result(), &LoginResult::Allowed);
+        event.deny("closed");
+        assert_eq!(
+            event.into_outcome(),
+            EventOutcome::Login(we::LoginResult::Denied(
+                Component::text("closed").to_arena()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_profile_edit_is_sent_back_and_an_untouched_one_is_unchanged() {
+        let profile = wt::GameProfile {
+            uuid: wt::Uuid { hi: 0, lo: 1 },
+            username: "Steve".into(),
+            properties: vec![],
+        };
+        let event = || {
+            GameProfileRequestEvent::from_event(Event::GameProfileRequest(
+                we::GameProfileRequestEvent {
+                    original: profile.clone(),
+                    online_mode: false,
+                    remote_addr: wt::SocketAddress {
+                        ip: wt::IpAddress::Ipv4((127, 0, 0, 1)),
+                        port: 1,
+                    },
+                    virtual_host: None,
+                    protocol: 767,
+                    result: we::GameProfileRequestResult {
+                        profile: profile.clone(),
+                    },
+                },
+            ))
+            .unwrap()
+        };
+        assert_eq!(event().into_outcome(), EventOutcome::Unchanged);
+        let mut renamed = event();
+        renamed.profile_mut().username = "Alex".into();
+        assert!(renamed.is_modified());
+        let EventOutcome::GameProfileRequest(result) = renamed.into_outcome() else {
+            panic!("a profile edit answers game-profile-request");
+        };
+        assert_eq!(result.profile.username, "Alex");
     }
 }

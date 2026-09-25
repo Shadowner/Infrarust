@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use infrarust_plugin_sdk::prelude::*;
 
-use crate::script::{self, Action, Directive, EventName, joined, or_dash};
+use crate::script::{self, Action, Directive, EventName, joined, or_dash, text as bytes_text};
 
 fn log() -> PathBuf {
     Path::new("/").join(script::LOG_FILE)
@@ -73,6 +73,136 @@ fn backend_state(state: BackendState) -> &'static str {
     }
 }
 
+fn direction(direction: PacketDirection) -> &'static str {
+    match direction {
+        PacketDirection::Clientbound => "clientbound",
+        _ => "serverbound",
+    }
+}
+
+fn channel_fields(channel: &ChannelId) -> [String; 2] {
+    [
+        or_dash(channel.modern_id()).to_owned(),
+        or_dash(channel.legacy_name()).to_owned(),
+    ]
+}
+
+fn ban_target(target: &BanTarget) -> String {
+    match target {
+        BanTarget::Username(name) => format!("username:{name}"),
+        _ => "other".to_owned(),
+    }
+}
+
+fn ban_source(source: &BanSource) -> String {
+    match source {
+        BanSource::Console => "console".to_owned(),
+        BanSource::Player { name, .. } => format!("player:{name}"),
+        BanSource::Plugin(id) => format!("plugin:{id}"),
+        BanSource::WebApi(None) => "web-api".to_owned(),
+        BanSource::WebApi(Some(actor)) => format!("web-api:{actor}"),
+        _ => "system".to_owned(),
+    }
+}
+
+fn ban_fields(entry: &BanEntry, source: &BanSource, silent: bool) -> Vec<String> {
+    vec![
+        entry.id.clone(),
+        ban_target(&entry.target),
+        or_dash(entry.reason.as_deref()).to_owned(),
+        ban_source(source),
+        silent.to_string(),
+    ]
+}
+
+fn pack_status(status: ResourcePackStatus) -> &'static str {
+    match status {
+        ResourcePackStatus::SuccessfullyLoaded => "successfully_loaded",
+        ResourcePackStatus::Declined => "declined",
+        ResourcePackStatus::FailedDownload => "failed_download",
+        ResourcePackStatus::Accepted => "accepted",
+        ResourcePackStatus::Downloaded => "downloaded",
+        ResourcePackStatus::InvalidUrl => "invalid_url",
+        ResourcePackStatus::FailedReload => "failed_reload",
+        ResourcePackStatus::Discarded => "discarded",
+        _ => "unknown",
+    }
+}
+
+fn reject_reason(reason: &RejectReason) -> String {
+    match reason {
+        RejectReason::IpFilter => "ip_filter".to_owned(),
+        RejectReason::RateLimit => "rate_limit".to_owned(),
+        RejectReason::UnknownDomain => "unknown_domain".to_owned(),
+        RejectReason::IpBanned => "ip_banned".to_owned(),
+        RejectReason::Banned => "banned".to_owned(),
+        RejectReason::ServerUnavailable => "server_unavailable".to_owned(),
+        RejectReason::Plugin(id) => format!("plugin:{}", or_dash(id.as_deref())),
+        _ => "other".to_owned(),
+    }
+}
+
+fn limbo_context(context: &EntryContext) -> String {
+    match context {
+        EntryContext::InitialConnection(server) => format!("initial:{server}"),
+        EntryContext::KickedFromServer { server, .. } => format!("kicked:{server}"),
+        EntryContext::PluginRedirect(server) => {
+            format!(
+                "redirect:{}",
+                or_dash(server.as_ref().map(ServerId::as_str))
+            )
+        }
+        _ => "other".to_owned(),
+    }
+}
+
+fn limbo_exit(reason: &LimboExitReason) -> &'static str {
+    match reason {
+        LimboExitReason::Released => "released",
+        LimboExitReason::Redirected => "redirected",
+        LimboExitReason::SentToLimbo(_) => "sent_to_limbo",
+        LimboExitReason::Kicked(_) => "kicked",
+        LimboExitReason::TimedOut => "timed_out",
+        LimboExitReason::Shutdown => "shutdown",
+        _ => "disconnected",
+    }
+}
+
+fn named_fields(e: &NamedEvent) -> Vec<String> {
+    vec![
+        or_dash(Some(e.source_plugin.as_str()).filter(|s| !s.is_empty())).to_owned(),
+        e.content_type.clone(),
+        bytes_text(&e.payload),
+        e.is_cancelled().to_string(),
+        or_dash(e.response().and_then(NamedResponse::text)).to_owned(),
+    ]
+}
+
+fn answer_named(e: &mut NamedEvent, action: &Action) {
+    match action {
+        Action::Cancel => e.cancel(),
+        Action::Respond(text) => e.respond_text(text.as_str()),
+        _ => {}
+    }
+}
+
+fn subscribe_named(ctx: &Context, name: String, priority: u8, action: Action) {
+    let cancel = action == Action::Cancelled;
+    let subscription = ctx.on_named(name.clone(), EventPriority::Custom(priority), move |e| {
+        let fields = named_fields(e);
+        let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+        script::observe(
+            &log(),
+            &script::named_line(&name, priority, &fields),
+            &action,
+        );
+        answer_named(e, &action);
+    });
+    if cancel && let Ok(subscription) = subscription {
+        subscription.cancel();
+    }
+}
+
 pub fn enable(ctx: &Context) -> Result<(), PluginError> {
     let source = std::fs::read_to_string(Path::new("/").join(script::SCRIPT_FILE))
         .map_err(|e| format!("reading {}: {e}", script::SCRIPT_FILE))?;
@@ -93,6 +223,36 @@ pub fn enable(ctx: &Context) -> Result<(), PluginError> {
                         script::observe(&log(), &line, &Action::Record);
                     })
                     .register();
+            }
+            Directive::Fire {
+                command,
+                event,
+                payload,
+            } => {
+                let label = command.clone();
+                let _ = ctx
+                    .command(&label)
+                    .handler(move |_| {
+                        let line = match Context::new().fire_named_text(&event, &payload) {
+                            Ok(outcome) => script::fired_line(
+                                &command,
+                                &event,
+                                outcome.cancelled,
+                                outcome.response.as_ref().and_then(NamedResponse::text),
+                            ),
+                            Err(error) => format!("cmd {command} failed {error}"),
+                        };
+                        script::append(&log(), &line);
+                    })
+                    .register();
+            }
+            Directive::Named {
+                name,
+                priority,
+                action,
+            } => subscribe_named(ctx, name, priority, action),
+            Directive::Channel { id } => {
+                Messaging::register(&ChannelId::modern(id))?;
             }
         }
     }
@@ -312,6 +472,255 @@ fn subscribe(ctx: &Context, event: EventName, priority: u8, action: Action) {
                 &action,
             );
         }),
+        EventName::Login => ctx.on::<LoginEvent>(at, move |e| {
+            let id = e.player.id.to_string();
+            let online = e.online_mode.to_string();
+            seen(
+                event,
+                priority,
+                &[&id, &e.player.username, &online],
+                &action,
+            );
+            match &action {
+                Action::Allow => e.allow(),
+                Action::Deny(reason) => e.deny(text(reason)),
+                _ => {}
+            }
+        }),
+        EventName::GameProfileRequest => ctx.on::<GameProfileRequestEvent>(at, move |e| {
+            let uuid = e.original.uuid.to_string();
+            let online = e.online_mode.to_string();
+            let remote = e.remote_addr.to_string();
+            let protocol = e.protocol.to_string();
+            let fields = [
+                e.original.username.as_str(),
+                &uuid,
+                &online,
+                &remote,
+                or_dash(e.virtual_host.as_deref()),
+                &protocol,
+                e.profile().username.as_str(),
+            ];
+            seen(event, priority, &fields, &action);
+            if let Action::Rename(name) = &action {
+                e.profile_mut().username = name.clone();
+            }
+        }),
+        EventName::CommandExecute => ctx.on::<CommandExecuteEvent>(at, move |e| {
+            let id = e.player.id.to_string();
+            let signed = e.signed.to_string();
+            let server = or_dash(e.server.as_ref().map(ServerId::as_str));
+            seen(
+                event,
+                priority,
+                &[&id, &e.command, &signed, server],
+                &action,
+            );
+            match &action {
+                Action::Allow => e.allow(),
+                Action::Deny(reason) => e.deny(text(reason)),
+                Action::Modify(command) => e.modify(command.as_str()),
+                Action::ForwardToBackend => e.forward_to_backend(),
+                _ => {}
+            }
+        }),
+        EventName::ConnectionHandshake => ctx.on::<ConnectionHandshakeEvent>(at, move |e| {
+            let remote = e.remote_addr.to_string();
+            let port = e.port.to_string();
+            let protocol = e.protocol.to_string();
+            let intent = match e.intent {
+                HandshakeIntent::Status => "status",
+                HandshakeIntent::Transfer => "transfer",
+                _ => "login",
+            };
+            let legacy = e.legacy.to_string();
+            let fields = [
+                remote.as_str(),
+                or_dash(e.virtual_host.as_deref()),
+                &e.raw_host,
+                &port,
+                &protocol,
+                intent,
+                &legacy,
+                or_dash(e.server.as_ref().map(ServerId::as_str)),
+            ];
+            seen(event, priority, &fields, &action);
+            match &action {
+                Action::Allow => e.allow(),
+                Action::Deny(reason) => e.deny(text(reason)),
+                Action::Drop => e.drop_silently(),
+                _ => {}
+            }
+        }),
+        EventName::ConnectionRejected => ctx.on::<ConnectionRejectedEvent>(at, move |e| {
+            let remote = e.remote_addr.to_string();
+            let reason = reject_reason(&e.reason);
+            let fields = [remote.as_str(), or_dash(e.virtual_host.as_deref()), &reason];
+            seen(event, priority, &fields, &action);
+        }),
+        EventName::LimboEnter => ctx.on::<LimboEnterEvent>(at, move |e| {
+            let id = e.player.id.to_string();
+            let handlers = joined(e.handlers.iter());
+            let context = limbo_context(&e.context);
+            seen(event, priority, &[&id, &handlers, &context], &action);
+        }),
+        EventName::LimboExit => ctx.on::<LimboExitEvent>(at, move |e| {
+            let id = e.player.id.to_string();
+            let next = or_dash(e.next_server.as_ref().map(ServerId::as_str));
+            seen(
+                event,
+                priority,
+                &[&id, limbo_exit(&e.reason), next],
+                &action,
+            );
+        }),
+        EventName::PlayerClientBrand => ctx.on::<PlayerClientBrandEvent>(at, move |e| {
+            let id = e.player.id.to_string();
+            seen(event, priority, &[&id, &e.brand], &action);
+        }),
+        EventName::PlayerSettingsChanged => ctx.on::<PlayerSettingsChangedEvent>(at, move |e| {
+            let id = e.player.id.to_string();
+            let view = e.settings.view_distance.to_string();
+            let hand = match e.settings.main_hand {
+                MainHand::Left => "left",
+                _ => "right",
+            };
+            seen(
+                event,
+                priority,
+                &[&id, &e.settings.locale, &view, hand],
+                &action,
+            );
+        }),
+        EventName::PlayerChannelRegister => ctx.on::<PlayerChannelRegisterEvent>(at, move |e| {
+            let id = e.player.id.to_string();
+            let channels = joined(e.channels.iter());
+            seen(
+                event,
+                priority,
+                &[&id, &channels, direction(e.direction)],
+                &action,
+            );
+        }),
+        EventName::PluginMessage => ctx.on::<PluginMessageEvent>(at, move |e| {
+            let id = e.player.id.to_string();
+            let source = match &e.source {
+                MessageEndpoint::Backend(server) => format!("backend:{server}"),
+                _ => "client".to_owned(),
+            };
+            let [modern, legacy] = channel_fields(&e.channel);
+            let data = bytes_text(&e.data);
+            let phase = match e.phase {
+                MessagePhase::Configuration => "configuration",
+                _ => "play",
+            };
+            let fields = [
+                id.as_str(),
+                &source,
+                &modern,
+                &legacy,
+                &e.raw_channel,
+                &data,
+                phase,
+            ];
+            seen(event, priority, &fields, &action);
+            match &action {
+                Action::Forward => e.forward(),
+                Action::Handled => e.handled(),
+                Action::Replace(data) => e.replace(data.as_bytes()),
+                Action::Reply(data) => {
+                    let _ = Messaging::send_to_player(e.player.id, &e.channel, data.as_bytes());
+                    e.handled();
+                }
+                _ => {}
+            }
+        }),
+        EventName::BanIssued => ctx.on::<BanIssuedEvent>(at, move |e| {
+            let fields = ban_fields(&e.entry, &e.source, e.silent);
+            let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+            seen(event, priority, &fields, &action);
+        }),
+        EventName::BanRevoked => ctx.on::<BanRevokedEvent>(at, move |e| {
+            let fields = ban_fields(&e.entry, &e.source, e.silent);
+            let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+            seen(event, priority, &fields, &action);
+        }),
+        EventName::PluginEnabled => ctx.on::<PluginEnabledEvent>(at, move |e| {
+            seen(event, priority, &[&e.plugin_id, &e.version], &action);
+        }),
+        EventName::PluginDisabled => ctx.on::<PluginDisabledEvent>(at, move |e| {
+            seen(event, priority, &[&e.plugin_id], &action);
+        }),
+        EventName::PreTransfer => ctx.on::<PreTransferEvent>(at, move |e| {
+            let id = e.player.id.to_string();
+            let port = e.port.to_string();
+            let origin = match e.origin {
+                TransferOrigin::Backend => "backend",
+                _ => "plugin",
+            };
+            seen(event, priority, &[&id, &e.host, &port, origin], &action);
+            match &action {
+                Action::Allow => e.allow(),
+                Action::Deny(reason) => e.deny(text(reason)),
+                Action::Redirect(target) => {
+                    if let Some((host, port)) = target.rsplit_once(':')
+                        && let Ok(port) = port.parse()
+                    {
+                        e.redirect(host, port);
+                    }
+                }
+                _ => {}
+            }
+        }),
+        EventName::PlayerResourcePackStatus => {
+            ctx.on::<PlayerResourcePackStatusEvent>(at, move |e| {
+                let id = e.player.id.to_string();
+                let pack = e
+                    .pack_id
+                    .map_or_else(|| "-".to_owned(), |pack| pack.to_string());
+                let origin = match e.origin {
+                    ResourcePackOrigin::Backend => "backend",
+                    _ => "proxy",
+                };
+                seen(
+                    event,
+                    priority,
+                    &[&id, &pack, pack_status(e.status), origin],
+                    &action,
+                );
+            })
+        }
+        EventName::NamedEvent => ctx.on::<NamedEvent>(at, move |e| {
+            let mut fields = vec![e.name.clone()];
+            fields.extend(named_fields(e));
+            let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+            seen(event, priority, &fields, &action);
+            answer_named(e, &action);
+        }),
+        EventName::RawPacket => ctx.on_packets(
+            &[PacketFilter::serverbound(
+                script::PACKET_ID,
+                ConnectionState::Play,
+            )],
+            at,
+            move |e| {
+                let id = e.player.to_string();
+                let packet = e.packet_id.to_string();
+                let data = bytes_text(&e.data);
+                seen(
+                    event,
+                    priority,
+                    &[&id, direction(e.direction), &packet, &data],
+                    &action,
+                );
+                match &action {
+                    Action::Pass => e.pass(),
+                    Action::Drop => e.drop_packet(),
+                    Action::Modify(data) => e.modify(e.packet_id, data.as_bytes()),
+                    _ => {}
+                }
+            },
+        ),
     };
     if cancel && let Ok(subscription) = subscription {
         subscription.cancel();

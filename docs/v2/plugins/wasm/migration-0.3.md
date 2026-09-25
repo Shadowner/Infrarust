@@ -94,16 +94,39 @@ A handler that only logs is unchanged in behaviour. A handler that called `allow
 | `KickedFromServerEvent::reason: String` (JSON, empty when none) | `reason: Option<Component>`, plus `cause: KickCause`, `during_connect`, `previous_server` |
 | `KickedFromServerEvent::disconnect_player(reason)` | `disconnect(reason)` |
 | `PlayerChooseInitialServerEvent::redirect(server)` | `redirect_to(server)` |
+| no `PlayerInfo::settings`, `known_channels` | `settings: Option<ClientSettings>`, `known_channels: Vec<String>` |
 | `ChatMessageEvent { player_id, message }` | adds `signed` and `server`; `deny_silently()` denies without a reason |
 | `DisconnectEvent { player_id, username, last_server }` | `player`, `last_server: Option<ServerId>`, `cause: DisconnectCause` |
 | `PreLoginEvent::remote_addr: String`, `protocol_version` | `remote_addr: SocketAddr`, `protocol` |
 | `ProxyPingEvent::remote_addr: String`, `response.protocol_version` | `remote_addr: SocketAddr`, `server`, `virtual_host`, `protocol`, `legacy`; the response has `protocol` and `player_sample` |
 | `ConfigReloadEvent` (no fields) | `provider`, `added`, `removed`, `updated` |
 | none | `BackendHealthEvent { address, servers, state }` |
-| `raw-packet` event kind (never delivered) | removed; packet subscriptions come in a later step |
+| `raw-packet` event kind (never delivered) | `RawPacketEvent`, delivered through `ctx.on_packets(filters, priority, handler)` with the `raw-packet` capability |
 | `permissions-setup` `custom(handler-id)` outcome, `permission-level-of`, `check-permission` exports (never wired) | removed; `PermissionsSetupEvent::use_default()` only, custom checkers come with permission snapshots |
 
 Every reason and message argument takes `impl Into<Component>`, so `deny("Banned")` still compiles, and it now means plain text rather than JSON.
+
+### Events new in 0.3
+
+0.2.3 only exposed the lifecycle, connection, chat and proxy events. 0.3 exposes every native event a plugin can subscribe to, so these have no 0.2.3 equivalent to migrate from:
+
+| Event | Result | Capability beyond `event-bus` |
+|-------|--------|-------------------------------|
+| `ConnectionHandshakeEvent` | allow, deny, drop silently | |
+| `ConnectionRejectedEvent` | none | |
+| `GameProfileRequestEvent` | the profile | |
+| `LoginEvent` | allowed, denied | |
+| `CommandExecuteEvent` | allow, deny, modify, forward to backend | `chat-intercept` |
+| `LimboEnterEvent`, `LimboExitEvent` | none | |
+| `PlayerClientBrandEvent`, `PlayerSettingsChangedEvent`, `PlayerChannelRegisterEvent`, `PlayerResourcePackStatusEvent` | none | |
+| `PluginMessageEvent` | forward, handled, replace | `plugin-messaging` |
+| `BanIssuedEvent`, `BanRevokedEvent` | none | |
+| `PluginEnabledEvent`, `PluginDisabledEvent` | none | |
+| `PreTransferEvent` | allowed, denied, redirect | |
+| `NamedEvent` | cancelled, response | |
+| `RawPacketEvent` | pass, modify, drop | `raw-packet` |
+
+`NamedEvent` is the custom event native plugins exchange: subscribe with `ctx.on_named(name, ..)`, fire with `ctx.fire_named(..)`. See [Named events](./events#named-events).
 
 ## Players
 
@@ -122,6 +145,7 @@ Every reason and message argument takes `impl Into<Component>`, so `deny("Banned
 | `player.send_message(&component.into_json())` | `player.send_message(component)` |
 | `player.disconnect(&json)` returned nothing | `Player::disconnect(reason) -> Result<(), Error>` |
 | `player.send_packet(&RawPacket)` | `Player::send_packet(packet_id, data)` |
+| none | `Player::connect` (waits for the switch outcome), `set_player_list_header_footer`, `clear_title`, `show_boss_bar`, `send_resource_pack`, `remove_resource_pack`, `transfer`, `store_cookie`, `request_cookie`, `refresh_permissions`, all `player-write` |
 
 ```rust
 // 0.2.3
@@ -180,6 +204,10 @@ let _ = invocation.reply(Component::text(reply));
 | `Config.get(key) -> Option<String>` | `Config::get(key) -> Result<Option<String>, Error>` |
 | `Config.server(..)`, `servers()` | `Config::server(&ServerId)`, `Config::servers()`, both `Result` |
 | `ctx.server_manager()`, `ban_service()`, `config_service()` | the `Servers`, `Bans` and `Config` functions directly |
+| none | `Config::server_document`, `server_sources`, `proxy_document`, `effective_proxy_document` (`config-read`) and `write_proxy_document` (`config-write`) |
+| none | `LoadBalancer` (`config-read` to read, `server-manage` to drain and reset) |
+| none | `Messaging` for plugin channels (`plugin-messaging`) |
+| none | `Proxy` (version, limits, granted capabilities) and `Plugins` (loaded plugins), always available |
 
 ## Limbo
 
@@ -198,7 +226,7 @@ The filter trait is unchanged. `CodecSessionInit` now carries `remote_addr: Sock
 
 ## Types
 
-The SDK now exports `PlayerId`, `ServerId`, `PlayerRef`, `GameProfile`, `ServerAddress`, `ServerState`, `ProxyMode` and re-exports `Uuid`. `ServerId` converts from `&str` and `String`, so `redirect_to("lobby")` still compiles.
+The SDK now exports `PlayerId`, `ServerId`, `PlayerRef`, `GameProfile`, `ServerAddress`, `ServerState`, `ProxyMode`, `ChannelId`, `ClientSettings`, `PacketDirection`, `Capability` and re-exports `Uuid`. `ServerId` converts from `&str` and `String`, so `redirect_to("lobby")` still compiles.
 
 ## Checklist
 
@@ -211,6 +239,7 @@ The SDK now exports `PlayerId`, `ServerId`, `PlayerRef`, `GameProfile`, `ServerA
 7. Review every `allow()`: it now overrides earlier handlers.
 8. Replace `ServerSwitchEvent` with `ServerPostConnectEvent` and `switched_from()`.
 9. Add `#![forbid(unsafe_code)]` to your crate root.
+10. Grant `plugin-messaging` to a plugin that uses plugin channels, and `chat-intercept` to one that listens to commands.
 
 ## See also
 

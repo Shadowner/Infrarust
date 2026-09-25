@@ -1,30 +1,53 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use bytes::Bytes;
 use infrarust_api::command::{CommandContext, CommandHandler, CommandSpec};
 use infrarust_api::error::PluginError;
 use infrarust_api::event::bus::{EventBus, EventBusExt};
-use infrarust_api::event::{BoxFuture, EventPriority, ResultedEvent};
+use infrarust_api::event::{
+    BoxFuture, ConnectionState, EventPriority, PacketFilter, ResultedEvent,
+};
+use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
+use infrarust_api::events::client::{
+    PlayerChannelRegisterEvent, PlayerClientBrandEvent, PlayerSettingsChangedEvent,
+};
+use infrarust_api::events::command::{CommandExecuteEvent, CommandExecuteResult};
 use infrarust_api::events::connection::{
     KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
     PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPostConnectEvent,
     ServerPreConnectEvent, ServerPreConnectResult,
 };
-use infrarust_api::events::lifecycle::{
-    DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult,
-    PostLoginEvent, PreLoginEvent, PreLoginResult,
+use infrarust_api::events::handshake::{
+    ConnectionHandshakeEvent, ConnectionHandshakeResult, ConnectionRejectedEvent, RejectReason,
 };
+use infrarust_api::events::lifecycle::{
+    DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult, OnlineAuthFailed,
+    PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent, PreLoginResult,
+};
+use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
+use infrarust_api::events::messaging::{PluginMessageEvent, PluginMessageResult};
+use infrarust_api::events::named::NamedEvent;
+use infrarust_api::events::packet::{PacketDirection, RawPacketEvent, RawPacketResult};
+use infrarust_api::events::plugin::{PluginDisabledEvent, PluginEnabledEvent};
 use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
+use infrarust_api::events::resource_pack::PlayerResourcePackStatusEvent;
+use infrarust_api::events::transfer::{PreTransferEvent, PreTransferResult};
+use infrarust_api::limbo::context::LimboEntryContext;
+use infrarust_api::messaging::{ChannelId, Endpoint, MessagePhase};
 use infrarust_api::permissions::{PermissionChecker, Tristate};
+use infrarust_api::player::MainHand;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
+use infrarust_api::services::ban_service::{BanEntry, BanSource, BanTarget};
 use infrarust_api::services::server_manager::ServerState;
+use infrarust_api::types::RawPacket;
 use infrarust_api::types::{Component, PlayerId, ServerId};
 
-use super::script::{self, Action, Directive, EventName, joined, or_dash};
+use super::script::{self, Action, Directive, EventName, joined, or_dash, text as bytes_text};
 
 pub struct ScriptedPlugin {
     id: String,
@@ -69,6 +92,31 @@ impl Plugin for ScriptedPlugin {
                         });
                         let _ = ctx.command_manager().register(spec, command);
                     }
+                    Directive::Fire {
+                        command,
+                        event,
+                        payload,
+                    } => {
+                        let spec = CommandSpec::new(command.as_str());
+                        let fire = Box::new(FireCommand {
+                            command,
+                            event,
+                            payload,
+                            bus: ctx.event_bus_handle(),
+                            log: log.clone(),
+                        });
+                        let _ = ctx.command_manager().register(spec, fire);
+                    }
+                    Directive::Named {
+                        name,
+                        priority,
+                        action,
+                    } => subscribe_named(ctx.event_bus(), log.clone(), name, priority, action),
+                    Directive::Channel { id } => {
+                        let channel = ChannelId::modern(&id)
+                            .map_err(|e| PluginError::InitFailed(e.to_string()))?;
+                        ctx.channel_registrar().register(channel);
+                    }
                 }
             }
             script::append(&log, "enable");
@@ -99,6 +147,122 @@ impl CommandHandler for ScriptedCommand {
             let line = script::command_line(&self.name, &ctx.args, player);
             script::observe(&self.log, &line, &Action::Record);
         })
+    }
+}
+
+struct FireCommand {
+    command: String,
+    event: String,
+    payload: String,
+    bus: Arc<dyn EventBus>,
+    log: PathBuf,
+}
+
+impl CommandHandler for FireCommand {
+    fn execute<'a>(&'a self, _ctx: CommandContext) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let event = NamedEvent::new(self.event.as_str(), "text/plain", self.payload.clone());
+            let line = match self.bus.fire(event).await {
+                Ok(event) => script::fired_line(
+                    &self.command,
+                    &self.event,
+                    event.cancelled,
+                    event
+                        .response
+                        .as_ref()
+                        .and_then(|response| std::str::from_utf8(&response.payload).ok()),
+                ),
+                Err(error) => format!("cmd {} failed {error}", self.command),
+            };
+            script::append(&self.log, &line);
+        })
+    }
+}
+
+fn named_fields(e: &NamedEvent) -> Vec<String> {
+    vec![
+        or_dash(Some(e.source_plugin.as_str()).filter(|s| !s.is_empty())).to_owned(),
+        e.content_type.clone(),
+        bytes_text(&e.payload),
+        e.cancelled.to_string(),
+        or_dash(
+            e.response
+                .as_ref()
+                .and_then(|response| std::str::from_utf8(&response.payload).ok()),
+        )
+        .to_owned(),
+    ]
+}
+
+fn answer_named(e: &mut NamedEvent, action: &Action) {
+    match action {
+        Action::Cancel => e.cancel(),
+        Action::Respond(text) => e.respond("text/plain", text.clone()),
+        _ => {}
+    }
+}
+
+fn subscribe_named(bus: &dyn EventBus, log: PathBuf, name: String, priority: u8, action: Action) {
+    let cancel = action == Action::Cancelled;
+    let handle = bus.subscribe(
+        EventPriority::custom(priority),
+        move |e: &mut NamedEvent| {
+            if e.name != name {
+                return;
+            }
+            let fields = named_fields(e);
+            let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+            script::observe(&log, &script::named_line(&name, priority, &fields), &action);
+            answer_named(e, &action);
+        },
+    );
+    if cancel {
+        bus.unsubscribe(handle);
+    }
+}
+
+fn direction(direction: PacketDirection) -> &'static str {
+    match direction {
+        PacketDirection::Clientbound => "clientbound",
+        _ => "serverbound",
+    }
+}
+
+fn ban_target(target: &BanTarget) -> String {
+    match target {
+        BanTarget::Username(name) => format!("username:{name}"),
+        _ => "other".to_owned(),
+    }
+}
+
+fn ban_fields(entry: &BanEntry, source: &BanSource, silent: bool) -> Vec<String> {
+    vec![
+        entry.id.clone(),
+        ban_target(&entry.target),
+        or_dash(entry.reason.as_deref()).to_owned(),
+        source.to_string(),
+        silent.to_string(),
+    ]
+}
+
+fn reject_reason(reason: &RejectReason) -> String {
+    match reason {
+        RejectReason::Plugin { plugin_id } => format!("plugin:{}", or_dash(plugin_id.as_deref())),
+        other => other.as_str().to_owned(),
+    }
+}
+
+fn limbo_context(context: &LimboEntryContext) -> String {
+    match context {
+        LimboEntryContext::InitialConnection { target_server } => {
+            format!("initial:{target_server}")
+        }
+        LimboEntryContext::KickedFromServer { server, .. } => format!("kicked:{server}"),
+        LimboEntryContext::PluginRedirect { from_server } => format!(
+            "redirect:{}",
+            or_dash(from_server.as_ref().map(ServerId::as_str))
+        ),
+        _ => "other".to_owned(),
     }
 }
 
@@ -154,6 +318,240 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
         action,
     };
     let handle = match event {
+        EventName::Login => bus.subscribe(at, move |e: &mut LoginEvent| {
+            let id = e.player_id().as_u64().to_string();
+            let online = e.online_mode.to_string();
+            seen.record(&[&id, &e.profile().username, &online]);
+            let result = match &seen.action {
+                Action::Allow => LoginResult::Allowed,
+                Action::Deny(reason) => LoginResult::Denied {
+                    reason: text(reason),
+                },
+                _ => return,
+            };
+            e.set_result(result);
+        }),
+        EventName::GameProfileRequest => {
+            bus.subscribe(at, move |e: &mut GameProfileRequestEvent| {
+                let original = e.original().clone();
+                let uuid = original.uuid.to_string();
+                let online = e.online_mode.to_string();
+                let remote = e.remote_addr.to_string();
+                let protocol = e.protocol_version.raw().to_string();
+                seen.record(&[
+                    &original.username,
+                    &uuid,
+                    &online,
+                    &remote,
+                    or_dash(e.virtual_host.as_deref()),
+                    &protocol,
+                    &e.profile.username,
+                ]);
+                if let Action::Rename(name) = &seen.action {
+                    e.profile.username = name.clone();
+                }
+            })
+        }
+        EventName::CommandExecute => bus.subscribe(at, move |e: &mut CommandExecuteEvent| {
+            let id = e.player_id().as_u64().to_string();
+            let signed = e.signed.to_string();
+            seen.record(&[&id, &e.command, &signed, previous(e.server.as_ref())]);
+            let result = match &seen.action {
+                Action::Allow => CommandExecuteResult::Allow,
+                Action::Deny(reason) => CommandExecuteResult::Deny {
+                    reason: Some(text(reason)),
+                },
+                Action::Modify(command) => CommandExecuteResult::Modify {
+                    command: command.clone(),
+                },
+                Action::ForwardToBackend => CommandExecuteResult::ForwardToBackend,
+                _ => return,
+            };
+            e.set_result(result);
+        }),
+        EventName::ConnectionHandshake => {
+            bus.subscribe(at, move |e: &mut ConnectionHandshakeEvent| {
+                let remote = e.remote_addr.to_string();
+                let port = e.port.to_string();
+                let protocol = e.protocol_version.raw().to_string();
+                let legacy = e.legacy.to_string();
+                seen.record(&[
+                    &remote,
+                    or_dash(e.virtual_host.as_deref()),
+                    &e.raw_host,
+                    &port,
+                    &protocol,
+                    e.intent.as_str(),
+                    &legacy,
+                    previous(e.server.as_ref()),
+                ]);
+                let result = match &seen.action {
+                    Action::Allow => ConnectionHandshakeResult::Allow,
+                    Action::Deny(reason) => ConnectionHandshakeResult::Deny {
+                        reason: Some(text(reason)),
+                    },
+                    Action::Drop => ConnectionHandshakeResult::DropSilently,
+                    _ => return,
+                };
+                e.set_result(result);
+            })
+        }
+        EventName::ConnectionRejected => {
+            bus.subscribe(at, move |e: &mut ConnectionRejectedEvent| {
+                let remote = e.remote_addr.to_string();
+                seen.record(&[
+                    &remote,
+                    or_dash(e.virtual_host.as_deref()),
+                    &reject_reason(&e.reason),
+                ]);
+            })
+        }
+        EventName::LimboEnter => bus.subscribe(at, move |e: &mut LimboEnterEvent| {
+            let id = e.player_id().as_u64().to_string();
+            seen.record(&[&id, &joined(e.handlers.iter()), &limbo_context(&e.context)]);
+        }),
+        EventName::LimboExit => bus.subscribe(at, move |e: &mut LimboExitEvent| {
+            let id = e.player_id().as_u64().to_string();
+            seen.record(&[&id, e.reason.as_str(), previous(e.next_server.as_ref())]);
+        }),
+        EventName::PlayerClientBrand => bus.subscribe(at, move |e: &mut PlayerClientBrandEvent| {
+            let id = e.player_id().as_u64().to_string();
+            seen.record(&[&id, &e.brand]);
+        }),
+        EventName::PlayerSettingsChanged => {
+            bus.subscribe(at, move |e: &mut PlayerSettingsChangedEvent| {
+                let id = e.player_id().as_u64().to_string();
+                let view = e.settings.view_distance.to_string();
+                let hand = match e.settings.main_hand {
+                    MainHand::Left => "left",
+                    _ => "right",
+                };
+                seen.record(&[&id, &e.settings.locale, &view, hand]);
+            })
+        }
+        EventName::PlayerChannelRegister => {
+            bus.subscribe(at, move |e: &mut PlayerChannelRegisterEvent| {
+                let id = e.player_id().as_u64().to_string();
+                seen.record(&[&id, &joined(e.channels.iter()), direction(e.direction)]);
+            })
+        }
+        EventName::PluginMessage => bus.subscribe(at, move |e: &mut PluginMessageEvent| {
+            let id = e.player_id().as_u64().to_string();
+            let source = match &e.source {
+                Endpoint::Backend(server) => format!("backend:{server}"),
+                _ => "client".to_owned(),
+            };
+            let phase = match e.phase {
+                MessagePhase::Configuration => "configuration",
+                _ => "play",
+            };
+            seen.record(&[
+                &id,
+                &source,
+                or_dash(e.channel.modern_id()),
+                or_dash(e.channel.legacy_name()),
+                &e.raw_channel,
+                &bytes_text(&e.data),
+                phase,
+            ]);
+            let result = match &seen.action {
+                Action::Forward => PluginMessageResult::Forward,
+                Action::Handled => PluginMessageResult::Handled,
+                Action::Replace(data) => PluginMessageResult::Replace(Bytes::from(data.clone())),
+                Action::Reply(data) => {
+                    let _ = e
+                        .player
+                        .send_plugin_message(&e.channel, Bytes::from(data.clone()));
+                    PluginMessageResult::Handled
+                }
+                _ => return,
+            };
+            e.set_result(result);
+        }),
+        EventName::BanIssued => bus.subscribe(at, move |e: &mut BanIssuedEvent| {
+            let fields = ban_fields(&e.entry, &e.source, e.silent);
+            let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+            seen.record(&fields);
+        }),
+        EventName::BanRevoked => bus.subscribe(at, move |e: &mut BanRevokedEvent| {
+            let fields = ban_fields(&e.entry, &e.source, e.silent);
+            let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+            seen.record(&fields);
+        }),
+        EventName::PluginEnabled => bus.subscribe(at, move |e: &mut PluginEnabledEvent| {
+            seen.record(&[&e.plugin_id, &e.version]);
+        }),
+        EventName::PluginDisabled => bus.subscribe(at, move |e: &mut PluginDisabledEvent| {
+            seen.record(&[&e.plugin_id]);
+        }),
+        EventName::PreTransfer => bus.subscribe(at, move |e: &mut PreTransferEvent| {
+            let id = e.player_id().as_u64().to_string();
+            let port = e.port.to_string();
+            seen.record(&[&id, &e.host, &port, e.origin.as_str()]);
+            let result = match &seen.action {
+                Action::Allow => PreTransferResult::Allowed,
+                Action::Deny(reason) => PreTransferResult::Denied {
+                    reason: text(reason),
+                },
+                Action::Redirect(target) => {
+                    let Some((host, port)) = target.rsplit_once(':') else {
+                        return;
+                    };
+                    let Ok(port) = port.parse() else {
+                        return;
+                    };
+                    PreTransferResult::Redirect {
+                        host: host.to_owned(),
+                        port,
+                    }
+                }
+                _ => return,
+            };
+            e.set_result(result);
+        }),
+        EventName::PlayerResourcePackStatus => {
+            bus.subscribe(at, move |e: &mut PlayerResourcePackStatusEvent| {
+                let id = e.player_id().as_u64().to_string();
+                let pack = e
+                    .pack_id
+                    .map_or_else(|| "-".to_owned(), |pack| pack.to_string());
+                seen.record(&[&id, &pack, e.status.as_str(), e.origin.as_str()]);
+            })
+        }
+        EventName::NamedEvent => bus.subscribe(at, move |e: &mut NamedEvent| {
+            let mut fields = vec![e.name.clone()];
+            fields.extend(named_fields(e));
+            let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+            seen.record(&fields);
+            answer_named(e, &seen.action);
+        }),
+        EventName::RawPacket => bus.subscribe_packet_typed(
+            PacketFilter {
+                packet_id: script::PACKET_ID,
+                state: ConnectionState::Play,
+                direction: PacketDirection::Serverbound,
+            },
+            at,
+            move |e: &mut RawPacketEvent| {
+                let id = e.player_id.as_u64().to_string();
+                let packet = e.packet.packet_id.to_string();
+                seen.record(&[
+                    &id,
+                    direction(e.direction),
+                    &packet,
+                    &bytes_text(&e.packet.data),
+                ]);
+                let result = match &seen.action {
+                    Action::Pass => RawPacketResult::Pass,
+                    Action::Drop => RawPacketResult::Drop,
+                    Action::Modify(data) => RawPacketResult::Modify {
+                        packet: RawPacket::new(e.packet.packet_id, Bytes::from(data.clone())),
+                    },
+                    _ => return,
+                };
+                e.set_result(result);
+            },
+        ),
         EventName::PreLogin => bus.subscribe(at, move |e: &mut PreLoginEvent| {
             let uuid = e.profile.uuid.to_string();
             let addr = e.remote_addr.to_string();

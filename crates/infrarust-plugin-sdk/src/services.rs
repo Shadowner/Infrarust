@@ -1,13 +1,19 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, SystemTime};
 
 use uuid::Uuid;
 
-use crate::bindings::{ban_service as wb, config_service as wc, server_manager as ws};
+use crate::bindings::events as we;
+use crate::bindings::{
+    ban_service as wb, config_service as wc, load_balancer as wl, messaging as wm,
+    plugin_registry as wr, proxy_info as wi, server_manager as ws,
+};
 use crate::error::Error;
+use crate::event::BackendState;
+use crate::plugin::PluginDependency;
 use crate::types::{
-    ProxyMode, ServerAddress, ServerId, ServerState, ip_from_wit, ip_to_wit, millis,
-    time_from_millis, uuid_from_wit, uuid_to_wit,
+    Capability, ChannelId, PlayerId, ProxyMode, ServerAddress, ServerId, ServerState, ip_from_wit,
+    ip_to_wit, millis, socket_from_wit, time_from_millis, uuid_from_wit, uuid_to_wit,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,7 +135,7 @@ pub struct BanEntry {
 }
 
 impl BanEntry {
-    fn from_wit(entry: wb::BanEntry) -> Self {
+    pub(crate) fn from_wit(entry: wb::BanEntry) -> Self {
         Self {
             id: entry.id,
             target: BanTarget::from_wit(entry.target),
@@ -235,6 +241,318 @@ impl Config {
             .into_iter()
             .map(ServerConfig::from_wit)
             .collect())
+    }
+
+    pub fn server_document(server: &ServerId) -> Result<Option<String>, Error> {
+        Ok(wc::get_server_document(server.as_str())?)
+    }
+
+    pub fn server_sources() -> Result<Vec<ServerSource>, Error> {
+        Ok(wc::list_server_sources()?
+            .into_iter()
+            .map(|source| ServerSource {
+                id: source.id,
+                provider_id: source.provider_id,
+                provider_type: source.provider_type,
+                editable: source.editable,
+            })
+            .collect())
+    }
+
+    pub fn proxy_document() -> Result<String, Error> {
+        Ok(wc::get_proxy_config_document()?)
+    }
+
+    pub fn effective_proxy_document() -> Result<String, Error> {
+        Ok(wc::get_effective_proxy_config_document()?)
+    }
+
+    pub fn write_proxy_document(document: &str) -> Result<(), Error> {
+        Ok(wc::write_proxy_config_document(document)?)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ServerSource {
+    pub id: String,
+    pub provider_id: String,
+    pub provider_type: String,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BackendStatus {
+    pub address: ServerAddress,
+    pub weight: u32,
+    pub effective_weight: u32,
+    pub state: BackendState,
+    pub active_connections: u64,
+    pub healthy_since: Option<Duration>,
+    pub ejections: u32,
+    pub last_failure_ago: Option<Duration>,
+}
+
+impl BackendStatus {
+    fn from_wit(status: wl::BackendStatus) -> Self {
+        Self {
+            address: ServerAddress::from_wit(status.address),
+            weight: status.weight,
+            effective_weight: status.effective_weight,
+            state: match status.state {
+                we::BackendState::Healthy => BackendState::Healthy,
+                we::BackendState::Probing => BackendState::Probing,
+                we::BackendState::Unhealthy => BackendState::Unhealthy,
+                we::BackendState::Draining => BackendState::Draining,
+            },
+            active_connections: status.active_connections,
+            healthy_since: status.healthy_since_secs.map(Duration::from_secs),
+            ejections: status.ejections,
+            last_failure_ago: status.last_failure_secs_ago.map(Duration::from_secs),
+        }
+    }
+}
+
+pub struct LoadBalancer;
+
+impl LoadBalancer {
+    pub fn strategy(server: &ServerId) -> Result<Option<String>, Error> {
+        Ok(wl::strategy(server.as_str())?)
+    }
+
+    pub fn backends(server: &ServerId) -> Result<Vec<BackendStatus>, Error> {
+        Ok(wl::backends(server.as_str())?
+            .into_iter()
+            .map(BackendStatus::from_wit)
+            .collect())
+    }
+
+    pub fn set_drained(
+        server: &ServerId,
+        address: &ServerAddress,
+        drained: bool,
+    ) -> Result<(), Error> {
+        Ok(wl::set_drained(
+            server.as_str(),
+            &address.to_wit(),
+            drained,
+        )?)
+    }
+
+    pub fn reset_backend(server: &ServerId, address: &ServerAddress) -> Result<(), Error> {
+        Ok(wl::reset_backend(server.as_str(), &address.to_wit())?)
+    }
+}
+
+pub struct Messaging;
+
+impl Messaging {
+    pub fn register(channel: &ChannelId) -> Result<(), Error> {
+        Ok(wm::register_channel(&channel.to_wit())?)
+    }
+
+    pub fn unregister(channel: &ChannelId) -> Result<bool, Error> {
+        Ok(wm::unregister_channel(&channel.to_wit())?)
+    }
+
+    pub fn channels() -> Result<Vec<ChannelId>, Error> {
+        Ok(wm::channels()?
+            .into_iter()
+            .map(ChannelId::from_wit)
+            .collect())
+    }
+
+    pub fn send_to_player(player: PlayerId, channel: &ChannelId, data: &[u8]) -> Result<(), Error> {
+        Ok(wm::send_to_player(
+            player.as_u64(),
+            &channel.to_wit(),
+            data,
+        )?)
+    }
+
+    pub fn send_to_backend(
+        player: PlayerId,
+        channel: &ChannelId,
+        data: &[u8],
+    ) -> Result<(), Error> {
+        Ok(wm::send_to_backend(
+            player.as_u64(),
+            &channel.to_wit(),
+            data,
+        )?)
+    }
+
+    pub fn send_to_server(
+        server: &ServerId,
+        channel: &ChannelId,
+        data: &[u8],
+    ) -> Result<u32, Error> {
+        Ok(wm::send_to_server(
+            server.as_str(),
+            &channel.to_wit(),
+            data,
+        )?)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum UnknownDomainBehavior {
+    DefaultMotd,
+    Drop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RateLimitInfo {
+    pub max_connections: u32,
+    pub window: Duration,
+    pub status_max: u32,
+    pub status_window: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct StatusCacheInfo {
+    pub ttl: Duration,
+    pub max_entries: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct KeepaliveInfo {
+    pub time: Duration,
+    pub interval: Duration,
+    pub retries: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ProxyDetails {
+    pub version: String,
+    pub bind: SocketAddr,
+    pub max_connections: u32,
+    pub connect_timeout: Duration,
+    pub receive_proxy_protocol: bool,
+    pub worker_threads: u32,
+    pub so_reuseport: bool,
+    pub rate_limit: RateLimitInfo,
+    pub status_cache: StatusCacheInfo,
+    pub keepalive: KeepaliveInfo,
+    pub telemetry_enabled: bool,
+    pub docker_enabled: bool,
+    pub web_api_enabled: bool,
+    pub web_ui_enabled: bool,
+    pub unknown_domain_behavior: UnknownDomainBehavior,
+}
+
+impl ProxyDetails {
+    fn from_wit(details: wi::ProxyDetails) -> Self {
+        Self {
+            version: details.version,
+            bind: socket_from_wit(details.bind),
+            max_connections: details.max_connections,
+            connect_timeout: Duration::from_millis(details.connect_timeout_ms),
+            receive_proxy_protocol: details.receive_proxy_protocol,
+            worker_threads: details.worker_threads,
+            so_reuseport: details.so_reuseport,
+            rate_limit: RateLimitInfo {
+                max_connections: details.rate_limit.max_connections,
+                window: Duration::from_millis(details.rate_limit.window_ms),
+                status_max: details.rate_limit.status_max,
+                status_window: Duration::from_millis(details.rate_limit.status_window_ms),
+            },
+            status_cache: StatusCacheInfo {
+                ttl: Duration::from_millis(details.status_cache.ttl_ms),
+                max_entries: details.status_cache.max_entries,
+            },
+            keepalive: KeepaliveInfo {
+                time: Duration::from_millis(details.keepalive.time_ms),
+                interval: Duration::from_millis(details.keepalive.interval_ms),
+                retries: details.keepalive.retries,
+            },
+            telemetry_enabled: details.telemetry_enabled,
+            docker_enabled: details.docker_enabled,
+            web_api_enabled: details.web_api_enabled,
+            web_ui_enabled: details.web_ui_enabled,
+            unknown_domain_behavior: match details.unknown_domain_behavior {
+                wi::UnknownDomainBehavior::DefaultMotd => UnknownDomainBehavior::DefaultMotd,
+                wi::UnknownDomainBehavior::Drop => UnknownDomainBehavior::Drop,
+            },
+        }
+    }
+}
+
+pub struct Proxy;
+
+impl Proxy {
+    #[must_use]
+    pub fn details() -> ProxyDetails {
+        ProxyDetails::from_wit(wi::details())
+    }
+
+    #[must_use]
+    pub fn version() -> String {
+        wi::details().version
+    }
+
+    #[must_use]
+    pub fn granted_capabilities() -> Vec<Capability> {
+        wi::granted_capabilities()
+            .into_iter()
+            .map(Capability::from_wit)
+            .collect()
+    }
+
+    #[must_use]
+    pub fn has_capability(capability: Capability) -> bool {
+        Self::granted_capabilities().contains(&capability)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct PluginInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub authors: Vec<String>,
+    pub description: Option<String>,
+    pub state: String,
+    pub dependencies: Vec<PluginDependency>,
+}
+
+impl PluginInfo {
+    fn from_wit(info: wr::PluginInfo) -> Self {
+        Self {
+            id: info.id,
+            name: info.name,
+            version: info.version,
+            authors: info.authors,
+            description: info.description,
+            state: info.state,
+            dependencies: info.dependencies,
+        }
+    }
+}
+
+pub struct Plugins;
+
+impl Plugins {
+    #[must_use]
+    pub fn list() -> Vec<PluginInfo> {
+        wr::list().into_iter().map(PluginInfo::from_wit).collect()
+    }
+
+    #[must_use]
+    pub fn get(id: &str) -> Option<PluginInfo> {
+        wr::get(id).map(PluginInfo::from_wit)
+    }
+
+    #[must_use]
+    pub fn is_loaded(id: &str) -> bool {
+        Self::get(id).is_some()
     }
 }
 

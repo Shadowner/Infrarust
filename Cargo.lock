@@ -1987,6 +1987,7 @@ dependencies = [
  "infrarust-core",
  "infrarust-plugin-stats-native",
  "infrarust-plugin-wit",
+ "infrarust-test-harness",
  "infrarust_config",
  "sha2 0.11.0",
  "tempfile",

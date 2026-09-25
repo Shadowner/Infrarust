@@ -235,9 +235,11 @@ async fn a_plugin_denied_events_and_commands_still_runs() {
         ("event-bus", "`event-bus`"),
         ("command-manager", "`command`"),
     ] {
-        let report = refusal_report(&lines, "scripted", interface);
+        let report: Vec<&String> = refusal_report(&lines, "scripted", interface)
+            .into_iter()
+            .filter(|line| line.contains(capability))
+            .collect();
         assert_eq!(report.len(), 1, "{interface}: {lines:?}");
-        assert!(report[0].contains(capability), "{report:?}");
     }
 }
 

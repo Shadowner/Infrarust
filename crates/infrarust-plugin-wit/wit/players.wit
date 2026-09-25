@@ -1,7 +1,8 @@
 interface players {
     use types.{
         player-id, server-id, uuid, player-ref, game-profile, protocol-version, socket-address,
-        timestamp-ms, component, title-data, raw-packet, host-error,
+        timestamp-ms, component, title-data, raw-packet, host-error, client-settings,
+        server-address,
     };
 
     record player-info {
@@ -17,6 +18,50 @@ interface players {
         virtual-host: option<string>,
         client-brand: option<string>,
         ping-ms: option<u32>,
+        settings: option<client-settings>,
+        known-channels: list<string>,
+    }
+
+    variant connection-result {
+        success,
+        already-connected,
+        denied(component),
+        failed(component),
+        cancelled,
+    }
+
+    enum boss-bar-color { pink, blue, red, green, yellow, purple, white }
+    enum boss-bar-overlay { progress, notched6, notched10, notched12, notched20 }
+
+    flags boss-bar-flags {
+        darken-screen,
+        play-boss-music,
+        create-world-fog,
+    }
+
+    record boss-bar {
+        title: component,
+        progress: f32,
+        color: boss-bar-color,
+        overlay: boss-bar-overlay,
+        %flags: boss-bar-flags,
+    }
+
+    variant boss-bar-update {
+        title(component),
+        progress(f32),
+        style(tuple<boss-bar-color, boss-bar-overlay>),
+        %flags(boss-bar-flags),
+    }
+
+    type boss-bar-id = uuid;
+
+    record resource-pack-request {
+        id: uuid,
+        url: string,
+        hash: option<string>,
+        required: bool,
+        prompt: option<component>,
     }
 
     get: func(id: player-id) -> option<player-info>;
@@ -32,4 +77,17 @@ interface players {
     disconnect: func(player: player-id, reason: component) -> result<_, host-error>;
     switch-server: func(player: player-id, server: server-id) -> result<_, host-error>;
     has-permission: func(player: player-id, permission: string) -> result<bool, host-error>;
+
+    connect: func(player: player-id, server: server-id) -> result<connection-result, host-error>;
+    set-player-list-header-footer: func(player: player-id, header: component, footer: component) -> result<_, host-error>;
+    clear-title: func(player: player-id, reset: bool) -> result<_, host-error>;
+    show-boss-bar: func(player: player-id, bar: boss-bar) -> result<boss-bar-id, host-error>;
+    update-boss-bar: func(bar: boss-bar-id, update: boss-bar-update) -> result<_, host-error>;
+    hide-boss-bar: func(bar: boss-bar-id) -> result<_, host-error>;
+    send-resource-pack: func(player: player-id, pack: resource-pack-request) -> result<_, host-error>;
+    remove-resource-pack: func(player: player-id, id: option<uuid>) -> result<_, host-error>;
+    transfer: func(player: player-id, target: server-address) -> result<_, host-error>;
+    store-cookie: func(player: player-id, key: string, data: list<u8>) -> result<_, host-error>;
+    request-cookie: func(player: player-id, key: string) -> result<option<list<u8>>, host-error>;
+    refresh-permissions: func(player: player-id) -> result<_, host-error>;
 }

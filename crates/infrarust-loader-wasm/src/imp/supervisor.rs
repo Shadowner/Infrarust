@@ -10,6 +10,7 @@ use tokio::time::Instant;
 
 use crate::actor::{CallFailure, GuestCall, InstanceRef, Job, JobKind};
 use crate::bindings::exports::infrarust::plugin::guest::{EnableReason, RecoveryInfo};
+use crate::chain::CallChain;
 use crate::deadline::Deadline;
 use crate::error::WasmLoaderError;
 use crate::instance::{InstanceFactory, LiveInstance};
@@ -95,10 +96,12 @@ impl Supervisor {
             kind,
             deadline,
             generation,
+            chain,
             mut call,
         } = job;
+        let chain = chain.with(self.factory.plugin_id());
         if kind == JobKind::Disable {
-            self.disable(op, call).await;
+            self.disable(op, call, chain).await;
             return ControlFlow::Break(());
         }
         if call.caller_gone() {
@@ -134,7 +137,7 @@ impl Supervisor {
             call.refuse(CallFailure::Expired);
             return ControlFlow::Continue(());
         }
-        match run_guest(live, call.as_mut(), deadline, limit).await {
+        match run_guest(live, call.as_mut(), deadline, limit, chain).await {
             Ok(()) => {
                 if kind == JobKind::Enable {
                     self.promote();
@@ -167,7 +170,7 @@ impl Supervisor {
         tracing::debug!(plugin = %self.factory.plugin_id(), "wasm plugin task stopped");
     }
 
-    async fn disable(&mut self, op: &'static str, mut call: Box<dyn GuestCall>) {
+    async fn disable(&mut self, op: &'static str, mut call: Box<dyn GuestCall>, chain: CallChain) {
         let limit = self.factory.sandbox().max_call_duration;
         let live = match &mut self.health {
             Health::Starting(live) | Health::Healthy(live) => live,
@@ -180,7 +183,7 @@ impl Supervisor {
                 return;
             }
         };
-        match run_guest(live, call.as_mut(), None, limit).await {
+        match run_guest(live, call.as_mut(), None, limit, chain).await {
             Ok(()) => call.answer(),
             Err(fault) => {
                 self.report(op, &fault);
@@ -249,7 +252,8 @@ impl Supervisor {
             attempt: u32::try_from(generation - FIRST_GENERATION).unwrap_or(u32::MAX),
             cause: self.last_fault.clone(),
         });
-        match enable(&mut live, limit, &reason).await {
+        let chain = CallChain::default().with(self.factory.plugin_id());
+        match chain.scope(enable(&mut live, limit, &reason)).await {
             Ok(()) => {
                 let ctx = self.factory.ctx();
                 for name in self.factory.registrations().sweep(generation) {
@@ -294,9 +298,11 @@ async fn run_guest(
     call: &mut dyn GuestCall,
     deadline: Option<Deadline>,
     limit: Duration,
+    chain: CallChain,
 ) -> Result<(), Fault> {
     live.begin_call(deadline);
-    let outcome = contain(limit, call.run(&mut live.store, &live.bindings)).await;
+    let running = call.run(&mut live.store, &live.bindings);
+    let outcome = chain.scope(contain(limit, running)).await;
     live.end_call();
     outcome
 }

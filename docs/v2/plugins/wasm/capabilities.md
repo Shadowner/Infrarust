@@ -26,6 +26,7 @@ pub enum Capability {
     Command,
     Scheduler,
     ConfigRead,
+    ConfigWrite,
     CodecFilter,
     TransportFilter,
     Limbo,
@@ -34,6 +35,8 @@ pub enum Capability {
     FilesystemExtended,
     Network,
     ChatIntercept,
+    BanProvider,
+    PluginMessaging,
 }
 ```
 
@@ -49,10 +52,11 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `Command` | `command` | Register commands | Yes |
 | `Scheduler` | `scheduler` | Schedule tasks | Yes |
 | `ConfigRead` | `config-read` | Read the proxy configuration | Yes |
-| `ConfigWrite` | `config-write` | Rewrite the global `infrarust.toml` (no host binding yet, see below) | No |
-| `RawPacket` | `raw-packet` | Emit raw packets and gate `player.send-packet` | No |
-| `ChatIntercept` | `chat-intercept` | Subscribe to `chat-message`: read, deny and rewrite what players type in chat | No |
-| `ServerManage` | `server-manage` | Start/stop servers and read their state | No |
+| `ConfigWrite` | `config-write` | Rewrite the global `infrarust.toml` with `config-service.write-proxy-config-document` | No |
+| `RawPacket` | `raw-packet` | Send raw packets with `players.send-packet` and receive them with `event-bus.subscribe-packets` | No |
+| `ChatIntercept` | `chat-intercept` | Subscribe to `chat-message` and `command-execute`: read, deny and rewrite what players type | No |
+| `PluginMessaging` | `plugin-messaging` | Register plugin channels, send plugin messages, and subscribe to `plugin-message` | No |
+| `ServerManage` | `server-manage` | Start/stop servers and read their state; drain and reset load-balanced backends | No |
 | `Ban` | `ban` | Use the ban service | No |
 | `BanProvider` | `ban-provider` | Register a ban provider with `register_ban_provider` (native plugins only, no WASM binding yet) | No |
 | `CodecFilter` | `codec-filter` | Register codec filters | No |
@@ -62,10 +66,6 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `PermissionProvider` | `permission-provider` | Become the permission provider named by `[permissions] provider` (native plugins only) | No |
 | `FilesystemExtended` | `filesystem-extended` | Filesystem access beyond the per-plugin data directory (deferred) | No |
 | `Network` | `network` | Outbound network access (deferred) | No |
-
-::: warning config-write has no WASM binding
-`config-write` parses and can be granted, but the WIT contract exposes no write function, so a WASM plugin holding it still cannot rewrite `infrarust.toml`. The capability gates the native path: `ConfigService::write_proxy_config_document` is served by a read-only wrapper unless the plugin holds it.
-:::
 
 ::: warning transport-filter is host-only
 `transport-filter` is a valid capability string, but `from_config_strings` puts it in the rejected list rather than granting it. A WASM plugin cannot register transport filters. The capability exists for native plugins, which receive it through `native_trusted`.
@@ -159,21 +159,27 @@ Every host interface is linked for every plugin, whatever it was granted. A plug
 |-----------|----------|-------|---------------------|
 | `ban-service` | `ban`, `unban`, `get`, `list` | `ban` | `permission-denied: "missing capability: ban"` |
 | `server-manager` | `get-state`, `start`, `stop`, `list` | `server-manage` | `permission-denied: "missing capability: server-manage"` |
-| `config-service` | `get-value`, `get-server`, `list-servers` | `config-read` | `permission-denied: "missing capability: config-read"` |
+| `config-service` | `get-value`, `get-server`, `list-servers`, `get-server-document`, `list-server-sources`, `get-proxy-config-document`, `get-effective-proxy-config-document` | `config-read` | `permission-denied: "missing capability: config-read"` |
+| `config-service` | `write-proxy-config-document` | `config-write` | `permission-denied: "missing capability: config-write"` |
+| `load-balancer` | `strategy`, `backends` | `config-read` | `permission-denied: "missing capability: config-read"` |
+| `load-balancer` | `set-drained`, `reset-backend` | `server-manage` | `permission-denied: "missing capability: server-manage"` |
+| `messaging` | `register-channel`, `unregister-channel`, `channels`, `send-to-player`, `send-to-backend`, `send-to-server` | `plugin-messaging` | `permission-denied: "missing capability: plugin-messaging"` |
 | `players` | `get`, `get-by-name`, `get-by-uuid` | `player-read` | `none` |
 | `players` | `list` | `player-read` | empty list |
 | `players` | `count` | `player-read` | `0` |
 | `players` | `has-permission` | `player-read` | `permission-denied: "missing capability: player-read"` |
-| `players` | `send-message`, `send-title`, `send-action-bar`, `disconnect`, `switch-server` | `player-write` | `permission-denied: "missing capability: player-write"` |
+| `players` | `send-message`, `send-title`, `send-action-bar`, `disconnect`, `switch-server`, `connect`, `set-player-list-header-footer`, `clear-title`, `show-boss-bar`, `update-boss-bar`, `hide-boss-bar`, `send-resource-pack`, `remove-resource-pack`, `transfer`, `store-cookie`, `request-cookie`, `refresh-permissions` | `player-write` | `permission-denied: "missing capability: player-write"` |
 | `players` | `send-packet` | `raw-packet` | `permission-denied: "missing capability: raw-packet"` |
-| `event-bus` | `subscribe`, `unsubscribe` | `event-bus` | `permission-denied: "missing capability: event-bus"` |
-| `event-bus` | `subscribe` with kind `chat-message` | `event-bus` and `chat-intercept` | `permission-denied: "missing capability: chat-intercept"`: the plugin never sees a chat message |
+| `event-bus` | `subscribe`, `unsubscribe`, `subscribe-named`, `fire-named` | `event-bus` | `permission-denied: "missing capability: event-bus"` |
+| `event-bus` | `subscribe` with kind `chat-message` or `command-execute` | `event-bus` and `chat-intercept` | `permission-denied: "missing capability: chat-intercept"`: the plugin never sees a chat message or command |
+| `event-bus` | `subscribe` with kind `plugin-message` | `event-bus` and `plugin-messaging` | `permission-denied: "missing capability: plugin-messaging"` |
+| `event-bus` | `subscribe-packets`, and `subscribe` with kind `raw-packet` | `event-bus` and `raw-packet` | `permission-denied: "missing capability: raw-packet"` |
 | `command-manager` | `register`, `unregister` | `command` | `permission-denied: "missing capability: command"` |
 | `scheduler` | `delay`, `interval`, `cancel` | `scheduler` | `permission-denied: "missing capability: scheduler"` |
 | `codec-registry` | `register-codec-filter`, `unregister-codec-filter` | `codec-filter` | `permission-denied: "missing capability: codec-filter"` |
 | `limbo` | `register-limbo-handler` | `limbo` | `permission-denied: "missing capability: limbo"` |
 
-The five player reads are the contract's infallible reads: they have no error channel and answer a neutral value instead. The limbo session resources only reach a plugin through a handler it registered, which needs `limbo`. `log`, `text`, `types` and `events` are never gated.
+The five player reads are the contract's infallible reads: they have no error channel and answer a neutral value instead. The limbo session resources only reach a plugin through a handler it registered, which needs `limbo`. `log`, `text`, `types`, `events`, `proxy-info` and `plugin-registry` are never gated: `proxy-info.granted-capabilities` is how a plugin learns what it holds.
 
 The host also logs every refusal, naming the plugin, the call (`call="ban-service.get"`) and the missing capability. It logs at `warn`, and at `error` for `register-limbo-handler`, whose refusal means a server that points at the handler holds nobody. The log is rate-limited to one line per capability per minute for each plugin instance; the `suppressed` field counts the refusals skipped since the previous line.
 
@@ -196,9 +202,9 @@ Before it instantiates a plugin, the host reads the component's import list, whi
 WARN plugin my-plugin imports ban-service but lacks the `ban` capability; calls will be refused
 ```
 
-The warning also carries the imported functions in its `functions` field. The report works per function, not per interface. Every component imports the `limbo` interface for its session resource types, but only `register-limbo-handler` needs `limbo`, so a plugin that never registers a limbo handler is not reported. In the same way `players` is reported against `player-write` only when the plugin imports a function that acts on a player, and against `raw-packet` only when it imports `send-packet`.
+The warning also carries the imported functions in its `functions` field. The report works per function, not per interface. Every component imports the `limbo` interface for its session resource types, but only `register-limbo-handler` needs `limbo`, so a plugin that never registers a limbo handler is not reported. In the same way `players` is reported against `player-write` only when the plugin imports a function that acts on a player, and against `raw-packet` only when it imports `send-packet`; `event-bus` is reported against `raw-packet` when the plugin imports `subscribe-packets`, and `config-service` against `config-write` when it imports `write-proxy-config-document`.
 
-The report reads imports, not arguments, so it cannot tell which event kinds a plugin subscribes to: a `chat-message` subscription without `chat-intercept` is only reported when the call is refused.
+The report reads imports, not arguments, so it cannot tell which event kinds a plugin subscribes to: a `chat-message`, `command-execute` or `plugin-message` subscription without its capability is only reported when the call is refused.
 
 ### Chat needs `chat-intercept`
 
@@ -209,7 +215,18 @@ A chat listener sees every message players type, including private messages, and
 permissions = ["chat-intercept"]
 ```
 
-Without it the plugin still loads, but `subscribe` returns a `permission-denied` error (`ctx.on::<ChatMessageEvent>` returns it as an `Error`), no chat message reaches the plugin, and the host logs the refusal with `call="event-bus.subscribe(chat-message)"` and `capability="chat-intercept"`. Compiled-in plugins hold the capability unless their config denies it.
+Without it the plugin still loads, but `subscribe` returns a `permission-denied` error (`ctx.on::<ChatMessageEvent>` returns it as an `Error`), no chat message reaches the plugin, and the host logs the refusal with `call="event-bus.subscribe(chat-message)"` and `capability="chat-intercept"`. Compiled-in plugins hold the capability unless their config denies it. The same capability covers `command-execute`, which sees every command a player types.
+
+### Plugin messages need `plugin-messaging`
+
+Plugin channels carry whatever mods and backend plugins exchange with the client, including the BungeeCord channel that moves players between servers. `plugin-messaging` gates the whole `messaging` interface (registering channels, sending to a client, a backend or a server) and the `plugin-message` event:
+
+```toml
+[plugins.mod-bridge]
+permissions = ["plugin-messaging"]
+```
+
+Without it `Messaging::register` and the send functions return `permission-denied`, `ctx.on::<PluginMessageEvent>` is refused, and the host logs the refusal with `capability="plugin-messaging"`. Compiled-in plugins hold it unless their config denies it.
 
 ### Strict mode
 

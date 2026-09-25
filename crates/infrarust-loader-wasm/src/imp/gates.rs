@@ -16,11 +16,20 @@ pub(crate) struct MissingGrant {
 
 pub(crate) fn gate(interface: &str, function: &str) -> Option<Capability> {
     match interface {
+        "event-bus" if function == "subscribe-packets" => Some(Capability::RawPacket),
         "event-bus" => Some(Capability::EventBus),
         "players" => Some(player_gate(function)),
         "server-manager" => Some(Capability::ServerManage),
         "ban-service" => Some(Capability::Ban),
+        "config-service" if function == "write-proxy-config-document" => {
+            Some(Capability::ConfigWrite)
+        }
         "config-service" => Some(Capability::ConfigRead),
+        "load-balancer" if matches!(function, "set-drained" | "reset-backend") => {
+            Some(Capability::ServerManage)
+        }
+        "load-balancer" => Some(Capability::ConfigRead),
+        "messaging" => Some(Capability::PluginMessaging),
         "command-manager" => Some(Capability::Command),
         "scheduler" => Some(Capability::Scheduler),
         "codec-registry" => Some(Capability::CodecFilter),
@@ -31,9 +40,23 @@ pub(crate) fn gate(interface: &str, function: &str) -> Option<Capability> {
 
 fn player_gate(function: &str) -> Capability {
     match function {
-        "send-message" | "send-title" | "send-action-bar" | "switch-server" | "disconnect" => {
-            Capability::PlayerWrite
-        }
+        "send-message"
+        | "send-title"
+        | "send-action-bar"
+        | "switch-server"
+        | "disconnect"
+        | "connect"
+        | "set-player-list-header-footer"
+        | "clear-title"
+        | "show-boss-bar"
+        | "update-boss-bar"
+        | "hide-boss-bar"
+        | "send-resource-pack"
+        | "remove-resource-pack"
+        | "transfer"
+        | "store-cookie"
+        | "request-cookie"
+        | "refresh-permissions" => Capability::PlayerWrite,
         "send-packet" => Capability::RawPacket,
         _ => Capability::PlayerRead,
     }
@@ -253,5 +276,37 @@ mod tests {
         assert_eq!(gate("players", "disconnect"), Some(Capability::PlayerWrite));
         assert_eq!(gate("players", "send-packet"), Some(Capability::RawPacket));
         assert_eq!(gate("event-bus", "unsubscribe"), Some(Capability::EventBus));
+        assert_eq!(gate("event-bus", "fire-named"), Some(Capability::EventBus));
+        assert_eq!(
+            gate("event-bus", "subscribe-packets"),
+            Some(Capability::RawPacket)
+        );
+        assert_eq!(gate("players", "connect"), Some(Capability::PlayerWrite));
+        assert_eq!(
+            gate("players", "request-cookie"),
+            Some(Capability::PlayerWrite)
+        );
+        assert_eq!(
+            gate("messaging", "send-to-server"),
+            Some(Capability::PluginMessaging)
+        );
+        assert_eq!(
+            gate("load-balancer", "backends"),
+            Some(Capability::ConfigRead)
+        );
+        assert_eq!(
+            gate("load-balancer", "set-drained"),
+            Some(Capability::ServerManage)
+        );
+        assert_eq!(
+            gate("config-service", "write-proxy-config-document"),
+            Some(Capability::ConfigWrite)
+        );
+        assert_eq!(
+            gate("config-service", "list-server-sources"),
+            Some(Capability::ConfigRead)
+        );
+        assert_eq!(gate("proxy-info", "granted-capabilities"), None);
+        assert_eq!(gate("plugin-registry", "list"), None);
     }
 }

@@ -299,7 +299,7 @@ ctx.event_bus().subscribe::<ConnectionRejectedEvent, _>(
 );
 ```
 
-WASM plugins (contract 0.2.3) do not receive handshake events.
+WASM plugins (contract 0.3.0) receive `connection-handshake` and `connection-rejected` with the same fields and results. See [WASM events](../wasm/events).
 
 ## Lifecycle events
 
@@ -503,7 +503,7 @@ ctx.event_bus().subscribe_async::<DisconnectEvent, _>(
 
 ### WASM plugins
 
-WASM plugins (contract 0.2.3) receive `PreLoginEvent`, `OnlineAuthFailed`, `PermissionsSetupEvent`, `PostLoginEvent` and `DisconnectEvent` with the same fields as before, in the order above. `GameProfileRequestEvent` and `LoginEvent` are not delivered to WASM plugins yet, and the WASM `DisconnectEvent` has no cause.
+WASM plugins (contract 0.3.0) receive every event above in the same order, with the native fields and results, `GameProfileRequestEvent`, `LoginEvent` and the disconnect cause included. `PermissionsSetupEvent` can only reset to the default checker from WASM. See [WASM events](../wasm/events).
 
 ## Connection events
 
@@ -727,13 +727,13 @@ Fired when the player leaves the handler chain, whatever ends it. Awaited in the
 
 For one stay in limbo the order is `LimboEnterEvent`, then `LimboExitEvent`, then what the outcome leads to. After an initial gate that released the player, `ServerConnectedEvent` follows directly: the gate's `ServerPreConnectEvent` fired before `LimboEnterEvent`.
 
-WASM plugins (contract 0.2.3) do not receive limbo events.
+WASM plugins (contract 0.3.0) receive `limbo-enter` and `limbo-exit` with the same fields.
 
 ### WASM connection events
 
-WASM plugins (contract 0.2.3) keep the records they had. `server-pre-connect` carries `server` as `original-server`, and `server-connected` fires with `ServerConnectedEvent`, so it now waits for the backend to accept the login. `server-switch` fires from `ServerPostConnectEvent` when `switched_from()` is set, with the same `previous-server` and `new-server` fields. WASM plugins do not see `previous_server`, `cause`, or a join that is not a switch.
+WASM plugins (contract 0.3.0) receive these events with the native fields and results: `server-pre-connect` carries `previous-server` and `cause`, `server-connected` waits for the backend to accept the login, and `server-post-connect` fires for every connection, not only for switches.
 
-`kicked-from-server` keeps `player-id`, `server` and `reason`. `reason` is the server's reason as component JSON, the `error` text when the server could not be reached, and an empty text component otherwise. `disconnect-player(reason)` disconnects with that reason; to show the server's own disconnect, leave the result as it is. WASM plugins do not see `cause`, `during_connect` or `previous_server`.
+`kicked-from-server` carries the optional reason as a component, `cause`, `during-connect` and `previous-server`, and every result above. To show the server's own disconnect, leave the result as it is.
 
 ## Chat and command events
 
@@ -844,7 +844,7 @@ Formats: [Java Edition protocol, packets](https://minecraft.wiki/w/Java_Edition_
 
 ### WASM chat events
 
-Contract 0.2.3 has `chat-message` and no command event. A WASM plugin needs the [`chat-intercept`](../wasm/capabilities) capability to subscribe to `chat-message`. `deny(component)` maps to `Deny { reason: Some(..) }` and `modify(text)` to `Modify`. The record carries `player-id` and `message` only. See [WASM events](../wasm/events).
+Contract 0.3.0 has `chat-message` and `command-execute`, with the native fields and results. A WASM plugin needs the [`chat-intercept`](../wasm/capabilities) capability to subscribe to either. See [WASM events](../wasm/events).
 
 ## Plugin message and client events
 
@@ -894,7 +894,7 @@ ctx.event_bus().subscribe::<PlayerSettingsChangedEvent, _>(EventPriority::NORMAL
 });
 ```
 
-WASM plugins (contract 0.2.3) receive none of these events. Plugin messaging for WASM comes with the next contract version.
+WASM plugins (contract 0.3.0) receive these events, and `PlayerInfo` carries `settings` and `known-channels`. Plugin messaging for WASM needs the [`plugin-messaging`](../wasm/capabilities) capability.
 
 ## Resource pack and transfer events
 
@@ -982,7 +982,7 @@ A low-level event fired when a raw packet passes through the proxy during Play s
 
 `RawPacketEvent` does not implement `Event` or `ResultedEvent`, so `subscribe::<RawPacketEvent, _>` does not compile. The only way to receive raw packets is a packet subscription (`subscribe_packet_typed` or `subscribe_packet_async_typed`, shown below). Read and change the outcome with the event's own `result()`, `set_result()`, `drop_packet()` and `modify()` methods.
 
-WASM plugins cannot receive raw packets in the current contract version. A WASM plugin that subscribes to `raw-packet` gets a listener ID back, but no listener is registered and the proxy logs a warning naming the plugin.
+WASM plugins (contract 0.3.0) subscribe to raw packets with `event-bus.subscribe-packets` and packet filters, which needs `raw-packet`. Each matching packet waits for a guest call, so a codec filter is the better tool on the hot path; see [Raw packets](../wasm/events#raw-packets).
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1075,7 +1075,7 @@ ctx.event_bus().subscribe::<ProxyPingEvent, _>(
 );
 ```
 
-WASM plugins (contract 0.2.3) receive `proxy-ping` with `remote-addr` and the response as before. They do not see `server`, `virtual_host`, `protocol_version`, `legacy` or `player_sample`, and the response a WASM listener returns keeps the `player_sample` set before it.
+WASM plugins (contract 0.3.0) receive `proxy-ping` with the same fields and the whole response, `player_sample` included.
 
 #### Legacy pings
 
@@ -1119,7 +1119,7 @@ ctx.event_bus().subscribe::<ConfigReloadEvent, _>(
 );
 ```
 
-WASM plugins (contract 0.2.3) receive `config-reload` with no fields, as before.
+WASM plugins (contract 0.3.0) receive `config-reload` with `provider`, `added`, `removed` and `updated`.
 
 ### ServerStateChangeEvent
 
@@ -1195,7 +1195,7 @@ ctx.event_bus().subscribe::<BanIssuedEvent, _>(EventPriority::NORMAL, |event| {
 });
 ```
 
-WASM plugins (contract 0.2.3) do not receive ban events.
+WASM plugins (contract 0.3.0) receive `ban-issued` and `ban-revoked` with the entry, the source and `silent`.
 
 ## Plugin events
 
@@ -1251,7 +1251,7 @@ ctx.event_bus().subscribe::<ServiceProvidedEvent, _>(EventPriority::NORMAL, |eve
 
 Posted when a service was withdrawn through its `ServiceHandle`, or because its provider was disabled. It has the same fields and `is::<T>()` check as `ServiceProvidedEvent`. When a plugin is disabled, its `ServiceRemovedEvent`s come before its `PluginDisabledEvent`.
 
-WASM plugins (contract 0.2.3) do not receive plugin events.
+WASM plugins (contract 0.3.0) receive `plugin-enabled` and `plugin-disabled`. The service events stay native-only.
 
 ## Custom events
 
@@ -1323,4 +1323,4 @@ let answered = ctx
     .await?;
 ```
 
-WASM plugins cannot fire or subscribe to custom events or `NamedEvent` in the current contract version.
+WASM plugins (contract 0.3.0) fire and subscribe to `NamedEvent` with `event-bus.fire-named` and `subscribe-named`, and exchange them with native plugins. Other custom event types stay native-only. See [Named events](../wasm/events#named-events).

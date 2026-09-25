@@ -121,7 +121,7 @@ limbo-on-session-end:   func(handler: handler-id, player: player-id, reason: ses
 
 ## Threading
 
-The guest is single-threaded. The host runs one call at a time per instance, in the order the calls arrive, and never re-enters an instance: a host function the guest calls never calls back into the guest, and an event a host call triggers waits in the plugin's queue until the current call returns. Plugin state therefore needs no `Send` or `Sync`: keep it in `Cell`, `RefCell` and `Rc`, and do not reach for locks.
+The guest is single-threaded. The host runs one call at a time per instance, in the order the calls arrive, and never re-enters an instance: a host function the guest calls never calls back into the guest. An event that a call causes for a plugin already busy up that call's chain, such as a named event a plugin fires to itself, is queued behind the current call, and the proxy does not wait for its answer; see [Named events](./events#named-events). Plugin state therefore needs no `Send` or `Sync`: keep it in `Cell`, `RefCell` and `Rc`, and do not reach for locks.
 
 ## Sync vs async
 

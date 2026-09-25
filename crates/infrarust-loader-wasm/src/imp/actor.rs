@@ -12,6 +12,7 @@ use tracing::instrument::WithSubscriber;
 use wasmtime::Store;
 
 use crate::bindings::Plugin as PluginBindings;
+use crate::chain::CallChain;
 use crate::config::SandboxLimits;
 use crate::consts::{GUEST_WARNING_BURST, GUEST_WARNING_INTERVAL, QUEUE_FULL_WARN_INTERVAL};
 use crate::deadline::Deadline;
@@ -129,6 +130,7 @@ pub(crate) struct Job {
     pub(crate) kind: JobKind,
     pub(crate) deadline: Option<Deadline>,
     pub(crate) generation: Option<u64>,
+    pub(crate) chain: CallChain,
     pub(crate) call: Box<dyn GuestCall>,
 }
 
@@ -155,6 +157,7 @@ impl Job {
             kind,
             deadline,
             generation,
+            chain: CallChain::current(),
             call: Box::new(TypedCall {
                 reply,
                 call: Some(call),
@@ -252,6 +255,10 @@ impl InstanceRef {
         self.info.guest_warnings.admit(Instant::now())
     }
 
+    pub(crate) fn is_upstream(&self) -> bool {
+        CallChain::current().contains(self.plugin_id())
+    }
+
     pub(crate) fn for_calls(&self, kind: CallKind) -> Self {
         Self {
             kind,
@@ -273,7 +280,28 @@ impl InstanceRef {
         }
     }
 
-    pub(crate) async fn call<T, F>(&self, op: &'static str, call: F) -> Result<T, CallFailure>
+    pub(crate) fn post<T, F>(&self, op: &'static str, call: F) -> Result<(), CallFailure>
+    where
+        T: Send + 'static,
+        F: for<'a> FnOnce(
+                &'a mut Store<PluginStoreState>,
+                &'a PluginBindings,
+            ) -> BoxFuture<'a, wasmtime::Result<T>>
+            + Send
+            + 'static,
+    {
+        let answer = self.enqueue(op, call)?;
+        tokio::spawn(async move {
+            let _ = answer.await;
+        });
+        Ok(())
+    }
+
+    fn enqueue<T, F>(
+        &self,
+        op: &'static str,
+        call: F,
+    ) -> Result<oneshot::Receiver<Result<T, CallFailure>>, CallFailure>
     where
         T: Send + 'static,
         F: for<'a> FnOnce(
@@ -289,14 +317,26 @@ impl InstanceRef {
         let deadline = Deadline::after(self.info.budget(self.kind));
         let (job, answer) = Job::new(op, JobKind::Call, Some(deadline), self.generation, call);
         match jobs.try_send(job) {
-            Ok(()) => {}
+            Ok(()) => Ok(answer),
             Err(TrySendError::Full(_)) => {
                 self.info.warn_queue_full(op);
-                return Err(CallFailure::QueueFull);
+                Err(CallFailure::QueueFull)
             }
-            Err(TrySendError::Closed(_)) => return Err(CallFailure::Stopped),
+            Err(TrySendError::Closed(_)) => Err(CallFailure::Stopped),
         }
-        drop(jobs);
+    }
+
+    pub(crate) async fn call<T, F>(&self, op: &'static str, call: F) -> Result<T, CallFailure>
+    where
+        T: Send + 'static,
+        F: for<'a> FnOnce(
+                &'a mut Store<PluginStoreState>,
+                &'a PluginBindings,
+            ) -> BoxFuture<'a, wasmtime::Result<T>>
+            + Send
+            + 'static,
+    {
+        let answer = self.enqueue(op, call)?;
         answer.await.unwrap_or(Err(CallFailure::Dropped))
     }
 }

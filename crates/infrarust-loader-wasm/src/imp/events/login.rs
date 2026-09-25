@@ -1,7 +1,8 @@
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::lifecycle::{
-    DisconnectCause, DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent,
-    PermissionsSetupResult, PostLoginEvent, PreLoginEvent, PreLoginResult,
+    DisconnectCause, DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult,
+    OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent,
+    PreLoginResult,
 };
 
 use super::{Applied, Texts, WasmEvent, unmatched};
@@ -113,6 +114,62 @@ impl WasmEvent for PermissionsSetupEvent {
     }
 }
 
+impl WasmEvent for LoginEvent {
+    const KIND: EventKind = EventKind::Login;
+
+    fn to_wit(&self) -> we::Event {
+        we::Event::Login(we::LoginEvent {
+            player: convert::player_ref(&*self.player),
+            online_mode: self.online_mode,
+            result: match self.result() {
+                LoginResult::Denied { reason } => {
+                    we::LoginResult::Denied(component::to_wit(reason))
+                }
+                _ => we::LoginResult::Allowed,
+            },
+        })
+    }
+
+    fn apply(&mut self, outcome: we::EventOutcome) -> Applied {
+        let we::EventOutcome::Login(result) = outcome else {
+            return unmatched(&outcome);
+        };
+        let mut texts = Texts::default();
+        self.set_result(match result {
+            we::LoginResult::Allowed => LoginResult::Allowed,
+            we::LoginResult::Denied(reason) => LoginResult::Denied {
+                reason: texts.convert(&reason),
+            },
+        });
+        texts.applied()
+    }
+}
+
+impl WasmEvent for GameProfileRequestEvent {
+    const KIND: EventKind = EventKind::GameProfileRequest;
+
+    fn to_wit(&self) -> we::Event {
+        we::Event::GameProfileRequest(we::GameProfileRequestEvent {
+            original: convert::game_profile_to_wit(self.original()),
+            online_mode: self.online_mode,
+            remote_addr: convert::socket_to_wit(self.remote_addr),
+            virtual_host: self.virtual_host.clone(),
+            protocol: self.protocol_version.raw(),
+            result: we::GameProfileRequestResult {
+                profile: convert::game_profile_to_wit(&self.profile),
+            },
+        })
+    }
+
+    fn apply(&mut self, outcome: we::EventOutcome) -> Applied {
+        let we::EventOutcome::GameProfileRequest(result) = outcome else {
+            return unmatched(&outcome);
+        };
+        self.profile = convert::game_profile_from_wit(result.profile);
+        Applied::Set
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -202,6 +259,54 @@ mod tests {
             record.cause,
             we::DisconnectCause::Kicked(Some(component::to_wit(&Component::text("bye"))))
         );
+    }
+
+    #[test]
+    fn a_login_deny_sets_the_native_result_and_allowed_resets_it() {
+        let mut event = LoginEvent::new(steve(), true);
+        let reason = component::to_wit(&Component::text("closed"));
+        assert_eq!(
+            event.apply(we::EventOutcome::Login(we::LoginResult::Denied(
+                reason.clone()
+            ))),
+            Applied::Set
+        );
+        assert!(
+            matches!(event.result(), LoginResult::Denied { reason } if *reason == Component::text("closed"))
+        );
+        let we::Event::Login(record) = event.to_wit() else {
+            panic!("a login is sent as login");
+        };
+        assert_eq!(record.result, we::LoginResult::Denied(reason));
+        event.apply(we::EventOutcome::Login(we::LoginResult::Allowed));
+        assert!(matches!(event.result(), LoginResult::Allowed));
+    }
+
+    #[test]
+    fn a_profile_outcome_replaces_the_profile_and_keeps_the_original() {
+        let profile = steve().profile().clone();
+        let mut event = GameProfileRequestEvent::new(
+            profile.clone(),
+            false,
+            "203.0.113.7:51234".parse().unwrap(),
+            Some("play.example.com".into()),
+            ProtocolVersion::new(767),
+        );
+        let we::Event::GameProfileRequest(record) = event.to_wit() else {
+            panic!("a profile request is sent as game-profile-request");
+        };
+        assert_eq!(record.original, record.result.profile);
+        let mut renamed = record.result.profile.clone();
+        renamed.username = "Alex".into();
+        assert_eq!(
+            event.apply(we::EventOutcome::GameProfileRequest(
+                we::GameProfileRequestResult { profile: renamed }
+            )),
+            Applied::Set
+        );
+        assert_eq!(event.profile.username, "Alex");
+        assert_eq!(event.original(), &profile);
+        assert!(event.is_modified());
     }
 
     #[test]

@@ -1,14 +1,21 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
+use bytes::Bytes;
 use infrarust_api::error::PlayerError;
-use infrarust_api::event::BoxFuture;
+use infrarust_api::event::bus::EventBusExt;
+use infrarust_api::event::{BoxFuture, EventPriority};
+use infrarust_api::events::named::NamedEvent;
 use infrarust_api::loader::PluginContextFactory;
+use infrarust_api::messaging::ChannelId;
 use infrarust_api::permissions::{Capability, CapabilitySet};
-use infrarust_api::player::Player;
+use infrarust_api::player::{
+    BossBar, BossBarControl, BossBarHandle, BossBarUpdate, ClientSettings, ConnectionResult,
+    Player, ResourcePackRequest,
+};
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::config_service::{
     ConfigService, ConfigWriteError, ServerConfig, ServerSource,
@@ -33,8 +40,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::bindings::infrarust::plugin::events::EventKind;
 use crate::bindings::infrarust::plugin::{
-    ban_service, codec_registry, command_manager, config_service, event_bus, limbo, players,
-    scheduler, server_manager, text, types as wt,
+    ban_service, codec_registry, command_manager, config_service, event_bus, limbo, load_balancer,
+    messaging, players, plugin_registry, proxy_info, scheduler, server_manager, text, types as wt,
 };
 use crate::component;
 use crate::config::SandboxLimits;
@@ -400,6 +407,48 @@ fn codec_metadata() -> codec_registry::CodecFilterMetadata {
     }
 }
 
+fn address() -> wt::ServerAddress {
+    wt::ServerAddress {
+        host: "10.0.0.2".into(),
+        port: 25565,
+    }
+}
+
+fn channel() -> wt::ChannelId {
+    wt::ChannelId {
+        modern: Some("test:echo".into()),
+        legacy: None,
+    }
+}
+
+fn packet_filter() -> event_bus::PacketFilter {
+    event_bus::PacketFilter {
+        packet_id: 3,
+        state: wt::ConnectionState::Play,
+        direction: wt::PacketDirection::Serverbound,
+    }
+}
+
+fn boss_bar() -> players::BossBar {
+    players::BossBar {
+        title: text_of("boss"),
+        progress: 0.25,
+        color: players::BossBarColor::Red,
+        overlay: players::BossBarOverlay::Notched10,
+        flags: players::BossBarFlags::DARKEN_SCREEN,
+    }
+}
+
+fn resource_pack() -> players::ResourcePackRequest {
+    players::ResourcePackRequest {
+        id: wt::Uuid { hi: 0, lo: 7 },
+        url: "https://example.com/pack.zip".into(),
+        hash: None,
+        required: true,
+        prompt: Some(text_of("please")),
+    }
+}
+
 fn command_spec() -> command_manager::CommandSpec {
     command_manager::CommandSpec {
         name: "probe".to_owned(),
@@ -440,6 +489,14 @@ async fn unrefused_calls(capability: Capability) -> Vec<String> {
         }
         Capability::ServerManage => {
             denied!(
+                "set-drained",
+                load_balancer::Host::set_drained(s, "lobby".into(), address(), true).await
+            );
+            denied!(
+                "reset-backend",
+                load_balancer::Host::reset_backend(s, "lobby".into(), address()).await
+            );
+            denied!(
                 "start",
                 server_manager::Host::start(s, "lobby".into()).await
             );
@@ -459,6 +516,63 @@ async fn unrefused_calls(capability: Capability) -> Vec<String> {
             denied!(
                 "get-value",
                 config_service::Host::get_value(s, "greeting".into()).await
+            );
+            denied!(
+                "get-server-document",
+                config_service::Host::get_server_document(s, "lobby".into()).await
+            );
+            denied!(
+                "list-server-sources",
+                config_service::Host::list_server_sources(s).await
+            );
+            denied!(
+                "get-proxy-config-document",
+                config_service::Host::get_proxy_config_document(s).await
+            );
+            denied!(
+                "get-effective-proxy-config-document",
+                config_service::Host::get_effective_proxy_config_document(s).await
+            );
+            denied!(
+                "strategy",
+                load_balancer::Host::strategy(s, "lobby".into()).await
+            );
+            denied!(
+                "backends",
+                load_balancer::Host::backends(s, "lobby".into()).await
+            );
+        }
+        Capability::ConfigWrite => {
+            denied!(
+                "write-proxy-config-document",
+                config_service::Host::write_proxy_config_document(s, String::new()).await
+            );
+        }
+        Capability::PluginMessaging => {
+            denied!(
+                "register-channel",
+                messaging::Host::register_channel(s, channel()).await
+            );
+            denied!(
+                "unregister-channel",
+                messaging::Host::unregister_channel(s, channel()).await
+            );
+            denied!("channels", messaging::Host::channels(s).await);
+            denied!(
+                "send-to-player",
+                messaging::Host::send_to_player(s, 1, channel(), vec![1]).await
+            );
+            denied!(
+                "send-to-backend",
+                messaging::Host::send_to_backend(s, 1, channel(), vec![1]).await
+            );
+            denied!(
+                "send-to-server",
+                messaging::Host::send_to_server(s, "lobby".into(), channel(), vec![1]).await
+            );
+            denied!(
+                "subscribe(plugin-message)",
+                event_bus::Host::subscribe(s, EventKind::PluginMessage, 128).await
             );
         }
         Capability::PlayerRead => {
@@ -522,6 +636,54 @@ async fn unrefused_calls(capability: Capability) -> Vec<String> {
                 "disconnect",
                 players::Host::disconnect(s, 1, text_of("bye")).await
             );
+            denied!(
+                "connect",
+                players::Host::connect(s, 1, "lobby".into()).await
+            );
+            denied!(
+                "set-player-list-header-footer",
+                players::Host::set_player_list_header_footer(s, 1, text_of("h"), text_of("f"))
+                    .await
+            );
+            denied!("clear-title", players::Host::clear_title(s, 1, true).await);
+            denied!(
+                "show-boss-bar",
+                players::Host::show_boss_bar(s, 1, boss_bar()).await
+            );
+            denied!(
+                "update-boss-bar",
+                players::Host::update_boss_bar(
+                    s,
+                    wt::Uuid { hi: 0, lo: 1 },
+                    players::BossBarUpdate::Progress(0.5)
+                )
+                .await
+            );
+            denied!(
+                "hide-boss-bar",
+                players::Host::hide_boss_bar(s, wt::Uuid { hi: 0, lo: 1 }).await
+            );
+            denied!(
+                "send-resource-pack",
+                players::Host::send_resource_pack(s, 1, resource_pack()).await
+            );
+            denied!(
+                "remove-resource-pack",
+                players::Host::remove_resource_pack(s, 1, None).await
+            );
+            denied!("transfer", players::Host::transfer(s, 1, address()).await);
+            denied!(
+                "store-cookie",
+                players::Host::store_cookie(s, 1, "k".into(), vec![1]).await
+            );
+            denied!(
+                "request-cookie",
+                players::Host::request_cookie(s, 1, "k".into()).await
+            );
+            denied!(
+                "refresh-permissions",
+                players::Host::refresh_permissions(s, 1).await
+            );
         }
         Capability::RawPacket => {
             let packet = wt::RawPacket {
@@ -532,11 +694,23 @@ async fn unrefused_calls(capability: Capability) -> Vec<String> {
                 "send-packet",
                 players::Host::send_packet(s, 1, packet).await
             );
+            denied!(
+                "subscribe-packets",
+                event_bus::Host::subscribe_packets(s, vec![packet_filter()], 128).await
+            );
+            denied!(
+                "subscribe(raw-packet)",
+                event_bus::Host::subscribe(s, EventKind::RawPacket, 128).await
+            );
         }
         Capability::ChatIntercept => {
             denied!(
                 "subscribe(chat-message)",
                 event_bus::Host::subscribe(s, EventKind::ChatMessage, 128).await
+            );
+            denied!(
+                "subscribe(command-execute)",
+                event_bus::Host::subscribe(s, EventKind::CommandExecute, 128).await
             );
         }
         Capability::EventBus => {
@@ -545,6 +719,18 @@ async fn unrefused_calls(capability: Capability) -> Vec<String> {
                 event_bus::Host::subscribe(s, EventKind::PostLogin, 128).await
             );
             denied!("unsubscribe", event_bus::Host::unsubscribe(s, 1).await);
+            denied!(
+                "subscribe-named",
+                event_bus::Host::subscribe_named(s, "x".into(), 128).await
+            );
+            denied!(
+                "fire-named",
+                event_bus::Host::fire_named(s, "x".into(), "text/plain".into(), vec![]).await
+            );
+            denied!(
+                "subscribe-packets",
+                event_bus::Host::subscribe_packets(s, vec![packet_filter()], 128).await
+            );
         }
         Capability::Command => {
             denied!(
@@ -598,6 +784,8 @@ async fn every_gated_host_call_is_refused_without_its_capability() {
         Capability::Scheduler,
         Capability::CodecFilter,
         Capability::Limbo,
+        Capability::ConfigWrite,
+        Capability::PluginMessaging,
     ] {
         failures.extend(unrefused_calls(capability).await);
     }
@@ -605,5 +793,447 @@ async fn every_gated_host_call_is_refused_without_its_capability() {
         failures.is_empty(),
         "host calls that were not refused:\n{}",
         failures.join("\n")
+    );
+}
+
+#[derive(Default)]
+struct Recorded {
+    messages: Mutex<Vec<(String, Vec<u8>, bool)>>,
+    bars: Mutex<Vec<(uuid::Uuid, Option<BossBarUpdate>)>>,
+    cookies: Mutex<HashMap<String, Bytes>>,
+    packs: Mutex<Vec<ResourcePackRequest>>,
+}
+
+impl BossBarControl for Recorded {
+    fn update(&self, id: uuid::Uuid, update: BossBarUpdate) -> Result<(), PlayerError> {
+        self.bars.lock().unwrap().push((id, Some(update)));
+        Ok(())
+    }
+
+    fn hide(&self, id: uuid::Uuid) -> Result<(), PlayerError> {
+        self.bars.lock().unwrap().push((id, None));
+        Ok(())
+    }
+}
+
+struct RecordingPlayer {
+    profile: GameProfile,
+    seen: Arc<Recorded>,
+}
+
+impl RecordingPlayer {
+    fn shared() -> (Arc<dyn Player>, Arc<Recorded>) {
+        let seen = Arc::new(Recorded::default());
+        let player = Arc::new(Self {
+            profile: GameProfile {
+                uuid: uuid::Uuid::from_u128(1),
+                username: "Steve".to_owned(),
+                properties: vec![],
+            },
+            seen: Arc::clone(&seen),
+        });
+        (player, seen)
+    }
+}
+
+impl infrarust_api::player::private::Sealed for RecordingPlayer {}
+
+impl Player for RecordingPlayer {
+    fn id(&self) -> PlayerId {
+        PlayerId::new(1)
+    }
+    fn profile(&self) -> &GameProfile {
+        &self.profile
+    }
+    fn protocol_version(&self) -> ProtocolVersion {
+        ProtocolVersion::MINECRAFT_1_21
+    }
+    fn remote_addr(&self) -> SocketAddr {
+        SocketAddr::from(([127, 0, 0, 1], 0))
+    }
+    fn current_server(&self) -> Option<ServerId> {
+        Some(ServerId::new("lobby"))
+    }
+    fn is_connected(&self) -> bool {
+        true
+    }
+    fn is_active(&self) -> bool {
+        true
+    }
+    fn disconnect(&self, _reason: Component) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
+    fn send_message(&self, _message: Component) -> Result<(), PlayerError> {
+        Ok(())
+    }
+    fn send_title(&self, _title: TitleData) -> Result<(), PlayerError> {
+        Ok(())
+    }
+    fn send_action_bar(&self, _message: Component) -> Result<(), PlayerError> {
+        Ok(())
+    }
+    fn send_packet(&self, _packet: RawPacket) -> Result<(), PlayerError> {
+        Ok(())
+    }
+    fn switch_server(&self, _target: ServerId) -> BoxFuture<'_, Result<(), PlayerError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn is_online_mode(&self) -> bool {
+        true
+    }
+    fn has_permission(&self, _permission: &str) -> bool {
+        false
+    }
+    fn refresh_permissions(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
+    fn connected_at(&self) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+    }
+    fn settings(&self) -> Option<ClientSettings> {
+        Some(ClientSettings::new("fr_fr"))
+    }
+    fn known_channels(&self) -> Vec<String> {
+        vec!["test:echo".to_owned()]
+    }
+    fn send_plugin_message(&self, channel: &ChannelId, data: Bytes) -> Result<(), PlayerError> {
+        let entry = (channel.to_string(), data.to_vec(), false);
+        self.seen.messages.lock().unwrap().push(entry);
+        Ok(())
+    }
+    fn send_plugin_message_to_backend(
+        &self,
+        channel: &ChannelId,
+        data: Bytes,
+    ) -> Result<(), PlayerError> {
+        let entry = (channel.to_string(), data.to_vec(), true);
+        self.seen.messages.lock().unwrap().push(entry);
+        Ok(())
+    }
+    fn connect(&self, target: ServerId) -> BoxFuture<'_, Result<ConnectionResult, PlayerError>> {
+        Box::pin(async move {
+            Ok(if target.as_str() == "lobby" {
+                ConnectionResult::AlreadyConnected
+            } else {
+                ConnectionResult::Denied(Component::text("full"))
+            })
+        })
+    }
+    fn show_boss_bar(&self, _bar: BossBar) -> Result<BossBarHandle, PlayerError> {
+        let control: Arc<dyn BossBarControl> = Arc::clone(&self.seen) as Arc<dyn BossBarControl>;
+        Ok(BossBarHandle::new(uuid::Uuid::from_u128(42), control))
+    }
+    fn send_resource_pack(&self, pack: ResourcePackRequest) -> Result<(), PlayerError> {
+        self.seen.packs.lock().unwrap().push(pack);
+        Ok(())
+    }
+    fn store_cookie(&self, key: &str, data: Bytes) -> Result<(), PlayerError> {
+        self.seen
+            .cookies
+            .lock()
+            .unwrap()
+            .insert(key.to_owned(), data);
+        Ok(())
+    }
+    fn request_cookie(&self, key: &str) -> BoxFuture<'_, Result<Option<Bytes>, PlayerError>> {
+        let cookie = self.seen.cookies.lock().unwrap().get(key).cloned();
+        Box::pin(async move { Ok(cookie) })
+    }
+}
+
+fn messenger() -> CapabilitySet {
+    CapabilitySet::baseline().with(Capability::PluginMessaging)
+}
+
+#[tokio::test]
+async fn plugin_messages_reach_the_client_and_the_backend_on_registered_channels() {
+    let (player, seen) = RecordingPlayer::shared();
+    let mut state = state_with(messenger(), vec![player]);
+
+    assert_eq!(
+        messaging::Host::register_channel(&mut state, channel())
+            .await
+            .unwrap(),
+        Ok(())
+    );
+    let channels = messaging::Host::channels(&mut state)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(channels.contains(&channel()), "{channels:?}");
+
+    messaging::Host::send_to_player(&mut state, 1, channel(), b"hi".to_vec())
+        .await
+        .unwrap()
+        .unwrap();
+    messaging::Host::send_to_backend(&mut state, 1, channel(), b"up".to_vec())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        *seen.messages.lock().unwrap(),
+        [
+            ("test:echo".to_owned(), b"hi".to_vec(), false),
+            ("test:echo".to_owned(), b"up".to_vec(), true),
+        ]
+    );
+
+    let invalid = wt::ChannelId {
+        modern: Some("Bad Channel".into()),
+        legacy: None,
+    };
+    let refused = messaging::Host::send_to_player(&mut state, 1, invalid, vec![])
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.kind, wt::ErrorKind::InvalidArgument);
+
+    let nobody = messaging::Host::send_to_server(&mut state, "lobby".into(), channel(), vec![])
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(nobody.kind, wt::ErrorKind::Unavailable, "{nobody:?}");
+
+    assert_eq!(
+        messaging::Host::unregister_channel(&mut state, channel())
+            .await
+            .unwrap(),
+        Ok(true)
+    );
+}
+
+#[tokio::test]
+async fn player_info_carries_settings_and_known_channels() {
+    let (player, _) = RecordingPlayer::shared();
+    let mut state = state_with(CapabilitySet::baseline(), vec![player]);
+    let info = players::Host::get(&mut state, 1).await.unwrap().unwrap();
+    assert_eq!(info.known_channels, ["test:echo"]);
+    assert_eq!(info.settings.map(|s| s.locale).as_deref(), Some("fr_fr"));
+}
+
+#[tokio::test]
+async fn a_boss_bar_is_shown_updated_and_hidden_by_its_id() {
+    let (player, seen) = RecordingPlayer::shared();
+    let mut state = state_with(CapabilitySet::baseline(), vec![player]);
+
+    let bar = players::Host::show_boss_bar(&mut state, 1, boss_bar())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        crate::convert::uuid_from_wit(bar),
+        uuid::Uuid::from_u128(42)
+    );
+    players::Host::update_boss_bar(&mut state, bar, players::BossBarUpdate::Progress(0.75))
+        .await
+        .unwrap()
+        .unwrap();
+    players::Host::hide_boss_bar(&mut state, bar)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        *seen.bars.lock().unwrap(),
+        [
+            (
+                uuid::Uuid::from_u128(42),
+                Some(BossBarUpdate::Progress(0.75))
+            ),
+            (uuid::Uuid::from_u128(42), None),
+        ]
+    );
+    let gone = players::Host::hide_boss_bar(&mut state, bar)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(gone.kind, wt::ErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn cookies_round_trip_and_connect_reports_the_switch_outcome() {
+    let (player, seen) = RecordingPlayer::shared();
+    let mut state = state_with(CapabilitySet::baseline(), vec![player]);
+
+    players::Host::store_cookie(&mut state, 1, "infrarust:token".into(), b"t".to_vec())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        players::Host::request_cookie(&mut state, 1, "infrarust:token".into())
+            .await
+            .unwrap(),
+        Ok(Some(b"t".to_vec()))
+    );
+    assert_eq!(
+        players::Host::connect(&mut state, 1, "lobby".into())
+            .await
+            .unwrap(),
+        Ok(players::ConnectionResult::AlreadyConnected)
+    );
+    assert_eq!(
+        players::Host::connect(&mut state, 1, "full".into())
+            .await
+            .unwrap(),
+        Ok(players::ConnectionResult::Denied(text_of("full")))
+    );
+
+    players::Host::send_resource_pack(&mut state, 1, resource_pack())
+        .await
+        .unwrap()
+        .unwrap();
+    let pack = seen.packs.lock().unwrap()[0].clone();
+    assert_eq!(pack.id, uuid::Uuid::from_u128(7));
+    assert_eq!(pack.prompt, Some(Component::text("please")));
+
+    let mut bad = resource_pack();
+    bad.hash = Some("not-a-sha1".into());
+    let refused = players::Host::send_resource_pack(&mut state, 1, bad)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.kind, wt::ErrorKind::InvalidArgument);
+
+    let unsupported = players::Host::transfer(&mut state, 1, address())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(unsupported.kind, wt::ErrorKind::Unsupported);
+}
+
+#[tokio::test]
+async fn fire_named_returns_what_the_native_listeners_decided() {
+    let mut state = state_with(CapabilitySet::baseline(), vec![]);
+    let ctx = state.services().unwrap();
+    let seen_source = Arc::new(Mutex::new(String::new()));
+    let source = Arc::clone(&seen_source);
+    ctx.event_bus()
+        .subscribe::<NamedEvent, _>(EventPriority::NORMAL, move |event| {
+            if event.name == "echo" {
+                *source.lock().unwrap() = event.source_plugin.clone();
+                event.respond("text/plain", event.payload.clone());
+                event.cancel();
+            }
+        });
+
+    let answered = event_bus::Host::fire_named(
+        &mut state,
+        "echo".into(),
+        "text/plain".into(),
+        b"hi".to_vec(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(answered.cancelled);
+    let response = answered.response.expect("a response");
+    assert_eq!(response.payload, b"hi");
+    assert_eq!(*seen_source.lock().unwrap(), "test");
+
+    let ignored = event_bus::Host::fire_named(&mut state, "other".into(), "x".into(), vec![])
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!ignored.cancelled);
+    assert_eq!(ignored.response, None);
+}
+
+#[tokio::test]
+async fn subscribe_packets_needs_a_filter_and_registers_one_native_listener_per_filter() {
+    let mut state = state_with(
+        CapabilitySet::baseline().with(Capability::RawPacket),
+        vec![],
+    );
+    let empty = event_bus::Host::subscribe_packets(&mut state, vec![], 128)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(empty.kind, wt::ErrorKind::InvalidArgument);
+    let listener = event_bus::Host::subscribe_packets(&mut state, vec![packet_filter()], 128)
+        .await
+        .unwrap()
+        .unwrap();
+    let ctx = state.services().unwrap();
+    assert!(ctx.event_bus().has_packet_listeners(
+        3,
+        infrarust_api::event::ConnectionState::Play,
+        infrarust_api::events::packet::PacketDirection::Serverbound
+    ));
+    assert_eq!(
+        event_bus::Host::unsubscribe(&mut state, listener)
+            .await
+            .unwrap(),
+        Ok(true)
+    );
+    assert!(!ctx.event_bus().has_packet_listeners(
+        3,
+        infrarust_api::event::ConnectionState::Play,
+        infrarust_api::events::packet::PacketDirection::Serverbound
+    ));
+    let refused = event_bus::Host::subscribe(&mut state, EventKind::RawPacket, 128)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.kind, wt::ErrorKind::InvalidArgument);
+}
+
+#[tokio::test]
+async fn proxy_info_and_the_plugin_registry_answer_without_any_capability() {
+    let granted = CapabilitySet::default()
+        .with(Capability::Ban)
+        .with(Capability::PluginMessaging);
+    let mut state = state_with(granted, vec![]);
+    let mut capabilities = proxy_info::Host::granted_capabilities(&mut state)
+        .await
+        .unwrap();
+    capabilities.sort_by_key(|c| *c as u8);
+    assert_eq!(
+        capabilities,
+        [wt::Capability::Ban, wt::Capability::PluginMessaging]
+    );
+    let details = proxy_info::Host::details(&mut state).await.unwrap();
+    assert_eq!(details.bind.port, 25565);
+    assert_eq!(
+        details.unknown_domain_behavior,
+        proxy_info::UnknownDomainBehavior::DefaultMotd
+    );
+    assert!(
+        plugin_registry::Host::list(&mut state)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        plugin_registry::Host::get(&mut state, "nobody".into())
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn load_balancer_reads_and_config_writes_reach_the_native_services() {
+    let mut state = state_with(CapabilitySet::native_trusted(), vec![]);
+    assert_eq!(
+        load_balancer::Host::backends(&mut state, "lobby".into())
+            .await
+            .unwrap(),
+        Ok(vec![])
+    );
+    assert_eq!(
+        load_balancer::Host::set_drained(&mut state, "lobby".into(), address(), true)
+            .await
+            .unwrap(),
+        Ok(())
+    );
+    let refused = config_service::Host::write_proxy_config_document(&mut state, "bind = 1".into())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.kind, wt::ErrorKind::PermissionDenied);
+    assert_eq!(
+        config_service::Host::list_server_sources(&mut state)
+            .await
+            .unwrap(),
+        Ok(vec![])
     );
 }

@@ -52,6 +52,19 @@ interface ban-service {
         next-cursor: option<string>,
     }
 
+    record ban-actor {
+        uuid: uuid,
+        name: string,
+    }
+
+    variant ban-source {
+        console,
+        player(ban-actor),
+        plugin(string),
+        web-api(option<string>),
+        system,
+    }
+
     ban: func(request: ban-request) -> result<ban-entry, host-error>;
     unban: func(target: ban-target) -> result<option<ban-entry>, host-error>;
     get: func(target: ban-target) -> result<option<ban-entry>, host-error>;
@@ -60,6 +73,13 @@ interface ban-service {
 
 interface config-service {
     use types.{server-id, server-address, proxy-mode, host-error};
+
+    record server-source {
+        id: string,
+        provider-id: string,
+        provider-type: string,
+        editable: bool,
+    }
 
     record server-config {
         id: server-id,
@@ -77,6 +97,11 @@ interface config-service {
     get-value: func(key: string) -> result<option<string>, host-error>;
     get-server: func(server: server-id) -> result<option<server-config>, host-error>;
     list-servers: func() -> result<list<server-config>, host-error>;
+    get-server-document: func(server: server-id) -> result<option<string>, host-error>;
+    list-server-sources: func() -> result<list<server-source>, host-error>;
+    get-proxy-config-document: func() -> result<string, host-error>;
+    get-effective-proxy-config-document: func() -> result<string, host-error>;
+    write-proxy-config-document: func(document: string) -> result<_, host-error>;
 }
 
 interface command-manager {
@@ -124,4 +149,98 @@ interface codec-registry {
 
     register-codec-filter: func(metadata: codec-filter-metadata, factory: handler-id) -> result<_, host-error>;
     unregister-codec-filter: func(id: string) -> result<_, host-error>;
+}
+
+interface load-balancer {
+    use types.{server-id, server-address, host-error};
+    use events.{backend-state};
+
+    record backend-status {
+        address: server-address,
+        weight: u32,
+        effective-weight: u32,
+        state: backend-state,
+        active-connections: u64,
+        healthy-since-secs: option<u64>,
+        ejections: u32,
+        last-failure-secs-ago: option<u64>,
+    }
+
+    strategy: func(server: server-id) -> result<option<string>, host-error>;
+    backends: func(server: server-id) -> result<list<backend-status>, host-error>;
+    set-drained: func(server: server-id, address: server-address, drained: bool) -> result<_, host-error>;
+    reset-backend: func(server: server-id, address: server-address) -> result<_, host-error>;
+}
+
+interface messaging {
+    use types.{player-id, server-id, channel-id, host-error};
+
+    register-channel: func(channel: channel-id) -> result<_, host-error>;
+    unregister-channel: func(channel: channel-id) -> result<bool, host-error>;
+    channels: func() -> result<list<channel-id>, host-error>;
+    send-to-player: func(player: player-id, channel: channel-id, data: list<u8>) -> result<_, host-error>;
+    send-to-backend: func(player: player-id, channel: channel-id, data: list<u8>) -> result<_, host-error>;
+    send-to-server: func(server: server-id, channel: channel-id, data: list<u8>) -> result<u32, host-error>;
+}
+
+interface proxy-info {
+    use types.{capability, socket-address, duration-ms};
+
+    record rate-limit-info {
+        max-connections: u32,
+        window-ms: duration-ms,
+        status-max: u32,
+        status-window-ms: duration-ms,
+    }
+
+    record status-cache-info {
+        ttl-ms: duration-ms,
+        max-entries: u64,
+    }
+
+    record keepalive-info {
+        time-ms: duration-ms,
+        interval-ms: duration-ms,
+        retries: u32,
+    }
+
+    enum unknown-domain-behavior { default-motd, drop }
+
+    record proxy-details {
+        version: string,
+        bind: socket-address,
+        max-connections: u32,
+        connect-timeout-ms: duration-ms,
+        receive-proxy-protocol: bool,
+        worker-threads: u32,
+        so-reuseport: bool,
+        rate-limit: rate-limit-info,
+        status-cache: status-cache-info,
+        keepalive: keepalive-info,
+        telemetry-enabled: bool,
+        docker-enabled: bool,
+        web-api-enabled: bool,
+        web-ui-enabled: bool,
+        unknown-domain-behavior: unknown-domain-behavior,
+    }
+
+    details: func() -> proxy-details;
+    granted-capabilities: func() -> list<capability>;
+}
+
+interface plugin-registry {
+    use types.{plugin-dependency};
+
+    record plugin-info {
+        id: string,
+        name: string,
+        version: string,
+        authors: list<string>,
+        description: option<string>,
+        state: string,
+        dependencies: list<plugin-dependency>,
+    }
+
+    %list: func() -> list<plugin-info>;
+    get: func(id: string) -> option<plugin-info>;
 }

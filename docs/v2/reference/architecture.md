@@ -30,7 +30,7 @@ Two more crates round out the plugin tooling: `infrarust-plugin-macros` provides
 
 The dependency direction is one-way. `infrarust_protocol` and `infrarust_config` sit at the bottom and depend on neither each other nor the core. `infrarust-api` defines the plugin contract without pulling in the engine, so a plugin compiles against the API alone. `infrarust-core` depends on all of the above and is in turn consumed only by the `infrarust` binary and the loaders.
 
-The WASM toolchain talks across a frozen contract rather than a Rust dependency. The host loader and the guest SDK both speak the WIT world declared in `crates/infrarust-plugin-wit/wit/world.wit`, currently `infrarust:plugin@0.2.3`. Guest plugins build for the `wasm32-wasip2` target as a `cdylib`, with no separate cargo-component step.
+The WASM toolchain talks across a frozen contract rather than a Rust dependency. The host loader and the guest SDK both speak the WIT world declared in `crates/infrarust-plugin-wit/wit/world.wit`, currently `infrarust:plugin@0.3.0`. Guest plugins build for the `wasm32-wasip2` target as a `cdylib`, with no separate cargo-component step.
 
 ## Connection lifecycle
 

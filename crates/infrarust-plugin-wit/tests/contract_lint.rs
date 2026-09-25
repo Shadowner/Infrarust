@@ -13,6 +13,8 @@ const GATED: &[&str] = &[
     "scheduler",
     "codec-registry",
     "limbo",
+    "load-balancer",
+    "messaging",
 ];
 
 const INFALLIBLE_READS: &[(&str, &str)] = &[

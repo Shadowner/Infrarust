@@ -36,6 +36,7 @@ infrarust-api = { workspace = true, features = ["test-util"] }
 infrarust-core = { workspace = true }
 infrarust_config = { workspace = true }
 infrarust-plugin-stats-native = { workspace = true }
+infrarust-test-harness = { path = "../infrarust-test-harness" }
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 tokio-util = { workspace = true }
 tempfile = { workspace = true }

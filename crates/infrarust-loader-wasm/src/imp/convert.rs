@@ -1,12 +1,19 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use infrarust_api::event::ConnectionState;
+use infrarust_api::events::packet::PacketDirection;
 use infrarust_api::limbo::{HandlerResult, LimboEntryContext, SessionEndReason};
-use infrarust_api::player::Player;
-use infrarust_api::services::ban_service::{BanEntry, BanTarget, IpNet};
+use infrarust_api::messaging::ChannelId;
+use infrarust_api::player::{
+    ChatMode, ClientSettings, MainHand, ParticleStatus, Player, SkinParts,
+};
+use infrarust_api::services::ban_service::{BanEntry, BanSource, BanTarget, IpNet};
 use infrarust_api::services::config_service::{ProxyMode, ServerConfig};
 use infrarust_api::services::server_manager::ServerState;
-use infrarust_api::types::{Component, GameProfile, RawPacket, ServerAddress, ServerId, TitleData};
+use infrarust_api::types::{
+    Component, GameProfile, ProfileProperty, RawPacket, ServerAddress, ServerId, TitleData,
+};
 use infrarust_plugin_wit::arena::ArenaError;
 
 use crate::bindings::infrarust::plugin::ban_service as wb;
@@ -71,6 +78,22 @@ pub(crate) fn game_profile_to_wit(p: &GameProfile) -> wt::GameProfile {
                 name: pp.name.clone(),
                 value: pp.value.clone(),
                 signature: pp.signature.clone(),
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn game_profile_from_wit(p: wt::GameProfile) -> GameProfile {
+    GameProfile {
+        uuid: uuid_from_wit(p.uuid),
+        username: p.username,
+        properties: p
+            .properties
+            .into_iter()
+            .map(|pp| ProfileProperty {
+                name: pp.name,
+                value: pp.value,
+                signature: pp.signature,
             })
             .collect(),
     }
@@ -168,6 +191,119 @@ pub(crate) fn ban_entry_to_wit(e: &BanEntry) -> wb::BanEntry {
         source: e.source.to_string(),
         created_at: system_time_to_millis(e.created_at),
         expires_at: e.expires_at.map(system_time_to_millis),
+    }
+}
+
+pub(crate) fn ban_source_to_wit(source: &BanSource) -> wb::BanSource {
+    match source {
+        BanSource::Console => wb::BanSource::Console,
+        BanSource::Player { uuid, name } => wb::BanSource::Player(wb::BanActor {
+            uuid: uuid_to_wit(*uuid),
+            name: name.clone(),
+        }),
+        BanSource::Plugin(id) => wb::BanSource::Plugin(id.clone()),
+        BanSource::WebApi { actor } => wb::BanSource::WebApi(actor.clone()),
+        _ => wb::BanSource::System,
+    }
+}
+
+pub(crate) fn server_address_from_wit(address: wt::ServerAddress) -> ServerAddress {
+    ServerAddress {
+        host: address.host,
+        port: address.port,
+    }
+}
+
+pub(crate) fn channel_to_wit(channel: &ChannelId) -> wt::ChannelId {
+    wt::ChannelId {
+        modern: channel.modern_id().map(str::to_owned),
+        legacy: channel.legacy_name().map(str::to_owned),
+    }
+}
+
+pub(crate) fn channel_from_wit(channel: &wt::ChannelId) -> HostResult<ChannelId> {
+    let parsed = match (channel.modern.as_deref(), channel.legacy.as_deref()) {
+        (Some(modern), Some(legacy)) => ChannelId::pair(modern, legacy),
+        (Some(modern), None) => ChannelId::modern(modern),
+        (None, Some(legacy)) => ChannelId::legacy(legacy),
+        (None, None) => {
+            return Err(host_error(
+                wt::ErrorKind::InvalidArgument,
+                "a channel needs a modern id, a legacy name, or both",
+            ));
+        }
+    };
+    parsed.map_err(|e| host_error(wt::ErrorKind::InvalidArgument, e.to_string()))
+}
+
+pub(crate) fn client_settings_to_wit(settings: &ClientSettings) -> wt::ClientSettings {
+    wt::ClientSettings {
+        locale: settings.locale.clone(),
+        view_distance: settings.view_distance,
+        chat_mode: match settings.chat_mode {
+            ChatMode::CommandsOnly => wt::ChatMode::CommandsOnly,
+            ChatMode::Hidden => wt::ChatMode::Hidden,
+            _ => wt::ChatMode::Enabled,
+        },
+        chat_colors: settings.chat_colors,
+        skin_parts: skin_parts_to_wit(settings.skin_parts),
+        main_hand: match settings.main_hand {
+            MainHand::Left => wt::MainHand::Left,
+            _ => wt::MainHand::Right,
+        },
+        text_filtering: settings.text_filtering,
+        allow_listing: settings.allow_listing,
+        particle_status: match settings.particle_status {
+            ParticleStatus::Decreased => wt::ParticleStatus::Decreased,
+            ParticleStatus::Minimal => wt::ParticleStatus::Minimal,
+            _ => wt::ParticleStatus::All,
+        },
+    }
+}
+
+fn skin_parts_to_wit(parts: SkinParts) -> wt::SkinParts {
+    [
+        (SkinParts::CAPE, wt::SkinParts::CAPE),
+        (SkinParts::JACKET, wt::SkinParts::JACKET),
+        (SkinParts::LEFT_SLEEVE, wt::SkinParts::LEFT_SLEEVE),
+        (SkinParts::RIGHT_SLEEVE, wt::SkinParts::RIGHT_SLEEVE),
+        (SkinParts::LEFT_PANTS, wt::SkinParts::LEFT_PANTS),
+        (SkinParts::RIGHT_PANTS, wt::SkinParts::RIGHT_PANTS),
+        (SkinParts::HAT, wt::SkinParts::HAT),
+    ]
+    .into_iter()
+    .filter(|(bit, _)| parts.shows(*bit))
+    .fold(wt::SkinParts::empty(), |shown, (_, part)| shown | part)
+}
+
+pub(crate) fn packet_direction_to_wit(direction: PacketDirection) -> wt::PacketDirection {
+    match direction {
+        PacketDirection::Clientbound => wt::PacketDirection::Clientbound,
+        _ => wt::PacketDirection::Serverbound,
+    }
+}
+
+pub(crate) const fn packet_direction_from_wit(direction: wt::PacketDirection) -> PacketDirection {
+    match direction {
+        wt::PacketDirection::Serverbound => PacketDirection::Serverbound,
+        wt::PacketDirection::Clientbound => PacketDirection::Clientbound,
+    }
+}
+
+pub(crate) const fn connection_state_from_wit(state: wt::ConnectionState) -> ConnectionState {
+    match state {
+        wt::ConnectionState::Handshake => ConnectionState::Handshake,
+        wt::ConnectionState::Status => ConnectionState::Status,
+        wt::ConnectionState::Login => ConnectionState::Login,
+        wt::ConnectionState::Configuration => ConnectionState::Configuration,
+        wt::ConnectionState::Play => ConnectionState::Play,
+    }
+}
+
+pub(crate) fn raw_packet_to_wit(p: &RawPacket) -> wt::RawPacket {
+    wt::RawPacket {
+        packet_id: p.packet_id,
+        data: p.data.to_vec(),
     }
 }
 
@@ -278,6 +414,46 @@ mod tests {
             let ip: IpAddr = ip.parse().unwrap();
             assert_eq!(ip_from_wit(ip_to_wit(ip)), ip);
         }
+    }
+
+    #[test]
+    fn channels_convert_both_ways_and_an_empty_one_is_an_argument_error() {
+        let pair = ChannelId::pair("myplugin:main", "MyPlugin").unwrap();
+        let wire = channel_to_wit(&pair);
+        assert_eq!(wire.modern.as_deref(), Some("myplugin:main"));
+        assert_eq!(wire.legacy.as_deref(), Some("MyPlugin"));
+        assert_eq!(channel_from_wit(&wire).unwrap(), pair);
+        let bungee = wt::ChannelId {
+            modern: None,
+            legacy: Some("BungeeCord".into()),
+        };
+        assert_eq!(channel_from_wit(&bungee).unwrap(), ChannelId::bungeecord());
+        for bad in [
+            wt::ChannelId {
+                modern: None,
+                legacy: None,
+            },
+            wt::ChannelId {
+                modern: Some("Not A Channel".into()),
+                legacy: None,
+            },
+        ] {
+            assert_eq!(
+                channel_from_wit(&bad).unwrap_err().kind,
+                wt::ErrorKind::InvalidArgument
+            );
+        }
+    }
+
+    #[test]
+    fn client_settings_keep_their_skin_bits() {
+        let mut settings = ClientSettings::new("fr_fr");
+        settings.skin_parts = SkinParts::new(SkinParts::HAT | SkinParts::CAPE);
+        settings.main_hand = MainHand::Left;
+        let wire = client_settings_to_wit(&settings);
+        assert_eq!(wire.locale, "fr_fr");
+        assert_eq!(wire.skin_parts, wt::SkinParts::HAT | wt::SkinParts::CAPE);
+        assert_eq!(wire.main_hand, wt::MainHand::Left);
     }
 
     #[test]

@@ -3,6 +3,7 @@ use std::path::Path;
 
 pub const SCRIPT_FILE: &str = "script.txt";
 pub const LOG_FILE: &str = "log.txt";
+pub const PACKET_ID: i32 = 0x05;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventName {
@@ -23,10 +24,29 @@ pub enum EventName {
     ServerStateChange,
     ChatMessage,
     BackendHealth,
+    Login,
+    GameProfileRequest,
+    CommandExecute,
+    ConnectionHandshake,
+    ConnectionRejected,
+    LimboEnter,
+    LimboExit,
+    PlayerClientBrand,
+    PlayerSettingsChanged,
+    PlayerChannelRegister,
+    PluginMessage,
+    BanIssued,
+    BanRevoked,
+    PluginEnabled,
+    PluginDisabled,
+    PreTransfer,
+    PlayerResourcePackStatus,
+    NamedEvent,
+    RawPacket,
 }
 
 impl EventName {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 36] = [
         Self::PreLogin,
         Self::PostLogin,
         Self::Disconnect,
@@ -44,6 +64,25 @@ impl EventName {
         Self::ServerStateChange,
         Self::ChatMessage,
         Self::BackendHealth,
+        Self::Login,
+        Self::GameProfileRequest,
+        Self::CommandExecute,
+        Self::ConnectionHandshake,
+        Self::ConnectionRejected,
+        Self::LimboEnter,
+        Self::LimboExit,
+        Self::PlayerClientBrand,
+        Self::PlayerSettingsChanged,
+        Self::PlayerChannelRegister,
+        Self::PluginMessage,
+        Self::BanIssued,
+        Self::BanRevoked,
+        Self::PluginEnabled,
+        Self::PluginDisabled,
+        Self::PreTransfer,
+        Self::PlayerResourcePackStatus,
+        Self::NamedEvent,
+        Self::RawPacket,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -65,6 +104,25 @@ impl EventName {
             Self::ServerStateChange => "server-state-change",
             Self::ChatMessage => "chat-message",
             Self::BackendHealth => "backend-health",
+            Self::Login => "login",
+            Self::GameProfileRequest => "game-profile-request",
+            Self::CommandExecute => "command-execute",
+            Self::ConnectionHandshake => "connection-handshake",
+            Self::ConnectionRejected => "connection-rejected",
+            Self::LimboEnter => "limbo-enter",
+            Self::LimboExit => "limbo-exit",
+            Self::PlayerClientBrand => "player-client-brand",
+            Self::PlayerSettingsChanged => "player-settings-changed",
+            Self::PlayerChannelRegister => "player-channel-register",
+            Self::PluginMessage => "plugin-message",
+            Self::BanIssued => "ban-issued",
+            Self::BanRevoked => "ban-revoked",
+            Self::PluginEnabled => "plugin-enabled",
+            Self::PluginDisabled => "plugin-disabled",
+            Self::PreTransfer => "pre-transfer",
+            Self::PlayerResourcePackStatus => "player-resource-pack-status",
+            Self::NamedEvent => "named-event",
+            Self::RawPacket => "raw-packet",
         }
     }
 
@@ -81,23 +139,44 @@ impl EventName {
                     | Self::ServerPreConnect
                     | Self::PlayerChooseInitialServer
                     | Self::ChatMessage
+                    | Self::Login
+                    | Self::CommandExecute
+                    | Self::ConnectionHandshake
+                    | Self::PreTransfer
             ),
             Action::Deny(_) => matches!(
                 self,
-                Self::PreLogin | Self::ServerPreConnect | Self::ChatMessage
+                Self::PreLogin
+                    | Self::ServerPreConnect
+                    | Self::ChatMessage
+                    | Self::Login
+                    | Self::CommandExecute
+                    | Self::ConnectionHandshake
+                    | Self::PreTransfer
             ),
             Action::ForceOffline | Action::ForceOnline => self == Self::PreLogin,
             Action::ConnectTo(_) => self == Self::ServerPreConnect,
             Action::Redirect(_) => matches!(
                 self,
-                Self::PlayerChooseInitialServer | Self::KickedFromServer
+                Self::PlayerChooseInitialServer | Self::KickedFromServer | Self::PreTransfer
             ),
+            Action::Rename(_) => self == Self::GameProfileRequest,
+            Action::ForwardToBackend => self == Self::CommandExecute,
+            Action::Drop => matches!(self, Self::ConnectionHandshake | Self::RawPacket),
+            Action::Forward | Action::Handled | Action::Replace(_) | Action::Reply(_) => {
+                self == Self::PluginMessage
+            }
+            Action::Cancel | Action::Respond(_) => self == Self::NamedEvent,
+            Action::Pass => self == Self::RawPacket,
             Action::Limbo(_) => matches!(
                 self,
                 Self::ServerPreConnect | Self::PlayerChooseInitialServer | Self::KickedFromServer
             ),
             Action::Notify(_) | Action::Disconnect(_) => self == Self::KickedFromServer,
-            Action::Modify(_) => self == Self::ChatMessage,
+            Action::Modify(_) => matches!(
+                self,
+                Self::ChatMessage | Self::CommandExecute | Self::RawPacket
+            ),
             Action::Description(_) => self == Self::ProxyPing,
             Action::Custom(_) => self == Self::PermissionsSetup,
         }
@@ -121,6 +200,16 @@ pub enum Action {
     Modify(String),
     Description(String),
     Custom(String),
+    Rename(String),
+    ForwardToBackend,
+    Drop,
+    Forward,
+    Handled,
+    Replace(String),
+    Reply(String),
+    Cancel,
+    Respond(String),
+    Pass,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +221,19 @@ pub enum Directive {
     },
     Cmd {
         name: String,
+    },
+    Fire {
+        command: String,
+        event: String,
+        payload: String,
+    },
+    Named {
+        name: String,
+        priority: u8,
+        action: Action,
+    },
+    Channel {
+        id: String,
     },
 }
 
@@ -165,12 +267,57 @@ fn parse_line(line: &str) -> Result<Directive, String> {
         }
         "cmd" => {
             let (name, rest) = word(rest);
-            if name.is_empty() || rest.trim() != "record" {
-                return Err("expected `cmd <name> record`".to_owned());
+            if name.is_empty() {
+                return Err(
+                    "expected `cmd <name> record` or `cmd <name> fire <event> \"<payload>\"`"
+                        .to_owned(),
+                );
             }
-            Ok(Directive::Cmd {
+            let (verb, rest) = word(rest);
+            match verb {
+                "record" if rest.trim().is_empty() => Ok(Directive::Cmd {
+                    name: name.to_owned(),
+                }),
+                "fire" => {
+                    let (event, rest) = word(rest);
+                    if event.is_empty() {
+                        return Err("`cmd <name> fire` needs an event name".to_owned());
+                    }
+                    Ok(Directive::Fire {
+                        command: name.to_owned(),
+                        event: event.to_owned(),
+                        payload: unquote(rest.trim()),
+                    })
+                }
+                _ => Err(
+                    "expected `cmd <name> record` or `cmd <name> fire <event> \"<payload>\"`"
+                        .to_owned(),
+                ),
+            }
+        }
+        "named" => {
+            let (name, rest) = word(rest);
+            if name.is_empty() {
+                return Err("`named` needs an event name".to_owned());
+            }
+            let (priority, rest) = word(rest);
+            let priority = parse_priority(priority)?;
+            let action = parse_action(rest)?;
+            if !(EventName::NamedEvent.accepts(&action)) {
+                return Err(format!("named events cannot {action:?}"));
+            }
+            Ok(Directive::Named {
                 name: name.to_owned(),
+                priority,
+                action,
             })
+        }
+        "channel" => {
+            let (id, rest) = word(rest);
+            if id.is_empty() || !rest.trim().is_empty() {
+                return Err("expected `channel <namespace:name>`".to_owned());
+            }
+            Ok(Directive::Channel { id: id.to_owned() })
         }
         other => Err(format!("unknown directive {other:?}")),
     }
@@ -204,6 +351,12 @@ fn parse_action(text: &str) -> Result<Action, String> {
         "allow" => Some(Action::Allow),
         "force-offline" => Some(Action::ForceOffline),
         "force-online" => Some(Action::ForceOnline),
+        "forward-to-backend" => Some(Action::ForwardToBackend),
+        "drop" => Some(Action::Drop),
+        "forward" => Some(Action::Forward),
+        "handled" => Some(Action::Handled),
+        "cancel" => Some(Action::Cancel),
+        "pass" => Some(Action::Pass),
         _ => None,
     };
     if let Some(action) = bare {
@@ -216,11 +369,7 @@ fn parse_action(text: &str) -> Result<Action, String> {
     if rest.is_empty() {
         return Err(format!("{name:?} needs an argument"));
     }
-    let arg = rest
-        .strip_prefix('"')
-        .and_then(|quoted| quoted.strip_suffix('"'))
-        .unwrap_or(rest)
-        .to_owned();
+    let arg = unquote(rest);
     Ok(match name {
         "deny" => Action::Deny(arg),
         "connect-to" => Action::ConnectTo(arg),
@@ -231,8 +380,44 @@ fn parse_action(text: &str) -> Result<Action, String> {
         "modify" => Action::Modify(arg),
         "description" => Action::Description(arg),
         "custom" if matches!(arg.as_str(), "admin" | "player") => Action::Custom(arg),
+        "rename" => Action::Rename(arg),
+        "replace" => Action::Replace(arg),
+        "reply" => Action::Reply(arg),
+        "respond" => Action::Respond(arg),
         other => return Err(format!("unknown action {other:?} {arg:?}")),
     })
+}
+
+fn unquote(text: &str) -> String {
+    text.strip_prefix('"')
+        .and_then(|quoted| quoted.strip_suffix('"'))
+        .unwrap_or(text)
+        .to_owned()
+}
+
+pub fn named_line(name: &str, priority: u8, fields: &[&str]) -> String {
+    let mut line = format!("named {name} @{priority}");
+    for field in fields {
+        line.push(' ');
+        line.push_str(field);
+    }
+    line
+}
+
+pub fn fired_line(command: &str, event: &str, cancelled: bool, response: Option<&str>) -> String {
+    format!(
+        "cmd {command} fired {event} {cancelled} {}",
+        or_dash(response)
+    )
+}
+
+pub fn text(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    if text.is_empty() {
+        "-".to_owned()
+    } else {
+        text.into_owned()
+    }
 }
 
 pub fn event_line(event: EventName, priority: u8, fields: &[&str]) -> String {

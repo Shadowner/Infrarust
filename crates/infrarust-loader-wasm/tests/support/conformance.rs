@@ -2,30 +2,53 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use infrarust_api::event::ResultedEvent;
+use bytes::Bytes;
+use infrarust_api::event::{ConnectionState, ResultedEvent};
+use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
+use infrarust_api::events::client::{
+    PlayerChannelRegisterEvent, PlayerClientBrandEvent, PlayerSettingsChangedEvent,
+};
+use infrarust_api::events::command::{CommandExecuteEvent, CommandExecuteResult};
 use infrarust_api::events::connection::{
     ConnectCause, KickCause, KickedFromServerEvent, KickedFromServerResult,
     PlayerChooseInitialServerEvent, PlayerChooseInitialServerResult, ServerConnectedEvent,
     ServerPostConnectEvent, ServerPreConnectEvent, ServerPreConnectResult,
 };
-use infrarust_api::events::lifecycle::{
-    DisconnectCause, DisconnectEvent, OnlineAuthFailed, PermissionsSetupEvent,
-    PermissionsSetupResult, PostLoginEvent, PreLoginEvent, PreLoginResult,
+use infrarust_api::events::handshake::{
+    ConnectionHandshakeEvent, ConnectionHandshakeResult, ConnectionRejectedEvent, HandshakeIntent,
+    RejectReason,
 };
+use infrarust_api::events::lifecycle::{
+    DisconnectCause, DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult,
+    OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent,
+    PreLoginResult,
+};
+use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
+use infrarust_api::events::messaging::{PluginMessageEvent, PluginMessageResult};
+use infrarust_api::events::named::NamedEvent;
+use infrarust_api::events::packet::{PacketDirection, RawPacketEvent, RawPacketResult};
+use infrarust_api::events::plugin::{PluginDisabledEvent, PluginEnabledEvent};
 use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
+use infrarust_api::events::resource_pack::{PlayerResourcePackStatusEvent, ResourcePackOrigin};
+use infrarust_api::events::transfer::{PreTransferEvent, PreTransferResult, TransferOrigin};
+use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::loader::PluginContextFactory;
+use infrarust_api::messaging::{ChannelId, Endpoint, MessagePhase};
 use infrarust_api::permissions::ADMIN_PERMISSION;
 use infrarust_api::player::Player;
+use infrarust_api::player::{ClientSettings, MainHand, ResourcePackStatus};
 use infrarust_api::plugin::Plugin;
+use infrarust_api::services::ban_service::{BanEntry, BanSource, BanTarget};
 use infrarust_api::services::load_balancer::BackendState;
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{
     Component, GameProfile, HoverEvent, NamedColor, ProtocolVersion, ServerAddress, ServerId,
 };
+use infrarust_api::types::{PlayerId, RawPacket};
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::services::command_manager::DispatchOutcome;
 
@@ -42,6 +65,10 @@ pub const PROTOCOL: i32 = 767;
 pub const MOTD: &str = "A Minecraft Proxy";
 pub const KICK_REASON: &str = "Server closed";
 pub const CHAT: &str = "hello";
+pub const COMMAND: &str = "spawn now";
+pub const BAN_ID: &str = "ban-1";
+pub const PACK: &str = "00000000-0000-0000-0000-000000000005";
+pub const NAMED: &str = "echo";
 
 pub const fn paired(native: &str, wasm: &str) -> bool {
     let native = native.as_bytes();
@@ -128,6 +155,46 @@ pub fn fields(event: EventName) -> Vec<String> {
         EventName::ServerStateChange => owned(&["survival", "starting", "online"]),
         EventName::ChatMessage => owned(&[id, CHAT, "false", "lobby"]),
         EventName::BackendHealth => owned(&["10.0.0.2:25565", "lobby,survival", "draining"]),
+        EventName::Login => owned(&[id, USERNAME, "true"]),
+        EventName::GameProfileRequest => {
+            owned(&[USERNAME, UUID, "false", REMOTE, DOMAIN, "767", USERNAME])
+        }
+        EventName::CommandExecute => owned(&[id, COMMAND, "true", "lobby"]),
+        EventName::ConnectionHandshake => owned(&[
+            REMOTE,
+            DOMAIN,
+            "Play.Example.Com\0FML3\0",
+            "25565",
+            "767",
+            "login",
+            "false",
+            "lobby",
+        ]),
+        EventName::ConnectionRejected => owned(&[REMOTE, DOMAIN, "plugin:gate"]),
+        EventName::LimboEnter => owned(&[id, "gate,queue", "kicked:survival"]),
+        EventName::LimboExit => owned(&[id, "sent_to_limbo", "lobby"]),
+        EventName::PlayerClientBrand => owned(&[id, "fabric"]),
+        EventName::PlayerSettingsChanged => owned(&[id, "fr_fr", "12", "left"]),
+        EventName::PlayerChannelRegister => owned(&[id, "test:echo,mod:b", "serverbound"]),
+        EventName::PluginMessage => owned(&[
+            id,
+            "backend:lobby",
+            "bungeecord:main",
+            "BungeeCord",
+            "BungeeCord",
+            "payload",
+            "play",
+        ]),
+        EventName::BanIssued => {
+            owned(&[BAN_ID, "username:Steve", "griefing", "player:Admin", "true"])
+        }
+        EventName::BanRevoked => owned(&[BAN_ID, "username:Steve", "-", "web-api:ops", "false"]),
+        EventName::PluginEnabled => owned(&["stats", "1.2.0"]),
+        EventName::PluginDisabled => owned(&["stats"]),
+        EventName::PreTransfer => owned(&[id, "old.example.com", "25565", "backend"]),
+        EventName::PlayerResourcePackStatus => owned(&[id, PACK, "declined", "proxy"]),
+        EventName::NamedEvent => owned(&[NAMED, "-", "text/plain", "ping", "false", "-"]),
+        EventName::RawPacket => owned(&[id, "serverbound", "5", "abc"]),
     }
 }
 
@@ -256,6 +323,96 @@ fn permissions(result: &PermissionsSetupResult) -> Outcome {
         PermissionsSetupResult::Custom(_) => Outcome::same("custom:player"),
         _ => Outcome::same("unknown"),
     }
+}
+
+fn login(result: &LoginResult) -> Outcome {
+    match result {
+        LoginResult::Allowed => Outcome::same("allowed"),
+        LoginResult::Denied { reason } => Outcome::component("denied", reason),
+        _ => Outcome::same("unknown"),
+    }
+}
+
+fn command(result: &CommandExecuteResult) -> Outcome {
+    match result {
+        CommandExecuteResult::Allow => Outcome::same("allow"),
+        CommandExecuteResult::Deny {
+            reason: Some(reason),
+        } => Outcome::component("deny", reason),
+        CommandExecuteResult::Deny { reason: None } => Outcome::same("deny"),
+        CommandExecuteResult::Modify { command } => Outcome::same(format!("modify:{command}")),
+        CommandExecuteResult::ForwardToBackend => Outcome::same("forward-to-backend"),
+        _ => Outcome::same("unknown"),
+    }
+}
+
+fn handshake(result: &ConnectionHandshakeResult) -> Outcome {
+    match result {
+        ConnectionHandshakeResult::Allow => Outcome::same("allow"),
+        ConnectionHandshakeResult::Deny {
+            reason: Some(reason),
+        } => Outcome::component("deny", reason),
+        ConnectionHandshakeResult::Deny { reason: None } => Outcome::same("deny"),
+        ConnectionHandshakeResult::DropSilently => Outcome::same("drop"),
+        _ => Outcome::same("unknown"),
+    }
+}
+
+fn plugin_message(result: &PluginMessageResult) -> Outcome {
+    match result {
+        PluginMessageResult::Forward => Outcome::same("forward"),
+        PluginMessageResult::Handled => Outcome::same("handled"),
+        PluginMessageResult::Replace(data) => {
+            Outcome::same(format!("replace:{}", String::from_utf8_lossy(data)))
+        }
+        _ => Outcome::same("unknown"),
+    }
+}
+
+fn transfer(result: &PreTransferResult) -> Outcome {
+    match result {
+        PreTransferResult::Allowed => Outcome::same("allowed"),
+        PreTransferResult::Denied { reason } => Outcome::component("denied", reason),
+        PreTransferResult::Redirect { host, port } => {
+            Outcome::same(format!("redirect:{host}:{port}"))
+        }
+        _ => Outcome::same("unknown"),
+    }
+}
+
+fn named(event: &NamedEvent) -> Outcome {
+    let response = event.response.as_ref().map_or_else(
+        || "-".to_owned(),
+        |response| {
+            format!(
+                "{}={}",
+                response.content_type,
+                String::from_utf8_lossy(&response.payload)
+            )
+        },
+    );
+    Outcome::same(format!("named:{}:{response}", event.cancelled))
+}
+
+fn raw_packet(result: &RawPacketResult) -> Outcome {
+    match result {
+        RawPacketResult::Pass => Outcome::same("pass"),
+        RawPacketResult::Drop => Outcome::same("drop"),
+        RawPacketResult::Modify { packet } => Outcome::same(format!(
+            "modify:{}:{}",
+            packet.packet_id,
+            String::from_utf8_lossy(&packet.data)
+        )),
+        _ => Outcome::same("unknown"),
+    }
+}
+
+fn ban_entry() -> BanEntry {
+    BanEntry::new(
+        BAN_ID,
+        BanTarget::Username(USERNAME.to_owned()),
+        BanSource::Console,
+    )
 }
 
 fn ping(response: &PingResponse) -> Outcome {
@@ -405,6 +562,168 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             })
             .await;
             Outcome::same("none")
+        }
+        EventName::Login => login(bus.fire(LoginEvent::new(session(), true)).await.result()),
+        EventName::GameProfileRequest => {
+            let event = GameProfileRequestEvent::new(
+                profile(),
+                false,
+                remote(),
+                Some(DOMAIN.to_owned()),
+                protocol,
+            );
+            let event = bus.fire(event).await;
+            Outcome::same(format!("profile:{}", event.profile.username))
+        }
+        EventName::CommandExecute => {
+            let event = CommandExecuteEvent::new(
+                session(),
+                COMMAND.to_owned(),
+                true,
+                Some(ServerId::new("lobby")),
+            );
+            command(bus.fire(event).await.result())
+        }
+        EventName::ConnectionHandshake => {
+            let event = ConnectionHandshakeEvent::new(remote(), HandshakeIntent::Login, protocol)
+                .with_host("Play.Example.Com\0FML3\0", Some(DOMAIN.to_owned()), 25565)
+                .with_server(Some(ServerId::new("lobby")));
+            handshake(bus.fire(event).await.result())
+        }
+        EventName::ConnectionRejected => {
+            bus.fire(ConnectionRejectedEvent::new(
+                remote(),
+                Some(DOMAIN.to_owned()),
+                RejectReason::Plugin {
+                    plugin_id: Some("gate".to_owned()),
+                },
+            ))
+            .await;
+            Outcome::same("none")
+        }
+        EventName::LimboEnter => {
+            bus.fire(LimboEnterEvent::new(
+                session(),
+                vec!["gate".to_owned(), "queue".to_owned()],
+                LimboEntryContext::KickedFromServer {
+                    server: ServerId::new("survival"),
+                    reason: Component::text(KICK_REASON),
+                },
+            ))
+            .await;
+            Outcome::same("none")
+        }
+        EventName::LimboExit => {
+            bus.fire(LimboExitEvent::new(
+                session(),
+                LimboExitReason::SentToLimbo {
+                    handlers: vec!["queue".to_owned()],
+                },
+                Some(ServerId::new("lobby")),
+            ))
+            .await;
+            Outcome::same("none")
+        }
+        EventName::PlayerClientBrand => {
+            bus.fire(PlayerClientBrandEvent::new(session(), "fabric".to_owned()))
+                .await;
+            Outcome::same("none")
+        }
+        EventName::PlayerSettingsChanged => {
+            let mut settings = ClientSettings::new("fr_fr");
+            settings.view_distance = 12;
+            settings.main_hand = MainHand::Left;
+            bus.fire(PlayerSettingsChangedEvent::new(session(), settings))
+                .await;
+            Outcome::same("none")
+        }
+        EventName::PlayerChannelRegister => {
+            bus.fire(PlayerChannelRegisterEvent::new(
+                session(),
+                vec!["test:echo".to_owned(), "mod:b".to_owned()],
+                PacketDirection::Serverbound,
+            ))
+            .await;
+            Outcome::same("none")
+        }
+        EventName::PluginMessage => {
+            let event = PluginMessageEvent::new(
+                session(),
+                Endpoint::Backend(ServerId::new("lobby")),
+                ChannelId::bungeecord(),
+                "BungeeCord".to_owned(),
+                Bytes::from_static(b"payload"),
+                MessagePhase::Play,
+            );
+            plugin_message(bus.fire(event).await.result())
+        }
+        EventName::BanIssued => {
+            bus.fire(BanIssuedEvent::new(
+                ban_entry().reason("griefing"),
+                BanSource::Player {
+                    uuid: uuid::Uuid::from_u128(9),
+                    name: "Admin".to_owned(),
+                },
+                true,
+            ))
+            .await;
+            Outcome::same("none")
+        }
+        EventName::BanRevoked => {
+            bus.fire(BanRevokedEvent::new(
+                ban_entry(),
+                BanSource::WebApi {
+                    actor: Some("ops".to_owned()),
+                },
+                false,
+            ))
+            .await;
+            Outcome::same("none")
+        }
+        EventName::PluginEnabled => {
+            bus.fire(PluginEnabledEvent::new("stats", "1.2.0")).await;
+            Outcome::same("none")
+        }
+        EventName::PluginDisabled => {
+            bus.fire(PluginDisabledEvent::new("stats")).await;
+            Outcome::same("none")
+        }
+        EventName::PreTransfer => {
+            let event = PreTransferEvent::new(
+                session(),
+                "old.example.com".to_owned(),
+                25565,
+                TransferOrigin::Backend,
+            );
+            transfer(bus.fire(event).await.result())
+        }
+        EventName::PlayerResourcePackStatus => {
+            bus.fire(PlayerResourcePackStatusEvent::new(
+                session(),
+                Some(PACK.parse().expect("canonical uuid")),
+                ResourcePackStatus::Declined,
+                ResourcePackOrigin::Proxy,
+            ))
+            .await;
+            Outcome::same("none")
+        }
+        EventName::NamedEvent => {
+            named(&bus.fire(NamedEvent::new(NAMED, "text/plain", "ping")).await)
+        }
+        EventName::RawPacket => {
+            let mut event = RawPacketEvent::new(
+                PlayerId::new(PLAYER),
+                PacketDirection::Serverbound,
+                RawPacket::new(script::PACKET_ID, Bytes::from_static(b"abc")),
+            );
+            bus.fire_packet_event(
+                script::PACKET_ID,
+                ConnectionState::Play,
+                PacketDirection::Serverbound,
+                &mut event,
+            )
+            .await;
+            raw_packet(event.result())
         }
     }
 }

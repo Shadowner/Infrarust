@@ -73,9 +73,21 @@ fn next_id() -> u64 {
 
 pub fn register_event<E: GuestEvent>(
     priority: EventPriority,
+    handler: impl FnMut(&mut E) + 'static,
+) -> Result<u64, Error> {
+    register_listener(
+        |priority| crate::host::subscribe(E::KIND, priority),
+        priority,
+        handler,
+    )
+}
+
+pub(crate) fn register_listener<E: GuestEvent>(
+    subscribe: impl FnOnce(u8) -> Result<u64, crate::bindings::types::HostError>,
+    priority: EventPriority,
     mut handler: impl FnMut(&mut E) + 'static,
 ) -> Result<u64, Error> {
-    let listener = crate::host::subscribe(E::KIND, priority.value())?;
+    let listener = subscribe(priority.value())?;
     let entry: Rc<EventEntry> = Rc::new(RefCell::new(move |ev: Event| match E::from_event(ev) {
         Some(mut typed) => {
             handler(&mut typed);

@@ -54,21 +54,29 @@ pub use context::{
     Context, DisableReason, EnableReason, EventSubscription, RecoveryInfo, TaskHandle,
 };
 pub use error::{Error, ErrorKind, PluginError};
-pub use event::{EventPriority, GuestEvent, ResultCell};
+pub use event::{
+    EventPriority, GuestEvent, NamedEvent, NamedOutcome, NamedResponse, PacketFilter, ResultCell,
+};
 pub use infrarust_plugin_macros::plugin;
 pub use infrarust_plugin_wit::WORLD_VERSION;
 pub use limbo::{
     EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason,
     SessionHandle, TimeoutOutcome,
 };
-pub use player::{Player, PlayerInfo, Players, TitleData};
+pub use player::{
+    BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, ConnectionResult, Player,
+    PlayerInfo, Players, ResourcePackRequest, TitleData,
+};
 pub use plugin::{Plugin, PluginDependency, PluginMetadata};
 pub use services::{
-    BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, ServerConfig, ServerStatus, Servers,
+    BackendStatus, BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, KeepaliveInfo,
+    LoadBalancer, Messaging, PluginInfo, Plugins, Proxy, ProxyDetails, RateLimitInfo, ServerConfig,
+    ServerSource, ServerStatus, Servers, StatusCacheInfo, UnknownDomainBehavior,
 };
 pub use types::{
-    GameProfile, PlayerId, PlayerRef, ProfileProperty, ProxyMode, ServerAddress, ServerId,
-    ServerState,
+    Capability, ChannelId, ChatMode, ClientSettings, GameProfile, MainHand, PacketDirection,
+    ParticleStatus, PlayerId, PlayerRef, ProfileProperty, ProxyMode, ServerAddress, ServerId,
+    ServerState, SkinParts,
 };
 pub use uuid::Uuid;
 
@@ -113,13 +121,20 @@ pub mod prelude {
         EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason,
         SessionHandle, TimeoutOutcome,
     };
-    pub use crate::player::{Player, PlayerInfo, Players, TitleData};
+    pub use crate::player::{
+        BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, ConnectionResult,
+        Player, PlayerInfo, Players, ResourcePackRequest, TitleData,
+    };
     pub use crate::plugin::{Plugin, PluginDependency, PluginMetadata};
     pub use crate::services::{
-        BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, ServerConfig, ServerStatus, Servers,
+        BackendStatus, BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, LoadBalancer,
+        Messaging, PluginInfo, Plugins, Proxy, ProxyDetails, ServerConfig, ServerSource,
+        ServerStatus, Servers,
     };
     pub use crate::types::{
-        GameProfile, PlayerId, PlayerRef, ProxyMode, ServerAddress, ServerId, ServerState,
+        Capability, ChannelId, ChatMode, ClientSettings, GameProfile, MainHand, PacketDirection,
+        ParticleStatus, PlayerId, PlayerRef, ProxyMode, ServerAddress, ServerId, ServerState,
+        SkinParts,
     };
     pub use crate::{Uuid, debug, error, info, plugin, trace, warn};
 }

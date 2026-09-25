@@ -1,5 +1,6 @@
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
+use infrarust_api::events::command::{CommandExecuteEvent, CommandExecuteResult};
 
 use super::{Applied, Texts, WasmEvent, unmatched};
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
@@ -43,6 +44,47 @@ impl WasmEvent for ChatMessageEvent {
     }
 }
 
+impl WasmEvent for CommandExecuteEvent {
+    const KIND: EventKind = EventKind::CommandExecute;
+
+    fn to_wit(&self) -> we::Event {
+        we::Event::CommandExecute(we::CommandExecuteEvent {
+            player: convert::player_ref(&*self.player),
+            command: self.command.clone(),
+            signed: self.signed,
+            server: self.server.as_ref().map(|s| s.as_str().to_owned()),
+            result: match self.result() {
+                CommandExecuteResult::Deny { reason } => {
+                    we::CommandExecuteResult::Deny(reason.as_ref().map(component::to_wit))
+                }
+                CommandExecuteResult::Modify { command } => {
+                    we::CommandExecuteResult::Modify(command.clone())
+                }
+                CommandExecuteResult::ForwardToBackend => {
+                    we::CommandExecuteResult::ForwardToBackend
+                }
+                _ => we::CommandExecuteResult::Allow,
+            },
+        })
+    }
+
+    fn apply(&mut self, outcome: we::EventOutcome) -> Applied {
+        let we::EventOutcome::CommandExecute(result) = outcome else {
+            return unmatched(&outcome);
+        };
+        let mut texts = Texts::default();
+        self.set_result(match result {
+            we::CommandExecuteResult::Allow => CommandExecuteResult::Allow,
+            we::CommandExecuteResult::Deny(reason) => CommandExecuteResult::Deny {
+                reason: reason.as_ref().map(|reason| texts.convert(reason)),
+            },
+            we::CommandExecuteResult::Modify(command) => CommandExecuteResult::Modify { command },
+            we::CommandExecuteResult::ForwardToBackend => CommandExecuteResult::ForwardToBackend,
+        });
+        texts.applied()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use infrarust_api::types::{Component, ServerId};
@@ -62,6 +104,47 @@ mod tests {
         assert!(record.signed);
         assert_eq!(record.server.as_deref(), Some("lobby"));
         assert_eq!(record.result, we::ChatMessageResult::Allow);
+    }
+
+    #[test]
+    fn a_command_carries_its_line_and_every_result_round_trips() {
+        let mut event = CommandExecuteEvent::new(
+            steve(),
+            "spawn now".into(),
+            false,
+            Some(ServerId::new("lobby")),
+        );
+        let we::Event::CommandExecute(record) = event.to_wit() else {
+            panic!("a command is sent as command-execute");
+        };
+        assert_eq!(record.command, "spawn now");
+        assert_eq!(record.result, we::CommandExecuteResult::Allow);
+        for (wit, native) in [
+            (
+                we::CommandExecuteResult::ForwardToBackend,
+                CommandExecuteResult::ForwardToBackend,
+            ),
+            (
+                we::CommandExecuteResult::Modify("hub".into()),
+                CommandExecuteResult::Modify {
+                    command: "hub".into(),
+                },
+            ),
+            (
+                we::CommandExecuteResult::Deny(None),
+                CommandExecuteResult::Deny { reason: None },
+            ),
+        ] {
+            assert_eq!(
+                event.apply(we::EventOutcome::CommandExecute(wit.clone())),
+                Applied::Set
+            );
+            assert_eq!(event.result(), &native);
+            let we::Event::CommandExecute(record) = event.to_wit() else {
+                panic!("a command is sent as command-execute");
+            };
+            assert_eq!(record.result, wit);
+        }
     }
 
     #[test]

@@ -13,6 +13,8 @@ const NORMAL: u8 = 128;
 const LATE: u8 = 192;
 const LAST: u8 = 255;
 const CHAT_INTERCEPT: &str = "chat-intercept";
+const PLUGIN_MESSAGING: &str = "plugin-messaging";
+const RAW_PACKET: &str = "raw-packet";
 
 macro_rules! conformance {
     ($native:ident, $wasm:ident, $scenario:expr $(,)?) => {
@@ -41,7 +43,22 @@ fn default_result(event: E) -> &'static str {
         E::KickedFromServer => "disconnect",
         E::ProxyPing => "ping:A Minecraft Proxy v2",
         E::ChatMessage => "allow",
+        E::Login | E::PreTransfer => "allowed",
+        E::GameProfileRequest => "profile:Steve",
+        E::CommandExecute | E::ConnectionHandshake => "allow",
+        E::PluginMessage => "forward",
+        E::NamedEvent => "named:false:-",
+        E::RawPacket => "pass",
         _ => "none",
+    }
+}
+
+fn grants_for(scenario: Scenario, id: &'static str, event: E) -> Scenario {
+    match event {
+        E::ChatMessage | E::CommandExecute => scenario.grant(id, CHAT_INTERCEPT),
+        E::PluginMessage => scenario.grant(id, PLUGIN_MESSAGING),
+        E::RawPacket => scenario.grant(id, RAW_PACKET),
+        _ => scenario,
     }
 }
 
@@ -53,15 +70,13 @@ fn single(line: &str, expected: &str) -> Scenario {
     else {
         panic!("expected an `on` directive: {line}");
     };
-    let scenario = Scenario::new().plugin("scripted", [line]);
-    let scenario = if event == E::ChatMessage {
-        scenario.grant("scripted", CHAT_INTERCEPT)
-    } else {
-        scenario
-    };
-    scenario
-        .fire(event, expected)
-        .log("scripted", [seen(event, priority)])
+    grants_for(
+        Scenario::new().plugin("scripted", [line]),
+        "scripted",
+        event,
+    )
+    .fire(event, expected)
+    .log("scripted", [seen(event, priority)])
 }
 
 fn record_only(event: E) -> Scenario {
@@ -75,7 +90,9 @@ fn every_event_late_record() -> Scenario {
     let script = E::ALL.map(|event| format!("on {} late record", event.as_str()));
     let mut scenario = Scenario::new()
         .plugin("scripted", script)
-        .grant("scripted", CHAT_INTERCEPT);
+        .grant("scripted", CHAT_INTERCEPT)
+        .grant("scripted", PLUGIN_MESSAGING)
+        .grant("scripted", RAW_PACKET);
     for event in E::ALL {
         scenario = scenario.fire(event, default_result(event));
     }
@@ -290,6 +307,332 @@ conformance!(
 );
 
 conformance!(
+    login_record_native,
+    login_record_wasm,
+    record_only(E::Login)
+);
+conformance!(
+    game_profile_request_record_native,
+    game_profile_request_record_wasm,
+    record_only(E::GameProfileRequest)
+);
+conformance!(
+    command_execute_record_native,
+    command_execute_record_wasm,
+    record_only(E::CommandExecute)
+);
+conformance!(
+    connection_handshake_record_native,
+    connection_handshake_record_wasm,
+    record_only(E::ConnectionHandshake)
+);
+conformance!(
+    connection_rejected_record_native,
+    connection_rejected_record_wasm,
+    record_only(E::ConnectionRejected)
+);
+conformance!(
+    limbo_enter_record_native,
+    limbo_enter_record_wasm,
+    record_only(E::LimboEnter)
+);
+conformance!(
+    limbo_exit_record_native,
+    limbo_exit_record_wasm,
+    record_only(E::LimboExit)
+);
+conformance!(
+    player_client_brand_record_native,
+    player_client_brand_record_wasm,
+    record_only(E::PlayerClientBrand)
+);
+conformance!(
+    player_settings_changed_record_native,
+    player_settings_changed_record_wasm,
+    record_only(E::PlayerSettingsChanged)
+);
+conformance!(
+    player_channel_register_record_native,
+    player_channel_register_record_wasm,
+    record_only(E::PlayerChannelRegister)
+);
+conformance!(
+    plugin_message_record_native,
+    plugin_message_record_wasm,
+    record_only(E::PluginMessage)
+);
+conformance!(
+    ban_issued_record_native,
+    ban_issued_record_wasm,
+    record_only(E::BanIssued)
+);
+conformance!(
+    ban_revoked_record_native,
+    ban_revoked_record_wasm,
+    record_only(E::BanRevoked)
+);
+conformance!(
+    plugin_enabled_record_native,
+    plugin_enabled_record_wasm,
+    record_only(E::PluginEnabled)
+);
+conformance!(
+    plugin_disabled_record_native,
+    plugin_disabled_record_wasm,
+    record_only(E::PluginDisabled)
+);
+conformance!(
+    pre_transfer_record_native,
+    pre_transfer_record_wasm,
+    record_only(E::PreTransfer)
+);
+conformance!(
+    player_resource_pack_status_record_native,
+    player_resource_pack_status_record_wasm,
+    record_only(E::PlayerResourcePackStatus)
+);
+conformance!(
+    named_event_record_native,
+    named_event_record_wasm,
+    record_only(E::NamedEvent)
+);
+conformance!(
+    raw_packet_record_native,
+    raw_packet_record_wasm,
+    record_only(E::RawPacket)
+);
+
+conformance!(
+    login_deny_native,
+    login_deny_wasm,
+    single("on login early deny \"Closed\"", "denied:Closed"),
+);
+
+conformance!(
+    game_profile_request_rename_native,
+    game_profile_request_rename_wasm,
+    single("on game-profile-request normal rename Alex", "profile:Alex"),
+);
+
+conformance!(
+    command_execute_deny_native,
+    command_execute_deny_wasm,
+    single("on command-execute normal deny \"no\"", "deny:no"),
+);
+
+conformance!(
+    command_execute_modify_native,
+    command_execute_modify_wasm,
+    single("on command-execute normal modify \"hub\"", "modify:hub"),
+);
+
+conformance!(
+    command_execute_forward_native,
+    command_execute_forward_wasm,
+    single(
+        "on command-execute normal forward-to-backend",
+        "forward-to-backend"
+    ),
+);
+
+conformance!(
+    connection_handshake_deny_native,
+    connection_handshake_deny_wasm,
+    single("on connection-handshake normal deny \"bots\"", "deny:bots"),
+);
+
+conformance!(
+    connection_handshake_drop_native,
+    connection_handshake_drop_wasm,
+    single("on connection-handshake normal drop", "drop"),
+);
+
+conformance!(
+    plugin_message_handled_native,
+    plugin_message_handled_wasm,
+    single("on plugin-message normal handled", "handled"),
+);
+
+conformance!(
+    plugin_message_replace_native,
+    plugin_message_replace_wasm,
+    single(
+        "on plugin-message normal replace \"swapped\"",
+        "replace:swapped"
+    ),
+);
+
+conformance!(
+    pre_transfer_deny_native,
+    pre_transfer_deny_wasm,
+    single("on pre-transfer normal deny \"stay\"", "denied:stay"),
+);
+
+conformance!(
+    pre_transfer_redirect_native,
+    pre_transfer_redirect_wasm,
+    single(
+        "on pre-transfer normal redirect new.example.com:25566",
+        "redirect:new.example.com:25566"
+    ),
+);
+
+conformance!(
+    named_event_cancel_native,
+    named_event_cancel_wasm,
+    single("on named-event normal cancel", "named:true:-"),
+);
+
+conformance!(
+    named_event_respond_native,
+    named_event_respond_wasm,
+    single(
+        "on named-event normal respond \"pong\"",
+        "named:false:text/plain=pong"
+    ),
+);
+
+conformance!(
+    raw_packet_drop_native,
+    raw_packet_drop_wasm,
+    single("on raw-packet normal drop", "drop"),
+);
+
+conformance!(
+    raw_packet_modify_native,
+    raw_packet_modify_wasm,
+    single("on raw-packet normal modify \"xyz\"", "modify:5:xyz"),
+);
+
+conformance!(
+    named_subscription_filters_by_name_native,
+    named_subscription_filters_by_name_wasm,
+    Scenario::new()
+        .plugin(
+            "scripted",
+            [
+                "named echo late respond \"pong\"",
+                "named other first cancel",
+            ],
+        )
+        .fire(E::NamedEvent, "named:false:text/plain=pong")
+        .log("scripted", ["named echo @192 - text/plain ping false -"],),
+);
+
+conformance!(
+    named_event_round_trip_across_plugins_native,
+    named_event_round_trip_across_plugins_wasm,
+    Scenario::new()
+        .plugin("scripted-peer", ["named echo late respond \"pong\""])
+        .plugin("scripted", ["cmd ask fire echo \"ping\""])
+        .command("ask")
+        .log("scripted", ["cmd ask fired echo false pong"])
+        .log(
+            "scripted-peer",
+            ["named echo @192 scripted text/plain ping false -"],
+        ),
+);
+
+conformance!(
+    named_event_fired_to_its_own_plugin_native,
+    named_event_fired_to_its_own_plugin_wasm,
+    Scenario::new()
+        .plugin(
+            "scripted",
+            [
+                "named echo late respond \"pong\"",
+                "cmd ask fire echo \"ping\""
+            ],
+        )
+        .command("ask")
+        .disable()
+        .log(
+            "scripted",
+            [
+                "named echo @192 scripted text/plain ping false -",
+                "cmd ask fired echo false pong",
+                "disable",
+            ],
+        )
+        .wasm_log(
+            "scripted",
+            [
+                "cmd ask fired echo false -",
+                "named echo @192 scripted text/plain ping false -",
+                "disable",
+            ],
+        )
+        .expect_divergence(
+            "a WASM plugin that fires a named event it listens to itself is still running its \
+             command when the event reaches its own listener; the host never re-enters a busy \
+             instance, so the listener gets the event right after the command returns and its \
+             answer is not part of the result the command saw"
+        ),
+);
+
+conformance!(
+    later_result_resets_new_events_native,
+    later_result_resets_new_events_wasm,
+    Scenario::new()
+        .plugin(
+            "scripted",
+            [
+                "on login early deny \"Closed\"",
+                "on command-execute early deny \"no\"",
+                "on connection-handshake early drop",
+                "on plugin-message early handled",
+                "on pre-transfer early deny \"stay\"",
+                "on raw-packet early drop",
+            ],
+        )
+        .plugin(
+            "scripted-peer",
+            [
+                "on login late allow",
+                "on command-execute late allow",
+                "on connection-handshake late allow",
+                "on plugin-message late forward",
+                "on pre-transfer late allow",
+                "on raw-packet late pass",
+            ],
+        )
+        .grant("scripted", CHAT_INTERCEPT)
+        .grant("scripted-peer", CHAT_INTERCEPT)
+        .grant("scripted", PLUGIN_MESSAGING)
+        .grant("scripted-peer", PLUGIN_MESSAGING)
+        .grant("scripted", RAW_PACKET)
+        .grant("scripted-peer", RAW_PACKET)
+        .fire(E::Login, "allowed")
+        .fire(E::CommandExecute, "allow")
+        .fire(E::ConnectionHandshake, "allow")
+        .fire(E::PluginMessage, "forward")
+        .fire(E::PreTransfer, "allowed")
+        .fire(E::RawPacket, "pass")
+        .log(
+            "scripted",
+            [
+                seen(E::Login, EARLY),
+                seen(E::CommandExecute, EARLY),
+                seen(E::ConnectionHandshake, EARLY),
+                seen(E::PluginMessage, EARLY),
+                seen(E::PreTransfer, EARLY),
+                seen(E::RawPacket, EARLY),
+            ],
+        )
+        .log(
+            "scripted-peer",
+            [
+                seen(E::Login, LATE),
+                seen(E::CommandExecute, LATE),
+                seen(E::ConnectionHandshake, LATE),
+                seen(E::PluginMessage, LATE),
+                seen(E::PreTransfer, LATE),
+                seen(E::RawPacket, LATE),
+            ],
+        ),
+);
+
+conformance!(
     every_event_late_record_native,
     every_event_late_record_wasm,
     every_event_late_record()
@@ -474,7 +817,8 @@ conformance!(
 #[test]
 fn script_parser_accepts_the_grammar_and_rejects_mistakes() {
     let parsed = script::parse(
-        "on pre-login early deny \"Banned\"\n\ncmd greet record\non post-login 32 cancelled",
+        "on pre-login early deny \"Banned\"\n\ncmd greet record\non post-login 32 cancelled\n\
+         named echo late respond \"pong\"\ncmd ask fire echo \"ping\"\nchannel test:echo",
     )
     .expect("valid script");
     assert_eq!(
@@ -493,6 +837,19 @@ fn script_parser_accepts_the_grammar_and_rejects_mistakes() {
                 priority: 32,
                 action: Action::Cancelled,
             },
+            Directive::Named {
+                name: "echo".to_owned(),
+                priority: LATE,
+                action: Action::Respond("pong".to_owned()),
+            },
+            Directive::Fire {
+                command: "ask".to_owned(),
+                event: "echo".to_owned(),
+                payload: "ping".to_owned(),
+            },
+            Directive::Channel {
+                id: "test:echo".to_owned(),
+            },
         ]
     );
     for bad in [
@@ -504,6 +861,11 @@ fn script_parser_accepts_the_grammar_and_rejects_mistakes() {
         "on permissions-setup normal custom root",
         "cmd greet panic",
         "off pre-login normal record",
+        "on login normal drop",
+        "on raw-packet normal respond \"x\"",
+        "named echo normal drop",
+        "cmd ask fire",
+        "channel",
     ] {
         assert!(script::parse(bad).is_err(), "`{bad}` must be rejected");
     }

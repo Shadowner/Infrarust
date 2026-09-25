@@ -133,6 +133,22 @@ pub struct GameProfile {
 }
 
 impl GameProfile {
+    pub(crate) fn to_wit(&self) -> wt::GameProfile {
+        wt::GameProfile {
+            uuid: uuid_to_wit(self.uuid),
+            username: self.username.clone(),
+            properties: self
+                .properties
+                .iter()
+                .map(|property| wt::ProfileProperty {
+                    name: property.name.clone(),
+                    value: property.value.clone(),
+                    signature: property.signature.clone(),
+                })
+                .collect(),
+        }
+    }
+
     pub(crate) fn from_wit(profile: wt::GameProfile) -> Self {
         Self {
             uuid: uuid_from_wit(profile.uuid),
@@ -157,10 +173,25 @@ pub struct ServerAddress {
 }
 
 impl ServerAddress {
+    #[must_use]
+    pub fn new(host: impl Into<String>, port: u16) -> Self {
+        Self {
+            host: host.into(),
+            port,
+        }
+    }
+
     pub(crate) fn from_wit(address: wt::ServerAddress) -> Self {
         Self {
             host: address.host,
             port: address.port,
+        }
+    }
+
+    pub(crate) fn to_wit(&self) -> wt::ServerAddress {
+        wt::ServerAddress {
+            host: self.host.clone(),
+            port: self.port,
         }
     }
 }
@@ -214,6 +245,255 @@ impl ProxyMode {
             wt::ProxyMode::Offline => Self::Offline,
             wt::ProxyMode::ServerOnly => Self::ServerOnly,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ChannelId {
+    modern: Option<String>,
+    legacy: Option<String>,
+}
+
+impl ChannelId {
+    #[must_use]
+    pub fn modern(id: impl Into<String>) -> Self {
+        Self {
+            modern: Some(id.into()),
+            legacy: None,
+        }
+    }
+
+    #[must_use]
+    pub fn legacy(name: impl Into<String>) -> Self {
+        Self {
+            modern: None,
+            legacy: Some(name.into()),
+        }
+    }
+
+    #[must_use]
+    pub fn pair(modern: impl Into<String>, legacy: impl Into<String>) -> Self {
+        Self {
+            modern: Some(modern.into()),
+            legacy: Some(legacy.into()),
+        }
+    }
+
+    #[must_use]
+    pub fn bungeecord() -> Self {
+        Self::pair("bungeecord:main", "BungeeCord")
+    }
+
+    #[must_use]
+    pub fn modern_id(&self) -> Option<&str> {
+        self.modern.as_deref()
+    }
+
+    #[must_use]
+    pub fn legacy_name(&self) -> Option<&str> {
+        self.legacy.as_deref()
+    }
+
+    #[must_use]
+    pub fn matches(&self, raw: &str) -> bool {
+        self.modern_id() == Some(raw) || self.legacy_name() == Some(raw)
+    }
+
+    pub(crate) fn to_wit(&self) -> wt::ChannelId {
+        wt::ChannelId {
+            modern: self.modern.clone(),
+            legacy: self.legacy.clone(),
+        }
+    }
+
+    pub(crate) fn from_wit(channel: wt::ChannelId) -> Self {
+        Self {
+            modern: channel.modern,
+            legacy: channel.legacy,
+        }
+    }
+}
+
+impl fmt::Display for ChannelId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (&self.modern, &self.legacy) {
+            (Some(modern), Some(legacy)) => write!(f, "{modern} ({legacy})"),
+            (Some(name), None) | (None, Some(name)) => f.write_str(name),
+            (None, None) => f.write_str("-"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum PacketDirection {
+    Serverbound,
+    Clientbound,
+}
+
+impl PacketDirection {
+    pub(crate) const fn from_wit(direction: wt::PacketDirection) -> Self {
+        match direction {
+            wt::PacketDirection::Serverbound => Self::Serverbound,
+            wt::PacketDirection::Clientbound => Self::Clientbound,
+        }
+    }
+
+    pub(crate) const fn to_wit(self) -> wt::PacketDirection {
+        match self {
+            Self::Serverbound => wt::PacketDirection::Serverbound,
+            Self::Clientbound => wt::PacketDirection::Clientbound,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ChatMode {
+    Enabled,
+    CommandsOnly,
+    Hidden,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MainHand {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ParticleStatus {
+    All,
+    Decreased,
+    Minimal,
+}
+
+pub use crate::bindings::types::SkinParts;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ClientSettings {
+    pub locale: String,
+    pub view_distance: u8,
+    pub chat_mode: ChatMode,
+    pub chat_colors: bool,
+    pub skin_parts: SkinParts,
+    pub main_hand: MainHand,
+    pub text_filtering: bool,
+    pub allow_listing: bool,
+    pub particle_status: ParticleStatus,
+}
+
+impl ClientSettings {
+    pub(crate) fn from_wit(settings: wt::ClientSettings) -> Self {
+        Self {
+            locale: settings.locale,
+            view_distance: settings.view_distance,
+            chat_mode: match settings.chat_mode {
+                wt::ChatMode::Enabled => ChatMode::Enabled,
+                wt::ChatMode::CommandsOnly => ChatMode::CommandsOnly,
+                wt::ChatMode::Hidden => ChatMode::Hidden,
+            },
+            chat_colors: settings.chat_colors,
+            skin_parts: settings.skin_parts,
+            main_hand: match settings.main_hand {
+                wt::MainHand::Left => MainHand::Left,
+                wt::MainHand::Right => MainHand::Right,
+            },
+            text_filtering: settings.text_filtering,
+            allow_listing: settings.allow_listing,
+            particle_status: match settings.particle_status {
+                wt::ParticleStatus::All => ParticleStatus::All,
+                wt::ParticleStatus::Decreased => ParticleStatus::Decreased,
+                wt::ParticleStatus::Minimal => ParticleStatus::Minimal,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Capability {
+    EventBus,
+    PlayerRead,
+    PlayerWrite,
+    RawPacket,
+    ServerManage,
+    Ban,
+    Command,
+    Scheduler,
+    ConfigRead,
+    ConfigWrite,
+    CodecFilter,
+    TransportFilter,
+    Limbo,
+    VirtualBackend,
+    PermissionProvider,
+    FilesystemExtended,
+    Network,
+    ChatIntercept,
+    BanProvider,
+    PluginMessaging,
+}
+
+impl Capability {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::EventBus => "event-bus",
+            Self::PlayerRead => "player-read",
+            Self::PlayerWrite => "player-write",
+            Self::RawPacket => "raw-packet",
+            Self::ServerManage => "server-manage",
+            Self::Ban => "ban",
+            Self::Command => "command",
+            Self::Scheduler => "scheduler",
+            Self::ConfigRead => "config-read",
+            Self::ConfigWrite => "config-write",
+            Self::CodecFilter => "codec-filter",
+            Self::TransportFilter => "transport-filter",
+            Self::Limbo => "limbo",
+            Self::VirtualBackend => "virtual-backend",
+            Self::PermissionProvider => "permission-provider",
+            Self::FilesystemExtended => "filesystem-extended",
+            Self::Network => "network",
+            Self::ChatIntercept => "chat-intercept",
+            Self::BanProvider => "ban-provider",
+            Self::PluginMessaging => "plugin-messaging",
+        }
+    }
+
+    pub(crate) const fn from_wit(capability: wt::Capability) -> Self {
+        match capability {
+            wt::Capability::EventBus => Self::EventBus,
+            wt::Capability::PlayerRead => Self::PlayerRead,
+            wt::Capability::PlayerWrite => Self::PlayerWrite,
+            wt::Capability::RawPacket => Self::RawPacket,
+            wt::Capability::ServerManage => Self::ServerManage,
+            wt::Capability::Ban => Self::Ban,
+            wt::Capability::Command => Self::Command,
+            wt::Capability::Scheduler => Self::Scheduler,
+            wt::Capability::ConfigRead => Self::ConfigRead,
+            wt::Capability::ConfigWrite => Self::ConfigWrite,
+            wt::Capability::CodecFilter => Self::CodecFilter,
+            wt::Capability::TransportFilter => Self::TransportFilter,
+            wt::Capability::Limbo => Self::Limbo,
+            wt::Capability::VirtualBackend => Self::VirtualBackend,
+            wt::Capability::PermissionProvider => Self::PermissionProvider,
+            wt::Capability::FilesystemExtended => Self::FilesystemExtended,
+            wt::Capability::Network => Self::Network,
+            wt::Capability::ChatIntercept => Self::ChatIntercept,
+            wt::Capability::BanProvider => Self::BanProvider,
+            wt::Capability::PluginMessaging => Self::PluginMessaging,
+        }
+    }
+}
+
+impl fmt::Display for Capability {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -295,6 +575,26 @@ mod tests {
             UNIX_EPOCH + Duration::from_millis(1_500)
         );
         assert_eq!(millis(Duration::from_secs(2)), 2_000);
+    }
+
+    #[test]
+    fn a_channel_keeps_the_names_it_was_built_with() {
+        let pair = ChannelId::pair("myplugin:main", "MyPlugin");
+        assert!(pair.matches("MyPlugin"));
+        assert!(pair.matches("myplugin:main"));
+        assert_eq!(pair.to_string(), "myplugin:main (MyPlugin)");
+        assert_eq!(ChannelId::from_wit(pair.to_wit()), pair);
+        assert_eq!(ChannelId::modern("a:b").legacy_name(), None);
+        assert_eq!(ChannelId::bungeecord().legacy_name(), Some("BungeeCord"));
+    }
+
+    #[test]
+    fn capabilities_have_their_config_names() {
+        assert_eq!(
+            Capability::from_wit(wt::Capability::PluginMessaging).as_str(),
+            "plugin-messaging"
+        );
+        assert_eq!(Capability::ChatIntercept.to_string(), "chat-intercept");
     }
 
     #[test]

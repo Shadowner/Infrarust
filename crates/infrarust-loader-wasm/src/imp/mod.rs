@@ -7,6 +7,7 @@
 pub(crate) mod actor;
 pub(crate) mod bindings;
 pub(crate) mod cache;
+pub(crate) mod chain;
 pub(crate) mod codec;
 pub(crate) mod component;
 pub(crate) mod config;

@@ -1,7 +1,16 @@
 interface event-bus {
-    use types.{event-priority, listener-handle, host-error};
-    use events.{event-kind};
+    use types.{event-priority, listener-handle, host-error, connection-state, packet-direction};
+    use events.{event-kind, named-event-result};
+
+    record packet-filter {
+        packet-id: s32,
+        state: connection-state,
+        direction: packet-direction,
+    }
 
     subscribe: func(kind: event-kind, priority: event-priority) -> result<listener-handle, host-error>;
     unsubscribe: func(handle: listener-handle) -> result<bool, host-error>;
+    subscribe-named: func(name: string, priority: event-priority) -> result<listener-handle, host-error>;
+    fire-named: func(name: string, content-type: string, payload: list<u8>) -> result<named-event-result, host-error>;
+    subscribe-packets: func(filters: list<packet-filter>, priority: event-priority) -> result<listener-handle, host-error>;
 }
