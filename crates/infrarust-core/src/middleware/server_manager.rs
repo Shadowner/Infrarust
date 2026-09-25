@@ -4,13 +4,14 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use infrarust_api::events::handshake::RejectReason;
 use infrarust_server_manager::{ServerManagerError, ServerManagerService, ServerState};
 
 use crate::error::CoreError;
 use crate::loadbalancer::PassiveBackendHealth;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::RoutingData;
+use crate::pipeline::types::{Refused, RoutingData};
 
 /// Middleware that intercepts login connections to servers with a `server_manager`
 /// and triggers wake-up if the server is not online.
@@ -65,8 +66,9 @@ impl Middleware for ServerManagerMiddleware {
             };
 
             match state {
-                ServerState::Stopping => Ok(MiddlewareResult::Reject(
-                    "Server is shutting down, please try again later.".into(),
+                ServerState::Stopping => Ok(refuse(
+                    ctx,
+                    "Server is shutting down, please try again later.",
                 )),
                 ServerState::Sleeping | ServerState::Crashed | ServerState::Starting => {
                     match self.server_manager.ensure_started(&server_id).await {
@@ -83,15 +85,15 @@ impl Middleware for ServerManagerMiddleware {
                             }
                             Ok(MiddlewareResult::Continue)
                         }
-                        Err(ServerManagerError::StartTimeout { .. }) => {
-                            Ok(MiddlewareResult::Reject(
-                                "Server failed to start in time. Please try again.".into(),
-                            ))
-                        }
+                        Err(ServerManagerError::StartTimeout { .. }) => Ok(refuse(
+                            ctx,
+                            "Server failed to start in time. Please try again.",
+                        )),
                         Err(e) => {
                             tracing::error!(server = %server_id, "server manager error: {e}");
-                            Ok(MiddlewareResult::Reject(
-                                "Server is unavailable. Please try again later.".into(),
+                            Ok(refuse(
+                                ctx,
+                                "Server is unavailable. Please try again later.",
                             ))
                         }
                     }
@@ -100,4 +102,10 @@ impl Middleware for ServerManagerMiddleware {
             }
         })
     }
+}
+
+fn refuse(ctx: &mut ConnectionContext, message: &str) -> MiddlewareResult {
+    ctx.extensions
+        .insert(Refused(RejectReason::ServerUnavailable));
+    MiddlewareResult::Reject(message.to_string())
 }

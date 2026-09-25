@@ -527,6 +527,7 @@ mod tests {
         };
         let handshake = HandshakeData {
             domain: "origin.test".to_string(),
+            raw_host: "origin.test".to_string(),
             port: 25565,
             protocol_version: version,
             intent: ConnectionIntent::Login,

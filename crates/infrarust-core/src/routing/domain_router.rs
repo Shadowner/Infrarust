@@ -245,6 +245,12 @@ impl DomainRouter {
         self.resolve(domain).map(|(_, cfg)| cfg)
     }
 
+    pub fn get(&self, id: &ProviderId) -> Option<Arc<ServerConfig>> {
+        self.configs
+            .get(id)
+            .map(|entry| Arc::clone(&entry.value().config))
+    }
+
     pub fn find_by_server_id(&self, server_id: &str) -> Option<Arc<ServerConfig>> {
         self.find_route_by_server_id(server_id)
             .map(|(cfg, _lb)| cfg)

@@ -8,7 +8,7 @@ use crate::ban::BanManager;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{ConnectionIntent, HandshakeData};
+use crate::pipeline::types::{ConnectionIntent, HandshakeData, Refused};
 
 pub struct BanIpCheckMiddleware {
     ban_manager: Arc<BanManager>,
@@ -39,10 +39,12 @@ impl Middleware for BanIpCheckMiddleware {
 
             let attempt =
                 LoginAttempt::status(ctx.client_ip).virtual_host(handshake.domain.clone());
-            if self.ban_manager.refusal(&attempt).await.is_some() {
-                Ok(MiddlewareResult::ShortCircuit)
-            } else {
-                Ok(MiddlewareResult::Continue)
+            match self.ban_manager.refuse(&attempt).await {
+                Some(refusal) => {
+                    ctx.extensions.insert(Refused(refusal.reason));
+                    Ok(MiddlewareResult::ShortCircuit)
+                }
+                None => Ok(MiddlewareResult::Continue),
             }
         })
     }

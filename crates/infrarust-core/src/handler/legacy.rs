@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::events::handshake::{ConnectionHandshakeEvent, HandshakeIntent, RejectReason};
 use infrarust_api::events::proxy::{PingResponse, ProxyPingEvent};
 use infrarust_api::services::ban_service::LoginAttempt;
 use infrarust_api::types::{Component, LEGACY_SECTION, ServerId};
@@ -19,6 +20,7 @@ use super::forwarded::{Arrival, ForwardedLogin, Opening, Route, UNKNOWN_SERVER, 
 use super::helpers::send_legacy_kick;
 use crate::error::CoreError;
 use crate::loadbalancer::{peek_backend_addresses, select_backend_addresses};
+use crate::pipeline::admission::{self, Admission};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::RoutingData;
 use crate::services::ProxyServices;
@@ -82,12 +84,46 @@ impl LegacyHandler {
         if let Some(host) = &virtual_host {
             attempt = attempt.virtual_host(host.clone());
         }
-        if self.services.ban_manager.refusal(&attempt).await.is_some() {
+        if let Some(refusal) = self.services.ban_manager.refuse(&attempt).await {
+            admission::reject(
+                &self.services.event_bus,
+                ctx.client_addr(),
+                virtual_host,
+                refusal.reason,
+            );
             return Ok(());
         }
         let route = virtual_host
             .as_deref()
             .and_then(|host| self.services.domain_router.resolve_route(host));
+
+        let screened = admission::screen(&self.services.event_bus, || {
+            ConnectionHandshakeEvent::new(
+                ctx.client_addr(),
+                HandshakeIntent::Status,
+                infrarust_api::types::ProtocolVersion::new(
+                    request.protocol_version.map_or(0, i32::from),
+                ),
+            )
+            .with_host(
+                request.hostname.clone().unwrap_or_default(),
+                virtual_host.clone(),
+                request
+                    .port
+                    .and_then(|port| u16::try_from(port).ok())
+                    .unwrap_or(0),
+            )
+            .with_server(
+                route
+                    .as_ref()
+                    .map(|(_, config, _)| ServerId::new(config.effective_id())),
+            )
+            .with_legacy(true)
+        })
+        .await;
+        if screened != Admission::Admitted {
+            return Ok(());
+        }
 
         let (server, response) = match route {
             Some((_provider_id, config, load_balancer)) => {
@@ -382,17 +418,55 @@ impl LegacyHandler {
             self.services.domain_router.resolve_route(&domain)
         else {
             tracing::debug!(domain = %domain, "legacy login: unknown domain");
+            admission::reject(
+                &self.services.event_bus,
+                ctx.client_addr(),
+                Some(domain),
+                RejectReason::UnknownDomain,
+            );
             send_legacy_kick(ctx.stream_mut(), &Component::text(UNKNOWN_SERVER))
                 .await
                 .ok();
             return Ok(());
         };
 
+        let screened = admission::screen(&self.services.event_bus, || {
+            ConnectionHandshakeEvent::new(
+                ctx.client_addr(),
+                HandshakeIntent::Login,
+                infrarust_api::types::ProtocolVersion::new(i32::from(handshake.protocol_version)),
+            )
+            .with_host(
+                handshake.hostname.clone(),
+                Some(domain.clone()),
+                u16::try_from(handshake.port).unwrap_or(0),
+            )
+            .with_server(Some(ServerId::new(server_config.effective_id())))
+            .with_legacy(true)
+        })
+        .await;
+        match screened {
+            Admission::Admitted => {}
+            Admission::Denied(reason) => {
+                send_legacy_kick(ctx.stream_mut(), &reason).await.ok();
+                return Ok(());
+            }
+            Admission::Dropped => return Ok(()),
+        }
+
         let attempt = LoginAttempt::pre_auth(ctx.client_ip, handshake.username.clone())
             .virtual_host(domain.clone())
             .server(ServerId::new(server_config.effective_id()));
-        if let Some(reason) = self.services.ban_manager.refusal(&attempt).await {
-            send_legacy_kick(ctx.stream_mut(), &reason).await.ok();
+        if let Some(refusal) = self.services.ban_manager.refuse(&attempt).await {
+            admission::reject(
+                &self.services.event_bus,
+                ctx.client_addr(),
+                Some(domain),
+                refusal.reason,
+            );
+            send_legacy_kick(ctx.stream_mut(), &refusal.message)
+                .await
+                .ok();
             return Ok(());
         }
 

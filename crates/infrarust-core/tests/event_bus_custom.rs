@@ -15,10 +15,12 @@ use infrarust_api::events::connection::{
     KickedFromServerEvent, PlayerChooseInitialServerEvent, ServerConnectedEvent,
     ServerPostConnectEvent, ServerPreConnectEvent,
 };
+use infrarust_api::events::handshake::{ConnectionHandshakeEvent, ConnectionRejectedEvent};
 use infrarust_api::events::lifecycle::{
     DisconnectEvent, GameProfileRequestEvent, LoginEvent, OnlineAuthFailed, PermissionsSetupEvent,
     PostLoginEvent, PreLoginEvent,
 };
+use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
 use infrarust_api::events::named::{NamedEvent, NamedEventResponse};
 use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_api::events::proxy::{
@@ -111,7 +113,14 @@ async fn plugins_cannot_fire_builtin_events() {
     let shutdowns = count::<ProxyShutdownEvent>(bus.as_ref());
 
     let pre_login = forger_ref.fire(pre_login()).await;
-    let reload = forger_ref.fire(ConfigReloadEvent).await;
+    let reload = forger_ref
+        .fire(ConfigReloadEvent::new(
+            "file",
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await;
     let shutdown = forger_ref.fire(ProxyShutdownEvent).await;
 
     assert_eq!(pre_login.err(), Some(FireError::Reserved));
@@ -216,7 +225,7 @@ async fn a_failing_handler_names_the_plugin_that_fired_the_event() {
 
 type Probe = (&'static str, fn() -> TypeId);
 
-const BUILTIN_NAMES: [Probe; 22] = [
+const BUILTIN_NAMES: [Probe; 26] = [
     ("PreLoginEvent", TypeId::of::<PreLoginEvent>),
     (
         "GameProfileRequestEvent",
@@ -251,6 +260,16 @@ const BUILTIN_NAMES: [Probe; 22] = [
     ),
     ("BanIssuedEvent", TypeId::of::<BanIssuedEvent>),
     ("BanRevokedEvent", TypeId::of::<BanRevokedEvent>),
+    (
+        "ConnectionHandshakeEvent",
+        TypeId::of::<ConnectionHandshakeEvent>,
+    ),
+    (
+        "ConnectionRejectedEvent",
+        TypeId::of::<ConnectionRejectedEvent>,
+    ),
+    ("LimboEnterEvent", TypeId::of::<LimboEnterEvent>),
+    ("LimboExitEvent", TypeId::of::<LimboExitEvent>),
 ];
 
 const OPEN_API_EVENTS: [&str; 1] = ["NamedEvent"];

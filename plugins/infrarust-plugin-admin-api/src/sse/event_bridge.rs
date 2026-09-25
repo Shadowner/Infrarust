@@ -4,6 +4,7 @@ use infrarust_api::events::connection::ServerPostConnectEvent;
 use infrarust_api::events::lifecycle::{DisconnectEvent, PostLoginEvent};
 use infrarust_api::events::proxy::{BackendHealthEvent, ConfigReloadEvent, ServerStateChangeEvent};
 use infrarust_api::plugin::PluginContext;
+use infrarust_api::types::ServerId;
 use tokio::sync::broadcast;
 
 use crate::state::ApiEvent;
@@ -81,8 +82,15 @@ impl EventBridge {
         // ConfigReloadEvent → ConfigReload
         let tx = self.event_tx.clone();
         ctx.event_bus()
-            .subscribe::<ConfigReloadEvent, _>(EventPriority::LAST, move |_event| {
+            .subscribe::<ConfigReloadEvent, _>(EventPriority::LAST, move |event| {
+                let ids = |servers: &[ServerId]| -> Vec<String> {
+                    servers.iter().map(|s| s.as_str().to_string()).collect()
+                };
                 let _ = tx.send(ApiEvent::ConfigReload {
+                    provider: event.provider.clone(),
+                    added: ids(&event.added),
+                    removed: ids(&event.removed),
+                    updated: ids(&event.updated),
                     timestamp: now_iso8601(),
                 });
             });

@@ -13,10 +13,14 @@ use infrarust_api::events::connection::{
     PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPostConnectEvent,
     ServerPreConnectEvent, ServerPreConnectResult,
 };
+use infrarust_api::events::handshake::{
+    ConnectionHandshakeEvent, ConnectionHandshakeResult, ConnectionRejectedEvent, RejectReason,
+};
 use infrarust_api::events::lifecycle::{
     DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult, OnlineAuthFailed,
     PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent, PreLoginResult,
 };
+use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
 use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
@@ -56,10 +60,14 @@ pub enum EventKind {
     ServerStateChange,
     BanIssued,
     BanRevoked,
+    ConnectionHandshake,
+    ConnectionRejected,
+    LimboEnter,
+    LimboExit,
 }
 
 impl EventKind {
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 26] = [
         Self::PreLogin,
         Self::GameProfileRequest,
         Self::Login,
@@ -82,6 +90,10 @@ impl EventKind {
         Self::ServerStateChange,
         Self::BanIssued,
         Self::BanRevoked,
+        Self::ConnectionHandshake,
+        Self::ConnectionRejected,
+        Self::LimboEnter,
+        Self::LimboExit,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -108,6 +120,10 @@ impl EventKind {
             Self::ServerStateChange => "ServerStateChange",
             Self::BanIssued => "BanIssued",
             Self::BanRevoked => "BanRevoked",
+            Self::ConnectionHandshake => "ConnectionHandshake",
+            Self::ConnectionRejected => "ConnectionRejected",
+            Self::LimboEnter => "LimboEnter",
+            Self::LimboExit => "LimboExit",
         }
     }
 }
@@ -608,8 +624,18 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
     on::<ProxyShutdownEvent>(bus, recorder, |_| {
         (EventKind::ProxyShutdown, None, None, json!({}))
     });
-    on::<ConfigReloadEvent>(bus, recorder, |_| {
-        (EventKind::ConfigReload, None, None, json!({}))
+    on::<ConfigReloadEvent>(bus, recorder, |e| {
+        (
+            EventKind::ConfigReload,
+            None,
+            None,
+            json!({
+                "provider": e.provider,
+                "added": servers(&e.added),
+                "removed": servers(&e.removed),
+                "updated": servers(&e.updated),
+            }),
+        )
     });
     on::<BackendHealthEvent>(bus, recorder, |e| {
         let servers: Vec<&str> = e.servers.iter().map(ServerId::as_str).collect();
@@ -652,6 +678,82 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
             ban_detail(&e.entry, &e.source, e.silent),
         )
     });
+    on::<ConnectionHandshakeEvent>(bus, recorder, |e| {
+        let result = match e.result() {
+            ConnectionHandshakeResult::Allow => json!("allow"),
+            ConnectionHandshakeResult::Deny { reason } => {
+                json!({ "deny": reason.as_ref().map(ToString::to_string) })
+            }
+            ConnectionHandshakeResult::DropSilently => json!("drop_silently"),
+            _ => json!("other"),
+        };
+        (
+            EventKind::ConnectionHandshake,
+            None,
+            None,
+            json!({
+                "remote_addr": e.remote_addr.to_string(),
+                "virtual_host": e.virtual_host,
+                "raw_host": e.raw_host,
+                "port": e.port,
+                "protocol_version": e.protocol_version.raw(),
+                "intent": e.intent.as_str(),
+                "legacy": e.legacy,
+                "server": server(e.server.as_ref()),
+                "result": result,
+            }),
+        )
+    });
+    on::<ConnectionRejectedEvent>(bus, recorder, |e| {
+        let plugin = match &e.reason {
+            RejectReason::Plugin { plugin_id } => json!(plugin_id),
+            _ => Value::Null,
+        };
+        (
+            EventKind::ConnectionRejected,
+            None,
+            None,
+            json!({
+                "remote_addr": e.remote_addr.to_string(),
+                "virtual_host": e.virtual_host,
+                "reason": e.reason.as_str(),
+                "plugin": plugin,
+            }),
+        )
+    });
+    on::<LimboEnterEvent>(bus, recorder, |e| {
+        (
+            EventKind::LimboEnter,
+            Some(e.player_id()),
+            Some(e.player.profile().username.clone()),
+            json!({
+                "handlers": e.handlers,
+                "context": format!("{:?}", e.context),
+                "current_server": server(e.player.current_server().as_ref()),
+            }),
+        )
+    });
+    on::<LimboExitEvent>(bus, recorder, |e| {
+        let reason = match &e.reason {
+            LimboExitReason::Kicked { reason } => Some(reason.to_string()),
+            _ => None,
+        };
+        let handlers = match &e.reason {
+            LimboExitReason::SentToLimbo { handlers } => json!(handlers),
+            _ => Value::Null,
+        };
+        (
+            EventKind::LimboExit,
+            Some(e.player_id()),
+            Some(e.player.profile().username.clone()),
+            json!({
+                "reason": e.reason.as_str(),
+                "kick_reason": reason,
+                "handlers": handlers,
+                "next_server": server(e.next_server.as_ref()),
+            }),
+        )
+    });
 }
 
 fn ban_detail(entry: &BanEntry, source: &BanSource, silent: bool) -> Value {
@@ -667,6 +769,10 @@ fn ban_detail(entry: &BanEntry, source: &BanSource, silent: bool) -> Value {
 
 pub fn component_value(component: &Component) -> Value {
     serde_json::from_str(&component.to_json()).unwrap_or(Value::Null)
+}
+
+fn servers(servers: &[ServerId]) -> Value {
+    json!(servers.iter().map(ServerId::as_str).collect::<Vec<_>>())
 }
 
 fn server(server: Option<&ServerId>) -> Value {

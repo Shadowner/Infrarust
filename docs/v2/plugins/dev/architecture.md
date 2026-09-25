@@ -179,8 +179,9 @@ Events fall into categories:
 
 | Category | Events |
 |----------|--------|
+| Handshake | `ConnectionHandshakeEvent`, `ConnectionRejectedEvent` |
 | Lifecycle | `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `DisconnectEvent` |
-| Connection | `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent` |
+| Connection | `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent` |
 | Chat | `ChatMessageEvent`, `CommandExecuteEvent` |
 | Proxy | `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `ConfigReloadEvent`, `ServerStateChangeEvent`, `BackendHealthEvent` |
 | Packet (Tier 3) | `RawPacketEvent` (packet subscriptions only) |

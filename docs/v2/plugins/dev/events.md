@@ -10,7 +10,30 @@ Infrarust fires events at key points in a player's lifecycle, from initial conne
 
 ## Player lifecycle
 
-The events a player goes through depend on the proxy mode of the server they join.
+The events a player goes through depend on the proxy mode of the server they join. Before any of them, every connection goes through the same [handshake](#before-the-login).
+
+### Before the login
+
+```
+connection accepted
+  → IP filter ──────────────────────── refused ──▶ ConnectionRejectedEvent (ip_filter)
+  → handshake read
+  → IP ban, for a server list ping ─── banned ───▶ ConnectionRejectedEvent (ip_banned)
+  → rate limit ─────────────────────── exceeded ─▶ ConnectionRejectedEvent (rate_limit)
+  → domain routing ─────────────────── unknown ──▶ ConnectionRejectedEvent (unknown_domain)
+                   ─── server's IP filter ──▶ ConnectionRejectedEvent (ip_filter)
+  → ConnectionHandshakeEvent ── Deny, DropSilently ──▶ ConnectionRejectedEvent (plugin)
+  → server list ping: ProxyPingEvent
+  → login: name and IP ban ─────────── banned ───▶ ConnectionRejectedEvent (banned, ip_banned)
+           server manager ──────────── unavailable ▶ ConnectionRejectedEvent (server_unavailable)
+           PreLoginEvent, and the flows below
+```
+
+A connection that reaches `ConnectionHandshakeEvent` passed the proxy's own checks. A connection the proxy refuses, before or after that event, posts exactly one [`ConnectionRejectedEvent`](#connectionrejectedevent) and never becomes a player. Refusals from the login on (`PreLoginEvent` or `LoginEvent` denied, the UUID ban after authentication) do not post it: their own events report them.
+
+A server list ping to an unknown domain is answered with `[default_motd]` when [`unknown_domain_behavior`](../../configuration/global#unknown-domain-behavior) is `default_motd`, so it goes through `ConnectionHandshakeEvent` with no server. A login to an unknown domain, or any connection to one with `drop`, is refused.
+
+Clients older than 1.7 go through the IP filter, then their own path: a legacy ping checks IP bans, then fires `ConnectionHandshakeEvent`; a legacy login is refused for an unknown domain, then fires `ConnectionHandshakeEvent`, then checks name and IP bans. The rate limit does not apply to them.
 
 ### `offline` and `client_only`
 
@@ -29,7 +52,7 @@ PreLoginEvent ─────────────── Denied ──▶ dis
   → PostLoginEvent
   → PlayerChooseInitialServerEvent
   → ServerPreConnectEvent (cause: initial)
-  → limbo gate, when the server or a listener asks for one
+  → limbo gate, when the server or a listener asks for one (LimboEnterEvent → LimboExitEvent)
   → backend login ────────────── refused ──▶ no ServerConnectedEvent
   → ServerConnectedEvent       the backend accepted the login
   → ServerPostConnectEvent     the server's JoinGame reached the client
@@ -117,7 +140,7 @@ When the proxy stops (a signal, the `stop` console command, or a plugin cancelli
 2. It ends every connection. In `offline` and `client_only`, a player is disconnected with "Proxy is shutting down", in whatever phase it is in (login, configuration or play). In passthrough modes, a player whose traffic is already forwarded only sees the connection close, because the proxy does not write into the forwarded stream. Each player's `DisconnectEvent` fires with the cause `Shutdown` while every plugin is still enabled and subscribed. A login still in progress gets the same message and ends without a `PostLoginEvent`, so it gets no `DisconnectEvent` either. Server list pings and connections that have not finished their handshake are closed.
 3. It waits for every connection to finish, for at most 30 seconds. Each `DisconnectEvent` is still bounded by `[events] disconnect_deadline`, so a listener that hangs holds the shutdown only that long.
 4. It fires `ProxyShutdownEvent` and waits for its listeners. By then no player is online, unless the 30 seconds ran out.
-5. It delivers the queued events that were posted before this point (`ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`).
+5. It delivers the queued events that were posted before this point (`ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `ConnectionRejectedEvent`).
 6. It disables the plugins, in reverse load order: `on_disable` runs, then the plugin's listeners, commands, scheduled tasks and config providers are removed.
 7. It stops its background work: the file and Docker providers and their watchers, active health probes, the expired ban purge and server manager monitoring.
 
@@ -185,10 +208,98 @@ Every event goes through the same dispatch: listeners run one after another in p
 
 | Delivery | Events | What it means |
 |----------|--------|---------------|
-| Inline, awaited | `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
-| Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `BanIssuedEvent`, `BanRevokedEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
+| Inline, awaited | `ConnectionHandshakeEvent`, `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
+| Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `BanIssuedEvent`, `BanRevokedEvent`, `ConnectionRejectedEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
 
 Because the queue delivers one event at a time, a slow listener on a queued event delays the queued events behind it, up to `handler_timeout` per listener. A listener that panics does not stop the queue: the next event is still delivered.
+
+`ConnectionHandshakeEvent` and `ConnectionRejectedEvent` fire for every connection, including floods of bots. The proxy builds and dispatches them only while at least one listener is subscribed, so they cost nothing when no plugin uses them.
+
+## Handshake events
+
+These fire before a player exists: there is no `Player` yet, only an address and a handshake. Anti-bot and anti-VPN plugins use them.
+
+### ConnectionHandshakeEvent
+
+Fired once per connection, right after the proxy routed its domain and before anything else happens: before `ProxyPingEvent` for a server list ping, before the login start is read and `PreLoginEvent` for a login. It fires for connections that passed the IP filter, the rate limit and, for a ping, the IP ban check, see [before the login](#before-the-login). Awaited.
+
+**Type:** Resulted
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `remote_addr` | `SocketAddr` | The client's address. Behind a load balancer that sends the PROXY protocol ([`receive_proxy_protocol`](../../configuration/global#proxy-protocol)), the address from the header |
+| `virtual_host` | `Option<String>` | The domain from the handshake, lowercased, without the Forge marker or trailing dot. `None` when a legacy ping sends no host |
+| `raw_host` | `String` | The host as the client sent it, with its case, Forge marker (`\0FML3\0`) and trailing dot. Empty when a legacy ping sends no host |
+| `port` | `u16` | The port from the handshake, 0 when a legacy ping sends none |
+| `protocol_version` | `ProtocolVersion` | The client's protocol version. For a client older than 1.7, the legacy protocol number, or 0 for a ping format that carries none |
+| `intent` | `HandshakeIntent` | `Status` (server list ping), `Login` or `Transfer` (a 1.20.5+ client sent by a `Transfer` packet, which the proxy closes after the event: transfers are not supported yet). `as_str()` gives `status`, `login`, `transfer` |
+| `legacy` | `bool` | `true` for a client older than 1.7 |
+| `server` | `Option<ServerId>` | The server the domain routes to. `None` for a ping to an unknown domain |
+
+**Results** (`ConnectionHandshakeResult`, `#[non_exhaustive]`, the shortcut method in parentheses):
+
+| Variant | Description |
+|---------|-------------|
+| `Allow` (default, `allow()`) | Let the connection go on |
+| `Deny { reason }` (`deny(reason)`) | Refuse the connection. A login is disconnected in the login phase with `reason`, or "You are not allowed to connect to this server" when it is `None`. A client older than 1.7 gets a legacy kick. A server list ping gets no answer: the proxy closes the connection |
+| `DropSilently` (`drop_silently()`) | Close the connection without sending anything |
+
+A refused connection posts a `ConnectionRejectedEvent` with the reason `Plugin`, carrying the ID of the plugin whose listener last changed the result.
+
+```rust
+use infrarust_api::events::handshake::{ConnectionHandshakeEvent, HandshakeIntent};
+
+ctx.event_bus().subscribe::<ConnectionHandshakeEvent, _>(
+    EventPriority::FIRST,
+    |event| {
+        if is_known_vpn(event.remote_addr.ip()) {
+            match event.intent {
+                HandshakeIntent::Status => event.drop_silently(),
+                _ => event.deny(Component::error("VPNs are not allowed.")),
+            }
+        }
+    },
+);
+```
+
+### ConnectionRejectedEvent
+
+Posted when the proxy refuses a connection before a player exists, exactly once per refused connection. Informational and queued: the proxy refuses the client without waiting for listeners, and listeners see the refusals in the order they happened. See [before the login](#before-the-login) for where each refusal happens.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `remote_addr` | `SocketAddr` | The client's address, from the PROXY protocol header when there is one |
+| `virtual_host` | `Option<String>` | The domain from the handshake, lowercased. `None` when the connection was refused before its handshake was read |
+| `reason` | `RejectReason` | Why the proxy refused it |
+
+**`RejectReason`** (`#[non_exhaustive]`, `as_str()` gives the name in parentheses):
+
+| Variant | Description |
+|---------|-------------|
+| `IpFilter` (`ip_filter`) | The global [`ip_filter`](../../configuration/global#ip-filter) or the server's own filter refused the address |
+| `RateLimit` (`rate_limit`) | The address went over [`rate_limit`](../../configuration/global#rate-limiting) |
+| `UnknownDomain` (`unknown_domain`) | No server has the domain: a login, or any connection when `unknown_domain_behavior` is `drop` |
+| `IpBanned` (`ip_banned`) | A ban on the address or a range that contains it, for a server list ping or a login |
+| `Banned` (`banned`) | A ban on the name (or the UUID the client claimed) before authentication, or a ban check that failed and refused the login |
+| `ServerUnavailable` (`server_unavailable`) | The [server manager](../../guide/server-management) could not start the server, or it is stopping |
+| `Plugin { plugin_id }` (`plugin`) | A `ConnectionHandshakeEvent` listener denied or dropped the connection. `plugin_id` is the plugin that set the result, `None` when the proxy cannot tell |
+
+Connections a plugin's transport filter rejects are not reported. The listener limit ([`max_connections`](../../configuration/global#connection-limits)) refuses nothing: while it is reached, the proxy waits before it accepts the next connection, so the kernel holds it in the backlog.
+
+```rust
+use infrarust_api::events::handshake::{ConnectionRejectedEvent, RejectReason};
+
+ctx.event_bus().subscribe::<ConnectionRejectedEvent, _>(
+    EventPriority::NORMAL,
+    |event| {
+        if event.reason == RejectReason::RateLimit {
+            tracing::warn!("{} is flooding the proxy", event.remote_addr.ip());
+        }
+    },
+);
+```
+
+WASM plugins (contract 0.2.3) do not receive handshake events.
 
 ## Lifecycle events
 
@@ -579,6 +690,44 @@ ctx.event_bus().subscribe::<KickedFromServerEvent, _>(
 );
 ```
 
+### LimboEnterEvent
+
+Fired when a player enters a chain of [limbo handlers](./architecture#layer-4-limbohandler): an initial gate (the server's `limbo_handlers`, or `SendToLimbo` from `PlayerChooseInitialServerEvent` or `ServerPreConnectEvent`), a kick sent to limbo by `KickedFromServerEvent`, a switch sent to limbo by `ServerPreConnectEvent`, or a limbo handler moving the player to another chain with `SendToLimbo`. Awaited in the player's session, once the client has left the login and configuration phases, before the proxy sends the limbo world and before the first handler's `on_player_enter`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `player` | `Arc<dyn Player>` | The player |
+| `handlers` | `Vec<String>` | The names of the handlers the player goes through, in order |
+| `context` | `LimboEntryContext` | Why the player entered: `InitialConnection { target_server }`, `KickedFromServer { server, reason }` or `PluginRedirect { from_server }` |
+
+`player_id()` is a shortcut for `player.id()`.
+
+### LimboExitEvent
+
+Fired when the player leaves the handler chain, whatever ends it. Awaited in the player's session, before the proxy acts on the outcome: the `ServerPreConnectEvent` of the next server, the next `LimboEnterEvent`, or the player's `DisconnectEvent` follow it.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `player` | `Arc<dyn Player>` | The player |
+| `reason` | `LimboExitReason` | How the chain ended |
+| `next_server` | `Option<ServerId>` | The server the proxy connects the player to now, `None` when the player is not sent to a server |
+
+**`LimboExitReason`** (`#[non_exhaustive]`, `as_str()` gives the name in parentheses):
+
+| Variant | Description |
+|---------|-------------|
+| `Released` (`released`) | Every handler accepted the player. `next_server` is the server the chain held them for: the initial server, the server that kicked them, or the server they were on when a switch sent them to limbo |
+| `Redirected` (`redirected`) | A handler or `Player::switch_server` sent the player to `next_server` |
+| `SentToLimbo { handlers }` (`sent_to_limbo`) | A handler moved the player to another chain. A `LimboEnterEvent` follows when those handlers exist |
+| `Kicked { reason }` (`kicked`) | A handler denied the player or `Player::disconnect` was called. The client was shown `reason` |
+| `Disconnected` (`disconnected`) | The client left |
+| `TimedOut` (`timed_out`) | The client stopped answering keep-alives |
+| `Shutdown` (`shutdown`) | The proxy is shutting down |
+
+For one stay in limbo the order is `LimboEnterEvent`, then `LimboExitEvent`, then what the outcome leads to. After an initial gate that released the player, `ServerConnectedEvent` follows directly: the gate's `ServerPreConnectEvent` fired before `LimboEnterEvent`.
+
+WASM plugins (contract 0.2.3) do not receive limbo events.
+
 ### WASM connection events
 
 WASM plugins (contract 0.2.3) keep the records they had. `server-pre-connect` carries `server` as `original-server`, and `server-connected` fires with `ServerConnectedEvent`, so it now waits for the backend to accept the login. `server-switch` fires from `ServerPostConnectEvent` when `switched_from()` is set, with the same `previous-server` and `new-server` fields. WASM plugins do not see `previous_server`, `cause`, or a join that is not a switch.
@@ -813,16 +962,35 @@ Fired during shutdown, once every player session has ended and before any plugin
 
 ### ConfigReloadEvent
 
-Fired when the proxy configuration is hot-reloaded. No fields. Subscribe to this to re-read your plugin's config at runtime.
+Posted when a config provider changed the proxy's servers. Informational, delivered through the ordered queue. One event covers one batch of changes from one provider:
+
+- the file provider: one scan of the servers directory, which runs once the directory has been quiet for 300 ms (at most 2 seconds after the first change), so files written together are one event;
+- the Docker provider: one container change;
+- a plugin config provider: one `send`.
+
+It lists the servers the batch actually changed. A batch that changes nothing, such as a server file rewritten with the same content, posts no event. The servers loaded at startup post none either.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider` | `String` | The provider type: `file`, `docker`, or `plugin:<plugin id>:<provider type>` for a plugin config provider |
+| `added` | `Vec<ServerId>` | Servers that did not exist before, sorted by ID |
+| `removed` | `Vec<ServerId>` | Servers that no longer exist, sorted by ID |
+| `updated` | `Vec<ServerId>` | Servers whose configuration changed, sorted by ID. A file whose `id` changed counts as the old server removed and the new one added |
+
+`is_empty()` tells whether all three lists are empty, which never happens for a posted event.
 
 ```rust
 ctx.event_bus().subscribe::<ConfigReloadEvent, _>(
     EventPriority::NORMAL,
-    |_event| {
-        tracing::info!("Config reloaded, refreshing plugin settings");
+    |event| {
+        for server in &event.removed {
+            tracing::info!("{server} was removed by the {} provider", event.provider);
+        }
     },
 );
 ```
+
+WASM plugins (contract 0.2.3) receive `config-reload` with no fields, as before.
 
 ### ServerStateChangeEvent
 

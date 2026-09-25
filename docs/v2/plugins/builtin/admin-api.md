@@ -377,6 +377,20 @@ Omit the `types` parameter to receive all events. The stream sends a keep-alive 
 
 The state is the one selection acts on, so a drained address reports `draining` even while its own health checks pass.
 
+`config.reload` carries the provider that changed the servers and the IDs of the servers it added, removed and updated. One event covers one batch, for example every file written in the servers directory at once:
+
+```json
+{
+  "provider": "file",
+  "added": ["creative"],
+  "removed": [],
+  "updated": ["lobby", "survival"],
+  "timestamp": "2025-01-15T10:30:00Z"
+}
+```
+
+A rewrite that changes nothing sends no event.
+
 ### Log stream
 
 ```

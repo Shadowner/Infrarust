@@ -141,7 +141,12 @@ async fn events_posted_during_shutdown_reach_plugins_before_they_are_disabled() 
         ScriptedPlugin::new("poster").on::<ProxyShutdownEvent>(EventPriority::NORMAL, move |_| {
             bus.get()
                 .expect("the bus is known once the proxy runs")
-                .post(ConfigReloadEvent);
+                .post(ConfigReloadEvent::new(
+                    "file",
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ));
         })
     };
     let proxy = TestProxy::builder()

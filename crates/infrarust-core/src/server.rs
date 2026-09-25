@@ -36,6 +36,7 @@ use crate::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::middleware::server_manager::ServerManagerMiddleware;
 use crate::middleware::telemetry::{ConnectionSpan, TelemetryMiddleware};
 use crate::pipeline::Pipeline;
+use crate::pipeline::admission::{self, Admission};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
 use crate::pipeline::types::{
@@ -568,25 +569,29 @@ impl ProxyServer {
                 if ctx.extensions.contains::<LegacyDetected>() {
                     return self.legacy_handler.handle(&mut ctx).await;
                 }
+                admission::reject_refused(&self.services.event_bus, &ctx);
                 return Ok(());
             }
             MiddlewareResult::Reject(msg) => {
-                if self.unknown_domain_behavior == UnknownDomainBehavior::Drop {
-                    tracing::debug!("dropping connection: {msg}");
-                    return Ok(());
-                }
                 let is_status = ctx
                     .extensions
                     .get::<HandshakeData>()
                     .is_some_and(|h| h.intent == ConnectionIntent::Status);
-                if !is_status {
-                    self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
-                } else if ctx.extensions.contains::<UnknownDomain>() {
-                    self.answer_status(&mut ctx, &shutdown).await?;
+                let answered = is_status
+                    && ctx.extensions.contains::<UnknownDomain>()
+                    && self.unknown_domain_behavior != UnknownDomainBehavior::Drop;
+                if !answered {
+                    admission::reject_refused(&self.services.event_bus, &ctx);
+                    if self.unknown_domain_behavior == UnknownDomainBehavior::Drop {
+                        tracing::debug!("dropping connection: {msg}");
+                    } else if !is_status {
+                        self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
+                    }
+                    return Ok(());
                 }
-                return Ok(());
             }
             MiddlewareResult::Kick(reason) => {
+                admission::reject_refused(&self.services.event_bus, &ctx);
                 self.send_kick(&mut ctx, &reason).await.ok();
                 return Ok(());
             }
@@ -596,6 +601,22 @@ impl ProxyServer {
         let intent = ctx
             .require_extension::<HandshakeData>("HandshakeData")?
             .intent;
+
+        let screened = tokio::select! {
+            biased;
+            () = shutdown.cancelled() => return Ok(()),
+            screened = admission::screen_connection(&self.services.event_bus, &ctx) => screened,
+        };
+        match screened {
+            Admission::Admitted => {}
+            Admission::Denied(reason) => {
+                if intent != ConnectionIntent::Status {
+                    self.send_kick(&mut ctx, &reason).await.ok();
+                }
+                return Ok(());
+            }
+            Admission::Dropped => return Ok(()),
+        }
 
         match intent {
             ConnectionIntent::Status => self.answer_status(&mut ctx, &shutdown).await?,
@@ -617,10 +638,12 @@ impl ProxyServer {
                     MiddlewareResult::Continue => {}
                     MiddlewareResult::ShortCircuit => return Ok(()),
                     MiddlewareResult::Reject(msg) => {
+                        admission::reject_refused(&self.services.event_bus, &ctx);
                         self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
                         return Ok(());
                     }
                     MiddlewareResult::Kick(reason) => {
+                        admission::reject_refused(&self.services.event_bus, &ctx);
                         self.send_kick(&mut ctx, &reason).await.ok();
                         return Ok(());
                     }

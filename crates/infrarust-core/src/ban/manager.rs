@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 use infrarust_api::error::ServiceError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
+use infrarust_api::events::handshake::RejectReason;
 use infrarust_api::player::Player;
 use infrarust_api::services::ban_service::{
     BanFeatures, BanPage, BanProvider, BanProviderRejected, BanQuery, BanRequest, BanService,
@@ -25,6 +26,12 @@ use crate::registry::ConnectionRegistry;
 
 pub const BAN_CHECK_UNAVAILABLE: &str =
     "Your ban status cannot be checked right now. Please try again later.";
+
+#[derive(Debug, Clone)]
+pub struct Refusal {
+    pub message: Component,
+    pub reason: RejectReason,
+}
 
 #[derive(Debug, Clone)]
 pub struct IssuedBan {
@@ -169,6 +176,10 @@ impl BanManager {
     }
 
     pub async fn refusal(&self, attempt: &LoginAttempt) -> Option<Component> {
+        self.refuse(attempt).await.map(|refusal| refusal.message)
+    }
+
+    pub async fn refuse(&self, attempt: &LoginAttempt) -> Option<Refusal> {
         match self.check(attempt).await {
             Ok(None) => None,
             Ok(Some(verdict)) => {
@@ -180,7 +191,14 @@ impl BanManager {
                     ban_target = %verdict.entry.target,
                     "connection refused: banned"
                 );
-                Some(verdict.kick_message)
+                let reason = match verdict.entry.target {
+                    BanTarget::Ip(_) | BanTarget::IpRange(_) => RejectReason::IpBanned,
+                    _ => RejectReason::Banned,
+                };
+                Some(Refusal {
+                    message: verdict.kick_message,
+                    reason,
+                })
             }
             Err(e) if attempt.stage == LoginStage::Status => {
                 tracing::warn!(ip = %attempt.ip, error = %e, "could not check bans for a status request, answering it");
@@ -194,7 +212,10 @@ impl BanManager {
                     error = %e,
                     "could not check bans, refusing the login"
                 );
-                Some(Component::text(BAN_CHECK_UNAVAILABLE))
+                Some(Refusal {
+                    message: Component::text(BAN_CHECK_UNAVAILABLE),
+                    reason: RejectReason::Banned,
+                })
             }
         }
     }

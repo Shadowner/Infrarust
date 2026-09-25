@@ -6,6 +6,7 @@ use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::connection::{
     ConnectCause, KickCause, KickedFromServerEvent, KickedFromServerResult,
 };
+use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
 use infrarust_api::player::Player;
@@ -239,6 +240,15 @@ pub(super) async fn run_session_loop(
                         .ok();
                     break ProxyLoopOutcome::Error(e);
                 }
+                let player = Arc::clone(session) as Arc<dyn Player>;
+                services
+                    .event_bus
+                    .fire(LimboEnterEvent::new(
+                        Arc::clone(&player),
+                        handlers.iter().map(|h| h.name().to_string()).collect(),
+                        entry_ctx.clone(),
+                    ))
+                    .await;
                 let exit = enter_limbo(
                     client,
                     handlers.clone(),
@@ -252,6 +262,13 @@ pub(super) async fn run_session_loop(
                 )
                 .await;
 
+                let shutting_down = session_token.is_cancelled();
+                let (reason, next_server) = limbo_exit(&exit, shutting_down, &current_server_id);
+                services
+                    .event_bus
+                    .fire(LimboExitEvent::new(player, reason, next_server))
+                    .await;
+
                 let gate_target = match entry_ctx {
                     LimboEntryContext::InitialConnection { target_server } => {
                         Some(target_server.clone())
@@ -262,7 +279,7 @@ pub(super) async fn run_session_loop(
 
                 match exit {
                     LimboExitResult::Completed | LimboExitResult::SwitchedTo(_)
-                        if session_token.is_cancelled() =>
+                        if shutting_down =>
                     {
                         break ProxyLoopOutcome::Shutdown;
                     }
@@ -343,6 +360,35 @@ pub(super) async fn run_session_loop(
                 }
             }
         }
+    }
+}
+
+fn limbo_exit(
+    exit: &LimboExitResult,
+    shutting_down: bool,
+    held_for: &ServerId,
+) -> (LimboExitReason, Option<ServerId>) {
+    match exit {
+        LimboExitResult::Completed | LimboExitResult::SwitchedTo(_) if shutting_down => {
+            (LimboExitReason::Shutdown, None)
+        }
+        LimboExitResult::Completed => (LimboExitReason::Released, Some(held_for.clone())),
+        LimboExitResult::SwitchedTo(server) => (LimboExitReason::Redirected, Some(server.clone())),
+        LimboExitResult::SendToLimbo(handlers) => (
+            LimboExitReason::SentToLimbo {
+                handlers: handlers.clone(),
+            },
+            None,
+        ),
+        LimboExitResult::Kicked(reason) => (
+            LimboExitReason::Kicked {
+                reason: reason.clone(),
+            },
+            None,
+        ),
+        LimboExitResult::ClientDisconnected => (LimboExitReason::Disconnected, None),
+        LimboExitResult::Timeout => (LimboExitReason::TimedOut, None),
+        LimboExitResult::Shutdown => (LimboExitReason::Shutdown, None),
     }
 }
 

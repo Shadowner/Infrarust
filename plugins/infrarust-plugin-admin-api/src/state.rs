@@ -92,6 +92,10 @@ pub enum ApiEvent {
         timestamp: String,
     },
     ConfigReload {
+        provider: String,
+        added: Vec<String>,
+        removed: Vec<String>,
+        updated: Vec<String>,
         timestamp: String,
     },
     BanCreated {
@@ -189,7 +193,7 @@ impl ApiEvent {
                 format!("{server_id}: {old_state} → {new_state}"),
                 timestamp.clone(),
             ),
-            ApiEvent::ConfigReload { timestamp } => (
+            ApiEvent::ConfigReload { timestamp, .. } => (
                 "config.reload",
                 "Config reloaded".to_string(),
                 timestamp.clone(),

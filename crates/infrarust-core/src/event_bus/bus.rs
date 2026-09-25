@@ -16,7 +16,8 @@ use std::time::Duration;
 use futures_util::FutureExt;
 use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus, FireError};
 use infrarust_api::event::{
-    BoxFuture, ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection, PacketFilter,
+    BoxFuture, ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection,
+    PacketFilter, ResultedEvent,
 };
 use infrarust_api::events::named::NamedEvent;
 use infrarust_api::events::packet::RawPacketEvent;
@@ -165,6 +166,41 @@ impl EventBusImpl {
         )
         .await;
         event
+    }
+
+    pub async fn fire_decided<E>(&self, mut event: E) -> (E, Option<Arc<str>>)
+    where
+        E: ResultedEvent,
+        E::Result: Clone + PartialEq,
+    {
+        let snapshot = {
+            let map = self
+                .handlers
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            map.get(&TypeId::of::<E>()).cloned()
+        };
+        let mut decided_by = None;
+        if let Some(handlers) = snapshot {
+            let mut clock = Instant::now();
+            for entry in handlers.iter() {
+                let before = event.result().clone();
+                clock = self
+                    .dispatch_one(
+                        entry,
+                        &mut event,
+                        type_name::<E>(),
+                        &self.core_owner,
+                        self.config.handler_timeout,
+                        clock,
+                    )
+                    .await;
+                if *event.result() != before {
+                    decided_by = Some(Arc::clone(&entry.owner));
+                }
+            }
+        }
+        (event, decided_by)
     }
 
     pub fn fire_and_forget_arc<E: Event + Send + 'static>(self: &Arc<Self>, event: E) {

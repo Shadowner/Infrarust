@@ -7,6 +7,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::events::proxy::ConfigReloadEvent;
+use infrarust_api::types::ServerId;
 use infrarust_config::ServerConfig;
 
 use crate::error::CoreError;
@@ -14,7 +15,7 @@ use crate::event_bus::EventBusImpl;
 use crate::routing::DomainRouter;
 use crate::status::{FaviconCache, StatusCache};
 
-use super::{ConfigProvider, ProviderEvent};
+use super::{ConfigProvider, ProviderEvent, ProviderId};
 
 /// Orchestrates config providers, feeding their events into the `DomainRouter`.
 ///
@@ -160,25 +161,15 @@ async fn event_loop(
                 break;
             }
             event = rx.recv() => {
-                match event {
-                    Some(ProviderEvent::Added(pc)) => {
-                        tracing::info!(id = %pc.id, "config added by provider");
-                        router.add(pc.id, pc.config);
-                        on_config_change(&router, &status_cache, &favicon_cache, &event_bus).await;
-                    }
-                    Some(ProviderEvent::Updated(pc)) => {
-                        tracing::info!(id = %pc.id, "config updated by provider");
-                        router.update(pc.id, pc.config);
-                        on_config_change(&router, &status_cache, &favicon_cache, &event_bus).await;
-                    }
-                    Some(ProviderEvent::Removed(id)) => {
-                        tracing::info!(id = %id, "config removed by provider");
-                        router.remove(&id);
-                        on_config_change(&router, &status_cache, &favicon_cache, &event_bus).await;
-                    }
-                    None => {
-                        tracing::debug!("all provider senders dropped, event loop exiting");
-                        break;
+                let Some(event) = event else {
+                    tracing::debug!("all provider senders dropped, event loop exiting");
+                    break;
+                };
+                let reloads = apply(&router, event);
+                if !reloads.is_empty() {
+                    on_config_change(&router, &status_cache, &favicon_cache).await;
+                    for reload in reloads {
+                        event_bus.post(reload);
                     }
                 }
             }
@@ -186,12 +177,91 @@ async fn event_loop(
     }
 }
 
-/// Common post-change handler: invalidate caches, reload favicons, fire event.
+fn apply(router: &DomainRouter, event: ProviderEvent) -> Vec<ConfigReloadEvent> {
+    let mut changes = Vec::new();
+    flatten(event, &mut changes);
+
+    let mut before: Vec<(ProviderId, Option<Arc<ServerConfig>>)> = Vec::new();
+    for change in changes {
+        let id = match &change {
+            ProviderEvent::Added(pc) | ProviderEvent::Updated(pc) => pc.id.clone(),
+            ProviderEvent::Removed(id) => id.clone(),
+            ProviderEvent::Batch(_) => continue,
+        };
+        if !before.iter().any(|(seen, _)| *seen == id) {
+            let previous = router.get(&id);
+            before.push((id, previous));
+        }
+        match change {
+            ProviderEvent::Added(pc) => {
+                tracing::info!(id = %pc.id, "config added by provider");
+                router.add(pc.id, pc.config);
+            }
+            ProviderEvent::Updated(pc) => {
+                tracing::info!(id = %pc.id, "config updated by provider");
+                router.update(pc.id, pc.config);
+            }
+            ProviderEvent::Removed(id) => {
+                tracing::info!(id = %id, "config removed by provider");
+                router.remove(&id);
+            }
+            ProviderEvent::Batch(_) => {}
+        }
+    }
+
+    let mut reloads: Vec<ConfigReloadEvent> = Vec::new();
+    for (id, previous) in before {
+        let position = reloads
+            .iter()
+            .position(|reload| reload.provider == id.provider_type)
+            .unwrap_or_else(|| {
+                reloads.push(ConfigReloadEvent::new(
+                    id.provider_type.clone(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ));
+                reloads.len() - 1
+            });
+        let reload = &mut reloads[position];
+        match (previous, router.get(&id)) {
+            (None, Some(now)) => reload.added.push(ServerId::new(now.effective_id())),
+            (Some(was), None) => reload.removed.push(ServerId::new(was.effective_id())),
+            (Some(was), Some(now)) if was.effective_id() != now.effective_id() => {
+                reload.removed.push(ServerId::new(was.effective_id()));
+                reload.added.push(ServerId::new(now.effective_id()));
+            }
+            (Some(was), Some(now)) if was != now => {
+                reload.updated.push(ServerId::new(now.effective_id()));
+            }
+            _ => {}
+        }
+    }
+    reloads.retain(|reload| !reload.is_empty());
+    for reload in &mut reloads {
+        for ids in [&mut reload.added, &mut reload.removed, &mut reload.updated] {
+            ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+            ids.dedup();
+        }
+    }
+    reloads
+}
+
+fn flatten(event: ProviderEvent, into: &mut Vec<ProviderEvent>) {
+    match event {
+        ProviderEvent::Batch(events) => {
+            for event in events {
+                flatten(event, into);
+            }
+        }
+        change => into.push(change),
+    }
+}
+
 async fn on_config_change(
     router: &DomainRouter,
     status_cache: &StatusCache,
     favicon_cache: &FaviconCache,
-    event_bus: &Arc<EventBusImpl>,
 ) {
     status_cache.invalidate_all();
 
@@ -203,6 +273,4 @@ async fn on_config_change(
     if let Err(e) = favicon_cache.reload(&favicon_configs, None).await {
         tracing::warn!(error = %e, "failed to reload favicons after config change");
     }
-
-    event_bus.post(ConfigReloadEvent);
 }

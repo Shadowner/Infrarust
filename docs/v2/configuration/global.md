@@ -40,7 +40,7 @@ Number of Tokio async runtime threads. `0` (the default) lets the runtime pick a
 max_connections = 0
 ```
 
-Maximum simultaneous client connections. `0` means unlimited. When the limit is reached, new connections are rejected until existing ones close.
+Maximum simultaneous client connections. `0` means unlimited. When the limit is reached, the proxy stops accepting connections until existing ones close: new clients wait in the operating system's backlog instead of being refused.
 
 ## Timeouts
 

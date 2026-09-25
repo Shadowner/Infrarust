@@ -358,7 +358,13 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             Outcome::same("none")
         }
         EventName::ConfigReload => {
-            bus.fire(ConfigReloadEvent).await;
+            bus.fire(ConfigReloadEvent::new(
+                "file",
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ))
+            .await;
             Outcome::same("none")
         }
         EventName::ServerStateChange => {

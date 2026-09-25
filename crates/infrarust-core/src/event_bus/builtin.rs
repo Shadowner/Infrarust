@@ -7,17 +7,19 @@ use infrarust_api::events::connection::{
     KickedFromServerEvent, PlayerChooseInitialServerEvent, ServerConnectedEvent,
     ServerPostConnectEvent, ServerPreConnectEvent,
 };
+use infrarust_api::events::handshake::{ConnectionHandshakeEvent, ConnectionRejectedEvent};
 use infrarust_api::events::lifecycle::{
     DisconnectEvent, GameProfileRequestEvent, LoginEvent, OnlineAuthFailed, PermissionsSetupEvent,
     PostLoginEvent, PreLoginEvent,
 };
+use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
 use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
 
-pub static BUILTIN_EVENTS: [TypeId; 23] = [
+pub static BUILTIN_EVENTS: &[TypeId] = &[
     TypeId::of::<PreLoginEvent>(),
     TypeId::of::<GameProfileRequestEvent>(),
     TypeId::of::<LoginEvent>(),
@@ -40,6 +42,10 @@ pub static BUILTIN_EVENTS: [TypeId; 23] = [
     TypeId::of::<ServerStateChangeEvent>(),
     TypeId::of::<BanIssuedEvent>(),
     TypeId::of::<BanRevokedEvent>(),
+    TypeId::of::<ConnectionHandshakeEvent>(),
+    TypeId::of::<ConnectionRejectedEvent>(),
+    TypeId::of::<LimboEnterEvent>(),
+    TypeId::of::<LimboExitEvent>(),
     TypeId::of::<RawPacketEvent>(),
 ];
 

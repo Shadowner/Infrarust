@@ -107,10 +107,34 @@ pub struct ProxyShutdownEvent;
 
 impl Event for ProxyShutdownEvent {}
 
-/// Fired when the proxy configuration is hot-reloaded.
-///
-/// Plugins can re-read their configuration in response.
-pub struct ConfigReloadEvent;
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ConfigReloadEvent {
+    pub provider: String,
+    pub added: Vec<ServerId>,
+    pub removed: Vec<ServerId>,
+    pub updated: Vec<ServerId>,
+}
+
+impl ConfigReloadEvent {
+    pub fn new(
+        provider: impl Into<String>,
+        added: Vec<ServerId>,
+        removed: Vec<ServerId>,
+        updated: Vec<ServerId>,
+    ) -> Self {
+        Self {
+            provider: provider.into(),
+            added,
+            removed,
+            updated,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty() && self.updated.is_empty()
+    }
+}
 
 impl Event for ConfigReloadEvent {}
 

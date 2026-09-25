@@ -8,12 +8,13 @@ use governor::clock::DefaultClock;
 use governor::state::keyed::DashMapStateStore;
 use governor::{Quota, RateLimiter};
 
+use infrarust_api::events::handshake::RejectReason;
 use infrarust_config::RateLimitConfig;
 
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{ConnectionIntent, HandshakeData};
+use crate::pipeline::types::{ConnectionIntent, HandshakeData, Refused};
 
 type KeyedLimiter = RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>;
 
@@ -78,6 +79,7 @@ impl Middleware for RateLimiterMiddleware {
                     intent = ?handshake.intent,
                     "rate limit exceeded"
                 );
+                ctx.extensions.insert(Refused(RejectReason::RateLimit));
                 Ok(MiddlewareResult::Reject("Rate limit exceeded".into()))
             }
         })

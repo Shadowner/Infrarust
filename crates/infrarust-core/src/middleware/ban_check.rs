@@ -9,7 +9,7 @@ use crate::ban::BanManager;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
+use crate::pipeline::types::{HandshakeData, LoginData, Refused, RoutingData};
 
 pub struct BanCheckMiddleware {
     ban_manager: Arc<BanManager>,
@@ -45,8 +45,11 @@ impl Middleware for BanCheckMiddleware {
                 attempt = attempt.server(ServerId::new(routing.config_id.clone()));
             }
 
-            Ok(match self.ban_manager.refusal(&attempt).await {
-                Some(reason) => MiddlewareResult::Kick(reason),
+            Ok(match self.ban_manager.refuse(&attempt).await {
+                Some(refusal) => {
+                    ctx.extensions.insert(Refused(refusal.reason));
+                    MiddlewareResult::Kick(refusal.message)
+                }
                 None => MiddlewareResult::Continue,
             })
         })

@@ -63,6 +63,7 @@ async fn make_context_with_intent(ip: IpAddr, intent: ConnectionIntent) -> Conne
     let mut ctx = loopback(ip).await;
     ctx.extensions.insert(HandshakeData {
         domain: "lobby.test".to_string(),
+        raw_host: "lobby.test".to_string(),
         port: 25565,
         protocol_version: ProtocolVersion(767),
         intent,

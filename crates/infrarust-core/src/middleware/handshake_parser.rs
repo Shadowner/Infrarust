@@ -134,6 +134,7 @@ impl Middleware for HandshakeParserMiddleware {
 
                 ctx.extensions.insert(HandshakeData {
                     domain,
+                    raw_host: handshake.server_address,
                     port,
                     protocol_version,
                     intent,

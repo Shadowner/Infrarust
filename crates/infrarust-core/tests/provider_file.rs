@@ -100,14 +100,19 @@ fn summary(event: &ProviderEvent) -> String {
         ProviderEvent::Added(pc) => format!("added {}", pc.id),
         ProviderEvent::Updated(pc) => format!("updated {}", pc.id),
         ProviderEvent::Removed(id) => format!("removed {id}"),
+        ProviderEvent::Batch(events) => events.iter().map(summary).collect::<Vec<_>>().join(", "),
     }
 }
 
 async fn next_event(rx: &mut mpsc::Receiver<ProviderEvent>) -> ProviderEvent {
-    tokio::time::timeout(Duration::from_secs(5), rx.recv())
+    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("timeout waiting for event")
-        .expect("channel closed")
+        .expect("channel closed");
+    match event {
+        ProviderEvent::Batch(mut events) if events.len() == 1 => events.remove(0),
+        event => event,
+    }
 }
 
 struct Watching {
@@ -268,16 +273,19 @@ async fn test_watch_emits_changes_made_between_load_and_watch() {
         provider.watch(tx, shutdown_clone).await.unwrap();
     });
 
+    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("a change made before the watch was lost")
+        .expect("channel closed");
+    let ProviderEvent::Batch(changes) = event else {
+        panic!("expected one batch for one scan, got {}", summary(&event));
+    };
     let mut seen = Vec::new();
-    for _ in 0..3 {
-        let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-            .await
-            .unwrap_or_else(|_| panic!("a change made before the watch was lost, got {seen:?}"))
-            .expect("channel closed");
-        if let ProviderEvent::Updated(pc) = &event {
+    for change in &changes {
+        if let ProviderEvent::Updated(pc) = change {
             assert!(pc.config.domains.contains(&"survival.mc.com".to_string()));
         }
-        seen.push(summary(&event));
+        seen.push(summary(change));
     }
     seen.sort();
     assert_eq!(

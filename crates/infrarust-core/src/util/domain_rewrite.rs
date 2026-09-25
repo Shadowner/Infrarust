@@ -98,6 +98,7 @@ mod tests {
 
         HandshakeData {
             domain: "play.example.com".to_string(),
+            raw_host: "play.example.com".to_string(),
             port: 25565,
             protocol_version: ProtocolVersion::V1_21,
             intent: ConnectionIntent::Login,

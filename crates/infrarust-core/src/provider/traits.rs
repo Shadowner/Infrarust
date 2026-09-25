@@ -28,6 +28,7 @@ pub enum ProviderEvent {
     Updated(ProviderConfig),
     /// A server configuration was removed.
     Removed(ProviderId),
+    Batch(Vec<ProviderEvent>),
 }
 
 /// Source of dynamic server configurations.

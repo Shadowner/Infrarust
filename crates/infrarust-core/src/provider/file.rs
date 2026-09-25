@@ -211,12 +211,7 @@ async fn sleep_until_some(at: Option<Instant>) {
 }
 
 async fn publish(events: Vec<ProviderEvent>, sender: &mpsc::Sender<ProviderEvent>) -> bool {
-    for event in events {
-        if sender.send(event).await.is_err() {
-            return false;
-        }
-    }
-    true
+    events.is_empty() || sender.send(ProviderEvent::Batch(events)).await.is_ok()
 }
 
 fn file_id(path: &Path) -> ProviderId {
@@ -411,6 +406,9 @@ mod tests {
                 pc.id, pc.config.domains, pc.config.addresses[0].address.port
             ),
             ProviderEvent::Removed(id) => format!("{id} removed"),
+            ProviderEvent::Batch(events) => {
+                events.iter().map(describe).collect::<Vec<_>>().join(", ")
+            }
         }
     }
 

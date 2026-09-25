@@ -2,10 +2,12 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use infrarust_api::events::handshake::RejectReason;
+
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{HandshakeData, RoutingData, UnknownDomain};
+use crate::pipeline::types::{HandshakeData, Refused, RoutingData, UnknownDomain};
 use crate::routing::DomainRouter;
 
 /// Middleware that resolves the target server from the handshake domain.
@@ -46,6 +48,7 @@ impl Middleware for DomainRouterMiddleware {
                 tracing::debug!(domain, "no server found for domain");
                 let reason = format!("Unknown server: {domain}");
                 ctx.extensions.insert(UnknownDomain);
+                ctx.extensions.insert(Refused(RejectReason::UnknownDomain));
                 return Ok(MiddlewareResult::Reject(reason));
             };
             let config_id = server_config.effective_id();
@@ -59,6 +62,7 @@ impl Middleware for DomainRouterMiddleware {
                     server = %config_id,
                     "ip blocked by server filter"
                 );
+                ctx.extensions.insert(Refused(RejectReason::IpFilter));
                 return Ok(MiddlewareResult::Reject(format!(
                     "IP {} is not allowed on this server",
                     ctx.client_ip

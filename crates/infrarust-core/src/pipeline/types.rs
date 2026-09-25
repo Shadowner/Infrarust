@@ -20,6 +20,7 @@ pub enum ConnectionIntent {
 pub struct HandshakeData {
     /// Cleaned domain (FML markers stripped).
     pub domain: String,
+    pub raw_host: String,
     /// Port from handshake.
     pub port: u16,
     /// Protocol version from handshake.
@@ -66,3 +67,6 @@ pub struct LegacyDetected;
 
 #[derive(Debug, Clone, Copy)]
 pub struct UnknownDomain;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refused(pub infrarust_api::events::handshake::RejectReason);
