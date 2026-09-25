@@ -50,7 +50,10 @@ struct Enabled {
 async fn enable_scripted(script: &str, proxy_toml: &str) -> Enabled {
     let (tmp, plugins_dir) = stage(SCRIPTED);
     write_script(&plugins_dir, SCRIPTED, script);
-    let env = make_env(plugins_dir.clone());
+    let env = make_env_with(
+        plugins_dir.clone(),
+        EnvOptions::default().grant(SCRIPTED, "chat-intercept"),
+    );
     enable(tmp, plugins_dir, env, SCRIPTED, proxy_toml).await
 }
 
@@ -104,7 +107,17 @@ fn pre_login() -> PreLoginEvent {
 }
 
 fn chat() -> ChatMessageEvent {
-    ChatMessageEvent::new(PlayerId::new(1), "hello".to_string())
+    ChatMessageEvent::new(
+        support::session_player(
+            1,
+            nil_profile("Steve"),
+            ProtocolVersion::MINECRAFT_1_21.raw(),
+            "127.0.0.1:40000".parse().unwrap(),
+        ),
+        "hello".to_string(),
+        false,
+        Some(ServerId::from("lobby")),
+    )
 }
 
 fn post_login() -> PostLoginEvent {
@@ -200,7 +213,7 @@ async fn a_trapped_handler_leaves_its_event_unchanged_and_a_fresh_instance_handl
             .await
             .unwrap();
         assert!(
-            matches!(message.result(), ChatMessageResult::Modify { new_message } if new_message == "alive"),
+            matches!(message.result(), ChatMessageResult::Modify { message } if message == "alive"),
             "a fresh instance handled the next event"
         );
         assert_eq!(
@@ -209,7 +222,10 @@ async fn a_trapped_handler_leaves_its_event_unchanged_and_a_fresh_instance_handl
             "the fresh instance ran on_enable again before handling the next event"
         );
         assert_eq!(listeners::<PreLoginEvent>(&fx.env.event_bus, SCRIPTED), 1);
-        assert_eq!(listeners::<ChatMessageEvent>(&fx.env.event_bus, SCRIPTED), 1);
+        assert_eq!(
+            listeners::<ChatMessageEvent>(&fx.env.event_bus, SCRIPTED),
+            1
+        );
     }
     .with_subscriber(logs.clone())
     .await;

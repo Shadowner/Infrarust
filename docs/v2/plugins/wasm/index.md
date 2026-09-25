@@ -83,7 +83,7 @@ ctx.on::<ChatMessageEvent>(EventPriority::Normal, |e| {
 });
 ```
 
-The `event-bus` capability is part of the baseline, so any plugin can react to events. See [Events](./events) for the kinds the SDK exposes.
+The `event-bus` capability is part of the baseline, so any plugin can react to events. Chat is the exception: a `ChatMessageEvent` handler like the one above needs the opt-in `chat-intercept` capability. See [Events](./events) for the kinds the SDK exposes.
 
 ### Add commands
 

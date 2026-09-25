@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use infrarust_api::event::bus::{EventBus, EventBusExt, FireError};
 use infrarust_api::event::{Event, EventPriority};
 use infrarust_api::events::chat::ChatMessageEvent;
+use infrarust_api::events::command::CommandExecuteEvent;
 use infrarust_api::events::connection::{
     KickedFromServerEvent, PlayerChooseInitialServerEvent, ServerConnectedEvent,
     ServerPostConnectEvent, ServerPreConnectEvent,
@@ -214,7 +215,7 @@ async fn a_failing_handler_names_the_plugin_that_fired_the_event() {
 
 type Probe = (&'static str, fn() -> TypeId);
 
-const BUILTIN_NAMES: [Probe; 19] = [
+const BUILTIN_NAMES: [Probe; 20] = [
     ("PreLoginEvent", TypeId::of::<PreLoginEvent>),
     (
         "GameProfileRequestEvent",
@@ -237,6 +238,7 @@ const BUILTIN_NAMES: [Probe; 19] = [
     ),
     ("KickedFromServerEvent", TypeId::of::<KickedFromServerEvent>),
     ("ChatMessageEvent", TypeId::of::<ChatMessageEvent>),
+    ("CommandExecuteEvent", TypeId::of::<CommandExecuteEvent>),
     ("ProxyPingEvent", TypeId::of::<ProxyPingEvent>),
     ("ProxyInitializeEvent", TypeId::of::<ProxyInitializeEvent>),
     ("ProxyShutdownEvent", TypeId::of::<ProxyShutdownEvent>),

@@ -181,7 +181,7 @@ Events fall into categories:
 |----------|--------|
 | Lifecycle | `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `DisconnectEvent` |
 | Connection | `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent` |
-| Chat | `ChatMessageEvent` |
+| Chat | `ChatMessageEvent`, `CommandExecuteEvent` |
 | Proxy | `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `ConfigReloadEvent`, `ServerStateChangeEvent`, `BackendHealthEvent` |
 | Packet (Tier 3) | `RawPacketEvent` (packet subscriptions only) |
 | Plugin-defined | `NamedEvent` and your own event types, fired with `fire` ([custom events](./events#custom-events)) |
@@ -229,7 +229,7 @@ pub enum PreLoginResult {
 
 `ServerPreConnectEvent` lets you redirect players to another backend, send them to a limbo handler chain, or deny the connection entirely. Routing to a virtual backend is not wired into the proxy yet (see below).
 
-`ChatMessageEvent` lets you allow, deny, or modify messages.
+`ChatMessageEvent` lets you allow, deny, or modify messages, signed ones included. `CommandExecuteEvent` does the same for commands, before the proxy runs its own.
 
 ### Priority ordering
 

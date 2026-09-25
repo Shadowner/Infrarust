@@ -63,7 +63,7 @@ world plugin {
 | `codec-filter` | The per-session `filter-instance` resource and its `create` factory. |
 
 ::: tip Baseline vs opt-in capabilities
-Every WASM plugin gets the baseline capabilities (`event-bus`, `player-read`, `player-write`, `command`, `scheduler`, `config-read`). The rest (`ban`, `server-manage`, `codec-filter`, `limbo`, `raw-packet`) are opt-in: list them in your plugin's TOML permissions. See [Capabilities](./capabilities) for the full model.
+Every WASM plugin gets the baseline capabilities (`event-bus`, `player-read`, `player-write`, `command`, `scheduler`, `config-read`). The rest (`ban`, `server-manage`, `codec-filter`, `limbo`, `raw-packet`, `chat-intercept`) are opt-in: list them in your plugin's TOML permissions. See [Capabilities](./capabilities) for the full model.
 :::
 
 ## Core types
@@ -477,6 +477,8 @@ interface event-bus {                                                         //
     unsubscribe: func(handle: listener-handle);
 }
 ```
+
+`subscribe` with kind `raw-packet` also needs `raw-packet`, and with kind `chat-message` also needs `chat-intercept`. Refused, it returns a handle with no listener behind it.
 
 ### player-registry
 

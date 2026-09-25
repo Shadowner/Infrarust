@@ -31,11 +31,15 @@ impl Plugin for HelloPlugin {
                 .subscribe(EventPriority::NORMAL, |event: &mut ChatMessageEvent| {
                     if event.message.contains("hello") {
                         tracing::info!(
-                            "[HelloPlugin] Detected 'hello' in a chat message: {}",
+                            "[HelloPlugin] {} said 'hello' on {}: {}",
+                            event.profile().username,
+                            event.server.as_ref().map_or("limbo", ServerId::as_str),
                             event.message
                         );
-                        tracing::info!("[HelloPlugin] Rejecting the message");
-                        event.deny(Component::text("Test"));
+                        event.deny(
+                            Component::text("Use /hello to greet the proxy instead.")
+                                .color("yellow"),
+                        );
                     }
                 });
 

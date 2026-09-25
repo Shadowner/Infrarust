@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_core::auth::mojang::minecraft_server_hash;
@@ -40,6 +40,7 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::DEFAULT_TIMEOUT;
+use crate::chat::{self, now_millis};
 use crate::error::{HarnessError, HarnessResult};
 use crate::framing::{FrameReader, FrameWriter, FramedConn};
 use crate::text::{DisconnectInfo, component_text, uses_nbt_components};
@@ -520,6 +521,21 @@ impl ClientSession {
         self.send_packet(&packet).await
     }
 
+    pub async fn chat_signed(&self, message: &str, offset: i32) -> HarnessResult<PacketFrame> {
+        let frame = wire::encode(
+            &chat::signed_chat(message, offset, self.version),
+            self.version,
+        )?;
+        self.send_frame(&frame).await?;
+        Ok(frame)
+    }
+
+    pub async fn command_signed(&self, command: &str, offset: i32) -> HarnessResult<PacketFrame> {
+        let frame = chat::signed_command_frame(command, offset, self.version)?;
+        self.send_frame(&frame).await?;
+        Ok(frame)
+    }
+
     pub async fn command(&self, command: &str) -> HarnessResult<()> {
         let command = command.strip_prefix('/').unwrap_or(command);
         if self.version.less_than(ProtocolVersion::V1_19) {
@@ -654,12 +670,4 @@ fn proxy_v2_header(source: SocketAddr, destination: SocketAddr) -> HarnessResult
     header.extend_from_slice(&source.port().to_be_bytes());
     header.extend_from_slice(&destination.port().to_be_bytes());
     Ok(header)
-}
-
-fn now_millis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
-        .unwrap_or(0)
 }

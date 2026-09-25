@@ -1,6 +1,7 @@
 use std::any::TypeId;
 
 use infrarust_api::events::chat::ChatMessageEvent;
+use infrarust_api::events::command::CommandExecuteEvent;
 use infrarust_api::events::connection::{
     KickedFromServerEvent, PlayerChooseInitialServerEvent, ServerConnectedEvent,
     ServerPostConnectEvent, ServerPreConnectEvent,
@@ -15,7 +16,7 @@ use infrarust_api::events::proxy::{
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
 
-pub static BUILTIN_EVENTS: [TypeId; 20] = [
+pub static BUILTIN_EVENTS: [TypeId; 21] = [
     TypeId::of::<PreLoginEvent>(),
     TypeId::of::<GameProfileRequestEvent>(),
     TypeId::of::<LoginEvent>(),
@@ -29,6 +30,7 @@ pub static BUILTIN_EVENTS: [TypeId; 20] = [
     TypeId::of::<ServerPostConnectEvent>(),
     TypeId::of::<KickedFromServerEvent>(),
     TypeId::of::<ChatMessageEvent>(),
+    TypeId::of::<CommandExecuteEvent>(),
     TypeId::of::<ProxyPingEvent>(),
     TypeId::of::<ProxyInitializeEvent>(),
     TypeId::of::<ProxyShutdownEvent>(),

@@ -98,6 +98,7 @@ pub(super) async fn run_session_loop(
                     commands,
                     services,
                     player_id,
+                    &current_server_id,
                     client_codec_chain,
                     server_codec_chain,
                     &mut pending.join,

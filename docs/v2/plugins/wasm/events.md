@@ -125,7 +125,7 @@ The events arrive in the order described in the native [player lifecycle](../dev
 | `KickedFromServerEvent` | `player_id`, `server`, `reason` | `disconnect_player(reason)`, `redirect_to(server)`, `send_to_limbo(handlers)`, `notify(message)` |
 | `PlayerChooseInitialServerEvent` | `player_id`, `profile`, `initial_server` | `redirect(server)`, `send_to_limbo(handlers)`, `allow()` |
 | `ProxyPingEvent` | `remote_addr`, `response` | mutate `response` in place |
-| `ChatMessageEvent` | `player_id`, `message` | `deny(reason)`, `modify(message)`, `allow()` |
+| `ChatMessageEvent` | `player_id`, `message` | `deny(reason)`, `modify(message)`, `allow()`. Needs `chat-intercept` |
 
 `ProxyPingEvent` has no result variant. The handler mutates `event.response`, whose fields are `description`, `max_players`, `online_players`, `protocol_version`, `version_name`, and `favicon: Option<String>`.
 
@@ -137,8 +137,12 @@ ctx.on::<ProxyPingEvent>(EventPriority::Normal, |event| {
 ```
 
 :::info Capabilities for outcome methods
-Subscribing needs only the baseline `event-bus` capability. `send_to_limbo` routes a player to a limbo session and needs the opt-in `limbo` capability. Capability strings in config are kebab-case. See [api-reference](./api-reference) for the full set.
+Subscribing needs the baseline `event-bus` capability. `ChatMessageEvent` also needs the opt-in `chat-intercept` capability: without it the subscription is refused and the handler never runs. `send_to_limbo` routes a player to a limbo session and needs the opt-in `limbo` capability. Capability strings in config are kebab-case. See [Capabilities](./capabilities#chat-needs-chat-intercept) for the full set.
 :::
+
+### Chat messages
+
+`ChatMessageEvent` fires for the chat a player types on a server and in limbo, where it runs before the limbo handler's `on_chat`. `deny(reason)` drops the message and shows `reason` to the player, `modify(message)` sends `message` in its place, signed messages included: the proxy keeps the backend's message acknowledgements in step (see [Signed chat and acknowledgements](../dev/events#signed-chat-and-acknowledgements)). The contract 0.2.3 record has no `signed` or `server` field, no way to deny without a reason, and there is no command event: `CommandExecuteEvent` is only available to native plugins.
 
 ## Not exposed by the SDK
 

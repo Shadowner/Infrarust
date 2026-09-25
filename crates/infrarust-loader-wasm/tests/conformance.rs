@@ -12,6 +12,7 @@ const EARLY: u8 = 64;
 const NORMAL: u8 = 128;
 const LATE: u8 = 192;
 const LAST: u8 = 255;
+const CHAT_INTERCEPT: &str = "chat-intercept";
 
 macro_rules! conformance {
     ($native:ident, $wasm:ident, $scenario:expr $(,)?) => {
@@ -52,8 +53,13 @@ fn single(line: &str, expected: &str) -> Scenario {
     else {
         panic!("expected an `on` directive: {line}");
     };
-    Scenario::new()
-        .plugin("scripted", [line])
+    let scenario = Scenario::new().plugin("scripted", [line]);
+    let scenario = if event == E::ChatMessage {
+        scenario.grant("scripted", CHAT_INTERCEPT)
+    } else {
+        scenario
+    };
+    scenario
         .fire(event, expected)
         .log("scripted", [seen(event, priority)])
 }
@@ -67,7 +73,9 @@ fn record_only(event: E) -> Scenario {
 
 fn every_event_late_record() -> Scenario {
     let script = E::ALL.map(|event| format!("on {} late record", event.as_str()));
-    let mut scenario = Scenario::new().plugin("scripted", script);
+    let mut scenario = Scenario::new()
+        .plugin("scripted", script)
+        .grant("scripted", CHAT_INTERCEPT);
     for event in E::ALL {
         scenario = scenario.fire(event, default_result(event));
     }
@@ -322,6 +330,8 @@ conformance!(
                 "on proxy-ping early description \"from-early\"",
             ],
         )
+        .grant("scripted", CHAT_INTERCEPT)
+        .grant("scripted-peer", CHAT_INTERCEPT)
         .fire(E::ChatMessage, "modify:late")
         .fire(E::ProxyPing, "ping:from-early")
         .log(
@@ -363,6 +373,8 @@ conformance!(
                 "on chat-message late allow",
             ],
         )
+        .grant("scripted", CHAT_INTERCEPT)
+        .grant("scripted-peer", CHAT_INTERCEPT)
         .fire_diverging(E::PreLogin, "allowed", "denied:Banned")
         .fire_diverging(E::ServerPreConnect, "allowed", "connect-to:backend-2")
         .fire_diverging(E::PlayerChooseInitialServer, "allowed", "redirect:lobby")
@@ -403,6 +415,8 @@ conformance!(
             ],
         )
         .plugin("scripted-peer", ["on chat-message late record"])
+        .grant("scripted", CHAT_INTERCEPT)
+        .grant("scripted-peer", CHAT_INTERCEPT)
         .fire(E::PreLogin, "allowed")
         .fire(E::ChatMessage, "modify:alive")
         .disable()

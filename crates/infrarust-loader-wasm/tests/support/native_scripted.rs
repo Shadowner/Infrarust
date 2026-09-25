@@ -306,15 +306,15 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
             seen.record(&[e.server.as_str(), state(e.old_state), state(e.new_state)]);
         }),
         EventName::ChatMessage => bus.subscribe(at, move |e: &mut ChatMessageEvent| {
-            let id = e.player_id.as_u64().to_string();
+            let id = e.player_id().as_u64().to_string();
             seen.record(&[&id, &e.message]);
             let result = match &seen.action {
                 Action::Allow => ChatMessageResult::Allow,
                 Action::Deny(reason) => ChatMessageResult::Deny {
-                    reason: text(reason),
+                    reason: Some(text(reason)),
                 },
                 Action::Modify(message) => ChatMessageResult::Modify {
-                    new_message: message.clone(),
+                    message: message.clone(),
                 },
                 _ => return,
             };

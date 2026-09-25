@@ -8,9 +8,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use infrarust_api::command::CommandSource;
+use infrarust_api::event::ResultedEvent;
+use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::loader::PluginLoader;
-use infrarust_api::types::ProtocolVersion;
+use infrarust_api::types::{ProtocolVersion, ServerId};
 use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutcome};
 use infrarust_loader_wasm::WasmPluginLoader;
 use tracing::Level;
@@ -242,4 +244,92 @@ async fn a_plugin_denied_events_and_commands_still_runs() {
 
 async fn dispatch_line(commands: &CommandManagerImpl, line: &str) -> bool {
     commands.dispatch(CommandSource::Console, line).await == DispatchOutcome::Executed
+}
+
+fn chat() -> ChatMessageEvent {
+    ChatMessageEvent::new(
+        support::session_player(
+            1,
+            nil_profile("Steve"),
+            ProtocolVersion::MINECRAFT_1_21.raw(),
+            "127.0.0.1:40000".parse().unwrap(),
+        ),
+        "hello".to_string(),
+        false,
+        Some(ServerId::new("lobby")),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chat_subscription_without_chat_intercept_is_refused() {
+    let (_tmp, plugins_dir) = stage("scripted");
+    write_script(
+        &plugins_dir,
+        "scripted",
+        "on chat-message normal modify \"rewritten\"\n",
+    );
+    let loader = fresh_loader();
+    let env = make_env_with(plugins_dir.clone(), EnvOptions::default());
+    let logs = LogCapture::at(Level::WARN);
+
+    let event = async {
+        loader.discover(&plugins_dir).await.unwrap();
+        let _plugin = load_enabled(&loader, &env.factory, "scripted").await;
+        env.event_bus.fire(chat()).await
+    }
+    .with_subscriber(logs.clone())
+    .await;
+
+    assert!(
+        matches!(event.result(), ChatMessageResult::Allow),
+        "a plugin without chat-intercept changed a chat message"
+    );
+    assert_eq!(
+        read_log(&plugins_dir.join("scripted")),
+        ["enable"],
+        "the chat message reached the guest"
+    );
+    let refused = logs.matching("missing capability `chat-intercept`");
+    assert_eq!(refused.len(), 1, "{:?}", logs.lines());
+    assert!(
+        refused[0].contains("event-bus.subscribe(chat-message)"),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_intercept_lets_a_wasm_plugin_rewrite_chat() {
+    let (_tmp, plugins_dir) = stage("scripted");
+    write_script(
+        &plugins_dir,
+        "scripted",
+        "on chat-message normal modify \"rewritten\"\n",
+    );
+    let loader = fresh_loader();
+    let env = make_env_with(
+        plugins_dir.clone(),
+        EnvOptions::default().grant("scripted", "chat-intercept"),
+    );
+    let logs = LogCapture::at(Level::WARN);
+
+    let event = async {
+        loader.discover(&plugins_dir).await.unwrap();
+        let _plugin = load_enabled(&loader, &env.factory, "scripted").await;
+        env.event_bus.fire(chat()).await
+    }
+    .with_subscriber(logs.clone())
+    .await;
+
+    assert_eq!(
+        event.result(),
+        &ChatMessageResult::Modify {
+            message: "rewritten".to_string()
+        }
+    );
+    assert_eq!(read_log(&plugins_dir.join("scripted")).len(), 2);
+    assert!(
+        logs.matching("chat-intercept").is_empty(),
+        "{:?}",
+        logs.lines()
+    );
 }

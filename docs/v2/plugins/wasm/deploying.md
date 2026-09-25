@@ -84,7 +84,7 @@ Baseline (always granted):
 
 Opt-in (must be listed in `permissions`):
 
-`ban`, `server-manage`, `codec-filter`, `limbo`, `raw-packet`, `network`, `filesystem-extended`, `permission-provider`, `virtual-backend`.
+`ban`, `server-manage`, `codec-filter`, `limbo`, `raw-packet`, `chat-intercept`, `network`, `filesystem-extended`, `permission-provider`, `virtual-backend`.
 
 Capability strings are kebab-case. An unknown string, or one that is not grantable through config, is ignored with a warning at load and the plugin loads without it. The `transport-filter` capability exists internally but cannot be granted via config and is always rejected with a warning.
 

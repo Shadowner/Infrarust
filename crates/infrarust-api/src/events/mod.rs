@@ -8,6 +8,7 @@
 //! - [`packet`] — Raw packet events (Tier 3)
 
 pub mod chat;
+pub mod command;
 pub mod connection;
 pub mod lifecycle;
 pub mod named;
@@ -15,6 +16,7 @@ pub mod packet;
 pub mod proxy;
 
 pub use chat::{ChatMessageEvent, ChatMessageResult};
+pub use command::{CommandExecuteEvent, CommandExecuteResult};
 pub use connection::{
     ConnectCause, KickCause, KickedFromServerEvent, KickedFromServerResult,
     PlayerChooseInitialServerEvent, PlayerChooseInitialServerResult, ServerConnectedEvent,

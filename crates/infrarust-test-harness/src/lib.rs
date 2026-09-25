@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod chat;
 pub mod client;
 pub mod error;
 pub mod framing;
@@ -15,6 +16,7 @@ use std::sync::Once;
 use std::time::Duration;
 
 pub use backend::{BackendConn, FakeBackend, FakeBackendBuilder, LoginBehavior, ObservedHandshake};
+pub use chat::{ChatFrame, ChatPacket};
 pub use client::{ClientSession, FakeClient, LoginOutcome, StatusResult};
 pub use error::{HarnessError, HarnessResult};
 pub use framing::{FrameReader, FrameWriter, FramedConn};

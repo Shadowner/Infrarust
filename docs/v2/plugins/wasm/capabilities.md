@@ -33,6 +33,7 @@ pub enum Capability {
     PermissionProvider,
     FilesystemExtended,
     Network,
+    ChatIntercept,
 }
 ```
 
@@ -42,7 +43,7 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 
 | Capability | Config string | Grants | Baseline |
 |------------|---------------|--------|----------|
-| `EventBus` | `event-bus` | Subscribe to domain events (lifecycle, connection, proxy, chat) | Yes |
+| `EventBus` | `event-bus` | Subscribe to domain events (lifecycle, connection, proxy) | Yes |
 | `PlayerRead` | `player-read` | Read the player registry and player state | Yes |
 | `PlayerWrite` | `player-write` | Act on a player (message, title, kick, switch-server) | Yes |
 | `Command` | `command` | Register commands | Yes |
@@ -50,6 +51,7 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `ConfigRead` | `config-read` | Read the proxy configuration | Yes |
 | `ConfigWrite` | `config-write` | Rewrite the global `infrarust.toml` (no host binding yet, see below) | No |
 | `RawPacket` | `raw-packet` | Emit raw packets and gate `player.send-packet` | No |
+| `ChatIntercept` | `chat-intercept` | Subscribe to `chat-message`: read, deny and rewrite what players type in chat | No |
 | `ServerManage` | `server-manage` | Start/stop servers and read their state | No |
 | `Ban` | `ban` | Use the ban service | No |
 | `CodecFilter` | `codec-filter` | Register codec filters | No |
@@ -84,7 +86,7 @@ pub fn baseline() -> Self {
 }
 ```
 
-Native plugins call `native_trusted`, which inserts all 16 capabilities. WASM plugins never use that path.
+Native plugins call `native_trusted`, which inserts every capability, `chat-intercept` included. WASM plugins never use that path.
 
 ```rust
 pub fn native_trusted() -> Self {
@@ -167,6 +169,7 @@ Every host interface is linked for every plugin, whatever it was granted. A plug
 | `player` | `send-packet` | `raw-packet` | `player-error` `send-failed: "missing capability: raw-packet"` |
 | `event-bus` | `subscribe` | `event-bus` | a fresh listener handle with no listener behind it: no event is delivered |
 | `event-bus` | `subscribe` with kind `raw-packet` | `event-bus` and `raw-packet` | same as above |
+| `event-bus` | `subscribe` with kind `chat-message` | `event-bus` and `chat-intercept` | same as above: the plugin never sees a chat message and cannot deny or change one |
 | `event-bus` | `unsubscribe` | `event-bus` | nothing happens |
 | `command-manager` | `register`, `unregister` | `command` | nothing happens: the command is not routed to the plugin |
 | `scheduler` | `delay`, `interval` | `scheduler` | task handle `0`: the callback never runs |
@@ -200,6 +203,19 @@ WARN plugin my-plugin imports ban-service but lacks the `ban` capability; calls 
 ```
 
 The warning also carries the imported functions in its `functions` field. The report works per function, not per interface. Every component imports the `limbo` interface for its session resource types, but only `register-limbo-handler` needs `limbo`, so a plugin that never registers a limbo handler is not reported. In the same way `player-registry` is reported against `player-write` only when the plugin imports a method that acts on a player, and against `raw-packet` only when it imports `send-packet`.
+
+The report reads imports, not arguments, so it cannot tell which event kinds a plugin subscribes to: a `raw-packet` or `chat-message` subscription without its capability is only reported when the call is refused.
+
+### Chat needs `chat-intercept`
+
+A chat listener sees every message players type, including private messages, and can drop or rewrite them. Subscribing to `chat-message` therefore needs the opt-in `chat-intercept` capability on top of `event-bus`. Earlier versions accepted the subscription with `event-bus` alone, so a plugin that moderates or logs chat needs a new grant after upgrading:
+
+```toml
+[plugins.chat-filter]
+permissions = ["chat-intercept"]
+```
+
+Without it the plugin still loads and `subscribe` still returns a handle, but no chat message reaches the handler, and the host logs the refusal with `call="event-bus.subscribe(chat-message)"` and `capability="chat-intercept"`. Compiled-in plugins hold the capability unless their config denies it.
 
 ### Strict mode
 

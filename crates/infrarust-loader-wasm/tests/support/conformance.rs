@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use infrarust_api::command::CommandSource;
 use infrarust_api::event::ResultedEvent;
@@ -24,14 +24,14 @@ use infrarust_api::player::Player;
 use infrarust_api::plugin::Plugin;
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{
-    Component, GameProfile, HoverEvent, NamedColor, PlayerId, ProtocolVersion, ServerId,
+    Component, GameProfile, HoverEvent, NamedColor, ProtocolVersion, ServerId,
 };
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::services::command_manager::DispatchOutcome;
 
 use super::native_scripted::ScriptedPlugin;
 use super::script::{self, EventName};
-use super::{TestEnv, make_env, read_log, write_script};
+use super::{EnvOptions, TestEnv, make_env_with, read_log, write_script};
 
 pub const PLAYER: u64 = 1;
 pub const USERNAME: &str = "Steve";
@@ -95,10 +95,6 @@ fn motd() -> Component {
             .color("#55ff55")
             .hover(HoverEvent::show_text("status")),
     )
-}
-
-fn player() -> PlayerId {
-    PlayerId::new(PLAYER)
 }
 
 fn session() -> std::sync::Arc<dyn Player> {
@@ -233,8 +229,11 @@ fn initial_server(result: &PlayerChooseInitialServerResult) -> Outcome {
 fn chat(result: &ChatMessageResult) -> Outcome {
     match result {
         ChatMessageResult::Allow => Outcome::same("allow"),
-        ChatMessageResult::Deny { reason } => Outcome::component("deny", reason),
-        ChatMessageResult::Modify { new_message } => Outcome::same(format!("modify:{new_message}")),
+        ChatMessageResult::Deny {
+            reason: Some(reason),
+        } => Outcome::component("deny", reason),
+        ChatMessageResult::Deny { reason: None } => Outcome::same("deny"),
+        ChatMessageResult::Modify { message } => Outcome::same(format!("modify:{message}")),
         _ => Outcome::same("unknown"),
     }
 }
@@ -372,7 +371,12 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             Outcome::same("none")
         }
         EventName::ChatMessage => {
-            let event = ChatMessageEvent::new(player(), CHAT.to_owned());
+            let event = ChatMessageEvent::new(
+                session(),
+                CHAT.to_owned(),
+                false,
+                Some(ServerId::new("lobby")),
+            );
             chat(bus.fire(event).await.result())
         }
     }
@@ -393,6 +397,7 @@ struct Step {
 #[derive(Default)]
 pub struct Scenario {
     plugins: Vec<(&'static str, Vec<String>)>,
+    grants: Vec<(&'static str, &'static str)>,
     steps: Vec<Step>,
     logs: BTreeMap<&'static str, Vec<String>>,
     wasm_logs: BTreeMap<&'static str, Vec<String>>,
@@ -411,6 +416,11 @@ impl Scenario {
     {
         self.plugins
             .push((id, script.into_iter().map(Into::into).collect()));
+        self
+    }
+
+    pub fn grant(mut self, id: &'static str, capability: &'static str) -> Self {
+        self.grants.push((id, capability));
         self
     }
 
@@ -558,6 +568,16 @@ async fn drive(
     Observed { results, logs }
 }
 
+fn environment(plugins_dir: PathBuf, scenario: &Scenario) -> TestEnv {
+    let options = scenario
+        .grants
+        .iter()
+        .fold(EnvOptions::default(), |options, (id, capability)| {
+            options.grant(id, capability)
+        });
+    make_env_with(plugins_dir, options)
+}
+
 fn write_scripts(plugins_dir: &Path, scenario: &Scenario) {
     for (id, lines) in &scenario.plugins {
         write_script(plugins_dir, id, &lines.join("\n"));
@@ -568,7 +588,7 @@ pub async fn observe_native(scenario: &Scenario) -> Observed {
     let tmp = tempfile::tempdir().expect("tempdir");
     let plugins_dir = tmp.path().to_path_buf();
     write_scripts(&plugins_dir, scenario);
-    let env = make_env(plugins_dir.clone());
+    let env = environment(plugins_dir.clone(), scenario);
     let mut plugins: Vec<Box<dyn Plugin>> = Vec::new();
     for (id, _) in &scenario.plugins {
         let plugin = ScriptedPlugin::new(id);
@@ -592,7 +612,7 @@ pub async fn observe_wasm(scenario: &Scenario) -> Observed {
         super::add_precompiled_fixture(&plugins_dir, id).await;
     }
     write_scripts(&plugins_dir, scenario);
-    let env = make_env(plugins_dir.clone());
+    let env = environment(plugins_dir.clone(), scenario);
     let loader = super::fresh_loader();
     loader.discover(&plugins_dir).await.expect("discover");
     let mut plugins = Vec::new();

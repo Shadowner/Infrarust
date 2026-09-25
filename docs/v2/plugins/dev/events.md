@@ -33,7 +33,7 @@ PreLoginEvent ─────────────── Denied ──▶ dis
   → backend login ────────────── refused ──▶ no ServerConnectedEvent
   → ServerConnectedEvent       the backend accepted the login
   → ServerPostConnectEvent     the server's JoinGame reached the client
-  → play (ChatMessageEvent, raw packets,
+  → play (ChatMessageEvent, CommandExecuteEvent, raw packets,
           switches: ServerPreConnectEvent → ServerConnectedEvent → ServerPostConnectEvent)
   → DisconnectEvent
 ```
@@ -185,7 +185,7 @@ Every event goes through the same dispatch: listeners run one after another in p
 
 | Delivery | Events | What it means |
 |----------|--------|---------------|
-| Inline, awaited | `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `ChatMessageEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
+| Inline, awaited | `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
 | Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
 
 Because the queue delivers one event at a time, a slow listener on a queued event delays the queued events behind it, up to `handler_timeout` per listener. A listener that panics does not stop the queue: the next event is still delivered.
@@ -585,26 +585,31 @@ WASM plugins (contract 0.2.3) keep the records they had. `server-pre-connect` ca
 
 `kicked-from-server` keeps `player-id`, `server` and `reason`. `reason` is the server's reason as component JSON, the `error` text when the server could not be reached, and an empty text component otherwise. `disconnect-player(reason)` disconnects with that reason; to show the server's own disconnect, leave the result as it is. WASM plugins do not see `cause`, `during_connect` or `previous_server`.
 
-## Chat events
+## Chat and command events
+
+The proxy reads chat and commands in the `offline` and `client_only` modes, and in limbo. In passthrough, `zero_copy` and `server_only` it only forwards bytes, so these events do not fire.
 
 ### ChatMessageEvent
 
-Fired when a player sends a chat message during Play state.
+Fired when a player sends a chat message, before the proxy forwards it. On a server it fires for every chat packet the client sends. In limbo it fires before the limbo handler's `on_chat`, and the handler sees the message only if the result lets it through.
 
 **Type:** Resulted
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `player_id` | `PlayerId` | The sender |
+| `player` | `Arc<dyn Player>` | The sender. `player_id()` and `profile()` read from it |
 | `message` | `String` | The message text |
+| `signed` | `bool` | The client signed the message (1.19 and later, with a chat session) |
+| `server` | `Option<ServerId>` | The server the message is going to. `None` in limbo |
 
 **Results** (`ChatMessageResult`):
 
-| Variant | Description |
-|---------|-------------|
-| `Allow` (default) | Forward the message |
-| `Deny { reason }` | Block the message, show a reason to the sender |
-| `Modify { new_message }` | Replace the message text |
+| Variant | Shortcut | Description |
+|---------|----------|-------------|
+| `Allow` (default) | `allow()` | Forward the message exactly as the client sent it |
+| `Deny { reason: Some(..) }` | `deny(reason)` | Drop the message and show `reason` to the sender as a system message |
+| `Deny { reason: None }` | `deny_silently()` | Drop the message without telling anyone |
+| `Modify { message }` | `modify(message)` | Send `message` instead. In limbo, `on_chat` receives `message` |
 
 ```rust
 ctx.event_bus().subscribe::<ChatMessageEvent, _>(
@@ -612,10 +617,84 @@ ctx.event_bus().subscribe::<ChatMessageEvent, _>(
     |event| {
         if contains_banned_word(&event.message) {
             event.deny(Component::error("That word is not allowed."));
+        } else if event.message.starts_with("!shout ") {
+            let text = event.message.trim_start_matches("!shout ").to_uppercase();
+            event.modify(text);
         }
     },
 );
 ```
+
+A vanilla server disconnects a player whose message is longer than 256 characters, and a modified message is sent as it is. Keep a rewritten message within that limit.
+
+### CommandExecuteEvent
+
+Fired when a player runs a command on a server, before the proxy looks for a proxy command with that name. It fires for every command: the proxy's own, the backend's, and signed commands.
+
+It does not fire in limbo. Commands typed in limbo belong to the limbo handler: the proxy runs its own commands there and passes the others to `on_command`, so no plugin sees an auth limbo's `/login <password>`.
+
+**Type:** Resulted
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `player` | `Arc<dyn Player>` | The player. `player_id()` and `profile()` read from it |
+| `command` | `String` | The command line without the leading `/`. `label()` returns its first word |
+| `signed` | `bool` | The client signed at least one argument (1.19 and later, with a chat session) |
+| `server` | `Option<ServerId>` | The server the player is on |
+
+**Results** (`CommandExecuteResult`):
+
+| Variant | Shortcut | Description |
+|---------|----------|-------------|
+| `Allow` (default) | `allow()` | Run the proxy command with this name, or forward the command unchanged when the proxy has none |
+| `Deny { reason: Some(..) }` | `deny(reason)` | Drop the command and show `reason` to the player |
+| `Deny { reason: None }` | `deny_silently()` | Drop the command without telling anyone |
+| `Modify { command }` | `modify(command)` | Run `command` instead: the proxy command with its name, or the backend's, sent unsigned |
+| `ForwardToBackend` | `forward_to_backend()` | Forward the command unchanged, even when the proxy has a command with this name |
+
+```rust
+ctx.event_bus().subscribe::<CommandExecuteEvent, _>(
+    EventPriority::NORMAL,
+    |event| {
+        match event.label() {
+            "op" | "deop" => event.deny(Component::error("Run this from the console.")),
+            "spawn" => event.modify("warp spawn"),
+            _ => {}
+        }
+    },
+);
+```
+
+The proxy checks a proxy command's permission after the event, when it runs the command.
+
+### Signed chat and acknowledgements
+
+From 1.19 on, clients sign chat messages and command arguments, and from 1.19.1 on every chat packet also tells the server which signed messages the client has seen. Velocity passes the client's chat session on to the backend, so it cannot change or drop a signed message without breaking the backend's checks, and disconnects the player when a plugin tries.
+
+Infrarust drops the client's chat session (the Player Session packet on 1.19.3 and later, the key in Login Start before that) instead of sending it to the backend. The backend has no key for the player and accepts messages without a signature, the way a vanilla server in offline mode does. That lets the proxy deny and modify signed chat and signed commands, as long as it keeps the backend's count of seen messages right:
+
+- A dropped packet that acknowledged messages is replaced with a Message Acknowledgment carrying the same count, so the backend's window of seen messages stays in step with the client's. Without it, the backend disconnects the player with a chat validation error on a later message.
+- A modified packet keeps the timestamp, the salt and the acknowledgements of the original and loses the signature.
+- A proxy command consumed by the proxy is acknowledged the same way as a denied one.
+
+A backend only counts signed messages, and no player behind Infrarust has a chat session on the backend, so the count is 0 in most setups and no acknowledgement is sent. It matters when players who connect to the backend directly share it with players behind the proxy.
+
+| Client | Chat and command packets | Deny, or a command run by the proxy | Modify |
+|--------|--------------------------|-------------------------------------|--------|
+| 1.7 to 1.18.2 | Chat Message with the text only. A command is a chat message that starts with `/` | Dropped | Sent again with the new text (`/` and the new command for a command) |
+| 1.19 | Chat Message and Chat Command with a timestamp, a salt and signatures. No acknowledgements | Dropped | Sent unsigned: empty signature, preview flag off, same timestamp and salt |
+| 1.19.1, 1.19.2 | The same, with the list of the last messages the client saw | Dropped. A Message Acknowledgment carrying that list is sent when it is not empty | Sent unsigned with the same list |
+| 1.19.3 to 1.20.4 | Chat Message and Chat Command with a signature, a count of seen messages and a 20-bit acknowledged set | Dropped. A Message Acknowledgment with the count is sent when it is above 0 | Sent without signature, with the same count and set |
+| 1.20.5 to 1.21.4 | Chat Command carries the command only. Signed Chat Command carries the signatures and the count | As above for chat and Signed Chat Command. A Chat Command is only dropped | A Chat Command with the new command. For a Signed Chat Command, a Message Acknowledgment with its count follows when it is above 0 |
+| 1.21.5 and later | The same, with a checksum of the acknowledged messages | As above | As above, the checksum is kept |
+
+The backend must accept messages without a signature. A vanilla server does when it runs in offline mode, which is how Infrarust's backends run. A Paper server enforces signed chat when `enforce-secure-profile` is `true` and it trusts a proxy as online, which is the default with Velocity forwarding: set `enforce-secure-profile=false` in `server.properties` on such a backend, or it refuses the player's chat whatever the plugins do.
+
+Formats: [Java Edition protocol, packets](https://minecraft.wiki/w/Java_Edition_protocol/Packets) and the [1.19](https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol?oldid=2772902), [1.19.2](https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol?oldid=2772944), [1.19.3](https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol?oldid=2773015), [1.20.5](https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol?oldid=2789623) and [1.21.5](https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol?oldid=2992295) revisions. Velocity's handling, for comparison: [`SessionChatHandler`](https://github.com/PaperMC/Velocity/blob/dev/3.0.0/proxy/src/main/java/com/velocitypowered/proxy/protocol/packet/chat/session/SessionChatHandler.java), [`SessionCommandHandler`](https://github.com/PaperMC/Velocity/blob/dev/3.0.0/proxy/src/main/java/com/velocitypowered/proxy/protocol/packet/chat/session/SessionCommandHandler.java) and [`ChatQueue`](https://github.com/PaperMC/Velocity/blob/dev/3.0.0/proxy/src/main/java/com/velocitypowered/proxy/protocol/packet/chat/ChatQueue.java).
+
+### WASM chat events
+
+Contract 0.2.3 has `chat-message` and no command event. A WASM plugin needs the [`chat-intercept`](../wasm/capabilities) capability to subscribe to `chat-message`. `deny(component)` maps to `Deny { reason: Some(..) }` and `modify(text)` to `Modify`. The record carries `player-id` and `message` only. See [WASM events](../wasm/events).
 
 ## Packet events
 

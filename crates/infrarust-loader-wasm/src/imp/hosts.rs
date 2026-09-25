@@ -103,6 +103,11 @@ impl event_bus::Host for PluginStoreState {
         if self.lacks(Capability::EventBus, "event-bus.subscribe")
             || (matches!(kind, event_bus::EventKind::RawPacket)
                 && self.lacks(Capability::RawPacket, "event-bus.subscribe(raw-packet)"))
+            || (matches!(kind, event_bus::EventKind::ChatMessage)
+                && self.lacks(
+                    Capability::ChatIntercept,
+                    "event-bus.subscribe(chat-message)",
+                ))
         {
             return Ok(self.mint_listener_id());
         }
@@ -1281,6 +1286,20 @@ mod tests {
                     failures.push(format!("{capability:?} subscribe(raw-packet): {e:?}"));
                 }
             }
+            Capability::ChatIntercept => {
+                match event_bus::Host::subscribe(s, event_bus::EventKind::ChatMessage, 128).await {
+                    Ok(listener) => {
+                        if s.take_listener(listener).is_some() {
+                            failures.push(format!(
+                                "{capability:?} subscribe(chat-message) registered a listener"
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        failures.push(format!("{capability:?} subscribe(chat-message): {e:?}"))
+                    }
+                }
+            }
             Capability::EventBus => {
                 match event_bus::Host::subscribe(s, event_bus::EventKind::PostLogin, 128).await {
                     Ok(listener) => {
@@ -1379,6 +1398,7 @@ mod tests {
             Capability::PlayerRead,
             Capability::PlayerWrite,
             Capability::RawPacket,
+            Capability::ChatIntercept,
             Capability::EventBus,
             Capability::Command,
             Capability::Scheduler,

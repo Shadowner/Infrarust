@@ -6,6 +6,7 @@ use infrarust_api::error::PluginError;
 use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{BoxFuture, Event, EventPriority, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
+use infrarust_api::events::command::{CommandExecuteEvent, CommandExecuteResult};
 use infrarust_api::events::connection::{
     KickedFromServerEvent, KickedFromServerResult, PlayerChooseInitialServerEvent,
     PlayerChooseInitialServerResult, ServerConnectedEvent, ServerPostConnectEvent,
@@ -44,6 +45,7 @@ pub enum EventKind {
     ServerPostConnect,
     KickedFromServer,
     ChatMessage,
+    CommandExecute,
     ProxyPing,
     ProxyInitialize,
     ProxyShutdown,
@@ -53,7 +55,7 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::PreLogin,
         Self::GameProfileRequest,
         Self::Login,
@@ -67,6 +69,7 @@ impl EventKind {
         Self::ServerPostConnect,
         Self::KickedFromServer,
         Self::ChatMessage,
+        Self::CommandExecute,
         Self::ProxyPing,
         Self::ProxyInitialize,
         Self::ProxyShutdown,
@@ -90,6 +93,7 @@ impl EventKind {
             Self::ServerPostConnect => "ServerPostConnect",
             Self::KickedFromServer => "KickedFromServer",
             Self::ChatMessage => "ChatMessage",
+            Self::CommandExecute => "CommandExecute",
             Self::ProxyPing => "ProxyPing",
             Self::ProxyInitialize => "ProxyInitialize",
             Self::ProxyShutdown => "ProxyShutdown",
@@ -523,15 +527,44 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
     on::<ChatMessageEvent>(bus, recorder, |e| {
         let result = match e.result() {
             ChatMessageResult::Allow => json!("allow"),
-            ChatMessageResult::Deny { reason } => json!({ "deny": reason.to_string() }),
-            ChatMessageResult::Modify { new_message } => json!({ "modify": new_message }),
+            ChatMessageResult::Deny { reason } => {
+                json!({ "deny": reason.as_ref().map(ToString::to_string) })
+            }
+            ChatMessageResult::Modify { message } => json!({ "modify": message }),
             _ => json!("other"),
         };
         (
             EventKind::ChatMessage,
-            Some(e.player_id),
-            None,
-            json!({ "message": e.message, "result": result }),
+            Some(e.player_id()),
+            Some(e.profile().username.clone()),
+            json!({
+                "message": e.message,
+                "signed": e.signed,
+                "server": server(e.server.as_ref()),
+                "result": result,
+            }),
+        )
+    });
+    on::<CommandExecuteEvent>(bus, recorder, |e| {
+        let result = match e.result() {
+            CommandExecuteResult::Allow => json!("allow"),
+            CommandExecuteResult::Deny { reason } => {
+                json!({ "deny": reason.as_ref().map(ToString::to_string) })
+            }
+            CommandExecuteResult::Modify { command } => json!({ "modify": command }),
+            CommandExecuteResult::ForwardToBackend => json!("forward_to_backend"),
+            _ => json!("other"),
+        };
+        (
+            EventKind::CommandExecute,
+            Some(e.player_id()),
+            Some(e.profile().username.clone()),
+            json!({
+                "command": e.command,
+                "signed": e.signed,
+                "server": server(e.server.as_ref()),
+                "result": result,
+            }),
         )
     });
     on::<ProxyPingEvent>(bus, recorder, |e| {

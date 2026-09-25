@@ -11,6 +11,8 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::command::CommandSource;
+use infrarust_api::event::ResultedEvent;
+use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, ServerId};
@@ -26,6 +28,7 @@ use super::session::LimboSessionImpl;
 use super::spawn::send_spawn_sequence;
 use super::virtual_session::VirtualSessionCore;
 use crate::player::commands::{CommandInbox, CommandOutcome};
+use crate::player::packets::build_system_chat_message;
 use crate::services::ProxyServices;
 use crate::services::command_manager::DispatchOutcome;
 use crate::session::client_bridge::ClientBridge;
@@ -218,8 +221,10 @@ async fn wait_for_hold(
                                         handler.on_command(session.as_ref(), &name, &args_refs).await;
                                     }
                                 }
-                                ClientMessage::Chat { message } => {
-                                    handler.on_chat(session.as_ref(), &message).await;
+                                ClientMessage::Chat { message, signed } => {
+                                    if let Some(message) = limbo_chat(services, core, client, message, signed).await {
+                                        handler.on_chat(session.as_ref(), &message).await;
+                                    }
                                 }
                             }
                         }
@@ -266,6 +271,43 @@ async fn wait_for_hold(
                 }
             }
         }
+    }
+}
+
+async fn limbo_chat(
+    services: &ProxyServices,
+    core: &VirtualSessionCore,
+    client: &mut ClientBridge,
+    message: String,
+    signed: bool,
+) -> Option<String> {
+    let Some(player) = services.player_registry.get_player_by_id(core.player_id) else {
+        return Some(message);
+    };
+    let event = services
+        .event_bus
+        .fire(ChatMessageEvent::new(player, message, signed, None))
+        .await;
+    match event.result().clone() {
+        ChatMessageResult::Deny { reason } => {
+            if let Some(reason) = reason {
+                match build_system_chat_message(
+                    &reason,
+                    core.protocol_version,
+                    &core.packet_registry,
+                ) {
+                    Ok(frame) => {
+                        if let Err(e) = client.write_frame(&frame).await {
+                            tracing::debug!("failed to send a chat denial reason in limbo: {e}");
+                        }
+                    }
+                    Err(e) => tracing::warn!("failed to encode a chat denial reason: {e}"),
+                }
+            }
+            None
+        }
+        ChatMessageResult::Modify { message } => Some(message),
+        _ => Some(event.message),
     }
 }
 

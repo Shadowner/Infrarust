@@ -8,7 +8,6 @@
 //! Codec filters are applied to every packet BEFORE the EventBus.
 
 use infrarust_api::command::CommandSource;
-use infrarust_api::event::ResultedEvent;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, PlayerId, RawPacket, ServerId};
@@ -21,7 +20,6 @@ use infrarust_protocol::packets::config::{
 use infrarust_protocol::packets::login::{
     CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged,
 };
-use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::packets::play::chat_session::SChatSessionUpdate;
 use infrarust_protocol::packets::play::commands::CCommands;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
@@ -38,7 +36,6 @@ use crate::filter::codec_chain::{CodecFilterChain, FilterResult};
 use crate::player::PlayerCommand;
 use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::services::ProxyServices;
-use crate::services::command_manager::DispatchOutcome;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::kick::BackendKick;
@@ -82,7 +79,8 @@ enum BackendAction {
     Kicked(Box<BackendKick>),
 }
 
-use super::chat_utils::{ChatAction, detect_chat_or_command};
+use super::chat_intercept::{ChatScope, intercept};
+use super::chat_utils::{ChatIds, decode_player_input};
 
 #[inline]
 fn frame_to_raw(frame: &PacketFrame) -> RawPacket {
@@ -110,8 +108,7 @@ struct HotIds {
     s_chat_session: Option<i32>,
     s_tab_request: Option<i32>,
     c_tab_response: Option<i32>,
-    s_chat_command: Option<i32>,
-    s_chat_message: Option<i32>,
+    chat: ChatIds,
     c_disconnect: Option<i32>,
     c_commands: Option<i32>,
     c_join_game: Option<i32>,
@@ -124,8 +121,7 @@ impl HotIds {
             s_chat_session: registry.get_packet_id::<SChatSessionUpdate>(version),
             s_tab_request: registry.get_packet_id::<STabCompleteRequest>(version),
             c_tab_response: registry.get_packet_id::<CTabCompleteResponse>(version),
-            s_chat_command: registry.get_packet_id::<SChatCommand>(version),
-            s_chat_message: registry.get_packet_id::<SChatMessage>(version),
+            chat: ChatIds::resolve(registry, version),
             c_disconnect: registry.get_packet_id::<CDisconnect>(version),
             c_commands: registry.get_packet_id::<CCommands>(version),
             c_join_game: registry.get_packet_id::<CJoinGame>(version),
@@ -197,6 +193,7 @@ pub async fn proxy_loop(
     commands: &mut CommandInbox,
     services: &ProxyServices,
     player_id: PlayerId,
+    server: &ServerId,
     client_codec_chain: &mut CodecFilterChain,
     server_codec_chain: &mut CodecFilterChain,
     join: &mut Option<ServerJoin>,
@@ -270,6 +267,7 @@ pub async fn proxy_loop(
                         registry,
                         services,
                         player_id,
+                        server,
                         client_codec_chain,
                         &hot_ids,
                     )
@@ -285,6 +283,7 @@ pub async fn proxy_loop(
                                     registry,
                                     services,
                                     player_id,
+                                    server,
                                     client_codec_chain,
                                     &hot_ids,
                                 )
@@ -582,6 +581,7 @@ async fn handle_client_to_backend(
     registry: &PacketRegistry,
     services: &ProxyServices,
     player_id: PlayerId,
+    server: &ServerId,
     codec_chain: &mut CodecFilterChain,
     hot_ids: &HotIds,
 ) -> Result<(), CoreError> {
@@ -638,44 +638,18 @@ async fn handle_client_to_backend(
             }
         }
 
-        // Chat/command detection (serverbound only)
-        if let Some(action) = detect_chat_or_command(
-            &frame,
-            hot_ids.s_chat_command,
-            hot_ids.s_chat_message,
-            version,
-        ) {
-            match action {
-                ChatAction::Command(input) => {
-                    if let Some(player) = services.player_registry.get_player_by_id(player_id) {
-                        let outcome = services
-                            .command_manager
-                            .dispatch(CommandSource::Player(player), &input)
-                            .await;
-                        if outcome != DispatchOutcome::Unknown {
-                            return Ok(());
-                        }
-                    }
-                }
-                ChatAction::Message(text) => {
-                    // Fire ChatMessageEvent
-                    let chat_event =
-                        infrarust_api::events::chat::ChatMessageEvent::new(player_id, text);
-                    let chat_event = services.event_bus.fire(chat_event).await;
-                    match chat_event.result() {
-                        infrarust_api::events::chat::ChatMessageResult::Deny { .. } => {
-                            return Ok(()); // Don't forward
-                        }
-                        infrarust_api::events::chat::ChatMessageResult::Allow => {
-                            // Forward normally below
-                        }
-                        infrarust_api::events::chat::ChatMessageResult::Modify { .. } => {
-                            // Modifying signed messages is not possible (1.19+)
-                            // Forward the original for now
-                        }
-                        _ => {} // non-exhaustive
-                    }
-                }
+        if let Some(input) = decode_player_input(&frame, &hot_ids.chat, version) {
+            let scope = ChatScope {
+                services,
+                registry,
+                ids: &hot_ids.chat,
+                player_id,
+                server,
+                version,
+            };
+            match intercept(input, frame, &scope, client, backend).await? {
+                Some(next) => frame = next,
+                None => return Ok(()),
             }
         }
 

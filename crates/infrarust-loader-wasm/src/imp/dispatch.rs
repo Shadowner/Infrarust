@@ -279,7 +279,7 @@ fn ev_server_state_change(e: &ServerStateChangeEvent) -> wg::Event {
 
 fn ev_chat_message(e: &ChatMessageEvent) -> wg::Event {
     wg::Event::ChatMessage(wg::ChatMessageEvent {
-        player_id: e.player_id.as_u64(),
+        player_id: e.player_id().as_u64(),
         message: e.message.clone(),
     })
 }
@@ -374,9 +374,9 @@ fn apply_chat_message(outcome: wg::EventOutcome, ev: &mut ChatMessageEvent) {
         let native = match r {
             wg::ChatMessageResult::Allow => ChatMessageResult::Allow,
             wg::ChatMessageResult::Deny(c) => ChatMessageResult::Deny {
-                reason: convert::component_from_wit(&c),
+                reason: Some(convert::component_from_wit(&c)),
             },
-            wg::ChatMessageResult::Modify(m) => ChatMessageResult::Modify { new_message: m },
+            wg::ChatMessageResult::Modify(message) => ChatMessageResult::Modify { message },
         };
         ev.set_result(native);
     }

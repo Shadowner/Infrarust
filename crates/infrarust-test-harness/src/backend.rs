@@ -26,6 +26,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
 use uuid::Uuid;
 
+use crate::chat::ChatFrame;
 use crate::error::{HarnessError, HarnessResult};
 use crate::framing::{FrameReader, FrameWriter, FramedConn};
 use crate::text::{encode_component_json, uses_nbt_components};
@@ -464,6 +465,29 @@ impl BackendConn {
             if wire::is::<P>(&frame, version) {
                 return wire::decode::<P>(&frame, version);
             }
+        }
+    }
+
+    pub async fn chat_until(
+        &mut self,
+        marker: &str,
+        timeout: Duration,
+    ) -> HarnessResult<Vec<ChatFrame>> {
+        let version = self.setup.version;
+        let deadline = Instant::now() + timeout;
+        let mut seen = Vec::new();
+        loop {
+            let frame = tokio::time::timeout_at(deadline, self.frames.recv())
+                .await
+                .map_err(|_| HarnessError::timeout("the chat marker", timeout))?
+                .ok_or_else(|| HarnessError::Closed("the chat marker".to_string()))?;
+            let Some(chat) = ChatFrame::classify(&frame, version)? else {
+                continue;
+            };
+            if chat.is_message(marker) {
+                return Ok(seen);
+            }
+            seen.push(chat);
         }
     }
 

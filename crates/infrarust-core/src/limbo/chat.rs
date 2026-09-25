@@ -1,14 +1,13 @@
 //! Client message parsing for the Limbo loop.
 //!
-//! Wraps the shared [`detect_chat_or_command`](crate::session::chat_utils::detect_chat_or_command)
+//! Wraps the shared [`decode_player_input`](crate::session::chat_utils::decode_player_input)
 //! helper and splits commands into name + arguments for handler dispatch.
 
 use infrarust_protocol::io::PacketFrame;
-use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
-use crate::session::chat_utils::{ChatAction, detect_chat_or_command};
+use crate::session::chat_utils::{ChatIds, PlayerInput, decode_player_input};
 
 /// A parsed client message — either a command with arguments or plain chat.
 #[derive(Debug)]
@@ -16,7 +15,7 @@ pub(crate) enum ClientMessage {
     /// A slash command, split into name and arguments.
     Command { name: String, args: Vec<String> },
     /// A regular chat message.
-    Chat { message: String },
+    Chat { message: String, signed: bool },
 }
 
 /// Parses a serverbound frame into a [`ClientMessage`], if applicable.
@@ -27,12 +26,10 @@ pub(crate) fn parse_client_message(
     registry: &PacketRegistry,
     version: ProtocolVersion,
 ) -> Option<ClientMessage> {
-    let chat_cmd_id = registry.get_packet_id::<SChatCommand>(version);
-    let chat_msg_id = registry.get_packet_id::<SChatMessage>(version);
-    let action = detect_chat_or_command(frame, chat_cmd_id, chat_msg_id, version)?;
-
-    match action {
-        ChatAction::Command(input) => {
+    let ids = ChatIds::resolve(registry, version);
+    match decode_player_input(frame, &ids, version)? {
+        PlayerInput::Command(command) => {
+            let input = command.into_command();
             let mut parts = input.splitn(2, ' ');
             let name = parts.next()?.to_string();
             let args = parts.next().map_or_else(Vec::new, |rest| {
@@ -40,7 +37,13 @@ pub(crate) fn parse_client_message(
             });
             Some(ClientMessage::Command { name, args })
         }
-        ChatAction::Message(msg) => Some(ClientMessage::Chat { message: msg }),
+        PlayerInput::Chat(chat) => {
+            let signed = chat.signed();
+            Some(ClientMessage::Chat {
+                message: chat.into_message(),
+                signed,
+            })
+        }
     }
 }
 
@@ -110,8 +113,9 @@ mod tests {
 
         let result = parse_client_message(&frame, &registry, version);
         match result {
-            Some(ClientMessage::Chat { message }) => {
+            Some(ClientMessage::Chat { message, signed }) => {
                 assert_eq!(message, "hello");
+                assert!(!signed);
             }
             other => panic!("expected Chat, got {other:?}"),
         }
