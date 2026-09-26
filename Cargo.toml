@@ -7,6 +7,7 @@ members = [
     "crates/infrarust-core",
     "crates/infrarust_server_manager",
     "crates/infrarust-transport",
+    "crates/infrarust-plugin-common",
     "crates/infrarust-plugin-wit",
     "crates/infrarust-loader-wasm",
     "crates/infrarust-plugin-sdk",
@@ -162,6 +163,7 @@ infrarust_config = { path = "crates/infrarust_config", version = "2.0.0-beta.3" 
 infrarust-transport = { path = "crates/infrarust-transport", version = "2.0.0-beta.3" }
 infrarust-core = { path = "crates/infrarust-core", version = "2.0.0-beta.3" }
 infrarust_server_manager = { path = "crates/infrarust_server_manager", version = "2.0.0-beta.3" }
+infrarust-plugin-common = { path = "crates/infrarust-plugin-common", version = "2.0.0-beta.3" }
 infrarust-plugin-wit = { path = "crates/infrarust-plugin-wit", version = "2.0.0-beta.3" }
 infrarust-loader-wasm = { path = "crates/infrarust-loader-wasm", version = "2.0.0-beta.3" }
 infrarust-plugin-macros = { path = "crates/infrarust-plugin-macros", version = "2.0.0-beta.3" }

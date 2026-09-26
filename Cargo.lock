@@ -2153,6 +2153,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "infrarust-plugin-common"
+version = "2.0.0-beta.3"
+
+[[package]]
 name = "infrarust-plugin-hello"
 version = "2.0.0-beta.3"
 dependencies = [
