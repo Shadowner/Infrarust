@@ -453,8 +453,6 @@ mod tests {
         shutdown.cancel();
     }
 
-    /// Failover must reach the live replica, and the handshake must carry the
-    /// port of the address actually connected to.
     #[tokio::test]
     async fn test_relay_fails_over_to_the_live_address() {
         let (addrs, shutdown) = spawn_mock_mc_status(TEST_JSON).await;

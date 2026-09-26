@@ -112,10 +112,6 @@ impl BackendBridge {
         self.flush().await
     }
 
-    /// Encodes and sends a typed packet to the backend.
-    ///
-    /// # Errors
-    /// Returns `CoreError` if packet ID lookup fails or I/O errors occur.
     pub async fn send_packet<P: Packet>(
         &mut self,
         packet: &P,

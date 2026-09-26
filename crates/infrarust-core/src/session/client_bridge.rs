@@ -182,10 +182,6 @@ impl ClientBridge {
         self.awaiting_config_ack
     }
 
-    /// Encodes and sends a typed packet to the client.
-    ///
-    /// # Errors
-    /// Returns `CoreError` if packet ID lookup fails or I/O errors occur.
     pub async fn send_packet<P: Packet>(
         &mut self,
         packet: &P,
