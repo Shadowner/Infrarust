@@ -200,6 +200,10 @@ impl Context {
         runtime::unregister_command(name)
     }
 
+    pub fn unregister_codec_filter(&self, id: &str) -> Result<(), Error> {
+        runtime::unregister_codec_filter(id)
+    }
+
     pub fn delay(
         &self,
         after: Duration,

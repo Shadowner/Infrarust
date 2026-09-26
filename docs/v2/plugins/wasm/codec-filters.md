@@ -70,6 +70,16 @@ impl Plugin for MyPlugin {
 
 A filter id belongs to the plugin that registered it. At the WIT level, `register-codec-filter` answers `conflict` for an id owned by someone else, and registering one of your own ids again replaces it. `unregister-codec-filter` removes only your own filters: it answers `conflict` for an id another plugin owns and `not-found` for an id nobody registered. The host removes all of a plugin's codec filters when the plugin is disabled or unloaded, so connections opened afterwards run none of its filter code.
 
+In the SDK, `reg.add` declares the filter and the host's answer is not returned to it, because the same method is replayed on every codec instance to rebuild the constructor table. A refused registration drops its constructor and the host logs the refusal. To withdraw one of your filters at runtime, call `ctx.unregister_codec_filter(id)`, which returns the host's answer as a `Result<(), Error>`:
+
+```rust
+if let Err(error) = ctx.unregister_codec_filter("flip") {
+    warn!("flip filter not removed: {error}");
+}
+```
+
+Connections already open keep the instance they were created with until they close.
+
 ## Per-connection state
 
 The constructor is a factory. The host calls it once per connection-side and builds a fresh filter from the [`CodecSessionInit`](#codecsessioninit). The client side and server side of one connection get separate instances, so their state is independent.

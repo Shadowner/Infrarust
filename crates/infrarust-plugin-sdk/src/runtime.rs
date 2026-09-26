@@ -277,9 +277,15 @@ pub(crate) fn register_codec_factory(
 ) {
     let id = take_id(&NEXT_CODEC_FACTORY);
     CODEC_FACTORIES.with(|factories| factories.insert(id, Rc::from(constructor)));
-    if notify {
-        let _ = crate::host::register_codec_filter(&metadata, id);
+    if notify && crate::host::register_codec_filter(&metadata, id).is_err() {
+        let refused = CODEC_FACTORIES.with(|factories| factories.remove(id));
+        drop(refused);
     }
+}
+
+pub(crate) fn unregister_codec_filter(id: &str) -> Result<(), Error> {
+    crate::host::unregister_codec_filter(id)?;
+    Ok(())
 }
 
 fn declare_codec_filters<P: Plugin>(notify: bool) {

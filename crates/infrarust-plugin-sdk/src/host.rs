@@ -72,6 +72,10 @@ mod imp {
         codec_registry::register_codec_filter(metadata, factory)
     }
 
+    pub(crate) fn unregister_codec_filter(id: &str) -> Result<(), HostError> {
+        codec_registry::unregister_codec_filter(id)
+    }
+
     pub(crate) fn register_limbo_handler(name: &str, handler: u64) -> Result<(), HostError> {
         limbo::register_limbo_handler(name, handler)
     }
@@ -272,6 +276,21 @@ mod imp {
         with_fake(|host| {
             host.refuse(&metadata.id)?;
             host.codec_filters.push((metadata.id.clone(), factory));
+            Ok(())
+        })
+    }
+
+    pub(crate) fn unregister_codec_filter(id: &str) -> Result<(), HostError> {
+        with_fake(|host| {
+            host.refuse(id)?;
+            let before = host.codec_filters.len();
+            host.codec_filters.retain(|(name, _)| name != id);
+            if host.codec_filters.len() == before {
+                return Err(HostError {
+                    kind: ErrorKind::NotFound,
+                    message: format!("no codec filter {id}"),
+                });
+            }
             Ok(())
         })
     }

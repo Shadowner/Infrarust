@@ -748,6 +748,36 @@ fn codec_factories_get_sequential_ids_from_zero() {
     );
 }
 
+#[test]
+fn a_refused_codec_filter_is_dropped_from_the_factory_table() {
+    refuse("stolen");
+    let mut registrar = CodecRegistrar { notify: true };
+    registrar.add("stolen", crate::codec::FilterPriority::Normal, |_| {
+        Box::new(PassthroughFilter)
+    });
+    assert!(host::with_fake(|h| h.codec_filters.is_empty()));
+    assert_eq!(CODEC_FACTORIES.with(|factories| factories.len()), 0);
+}
+
+#[test]
+fn unregistering_a_codec_filter_reports_what_the_host_answered() {
+    let mut registrar = CodecRegistrar { notify: true };
+    registrar.add("mine", crate::codec::FilterPriority::Normal, |_| {
+        Box::new(PassthroughFilter)
+    });
+    assert_eq!(unregister_codec_filter("mine"), Ok(()));
+    assert!(host::with_fake(|h| h.codec_filters.is_empty()));
+    assert_eq!(
+        unregister_codec_filter("mine").unwrap_err().kind(),
+        ErrorKind::NotFound
+    );
+    refuse("theirs");
+    assert_eq!(
+        unregister_codec_filter("theirs").unwrap_err().kind(),
+        ErrorKind::Conflict
+    );
+}
+
 #[derive(Default)]
 struct Lifecycle;
 
