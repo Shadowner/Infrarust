@@ -36,21 +36,13 @@ impl CommandHandler for ForceChangePasswordCommand {
             let username = Username::new(target_name);
             let storage = self.handler.storage();
 
-            match storage.has_account(&username).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    let msg = config.messages.format_message(
-                        &config.messages.forcechangepassword_not_found,
-                        &[("{username}", target_name)],
-                    );
-                    ctx.source.send_message(parse_colored(&msg));
-                    return;
-                }
-                Err(e) => {
-                    tracing::error!("Storage error: {e}");
-                    ctx.source.send_message(Component::error("Internal error."));
-                    return;
-                }
+            if !storage.has_account(&username) {
+                let msg = config.messages.format_message(
+                    &config.messages.forcechangepassword_not_found,
+                    &[("{username}", target_name)],
+                );
+                ctx.source.send_message(parse_colored(&msg));
+                return;
             }
 
             match password::hash_password(new_password, &config.hashing).await {

@@ -43,7 +43,7 @@ impl PremiumDetector {
             let username = event.profile.username.clone();
             Box::pin(async move {
                 let canonical = crate::account::Username::new(&username);
-                if detector.storage.is_force_cracked_blocking(&canonical) {
+                if detector.storage.is_force_cracked(&canonical) {
                     tracing::debug!(%username, "Skipping premium check: force_cracked");
                     return;
                 }

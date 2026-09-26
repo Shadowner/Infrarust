@@ -32,7 +32,7 @@ async fn changepassword_updates_hash_with_correct_old_password() {
 
     let account = env
         .storage
-        .get_account_blocking(&Username::new("Steve"))
+        .get_account(&Username::new("Steve"))
         .unwrap()
         .unwrap();
     let hash = account.password_hash.unwrap();
@@ -58,7 +58,7 @@ async fn changepassword_rejects_wrong_old_password() {
 
     let account = env
         .storage
-        .get_account_blocking(&Username::new("Steve"))
+        .get_account(&Username::new("Steve"))
         .unwrap()
         .unwrap();
     let hash = account.password_hash.unwrap();
@@ -81,7 +81,7 @@ async fn unregister_deletes_account_with_correct_password() {
     };
     cmd.execute(ctx(&env, 1, &["hunter2hunter2"])).await;
 
-    assert!(!env.storage.has_account_blocking(&Username::new("Steve")));
+    assert!(!env.storage.has_account(&Username::new("Steve")));
 }
 
 #[tokio::test]
@@ -137,7 +137,7 @@ async fn forceunregister_allows_config_listed_admin() {
     };
     cmd.execute(ctx(&env, 1, &["Steve"])).await;
 
-    assert!(!env.storage.has_account_blocking(&Username::new("Steve")));
+    assert!(!env.storage.has_account(&Username::new("Steve")));
     assert!(sender.sent_text().contains("Account deleted"));
 }
 
@@ -155,7 +155,7 @@ async fn forcechangepassword_sets_new_password() {
 
     let account = env
         .storage
-        .get_account_blocking(&Username::new("Steve"))
+        .get_account(&Username::new("Steve"))
         .unwrap()
         .unwrap();
     assert!(
@@ -179,7 +179,7 @@ async fn cracked_sets_force_cracked() {
 
     let account = env
         .storage
-        .get_account_blocking(&Username::new("Notch"))
+        .get_account(&Username::new("Notch"))
         .unwrap()
         .unwrap();
     assert!(account.premium_info.unwrap().force_cracked);
@@ -199,7 +199,7 @@ async fn premium_unsets_force_cracked() {
 
     let account = env
         .storage
-        .get_account_blocking(&Username::new("Notch"))
+        .get_account(&Username::new("Notch"))
         .unwrap()
         .unwrap();
     assert!(!account.premium_info.unwrap().force_cracked);

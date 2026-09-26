@@ -185,7 +185,7 @@ impl LimboHandler for AuthHandler {
             let mojang_uuid = profile.uuid;
             let now = chrono::Utc::now();
 
-            match self.storage.get_account_blocking(&username) {
+            match self.storage.get_account(&username) {
                 Ok(Some(existing)) => {
                     let first = existing
                         .premium_info
@@ -254,7 +254,7 @@ impl LimboHandler for AuthHandler {
         let username = Username::new(&profile.username);
         let display_name = profile.username.clone();
 
-        let needs_register = !self.storage.has_account_blocking(&username);
+        let needs_register = !self.storage.has_account(&username);
 
         if needs_register {
             let title = self.msg(
@@ -353,7 +353,7 @@ impl LimboHandler for AuthHandler {
 
                 // Passwordless (premium) accounts verify against the dummy hash so
                 // messaging and timing match unknown accounts (no account-type oracle).
-                let hash = match self.storage.get_account_blocking(&username) {
+                let hash = match self.storage.get_account(&username) {
                     Ok(Some(AuthAccount {
                         password_hash: Some(h),
                         ..
@@ -590,7 +590,7 @@ mod tests {
             .await;
 
         assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
-        assert!(env.storage.has_account_blocking(&Username::new("Steve")));
+        assert!(env.storage.has_account(&Username::new("Steve")));
     }
 
     #[tokio::test]
@@ -607,7 +607,7 @@ mod tests {
             .await;
 
         assert!(session.completions().is_empty());
-        assert!(!env.storage.has_account_blocking(&Username::new("Steve")));
+        assert!(!env.storage.has_account(&Username::new("Steve")));
     }
 
     #[tokio::test]
@@ -674,14 +674,14 @@ mod tests {
 
         let username = Username::new("Notch");
         for _ in 0..200 {
-            if env.storage.has_account_blocking(&username) {
+            if env.storage.has_account(&username) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         let account = env
             .storage
-            .get_account_blocking(&username)
+            .get_account(&username)
             .unwrap()
             .expect("premium account created in background");
         assert!(account.premium_info.is_some());

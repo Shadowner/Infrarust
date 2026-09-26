@@ -59,23 +59,22 @@ impl JsonFileStorage {
 }
 
 impl AuthStorage for JsonFileStorage {
-    fn has_account<'a>(
-        &'a self,
-        username: &'a Username,
-    ) -> BoxFuture<'a, Result<bool, AuthStorageError>> {
-        Box::pin(async move { Ok(self.accounts.contains_key(username)) })
+    fn has_account(&self, username: &Username) -> bool {
+        self.accounts.contains_key(username)
     }
 
-    fn get_account<'a>(
-        &'a self,
-        username: &'a Username,
-    ) -> BoxFuture<'a, Result<Option<AuthAccount>, AuthStorageError>> {
-        Box::pin(async move {
-            Ok(self
-                .accounts
-                .get(username)
-                .map(|entry| entry.value().clone()))
-        })
+    fn get_account(&self, username: &Username) -> Result<Option<AuthAccount>, AuthStorageError> {
+        Ok(self
+            .accounts
+            .get(username)
+            .map(|entry| entry.value().clone()))
+    }
+
+    fn is_force_cracked(&self, username: &Username) -> bool {
+        self.accounts
+            .get(username)
+            .and_then(|entry| entry.premium_info.as_ref().map(|pi| pi.force_cracked))
+            .unwrap_or(false)
     }
 
     fn create_account<'a>(
@@ -175,20 +174,6 @@ impl AuthStorage for JsonFileStorage {
         })
     }
 
-    fn get_account_blocking(
-        &self,
-        username: &Username,
-    ) -> Result<Option<AuthAccount>, AuthStorageError> {
-        Ok(self
-            .accounts
-            .get(username)
-            .map(|entry| entry.value().clone()))
-    }
-
-    fn has_account_blocking(&self, username: &Username) -> bool {
-        self.accounts.contains_key(username)
-    }
-
     fn update_premium_info<'a>(
         &'a self,
         username: &'a Username,
@@ -206,13 +191,6 @@ impl AuthStorage for JsonFileStorage {
                 }),
             }
         })
-    }
-
-    fn is_force_cracked_blocking(&self, username: &Username) -> bool {
-        self.accounts
-            .get(username)
-            .and_then(|entry| entry.premium_info.as_ref().map(|pi| pi.force_cracked))
-            .unwrap_or(false)
     }
 }
 
@@ -246,10 +224,7 @@ mod tests {
         let account = test_account("TestPlayer");
         storage.create_account(&account).await.unwrap();
 
-        let fetched = storage
-            .get_account(&Username::new("testplayer"))
-            .await
-            .unwrap();
+        let fetched = storage.get_account(&Username::new("testplayer")).unwrap();
         assert!(fetched.is_some());
         assert_eq!(fetched.unwrap().display_name.as_str(), "TestPlayer");
     }
@@ -316,7 +291,7 @@ mod tests {
             let storage = JsonFileStorage::load_or_create(dir.path(), "accounts.json")
                 .await
                 .unwrap();
-            assert!(storage.has_account_blocking(&Username::new("persistent")));
+            assert!(storage.has_account(&Username::new("persistent")));
         }
     }
 
@@ -330,10 +305,8 @@ mod tests {
         let account = test_account("SyncTest");
         storage.create_account(&account).await.unwrap();
 
-        assert!(storage.has_account_blocking(&Username::new("synctest")));
-        let fetched = storage
-            .get_account_blocking(&Username::new("synctest"))
-            .unwrap();
+        assert!(storage.has_account(&Username::new("synctest")));
+        let fetched = storage.get_account(&Username::new("synctest")).unwrap();
         assert!(fetched.is_some());
     }
 
@@ -357,7 +330,6 @@ mod tests {
 
         let account = storage
             .get_account(&Username::new("hashupdate"))
-            .await
             .unwrap()
             .unwrap();
         assert_eq!(

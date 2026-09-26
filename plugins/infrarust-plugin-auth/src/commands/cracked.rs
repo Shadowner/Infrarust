@@ -27,7 +27,7 @@ impl CommandHandler for CrackedCommand {
             let storage = self.handler.storage();
             let config = self.handler.config();
 
-            let account = match storage.get_account(&username).await {
+            let account = match storage.get_account(&username) {
                 Ok(Some(a)) => a,
                 _ => {
                     let _ = player.send_message(Component::error("No account found."));
