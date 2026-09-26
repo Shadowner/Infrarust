@@ -10,10 +10,11 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use infrarust_api::command::CommandSource;
+use infrarust_api::command::{CommandSource, Suggestion};
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::events::connection::ConnectCause;
 use infrarust_api::messaging::ChannelId;
+use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{
     Component, PlayerId, ProtocolVersion as ApiVersion, RawPacket, ServerId,
@@ -51,6 +52,7 @@ use crate::player::{PlayerCommand, PlayerSession};
 use crate::plugin_messaging::channels::{self, MessageIds};
 use crate::plugin_messaging::router::{self, Scope};
 use crate::services::ProxyServices;
+use crate::services::command_manager::Prepared;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::kick::BackendKick;
@@ -851,40 +853,37 @@ async fn handle_client_to_backend(
         }
 
         if Some(frame.id) == hot_ids.s_tab_request
-            && let Some(resp_id) = hot_ids.c_tab_response
+            && let Some(packet_id) = hot_ids.c_tab_response
+            && let Some(session) = loop_state.session.as_ref()
             && let Ok(DecodedPacket::Typed { id: _, packet }) =
                 registry.decode_frame(&frame, state, Direction::Serverbound, version)
             && let Some(req) = packet.as_any().downcast_ref::<STabCompleteRequest>()
             && let Some(input) = req.text.trim_start().strip_prefix('/')
-            && let Some(player) = services.player_registry.get_player_by_id(player_id)
-            && let Some(suggestions) = services
-                .command_manager
-                .suggest(CommandSource::Player(player), input)
-                .await
         {
-            let text = req.text.as_str();
-            let start = text.rfind(' ').map_or(0, |i| i + 1);
-            let response = CTabCompleteResponse {
-                transaction_id: req.transaction_id,
-                start: i32::try_from(start).unwrap_or(i32::MAX),
-                length: i32::try_from(text.len() - start).unwrap_or(i32::MAX),
-                matches: suggestions
-                    .into_iter()
-                    .map(|suggestion| TabCompleteMatch {
-                        text: suggestion.text,
-                        tooltip: suggestion.tooltip.map(|tooltip| {
-                            encode_text_component(&tooltip, version, ConnectionState::Play)
-                        }),
-                    })
-                    .collect(),
-            };
-            let mut buf = Vec::new();
-            match infrarust_protocol::packets::Packet::encode(&response, &mut buf, version) {
-                Ok(()) => {
-                    client.queue_frame(&PacketFrame::new(resp_id, buf.into()))?;
+            let reply = TabReply::new(packet_id, req, version);
+            let source = CommandSource::Player(Arc::clone(session) as Arc<dyn Player>);
+            match services.command_manager.prepare_suggestion(source, input) {
+                Prepared::Unknown => {}
+                Prepared::Denied => {
+                    if let Some(answer) = reply.frame(Vec::new()) {
+                        client.queue_frame(&answer)?;
+                        return Ok(());
+                    }
+                }
+                Prepared::Ready(completion) => {
+                    let replying = Arc::clone(session);
+                    session.run_completion(completion, move |suggestions| {
+                        let Some(answer) = reply.frame(suggestions) else {
+                            return;
+                        };
+                        if let Err(e) =
+                            replying.send_packet(RawPacket::new(answer.id, answer.payload))
+                        {
+                            tracing::debug!("dropping proxy command suggestions: {e}");
+                        }
+                    });
                     return Ok(());
                 }
-                Err(e) => tracing::warn!("failed to encode proxy command suggestions: {e}"),
             }
         }
 
@@ -1003,6 +1002,53 @@ async fn handle_client_to_backend(
     }
 
     Ok(())
+}
+
+struct TabReply {
+    packet_id: i32,
+    transaction_id: i32,
+    start: i32,
+    length: i32,
+    version: ProtocolVersion,
+}
+
+impl TabReply {
+    fn new(packet_id: i32, request: &STabCompleteRequest, version: ProtocolVersion) -> Self {
+        let text = request.text.as_str();
+        let start = text.rfind(' ').map_or(0, |i| i + 1);
+        Self {
+            packet_id,
+            transaction_id: request.transaction_id,
+            start: i32::try_from(start).unwrap_or(i32::MAX),
+            length: i32::try_from(text.len() - start).unwrap_or(i32::MAX),
+            version,
+        }
+    }
+
+    fn frame(&self, suggestions: Vec<Suggestion>) -> Option<PacketFrame> {
+        let response = CTabCompleteResponse {
+            transaction_id: self.transaction_id,
+            start: self.start,
+            length: self.length,
+            matches: suggestions
+                .into_iter()
+                .map(|suggestion| TabCompleteMatch {
+                    text: suggestion.text,
+                    tooltip: suggestion.tooltip.map(|tooltip| {
+                        encode_text_component(&tooltip, self.version, ConnectionState::Play)
+                    }),
+                })
+                .collect(),
+        };
+        let mut buf = Vec::new();
+        match infrarust_protocol::packets::Packet::encode(&response, &mut buf, self.version) {
+            Ok(()) => Some(PacketFrame::new(self.packet_id, buf.into())),
+            Err(e) => {
+                tracing::warn!("failed to encode proxy command suggestions: {e}");
+                None
+            }
+        }
+    }
 }
 
 async fn presentation_from_backend(

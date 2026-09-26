@@ -101,6 +101,8 @@ ctx.command("ping")
     .register()?;
 ```
 
+A player's command does not run in that player's session: the host hands it to the player's command queue, which runs the player's commands one at a time, in the order they were typed, while the session goes on with the player's packets. A handler can therefore call `connect` or `request_cookie` for the player who typed the command and wait for the answer. Tab completions take the same queue. See [Where the chain does not reach](./threading#where-the-chain-does-not-reach).
+
 ## Tab-completion
 
 The completer receives a `Completion` with the `sender`, the argument tokens typed so far (`args`, the last one being the token under the cursor, empty after a trailing space), and the `cursor`. `completion.partial()` returns the last token. It answers suggestions; a `&str` or `String` converts into a plain `Suggestion`, and `Suggestion::new(text).with_tooltip(component)` adds a hover tooltip.

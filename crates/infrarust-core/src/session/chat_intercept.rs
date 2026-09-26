@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use infrarust_api::command::CommandSource;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::command::{CommandExecuteEvent, CommandExecuteResult};
 use infrarust_api::player::Player;
-use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, PlayerId, ServerId};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
@@ -14,6 +12,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
+use crate::player::PlayerSession;
 use crate::player::packets::build_system_chat_message;
 use crate::services::ProxyServices;
 use crate::services::command_manager::DispatchOutcome;
@@ -37,17 +36,27 @@ pub(crate) async fn intercept(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
 ) -> Result<Option<PacketFrame>, CoreError> {
-    let Some(player) = scope
+    let Some(session) = scope
         .services
-        .player_registry
-        .get_player_by_id(scope.player_id)
+        .connection_registry
+        .find_by_id(scope.player_id)
     else {
         return Ok(Some(frame));
     };
     match input {
-        PlayerInput::Chat(chat) => on_chat(chat, frame, player, scope, client, backend).await,
+        PlayerInput::Chat(chat) => {
+            on_chat(
+                chat,
+                frame,
+                session as Arc<dyn Player>,
+                scope,
+                client,
+                backend,
+            )
+            .await
+        }
         PlayerInput::Command(command) => {
-            on_command(command, frame, player, scope, client, backend).await
+            on_command(command, frame, &session, scope, client, backend).await
         }
     }
 }
@@ -91,13 +100,13 @@ async fn on_chat(
 async fn on_command(
     command: CommandInput,
     frame: PacketFrame,
-    player: Arc<dyn Player>,
+    session: &Arc<PlayerSession>,
     scope: &ChatScope<'_>,
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
 ) -> Result<Option<PacketFrame>, CoreError> {
     let event = CommandExecuteEvent::new(
-        Arc::clone(&player),
+        Arc::clone(session) as Arc<dyn Player>,
         command.command().to_string(),
         command.signed(),
         Some(scope.server.clone()),
@@ -112,7 +121,7 @@ async fn on_command(
         }
         CommandExecuteResult::ForwardToBackend => Ok(Some(frame)),
         CommandExecuteResult::Modify { command: modified } => {
-            if dispatch(player, modified, scope).await {
+            if dispatch(session, modified, scope) {
                 acknowledge(acknowledgement, scope, backend)?;
                 return Ok(None);
             }
@@ -136,7 +145,7 @@ async fn on_command(
             }
         }
         _ => {
-            if dispatch(player, command.command(), scope).await {
+            if dispatch(session, command.command(), scope) {
                 acknowledge(acknowledgement, scope, backend)?;
                 return Ok(None);
             }
@@ -145,13 +154,8 @@ async fn on_command(
     }
 }
 
-async fn dispatch(player: Arc<dyn Player>, input: &str, scope: &ChatScope<'_>) -> bool {
-    scope
-        .services
-        .command_manager
-        .dispatch(CommandSource::Player(player), input)
-        .await
-        != DispatchOutcome::Unknown
+fn dispatch(session: &Arc<PlayerSession>, input: &str, scope: &ChatScope<'_>) -> bool {
+    session.dispatch_command(&scope.services.command_manager, input) != DispatchOutcome::Unknown
 }
 
 fn acknowledge(

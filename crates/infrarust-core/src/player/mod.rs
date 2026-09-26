@@ -4,6 +4,7 @@
 //! and [`PlayerCommand`] (the command channel enum for packet injection).
 
 pub(crate) mod client_state;
+pub(crate) mod command_queue;
 pub(crate) mod commands;
 pub(crate) mod lifecycle;
 pub(crate) mod packets;
@@ -43,6 +44,7 @@ use crate::loadbalancer::BackendLoad;
 use crate::permissions::PermissionService;
 
 use client_state::ClientState;
+use command_queue::CommandQueue;
 use presentation::{BarControl, Presentation};
 
 const TAB_LIST_SINCE: WireVersion = WireVersion::V1_8;
@@ -156,6 +158,7 @@ pub struct PlayerSession {
     events: Option<Arc<EventBusImpl>>,
     shared: OnceLock<Weak<Self>>,
     connects: Mutex<Vec<(ServerId, oneshot::Sender<ConnectionResult>)>>,
+    typed_commands: CommandQueue,
 }
 
 impl std::fmt::Debug for PlayerSession {
@@ -184,6 +187,7 @@ impl PlayerSession {
         permission_checker: Arc<dyn PermissionChecker>,
         backend_load: Arc<BackendLoad>,
     ) -> Self {
+        let typed_commands = CommandQueue::new(profile.username.clone());
         Self {
             player_id,
             profile,
@@ -213,6 +217,7 @@ impl PlayerSession {
             events: None,
             shared: OnceLock::new(),
             connects: Mutex::new(Vec::new()),
+            typed_commands,
         }
     }
 
@@ -303,6 +308,7 @@ impl PlayerSession {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
+        drop(self.typed_commands.stop());
     }
 
     /// Updates the current server (called by the proxy loop on server switch).

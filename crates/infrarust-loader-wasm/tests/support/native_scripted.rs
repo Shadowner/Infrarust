@@ -125,6 +125,15 @@ impl Plugin for ScriptedPlugin {
                         let state = ctx.plugin_registry().plugin_info(&id).map(|p| p.state);
                         script::append(&log, &script::plugin_line(&id, state.as_deref()));
                     }
+                    Directive::Connect { command, server } => {
+                        let spec = CommandSpec::new(command.as_str());
+                        let connect = Box::new(ConnectCommand {
+                            command,
+                            server,
+                            log: log.clone(),
+                        });
+                        let _ = ctx.command_manager().register(spec, connect);
+                    }
                 }
             }
             script::append(&log, "enable");
@@ -154,6 +163,33 @@ impl CommandHandler for ScriptedCommand {
             let player = ctx.source.player_id().map(PlayerId::as_u64);
             let line = script::command_line(&self.name, &ctx.args, player);
             script::observe(&self.log, &line, &Action::Record);
+        })
+    }
+}
+
+struct ConnectCommand {
+    command: String,
+    server: String,
+    log: PathBuf,
+}
+
+impl CommandHandler for ConnectCommand {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let outcome = match ctx.source.player() {
+                Some(player) => match player.connect(ServerId::new(self.server.as_str())).await {
+                    Ok(result) => result.as_str().to_owned(),
+                    Err(error) => format!("{error:?}"),
+                },
+                None => "console".to_owned(),
+            };
+            let origin = format!("cmd {}", self.command);
+            script::append(
+                &self.log,
+                &script::connect_line(&origin, &self.server, &outcome),
+            );
+            ctx.source
+                .send_message(Component::text(format!("{} {outcome}", self.command)));
         })
     }
 }

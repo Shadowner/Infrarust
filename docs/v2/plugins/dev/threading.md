@@ -1,12 +1,12 @@
 ---
 title: Threading Model
-description: Where native plugin code runs. The proxy's tokio runtime, the Send and Sync bounds, per-handler timeouts and panic isolation, the order events arrive in, what blocking costs, and when it is safe to call back into the proxy.
+description: Where native plugin code runs. The proxy's tokio runtime, the Send and Sync bounds, per-handler timeouts and panic isolation, the order events arrive in, where player commands run, what blocking costs, and when it is safe to call back into the proxy.
 outline: [2, 3]
 ---
 
 # Threading Model
 
-A native plugin runs inside the proxy process, on the proxy's tokio runtime. No thread belongs to a plugin: a listener, a command, a limbo callback or a scheduled task runs as part of the proxy task that triggered it, and that task can be a player's connection, the event queue, the console or a task the plugin scheduled. This page says which task runs your code, what the proxy guarantees about order and time, and what your code must not do on those tasks.
+A native plugin runs inside the proxy process, on the proxy's tokio runtime. No thread belongs to a plugin: a listener, a command, a limbo callback or a scheduled task runs as part of the proxy task that triggered it, and that task can be a player's connection, a player's command queue, the event queue, the console or a task the plugin scheduled. This page says which task runs your code, what the proxy guarantees about order and time, and what your code must not do on those tasks.
 
 WASM plugins follow a different model, one call at a time per plugin; see [WASM Threading](../wasm/threading).
 
@@ -110,7 +110,7 @@ disconnect_deadline = "15s"
 
 Cancellation happens at an `.await`. Code after that await never runs, so do not leave shared state half-updated across one. Work that must finish, such as saving a player's data, belongs in a scheduled task, which the event timeout does not cancel.
 
-Command handlers and limbo callbacks have no timeout. They are awaited until they return; see [player events](#player-events-run-in-the-player-s-session) for what that holds.
+Command handlers and limbo callbacks have no timeout. A limbo callback holds the player's session until it returns; see [player events](#player-events-run-in-the-player-s-session). A command a player types runs off the session and is cancelled when the player leaves; see [Player commands run on a queue of their own](#player-commands-run-on-a-queue-of-their-own).
 
 ## Player events run in the player's session
 
@@ -121,11 +121,24 @@ This gives two guarantees:
 - **In order for one player.** One player's events reach your listeners one at a time, in the order they happen, and never concurrently with each other. `DisconnectEvent` comes after every other event the session fires for that player: the session dispatches it on a task of its own, bounded by `disconnect_deadline`, and waits for it before it releases the player.
 - **Concurrent across players.** Different players' sessions run in parallel, so the same listener runs for several players at once. Anything a listener shares between players needs the synchronisation described above.
 
-In `offline` and `client_only`, the session also handles the game traffic, one packet at a time. `ChatMessageEvent`, `CommandExecuteEvent`, `PluginMessageEvent` and `RawPacketEvent` are awaited between two packets, and so is a plugin command a player types: while your listener or handler runs, that player's session reads nothing more from the client or the backend. The player sees the delay.
+In `offline` and `client_only`, the session also handles the game traffic, one packet at a time. `ChatMessageEvent`, `CommandExecuteEvent`, `PluginMessageEvent` and `RawPacketEvent` are awaited between two packets, and so are the limbo callbacks of a player in limbo: while your listener or callback runs, that player's session reads nothing more from the client or the backend. The player sees the delay. A plugin command the player types is the exception; it runs on the player's command queue, described below.
 
 A few player events are not fired from the session. `PlayerClientBrandEvent`, `PlayerSettingsChangedEvent`, `PlayerChannelRegisterEvent` and `PlayerResourcePackStatusEvent` go through the proxy event queue below: they keep their order among themselves, but not with the session's events, and they can arrive after the player's `DisconnectEvent`.
 
 See [Delivery](./events#delivery) for the complete list and [Guarantees](./events#guarantees) for what holds at each step of a login.
+
+## Player commands run on a queue of their own
+
+When a player types a command, the session fires `CommandExecuteEvent`, looks the label up and checks the permission node, as described in [Dispatch flow](./commands#dispatch-flow). Once it knows the command is a proxy command, it never forwards it to the backend, and it hands the handler to the player's command queue instead of awaiting it:
+
+- **One at a time, in order.** Each player has one queue, a task the proxy starts at the player's first command. It runs that player's commands in the order they were typed and starts the next one only when the previous `execute` returned, so two commands of the same player never overlap. Different players' queues run in parallel.
+- **The session goes on.** While a command runs, the session keeps forwarding packets and carries out what the command asks of it, so a handler can await `connect` or `request_cookie` for its own player; see [Calling back into the proxy](#calling-back-into-the-proxy).
+- **Tab completion takes the same queue.** `suggest` runs there too, after the commands typed before it, and the proxy sends the suggestions when they are ready. The answer carries the request's transaction id, so the client matches it.
+- **A bounded queue.** Up to 16 commands can wait behind the running one. A player who types more gets "You are sending commands faster than they can run" and the extra command is dropped; an extra tab completion request goes unanswered.
+- **Ends with the player.** When the player leaves, the queue stops before `DisconnectEvent` fires: the command still running is cancelled at its next `.await`, like a listener at its timeout, and the commands still waiting are dropped. Work that must finish belongs in a scheduled task.
+- **Panics.** A panicking handler is logged with your plugin id, and the player's next command still runs.
+
+Console commands are not queued: the console awaits them in its own task.
 
 ## Proxy events go through one queue
 
@@ -206,43 +219,36 @@ Plugin code calls proxy services all the time. Most calls are safe from anywhere
 
 **Do not await from the same player's session:**
 
-`Player::connect` and `Player::request_cookie` wait for the player's session to carry out the request and answer. If you await them from code the session itself is awaiting (a listener of one of that player's session events, a command that player typed, a limbo callback for that player), the session cannot handle the request until your code returns:
-
-- a listener waits until `handler_timeout` cancels it, and the request is then carried out without anyone waiting for the answer;
-- a command handler or limbo callback has no timeout, so that player's session stays stuck.
-
-Queue the request with `switch_server` when you do not need the outcome, or await `connect` in a task of its own:
+`Player::connect` and `Player::request_cookie` wait for the player's session to carry out the request and answer. A command handler can await them for the player who typed the command, because commands run on the player's [command queue](#player-commands-run-on-a-queue-of-their-own), not in the session:
 
 ```rust
-pub struct Hub {
-    scheduler: Arc<dyn Scheduler>,
-}
+struct Hub;
 
 impl CommandHandler for Hub {
     fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player) = ctx.source.player().cloned() else {
+            let Some(player) = ctx.source.player() else {
                 return;
             };
-            let source = ctx.source.clone();
-            // The command runs in the player's session: let it return, and wait for
-            // the switch in a task of its own.
-            self.scheduler.spawn(Box::pin(async move {
-                match player.connect(ServerId::new("hub")).await {
-                    Ok(result) if result.is_success() => {}
-                    Ok(result) => {
-                        source.send_message(Component::error(format!(
-                            "Could not reach the hub: {}",
-                            result.as_str()
-                        )));
-                    }
-                    Err(e) => source.send_message(Component::error(e.to_string())),
-                }
-            }));
+            match player.connect(ServerId::new("hub")).await {
+                Ok(result) if result.is_success() => {}
+                Ok(result) => ctx.source.send_message(Component::error(format!(
+                    "Could not reach the hub: {}",
+                    result.as_str()
+                ))),
+                Err(e) => ctx.source.send_message(Component::error(e.to_string())),
+            }
         })
     }
 }
 ```
+
+If you await them from code the session itself is awaiting (a listener of one of that player's session events, a limbo callback for that player), the session cannot handle the request until your code returns:
+
+- a listener waits until `handler_timeout` cancels it, and the request is then carried out without anyone waiting for the answer;
+- a limbo callback has no timeout, so that player's session stays stuck.
+
+Queue the request with `switch_server` there when you do not need the outcome, or await `connect` in a task of its own.
 
 Awaiting these calls for another player, from a queued event or from a scheduled task is fine: the session that answers is not waiting on you.
 

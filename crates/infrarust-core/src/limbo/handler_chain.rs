@@ -10,7 +10,6 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use infrarust_api::command::CommandSource;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
@@ -224,8 +223,8 @@ async fn wait_for_hold(
                                     } else {
                                         format!("{name} {}", args.join(" "))
                                     };
-                                    let outcome = match services.player_registry.get_player_by_id(core.player_id) {
-                                        Some(player) => services.command_manager.dispatch(CommandSource::Player(player), &input).await,
+                                    let outcome = match &player {
+                                        Some(player) => player.dispatch_command(&services.command_manager, &input),
                                         None => DispatchOutcome::Unknown,
                                     };
                                     if outcome == DispatchOutcome::Unknown {

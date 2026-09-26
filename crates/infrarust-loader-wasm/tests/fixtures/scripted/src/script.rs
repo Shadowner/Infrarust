@@ -241,6 +241,10 @@ pub enum Directive {
     Plugin {
         id: String,
     },
+    Connect {
+        command: String,
+        server: String,
+    },
 }
 
 pub fn parse(script: &str) -> Result<Vec<Directive>, String> {
@@ -274,10 +278,7 @@ fn parse_line(line: &str) -> Result<Directive, String> {
         "cmd" => {
             let (name, rest) = word(rest);
             if name.is_empty() {
-                return Err(
-                    "expected `cmd <name> record` or `cmd <name> fire <event> \"<payload>\"`"
-                        .to_owned(),
-                );
+                return Err(CMD_FORMS.to_owned());
             }
             let (verb, rest) = word(rest);
             match verb {
@@ -295,10 +296,17 @@ fn parse_line(line: &str) -> Result<Directive, String> {
                         payload: unquote(rest.trim()),
                     })
                 }
-                _ => Err(
-                    "expected `cmd <name> record` or `cmd <name> fire <event> \"<payload>\"`"
-                        .to_owned(),
-                ),
+                "connect" => {
+                    let (server, rest) = word(rest);
+                    if server.is_empty() || !rest.trim().is_empty() {
+                        return Err("expected `cmd <name> connect <server>`".to_owned());
+                    }
+                    Ok(Directive::Connect {
+                        command: name.to_owned(),
+                        server: server.to_owned(),
+                    })
+                }
+                _ => Err(CMD_FORMS.to_owned()),
             }
         }
         "named" => {
@@ -344,6 +352,8 @@ fn parse_line(line: &str) -> Result<Directive, String> {
         other => Err(format!("unknown directive {other:?}")),
     }
 }
+
+const CMD_FORMS: &str = "expected `cmd <name> record`, `cmd <name> fire <event> \"<payload>\"` or `cmd <name> connect <server>`";
 
 fn word(text: &str) -> (&str, &str) {
     let text = text.trim_start();
@@ -477,6 +487,10 @@ where
     } else {
         items.join(",")
     }
+}
+
+pub fn connect_line(origin: &str, server: &str, outcome: &str) -> String {
+    format!("{origin} connect {server} {outcome}")
 }
 
 pub fn command_line(name: &str, args: &[String], player: Option<u64>) -> String {

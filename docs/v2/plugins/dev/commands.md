@@ -124,7 +124,7 @@ impl CommandHandler for HelloCommand {
 }
 ```
 
-A player's command runs inside that player's session loop, so keep `execute` short and `tokio::spawn` anything slow.
+A player's command runs on that player's command queue, not in the session: the player's packets keep flowing while it runs, and `execute` may await `connect` or `request_cookie` for the player who typed it. The player's commands run one at a time in the order they were typed, so a slow `execute` delays that player's next command; move long work to the [scheduler](./api#scheduler). A command still running when the player leaves is cancelled at its next `.await`. See [Player commands run on a queue of their own](./threading#player-commands-run-on-a-queue-of-their-own).
 
 ## CommandSource
 
@@ -218,7 +218,7 @@ impl CommandHandler for WarpCommand {
 
 `SuggestContext` has the same `source`, `label`, and `raw_args` as `CommandContext`, and `args` holds the arguments typed so far. When the input ends with a space the last element is an empty string, so you can tell that a new argument has started. `partial()` returns that last element. Each `Suggestion` carries its text and an optional tooltip `Component`, which the client shows on hover.
 
-The proxy answers a completion request for a proxy command itself and never forwards it to the backend. If the player lacks the command's permission node, `suggest` is not called and the answer is empty.
+The proxy answers a completion request for a proxy command itself and never forwards it to the backend. If the player lacks the command's permission node, `suggest` is not called and the answer is empty. `suggest` runs on the player's command queue, after the commands typed before it, and the proxy sends its answer when it returns.
 
 ## Permission nodes
 
@@ -358,6 +358,6 @@ Players and the console go through the same dispatch:
 2. The proxy splits off the first word as the label and looks it up case-insensitively among built-in names, plugin names, aliases, and `<plugin_id>:<name>` forms.
 3. If nothing matches, a player's command goes to the backend unchanged, or to the limbo handler's `on_command` while the player is in limbo. The console prints `Unknown command`.
 4. If the command has a permission node the sender lacks, the sender gets the denial message and dispatch stops there.
-5. Otherwise the proxy builds a `CommandContext` and awaits `handler.execute()`. The command is not forwarded.
+5. Otherwise the proxy builds a `CommandContext` and the command is not forwarded. The console awaits `handler.execute()`; a player's command goes to the player's command queue, which runs it once the player's earlier commands are done, while the session goes on with the next packet.
 
 The console lists plugin commands at the end of `help`. Console commands keep their names, so when a plugin command shares a name with one of them, run it at the console with its `<plugin_id>:<name>` form.

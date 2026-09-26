@@ -97,21 +97,40 @@ The chain follows the call's own work. It does not follow work the host hands to
 `Player::connect` and `Player::request_cookie` hand the request to the player's session and wait for it to finish. Two consequences:
 
 - If your plugin listens to `ServerPreConnectEvent`, `ServerConnectedEvent` or `ServerPostConnectEvent` and calls `connect`, the session fires those events while your `connect` call is still running. Their delivery waits in your queue behind it, and the session waits up to `[events] handler_timeout` for each before it goes on without your answer.
-- If you call `connect` or `request_cookie` from a call that the same player's session is waiting on (a command that player typed, a `ChatMessageEvent`, `CommandExecuteEvent` or `PluginMessageEvent` from that player, a limbo callback for that player), the session cannot carry out the request before your call returns. The host call ends with a `Timeout` error at its [limit](#deadlines-and-host-call-timeouts), your call returns, and only then does the session act. For a command that is `host_call_timeout`, 30 seconds by default, during which that player's session is paused.
+- If you call `connect` or `request_cookie` from a call that the same player's session is waiting on (a `ChatMessageEvent`, `CommandExecuteEvent` or `PluginMessageEvent` from that player, a limbo callback for that player), the session cannot carry out the request before your call returns. The host call ends with a `Timeout` error at its [limit](#deadlines-and-host-call-timeouts), your call returns, and only then does the session act.
 
 Use `switch_server` in those places. It returns as soon as the session has taken the request (within 250 ms), and the switch then runs on its own:
 
 ```rust
+ctx.on::<ChatMessageEvent>(EventPriority::Normal, |event| {
+    if event.message == "!hub" {
+        let _ = event.player.handle().switch_server("hub");
+    }
+})?;
+```
+
+Commands are not in that list. A command a player types runs on that player's command queue, off the session, so a command handler can call `connect` for the player who typed it and use the outcome:
+
+```rust
 ctx.command("hub")
     .handler(|invocation| {
-        if let Some(player) = invocation.sender.player()
-            && let Err(e) = player.handle().switch_server("hub")
-        {
-            let _ = invocation.reply(format!("Could not reach the hub: {e}"));
+        let Some(player) = invocation.player() else {
+            return;
+        };
+        match player.handle().connect("hub") {
+            Ok(result) if result.is_success() => {}
+            Ok(_) => {
+                let _ = invocation.reply("Could not reach the hub");
+            }
+            Err(e) => {
+                let _ = invocation.reply(format!("Could not reach the hub: {e}"));
+            }
         }
     })
     .register()?;
 ```
+
+The session goes on with the player's packets meanwhile, and the player's commands run one at a time, in the order they were typed. Tab completions take the same queue. See [Player commands run on a queue of their own](../dev/threading#player-commands-run-on-a-queue-of-their-own) in the native guide.
 
 ## Deadlines and host-call timeouts
 

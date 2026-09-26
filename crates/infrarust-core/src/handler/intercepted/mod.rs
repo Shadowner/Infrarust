@@ -295,6 +295,7 @@ impl InterceptedHandler {
             &mut server_codec_chain,
         )
         .await;
+        player.end_commands().await;
 
         let cause = match commands.take_kick(&mut client, registry, false) {
             Some(reason) => {

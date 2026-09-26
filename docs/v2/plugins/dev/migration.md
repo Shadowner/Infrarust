@@ -286,6 +286,7 @@ What to do: stop relying on unsubscribing another plugin's handle; make sure an 
 | Tab completion | `tab_complete(args, cursor) -> Vec<String>`, `tab_complete_for(args, cursor, player_id)` | `suggest(&self, ctx: SuggestContext) -> Vec<Suggestion>`, with tooltips |
 | Who runs it | Players only | Players and the console (`CommandSource::Player` or `CommandSource::Console`) |
 | Permission | none | `CommandSpec::permission(node)`: a player without it gets a message and the command is neither run nor forwarded |
+| Where a player's command runs | Awaited in the player's session | On the player's command queue: one at a time, in order, while the session goes on; cancelled when the player leaves. `suggest` takes the same queue |
 
 ```rust
 // 2.0.0-beta.3
@@ -520,7 +521,7 @@ if player.has_permission(ADMIN_PERMISSION) {
 }
 ```
 
-What to do: replace `permission_level()`, and prefer `connect` where you need to know whether the switch worked. Do not await `connect` or `request_cookie` from a listener, command or limbo callback that runs in the same player's session; see [Calling back into the proxy](./threading#calling-back-into-the-proxy). See [The Player trait](./api#the-player-trait).
+What to do: replace `permission_level()`, and prefer `connect` where you need to know whether the switch worked. A command handler may await `connect` or `request_cookie` for the player who typed it. Do not await them from a listener or limbo callback that runs in the same player's session; see [Calling back into the proxy](./threading#calling-back-into-the-proxy). See [The Player trait](./api#the-player-trait).
 
 ## Services
 

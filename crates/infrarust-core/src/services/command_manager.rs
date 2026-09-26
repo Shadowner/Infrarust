@@ -7,6 +7,7 @@ use infrarust_api::command::{
     CommandContext, CommandError, CommandHandler, CommandInfo, CommandRegistration, CommandSource,
     CommandSpec, SuggestContext, Suggestion, split_label,
 };
+use infrarust_api::event::BoxFuture;
 use infrarust_api::message::ProxyMessage;
 
 pub const COMMAND_DENIED: &str = "You don't have permission to use this command.";
@@ -16,6 +17,54 @@ pub enum DispatchOutcome {
     Executed,
     Denied,
     Unknown,
+}
+
+pub enum Prepared<T> {
+    Unknown,
+    Denied,
+    Ready(T),
+}
+
+pub struct Invocation {
+    handler: Arc<dyn CommandHandler>,
+    owner: Option<String>,
+    ctx: CommandContext,
+}
+
+impl Invocation {
+    pub fn owner(&self) -> Option<&str> {
+        self.owner.as_deref()
+    }
+
+    pub fn label(&self) -> &str {
+        &self.ctx.label
+    }
+
+    pub fn run(self) -> BoxFuture<'static, ()> {
+        let Self { handler, ctx, .. } = self;
+        Box::pin(async move { handler.execute(ctx).await })
+    }
+}
+
+pub struct Completion {
+    handler: Arc<dyn CommandHandler>,
+    owner: Option<String>,
+    ctx: SuggestContext,
+}
+
+impl Completion {
+    pub fn owner(&self) -> Option<&str> {
+        self.owner.as_deref()
+    }
+
+    pub fn label(&self) -> &str {
+        &self.ctx.label
+    }
+
+    pub fn run(self) -> BoxFuture<'static, Vec<Suggestion>> {
+        let Self { handler, ctx, .. } = self;
+        Box::pin(async move { handler.suggest(ctx).await })
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -253,38 +302,63 @@ impl CommandManagerImpl {
         self.read().resolve(label).cloned()
     }
 
-    pub async fn dispatch(&self, source: CommandSource, input: &str) -> DispatchOutcome {
+    pub fn prepare(&self, source: CommandSource, input: &str) -> Prepared<Invocation> {
         let input = input.trim();
         let (label, rest) = split_label(input);
         if label.is_empty() {
-            return DispatchOutcome::Unknown;
+            return Prepared::Unknown;
         }
         let Some(entry) = self.resolve(label) else {
-            return DispatchOutcome::Unknown;
+            return Prepared::Unknown;
         };
         if !permitted(&entry, &source) {
             source.send_message(ProxyMessage::error(COMMAND_DENIED));
-            return DispatchOutcome::Denied;
+            return Prepared::Denied;
         }
         let mut ctx = CommandContext::new(source, label, rest.trim_start());
         input.clone_into(&mut ctx.raw);
-        entry.handler.execute(ctx).await;
-        DispatchOutcome::Executed
+        Prepared::Ready(Invocation {
+            handler: entry.handler,
+            owner: entry.owner,
+            ctx,
+        })
+    }
+
+    pub async fn dispatch(&self, source: CommandSource, input: &str) -> DispatchOutcome {
+        match self.prepare(source, input) {
+            Prepared::Unknown => DispatchOutcome::Unknown,
+            Prepared::Denied => DispatchOutcome::Denied,
+            Prepared::Ready(invocation) => {
+                invocation.run().await;
+                DispatchOutcome::Executed
+            }
+        }
+    }
+
+    pub fn prepare_suggestion(&self, source: CommandSource, input: &str) -> Prepared<Completion> {
+        let input = input.trim_start();
+        let Some((label, rest)) = input.split_once(char::is_whitespace) else {
+            return Prepared::Unknown;
+        };
+        let Some(entry) = self.resolve(label) else {
+            return Prepared::Unknown;
+        };
+        if !permitted(&entry, &source) {
+            return Prepared::Denied;
+        }
+        Prepared::Ready(Completion {
+            handler: entry.handler,
+            owner: entry.owner,
+            ctx: SuggestContext::new(source, label, rest),
+        })
     }
 
     pub async fn suggest(&self, source: CommandSource, input: &str) -> Option<Vec<Suggestion>> {
-        let input = input.trim_start();
-        let (label, rest) = input.split_once(char::is_whitespace)?;
-        let entry = self.resolve(label)?;
-        if !permitted(&entry, &source) {
-            return Some(Vec::new());
+        match self.prepare_suggestion(source, input) {
+            Prepared::Unknown => None,
+            Prepared::Denied => Some(Vec::new()),
+            Prepared::Ready(completion) => Some(completion.run().await),
         }
-        Some(
-            entry
-                .handler
-                .suggest(SuggestContext::new(source, label, rest))
-                .await,
-        )
     }
 }
 

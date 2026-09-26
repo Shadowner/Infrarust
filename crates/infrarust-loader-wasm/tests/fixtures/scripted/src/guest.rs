@@ -22,6 +22,17 @@ fn seen(event: EventName, priority: u8, fields: &[&str], action: &Action) {
     script::observe(&log(), &script::event_line(event, priority, fields), action);
 }
 
+fn connect(player: &PlayerRef, server: &str) -> String {
+    match player.handle().connect(server) {
+        Ok(ConnectionResult::Success) => "success".to_owned(),
+        Ok(ConnectionResult::AlreadyConnected) => "already_connected".to_owned(),
+        Ok(ConnectionResult::Denied(_)) => "denied".to_owned(),
+        Ok(ConnectionResult::Failed(_)) => "failed".to_owned(),
+        Ok(_) => "cancelled".to_owned(),
+        Err(error) => error.kind.to_string(),
+    }
+}
+
 fn state(state: ServerState) -> &'static str {
     match state {
         ServerState::Online => "online",
@@ -264,6 +275,21 @@ pub fn enable(ctx: &Context) -> Result<(), PluginError> {
             Directive::Plugin { id } => {
                 let state = Plugins::get(&id).map(|info| info.state);
                 script::append(&log(), &script::plugin_line(&id, state.as_deref()));
+            }
+            Directive::Connect { command, server } => {
+                let label = command.clone();
+                let _ = ctx
+                    .command(&label)
+                    .handler(move |invocation| {
+                        let outcome = invocation
+                            .player()
+                            .map_or_else(|| "console".to_owned(), |p| connect(p, &server));
+                        let line =
+                            script::connect_line(&format!("cmd {command}"), &server, &outcome);
+                        script::append(&log(), &line);
+                        let _ = invocation.reply(format!("{command} {outcome}"));
+                    })
+                    .register();
             }
         }
     }
