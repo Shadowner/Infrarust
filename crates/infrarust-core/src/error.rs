@@ -78,6 +78,12 @@ pub enum CoreError {
     Ban(String),
 }
 
+impl From<CoreError> for infrarust_api::error::ServiceError {
+    fn from(error: CoreError) -> Self {
+        Self::Internal(Box::new(error))
+    }
+}
+
 impl CoreError {
     /// Returns `true` if this error represents a normal disconnect
     /// (connection reset, broken pipe, EOF) that should be logged at debug level.

@@ -821,6 +821,7 @@ What to do: rename `load_initial_documents` to `load_initial`, delete the old `l
 - `EventBus::fire_erased` takes `&mut dyn ErasedEvent` (blanket-implemented for every `Event`) and no longer a type name; `fire` from `EventBusExt` is unchanged.
 - `ServiceHandle` and `LimboHandlerRegistration` share `types::Revocation` and derive `Debug`; their methods are unchanged.
 - `PluginContext::as_any` is gone: the proxy keeps its concrete context and no longer downcasts. Tests that reached the real context through it use `PluginContextFactoryImpl::context(id)` instead.
+- `ResourcePackRequest::validate` returns `ResourcePackError`, `cookie_key` returns `CookieKeyError`, and `CapabilitySet::from_config_strings`, `from_config` and `revoke_config_strings` list `CapabilityRejection`s (`Unknown` or `NotGrantable`) instead of strings. `ServiceError::Internal` wraps a proxy error with its source where `OperationFailed` used to carry its message.
 
 ## Checklist
 

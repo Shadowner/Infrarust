@@ -84,30 +84,29 @@ impl PluginProviderSenderImpl {
     }
 }
 
-/// Parses a plugin-supplied TOML document into a full server config.
-///
-/// # Errors
-///
-/// Returns a human-readable message when the TOML does not parse or the
-/// resulting config fails [`infrarust_config::validate_server_config`].
-pub fn parse_document(doc: &ServerDocument) -> Result<infrarust_config::ServerConfig, String> {
-    let mut config: infrarust_config::ServerConfig =
-        toml::from_str(&doc.toml).map_err(|e| e.to_string())?;
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum DocumentError {
+    #[error("invalid TOML: {0}")]
+    Toml(#[from] toml::de::Error),
+
+    #[error(transparent)]
+    Config(#[from] infrarust_config::ConfigError),
+}
+
+pub fn parse_document(
+    doc: &ServerDocument,
+) -> Result<infrarust_config::ServerConfig, DocumentError> {
+    let mut config: infrarust_config::ServerConfig = toml::from_str(&doc.toml)?;
 
     if config.id.is_none() {
         config.id = Some(doc.id.as_str().to_string());
     }
 
-    log_validation_warnings(&config)?;
-    Ok(config)
-}
-
-fn log_validation_warnings(config: &infrarust_config::ServerConfig) -> Result<(), String> {
-    let warnings = infrarust_config::validate_server_config(config).map_err(|e| e.to_string())?;
-    for warning in warnings {
+    for warning in infrarust_config::validate_server_config(&config)? {
         tracing::warn!(server = %config.effective_id(), "{warning}");
     }
-    Ok(())
+    Ok(config)
 }
 
 struct Activation {

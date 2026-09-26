@@ -28,14 +28,18 @@ impl ConnectionResult {
     }
 }
 
-pub fn cookie_key(key: &str) -> Result<String, String> {
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "`{0}` is not a cookie key: `namespace:path` in lowercase letters, digits, `_`, `-` and `.` (and `/` in the path)"
+)]
+pub struct CookieKeyError(pub String);
+
+pub fn cookie_key(key: &str) -> Result<String, CookieKeyError> {
     let (namespace, path) = key.split_once(':').unwrap_or(("minecraft", key));
     if namespaced_key::is_valid(namespace, path) {
         Ok(format!("{namespace}:{path}"))
     } else {
-        Err(format!(
-            "`{key}` is not a cookie key: `namespace:path` in lowercase letters, digits, `_`, `-` and `.` (and `/` in the path)"
-        ))
+        Err(CookieKeyError(key.to_owned()))
     }
 }
 

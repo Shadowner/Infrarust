@@ -24,9 +24,10 @@ pub use boss_bar::{
     BossBar, BossBarColor, BossBarControl, BossBarFlags, BossBarHandle, BossBarOverlay,
     BossBarUpdate, clamp_progress,
 };
-pub use connection::{ConnectionResult, MAX_COOKIE_SIZE, cookie_key};
+pub use connection::{ConnectionResult, CookieKeyError, MAX_COOKIE_SIZE, cookie_key};
 pub use resource_pack::{
-    MAX_RESOURCE_PACK_URL, RESOURCE_PACK_HASH_LENGTH, ResourcePackRequest, ResourcePackStatus,
+    MAX_RESOURCE_PACK_URL, RESOURCE_PACK_HASH_LENGTH, ResourcePackError, ResourcePackRequest,
+    ResourcePackStatus,
 };
 
 fn unsupported(feature: &str) -> PlayerError {

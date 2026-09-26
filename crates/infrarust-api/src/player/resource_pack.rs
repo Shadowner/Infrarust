@@ -6,6 +6,16 @@ pub const MAX_RESOURCE_PACK_URL: usize = 32_767;
 
 pub const RESOURCE_PACK_HASH_LENGTH: usize = 40;
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ResourcePackError {
+    #[error("the resource pack URL is {len} characters, over the {MAX_RESOURCE_PACK_URL} allowed")]
+    UrlTooLong { len: usize },
+
+    #[error("`{0}` is not a SHA-1 hash of {RESOURCE_PACK_HASH_LENGTH} hexadecimal characters")]
+    InvalidHash(String),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResourcePackRequest {
     pub id: Uuid,
@@ -50,20 +60,17 @@ impl ResourcePackRequest {
         self
     }
 
-    pub fn validate(&self) -> Result<(), String> {
-        if self.url.chars().count() > MAX_RESOURCE_PACK_URL {
-            return Err(format!(
-                "the resource pack URL is over {MAX_RESOURCE_PACK_URL} characters"
-            ));
+    pub fn validate(&self) -> Result<(), ResourcePackError> {
+        let len = self.url.chars().count();
+        if len > MAX_RESOURCE_PACK_URL {
+            return Err(ResourcePackError::UrlTooLong { len });
         }
         match &self.hash {
             Some(hash)
                 if hash.len() != RESOURCE_PACK_HASH_LENGTH
                     || !hash.chars().all(|c| c.is_ascii_hexdigit()) =>
             {
-                Err(format!(
-                    "`{hash}` is not a SHA-1 hash of {RESOURCE_PACK_HASH_LENGTH} hexadecimal characters"
-                ))
+                Err(ResourcePackError::InvalidHash(hash.clone()))
             }
             _ => Ok(()),
         }
@@ -94,16 +101,17 @@ mod tests {
         let good = ResourcePackRequest::new("https://example.com/pack.zip")
             .hash("0123456789abcdef0123456789ABCDEF01234567");
         assert_eq!(good.validate(), Ok(()));
-        assert!(
+        assert_eq!(
             ResourcePackRequest::new("https://example.com")
                 .hash("abc")
-                .validate()
-                .is_err()
+                .validate(),
+            Err(ResourcePackError::InvalidHash("abc".to_string()))
         );
-        assert!(
-            ResourcePackRequest::new("x".repeat(MAX_RESOURCE_PACK_URL + 1))
-                .validate()
-                .is_err()
+        assert_eq!(
+            ResourcePackRequest::new("x".repeat(MAX_RESOURCE_PACK_URL + 1)).validate(),
+            Err(ResourcePackError::UrlTooLong {
+                len: MAX_RESOURCE_PACK_URL + 1
+            })
         );
     }
 }

@@ -17,10 +17,6 @@ pub struct BuiltinBanProvider {
     storage: Arc<dyn BanStorage>,
 }
 
-fn failed(error: CoreError) -> ServiceError {
-    ServiceError::OperationFailed(error.to_string())
-}
-
 impl BuiltinBanProvider {
     pub fn new(storage: Arc<dyn BanStorage>) -> Self {
         Self { storage }
@@ -73,7 +69,7 @@ impl BanProvider for BuiltinBanProvider {
                 .check(attempt)
                 .await
                 .map(|entry| entry.map(BanVerdict::new))
-                .map_err(failed)
+                .map_err(ServiceError::from)
         })
     }
 
@@ -85,7 +81,10 @@ impl BanProvider for BuiltinBanProvider {
             if let Some(duration) = request.duration {
                 entry = entry.lasting(duration);
             }
-            self.storage.add_ban(entry).await.map_err(failed)
+            self.storage
+                .add_ban(entry)
+                .await
+                .map_err(ServiceError::from)
         })
     }
 
@@ -98,7 +97,7 @@ impl BanProvider for BuiltinBanProvider {
             self.storage
                 .remove_ban(&request.target, &source)
                 .await
-                .map_err(failed)
+                .map_err(ServiceError::from)
         })
     }
 
@@ -106,11 +105,16 @@ impl BanProvider for BuiltinBanProvider {
         &'a self,
         target: &'a BanTarget,
     ) -> BoxFuture<'a, Result<Option<BanEntry>, ServiceError>> {
-        Box::pin(async move { self.storage.get_ban(target).await.map_err(failed) })
+        Box::pin(async move {
+            self.storage
+                .get_ban(target)
+                .await
+                .map_err(ServiceError::from)
+        })
     }
 
     fn list(&self, query: BanQuery) -> BoxFuture<'_, Result<BanPage, ServiceError>> {
-        Box::pin(async move { self.storage.list(query).await.map_err(failed) })
+        Box::pin(async move { self.storage.list(query).await.map_err(ServiceError::from) })
     }
 
     fn features(&self) -> BanFeatures {

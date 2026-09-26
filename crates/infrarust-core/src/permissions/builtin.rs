@@ -163,7 +163,29 @@ fn player_grants(player_commands: &[String], admin_only: &HashSet<String>) -> Pe
     grants
 }
 
-async fn resolve_username(client: &reqwest::Client, username: &str) -> Result<Uuid, String> {
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum MojangLookupError {
+    #[error("HTTP request failed: {0}")]
+    Request(#[source] reqwest::Error),
+
+    #[error("username '{0}' not found on Mojang")]
+    UnknownUsername(String),
+
+    #[error("Mojang API returned status {0}")]
+    Status(reqwest::StatusCode),
+
+    #[error("failed to parse Mojang response: {0}")]
+    Response(#[source] reqwest::Error),
+
+    #[error("invalid UUID from Mojang: {0}")]
+    InvalidUuid(#[from] uuid::Error),
+}
+
+async fn resolve_username(
+    client: &reqwest::Client,
+    username: &str,
+) -> Result<Uuid, MojangLookupError> {
     #[derive(serde::Deserialize)]
     struct MojangProfile {
         id: String,
@@ -175,31 +197,28 @@ async fn resolve_username(client: &reqwest::Client, username: &str) -> Result<Uu
         .get(&url)
         .send()
         .await
-        .map_err(|e| format!("HTTP request failed: {e}"))?;
+        .map_err(MojangLookupError::Request)?;
 
     if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(format!("username '{username}' not found on Mojang"));
+        return Err(MojangLookupError::UnknownUsername(username.to_owned()));
     }
 
     if !response.status().is_success() {
-        return Err(format!("Mojang API returned status {}", response.status()));
+        return Err(MojangLookupError::Status(response.status()));
     }
 
-    let profile: MojangProfile = response
-        .json()
-        .await
-        .map_err(|e| format!("failed to parse Mojang response: {e}"))?;
+    let profile: MojangProfile = response.json().await.map_err(MojangLookupError::Response)?;
 
     mojang_uuid(&profile.id)
 }
 
-fn mojang_uuid(id: &str) -> Result<Uuid, String> {
-    Uuid::try_parse(id).map_err(|e| format!("invalid UUID from Mojang: {e}"))
+fn mojang_uuid(id: &str) -> Result<Uuid, MojangLookupError> {
+    Ok(Uuid::try_parse(id)?)
 }
 
 static MOJANG_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
-pub async fn resolve_username_to_uuid(username: &str) -> Result<Uuid, String> {
+pub async fn resolve_username_to_uuid(username: &str) -> Result<Uuid, MojangLookupError> {
     resolve_username(&MOJANG_CLIENT, username).await
 }
 

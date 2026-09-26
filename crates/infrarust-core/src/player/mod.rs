@@ -816,7 +816,8 @@ impl Player for PlayerSession {
 
     fn send_resource_pack(&self, pack: ResourcePackRequest) -> Result<(), PlayerError> {
         self.supports(RESOURCE_PACK_SINCE, "resource packs")?;
-        pack.validate().map_err(PlayerError::InvalidArgument)?;
+        pack.validate()
+            .map_err(|e| PlayerError::InvalidArgument(e.to_string()))?;
         self.try_send_command(PlayerCommand::Client(ClientCommand::PushPack(Box::new(
             pack,
         ))))
@@ -847,7 +848,7 @@ impl Player for PlayerSession {
 
     fn store_cookie(&self, key: &str, data: Bytes) -> Result<(), PlayerError> {
         self.supports(COOKIES_SINCE, "cookies")?;
-        let key = cookie_key(key).map_err(PlayerError::InvalidArgument)?;
+        let key = cookie_key(key).map_err(|e| PlayerError::InvalidArgument(e.to_string()))?;
         if data.len() > MAX_COOKIE_SIZE {
             return Err(PlayerError::InvalidArgument(format!(
                 "a cookie of {} bytes is over the {MAX_COOKIE_SIZE} bytes a client keeps",
@@ -864,7 +865,7 @@ impl Player for PlayerSession {
         let key = cookie_key(key);
         Box::pin(async move {
             self.supports(COOKIES_SINCE, "cookies")?;
-            let key = key.map_err(PlayerError::InvalidArgument)?;
+            let key = key.map_err(|e| PlayerError::InvalidArgument(e.to_string()))?;
             self.refuse_self_wait("request_cookie")?;
             let (reply, answer) = oneshot::channel();
             self.send_command(PlayerCommand::Client(ClientCommand::RequestCookie {

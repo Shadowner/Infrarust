@@ -117,7 +117,7 @@ fn resource_pack(pack: &wp::ResourcePackRequest) -> HostResult<ResourcePackReque
     }
     request
         .validate()
-        .map_err(|reason| host_error(wt::ErrorKind::InvalidArgument, reason))?;
+        .map_err(|reason| host_error(wt::ErrorKind::InvalidArgument, reason.to_string()))?;
     Ok(request)
 }
 

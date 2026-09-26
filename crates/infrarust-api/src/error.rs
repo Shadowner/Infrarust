@@ -60,6 +60,9 @@ pub enum ServiceError {
     #[error("operation failed: {0}")]
     OperationFailed(String),
 
+    #[error("operation failed: {0}")]
+    Internal(#[source] Box<dyn std::error::Error + Send + Sync>),
+
     /// The service is temporarily unavailable.
     #[error("service unavailable: {0}")]
     Unavailable(String),

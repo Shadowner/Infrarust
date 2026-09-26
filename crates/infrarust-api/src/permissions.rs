@@ -449,6 +449,16 @@ pub struct CapabilitySet {
     granted: std::collections::HashSet<Capability>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CapabilityRejection {
+    #[error("unknown capability `{0}`")]
+    Unknown(String),
+
+    #[error("capability `{0}` cannot be granted through configuration")]
+    NotGrantable(Capability),
+}
+
 impl CapabilitySet {
     #[must_use]
     pub fn has(&self, cap: Capability) -> bool {
@@ -496,12 +506,17 @@ impl CapabilitySet {
     }
 
     #[must_use]
-    pub fn from_config_strings(strings: &[String]) -> (Self, Vec<String>) {
+    pub fn from_config_strings(strings: &[String]) -> (Self, Vec<CapabilityRejection>) {
         let mut set = Self::baseline();
         let mut rejected = Vec::new();
         for s in strings {
             match Capability::from_kebab(s) {
-                Some(Capability::TransportFilter) | None => rejected.push(s.clone()),
+                None => rejected.push(CapabilityRejection::Unknown(s.clone())),
+                Some(Capability::TransportFilter) => {
+                    rejected.push(CapabilityRejection::NotGrantable(
+                        Capability::TransportFilter,
+                    ));
+                }
                 Some(cap) => set.insert(cap),
             }
         }
@@ -509,19 +524,19 @@ impl CapabilitySet {
     }
 
     #[must_use]
-    pub fn revoke_config_strings(&mut self, strings: &[String]) -> Vec<String> {
+    pub fn revoke_config_strings(&mut self, strings: &[String]) -> Vec<CapabilityRejection> {
         let mut unknown = Vec::new();
         for s in strings {
             match Capability::from_kebab(s) {
                 Some(cap) => self.remove(cap),
-                None => unknown.push(s.clone()),
+                None => unknown.push(CapabilityRejection::Unknown(s.clone())),
             }
         }
         unknown
     }
 
     #[must_use]
-    pub fn from_config(grants: &[String], denies: &[String]) -> (Self, Vec<String>) {
+    pub fn from_config(grants: &[String], denies: &[String]) -> (Self, Vec<CapabilityRejection>) {
         let (mut set, mut rejected) = Self::from_config_strings(grants);
         rejected.extend(set.revoke_config_strings(denies));
         (set, rejected)
@@ -741,9 +756,13 @@ mod tests {
         ]);
         assert!(set.has(Capability::Ban));
         assert!(!set.has(Capability::TransportFilter));
-        assert_eq!(rejected.len(), 2);
-        assert!(rejected.contains(&"ban-all".to_string()));
-        assert!(rejected.contains(&"transport-filter".to_string()));
+        assert_eq!(
+            rejected,
+            [
+                CapabilityRejection::Unknown("ban-all".to_string()),
+                CapabilityRejection::NotGrantable(Capability::TransportFilter),
+            ]
+        );
     }
 
     #[test]
@@ -760,7 +779,10 @@ mod tests {
         assert!(!set.has(Capability::Ban));
         assert!(set.has(Capability::Limbo));
         assert!(set.has(Capability::EventBus));
-        assert_eq!(rejected, vec!["not-a-capability".to_string()]);
+        assert_eq!(
+            rejected,
+            [CapabilityRejection::Unknown("not-a-capability".to_string())]
+        );
     }
 
     #[test]
