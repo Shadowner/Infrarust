@@ -46,7 +46,6 @@ use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::component;
-use crate::plugin::call_guest;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Applied {
@@ -242,15 +241,16 @@ fn deliver<E: WasmEvent>(event: &mut E, instance: InstanceRef, listener: u64) ->
         return Box::pin(async {});
     }
     Box::pin(async move {
-        let outcome = call_guest(instance.clone(), "handle-event", move |store, bindings| {
-            Box::pin(async move {
-                bindings
-                    .infrarust_plugin_guest()
-                    .call_handle_event(&mut *store, listener, &wit)
-                    .await
+        let outcome = instance
+            .call_or_none("handle-event", move |store, bindings| {
+                Box::pin(async move {
+                    bindings
+                        .infrarust_plugin_guest()
+                        .call_handle_event(&mut *store, listener, &wit)
+                        .await
+                })
             })
-        })
-        .await;
+            .await;
         if let Some(outcome) = outcome {
             settle(event, outcome, &instance);
         }

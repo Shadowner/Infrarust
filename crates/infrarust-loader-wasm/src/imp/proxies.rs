@@ -9,7 +9,6 @@ use crate::actor::InstanceRef;
 use crate::bindings::exports::infrarust::plugin::guest as wg;
 use crate::component;
 use crate::convert;
-use crate::plugin::call_guest;
 use crate::registrations::Binding;
 
 pub(crate) struct WasmCommandHandler {
@@ -58,18 +57,19 @@ impl CommandHandler for WasmCommandHandler {
                 args: ctx.args,
                 raw: ctx.raw,
             };
-            let _ = call_guest(instance, "handle-command", move |store, bindings| {
-                Box::pin(async move {
-                    let Some(handler) = binding.callback_for(store.data().generation()) else {
-                        return Ok(());
-                    };
-                    bindings
-                        .infrarust_plugin_guest()
-                        .call_handle_command(&mut *store, handler, &invocation)
-                        .await
+            let _ = instance
+                .call_or_none("handle-command", move |store, bindings| {
+                    Box::pin(async move {
+                        let Some(handler) = binding.callback_for(store.data().generation()) else {
+                            return Ok(());
+                        };
+                        bindings
+                            .infrarust_plugin_guest()
+                            .call_handle_command(&mut *store, handler, &invocation)
+                            .await
+                    })
                 })
-            })
-            .await;
+                .await;
         })
     }
 
@@ -79,37 +79,38 @@ impl CommandHandler for WasmCommandHandler {
         let cursor = u32::try_from(ctx.raw_args.len()).unwrap_or(u32::MAX);
         let sender = command_sender(&ctx.source);
         Box::pin(async move {
-            let caller = instance.clone();
-            call_guest(caller, "tab-complete", move |store, bindings| {
-                Box::pin(async move {
-                    let Some(handler) = binding.callback_for(store.data().generation()) else {
-                        return Ok(Vec::new());
-                    };
-                    bindings
-                        .infrarust_plugin_guest()
-                        .call_tab_complete(&mut *store, handler, &sender, &ctx.args, cursor)
-                        .await
+            instance
+                .call_or_none("tab-complete", move |store, bindings| {
+                    Box::pin(async move {
+                        let Some(handler) = binding.callback_for(store.data().generation()) else {
+                            return Ok(Vec::new());
+                        };
+                        bindings
+                            .infrarust_plugin_guest()
+                            .call_tab_complete(&mut *store, handler, &sender, &ctx.args, cursor)
+                            .await
+                    })
                 })
-            })
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|suggestion| suggestion_from_wit(suggestion, &instance))
-            .collect()
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|suggestion| suggestion_from_wit(suggestion, &instance))
+                .collect()
         })
     }
 }
 
 pub(crate) fn dispatch_scheduled_task(instance: InstanceRef, handler: u64) {
     tokio::spawn(async move {
-        let _ = call_guest(instance, "on-scheduled-task", move |store, bindings| {
-            Box::pin(async move {
-                bindings
-                    .infrarust_plugin_guest()
-                    .call_on_scheduled_task(&mut *store, handler)
-                    .await
+        let _ = instance
+            .call_or_none("on-scheduled-task", move |store, bindings| {
+                Box::pin(async move {
+                    bindings
+                        .infrarust_plugin_guest()
+                        .call_on_scheduled_task(&mut *store, handler)
+                        .await
+                })
             })
-        })
-        .await;
+            .await;
     });
 }

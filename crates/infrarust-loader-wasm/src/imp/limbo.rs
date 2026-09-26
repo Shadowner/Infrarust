@@ -8,7 +8,6 @@ use wasmtime::component::Resource;
 use crate::actor::InstanceRef;
 use crate::component;
 use crate::convert;
-use crate::plugin::call_guest;
 use crate::registrations::{Binding, Registrations};
 
 pub(crate) struct WasmLimboHandler {
@@ -53,7 +52,7 @@ impl LimboHandler for WasmLimboHandler {
         let handle = session.handle();
         let arc_session = handle.as_session();
         Box::pin(async move {
-            call_guest(instance, "limbo-on-player-enter", move |store, bindings| {
+            instance.call_or_none("limbo-on-player-enter", move |store, bindings| {
                 Box::pin(async move {
                     let generation = store.data().generation();
                     let Some(handler_id) = binding.callback_for(generation) else {
@@ -105,7 +104,7 @@ impl LimboHandler for WasmLimboHandler {
         let command = command.to_string();
         let args: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
         Box::pin(async move {
-            let _ = call_guest(instance, "limbo-on-command", move |store, bindings| {
+            let _ = instance.call_or_none("limbo-on-command", move |store, bindings| {
                 Box::pin(async move {
                     let Some(handler_id) = binding.callback_for(store.data().generation()) else {
                         return Ok(());
@@ -138,7 +137,7 @@ impl LimboHandler for WasmLimboHandler {
         let arc_session = session.handle().as_session();
         let message = message.to_string();
         Box::pin(async move {
-            let _ = call_guest(instance, "limbo-on-chat", move |store, bindings| {
+            let _ = instance.call_or_none("limbo-on-chat", move |store, bindings| {
                 Box::pin(async move {
                     let Some(handler_id) = binding.callback_for(store.data().generation()) else {
                         return Ok(());
@@ -169,18 +168,20 @@ impl LimboHandler for WasmLimboHandler {
         let instance = self.instance.clone();
         let binding = Arc::clone(&self.binding);
         Box::pin(async move {
-            let _ = call_guest(instance, "limbo-on-disconnect", move |store, bindings| {
-                Box::pin(async move {
-                    let Some(handler_id) = binding.callback_for(store.data().generation()) else {
-                        return Ok(());
-                    };
-                    bindings
-                        .infrarust_plugin_guest()
-                        .call_limbo_on_disconnect(&mut *store, handler_id, player_id.as_u64())
-                        .await
+            let _ = instance
+                .call_or_none("limbo-on-disconnect", move |store, bindings| {
+                    Box::pin(async move {
+                        let Some(handler_id) = binding.callback_for(store.data().generation())
+                        else {
+                            return Ok(());
+                        };
+                        bindings
+                            .infrarust_plugin_guest()
+                            .call_limbo_on_disconnect(&mut *store, handler_id, player_id.as_u64())
+                            .await
+                    })
                 })
-            })
-            .await;
+                .await;
         })
     }
 
@@ -190,23 +191,25 @@ impl LimboHandler for WasmLimboHandler {
         let binding = Arc::clone(&self.binding);
         let wit_reason = convert::session_end_reason_to_wit(reason);
         Box::pin(async move {
-            let _ = call_guest(instance, "limbo-on-session-end", move |store, bindings| {
-                Box::pin(async move {
-                    let Some(handler_id) = binding.callback_for(store.data().generation()) else {
-                        return Ok(());
-                    };
-                    bindings
-                        .infrarust_plugin_guest()
-                        .call_limbo_on_session_end(
-                            &mut *store,
-                            handler_id,
-                            player_id.as_u64(),
-                            wit_reason,
-                        )
-                        .await
+            let _ = instance
+                .call_or_none("limbo-on-session-end", move |store, bindings| {
+                    Box::pin(async move {
+                        let Some(handler_id) = binding.callback_for(store.data().generation())
+                        else {
+                            return Ok(());
+                        };
+                        bindings
+                            .infrarust_plugin_guest()
+                            .call_limbo_on_session_end(
+                                &mut *store,
+                                handler_id,
+                                player_id.as_u64(),
+                                wit_reason,
+                            )
+                            .await
+                    })
                 })
-            })
-            .await;
+                .await;
         })
     }
 }

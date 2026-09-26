@@ -1,28 +1,11 @@
 use std::sync::Arc;
 
+use crate::actor::{CallFailure, JobKind, PluginActor};
+use crate::bindings::exports::infrarust::plugin::guest::{DisableReason, EnableReason};
+use crate::error::WasmLoaderError;
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
-use wasmtime::Store;
-
-use crate::actor::{CallFailure, InstanceRef, JobKind, PluginActor};
-use crate::bindings::Plugin as PluginBindings;
-use crate::bindings::exports::infrarust::plugin::guest::{DisableReason, EnableReason};
-use crate::error::WasmLoaderError;
-use crate::store_state::PluginStoreState;
-
-pub(crate) async fn call_guest<T, F>(instance: InstanceRef, op: &'static str, call: F) -> Option<T>
-where
-    T: Send + 'static,
-    F: for<'a> FnOnce(
-            &'a mut Store<PluginStoreState>,
-            &'a PluginBindings,
-        ) -> BoxFuture<'a, wasmtime::Result<T>>
-        + Send
-        + 'static,
-{
-    instance.call(op, call).await.ok()
-}
 
 pub(crate) struct WasmPlugin {
     metadata: PluginMetadata,

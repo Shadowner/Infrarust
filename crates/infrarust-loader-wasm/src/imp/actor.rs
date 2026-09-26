@@ -366,6 +366,19 @@ impl InstanceRef {
         answer.await.unwrap_or(Err(CallFailure::Dropped))
     }
 
+    pub(crate) async fn call_or_none<T, F>(&self, op: &'static str, call: F) -> Option<T>
+    where
+        T: Send + 'static,
+        F: for<'a> FnOnce(
+                &'a mut Store<PluginStoreState>,
+                &'a PluginBindings,
+            ) -> BoxFuture<'a, wasmtime::Result<T>>
+            + Send
+            + 'static,
+    {
+        self.call(op, call).await.ok()
+    }
+
     pub(crate) async fn call_bounded<T, F>(
         &self,
         op: &'static str,
