@@ -19,6 +19,7 @@ mod text;
 #[cfg(test)]
 mod tests;
 
+use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -27,6 +28,7 @@ use infrarust_api::permissions::Capability;
 use infrarust_api::player::Player;
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::types::{Component, PlayerId};
+use infrarust_plugin_common::capability::gates::required;
 
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::component;
@@ -57,20 +59,35 @@ impl PluginStoreState {
         self.host_call_limit(self.host_call_timeout())
     }
 
-    pub(crate) fn lacks(&mut self, capability: Capability, call: &'static str) -> bool {
-        if self.capabilities().has(capability) {
-            return false;
-        }
-        self.report_denied(capability, call);
-        true
+    pub(crate) fn check(
+        &mut self,
+        interface: &'static str,
+        function: &'static str,
+    ) -> HostResult<()> {
+        self.check_each(
+            required(interface, function),
+            format_args!("{interface}.{function}"),
+        )
     }
 
-    pub(crate) fn check(&mut self, capability: Capability, call: &'static str) -> HostResult<()> {
-        if self.lacks(capability, call) {
-            Err(missing_capability(capability))
-        } else {
-            Ok(())
-        }
+    pub(crate) fn check_each(
+        &mut self,
+        capabilities: &[Capability],
+        call: fmt::Arguments<'_>,
+    ) -> HostResult<()> {
+        let Some(missing) = capabilities
+            .iter()
+            .copied()
+            .find(|capability| !self.capabilities().has(*capability))
+        else {
+            return Ok(());
+        };
+        self.report_denied(missing, call);
+        Err(missing_capability(missing))
+    }
+
+    pub(crate) fn lacks(&mut self, interface: &'static str, function: &'static str) -> bool {
+        self.check(interface, function).is_err()
     }
 
     pub(crate) fn services(&self) -> HostResult<Arc<dyn PluginContext>> {

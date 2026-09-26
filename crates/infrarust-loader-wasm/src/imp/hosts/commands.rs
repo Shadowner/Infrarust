@@ -1,5 +1,4 @@
 use infrarust_api::command::{CommandRegistration, CommandSpec};
-use infrarust_api::permissions::Capability;
 
 use crate::actor::CallKind;
 use crate::bindings::infrarust::plugin::command_manager as wcm;
@@ -51,7 +50,7 @@ impl PluginStoreState {
         spec: wcm::CommandSpec,
         handler: u64,
     ) -> HostResult<wcm::CommandRegistration> {
-        self.check(Capability::Command, "command-manager.register")?;
+        self.check("command-manager", "register")?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback).any_generation();
         let name = spec.name.clone();
@@ -99,7 +98,7 @@ impl PluginStoreState {
     }
 
     fn unregister_command(&mut self, name: &str) -> HostResult<()> {
-        self.check(Capability::Command, "command-manager.unregister")?;
+        self.check("command-manager", "unregister")?;
         let Ok(ctx) = self.services() else {
             self.registrations().unbind_command(name);
             return Ok(());

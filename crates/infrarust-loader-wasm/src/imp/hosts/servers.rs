@@ -1,4 +1,3 @@
-use infrarust_api::permissions::Capability;
 use infrarust_api::types::ServerId;
 
 use super::await_service;
@@ -14,7 +13,7 @@ impl ws::Host for PluginStoreState {
         server: String,
     ) -> wasmtime::Result<HostResult<Option<wt::ServerState>>> {
         Ok((|| {
-            self.check(Capability::ServerManage, "server-manager.get-state")?;
+            self.check("server-manager", "get-state")?;
             Ok(self
                 .services()?
                 .server_manager()
@@ -24,7 +23,7 @@ impl ws::Host for PluginStoreState {
     }
 
     async fn start(&mut self, server: String) -> wasmtime::Result<HostResult<()>> {
-        if let Err(error) = self.check(Capability::ServerManage, "server-manager.start") {
+        if let Err(error) = self.check("server-manager", "start") {
             return Ok(Err(error));
         }
         let ctx = match self.services() {
@@ -40,7 +39,7 @@ impl ws::Host for PluginStoreState {
     }
 
     async fn stop(&mut self, server: String) -> wasmtime::Result<HostResult<()>> {
-        if let Err(error) = self.check(Capability::ServerManage, "server-manager.stop") {
+        if let Err(error) = self.check("server-manager", "stop") {
             return Ok(Err(error));
         }
         let ctx = match self.services() {
@@ -57,7 +56,7 @@ impl ws::Host for PluginStoreState {
 
     async fn list(&mut self) -> wasmtime::Result<HostResult<Vec<ws::ServerStatus>>> {
         Ok((|| {
-            self.check(Capability::ServerManage, "server-manager.list")?;
+            self.check("server-manager", "list")?;
             Ok(self
                 .services()?
                 .server_manager()

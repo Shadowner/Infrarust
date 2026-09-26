@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -89,7 +90,7 @@ impl PluginStoreState {
         &self.capabilities
     }
 
-    pub(crate) fn report_denied(&mut self, capability: Capability, call: &'static str) {
+    pub(crate) fn report_denied(&mut self, capability: Capability, call: fmt::Arguments<'_>) {
         let Some(suppressed) = self
             .denials
             .entry(capability)
@@ -100,10 +101,10 @@ impl PluginStoreState {
         };
         let name = capability.to_kebab();
         if capability == Capability::Limbo {
-            tracing::error!(plugin = %self.plugin_id, call, capability = name, suppressed,
+            tracing::error!(plugin = %self.plugin_id, %call, capability = name, suppressed,
                 "wasm plugin call refused: missing capability `{name}`; the call did nothing");
         } else {
-            tracing::warn!(plugin = %self.plugin_id, call, capability = name, suppressed,
+            tracing::warn!(plugin = %self.plugin_id, %call, capability = name, suppressed,
                 "wasm plugin call refused: missing capability `{name}`");
         }
     }

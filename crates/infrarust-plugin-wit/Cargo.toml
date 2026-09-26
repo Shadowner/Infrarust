@@ -17,4 +17,5 @@ rustdoc-args = ["--cfg", "docsrs"]
 workspace = true
 
 [dev-dependencies]
+infrarust-plugin-common = { workspace = true }
 wit-parser = { version = "0.251", default-features = false, features = ["std"] }

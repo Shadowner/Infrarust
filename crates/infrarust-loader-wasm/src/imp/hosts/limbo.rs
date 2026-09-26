@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use infrarust_api::permissions::Capability;
 use wasmtime::component::Resource;
 
 use super::parse_text;
@@ -25,7 +24,7 @@ impl wl::Host for PluginStoreState {
 
 impl PluginStoreState {
     fn register_limbo(&mut self, name: String, handler: u64) -> HostResult<()> {
-        self.check(Capability::Limbo, "limbo.register-limbo-handler")?;
+        self.check("limbo", "register-limbo-handler")?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback).any_generation();
         let Bound::Fresh(binding) =

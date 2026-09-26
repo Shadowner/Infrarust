@@ -1,4 +1,3 @@
-use infrarust_api::permissions::Capability;
 use infrarust_api::services::load_balancer::{BackendState, BackendStatus};
 use infrarust_api::types::ServerId;
 
@@ -30,7 +29,7 @@ fn backend_status(status: &BackendStatus) -> wl::BackendStatus {
 impl wl::Host for PluginStoreState {
     async fn strategy(&mut self, server: String) -> wasmtime::Result<HostResult<Option<String>>> {
         Ok((|| {
-            self.check(Capability::ConfigRead, "load-balancer.strategy")?;
+            self.check("load-balancer", "strategy")?;
             Ok(self
                 .services()?
                 .load_balancer_service()
@@ -43,7 +42,7 @@ impl wl::Host for PluginStoreState {
         server: String,
     ) -> wasmtime::Result<HostResult<Vec<wl::BackendStatus>>> {
         Ok((|| {
-            self.check(Capability::ConfigRead, "load-balancer.backends")?;
+            self.check("load-balancer", "backends")?;
             Ok(self
                 .services()?
                 .load_balancer_service()
@@ -61,7 +60,7 @@ impl wl::Host for PluginStoreState {
         drained: bool,
     ) -> wasmtime::Result<HostResult<()>> {
         Ok((|| {
-            self.check(Capability::ServerManage, "load-balancer.set-drained")?;
+            self.check("load-balancer", "set-drained")?;
             self.services()?
                 .load_balancer_service()
                 .set_drained(
@@ -79,7 +78,7 @@ impl wl::Host for PluginStoreState {
         address: wt::ServerAddress,
     ) -> wasmtime::Result<HostResult<()>> {
         Ok((|| {
-            self.check(Capability::ServerManage, "load-balancer.reset-backend")?;
+            self.check("load-balancer", "reset-backend")?;
             self.services()?
                 .load_balancer_service()
                 .reset_backend(

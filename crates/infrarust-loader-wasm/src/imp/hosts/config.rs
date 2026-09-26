@@ -1,4 +1,3 @@
-use infrarust_api::permissions::Capability;
 use infrarust_api::types::ServerId;
 
 use crate::bindings::infrarust::plugin::config_service as wc;
@@ -9,7 +8,7 @@ use crate::store_state::PluginStoreState;
 impl wc::Host for PluginStoreState {
     async fn get_value(&mut self, key: String) -> wasmtime::Result<HostResult<Option<String>>> {
         Ok((|| {
-            self.check(Capability::ConfigRead, "config-service.get-value")?;
+            self.check("config-service", "get-value")?;
             Ok(self.services()?.config_service().get_value(&key))
         })())
     }
@@ -19,7 +18,7 @@ impl wc::Host for PluginStoreState {
         server: String,
     ) -> wasmtime::Result<HostResult<Option<wc::ServerConfig>>> {
         Ok((|| {
-            self.check(Capability::ConfigRead, "config-service.get-server")?;
+            self.check("config-service", "get-server")?;
             Ok(self
                 .services()?
                 .config_service()
@@ -31,7 +30,7 @@ impl wc::Host for PluginStoreState {
 
     async fn list_servers(&mut self) -> wasmtime::Result<HostResult<Vec<wc::ServerConfig>>> {
         Ok((|| {
-            self.check(Capability::ConfigRead, "config-service.list-servers")?;
+            self.check("config-service", "list-servers")?;
             Ok(self
                 .services()?
                 .config_service()
@@ -47,7 +46,7 @@ impl wc::Host for PluginStoreState {
         server: String,
     ) -> wasmtime::Result<HostResult<Option<String>>> {
         Ok((|| {
-            self.check(Capability::ConfigRead, "config-service.get-server-document")?;
+            self.check("config-service", "get-server-document")?;
             Ok(self
                 .services()?
                 .config_service()
@@ -57,7 +56,7 @@ impl wc::Host for PluginStoreState {
 
     async fn list_server_sources(&mut self) -> wasmtime::Result<HostResult<Vec<wc::ServerSource>>> {
         Ok((|| {
-            self.check(Capability::ConfigRead, "config-service.list-server-sources")?;
+            self.check("config-service", "list-server-sources")?;
             Ok(self
                 .services()?
                 .config_service()
@@ -75,10 +74,7 @@ impl wc::Host for PluginStoreState {
 
     async fn get_proxy_config_document(&mut self) -> wasmtime::Result<HostResult<String>> {
         Ok((|| {
-            self.check(
-                Capability::ConfigRead,
-                "config-service.get-proxy-config-document",
-            )?;
+            self.check("config-service", "get-proxy-config-document")?;
             Ok(self
                 .services()?
                 .config_service()
@@ -90,10 +86,7 @@ impl wc::Host for PluginStoreState {
         &mut self,
     ) -> wasmtime::Result<HostResult<String>> {
         Ok((|| {
-            self.check(
-                Capability::ConfigRead,
-                "config-service.get-effective-proxy-config-document",
-            )?;
+            self.check("config-service", "get-effective-proxy-config-document")?;
             Ok(self
                 .services()?
                 .config_service()
@@ -106,10 +99,7 @@ impl wc::Host for PluginStoreState {
         document: String,
     ) -> wasmtime::Result<HostResult<()>> {
         Ok((|| {
-            self.check(
-                Capability::ConfigWrite,
-                "config-service.write-proxy-config-document",
-            )?;
+            self.check("config-service", "write-proxy-config-document")?;
             self.services()?
                 .config_service()
                 .write_proxy_config_document(&document)

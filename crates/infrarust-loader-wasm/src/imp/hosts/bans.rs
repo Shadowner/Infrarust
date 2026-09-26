@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use infrarust_api::permissions::Capability;
 use infrarust_api::services::ban_service::{BanQuery, BanRequest, BanSource, UnbanRequest};
 
 use super::await_service;
@@ -43,7 +42,7 @@ impl PluginStoreState {
     }
 
     async fn ban_target(&mut self, request: wb::BanRequest) -> HostResult<wb::BanEntry> {
-        self.check(Capability::Ban, "ban-service.ban")?;
+        self.check("ban-service", "ban")?;
         let ctx = self.services()?;
         let mut native = BanRequest::new(convert::ban_target_from_wit(request.target)?)
             .kick(request.kick)
@@ -56,7 +55,7 @@ impl PluginStoreState {
     }
 
     async fn unban_target(&mut self, target: wb::BanTarget) -> HostResult<Option<wb::BanEntry>> {
-        self.check(Capability::Ban, "ban-service.unban")?;
+        self.check("ban-service", "unban")?;
         let ctx = self.services()?;
         let request =
             UnbanRequest::new(convert::ban_target_from_wit(target)?).source(self.plugin_source());
@@ -66,7 +65,7 @@ impl PluginStoreState {
     }
 
     async fn ban_of(&mut self, target: wb::BanTarget) -> HostResult<Option<wb::BanEntry>> {
-        self.check(Capability::Ban, "ban-service.get")?;
+        self.check("ban-service", "get")?;
         let ctx = self.services()?;
         let target = convert::ban_target_from_wit(target)?;
         let entry =
@@ -75,7 +74,7 @@ impl PluginStoreState {
     }
 
     async fn ban_page(&mut self, cursor: Option<String>, limit: u32) -> HostResult<wb::BanPage> {
-        self.check(Capability::Ban, "ban-service.list")?;
+        self.check("ban-service", "list")?;
         let ctx = self.services()?;
         let mut query = BanQuery::new().limit(usize::try_from(limit).unwrap_or(usize::MAX));
         if let Some(cursor) = cursor {

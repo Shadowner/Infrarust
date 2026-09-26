@@ -1,6 +1,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+pub mod gates;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Capability {

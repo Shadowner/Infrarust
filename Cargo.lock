@@ -2065,6 +2065,7 @@ dependencies = [
  "hyper",
  "infrarust-api",
  "infrarust-core",
+ "infrarust-plugin-common",
  "infrarust-plugin-stats-native",
  "infrarust-plugin-wit",
  "infrarust-test-harness",
@@ -2215,6 +2216,7 @@ dependencies = [
 name = "infrarust-plugin-wit"
 version = "2.0.0-beta.3"
 dependencies = [
+ "infrarust-plugin-common",
  "wit-parser 0.251.0",
 ]
 

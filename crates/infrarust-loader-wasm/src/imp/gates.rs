@@ -1,4 +1,5 @@
 use infrarust_api::permissions::{Capability, CapabilitySet};
+use infrarust_plugin_common::capability::gates::required;
 use wasmtime::Engine;
 use wasmtime::component::Component;
 use wasmtime::component::types::ComponentItem;
@@ -12,57 +13,6 @@ pub(crate) struct MissingGrant {
     pub(crate) interface: String,
     pub(crate) capability: Capability,
     pub(crate) functions: Vec<String>,
-}
-
-pub(crate) fn gate(interface: &str, function: &str) -> &'static [Capability] {
-    match interface {
-        "event-bus" if function == "subscribe-packets" => {
-            &[Capability::EventBus, Capability::RawPacket]
-        }
-        "event-bus" => &[Capability::EventBus],
-        "players" => player_gate(function),
-        "server-manager" => &[Capability::ServerManage],
-        "ban-service" => &[Capability::Ban],
-        "config-service" if function == "write-proxy-config-document" => &[Capability::ConfigWrite],
-        "config-service" => &[Capability::ConfigRead],
-        "load-balancer" if matches!(function, "set-drained" | "reset-backend") => {
-            &[Capability::ServerManage]
-        }
-        "load-balancer" => &[Capability::ConfigRead],
-        "messaging" => &[Capability::PluginMessaging],
-        "command-manager" => &[Capability::Command],
-        "scheduler" => &[Capability::Scheduler],
-        "codec-registry" => &[Capability::CodecFilter],
-        "limbo" if function == "register-limbo-handler" => &[Capability::Limbo],
-        "permissions" => &[Capability::PermissionProvider],
-        "providers" if function == "register-ban-provider" => &[Capability::BanProvider],
-        "providers" => &[Capability::PermissionProvider],
-        _ => &[],
-    }
-}
-
-fn player_gate(function: &str) -> &'static [Capability] {
-    match function {
-        "send-message"
-        | "send-title"
-        | "send-action-bar"
-        | "switch-server"
-        | "disconnect"
-        | "connect"
-        | "set-player-list-header-footer"
-        | "clear-title"
-        | "show-boss-bar"
-        | "update-boss-bar"
-        | "hide-boss-bar"
-        | "send-resource-pack"
-        | "remove-resource-pack"
-        | "transfer"
-        | "store-cookie"
-        | "request-cookie"
-        | "refresh-permissions" => &[Capability::PlayerWrite],
-        "send-packet" => &[Capability::RawPacket],
-        _ => &[Capability::PlayerRead],
-    }
 }
 
 fn host_interface(import: &str) -> Option<&str> {
@@ -88,7 +38,7 @@ pub(crate) fn missing_grants(
             if !matches!(item, ComponentItem::ComponentFunc(_)) {
                 continue;
             }
-            for &capability in gate(interface, function) {
+            for &capability in required(interface, function) {
                 if granted.has(capability) {
                     continue;
                 }
@@ -304,57 +254,69 @@ mod tests {
 
     #[test]
     fn every_function_of_the_contract_has_a_gate_decision() {
-        assert!(gate("limbo", "[method]limbo-session.send-message").is_empty());
-        assert_eq!(gate("limbo", "register-limbo-handler"), [Capability::Limbo]);
-        assert!(gate("log", "info").is_empty());
-        assert!(gate("text", "parse-json").is_empty());
-        assert!(gate("types", "anything").is_empty());
-        assert!(gate("events", "anything").is_empty());
-        assert_eq!(gate("players", "get"), [Capability::PlayerRead]);
-        assert_eq!(gate("players", "has-permission"), [Capability::PlayerRead]);
-        assert_eq!(gate("players", "disconnect"), [Capability::PlayerWrite]);
-        assert_eq!(gate("players", "send-packet"), [Capability::RawPacket]);
-        assert_eq!(gate("event-bus", "unsubscribe"), [Capability::EventBus]);
-        assert_eq!(gate("event-bus", "fire-named"), [Capability::EventBus]);
+        assert!(required("limbo", "[method]limbo-session.send-message").is_empty());
         assert_eq!(
-            gate("event-bus", "subscribe-packets"),
+            required("limbo", "register-limbo-handler"),
+            [Capability::Limbo]
+        );
+        assert!(required("log", "info").is_empty());
+        assert!(required("text", "parse-json").is_empty());
+        assert!(required("types", "anything").is_empty());
+        assert!(required("events", "anything").is_empty());
+        assert_eq!(required("players", "get"), [Capability::PlayerRead]);
+        assert_eq!(
+            required("players", "has-permission"),
+            [Capability::PlayerRead]
+        );
+        assert_eq!(required("players", "disconnect"), [Capability::PlayerWrite]);
+        assert_eq!(required("players", "send-packet"), [Capability::RawPacket]);
+        assert_eq!(required("event-bus", "unsubscribe"), [Capability::EventBus]);
+        assert_eq!(required("event-bus", "fire-named"), [Capability::EventBus]);
+        assert_eq!(
+            required("event-bus", "subscribe-packets"),
             [Capability::EventBus, Capability::RawPacket]
         );
-        assert_eq!(gate("players", "connect"), [Capability::PlayerWrite]);
-        assert_eq!(gate("players", "request-cookie"), [Capability::PlayerWrite]);
+        assert_eq!(required("players", "connect"), [Capability::PlayerWrite]);
         assert_eq!(
-            gate("messaging", "send-to-server"),
+            required("players", "request-cookie"),
+            [Capability::PlayerWrite]
+        );
+        assert_eq!(
+            required("messaging", "send-to-server"),
             [Capability::PluginMessaging]
         );
-        assert_eq!(gate("load-balancer", "backends"), [Capability::ConfigRead]);
         assert_eq!(
-            gate("load-balancer", "set-drained"),
+            required("load-balancer", "backends"),
+            [Capability::ConfigRead]
+        );
+        assert_eq!(
+            required("load-balancer", "set-drained"),
             [Capability::ServerManage]
         );
         assert_eq!(
-            gate("config-service", "write-proxy-config-document"),
+            required("config-service", "write-proxy-config-document"),
             [Capability::ConfigWrite]
         );
         assert_eq!(
-            gate("config-service", "list-server-sources"),
+            required("config-service", "list-server-sources"),
             [Capability::ConfigRead]
         );
-        assert!(gate("proxy-info", "granted-capabilities").is_empty());
-        assert!(gate("plugin-registry", "list").is_empty());
+        assert!(required("proxy-info", "granted-capabilities").is_empty());
+        assert!(required("plugin-registry", "list").is_empty());
         assert_eq!(
-            gate("providers", "register-ban-provider"),
+            required("providers", "register-ban-provider"),
             [Capability::BanProvider]
         );
         assert_eq!(
-            gate("providers", "register-permission-provider"),
+            required("providers", "register-permission-provider"),
             [Capability::PermissionProvider]
         );
         assert_eq!(
-            gate("permissions", "set-snapshot"),
+            required("permissions", "set-snapshot"),
             [Capability::PermissionProvider]
         );
         assert_eq!(
-            gate("permissions", "release"),
+            required("permissions", "release"),
             [Capability::PermissionProvider]
         );
     }

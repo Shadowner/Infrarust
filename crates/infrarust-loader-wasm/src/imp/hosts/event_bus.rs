@@ -1,7 +1,7 @@
 use infrarust_api::event::bus::EventBusExt;
 use infrarust_api::event::{EventPriority, PacketFilter};
 use infrarust_api::events::named::NamedEvent;
-use infrarust_api::permissions::Capability;
+use infrarust_plugin_common::capability::gates::subscribe_gate;
 
 use crate::actor::CallKind;
 use crate::bindings::infrarust::plugin::event_bus;
@@ -53,24 +53,12 @@ impl event_bus::Host for PluginStoreState {
 
 impl PluginStoreState {
     fn subscribe_event(&mut self, kind: EventKind, priority: u8) -> HostResult<u64> {
-        self.check(Capability::EventBus, "event-bus.subscribe")?;
-        match kind {
-            EventKind::ChatMessage => self.check(
-                Capability::ChatIntercept,
-                "event-bus.subscribe(chat-message)",
-            )?,
-            EventKind::CommandExecute => self.check(
-                Capability::ChatIntercept,
-                "event-bus.subscribe(command-execute)",
-            )?,
-            EventKind::PluginMessage => self.check(
-                Capability::PluginMessaging,
-                "event-bus.subscribe(plugin-message)",
-            )?,
-            EventKind::RawPacket => {
-                self.check(Capability::RawPacket, "event-bus.subscribe(raw-packet)")?
-            }
-            _ => {}
+        self.check("event-bus", "subscribe")?;
+        if let Some(capability) = subscribe_gate(events::kind_name(kind)) {
+            self.check_each(
+                &[capability],
+                format_args!("event-bus.subscribe({})", events::kind_name(kind)),
+            )?;
         }
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Event);
@@ -91,7 +79,7 @@ impl PluginStoreState {
     }
 
     fn subscribe_named_event(&mut self, name: String, priority: u8) -> HostResult<u64> {
-        self.check(Capability::EventBus, "event-bus.subscribe-named")?;
+        self.check("event-bus", "subscribe-named")?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Event);
         let listener = self.mint_listener_id();
@@ -112,7 +100,7 @@ impl PluginStoreState {
         content_type: String,
         payload: Vec<u8>,
     ) -> HostResult<NamedEventResult> {
-        self.check(Capability::EventBus, "event-bus.fire-named")?;
+        self.check("event-bus", "fire-named")?;
         let ctx = self.services()?;
         let limit = self.service_call_limit();
         let event = NamedEvent::new(name, content_type, payload);
@@ -128,8 +116,8 @@ impl PluginStoreState {
         filters: &[event_bus::PacketFilter],
         priority: u8,
     ) -> HostResult<u64> {
-        self.check(Capability::EventBus, "event-bus.subscribe-packets")?;
-        self.check(Capability::RawPacket, "event-bus.subscribe-packets")?;
+        self.check("event-bus", "subscribe-packets")?;
+        self.check("event-bus", "subscribe-packets")?;
         if filters.is_empty() {
             return Err(host_error(
                 ErrorKind::InvalidArgument,
@@ -159,7 +147,7 @@ impl PluginStoreState {
     }
 
     fn unsubscribe_event(&mut self, handle: u64) -> HostResult<bool> {
-        self.check(Capability::EventBus, "event-bus.unsubscribe")?;
+        self.check("event-bus", "unsubscribe")?;
         let Some(native) = self.take_listener(handle) else {
             return Ok(false);
         };

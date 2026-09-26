@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use infrarust_api::permissions::Capability;
 use infrarust_api::types::ServerId;
 
 use crate::bindings::infrarust::plugin::messaging as wm;
@@ -14,7 +13,7 @@ impl wm::Host for PluginStoreState {
         channel: wt::ChannelId,
     ) -> wasmtime::Result<HostResult<()>> {
         Ok((|| {
-            self.check(Capability::PluginMessaging, "messaging.register-channel")?;
+            self.check("messaging", "register-channel")?;
             let channel = convert::channel_from_wit(&channel)?;
             self.services()?.channel_registrar().register(channel);
             Ok(())
@@ -26,7 +25,7 @@ impl wm::Host for PluginStoreState {
         channel: wt::ChannelId,
     ) -> wasmtime::Result<HostResult<bool>> {
         Ok((|| {
-            self.check(Capability::PluginMessaging, "messaging.unregister-channel")?;
+            self.check("messaging", "unregister-channel")?;
             let channel = convert::channel_from_wit(&channel)?;
             Ok(self.services()?.channel_registrar().unregister(&channel))
         })())
@@ -34,7 +33,7 @@ impl wm::Host for PluginStoreState {
 
     async fn channels(&mut self) -> wasmtime::Result<HostResult<Vec<wt::ChannelId>>> {
         Ok((|| {
-            self.check(Capability::PluginMessaging, "messaging.channels")?;
+            self.check("messaging", "channels")?;
             Ok(self
                 .services()?
                 .channel_registrar()
@@ -52,7 +51,7 @@ impl wm::Host for PluginStoreState {
         data: Vec<u8>,
     ) -> wasmtime::Result<HostResult<()>> {
         Ok((|| {
-            self.check(Capability::PluginMessaging, "messaging.send-to-player")?;
+            self.check("messaging", "send-to-player")?;
             let channel = convert::channel_from_wit(&channel)?;
             self.online_player(player)?
                 .send_plugin_message(&channel, Bytes::from(data))
@@ -67,7 +66,7 @@ impl wm::Host for PluginStoreState {
         data: Vec<u8>,
     ) -> wasmtime::Result<HostResult<()>> {
         Ok((|| {
-            self.check(Capability::PluginMessaging, "messaging.send-to-backend")?;
+            self.check("messaging", "send-to-backend")?;
             let channel = convert::channel_from_wit(&channel)?;
             self.online_player(player)?
                 .send_plugin_message_to_backend(&channel, Bytes::from(data))
@@ -82,7 +81,7 @@ impl wm::Host for PluginStoreState {
         data: Vec<u8>,
     ) -> wasmtime::Result<HostResult<u32>> {
         Ok((|| {
-            self.check(Capability::PluginMessaging, "messaging.send-to-server")?;
+            self.check("messaging", "send-to-server")?;
             let channel = convert::channel_from_wit(&channel)?;
             let carriers = self
                 .services()?

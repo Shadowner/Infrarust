@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use infrarust_api::permissions::{Capability, PermissionSnapshot};
+use infrarust_api::permissions::PermissionSnapshot;
 use infrarust_api::player::Player;
 use infrarust_api::types::PlayerId;
 
@@ -31,7 +31,7 @@ impl PluginStoreState {
         player: u64,
         snapshot: &wp::PermissionSnapshot,
     ) -> HostResult<()> {
-        self.check(Capability::PermissionProvider, "permissions.set-snapshot")?;
+        self.check("permissions", "set-snapshot")?;
         let snapshot = snapshot_from_wit(snapshot)
             .map_err(|reason| host_error(ErrorKind::InvalidArgument, reason))?;
         let online = self.online_player(player)?;
@@ -51,7 +51,7 @@ impl PluginStoreState {
     }
 
     async fn release_player_snapshot(&mut self, player: u64) -> HostResult<()> {
-        self.check(Capability::PermissionProvider, "permissions.release")?;
+        self.check("permissions", "release")?;
         let Some(released) = self
             .registrations()
             .snapshots()

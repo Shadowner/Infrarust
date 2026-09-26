@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use infrarust_api::permissions::Capability;
 use infrarust_api::services::scheduler::TaskHandle;
 
 use crate::actor::CallKind;
@@ -12,7 +11,7 @@ use crate::store_state::PluginStoreState;
 impl wsched::Host for PluginStoreState {
     async fn delay(&mut self, after: u64, handler: u64) -> wasmtime::Result<HostResult<u64>> {
         Ok((|| {
-            self.check(Capability::Scheduler, "scheduler.delay")?;
+            self.check("scheduler", "delay")?;
             let ctx = self.services()?;
             let instance = self.instance_ref(CallKind::Callback);
             let handle = ctx.scheduler().delay(
@@ -31,7 +30,7 @@ impl wsched::Host for PluginStoreState {
         handler: u64,
     ) -> wasmtime::Result<HostResult<u64>> {
         Ok((|| {
-            self.check(Capability::Scheduler, "scheduler.interval")?;
+            self.check("scheduler", "interval")?;
             let ctx = self.services()?;
             let instance = self.instance_ref(CallKind::Callback);
             let task =
@@ -51,7 +50,7 @@ impl wsched::Host for PluginStoreState {
 
     async fn cancel(&mut self, handle: u64) -> wasmtime::Result<HostResult<()>> {
         Ok((|| {
-            self.check(Capability::Scheduler, "scheduler.cancel")?;
+            self.check("scheduler", "cancel")?;
             self.forget_task(handle);
             if let Ok(ctx) = self.services() {
                 ctx.scheduler().cancel(TaskHandle::new(handle));

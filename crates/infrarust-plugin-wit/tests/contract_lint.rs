@@ -2,23 +2,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use infrarust_plugin_common::capability::gates::{GATES, gated_interfaces};
 use wit_parser::{Function, Interface, InterfaceId, PackageId, Resolve, Type, TypeDefKind, TypeId};
-
-const GATED: &[&str] = &[
-    "event-bus",
-    "players",
-    "server-manager",
-    "ban-service",
-    "config-service",
-    "command-manager",
-    "scheduler",
-    "codec-registry",
-    "limbo",
-    "load-balancer",
-    "messaging",
-    "permissions",
-    "providers",
-];
 
 const INFALLIBLE_READS: &[(&str, &str)] = &[
     ("players", "get"),
@@ -203,9 +188,9 @@ fn every_resulted_event_ends_with_its_current_result_and_has_one_outcome() {
 fn every_gated_function_returns_a_host_error() {
     let contract = Contract::load();
     let mut offenders = Vec::new();
-    for interface in GATED {
+    for interface in gated_interfaces() {
         for (name, function) in &contract.interface(interface).functions {
-            let allowed = INFALLIBLE_READS.contains(&(*interface, name.as_str()));
+            let allowed = INFALLIBLE_READS.contains(&(interface, name.as_str()));
             if !allowed && !contract.returns_host_error(function) {
                 offenders.push(format!("{interface}.{name}"));
             }
@@ -219,6 +204,26 @@ fn every_gated_function_returns_a_host_error() {
         assert!(
             contract.interface(interface).functions.contains_key(*name),
             "stale allow-list entry {interface}.{name}"
+        );
+    }
+}
+
+#[test]
+fn every_gated_function_exists_in_the_contract() {
+    let contract = Contract::load();
+    for (interface, function, capabilities) in GATES {
+        assert!(
+            !capabilities.is_empty(),
+            "`{interface}.{function}` gates nothing"
+        );
+        let functions = &contract.interface(interface).functions;
+        if *function == "*" {
+            assert!(!functions.is_empty(), "`{interface}` has no functions");
+            continue;
+        }
+        assert!(
+            functions.contains_key(*function),
+            "gated function `{interface}.{function}` is not in the contract"
         );
     }
 }
