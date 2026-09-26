@@ -266,3 +266,19 @@ pub(crate) fn encode_packet<P: Packet>(
     packet.encode(&mut payload, version)?;
     Ok(PacketFrame::new(packet_id, Bytes::from(payload)))
 }
+
+pub(crate) fn encode_for_state<P: Packet>(
+    packet: &P,
+    state: ConnectionState,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<PacketFrame, CoreError> {
+    if state != P::STATE {
+        return Err(CoreError::Protocol(ProtocolError::invalid(format!(
+            "cannot send {} ({}) while the bridge is in {state}",
+            P::NAME,
+            P::STATE,
+        ))));
+    }
+    encode_packet(packet, version, registry)
+}

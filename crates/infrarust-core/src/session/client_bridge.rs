@@ -20,7 +20,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
-use crate::player::packets::packet_id;
+use crate::player::packets::encode_for_state;
 use crate::util::text;
 
 const READ_CHUNK: usize = 16 * 1024;
@@ -191,29 +191,8 @@ impl ClientBridge {
         packet: &P,
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
-        if self.state != P::STATE {
-            return Err(CoreError::Protocol(
-                infrarust_protocol::ProtocolError::invalid(format!(
-                    "cannot send {} ({}) while the bridge is in {}",
-                    P::NAME,
-                    P::STATE,
-                    self.state
-                )),
-            ));
-        }
-
-        let packet_id = packet_id::<P>(registry, self.protocol_version)?;
-
-        let mut payload = Vec::new();
-        packet.encode(&mut payload, self.protocol_version)?;
-
-        self.encoder.append_raw(packet_id, &payload)?;
-        let mut data = self.encoder.take();
-        if let Some(cipher) = &mut self.encrypt_cipher {
-            cipher.encrypt(&mut data);
-        }
-        self.stream.write_all(&data).await?;
-        Ok(())
+        let frame = encode_for_state(packet, self.state, self.protocol_version, registry)?;
+        self.write_frame(&frame).await
     }
 
     pub async fn close_with(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {

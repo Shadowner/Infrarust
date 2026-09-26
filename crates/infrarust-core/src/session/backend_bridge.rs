@@ -21,7 +21,7 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use crate::auth::game_profile::offline_uuid;
 use crate::error::CoreError;
 use crate::pipeline::types::HandshakeData;
-use crate::player::packets::packet_id;
+use crate::player::packets::encode_for_state;
 use crate::session::kick::BackendKick;
 use crate::util::domain_rewrite::rewrite_handshake;
 
@@ -121,26 +121,8 @@ impl BackendBridge {
         packet: &P,
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
-        if self.state != P::STATE {
-            return Err(CoreError::Protocol(
-                infrarust_protocol::ProtocolError::invalid(format!(
-                    "cannot send {} ({}) while the bridge is in {}",
-                    P::NAME,
-                    P::STATE,
-                    self.state
-                )),
-            ));
-        }
-
-        let packet_id = packet_id::<P>(registry, self.protocol_version)?;
-
-        let mut payload = Vec::new();
-        packet.encode(&mut payload, self.protocol_version)?;
-
-        self.encoder.append_raw(packet_id, &payload)?;
-        let data = self.encoder.take();
-        self.stream.write_all(&data).await?;
-        Ok(())
+        let frame = encode_for_state(packet, self.state, self.protocol_version, registry)?;
+        self.write_frame(&frame).await
     }
 
     /// Activates packet compression with the given threshold, or leaves it
