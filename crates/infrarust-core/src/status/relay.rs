@@ -62,7 +62,6 @@ impl StatusRelayClient {
     ///
     /// # Errors
     /// Returns `CoreError` on connection failure, protocol error, or timeout.
-    #[allow(clippy::too_many_arguments)]
     pub async fn relay(
         &self,
         server_id: &str,
