@@ -186,6 +186,7 @@ pub fn loader_from_toml(proxy_toml: &str) -> infrarust_loader_wasm::WasmPluginLo
         infrarust_loader_wasm::build_engine(&config).expect("build engine"),
         infrarust_loader_wasm::WasmLoaderConfig::from_proxy_config(&config),
     )
+    .expect("wasm loader")
 }
 
 #[cfg(feature = "wasm")]

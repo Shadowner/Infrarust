@@ -272,10 +272,10 @@ async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Re
         .loader(Box::new(static_loader));
 
     #[cfg(feature = "wasm")]
-    let builder = builder.loader(Box::new(infrarust_loader_wasm::WasmPluginLoader::new(
-        wasm_engine,
-        wasm_config,
-    )));
+    let builder = builder.loader(Box::new(
+        infrarust_loader_wasm::WasmPluginLoader::new(wasm_engine, wasm_config)
+            .context("failed to start the wasm plugin loader")?,
+    ));
 
     let running = builder
         .start()

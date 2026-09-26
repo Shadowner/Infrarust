@@ -22,6 +22,7 @@ use crate::metadata::extract_metadata;
 use crate::plugin::WasmPlugin;
 use crate::registrations::Registrations;
 use crate::store_state::PluginSetup;
+use crate::sync::{lock, read, write};
 
 pub struct WasmPluginLoader {
     engine: Engine,
@@ -39,15 +40,15 @@ struct DiscoveredWasm {
 }
 
 impl WasmPluginLoader {
-    pub fn new(engine: Engine, config: WasmLoaderConfig) -> Self {
-        let ticker = EpochTicker::spawn(engine.clone(), config.epoch_tick());
-        Self {
+    pub fn new(engine: Engine, config: WasmLoaderConfig) -> std::io::Result<Self> {
+        let ticker = EpochTicker::spawn(engine.clone(), config.epoch_tick())?;
+        Ok(Self {
             engine,
             config,
             discovered: RwLock::new(HashMap::new()),
             actors: Mutex::new(HashMap::new()),
             ticker,
-        }
+        })
     }
 }
 
@@ -108,7 +109,7 @@ impl PluginLoader for WasmPluginLoader {
                 );
             }
 
-            *self.discovered.write().expect("discovered lock poisoned") = discovered;
+            *write(&self.discovered) = discovered;
             Ok(metadatas)
         })
     }
@@ -119,10 +120,7 @@ impl PluginLoader for WasmPluginLoader {
         context_factory: &'a dyn PluginContextFactory,
     ) -> BoxFuture<'a, Result<Box<dyn Plugin>, LoaderError>> {
         Box::pin(async move {
-            let entry = self
-                .discovered
-                .read()
-                .expect("discovered lock poisoned")
+            let entry = read(&self.discovered)
                 .get(plugin_id)
                 .cloned()
                 .ok_or_else(|| LoaderError::PluginNotFound {
@@ -189,20 +187,14 @@ impl PluginLoader for WasmPluginLoader {
             let actor = PluginActor::start(factory)
                 .await
                 .map_err(|e| e.into_loader_error(plugin_id))?;
-            self.actors
-                .lock()
-                .expect("actors lock poisoned")
-                .insert(plugin_id.to_owned(), Arc::downgrade(&actor));
+            lock(&self.actors).insert(plugin_id.to_owned(), Arc::downgrade(&actor));
             Ok(Box::new(WasmPlugin::new(entry.metadata, actor, shutting_down)) as Box<dyn Plugin>)
         })
     }
 
     fn unload<'a>(&'a self, plugin_id: &'a str) -> BoxFuture<'a, Result<(), LoaderError>> {
         Box::pin(async move {
-            let actor = self
-                .actors
-                .lock()
-                .expect("actors lock poisoned")
+            let actor = lock(&self.actors)
                 .remove(plugin_id)
                 .and_then(|actor| actor.upgrade());
             if let Some(actor) = actor {

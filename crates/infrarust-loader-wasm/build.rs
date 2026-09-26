@@ -5,16 +5,14 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn main() {
+fn main() -> Result<(), std::env::VarError> {
     println!("cargo:rustc-check-cfg=cfg(wasm_fixtures_available)");
 
     if std::env::var_os("CARGO_FEATURE_WASM").is_none() {
-        return;
+        return Ok(());
     }
 
-    let manifest_dir = PathBuf::from(
-        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set"),
-    );
+    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
     let repo_root = manifest_dir.join("..").join("..");
     let fixtures_dir = manifest_dir.join("tests").join("fixtures");
     let wit_dir = manifest_dir
@@ -34,10 +32,10 @@ fn main() {
         println!(
             "cargo:warning=INFRARUST_WASM_FIXTURES_SKIP is set; skipping WASM fixture build (fixture tests will be skipped)."
         );
-        return;
+        return Ok(());
     }
 
-    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is always set"));
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
 
     let fixture_target_dir = out_dir.join("fixture-target");
@@ -61,9 +59,10 @@ fn main() {
     let outcomes = std::thread::scope(|scope| {
         let stats_build = scope.spawn(|| stats.run(&cargo));
         let fixtures_outcome = fixtures.run(&cargo);
-        let stats_outcome = stats_build
-            .join()
-            .expect("stats wasm build thread panicked");
+        let stats_outcome = match stats_build.join() {
+            Ok(outcome) => outcome,
+            Err(payload) => std::panic::resume_unwind(payload),
+        };
         [(&fixtures, fixtures_outcome), (&stats, stats_outcome)]
     });
     for (build, outcome) in outcomes {
@@ -74,7 +73,7 @@ fn main() {
                     "cargo:warning=wasm32-wasip2 target not installed; skipping {} (run `rustup target add wasm32-wasip2`). WASM tests will be skipped.",
                     build.label
                 );
-                return;
+                return Ok(());
             }
             BuildOutcome::Failed(stderr) => {
                 panic!(
@@ -99,6 +98,7 @@ fn main() {
         "cargo:rustc-env=INFRARUST_WASM_FIXTURE_DIR={}",
         artifact_dir.display()
     );
+    Ok(())
 }
 
 const FAST_RELEASE_PROFILE: &[(&str, &str)] = &[

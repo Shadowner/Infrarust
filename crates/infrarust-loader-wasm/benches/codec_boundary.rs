@@ -155,7 +155,8 @@ mod bench {
         let loader = WasmPluginLoader::new(
             build_engine(&config).unwrap(),
             WasmLoaderConfig::from_proxy_config(&config),
-        );
+        )
+        .unwrap();
         loader.discover(&plugins_dir).await.unwrap();
         let plugin = loader.load("codec-modify", &factory).await.unwrap();
         let ctx = factory.create_context("codec-modify");

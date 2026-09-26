@@ -39,6 +39,7 @@ pub(crate) mod resources;
 pub(crate) mod snapshots;
 pub(crate) mod store_state;
 pub(crate) mod supervisor;
+pub(crate) mod sync;
 
 pub use config::WasmLoaderConfig;
 pub use engine::build_engine;

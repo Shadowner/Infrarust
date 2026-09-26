@@ -12,7 +12,7 @@ pub(crate) struct EpochTicker {
 }
 
 impl EpochTicker {
-    pub(crate) fn spawn(engine: Engine, tick: Duration) -> Self {
+    pub(crate) fn spawn(engine: Engine, tick: Duration) -> std::io::Result<Self> {
         let tick = tick.max(MIN_TICK);
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let handle = std::thread::Builder::new()
@@ -21,12 +21,11 @@ impl EpochTicker {
                 while let Err(RecvTimeoutError::Timeout) = stop_rx.recv_timeout(tick) {
                     engine.increment_epoch();
                 }
-            })
-            .expect("spawning the wasm epoch ticker thread should not fail");
-        Self {
+            })?;
+        Ok(Self {
             stop_tx: Some(stop_tx),
             handle: Some(handle),
-        }
+        })
     }
 
     fn stop(&mut self) {

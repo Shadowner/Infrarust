@@ -1,5 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use infrarust_api::command::CommandRegistration;
 use infrarust_api::limbo::{LimboHandlerRegistration, SessionHandle};
@@ -8,6 +8,7 @@ use infrarust_api::types::PlayerId;
 use crate::limbo::deny_unavailable;
 use crate::providers::{WasmBanProvider, WasmPermissionProvider};
 use crate::snapshots::PermissionSnapshots;
+use crate::sync::lock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Target {
@@ -224,10 +225,6 @@ fn bind(
     let binding = Binding::new(generation, callback);
     map.insert(name.to_owned(), Arc::clone(&binding));
     Bound::Fresh(binding)
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 #[cfg(test)]
