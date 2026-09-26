@@ -91,6 +91,15 @@ impl Network<'_> {
     }
 }
 
+fn target_of(network: &Network<'_>, target: &str) -> Option<(String, Vec<Arc<PlayerSession>>)> {
+    if target == ALL {
+        return Some((ALL.to_string(), network.players()));
+    }
+    let name = network.server(target)?.effective_id();
+    let players = network.players_on(&name);
+    Some((name, players))
+}
+
 fn names(players: &[Arc<PlayerSession>]) -> String {
     players
         .iter()
@@ -198,30 +207,16 @@ async fn respond(
             Ok(Reply::Data(out.into_bytes()))
         }
         "PlayerCount" if allowed.player_count => {
-            let target = input.read_utf()?;
-            let (name, count) = if target == ALL {
-                (ALL.to_string(), network.players().len())
-            } else if let Some(config) = network.server(&target) {
-                let name = config.effective_id();
-                let count = network.players_on(&name).len();
-                (name, count)
-            } else {
+            let Some((name, players)) = target_of(network, &input.read_utf()?) else {
                 return Ok(Reply::None);
             };
             out.write_utf("PlayerCount")?
                 .write_utf(&name)?
-                .write_i32(i32::try_from(count).unwrap_or(i32::MAX));
+                .write_i32(i32::try_from(players.len()).unwrap_or(i32::MAX));
             Ok(Reply::Data(out.into_bytes()))
         }
         "PlayerList" if allowed.player_list => {
-            let target = input.read_utf()?;
-            let (name, players) = if target == ALL {
-                (ALL.to_string(), network.players())
-            } else if let Some(config) = network.server(&target) {
-                let name = config.effective_id();
-                let players = network.players_on(&name);
-                (name, players)
-            } else {
+            let Some((name, players)) = target_of(network, &input.read_utf()?) else {
                 return Ok(Reply::None);
             };
             out.write_utf("PlayerList")?
