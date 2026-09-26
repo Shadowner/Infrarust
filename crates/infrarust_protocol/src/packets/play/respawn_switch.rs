@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use crate::codec::{McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
 use crate::version::ProtocolVersion;
@@ -51,7 +53,7 @@ pub fn for_switch(dimension: &DimensionInfo, version: ProtocolVersion) -> Protoc
 }
 
 fn encode_switch_respawn(
-    w: &mut Vec<u8>,
+    w: &mut (impl Write + ?Sized),
     dimension: &DimensionInfo,
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
@@ -116,11 +118,10 @@ fn dimension_as_name(dim: &DimensionInfo) -> String {
     }
 }
 
-fn write_minimal_dimension_nbt(w: &mut Vec<u8>) -> ProtocolResult<()> {
-    w.push(0x0A);
-    w.extend_from_slice(&0u16.to_be_bytes());
-    w.push(0x00);
-    Ok(())
+fn write_minimal_dimension_nbt(w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
+    w.write_u8(0x0A)?;
+    w.write_u16_be(0)?;
+    w.write_u8(0x00)
 }
 
 #[cfg(test)]
@@ -214,6 +215,30 @@ mod tests {
         let respawn = for_switch(&dim, ProtocolVersion::V1_20_2).unwrap();
         assert_eq!(respawn.dimension_type, "minecraft:the_nether");
         assert_eq!(respawn.level_name, "minecraft:the_nether");
+    }
+
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("closed"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_switch_respawn_propagates_writer_errors() {
+        for version in [ProtocolVersion::V1_8, ProtocolVersion::V1_16] {
+            let err = encode_switch_respawn(&mut FailingWriter, &DimensionInfo::Legacy(0), version)
+                .unwrap_err();
+            assert!(
+                matches!(err, crate::error::ProtocolError::Io(_)),
+                "{version}: {err}"
+            );
+        }
     }
 
     #[test]
