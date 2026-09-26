@@ -163,9 +163,13 @@ impl PermissionMap {
         if let Some(value) = self.nodes.get(node.as_ref()) {
             return Some(*value);
         }
+        let mut key = String::with_capacity(node.len() + WILDCARD.len() + 1);
         let mut end = node.len();
         while let Some(dot) = node[..end].rfind('.') {
-            if let Some(value) = self.nodes.get(&format!("{}.{WILDCARD}", &node[..dot])) {
+            key.clear();
+            key.push_str(&node[..=dot]);
+            key.push_str(WILDCARD);
+            if let Some(value) = self.nodes.get(key.as_str()) {
                 return Some(*value);
             }
             end = dot;
@@ -563,6 +567,33 @@ mod tests {
         assert_eq!(map.value("demo.admin.reload"), Tristate::True);
         assert_eq!(map.value("demo"), Tristate::Undefined);
         assert_eq!(map.value("demolition.use"), Tristate::Undefined);
+    }
+
+    #[test]
+    fn wildcards_are_tried_from_the_deepest_ancestor_up_to_the_root() {
+        let map = PermissionMap::new()
+            .with("*", false)
+            .with("a.*", true)
+            .with("a.b.*", false)
+            .with("a.b.c.d", true);
+        assert_eq!(map.value("a.b.c.d"), Tristate::True);
+        assert_eq!(map.value("a.b.c.e"), Tristate::False);
+        assert_eq!(map.value("a.b.c"), Tristate::False);
+        assert_eq!(map.value("a.b"), Tristate::True);
+        assert_eq!(map.value("a.x.y"), Tristate::True);
+        assert_eq!(map.value("a"), Tristate::False);
+        assert_eq!(map.value("ab.c"), Tristate::False);
+        assert_eq!(map.value(" A.B.Z "), Tristate::False);
+        assert_eq!(map.value("a.b."), Tristate::False);
+        assert_eq!(map.value(".a"), Tristate::False);
+        assert_eq!(
+            PermissionMap::new().with("a.*", true).value("b.c"),
+            Tristate::Undefined
+        );
+        assert_eq!(
+            PermissionMap::new().with("a.*", true).value("a.*"),
+            Tristate::True
+        );
     }
 
     #[test]
