@@ -81,7 +81,7 @@ impl AuthHandler {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn is_in_auth_limbo(&self, player_id: PlayerId) -> bool {
         self.sessions.contains_key(&player_id)
     }

@@ -38,7 +38,6 @@ pub struct FrameData {
 
 impl ExtractedRegistryData {
     /// Serialize to JSON (used by the registry-extractor tool).
-    #[allow(dead_code)]
     pub fn to_json(&self) -> Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec(self)
     }
@@ -51,7 +50,6 @@ impl ExtractedRegistryData {
     /// Serialize to compact binary format (used by the registry-extractor tool).
     ///
     /// Layout: `MAGIC (4 bytes) + FORMAT_VERSION (1 byte) + JSON length (4 bytes LE) + JSON bytes`
-    #[allow(dead_code)]
     pub fn to_binary(&self) -> Result<Vec<u8>, CoreError> {
         let json = self
             .to_json()

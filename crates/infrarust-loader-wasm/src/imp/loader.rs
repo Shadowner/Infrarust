@@ -29,8 +29,7 @@ pub struct WasmPluginLoader {
     config: WasmLoaderConfig,
     discovered: RwLock<HashMap<String, DiscoveredWasm>>,
     actors: Mutex<HashMap<String, Weak<PluginActor>>>,
-    #[allow(dead_code)]
-    ticker: EpochTicker,
+    _ticker: EpochTicker,
 }
 
 #[derive(Clone)]
@@ -47,7 +46,7 @@ impl WasmPluginLoader {
             config,
             discovered: RwLock::new(HashMap::new()),
             actors: Mutex::new(HashMap::new()),
-            ticker,
+            _ticker: ticker,
         })
     }
 }
