@@ -88,7 +88,7 @@ fn tester(seen: &Seen, handle: &Handle) -> ScriptedPlugin {
                 probe("quiet", &seen),
             )
             .unwrap();
-        *handle.lock().unwrap() = Some(ctx.command_manager_handle());
+        *handle.lock().unwrap() = Some(ctx.command_manager());
     })
 }
 

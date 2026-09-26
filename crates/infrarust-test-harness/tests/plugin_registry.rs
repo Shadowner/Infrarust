@@ -35,7 +35,7 @@ async fn a_plugin_enabled_before_is_in_the_registry_during_on_enable() {
         .depends_on("first")
         .on_enable(move |ctx| {
             let registry = ctx.plugin_registry();
-            *slot.lock().unwrap() = Some((state_of(registry, "first"), ids(registry)));
+            *slot.lock().unwrap() = Some((state_of(&*registry, "first"), ids(&*registry)));
         });
 
     let proxy = TestProxy::builder()
@@ -58,7 +58,7 @@ async fn a_plugin_enabled_listener_finds_the_plugin_it_names() {
     let seen: Sightings = Arc::default();
     let slot = Arc::clone(&seen);
     let watcher = ScriptedPlugin::new("watcher").on_enable(move |ctx| {
-        let registry = ctx.plugin_registry_handle();
+        let registry = ctx.plugin_registry();
         let slot = Arc::clone(&slot);
         ctx.event_bus().subscribe(
             EventPriority::NORMAL,
@@ -91,7 +91,7 @@ async fn a_disabled_plugin_leaves_the_registry_before_its_event() {
     let seen: Sightings = Arc::default();
     let slot = Arc::clone(&seen);
     let watcher = ScriptedPlugin::new("watcher").on_enable(move |ctx| {
-        let registry = ctx.plugin_registry_handle();
+        let registry = ctx.plugin_registry();
         let slot = Arc::clone(&slot);
         ctx.event_bus().subscribe(
             EventPriority::NORMAL,
@@ -111,7 +111,7 @@ async fn a_disabled_plugin_leaves_the_registry_before_its_event() {
         .plugin_context("watcher")
         .await
         .unwrap()
-        .plugin_registry_handle();
+        .plugin_registry();
     assert_eq!(
         state_of(registry.as_ref(), "leaving").as_deref(),
         Some("enabled")
@@ -134,7 +134,7 @@ async fn plugins_disabled_on_shutdown_leave_the_registry_one_by_one() {
     let seen = Arc::clone(&seen_on_disable);
     let first = ScriptedPlugin::new("first")
         .on_enable(move |ctx| {
-            *enable_slot.lock().unwrap() = Some(ctx.plugin_registry_handle());
+            *enable_slot.lock().unwrap() = Some(ctx.plugin_registry());
         })
         .on_disable(move || {
             let registry = disable_slot.lock().unwrap().clone().unwrap();

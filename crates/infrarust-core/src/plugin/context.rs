@@ -277,31 +277,19 @@ impl PluginContext for PluginContextImpl {
         self
     }
 
-    fn event_bus(&self) -> &dyn EventBus {
-        self.event_bus.as_ref()
+    fn event_bus(&self) -> Arc<dyn EventBus> {
+        Arc::clone(&self.event_bus) as Arc<dyn EventBus>
     }
 
-    fn player_registry(&self) -> &dyn PlayerRegistry {
-        self.player_registry.as_ref()
-    }
-
-    fn player_registry_handle(&self) -> Arc<dyn PlayerRegistry> {
+    fn player_registry(&self) -> Arc<dyn PlayerRegistry> {
         Arc::clone(&self.player_registry)
     }
 
-    fn server_manager(&self) -> &dyn ServerManager {
-        self.server_manager.as_ref()
-    }
-
-    fn server_manager_handle(&self) -> Arc<dyn ServerManager> {
+    fn server_manager(&self) -> Arc<dyn ServerManager> {
         Arc::clone(&self.server_manager)
     }
 
-    fn ban_service(&self) -> &dyn BanService {
-        self.ban_service.as_ref()
-    }
-
-    fn ban_service_handle(&self) -> Arc<dyn BanService> {
+    fn ban_service(&self) -> Arc<dyn BanService> {
         Arc::clone(&self.ban_service)
     }
 
@@ -353,48 +341,24 @@ impl PluginContext for PluginContextImpl {
         self.permissions.nodes()
     }
 
-    fn config_service(&self) -> &dyn ConfigService {
-        self.config_service.as_ref()
-    }
-
-    fn config_service_handle(&self) -> Arc<dyn ConfigService> {
+    fn config_service(&self) -> Arc<dyn ConfigService> {
         Arc::clone(&self.config_service)
     }
 
-    fn load_balancer_service(&self) -> &dyn LoadBalancerService {
-        self.load_balancer_service.as_ref()
-    }
-
-    fn load_balancer_service_handle(&self) -> Arc<dyn LoadBalancerService> {
+    fn load_balancer_service(&self) -> Arc<dyn LoadBalancerService> {
         Arc::clone(&self.load_balancer_service)
     }
 
-    fn command_manager(&self) -> &dyn CommandManager {
-        self.command_manager.as_ref()
-    }
-
-    fn command_manager_handle(&self) -> Arc<dyn CommandManager> {
+    fn command_manager(&self) -> Arc<dyn CommandManager> {
         Arc::clone(&self.command_manager) as Arc<dyn CommandManager>
     }
 
-    fn scheduler(&self) -> &dyn Scheduler {
-        self.scheduler.as_ref()
-    }
-
-    fn scheduler_handle(&self) -> Arc<dyn Scheduler> {
+    fn scheduler(&self) -> Arc<dyn Scheduler> {
         Arc::clone(&self.scheduler) as Arc<dyn Scheduler>
     }
 
-    fn services(&self) -> &dyn ServiceRegistry {
-        self.services.as_ref()
-    }
-
-    fn services_handle(&self) -> Arc<dyn ServiceRegistry> {
+    fn services(&self) -> Arc<dyn ServiceRegistry> {
         Arc::clone(&self.services) as Arc<dyn ServiceRegistry>
-    }
-
-    fn event_bus_handle(&self) -> Arc<dyn EventBus> {
-        Arc::clone(&self.event_bus) as Arc<dyn EventBus>
     }
 
     fn register_limbo_handler(
@@ -421,11 +385,7 @@ impl PluginContext for PluginContextImpl {
         }))
     }
 
-    fn plugin_registry(&self) -> &dyn PluginRegistry {
-        self.plugin_registry.as_ref()
-    }
-
-    fn plugin_registry_handle(&self) -> Arc<dyn PluginRegistry> {
+    fn plugin_registry(&self) -> Arc<dyn PluginRegistry> {
         Arc::clone(&self.plugin_registry)
     }
 

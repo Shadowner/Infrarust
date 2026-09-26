@@ -79,7 +79,7 @@ impl Plugin for HelloPlugin {
 
             ctx.register_limbo_handler(Box::new(TestGateHandler))?;
 
-            let player_registry = ctx.player_registry_handle();
+            let player_registry = ctx.player_registry();
             ctx.scheduler().interval(
                 std::time::Duration::from_secs(60),
                 Box::new(move || {

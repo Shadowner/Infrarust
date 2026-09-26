@@ -280,7 +280,7 @@ async fn disabling_a_plugin_cancels_every_task_it_scheduled() {
     let bystander = factory.create_context("q");
     let (runs, seen) = counter();
     let (other_runs, other_seen) = counter();
-    let handle = ctx.scheduler_handle();
+    let handle = ctx.scheduler();
     handle.repeat(
         10 * MS,
         None,

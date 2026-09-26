@@ -83,7 +83,7 @@ impl Plugin for ScriptedPlugin {
                         event,
                         priority,
                         action,
-                    } => subscribe(ctx.event_bus(), log.clone(), event, priority, action),
+                    } => subscribe(&*ctx.event_bus(), log.clone(), event, priority, action),
                     Directive::Cmd { name } => {
                         let spec = CommandSpec::new(name.as_str());
                         let command = Box::new(ScriptedCommand {
@@ -102,7 +102,7 @@ impl Plugin for ScriptedPlugin {
                             command,
                             event,
                             payload,
-                            bus: ctx.event_bus_handle(),
+                            bus: ctx.event_bus(),
                             log: log.clone(),
                         });
                         let _ = ctx.command_manager().register(spec, fire);
@@ -111,7 +111,7 @@ impl Plugin for ScriptedPlugin {
                         name,
                         priority,
                         action,
-                    } => subscribe_named(ctx.event_bus(), log.clone(), name, priority, action),
+                    } => subscribe_named(&*ctx.event_bus(), log.clone(), name, priority, action),
                     Directive::Channel { id } => {
                         let channel = ChannelId::modern(&id)
                             .map_err(|e| PluginError::InitFailed(e.to_string()))?;

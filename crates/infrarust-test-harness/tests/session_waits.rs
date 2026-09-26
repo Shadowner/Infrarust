@@ -612,7 +612,7 @@ async fn a_limbo_callback_waiting_for_its_own_players_switch_fails_at_once() {
     let (outcomes, mut seen) = mpsc::unbounded_channel();
     let limbo = ScriptedPlugin::new("gate").on_enable(move |ctx| {
         ctx.register_limbo_handler(Box::new(SelfWaitingLimbo {
-            players: ctx.player_registry_handle(),
+            players: ctx.player_registry(),
             outcomes: outcomes.clone(),
         }))
         .unwrap();

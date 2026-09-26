@@ -67,7 +67,7 @@ async fn a_service_is_shared_refused_twice_and_withdrawn_with_its_provider() {
                 .services()
                 .provide::<dyn LoginState>(Arc::new(OnlySteve))
                 .err();
-            seen.view = Some(ctx.services_handle());
+            seen.view = Some(ctx.services());
         });
     let proxy = TestProxy::builder()
         .plugin(recorder.plugin())

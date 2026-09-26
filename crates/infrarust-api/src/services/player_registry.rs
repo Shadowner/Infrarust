@@ -13,9 +13,7 @@ pub mod private {
 
 /// Registry of all players connected to the proxy.
 ///
-/// Obtained via [`PluginContext::player_registry()`](crate::plugin::PluginContext::player_registry)
-/// or as an `Arc<dyn PlayerRegistry>` via
-/// [`PluginContext::player_registry_handle()`](crate::plugin::PluginContext::player_registry_handle).
+/// Obtained via [`PluginContext::player_registry()`](crate::plugin::PluginContext::player_registry).
 pub trait PlayerRegistry: Send + Sync + private::Sealed {
     /// Finds a player by username (case-insensitive).
     fn get_player(&self, username: &str) -> Option<Arc<dyn Player>>;

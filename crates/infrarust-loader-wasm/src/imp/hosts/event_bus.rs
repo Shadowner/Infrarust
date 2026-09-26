@@ -64,7 +64,7 @@ impl PluginStoreState {
         let instance = self.instance_ref(CallKind::Event)?;
         let listener = self.mint_listener_id();
         match events::register(
-            ctx.event_bus(),
+            &*ctx.event_bus(),
             instance,
             kind,
             EventPriority::custom(priority),
@@ -84,7 +84,7 @@ impl PluginStoreState {
         let instance = self.instance_ref(CallKind::Event)?;
         let listener = self.mint_listener_id();
         let handle = events::register_named(
-            ctx.event_bus(),
+            &*ctx.event_bus(),
             instance,
             name,
             EventPriority::custom(priority),
@@ -135,7 +135,7 @@ impl PluginStoreState {
         let instance = self.instance_ref(CallKind::Event)?;
         let listener = self.mint_listener_id();
         let handles = events::register_packets(
-            ctx.event_bus(),
+            &*ctx.event_bus(),
             &instance,
             &filters,
             EventPriority::custom(priority),

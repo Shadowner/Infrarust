@@ -31,7 +31,7 @@ impl Plugin for StatsPlugin {
                 .aliases(core::COMMAND_ALIASES.iter().copied())
                 .description(core::COMMAND_DESCRIPTION);
             let handler = Box::new(CountCommand {
-                players: ctx.player_registry_handle(),
+                players: ctx.player_registry(),
             });
             if let Err(e) = ctx.command_manager().register(spec, handler) {
                 tracing::warn!("[stats] /{} was not registered: {e}", core::COMMAND_NAME);

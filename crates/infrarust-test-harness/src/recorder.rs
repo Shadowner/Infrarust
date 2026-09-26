@@ -600,9 +600,9 @@ impl Plugin for RecordingPlugin {
         &'a self,
         ctx: &'a dyn PluginContext,
     ) -> BoxFuture<'a, Result<(), PluginError>> {
-        subscribe_all(ctx.event_bus(), &self.recorder);
-        subscribe_plugin_events(ctx.event_bus(), &self.recorder);
-        subscribe_presentation_events(ctx.event_bus(), &self.recorder);
+        subscribe_all(&*ctx.event_bus(), &self.recorder);
+        subscribe_plugin_events(&*ctx.event_bus(), &self.recorder);
+        subscribe_presentation_events(&*ctx.event_bus(), &self.recorder);
         Box::pin(async { Ok(()) })
     }
 }

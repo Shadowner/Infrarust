@@ -51,28 +51,16 @@ impl PluginContext for MockPluginContext {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    fn event_bus(&self) -> &dyn EventBus {
+    fn event_bus(&self) -> Arc<dyn EventBus> {
         unimplemented!("mock")
     }
-    fn event_bus_handle(&self) -> Arc<dyn EventBus> {
+    fn player_registry(&self) -> Arc<dyn PlayerRegistry> {
         unimplemented!("mock")
     }
-    fn player_registry(&self) -> &dyn PlayerRegistry {
+    fn server_manager(&self) -> Arc<dyn ServerManager> {
         unimplemented!("mock")
     }
-    fn player_registry_handle(&self) -> Arc<dyn PlayerRegistry> {
-        unimplemented!("mock")
-    }
-    fn server_manager(&self) -> &dyn ServerManager {
-        unimplemented!("mock")
-    }
-    fn server_manager_handle(&self) -> Arc<dyn ServerManager> {
-        unimplemented!("mock")
-    }
-    fn ban_service(&self) -> &dyn BanService {
-        unimplemented!("mock")
-    }
-    fn ban_service_handle(&self) -> Arc<dyn BanService> {
+    fn ban_service(&self) -> Arc<dyn BanService> {
         unimplemented!("mock")
     }
     fn register_ban_provider(
@@ -93,34 +81,19 @@ impl PluginContext for MockPluginContext {
     fn permission_nodes(&self) -> Vec<PermissionNodeInfo> {
         unimplemented!("mock")
     }
-    fn config_service(&self) -> &dyn ConfigService {
+    fn config_service(&self) -> Arc<dyn ConfigService> {
         unimplemented!("mock")
     }
-    fn config_service_handle(&self) -> Arc<dyn ConfigService> {
+    fn load_balancer_service(&self) -> Arc<dyn LoadBalancerService> {
         unimplemented!("mock")
     }
-    fn load_balancer_service(&self) -> &dyn LoadBalancerService {
+    fn command_manager(&self) -> Arc<dyn CommandManager> {
         unimplemented!("mock")
     }
-    fn load_balancer_service_handle(&self) -> Arc<dyn LoadBalancerService> {
+    fn scheduler(&self) -> Arc<dyn Scheduler> {
         unimplemented!("mock")
     }
-    fn command_manager(&self) -> &dyn CommandManager {
-        unimplemented!("mock")
-    }
-    fn command_manager_handle(&self) -> Arc<dyn CommandManager> {
-        unimplemented!("mock")
-    }
-    fn scheduler(&self) -> &dyn Scheduler {
-        unimplemented!("mock")
-    }
-    fn scheduler_handle(&self) -> Arc<dyn Scheduler> {
-        unimplemented!("mock")
-    }
-    fn services(&self) -> &dyn ServiceRegistry {
-        unimplemented!("mock")
-    }
-    fn services_handle(&self) -> Arc<dyn ServiceRegistry> {
+    fn services(&self) -> Arc<dyn ServiceRegistry> {
         unimplemented!("mock")
     }
     fn register_limbo_handler(
@@ -135,10 +108,7 @@ impl PluginContext for MockPluginContext {
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry> {
         None
     }
-    fn plugin_registry(&self) -> &dyn PluginRegistry {
-        unimplemented!("mock")
-    }
-    fn plugin_registry_handle(&self) -> Arc<dyn PluginRegistry> {
+    fn plugin_registry(&self) -> Arc<dyn PluginRegistry> {
         unimplemented!("mock")
     }
     fn register_config_provider(&self, _provider: Box<dyn PluginConfigProvider>) {}

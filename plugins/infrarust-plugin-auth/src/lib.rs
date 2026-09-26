@@ -169,7 +169,7 @@ impl Plugin for AuthPlugin {
             let handler = Arc::new(AuthHandler::new(
                 Arc::clone(&storage),
                 Arc::clone(&config),
-                ctx.player_registry_handle(),
+                ctx.player_registry(),
                 dummy_hash,
                 blocked_passwords,
                 premium_cache,

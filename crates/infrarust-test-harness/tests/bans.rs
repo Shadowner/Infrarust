@@ -177,7 +177,7 @@ fn guard_plugin(provider: &Arc<GuardProvider>) -> (ScriptedPlugin, Guard) {
     let plugin = ScriptedPlugin::new(GUARD).on_enable(move |ctx| {
         let provider = Arc::clone(&provider) as Arc<dyn BanProvider>;
         *registration.lock().unwrap() = Some(ctx.register_ban_provider(provider));
-        *service.lock().unwrap() = Some(ctx.ban_service_handle());
+        *service.lock().unwrap() = Some(ctx.ban_service());
     });
     (plugin, guard)
 }

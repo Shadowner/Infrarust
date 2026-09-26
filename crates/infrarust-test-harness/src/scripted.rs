@@ -104,7 +104,7 @@ impl Plugin for ScriptedPlugin {
         ctx: &'a dyn PluginContext,
     ) -> BoxFuture<'a, Result<(), PluginError>> {
         for register in &self.registrations {
-            register(ctx.event_bus());
+            register(&*ctx.event_bus());
         }
         for hook in &self.enable_hooks {
             hook(ctx);

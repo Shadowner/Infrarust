@@ -57,8 +57,8 @@ impl Plugin for ServerWakePlugin {
 
             ctx.register_limbo_handler(Box::new(ServerWakeHandler {
                 state: Arc::clone(&state),
-                server_manager: ctx.server_manager_handle(),
-                config_service: ctx.config_service_handle(),
+                server_manager: ctx.server_manager(),
+                config_service: ctx.config_service(),
             }))?;
 
             let wake_state = Arc::clone(&state);

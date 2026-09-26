@@ -38,7 +38,7 @@ fn forged_pre_login(event: &PostLoginEvent) -> PreLoginEvent {
 async fn plugins_exchange_a_custom_event_through_a_running_proxy() {
     let (replies, mut replied) = mpsc::unbounded_channel::<Exchange>();
     let asker = ScriptedPlugin::new("asker").on_enable(move |ctx| {
-        let bus = ctx.event_bus_handle();
+        let bus = ctx.event_bus();
         let replies = replies.clone();
         ctx.event_bus()
             .subscribe_async::<PostLoginEvent, _>(EventPriority::NORMAL, move |event| {

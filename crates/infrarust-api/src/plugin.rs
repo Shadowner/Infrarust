@@ -158,21 +158,13 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     /// Used internally by the plugin manager for cleanup via downcast.
     fn as_any(&self) -> &dyn std::any::Any;
 
-    fn event_bus(&self) -> &dyn EventBus;
+    fn event_bus(&self) -> Arc<dyn EventBus>;
 
-    fn player_registry(&self) -> &dyn PlayerRegistry;
+    fn player_registry(&self) -> Arc<dyn PlayerRegistry>;
 
-    /// Returns an `Arc` handle to the player registry, suitable for
-    /// capturing in closures and event handlers.
-    fn player_registry_handle(&self) -> Arc<dyn PlayerRegistry>;
+    fn server_manager(&self) -> Arc<dyn ServerManager>;
 
-    fn server_manager(&self) -> &dyn ServerManager;
-
-    fn server_manager_handle(&self) -> Arc<dyn ServerManager>;
-
-    fn ban_service(&self) -> &dyn BanService;
-
-    fn ban_service_handle(&self) -> Arc<dyn BanService>;
+    fn ban_service(&self) -> Arc<dyn BanService>;
 
     fn register_ban_provider(
         &self,
@@ -188,27 +180,15 @@ pub trait PluginContext: Send + Sync + private::Sealed {
 
     fn permission_nodes(&self) -> Vec<PermissionNodeInfo>;
 
-    fn config_service(&self) -> &dyn ConfigService;
+    fn config_service(&self) -> Arc<dyn ConfigService>;
 
-    fn config_service_handle(&self) -> Arc<dyn ConfigService>;
+    fn load_balancer_service(&self) -> Arc<dyn LoadBalancerService>;
 
-    fn load_balancer_service(&self) -> &dyn LoadBalancerService;
+    fn command_manager(&self) -> Arc<dyn CommandManager>;
 
-    fn load_balancer_service_handle(&self) -> Arc<dyn LoadBalancerService>;
+    fn scheduler(&self) -> Arc<dyn Scheduler>;
 
-    fn command_manager(&self) -> &dyn CommandManager;
-
-    fn command_manager_handle(&self) -> Arc<dyn CommandManager>;
-
-    fn scheduler(&self) -> &dyn Scheduler;
-
-    fn scheduler_handle(&self) -> Arc<dyn Scheduler>;
-
-    fn services(&self) -> &dyn ServiceRegistry;
-
-    fn services_handle(&self) -> Arc<dyn ServiceRegistry>;
-
-    fn event_bus_handle(&self) -> Arc<dyn EventBus>;
+    fn services(&self) -> Arc<dyn ServiceRegistry>;
 
     /// Registers a limbo handler for this plugin.
     ///
@@ -234,9 +214,7 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     /// [`Capability::TransportFilter`]: crate::permissions::Capability::TransportFilter
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry>;
 
-    fn plugin_registry(&self) -> &dyn PluginRegistry;
-
-    fn plugin_registry_handle(&self) -> Arc<dyn PluginRegistry>;
+    fn plugin_registry(&self) -> Arc<dyn PluginRegistry>;
 
     fn register_config_provider(&self, provider: Box<dyn crate::provider::PluginConfigProvider>);
 

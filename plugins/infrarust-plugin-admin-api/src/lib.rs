@@ -119,7 +119,7 @@ impl AdminApiPlugin {
         let drain_store = Arc::new(DrainStore::open(data_dir));
         self.spawn(drain_store::reapply(
             drain_store.clone(),
-            ctx.load_balancer_service_handle(),
+            ctx.load_balancer_service(),
             self.shutdown.clone(),
         ));
         drain_store
@@ -148,9 +148,9 @@ impl AdminApiPlugin {
     fn spawn_stats_ticker(&self, ctx: &dyn PluginContext, state: &ApiState) {
         let ticker = StatsTicker::new(
             state.event_tx.clone(),
-            ctx.player_registry_handle(),
-            ctx.server_manager_handle(),
-            ctx.ban_service_handle(),
+            ctx.player_registry(),
+            ctx.server_manager(),
+            ctx.ban_service(),
             state.start_time,
             self.shutdown.clone(),
         );
@@ -229,12 +229,12 @@ impl Plugin for AdminApiPlugin {
             let drain_store = self.spawn_drain_reapply(ctx, &data_dir);
 
             let state = Arc::new(ApiState {
-                player_registry: ctx.player_registry_handle(),
-                ban_service: ctx.ban_service_handle(),
-                server_manager: ctx.server_manager_handle(),
-                config_service: ctx.config_service_handle(),
-                load_balancer: ctx.load_balancer_service_handle(),
-                plugin_registry: ctx.plugin_registry_handle(),
+                player_registry: ctx.player_registry(),
+                ban_service: ctx.ban_service(),
+                server_manager: ctx.server_manager(),
+                config_service: ctx.config_service(),
+                load_balancer: ctx.load_balancer_service(),
+                plugin_registry: ctx.plugin_registry(),
                 rate_limiter: RateLimiter::new(config.rate_limit.requests_per_minute),
                 config,
                 start_time: Instant::now(),

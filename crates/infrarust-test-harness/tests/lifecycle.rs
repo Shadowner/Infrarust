@@ -399,7 +399,7 @@ async fn post_login_sees_a_registered_player(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let (sightings, mut seen) = mpsc::unbounded_channel::<Sighting>();
     let probe = ScriptedPlugin::new("probe").on_enable(move |ctx| {
-        let registry = ctx.player_registry_handle();
+        let registry = ctx.player_registry();
         let sightings = sightings.clone();
         ctx.event_bus()
             .subscribe::<PostLoginEvent, _>(EventPriority::NORMAL, move |event| {

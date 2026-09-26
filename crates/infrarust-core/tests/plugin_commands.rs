@@ -178,7 +178,7 @@ async fn a_handle_kept_after_enable_registers_for_the_same_plugin() {
     let commands = Arc::new(CommandManagerImpl::new());
     let f = factory(&commands);
     let late = f.create_context("late");
-    let handle = late.command_manager_handle();
+    let handle = late.command_manager();
 
     handle
         .register(CommandSpec::new("later"), handler("late", &calls))
