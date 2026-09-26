@@ -15,6 +15,7 @@ use infrarust_api::permissions::{
 use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_config::{PermissionProviderSelection, PermissionsConfig};
 
+use crate::util::provider_slot::PluginProviderSlot;
 use crate::util::sync::{read, write};
 
 pub use builtin::{ConfigPermissionChecker, ConfigPermissionProvider, resolve_username_to_uuid};
@@ -25,7 +26,7 @@ use nodes::NodeRegistry;
 pub struct PermissionService {
     selection: PermissionProviderSelection,
     builtin: Arc<ConfigPermissionProvider>,
-    registered: RwLock<Option<Arc<dyn PermissionProvider>>>,
+    registered: PluginProviderSlot<dyn PermissionProvider>,
     nodes: Arc<NodeRegistry>,
     subcommands: RwLock<Vec<String>>,
 }
@@ -67,7 +68,11 @@ impl PermissionService {
         Self {
             selection: config.provider.clone(),
             builtin: Arc::new(builtin),
-            registered: RwLock::new(None),
+            registered: PluginProviderSlot::new(
+                ProviderKind::Permission,
+                config.provider.plugin_id(),
+                &config.provider,
+            ),
             nodes: Arc::new(nodes),
             subcommands: RwLock::new(Vec::new()),
         }
@@ -86,49 +91,16 @@ impl PermissionService {
         plugin_id: &str,
         provider: Arc<dyn PermissionProvider>,
     ) -> Result<(), ProviderRejected> {
-        match &self.selection {
-            PermissionProviderSelection::Plugin(id) if id == plugin_id => {
-                *write(&self.registered) = Some(provider);
-                tracing::info!(plugin = %plugin_id, "permission provider registered, permissions now come from it");
-                Ok(())
-            }
-            selected => {
-                tracing::warn!(
-                    plugin = %plugin_id,
-                    selected = %selected,
-                    "ignoring a permission provider: [permissions] provider selects another one"
-                );
-                Err(ProviderRejected::NotSelected {
-                    kind: ProviderKind::Permission,
-                    selected: selected.to_string(),
-                })
-            }
-        }
+        self.registered.register(plugin_id, provider)
     }
 
     pub fn unregister_provider(&self, plugin_id: &str) -> bool {
-        if self.selection.plugin_id() != Some(plugin_id) {
-            return false;
-        }
-        let removed = write(&self.registered).take().is_some();
-        if removed {
-            tracing::error!(
-                plugin = %plugin_id,
-                "the permission provider plugin went away, players only get the node defaults until it registers again"
-            );
-        }
-        removed
+        self.registered.unregister(plugin_id)
     }
 
     pub fn report_missing_provider(&self) {
-        if let PermissionProviderSelection::Plugin(id) = &self.selection
-            && self.active().is_none()
-        {
-            tracing::error!(
-                plugin = %id,
-                "[permissions] provider names a plugin that registered no permission provider; players only get the node defaults until it does (set provider = \"builtin\" to change this)"
-            );
-        }
+        self.registered
+            .report_missing("players only get the node defaults");
     }
 
     fn active(&self) -> Option<Arc<dyn PermissionProvider>> {
@@ -136,7 +108,7 @@ impl PermissionService {
             PermissionProviderSelection::Builtin => {
                 Some(Arc::clone(&self.builtin) as Arc<dyn PermissionProvider>)
             }
-            PermissionProviderSelection::Plugin(_) => read(&self.registered).clone(),
+            PermissionProviderSelection::Plugin(_) => self.registered.get(),
         }
     }
 

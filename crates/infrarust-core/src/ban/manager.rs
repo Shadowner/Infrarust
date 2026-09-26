@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
@@ -24,7 +24,7 @@ use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
 use crate::player::PlayerSession;
 use crate::registry::ConnectionRegistry;
-use crate::util::sync::{read, write};
+use crate::util::provider_slot::PluginProviderSlot;
 
 pub const BAN_CHECK_UNAVAILABLE: &str =
     "Your ban status cannot be checked right now. Please try again later.";
@@ -44,7 +44,7 @@ pub struct IssuedBan {
 pub struct BanManager {
     selection: BanProviderSelection,
     builtin: Option<Arc<BuiltinBanProvider>>,
-    registered: RwLock<Option<Arc<dyn BanProvider>>>,
+    registered: PluginProviderSlot<dyn BanProvider>,
     connection_registry: Arc<ConnectionRegistry>,
     event_bus: Arc<EventBusImpl>,
     check_timeout: Duration,
@@ -58,9 +58,13 @@ impl BanManager {
         event_bus: Arc<EventBusImpl>,
     ) -> Self {
         Self {
+            registered: PluginProviderSlot::new(
+                ProviderKind::Ban,
+                selection.plugin_id(),
+                &selection,
+            ),
             selection,
             builtin,
-            registered: RwLock::new(None),
             connection_registry,
             event_bus,
             check_timeout: infrarust_config::defaults::ban_check_timeout(),
@@ -147,13 +151,11 @@ impl BanManager {
                 .as_ref()
                 .map(|builtin| Arc::clone(builtin) as Arc<dyn BanProvider>)),
             BanProviderSelection::Disabled => Ok(None),
-            BanProviderSelection::Plugin(id) => {
-                read(&self.registered).clone().map(Some).ok_or_else(|| {
-                    ServiceError::Unavailable(format!(
-                        "ban provider plugin `{id}` has not registered a provider"
-                    ))
-                })
-            }
+            BanProviderSelection::Plugin(id) => self.registered.get().map(Some).ok_or_else(|| {
+                ServiceError::Unavailable(format!(
+                    "ban provider plugin `{id}` has not registered a provider"
+                ))
+            }),
         }
     }
 
@@ -321,48 +323,15 @@ impl BanManager {
         plugin_id: &str,
         provider: Arc<dyn BanProvider>,
     ) -> Result<(), ProviderRejected> {
-        match &self.selection {
-            BanProviderSelection::Plugin(id) if id == plugin_id => {
-                *write(&self.registered) = Some(provider);
-                tracing::info!(plugin = %plugin_id, "ban provider registered, bans now go through it");
-                Ok(())
-            }
-            selected => {
-                tracing::warn!(
-                    plugin = %plugin_id,
-                    selected = %selected,
-                    "ignoring a ban provider: [ban] provider selects another one"
-                );
-                Err(ProviderRejected::NotSelected {
-                    kind: ProviderKind::Ban,
-                    selected: selected.to_string(),
-                })
-            }
-        }
+        self.registered.register(plugin_id, provider)
     }
 
-    pub fn unregister_provider(&self, plugin_id: &str) {
-        if self.selection.plugin_id() != Some(plugin_id) {
-            return;
-        }
-        let removed = write(&self.registered).take();
-        if removed.is_some() {
-            tracing::error!(
-                plugin = %plugin_id,
-                "the ban provider plugin went away, logins are refused until it registers again"
-            );
-        }
+    pub fn unregister_provider(&self, plugin_id: &str) -> bool {
+        self.registered.unregister(plugin_id)
     }
 
     pub fn report_missing_provider(&self) {
-        if let BanProviderSelection::Plugin(id) = &self.selection
-            && self.active().is_err()
-        {
-            tracing::error!(
-                plugin = %id,
-                "[ban] provider names a plugin that registered no ban provider; logins are refused until it does (set provider = \"builtin\" or \"none\" to change this)"
-            );
-        }
+        self.registered.report_missing("logins are refused");
     }
 
     pub fn start_purge_task(

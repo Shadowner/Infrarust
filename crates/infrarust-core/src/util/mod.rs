@@ -1,4 +1,5 @@
 pub mod domain_rewrite;
+pub mod provider_slot;
 pub mod sync;
 pub mod text;
 
