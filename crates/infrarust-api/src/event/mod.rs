@@ -123,6 +123,26 @@ pub trait ResultedEvent: Event {
     fn set_result(&mut self, result: Self::Result);
 }
 
+macro_rules! resulted_event {
+    ($event:ty, $result:ty) => {
+        impl $crate::event::Event for $event {}
+
+        impl $crate::event::ResultedEvent for $event {
+            type Result = $result;
+
+            fn result(&self) -> &Self::Result {
+                &self.result
+            }
+
+            fn set_result(&mut self, result: Self::Result) {
+                self.result = result;
+            }
+        }
+    };
+}
+
+pub(crate) use resulted_event;
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]

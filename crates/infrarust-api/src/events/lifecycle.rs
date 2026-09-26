@@ -3,10 +3,10 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use crate::event::{Event, ResultedEvent};
+use crate::event::Event;
 use crate::permissions::PermissionChecker;
 use crate::player::Player;
-use crate::types::{Component, GameProfile, PlayerId, ProtocolVersion, ServerId};
+use crate::types::{Component, GameProfile, ProtocolVersion, ServerId};
 
 /// Fired before authentication, when a player initiates a connection.
 ///
@@ -64,18 +64,7 @@ pub enum PreLoginResult {
     ForceOnline,
 }
 
-impl Event for PreLoginEvent {}
-impl ResultedEvent for PreLoginEvent {
-    type Result = PreLoginResult;
-
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(PreLoginEvent, PreLoginResult);
 
 #[non_exhaustive]
 pub struct GameProfileRequestEvent {
@@ -134,11 +123,9 @@ impl PostLoginEvent {
             player,
         }
     }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
 }
+
+crate::events::player_event!(PostLoginEvent);
 
 impl Event for PostLoginEvent {}
 
@@ -166,14 +153,12 @@ impl DisconnectEvent {
         }
     }
 
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
-
     pub fn username(&self) -> &str {
         &self.player.profile().username
     }
 }
+
+crate::events::player_event!(DisconnectEvent);
 
 impl Event for DisconnectEvent {}
 
@@ -253,28 +238,11 @@ impl PermissionsSetupEvent {
             result: PermissionsSetupResult::default(),
         }
     }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
-
-    pub fn profile(&self) -> &GameProfile {
-        self.player.profile()
-    }
 }
 
-impl Event for PermissionsSetupEvent {}
-impl ResultedEvent for PermissionsSetupEvent {
-    type Result = PermissionsSetupResult;
+crate::events::player_event!(PermissionsSetupEvent, profile);
 
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(PermissionsSetupEvent, PermissionsSetupResult);
 
 pub struct LoginEvent {
     pub player: Arc<dyn Player>,
@@ -304,33 +272,17 @@ impl LoginEvent {
     pub fn deny(&mut self, reason: Component) {
         self.result = LoginResult::Denied { reason };
     }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
-
-    pub fn profile(&self) -> &GameProfile {
-        self.player.profile()
-    }
 }
 
-impl Event for LoginEvent {}
-impl ResultedEvent for LoginEvent {
-    type Result = LoginResult;
+crate::events::player_event!(LoginEvent, profile);
 
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(LoginEvent, LoginResult);
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::event::ResultedEvent;
 
     #[test]
     fn pre_login_default_result() {

@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use crate::event::{Event, ResultedEvent};
+use crate::event::Event;
 use crate::types::{Component, ProtocolVersion, ServerId};
 
 pub use infrarust_plugin_common::enums::HandshakeIntent;
@@ -88,19 +88,7 @@ impl ConnectionHandshakeEvent {
     }
 }
 
-impl Event for ConnectionHandshakeEvent {}
-
-impl ResultedEvent for ConnectionHandshakeEvent {
-    type Result = ConnectionHandshakeResult;
-
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(ConnectionHandshakeEvent, ConnectionHandshakeResult);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -155,6 +143,7 @@ impl Event for ConnectionRejectedEvent {}
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+    use crate::event::ResultedEvent;
 
     fn event() -> ConnectionHandshakeEvent {
         ConnectionHandshakeEvent::new(

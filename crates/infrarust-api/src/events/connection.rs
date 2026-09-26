@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use crate::event::{Event, ResultedEvent};
+use crate::event::Event;
 use crate::player::Player;
-use crate::types::{Component, GameProfile, PlayerId, ServerId};
+use crate::types::{Component, ServerId};
 
 pub use infrarust_plugin_common::enums::ConnectCause;
 
@@ -36,14 +36,6 @@ impl ServerPreConnectEvent {
         }
     }
 
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
-
-    pub fn profile(&self) -> &GameProfile {
-        self.player.profile()
-    }
-
     /// Shortcut: redirect to a different server.
     pub fn redirect_to(&mut self, server: ServerId) {
         self.result = ServerPreConnectResult::ConnectTo(server);
@@ -73,18 +65,9 @@ pub enum ServerPreConnectResult {
     },
 }
 
-impl Event for ServerPreConnectEvent {}
-impl ResultedEvent for ServerPreConnectEvent {
-    type Result = ServerPreConnectResult;
+crate::events::player_event!(ServerPreConnectEvent, profile);
 
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(ServerPreConnectEvent, ServerPreConnectResult);
 
 #[non_exhaustive]
 pub struct ServerConnectedEvent {
@@ -105,11 +88,9 @@ impl ServerConnectedEvent {
             previous_server,
         }
     }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
 }
+
+crate::events::player_event!(ServerConnectedEvent);
 
 impl Event for ServerConnectedEvent {}
 
@@ -133,16 +114,14 @@ impl ServerPostConnectEvent {
         }
     }
 
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
-
     pub fn switched_from(&self) -> Option<&ServerId> {
         self.previous_server
             .as_ref()
             .filter(|previous| **previous != self.server)
     }
 }
+
+crate::events::player_event!(ServerPostConnectEvent);
 
 impl Event for ServerPostConnectEvent {}
 
@@ -200,14 +179,6 @@ impl KickedFromServerEvent {
         }
     }
 
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
-
-    pub fn profile(&self) -> &GameProfile {
-        self.player.profile()
-    }
-
     pub fn redirect_to(&mut self, server: ServerId) {
         self.result = KickedFromServerResult::RedirectTo(server);
     }
@@ -242,18 +213,9 @@ impl Default for KickedFromServerResult {
     }
 }
 
-impl Event for KickedFromServerEvent {}
-impl ResultedEvent for KickedFromServerEvent {
-    type Result = KickedFromServerResult;
+crate::events::player_event!(KickedFromServerEvent, profile);
 
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(KickedFromServerEvent, KickedFromServerResult);
 
 /// Dispatched after PostLoginEvent, before ServerPreConnectEvent.
 /// Allows a plugin to redirect the player to a different server
@@ -290,14 +252,6 @@ impl PlayerChooseInitialServerEvent {
         }
     }
 
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
-
-    pub fn profile(&self) -> &GameProfile {
-        self.player.profile()
-    }
-
     /// Shortcut: redirect the player to a different server.
     pub fn redirect_to(&mut self, server: ServerId) {
         self.result = PlayerChooseInitialServerResult::Redirect(server);
@@ -309,24 +263,20 @@ impl PlayerChooseInitialServerEvent {
     }
 }
 
-impl Event for PlayerChooseInitialServerEvent {}
-impl ResultedEvent for PlayerChooseInitialServerEvent {
-    type Result = PlayerChooseInitialServerResult;
+crate::events::player_event!(PlayerChooseInitialServerEvent, profile);
 
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(
+    PlayerChooseInitialServerEvent,
+    PlayerChooseInitialServerResult
+);
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::event::ResultedEvent;
     use crate::test_util::MockPlayer;
+    use crate::types::PlayerId;
 
     fn steve() -> Arc<dyn Player> {
         MockPlayer::new(1, "Steve").into_arc()

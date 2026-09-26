@@ -2,9 +2,8 @@
 
 use std::sync::Arc;
 
-use crate::event::{Event, ResultedEvent};
 use crate::player::Player;
-use crate::types::{Component, GameProfile, PlayerId, ServerId};
+use crate::types::{Component, ServerId};
 
 /// Fired when a player sends a chat message.
 ///
@@ -32,14 +31,6 @@ impl ChatMessageEvent {
             server,
             result: ChatMessageResult::default(),
         }
-    }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
-
-    pub fn profile(&self) -> &GameProfile {
-        self.player.profile()
     }
 
     pub fn allow(&mut self) {
@@ -77,24 +68,17 @@ pub enum ChatMessageResult {
     },
 }
 
-impl Event for ChatMessageEvent {}
-impl ResultedEvent for ChatMessageEvent {
-    type Result = ChatMessageResult;
+crate::events::player_event!(ChatMessageEvent, profile);
 
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(ChatMessageEvent, ChatMessageResult);
 
 #[cfg(test)]
 pub(crate) mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use crate::event::ResultedEvent;
     use crate::test_util::MockPlayer;
+    use crate::types::PlayerId;
 
     pub(crate) fn steve() -> Arc<dyn Player> {
         MockPlayer::new(1, "Steve").into_arc()

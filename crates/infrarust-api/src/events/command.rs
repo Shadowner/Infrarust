@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use crate::event::{Event, ResultedEvent};
 use crate::player::Player;
-use crate::types::{Component, GameProfile, PlayerId, ServerId};
+use crate::types::{Component, ServerId};
 
 #[non_exhaustive]
 pub struct CommandExecuteEvent {
@@ -27,14 +26,6 @@ impl CommandExecuteEvent {
             server,
             result: CommandExecuteResult::default(),
         }
-    }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
-
-    pub fn profile(&self) -> &GameProfile {
-        self.player.profile()
     }
 
     pub fn label(&self) -> &str {
@@ -82,23 +73,16 @@ pub enum CommandExecuteResult {
     ForwardToBackend,
 }
 
-impl Event for CommandExecuteEvent {}
-impl ResultedEvent for CommandExecuteEvent {
-    type Result = CommandExecuteResult;
+crate::events::player_event!(CommandExecuteEvent, profile);
 
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(CommandExecuteEvent, CommandExecuteResult);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::ResultedEvent;
     use crate::events::chat::tests::steve;
+    use crate::types::PlayerId;
 
     fn command(line: &str) -> CommandExecuteEvent {
         CommandExecuteEvent::new(steve(), line.into(), false, Some(ServerId::new("lobby")))

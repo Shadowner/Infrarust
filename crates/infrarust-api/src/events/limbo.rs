@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::event::Event;
 use crate::limbo::context::LimboEntryContext;
 use crate::player::Player;
-use crate::types::{Component, PlayerId, ServerId};
+use crate::types::{Component, ServerId};
 
 #[non_exhaustive]
 pub struct LimboEnterEvent {
@@ -20,11 +20,9 @@ impl LimboEnterEvent {
             context,
         }
     }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
 }
+
+crate::events::player_event!(LimboEnterEvent);
 
 impl Event for LimboEnterEvent {}
 
@@ -73,10 +71,8 @@ impl LimboExitEvent {
             next_server,
         }
     }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
 }
+
+crate::events::player_event!(LimboExitEvent);
 
 impl Event for LimboExitEvent {}

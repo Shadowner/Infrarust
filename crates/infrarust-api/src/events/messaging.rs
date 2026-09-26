@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::event::{Event, ResultedEvent};
 use crate::messaging::{ChannelId, Endpoint, MessagePhase};
 use crate::player::Player;
-use crate::types::PlayerId;
 
 #[non_exhaustive]
 pub struct PluginMessageEvent {
@@ -38,10 +36,6 @@ impl PluginMessageEvent {
         }
     }
 
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
-
     pub fn from_client(&self) -> bool {
         self.source == Endpoint::Client
     }
@@ -68,16 +62,6 @@ pub enum PluginMessageResult {
     Replace(Bytes),
 }
 
-impl Event for PluginMessageEvent {}
+crate::events::player_event!(PluginMessageEvent);
 
-impl ResultedEvent for PluginMessageEvent {
-    type Result = PluginMessageResult;
-
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(PluginMessageEvent, PluginMessageResult);

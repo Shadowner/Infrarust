@@ -4,7 +4,6 @@ use uuid::Uuid;
 
 use crate::event::Event;
 use crate::player::{Player, ResourcePackStatus};
-use crate::types::PlayerId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -44,10 +43,8 @@ impl PlayerResourcePackStatusEvent {
             origin,
         }
     }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
 }
+
+crate::events::player_event!(PlayerResourcePackStatusEvent);
 
 impl Event for PlayerResourcePackStatusEvent {}

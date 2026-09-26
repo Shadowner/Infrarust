@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use crate::event::{Event, ResultedEvent};
 use crate::player::Player;
-use crate::types::{Component, PlayerId};
+use crate::types::Component;
 
 pub use infrarust_plugin_common::enums::TransferOrigin;
 
@@ -24,10 +23,6 @@ impl PreTransferEvent {
             origin,
             result: PreTransferResult::default(),
         }
-    }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
     }
 
     pub fn deny(&mut self, reason: Component) {
@@ -64,16 +59,6 @@ pub enum PreTransferResult {
     },
 }
 
-impl Event for PreTransferEvent {}
+crate::events::player_event!(PreTransferEvent);
 
-impl ResultedEvent for PreTransferEvent {
-    type Result = PreTransferResult;
-
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(PreTransferEvent, PreTransferResult);

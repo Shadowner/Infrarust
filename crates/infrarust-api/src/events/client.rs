@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::event::Event;
 use crate::events::packet::PacketDirection;
 use crate::player::{ClientSettings, Player};
-use crate::types::PlayerId;
 
 #[non_exhaustive]
 pub struct PlayerClientBrandEvent {
@@ -15,11 +14,9 @@ impl PlayerClientBrandEvent {
     pub fn new(player: Arc<dyn Player>, brand: String) -> Self {
         Self { player, brand }
     }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
 }
+
+crate::events::player_event!(PlayerClientBrandEvent);
 
 impl Event for PlayerClientBrandEvent {}
 
@@ -33,11 +30,9 @@ impl PlayerSettingsChangedEvent {
     pub fn new(player: Arc<dyn Player>, settings: ClientSettings) -> Self {
         Self { player, settings }
     }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
 }
+
+crate::events::player_event!(PlayerSettingsChangedEvent);
 
 impl Event for PlayerSettingsChangedEvent {}
 
@@ -56,10 +51,8 @@ impl PlayerChannelRegisterEvent {
             direction,
         }
     }
-
-    pub fn player_id(&self) -> PlayerId {
-        self.player.id()
-    }
 }
+
+crate::events::player_event!(PlayerChannelRegisterEvent);
 
 impl Event for PlayerChannelRegisterEvent {}
