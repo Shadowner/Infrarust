@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
 use infrarust_api::plugin::PluginMetadata;
+use infrarust_core::plugin::PluginManagerError;
 use infrarust_core::plugin::dependency::resolve_load_order;
 
 #[test]
@@ -43,13 +44,11 @@ fn test_chain() {
 #[test]
 fn test_missing_required() {
     let plugins = vec![PluginMetadata::new("a", "A", "1.0").depends_on("missing")];
-    let result = resolve_load_order(&plugins);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("missing"),
-        "Error should mention the missing dep: {err}"
-    );
+    assert!(matches!(
+        resolve_load_order(&plugins),
+        Err(PluginManagerError::MissingDependency { plugin, dependency })
+            if plugin == "a" && dependency == "missing"
+    ));
 }
 
 #[test]
@@ -80,13 +79,10 @@ fn test_cycle() {
         PluginMetadata::new("a", "A", "1.0").depends_on("b"),
         PluginMetadata::new("b", "B", "1.0").depends_on("a"),
     ];
-    let result = resolve_load_order(&plugins);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("Circular dependency"),
-        "Error should mention circular dependency: {err}"
-    );
+    assert!(matches!(
+        resolve_load_order(&plugins),
+        Err(PluginManagerError::Cycle(involved)) if involved == ["a", "b"]
+    ));
 }
 
 #[test]

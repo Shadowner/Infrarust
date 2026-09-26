@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use infrarust_api::error::PluginError;
 use infrarust_api::event::Event;
 use infrarust_api::events::plugin::{PluginDisabledEvent, PluginEnabledEvent};
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
@@ -26,6 +25,7 @@ use super::PluginState;
 use super::context::PluginContextImpl;
 use super::context_factory::{PluginContextFactory, PluginContextFactoryImpl};
 use super::dependency::resolve_load_order;
+use super::error::PluginManagerError;
 use super::loader::PluginLoader;
 
 /// Services required to construct per-plugin contexts.
@@ -109,23 +109,25 @@ impl PluginManager {
     pub async fn discover_all(
         &mut self,
         plugin_dir: &Path,
-    ) -> Result<Vec<PluginMetadata>, PluginError> {
+    ) -> Result<Vec<PluginMetadata>, PluginManagerError> {
         let mut all_metadata: Vec<PluginMetadata> = Vec::new();
         let mut loader_of: HashMap<String, LoaderIndex> = HashMap::new();
 
         for (at, loader) in self.loaders.iter().enumerate() {
-            let discovered = loader.discover(plugin_dir).await.map_err(|e| {
-                PluginError::InitFailed(format!("Loader '{}' discovery failed: {e}", loader.name()))
+            let discovered = loader.discover(plugin_dir).await.map_err(|source| {
+                PluginManagerError::Discovery {
+                    loader: loader.name().to_owned(),
+                    source,
+                }
             })?;
 
             for metadata in discovered {
                 if let Some(existing) = loader_of.get(&metadata.id) {
-                    return Err(PluginError::InitFailed(format!(
-                        "Duplicate plugin id '{}': found in loader '{}' and '{}'",
-                        metadata.id,
-                        self.loaders[*existing].name(),
-                        loader.name()
-                    )));
+                    return Err(PluginManagerError::DuplicateId {
+                        plugin: metadata.id,
+                        first: self.loaders[*existing].name().to_owned(),
+                        second: loader.name().to_owned(),
+                    });
                 }
                 loader_of.insert(metadata.id.clone(), at);
                 all_metadata.push(metadata);
@@ -143,7 +145,7 @@ impl PluginManager {
     pub async fn load_and_enable_all(
         &mut self,
         context_factory: Arc<PluginContextFactoryImpl>,
-    ) -> Vec<PluginError> {
+    ) -> Vec<PluginManagerError> {
         let mut errors = Vec::new();
         let load_order = self.load_order.clone();
         let factory: &dyn PluginContextFactory = context_factory.as_ref();
@@ -153,12 +155,13 @@ impl PluginManager {
         for (at, loader) in self.loaders.iter().enumerate() {
             match loader.on_load(factory).await {
                 Ok(()) => ok_loaders.push(at),
-                Err(e) => {
+                Err(source) => {
                     let name = loader.name();
-                    tracing::error!(loader = %name, error = %e, "Loader on_load() failed");
-                    errors.push(PluginError::InitFailed(format!(
-                        "Loader '{name}' on_load failed: {e}"
-                    )));
+                    tracing::error!(loader = %name, error = %source, "Loader on_load() failed");
+                    errors.push(PluginManagerError::Loader {
+                        loader: name.to_owned(),
+                        source,
+                    });
                     failed_loaders.insert(at);
                 }
             }
@@ -172,9 +175,7 @@ impl PluginManager {
                 continue;
             }
             let Some(&at) = self.loader_of.get(plugin_id) else {
-                errors.push(PluginError::InitFailed(format!(
-                    "No loader mapping for plugin '{plugin_id}'"
-                )));
+                errors.push(PluginManagerError::NoLoader(plugin_id.clone()));
                 continue;
             };
             let loader = &self.loaders[at];
@@ -190,14 +191,15 @@ impl PluginManager {
 
             let plugin = match loader.load(plugin_id, factory).await {
                 Ok(p) => p,
-                Err(e) => {
-                    let err = PluginError::InitFailed(format!(
-                        "Loader '{loader_name}' failed to load '{plugin_id}': {e}"
-                    ));
+                Err(source) => {
                     self.states
-                        .insert(plugin_id.clone(), PluginState::Error(e.to_string()));
-                    tracing::error!(plugin = %plugin_id, error = %e, "Plugin failed to load");
-                    errors.push(err);
+                        .insert(plugin_id.clone(), PluginState::Error(source.to_string()));
+                    tracing::error!(plugin = %plugin_id, error = %source, "Plugin failed to load");
+                    errors.push(PluginManagerError::Load {
+                        loader: loader_name.to_owned(),
+                        plugin: plugin_id.clone(),
+                        source,
+                    });
                     continue;
                 }
             };
@@ -226,13 +228,16 @@ impl PluginManager {
                         loader: at,
                     });
                 }
-                Err(e) => {
+                Err(source) => {
                     self.states
-                        .insert(plugin_id.clone(), PluginState::Error(e.to_string()));
-                    tracing::error!(plugin = %plugin_id, error = %e, "Plugin failed to enable");
+                        .insert(plugin_id.clone(), PluginState::Error(source.to_string()));
+                    tracing::error!(plugin = %plugin_id, error = %source, "Plugin failed to enable");
                     ctx.cleanup();
                     context_factory.forget_context(plugin_id);
-                    errors.push(e);
+                    errors.push(PluginManagerError::Enable {
+                        plugin: plugin_id.clone(),
+                        source,
+                    });
                 }
             }
         }
@@ -262,9 +267,9 @@ impl PluginManager {
         }
     }
 
-    pub async fn disable_plugin(&mut self, id: &str) -> Result<(), PluginError> {
+    pub async fn disable_plugin(&mut self, id: &str) -> Result<(), PluginManagerError> {
         let Some(at) = self.plugins.iter().position(|p| p.metadata.id == id) else {
-            return Err(PluginError::from(format!("plugin `{id}` is not enabled")));
+            return Err(PluginManagerError::UnknownPlugin(id.to_owned()));
         };
         if let Some(dependent) = self.plugins.iter().find(|p| {
             p.metadata.id != id
@@ -274,10 +279,10 @@ impl PluginManager {
                     .iter()
                     .any(|dep| dep.id == id && !dep.optional)
         }) {
-            return Err(PluginError::from(format!(
-                "plugin `{id}` is required by `{}`",
-                dependent.metadata.id
-            )));
+            return Err(PluginManagerError::RequiredBy {
+                plugin: id.to_owned(),
+                dependent: dependent.metadata.id.clone(),
+            });
         }
         let loaded = self.plugins.remove(at);
         self.disable_loaded(&loaded).await;

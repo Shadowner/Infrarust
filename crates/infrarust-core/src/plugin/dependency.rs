@@ -2,8 +2,9 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use infrarust_api::error::PluginError;
 use infrarust_api::plugin::PluginMetadata;
+
+use super::error::PluginManagerError;
 
 /// Resolves the load order of plugins via topological sort.
 ///
@@ -12,17 +13,17 @@ use infrarust_api::plugin::PluginMetadata;
 /// # Errors
 /// - Missing non-optional dependency
 /// - Circular dependency detected
-pub fn resolve_load_order(plugins: &[PluginMetadata]) -> Result<Vec<String>, PluginError> {
+pub fn resolve_load_order(plugins: &[PluginMetadata]) -> Result<Vec<String>, PluginManagerError> {
     let available: HashSet<&str> = plugins.iter().map(|p| p.id.as_str()).collect();
 
     // 1. Check that all required dependencies are present
     for plugin in plugins {
         for dep in &plugin.dependencies {
             if !dep.optional && !available.contains(dep.id.as_str()) {
-                return Err(PluginError::InitFailed(format!(
-                    "Plugin '{}' requires '{}' which is not loaded",
-                    plugin.id, dep.id
-                )));
+                return Err(PluginManagerError::MissingDependency {
+                    plugin: plugin.id.clone(),
+                    dependency: dep.id.clone(),
+                });
             }
         }
     }
@@ -78,15 +79,16 @@ pub fn resolve_load_order(plugins: &[PluginMetadata]) -> Result<Vec<String>, Plu
 
     // 4. Cycle detection
     if sorted.len() != plugins.len() {
-        let remaining: Vec<&str> = in_degree
+        let remaining: Vec<String> = plugins
             .iter()
-            .filter(|(_, deg)| **deg > 0)
-            .map(|(id, _)| *id)
+            .filter(|plugin| {
+                in_degree
+                    .get(plugin.id.as_str())
+                    .is_some_and(|deg| *deg > 0)
+            })
+            .map(|plugin| plugin.id.clone())
             .collect();
-        return Err(PluginError::InitFailed(format!(
-            "Circular dependency detected involving: {}",
-            remaining.join(", ")
-        )));
+        return Err(PluginManagerError::Cycle(remaining));
     }
 
     Ok(sorted)

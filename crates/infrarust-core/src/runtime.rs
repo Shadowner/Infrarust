@@ -23,7 +23,8 @@ use infrarust_transport::Listener;
 use crate::error::CoreError;
 use crate::plugin::manager::{PluginManager, PluginServices};
 use crate::plugin::{
-    PluginContextFactoryImpl, PluginLoader, PluginPermissions, PluginRegistryImpl,
+    PluginContextFactoryImpl, PluginLoader, PluginManagerError, PluginPermissions,
+    PluginRegistryImpl,
 };
 use crate::provider::plugin_adapter::PluginProviderActivator;
 use crate::server::{DEFAULT_DRAIN_TIMEOUT, ProxyServer};
@@ -145,10 +146,7 @@ impl ProxyRuntimeBuilder {
                 .collect(),
         );
 
-        plugin_manager
-            .discover_all(&plugins_dir)
-            .await
-            .map_err(|e| CoreError::Startup(format!("failed to discover plugins: {e}")))?;
+        plugin_manager.discover_all(&plugins_dir).await?;
 
         let services = server.services();
         let plugin_registry = Arc::new(PluginRegistryImpl::new());
@@ -406,7 +404,7 @@ impl RunningProxy {
         self.context_factory.service_registry()
     }
 
-    pub async fn disable_plugin(&self, id: &str) -> Result<(), infrarust_api::error::PluginError> {
+    pub async fn disable_plugin(&self, id: &str) -> Result<(), PluginManagerError> {
         self.plugin_manager.write().await.disable_plugin(id).await
     }
 

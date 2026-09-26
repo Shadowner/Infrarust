@@ -71,6 +71,9 @@ pub enum CoreError {
     #[error("startup error: {0}")]
     Startup(String),
 
+    #[error("plugin error: {0}")]
+    Plugin(#[from] crate::plugin::PluginManagerError),
+
     #[error("ban storage error: {0}")]
     Ban(String),
 }
