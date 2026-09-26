@@ -104,80 +104,7 @@ fn main() -> ExitCode {
         }
     };
 
-    // Init tracing subscriber. RUST_LOG takes priority over --log-level
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
-
-    let formatter = InfrarustFormatter::new();
-
-    let log_layer = if config.web.as_ref().is_some_and(|w| w.enable_api) {
-        use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
-        let lb = LogBroadcast::new(512, 1000);
-        let layer = BroadcastLogLayer::new(lb.tx.clone(), lb.history.clone(), 1000);
-        let _ = LogBroadcast::install(lb);
-        Some(layer)
-    } else {
-        None
-    };
-
-    {
-        use tracing_subscriber::layer::SubscriberExt;
-        use tracing_subscriber::util::SubscriberInitExt;
-
-        #[cfg(feature = "telemetry")]
-        let _otel_guard = {
-            if let Some(ref tc) = config.telemetry {
-                if tc.enabled {
-                    match infrarust_core::telemetry::init_telemetry(tc) {
-                        Ok(guard) => {
-                            let tracer = opentelemetry::global::tracer("infrarust");
-                            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-
-                            tracing_subscriber::registry()
-                                .with(filter)
-                                .with(tracing_subscriber::fmt::layer().event_format(formatter))
-                                .with(otel_layer)
-                                .with(log_layer)
-                                .init();
-                            Some(guard)
-                        }
-                        Err(e) => {
-                            tracing_subscriber::registry()
-                                .with(filter)
-                                .with(tracing_subscriber::fmt::layer().event_format(formatter))
-                                .with(log_layer)
-                                .init();
-                            tracing::warn!(
-                                "failed to initialize OpenTelemetry: {e}, continuing without telemetry"
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    tracing_subscriber::registry()
-                        .with(filter)
-                        .with(tracing_subscriber::fmt::layer().event_format(formatter))
-                        .with(log_layer)
-                        .init();
-                    None
-                }
-            } else {
-                tracing_subscriber::registry()
-                    .with(filter)
-                    .with(tracing_subscriber::fmt::layer().event_format(formatter))
-                    .with(log_layer)
-                    .init();
-                None
-            }
-        };
-
-        #[cfg(not(feature = "telemetry"))]
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(tracing_subscriber::fmt::layer().event_format(formatter))
-            .with(log_layer)
-            .init();
-    }
+    let _tracing_guard = init_tracing(&cli.log_level, &config);
 
     infrarust_core::telemetry::formatter::print_banner();
 
@@ -212,6 +139,60 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+struct TracingGuard {
+    #[cfg(feature = "telemetry")]
+    _otel: Option<infrarust_core::telemetry::OtelGuard>,
+}
+
+fn init_tracing(log_level: &str, config: &ProxyConfig) -> TracingGuard {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
+
+    let log_layer = if config.web.as_ref().is_some_and(|w| w.enable_api) {
+        use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
+        let lb = LogBroadcast::new(512, 1000);
+        let layer = BroadcastLogLayer::new(lb.tx.clone(), lb.history.clone(), 1000);
+        let _ = LogBroadcast::install(lb);
+        Some(layer)
+    } else {
+        None
+    };
+
+    let registry = tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().event_format(InfrarustFormatter::new()));
+
+    #[cfg(feature = "telemetry")]
+    let otel = enabled_telemetry(config).map(infrarust_core::telemetry::init_telemetry);
+    #[cfg(feature = "telemetry")]
+    let registry = registry.with(otel.as_ref().is_some_and(Result::is_ok).then(|| {
+        tracing_opentelemetry::layer().with_tracer(opentelemetry::global::tracer("infrarust"))
+    }));
+
+    registry.with(log_layer).init();
+
+    TracingGuard {
+        #[cfg(feature = "telemetry")]
+        _otel: match otel {
+            Some(Ok(guard)) => Some(guard),
+            Some(Err(e)) => {
+                tracing::warn!(
+                    "failed to initialize OpenTelemetry: {e}, continuing without telemetry"
+                );
+                None
+            }
+            None => None,
+        },
+    }
+}
+
+#[cfg(feature = "telemetry")]
+fn enabled_telemetry(config: &ProxyConfig) -> Option<&infrarust_config::TelemetryConfig> {
+    config.telemetry.as_ref().filter(|tc| tc.enabled)
 }
 
 fn load_config(cli: &Cli) -> anyhow::Result<(ProxyConfig, Vec<String>)> {
@@ -389,6 +370,24 @@ mod tests {
         assert_eq!(config.bind, "127.0.0.1:25577".parse().unwrap());
         assert_eq!(config.servers_dir, Path::new("/srv/mc"));
         assert_eq!(config.plugins_dir, Path::new("/srv/plugins"));
+    }
+
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn telemetry_is_only_enabled_when_the_section_says_so() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = wizard_like_config(tmp.path());
+        assert!(enabled_telemetry(&config).is_none());
+
+        let mut config = config;
+        config.telemetry = Some(infrarust_config::TelemetryConfig::default());
+        assert!(enabled_telemetry(&config).is_none());
+
+        config.telemetry = Some(infrarust_config::TelemetryConfig {
+            enabled: true,
+            ..infrarust_config::TelemetryConfig::default()
+        });
+        assert!(enabled_telemetry(&config).is_some_and(|tc| tc.enabled));
     }
 
     #[test]
