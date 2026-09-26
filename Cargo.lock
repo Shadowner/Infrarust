@@ -2185,6 +2185,7 @@ version = "2.0.0-beta.3"
 dependencies = [
  "dashmap",
  "infrarust-api",
+ "infrarust_config",
  "serde",
  "tokio",
  "toml",

@@ -114,10 +114,6 @@ pub const fn ban_purge_interval() -> Duration {
     Duration::from_secs(300)
 }
 
-pub const fn ban_audit_log() -> bool {
-    true
-}
-
 pub const fn ban_check_timeout() -> Duration {
     Duration::from_secs(5)
 }
@@ -132,10 +128,6 @@ pub const fn docker_poll_interval() -> Duration {
 
 pub const fn docker_reconnect_delay() -> Duration {
     Duration::from_secs(5)
-}
-
-pub const fn announce_proxy_commands() -> bool {
-    true
 }
 
 pub fn session_url() -> String {
@@ -208,12 +200,4 @@ pub const fn wasm_recovery_backoff_initial() -> Duration {
 
 pub const fn wasm_recovery_backoff_max() -> Duration {
     Duration::from_secs(300)
-}
-
-pub const fn wasm_network_http() -> bool {
-    true
-}
-
-pub const fn wasm_mount_read_only() -> bool {
-    true
 }

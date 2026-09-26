@@ -99,7 +99,7 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub unknown_domain_behavior: UnknownDomainBehavior,
 
-    #[serde(default = "defaults::announce_proxy_commands")]
+    #[serde(default = "defaults::true_val")]
     pub announce_proxy_commands: bool,
 
     #[serde(default)]
@@ -154,10 +154,6 @@ pub struct PluginConfig {
     pub wasm: Option<PluginWasmConfig>,
 
     /// Whether the plugin is enabled (default: true).
-    #[serde(default = "default_plugin_enabled")]
+    #[serde(default = "defaults::true_val")]
     pub enabled: bool,
-}
-
-fn default_plugin_enabled() -> bool {
-    true
 }

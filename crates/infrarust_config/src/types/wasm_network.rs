@@ -17,7 +17,7 @@ pub struct WasmNetworkConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dns: Option<bool>,
 
-    #[serde(default = "defaults::wasm_network_http")]
+    #[serde(default = "defaults::true_val")]
     pub http: bool,
 }
 
@@ -26,7 +26,7 @@ impl Default for WasmNetworkConfig {
         Self {
             allow: Vec::new(),
             dns: None,
-            http: defaults::wasm_network_http(),
+            http: defaults::true_val(),
         }
     }
 }
@@ -46,7 +46,7 @@ pub struct WasmMount {
 
     pub guest: String,
 
-    #[serde(default = "defaults::wasm_mount_read_only")]
+    #[serde(default = "defaults::true_val")]
     pub read_only: bool,
 }
 

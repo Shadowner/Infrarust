@@ -54,7 +54,7 @@ enum Command {
     /// Migrate V1 proxy configs (YAML) to V2 server configs (TOML)
     Migrate {
         input: std::path::PathBuf,
-        #[arg(short, long, default_value = "./servers")]
+        #[arg(short, long, default_value_os_t = infrarust_config::defaults::servers_dir())]
         output: std::path::PathBuf,
         #[arg(long)]
         config: Option<std::path::PathBuf>,

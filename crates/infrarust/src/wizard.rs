@@ -61,12 +61,16 @@ pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
 
     let bind: SocketAddr = Input::new()
         .with_prompt("Proxy listen address")
-        .default(SocketAddr::from(([0, 0, 0, 0], 25565)))
+        .default(infrarust_config::defaults::bind())
         .interact_text()?;
 
     let servers_dir: String = Input::new()
         .with_prompt("Server configs directory")
-        .default("./servers".to_string())
+        .default(
+            infrarust_config::defaults::servers_dir()
+                .display()
+                .to_string(),
+        )
         .interact_text()?;
     let servers_dir = PathBuf::from(servers_dir);
 

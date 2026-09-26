@@ -16,7 +16,7 @@ pub struct TimingConfig {
     pub start_timeout_seconds: u64,
     #[serde(default = "default_title_refresh")]
     pub title_refresh_interval_seconds: u64,
-    #[serde(default = "default_true")]
+    #[serde(default = "infrarust_config::defaults::true_val")]
     pub show_waiting_count: bool,
 }
 
@@ -73,9 +73,6 @@ const fn default_start_timeout() -> u64 {
 }
 const fn default_title_refresh() -> u64 {
     3
-}
-const fn default_true() -> bool {
-    true
 }
 
 fn default_starting_title() -> String {
