@@ -183,6 +183,8 @@ impl<T: LimboHandler + ?Sized> LimboHandler for Arc<T> {
 
 #[cfg(all(test, feature = "test-util"))]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use std::sync::Mutex;
 
     use super::super::context::LimboEntryContext;
