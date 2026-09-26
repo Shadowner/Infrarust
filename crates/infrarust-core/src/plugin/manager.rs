@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
+use crate::provider::plugin_adapter::PluginProviderActivator;
 use crate::services::scheduler::SchedulerImpl;
 
 use super::PluginRegistryImpl;
@@ -40,7 +41,7 @@ pub struct PluginServices {
     pub plugin_registry: Arc<dyn PluginRegistry>,
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
-    pub domain_router: Arc<crate::routing::DomainRouter>,
+    pub provider_activator: Arc<PluginProviderActivator>,
     pub proxy_shutdown: CancellationToken,
     pub proxy_info: ProxyInfo,
     pub plugins_dir: PathBuf,
@@ -319,35 +320,9 @@ impl PluginManager {
         }
     }
 
-    pub fn collect_config_providers(
-        &self,
-    ) -> Vec<(
-        String,
-        Box<dyn infrarust_api::provider::PluginConfigProvider>,
-    )> {
-        let mut all = Vec::new();
+    pub async fn activate_config_providers(&self) {
         for loaded in &self.plugins {
-            for provider in loaded.context.take_config_providers() {
-                all.push((loaded.metadata.id.clone(), provider));
-            }
-        }
-        all
-    }
-
-    pub fn store_provider_cleanup(
-        &self,
-        results: Vec<(String, crate::provider::plugin_adapter::ActivatedProvider)>,
-    ) {
-        let contexts: HashMap<&str, &Arc<PluginContextImpl>> = self
-            .plugins
-            .iter()
-            .map(|loaded| (loaded.metadata.id.as_str(), &loaded.context))
-            .collect();
-        for (plugin_id, activated) in results {
-            if let Some(ctx) = contexts.get(plugin_id.as_str()) {
-                ctx.register_active_provider_ids(activated.config_ids);
-                ctx.register_provider_token(activated.watch_token);
-            }
+            loaded.context.activate_queued_config_providers().await;
         }
     }
 

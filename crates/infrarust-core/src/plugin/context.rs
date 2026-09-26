@@ -33,8 +33,7 @@ use crate::ban::BanManager;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::permissions::PermissionService;
 use crate::plugin_messaging::PluginChannels;
-use crate::provider::ProviderId;
-use crate::routing::DomainRouter;
+use crate::provider::plugin_adapter::PluginProviderActivator;
 use crate::services::ban_bridge::PluginBanService;
 use crate::services::config_service::ReadOnlyConfigService;
 use crate::util::sync::lock;
@@ -70,17 +69,15 @@ pub struct PluginContextImpl {
     scheduler: Arc<TrackingScheduler>,
     limbo_handlers: Arc<LimboHandlerRegistry>,
     services: Arc<PluginServiceRegistry>,
-    config_providers: Mutex<Vec<Box<dyn PluginConfigProvider>>>,
+    provider_activator: Arc<PluginProviderActivator>,
+    queued_config_providers: Mutex<Vec<Box<dyn PluginConfigProvider>>>,
     codec_filters: Arc<TrackingCodecFilterRegistry>,
     transport_filters: Arc<TrackingTransportFilterRegistry>,
-    domain_router: Arc<DomainRouter>,
     proxy_shutdown: CancellationToken,
     proxy_info: ProxyInfo,
     plugin_id: String,
     plugins_dir: PathBuf,
     capabilities: CapabilitySet,
-    registered_provider_ids: Mutex<Vec<ProviderId>>,
-    registered_provider_tokens: Mutex<Vec<CancellationToken>>,
     channels: PluginChannels,
 }
 
@@ -139,17 +136,15 @@ impl PluginContextImpl {
             scheduler,
             limbo_handlers: registries.limbo_handlers,
             services,
-            config_providers: Mutex::new(Vec::new()),
+            provider_activator: Arc::clone(&host.provider_activator),
+            queued_config_providers: Mutex::new(Vec::new()),
             codec_filters,
             transport_filters,
-            domain_router: Arc::clone(&host.domain_router),
             proxy_shutdown: host.proxy_shutdown.clone(),
             proxy_info: host.proxy_info.clone(),
             plugin_id: plugin_id.to_owned(),
             plugins_dir: host.plugins_dir.clone(),
             capabilities,
-            registered_provider_ids: Mutex::new(Vec::new()),
-            registered_provider_tokens: Mutex::new(Vec::new()),
             channels: registries.channels,
         }
     }
@@ -177,17 +172,13 @@ impl PluginContextImpl {
         self.limbo_handlers.owned_by(&self.plugin_id)
     }
 
-    pub fn take_config_providers(&self) -> Vec<Box<dyn PluginConfigProvider>> {
-        let mut providers = lock(&self.config_providers);
-        std::mem::take(&mut *providers)
-    }
-
-    pub fn register_active_provider_ids(&self, ids: Vec<ProviderId>) {
-        lock(&self.registered_provider_ids).extend(ids);
-    }
-
-    pub fn register_provider_token(&self, token: CancellationToken) {
-        lock(&self.registered_provider_tokens).push(token);
+    pub async fn activate_queued_config_providers(&self) {
+        let queued = std::mem::take(&mut *lock(&self.queued_config_providers));
+        for provider in queued {
+            self.provider_activator
+                .activate(&self.plugin_id, provider)
+                .await;
+        }
     }
 
     pub fn tracked_commands(&self) -> Vec<String> {
@@ -207,15 +198,8 @@ impl PluginContextImpl {
         self.limbo_handlers.unregister_owner(&self.plugin_id);
         self.services.withdraw_all();
 
-        let tokens = std::mem::take(&mut *lock(&self.registered_provider_tokens));
-        for token in tokens {
-            token.cancel();
-        }
-
-        let provider_ids = std::mem::take(&mut *lock(&self.registered_provider_ids));
-        for pid in &provider_ids {
-            self.domain_router.remove(pid);
-        }
+        lock(&self.queued_config_providers).clear();
+        self.provider_activator.deactivate(&self.plugin_id);
 
         if self.registered_ban_provider.swap(false, Ordering::SeqCst)
             && let Some(bans) = &self.ban_manager
@@ -358,8 +342,12 @@ impl PluginContext for PluginContextImpl {
     }
 
     fn register_config_provider(&self, provider: Box<dyn PluginConfigProvider>) {
-        let mut providers = lock(&self.config_providers);
-        providers.push(provider);
+        let mut queued = lock(&self.queued_config_providers);
+        if self.provider_activator.is_started() {
+            self.provider_activator.spawn(&self.plugin_id, provider);
+        } else {
+            queued.push(provider);
+        }
     }
 
     fn codec_filters(&self) -> Option<&dyn CodecFilterRegistry> {

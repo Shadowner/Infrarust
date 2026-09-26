@@ -25,6 +25,7 @@ use crate::plugin::manager::{PluginManager, PluginServices};
 use crate::plugin::{
     PluginContextFactoryImpl, PluginLoader, PluginPermissions, PluginRegistryImpl,
 };
+use crate::provider::plugin_adapter::PluginProviderActivator;
 use crate::server::{DEFAULT_DRAIN_TIMEOUT, ProxyServer};
 use crate::services::ProxyServices;
 use crate::services::config_service::ConfigServiceImpl;
@@ -165,9 +166,11 @@ impl ProxyRuntimeBuilder {
             services,
             &plugin_registry,
             shutdown.clone(),
+            server.background_token().clone(),
             proxy_info,
             plugins_dir,
         );
+        let provider_activator = Arc::clone(&plugin_services.provider_activator);
         let context_factory = Arc::new(
             PluginContextFactoryImpl::new(
                 plugin_services,
@@ -191,7 +194,8 @@ impl ProxyRuntimeBuilder {
         services.ban_manager.report_missing_provider();
         services.permission_service.report_missing_provider();
 
-        activate_config_providers(&plugin_manager, services, server.background_token()).await;
+        provider_activator.start();
+        plugin_manager.activate_config_providers().await;
 
         let plugin_manager = Arc::new(RwLock::new(plugin_manager));
         let server = Arc::new(server);
@@ -256,6 +260,7 @@ fn plugin_services(
     services: &ProxyServices,
     plugin_registry: &Arc<PluginRegistryImpl>,
     proxy_shutdown: CancellationToken,
+    background: CancellationToken,
     proxy_info: ProxyInfo,
     plugins_dir: PathBuf,
 ) -> PluginServices {
@@ -280,7 +285,11 @@ fn plugin_services(
         plugin_registry: Arc::clone(plugin_registry) as Arc<dyn PluginRegistry>,
         codec_filter_registry: Arc::clone(&services.codec_filter_registry),
         transport_filter_registry: Arc::clone(&services.transport_filter_registry),
-        domain_router: Arc::clone(&services.domain_router),
+        provider_activator: Arc::new(PluginProviderActivator::new(
+            services.provider_event_sender.clone(),
+            Arc::clone(&services.domain_router),
+            background,
+        )),
         proxy_shutdown,
         proxy_info,
         plugins_dir,
@@ -315,29 +324,6 @@ fn plugin_permissions(
             });
     }
     permissions
-}
-
-async fn activate_config_providers(
-    plugin_manager: &PluginManager,
-    services: &ProxyServices,
-    shutdown: &CancellationToken,
-) {
-    let plugin_providers = plugin_manager.collect_config_providers();
-    if plugin_providers.is_empty() {
-        return;
-    }
-    tracing::info!(
-        count = plugin_providers.len(),
-        "activating plugin config providers"
-    );
-    let results = crate::provider::plugin_adapter::activate_plugin_providers(
-        plugin_providers,
-        services.provider_event_sender.clone(),
-        &services.domain_router,
-        shutdown.clone(),
-    )
-    .await;
-    plugin_manager.store_provider_cleanup(results);
 }
 
 async fn bind_listener(server: &ProxyServer) -> Result<(Listener, SocketAddr), CoreError> {
@@ -627,6 +613,83 @@ mod tests {
                 .limbo_handler_registry
                 .get("late_gate")
                 .is_some()
+        );
+        running.shutdown().await.unwrap();
+    }
+
+    struct StaticDocuments(&'static str);
+
+    impl infrarust_api::provider::PluginConfigProvider for StaticDocuments {
+        fn provider_type(&self) -> &str {
+            "static"
+        }
+
+        fn load_initial(
+            &self,
+        ) -> BoxFuture<'_, Result<Vec<infrarust_api::provider::ServerDocument>, PluginError>>
+        {
+            let document = infrarust_api::provider::ServerDocument {
+                id: infrarust_api::types::ServerId::new(self.0),
+                toml: format!(
+                    "domains = [\"{}.example.com\"]\naddresses = [\"10.0.0.1:25565\"]\n",
+                    self.0
+                ),
+            };
+            Box::pin(async move { Ok(vec![document]) })
+        }
+
+        fn watch(
+            &self,
+            _sender: Box<dyn infrarust_api::provider::PluginProviderSender>,
+        ) -> BoxFuture<'_, Result<(), PluginError>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    async fn served(ctx: &dyn PluginContext, server: &str) -> bool {
+        let id = infrarust_api::types::ServerId::new(server);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if ctx.config_service().get_server_config(&id).is_some() {
+                return true;
+            }
+            if Instant::now() > deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_config_provider_registered_after_startup_serves_its_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let log: Log = Arc::new(Mutex::new(Vec::new()));
+        let running = ProxyRuntime::builder(test_config(dir.path()), dir.path().join("i.toml"))
+            .loader(Box::new(recording_loader("late", &log)))
+            .trusted_plugins(["late".to_string()])
+            .start()
+            .await
+            .unwrap();
+
+        let ctx = running
+            .plugin_manager()
+            .read()
+            .await
+            .plugin_context("late")
+            .unwrap();
+        ctx.register_config_provider(Box::new(StaticDocuments("late-lobby")));
+
+        assert!(
+            served(ctx.as_ref(), "late-lobby").await,
+            "a provider registered after startup must reach the config service"
+        );
+
+        running.disable_plugin("late").await.unwrap();
+        assert!(
+            ctx.config_service()
+                .get_server_config(&infrarust_api::types::ServerId::new("late-lobby"))
+                .is_none(),
+            "disabling the plugin withdraws its documents"
         );
         running.shutdown().await.unwrap();
     }

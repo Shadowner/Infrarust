@@ -1,4 +1,6 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -11,11 +13,7 @@ use infrarust_api::provider::{
 use crate::provider::provider_id::ProviderId;
 use crate::provider::traits::{ProviderConfig, ProviderEvent};
 use crate::routing::DomainRouter;
-
-pub struct ActivatedProvider {
-    pub config_ids: Vec<ProviderId>,
-    pub watch_token: CancellationToken,
-}
+use crate::util::sync::lock;
 
 struct PluginProviderSenderImpl {
     sender: mpsc::Sender<ProviderEvent>,
@@ -112,87 +110,155 @@ fn log_validation_warnings(config: &infrarust_config::ServerConfig) -> Result<()
     Ok(())
 }
 
-pub async fn activate_plugin_providers(
-    providers: Vec<(String, Box<dyn PluginConfigProvider>)>,
-    event_sender: mpsc::Sender<ProviderEvent>,
-    domain_router: &Arc<DomainRouter>,
+struct Activation {
+    config_ids: Vec<ProviderId>,
+    watch: CancellationToken,
+}
+
+pub struct PluginProviderActivator {
+    sender: mpsc::Sender<ProviderEvent>,
+    router: Arc<DomainRouter>,
     shutdown: CancellationToken,
-) -> Vec<(String, ActivatedProvider)> {
-    let mut results = Vec::new();
+    started: AtomicBool,
+    active: Mutex<HashMap<String, Vec<Activation>>>,
+}
 
-    for (plugin_id, provider) in providers {
+impl PluginProviderActivator {
+    pub fn new(
+        sender: mpsc::Sender<ProviderEvent>,
+        router: Arc<DomainRouter>,
+        shutdown: CancellationToken,
+    ) -> Self {
+        Self {
+            sender,
+            router,
+            shutdown,
+            started: AtomicBool::new(false),
+            active: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn start(&self) {
+        self.started.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_started(&self) -> bool {
+        self.started.load(Ordering::SeqCst)
+    }
+
+    pub fn spawn(self: &Arc<Self>, plugin_id: &str, provider: Box<dyn PluginConfigProvider>) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(
+                plugin = %plugin_id,
+                provider = provider.provider_type(),
+                "config provider registered outside the async runtime: dropped"
+            );
+            return;
+        };
+        let activator = Arc::clone(self);
+        let plugin_id = plugin_id.to_owned();
+        runtime.spawn(async move { activator.activate(&plugin_id, provider).await });
+    }
+
+    pub async fn activate(&self, plugin_id: &str, provider: Box<dyn PluginConfigProvider>) {
         let kind = provider.provider_type().to_string();
-        let mut loaded_ids = Vec::new();
+        let watch = self.shutdown.child_token();
+        self.record(
+            plugin_id,
+            Activation {
+                config_ids: Vec::new(),
+                watch: watch.clone(),
+            },
+        );
 
-        match provider.load_initial().await {
-            Ok(documents) => {
-                let mut count = 0;
-                for doc in &documents {
-                    match parse_document(doc) {
-                        Ok(server_config) => {
-                            let pid = ProviderId::plugin(&plugin_id, &kind, doc.id.as_str());
-                            domain_router.add(pid.clone(), server_config);
-                            loaded_ids.push(pid);
-                            count += 1;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                plugin = %plugin_id,
-                                document = %doc.id.as_str(),
-                                error = %e,
-                                "skipping invalid server document"
-                            );
-                        }
-                    }
-                }
-                tracing::info!(
-                    plugin = %plugin_id,
-                    provider = provider.provider_type(),
-                    count,
-                    "plugin config provider loaded initial documents"
-                );
-            }
+        let documents = match provider.load_initial().await {
+            Ok(documents) => documents,
             Err(e) => {
                 tracing::warn!(
                     plugin = %plugin_id,
-                    provider = provider.provider_type(),
+                    provider = %kind,
                     error = %e,
                     "plugin config provider failed to load initial documents"
                 );
+                Vec::new()
             }
+        };
+
+        {
+            let mut active = lock(&self.active);
+            if watch.is_cancelled() {
+                return;
+            }
+            let mut config_ids = Vec::new();
+            for doc in &documents {
+                match parse_document(doc) {
+                    Ok(server_config) => {
+                        let pid = ProviderId::plugin(plugin_id, &kind, doc.id.as_str());
+                        self.router.add(pid.clone(), server_config);
+                        config_ids.push(pid);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            plugin = %plugin_id,
+                            document = %doc.id.as_str(),
+                            error = %e,
+                            "skipping invalid server document"
+                        );
+                    }
+                }
+            }
+            tracing::info!(
+                plugin = %plugin_id,
+                provider = %kind,
+                count = config_ids.len(),
+                "plugin config provider loaded initial documents"
+            );
+            active
+                .entry(plugin_id.to_owned())
+                .or_default()
+                .push(Activation {
+                    config_ids,
+                    watch: watch.clone(),
+                });
         }
 
-        let watch_token = shutdown.child_token();
         let sender_impl = Box::new(PluginProviderSenderImpl {
-            sender: event_sender.clone(),
-            shutdown: watch_token.clone(),
-            plugin_id: plugin_id.clone(),
+            sender: self.sender.clone(),
+            shutdown: watch,
+            plugin_id: plugin_id.to_owned(),
             kind: kind.clone(),
         });
-
-        let plugin_id_clone = plugin_id.clone();
-
+        let plugin_id = plugin_id.to_owned();
         tokio::spawn(async move {
             if let Err(e) = provider.watch(sender_impl).await {
                 tracing::warn!(
-                    plugin = %plugin_id_clone,
+                    plugin = %plugin_id,
                     provider = %kind,
                     error = %e,
                     "plugin config provider watch exited with error"
                 );
             }
         });
-
-        results.push((
-            plugin_id,
-            ActivatedProvider {
-                config_ids: loaded_ids,
-                watch_token,
-            },
-        ));
     }
 
-    results
+    pub fn deactivate(&self, plugin_id: &str) {
+        let Some(activations) = lock(&self.active).remove(plugin_id) else {
+            return;
+        };
+        for activation in activations {
+            activation.watch.cancel();
+            for pid in &activation.config_ids {
+                self.router.remove(pid);
+            }
+        }
+    }
+
+    fn record(&self, plugin_id: &str, activation: Activation) {
+        lock(&self.active)
+            .entry(plugin_id.to_owned())
+            .or_default()
+            .push(activation);
+    }
 }
 
 #[cfg(test)]

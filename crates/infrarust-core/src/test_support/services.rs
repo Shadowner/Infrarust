@@ -12,6 +12,7 @@ use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::plugin::PluginRegistryImpl;
 use crate::plugin::manager::PluginServices;
+use crate::provider::plugin_adapter::PluginProviderActivator;
 use crate::routing::DomainRouter;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::services::scheduler::SchedulerImpl;
@@ -25,6 +26,7 @@ impl PluginServices {
 
     #[must_use]
     pub fn for_tests_with(event_bus: Arc<EventBusImpl>) -> Self {
+        let (provider_events, _) = tokio::sync::mpsc::channel(1);
         Self {
             event_bus,
             player_registry: Arc::new(MockPlayerRegistry::new()),
@@ -37,7 +39,11 @@ impl PluginServices {
             plugin_registry: Arc::new(PluginRegistryImpl::new()),
             codec_filter_registry: Arc::new(CodecFilterRegistryImpl::new()),
             transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),
-            domain_router: Arc::new(DomainRouter::new()),
+            provider_activator: Arc::new(PluginProviderActivator::new(
+                provider_events,
+                Arc::new(DomainRouter::new()),
+                CancellationToken::new(),
+            )),
             proxy_shutdown: CancellationToken::new(),
             proxy_info: ProxyInfo::default(),
             plugins_dir: PathBuf::from("plugins"),
