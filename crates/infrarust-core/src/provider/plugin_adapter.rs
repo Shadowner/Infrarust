@@ -293,8 +293,6 @@ mod tests {
         )
     }
 
-    /// A rejected document must not look like a closed channel, or the plugin
-    /// would stop watching.
     #[tokio::test]
     async fn rejected_documents_are_dropped_without_closing_the_sender() {
         let (sender, mut receiver) = test_sender();
