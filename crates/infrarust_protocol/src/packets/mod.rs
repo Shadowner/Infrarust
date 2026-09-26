@@ -25,12 +25,12 @@ pub use play::{
     ArgumentSignature, BossBarAction, CBossBar, CChatMessageLegacy, CChunkBatchFinished,
     CChunkBatchStart, CChunkData, CClearTitles, CCommands, CConfigTransfer, CDisconnect,
     CGameEvent, CJoinGame, CKeepAlive, CPluginMessage, CRespawn, CSetCenterChunk,
-    CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes, CStartConfiguration,
-    CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse, CTabListHeaderFooter,
-    CTitleLegacy, CTransfer, ClientInformation, DimensionInfo, LastSeenMessages, PreviousMessage,
-    PreviousMessages, SAcknowledgeConfiguration, SChatAcknowledgement, SChatCommand,
-    SChatCommandSigned, SChatMessage, SChatSessionUpdate, SClientInformation, SKeepAlive,
-    SPluginMessage, STabCompleteRequest,
+    CSetContainerContent, CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes,
+    CStartConfiguration, CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse,
+    CTabListHeaderFooter, CTitleLegacy, CTransfer, ClientInformation, DimensionInfo,
+    LastSeenMessages, PreviousMessage, PreviousMessages, SAcknowledgeConfiguration,
+    SChatAcknowledgement, SChatCommand, SChatCommandSigned, SChatMessage, SChatSessionUpdate,
+    SClientInformation, SKeepAlive, SPluginMessage, STabCompleteRequest,
 };
 pub use resource_pack::{
     CConfigResourcePack, CConfigResourcePackPop, CConfigResourcePackPush, CResourcePack,

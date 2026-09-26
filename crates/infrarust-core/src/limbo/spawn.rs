@@ -5,12 +5,11 @@
 //! protocol version and whether this is a fresh join or a switch into limbo
 //! from an existing backend connection.
 
-use bytes::Bytes;
 use infrarust_protocol::codec::{McBufWriteExt, VarInt};
-use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::play::center_chunk::CSetCenterChunk;
 use infrarust_protocol::packets::play::chunk_batch::{CChunkBatchFinished, CChunkBatchStart};
 use infrarust_protocol::packets::play::chunk_data::CChunkData;
+use infrarust_protocol::packets::play::container_content::CSetContainerContent;
 use infrarust_protocol::packets::play::dimension::DimensionInfo;
 use infrarust_protocol::packets::play::game_event::{CGameEvent, START_WAITING_CHUNKS};
 use infrarust_protocol::packets::play::join_game::CJoinGame;
@@ -51,11 +50,8 @@ pub(crate) async fn send_spawn_sequence(
         send_legacy_switch(client, version, registry).await?;
     }
 
-    // Inventory clear uses hardcoded packet IDs that are only valid for 1.16+.
-    // Pre-1.16 has a different wire format; skip it (inventory starts empty on
-    // fresh JoinGame, and adventure mode prevents interaction anyway).
     if !is_pre_1_16 {
-        send_clear_inventory(client, version).await?;
+        send_clear_inventory(client, version, registry).await?;
     }
 
     Ok(())
@@ -394,14 +390,7 @@ fn build_1_16_to_1_20_1_join_game_payload(version: ProtocolVersion) -> Result<Ve
         buf.extend_from_slice(&dimension_codec);
     }
 
-    // dimension_name / dimension_type identifier
-    if pvn >= 759 {
-        // 1.19+: "dimension_type" identifier (references registry entry)
-        buf.write_string(LIMBO_DIMENSION_NAME)?;
-    } else {
-        // 1.16–1.18.2: "dimension_name" identifier
-        buf.write_string(LIMBO_DIMENSION_NAME)?;
-    }
+    buf.write_string(LIMBO_DIMENSION_NAME)?;
 
     // world_name
     buf.write_string(LIMBO_DIMENSION_NAME)?;
@@ -439,63 +428,18 @@ fn build_1_16_to_1_20_1_join_game_payload(version: ProtocolVersion) -> Result<Ve
     Ok(buf)
 }
 
-/// Raw CSetContainerContent: window 0, 46 empty slots.
-///
-/// - **1.17+**: `window_id(u8)`, `state_id(VarInt)`, `count(VarInt)`, the slots,
-///   then the carried item as one more slot.
-/// - **Pre-1.17**: `window_id(u8)`, `count(i16 BE)`, then the slots.
-///
-/// An empty slot is a single `0x00` byte in every version covered here:
-/// `present = false` from 1.13 on, and `count = 0` from 1.20.5 on.
 async fn send_clear_inventory(
     client: &mut ClientBridge,
     version: ProtocolVersion,
+    registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let packet_id = container_set_content_packet_id(version);
-
-    let mut buf = Vec::with_capacity(96);
-
-    if version.no_less_than(ProtocolVersion::V1_17) {
-        buf.write_u8(0)?;
-        buf.write_var_int(&VarInt(0))?;
-        buf.write_var_int(&VarInt(46))?;
-        buf.extend(std::iter::repeat_n(0, 46));
-        buf.write_u8(0)?;
-    } else {
-        buf.write_u8(0)?;
-        buf.write_i16_be(46)?;
-        buf.extend(std::iter::repeat_n(0, 46));
-    }
-
-    let frame = PacketFrame::new(packet_id, Bytes::from(buf));
+    let frame = encode_packet(
+        &CSetContainerContent::cleared_player_inventory(),
+        version,
+        registry,
+    )?;
     client.write_frame(&frame).await?;
     Ok(())
-}
-
-fn container_set_content_packet_id(version: ProtocolVersion) -> i32 {
-    let pvn = version.0;
-    match pvn {
-        // 1.21.5 (770)+
-        770.. => 0x12,
-        // 1.20.2 (764) .. 1.21.4 (769)
-        764..=769 => 0x13,
-        // 1.19.4 (762) .. 1.20.1 (763)
-        762..=763 => 0x12,
-        // 1.19.3 (761)
-        761 => 0x11,
-        // 1.19.1 (760)
-        760 => 0x12,
-        // 1.19 (759)
-        759 => 0x13,
-        // 1.17 (755) .. 1.18.2 (758)
-        755..=758 => 0x14,
-        // 1.16.2 (751) .. 1.16.4 (754)
-        751..=754 => 0x13,
-        // 1.16 (735) .. 1.16.1 (736)
-        735..=750 => 0x14,
-        // Pre-1.16 is skipped by caller; fallback for safety
-        _ => 0x13,
-    }
 }
 
 #[cfg(test)]

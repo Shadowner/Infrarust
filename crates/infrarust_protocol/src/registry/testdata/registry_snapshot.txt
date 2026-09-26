@@ -1591,6 +1591,7 @@ ENC play clientbound   4 CJoinGame 0x01
 ENC play clientbound   4 CKeepAlive 0x00
 ENC play clientbound   4 CPluginMessage 0x3F
 ENC play clientbound   4 CRespawn 0x07
+ENC play clientbound   4 CSetContainerContent 0x30
 ENC play clientbound   4 CSetDefaultSpawnPosition 0x05
 ENC play clientbound   4 CSynchronizePlayerPosition 0x08
 ENC play clientbound   5 CChatMessageLegacy 0x02
@@ -1600,6 +1601,7 @@ ENC play clientbound   5 CJoinGame 0x01
 ENC play clientbound   5 CKeepAlive 0x00
 ENC play clientbound   5 CPluginMessage 0x3F
 ENC play clientbound   5 CRespawn 0x07
+ENC play clientbound   5 CSetContainerContent 0x30
 ENC play clientbound   5 CSetDefaultSpawnPosition 0x05
 ENC play clientbound   5 CSynchronizePlayerPosition 0x08
 ENC play clientbound  47 CChatMessageLegacy 0x02
@@ -1610,6 +1612,7 @@ ENC play clientbound  47 CKeepAlive 0x00
 ENC play clientbound  47 CPluginMessage 0x3F
 ENC play clientbound  47 CResourcePack 0x48
 ENC play clientbound  47 CRespawn 0x07
+ENC play clientbound  47 CSetContainerContent 0x30
 ENC play clientbound  47 CSetDefaultSpawnPosition 0x05
 ENC play clientbound  47 CSynchronizePlayerPosition 0x08
 ENC play clientbound  47 CTabListHeaderFooter 0x47
@@ -1624,6 +1627,7 @@ ENC play clientbound 107 CKeepAlive 0x1F
 ENC play clientbound 107 CPluginMessage 0x18
 ENC play clientbound 107 CResourcePack 0x32
 ENC play clientbound 107 CRespawn 0x33
+ENC play clientbound 107 CSetContainerContent 0x14
 ENC play clientbound 107 CSetDefaultSpawnPosition 0x43
 ENC play clientbound 107 CSynchronizePlayerPosition 0x2E
 ENC play clientbound 107 CTabListHeaderFooter 0x48
@@ -1638,6 +1642,7 @@ ENC play clientbound 109 CKeepAlive 0x1F
 ENC play clientbound 109 CPluginMessage 0x18
 ENC play clientbound 109 CResourcePack 0x32
 ENC play clientbound 109 CRespawn 0x33
+ENC play clientbound 109 CSetContainerContent 0x14
 ENC play clientbound 109 CSetDefaultSpawnPosition 0x43
 ENC play clientbound 109 CSynchronizePlayerPosition 0x2E
 ENC play clientbound 109 CTabListHeaderFooter 0x48
@@ -1652,6 +1657,7 @@ ENC play clientbound 110 CKeepAlive 0x1F
 ENC play clientbound 110 CPluginMessage 0x18
 ENC play clientbound 110 CResourcePack 0x32
 ENC play clientbound 110 CRespawn 0x33
+ENC play clientbound 110 CSetContainerContent 0x14
 ENC play clientbound 110 CSetDefaultSpawnPosition 0x43
 ENC play clientbound 110 CSynchronizePlayerPosition 0x2E
 ENC play clientbound 110 CTabListHeaderFooter 0x47
@@ -1666,6 +1672,7 @@ ENC play clientbound 335 CKeepAlive 0x1F
 ENC play clientbound 335 CPluginMessage 0x18
 ENC play clientbound 335 CResourcePack 0x33
 ENC play clientbound 335 CRespawn 0x34
+ENC play clientbound 335 CSetContainerContent 0x14
 ENC play clientbound 335 CSetDefaultSpawnPosition 0x46
 ENC play clientbound 335 CSynchronizePlayerPosition 0x2E
 ENC play clientbound 335 CTabListHeaderFooter 0x49
@@ -1680,6 +1687,7 @@ ENC play clientbound 338 CKeepAlive 0x1F
 ENC play clientbound 338 CPluginMessage 0x18
 ENC play clientbound 338 CResourcePack 0x34
 ENC play clientbound 338 CRespawn 0x35
+ENC play clientbound 338 CSetContainerContent 0x14
 ENC play clientbound 338 CSetDefaultSpawnPosition 0x46
 ENC play clientbound 338 CSynchronizePlayerPosition 0x2F
 ENC play clientbound 338 CTabListHeaderFooter 0x4A
@@ -1694,6 +1702,7 @@ ENC play clientbound 340 CKeepAlive 0x1F
 ENC play clientbound 340 CPluginMessage 0x18
 ENC play clientbound 340 CResourcePack 0x34
 ENC play clientbound 340 CRespawn 0x35
+ENC play clientbound 340 CSetContainerContent 0x14
 ENC play clientbound 340 CSetDefaultSpawnPosition 0x46
 ENC play clientbound 340 CSynchronizePlayerPosition 0x2F
 ENC play clientbound 340 CTabListHeaderFooter 0x4A
@@ -1709,6 +1718,7 @@ ENC play clientbound 393 CKeepAlive 0x21
 ENC play clientbound 393 CPluginMessage 0x19
 ENC play clientbound 393 CResourcePack 0x37
 ENC play clientbound 393 CRespawn 0x38
+ENC play clientbound 393 CSetContainerContent 0x15
 ENC play clientbound 393 CSetDefaultSpawnPosition 0x49
 ENC play clientbound 393 CSynchronizePlayerPosition 0x32
 ENC play clientbound 393 CTabCompleteResponse 0x10
@@ -1726,6 +1736,7 @@ ENC play clientbound 477 CPluginMessage 0x18
 ENC play clientbound 477 CResourcePack 0x39
 ENC play clientbound 477 CRespawn 0x3A
 ENC play clientbound 477 CSetCenterChunk 0x40
+ENC play clientbound 477 CSetContainerContent 0x14
 ENC play clientbound 477 CSetDefaultSpawnPosition 0x4D
 ENC play clientbound 477 CSynchronizePlayerPosition 0x35
 ENC play clientbound 477 CTabCompleteResponse 0x10
@@ -1743,6 +1754,7 @@ ENC play clientbound 573 CPluginMessage 0x19
 ENC play clientbound 573 CResourcePack 0x3A
 ENC play clientbound 573 CRespawn 0x3B
 ENC play clientbound 573 CSetCenterChunk 0x41
+ENC play clientbound 573 CSetContainerContent 0x15
 ENC play clientbound 573 CSetDefaultSpawnPosition 0x4E
 ENC play clientbound 573 CSynchronizePlayerPosition 0x36
 ENC play clientbound 573 CTabCompleteResponse 0x11
@@ -1760,6 +1772,7 @@ ENC play clientbound 735 CPluginMessage 0x18
 ENC play clientbound 735 CResourcePack 0x39
 ENC play clientbound 735 CRespawn 0x3A
 ENC play clientbound 735 CSetCenterChunk 0x40
+ENC play clientbound 735 CSetContainerContent 0x14
 ENC play clientbound 735 CSetDefaultSpawnPosition 0x42
 ENC play clientbound 735 CSynchronizePlayerPosition 0x35
 ENC play clientbound 735 CTabCompleteResponse 0x10
@@ -1777,6 +1790,7 @@ ENC play clientbound 751 CPluginMessage 0x17
 ENC play clientbound 751 CResourcePack 0x38
 ENC play clientbound 751 CRespawn 0x39
 ENC play clientbound 751 CSetCenterChunk 0x40
+ENC play clientbound 751 CSetContainerContent 0x13
 ENC play clientbound 751 CSetDefaultSpawnPosition 0x42
 ENC play clientbound 751 CSynchronizePlayerPosition 0x34
 ENC play clientbound 751 CTabCompleteResponse 0x0F
@@ -1794,6 +1808,7 @@ ENC play clientbound 754 CPluginMessage 0x17
 ENC play clientbound 754 CResourcePack 0x38
 ENC play clientbound 754 CRespawn 0x39
 ENC play clientbound 754 CSetCenterChunk 0x40
+ENC play clientbound 754 CSetContainerContent 0x13
 ENC play clientbound 754 CSetDefaultSpawnPosition 0x42
 ENC play clientbound 754 CSynchronizePlayerPosition 0x34
 ENC play clientbound 754 CTabCompleteResponse 0x0F
@@ -1812,6 +1827,7 @@ ENC play clientbound 755 CPluginMessage 0x18
 ENC play clientbound 755 CResourcePack 0x3C
 ENC play clientbound 755 CRespawn 0x3D
 ENC play clientbound 755 CSetCenterChunk 0x49
+ENC play clientbound 755 CSetContainerContent 0x14
 ENC play clientbound 755 CSetDefaultSpawnPosition 0x4B
 ENC play clientbound 755 CSetSubtitle 0x57
 ENC play clientbound 755 CSetTitle 0x59
@@ -1832,6 +1848,7 @@ ENC play clientbound 757 CPluginMessage 0x18
 ENC play clientbound 757 CResourcePack 0x3C
 ENC play clientbound 757 CRespawn 0x3D
 ENC play clientbound 757 CSetCenterChunk 0x4A
+ENC play clientbound 757 CSetContainerContent 0x14
 ENC play clientbound 757 CSetDefaultSpawnPosition 0x4C
 ENC play clientbound 757 CSetSubtitle 0x58
 ENC play clientbound 757 CSetTitle 0x5A
@@ -1852,6 +1869,7 @@ ENC play clientbound 758 CPluginMessage 0x18
 ENC play clientbound 758 CResourcePack 0x3C
 ENC play clientbound 758 CRespawn 0x3D
 ENC play clientbound 758 CSetCenterChunk 0x4A
+ENC play clientbound 758 CSetContainerContent 0x14
 ENC play clientbound 758 CSetDefaultSpawnPosition 0x4C
 ENC play clientbound 758 CSetSubtitle 0x58
 ENC play clientbound 758 CSetTitle 0x5A
@@ -1871,6 +1889,7 @@ ENC play clientbound 759 CPluginMessage 0x15
 ENC play clientbound 759 CResourcePack 0x3A
 ENC play clientbound 759 CRespawn 0x3B
 ENC play clientbound 759 CSetCenterChunk 0x48
+ENC play clientbound 759 CSetContainerContent 0x11
 ENC play clientbound 759 CSetDefaultSpawnPosition 0x4A
 ENC play clientbound 759 CSetSubtitle 0x58
 ENC play clientbound 759 CSetTitle 0x5A
@@ -1891,6 +1910,7 @@ ENC play clientbound 760 CPluginMessage 0x16
 ENC play clientbound 760 CResourcePack 0x3D
 ENC play clientbound 760 CRespawn 0x3E
 ENC play clientbound 760 CSetCenterChunk 0x4B
+ENC play clientbound 760 CSetContainerContent 0x11
 ENC play clientbound 760 CSetDefaultSpawnPosition 0x4D
 ENC play clientbound 760 CSetSubtitle 0x5B
 ENC play clientbound 760 CSetTitle 0x5D
@@ -1911,6 +1931,7 @@ ENC play clientbound 761 CPluginMessage 0x15
 ENC play clientbound 761 CResourcePack 0x3C
 ENC play clientbound 761 CRespawn 0x3D
 ENC play clientbound 761 CSetCenterChunk 0x4A
+ENC play clientbound 761 CSetContainerContent 0x10
 ENC play clientbound 761 CSetDefaultSpawnPosition 0x4C
 ENC play clientbound 761 CSetSubtitle 0x59
 ENC play clientbound 761 CSetTitle 0x5B
@@ -1931,6 +1952,7 @@ ENC play clientbound 762 CPluginMessage 0x17
 ENC play clientbound 762 CResourcePack 0x40
 ENC play clientbound 762 CRespawn 0x41
 ENC play clientbound 762 CSetCenterChunk 0x4E
+ENC play clientbound 762 CSetContainerContent 0x12
 ENC play clientbound 762 CSetDefaultSpawnPosition 0x50
 ENC play clientbound 762 CSetSubtitle 0x5D
 ENC play clientbound 762 CSetTitle 0x5F
@@ -1951,6 +1973,7 @@ ENC play clientbound 763 CPluginMessage 0x17
 ENC play clientbound 763 CResourcePack 0x40
 ENC play clientbound 763 CRespawn 0x41
 ENC play clientbound 763 CSetCenterChunk 0x4E
+ENC play clientbound 763 CSetContainerContent 0x12
 ENC play clientbound 763 CSetDefaultSpawnPosition 0x50
 ENC play clientbound 763 CSetSubtitle 0x5D
 ENC play clientbound 763 CSetTitle 0x5F
@@ -1973,6 +1996,7 @@ ENC play clientbound 764 CPluginMessage 0x18
 ENC play clientbound 764 CResourcePack 0x42
 ENC play clientbound 764 CRespawn 0x43
 ENC play clientbound 764 CSetCenterChunk 0x50
+ENC play clientbound 764 CSetContainerContent 0x13
 ENC play clientbound 764 CSetDefaultSpawnPosition 0x52
 ENC play clientbound 764 CSetSubtitle 0x5F
 ENC play clientbound 764 CSetTitle 0x61
@@ -1997,6 +2021,7 @@ ENC play clientbound 765 CResourcePackPop 0x43
 ENC play clientbound 765 CResourcePackPush 0x44
 ENC play clientbound 765 CRespawn 0x45
 ENC play clientbound 765 CSetCenterChunk 0x52
+ENC play clientbound 765 CSetContainerContent 0x13
 ENC play clientbound 765 CSetDefaultSpawnPosition 0x54
 ENC play clientbound 765 CSetSubtitle 0x61
 ENC play clientbound 765 CSetTitle 0x63
@@ -2022,6 +2047,7 @@ ENC play clientbound 766 CResourcePackPop 0x45
 ENC play clientbound 766 CResourcePackPush 0x46
 ENC play clientbound 766 CRespawn 0x47
 ENC play clientbound 766 CSetCenterChunk 0x54
+ENC play clientbound 766 CSetContainerContent 0x13
 ENC play clientbound 766 CSetDefaultSpawnPosition 0x56
 ENC play clientbound 766 CSetSubtitle 0x63
 ENC play clientbound 766 CSetTitle 0x65
@@ -2049,6 +2075,7 @@ ENC play clientbound 767 CResourcePackPop 0x45
 ENC play clientbound 767 CResourcePackPush 0x46
 ENC play clientbound 767 CRespawn 0x47
 ENC play clientbound 767 CSetCenterChunk 0x54
+ENC play clientbound 767 CSetContainerContent 0x13
 ENC play clientbound 767 CSetDefaultSpawnPosition 0x56
 ENC play clientbound 767 CSetSubtitle 0x63
 ENC play clientbound 767 CSetTitle 0x65
@@ -2076,6 +2103,7 @@ ENC play clientbound 768 CResourcePackPop 0x4A
 ENC play clientbound 768 CResourcePackPush 0x4B
 ENC play clientbound 768 CRespawn 0x4C
 ENC play clientbound 768 CSetCenterChunk 0x58
+ENC play clientbound 768 CSetContainerContent 0x13
 ENC play clientbound 768 CSetDefaultSpawnPosition 0x5B
 ENC play clientbound 768 CSetSubtitle 0x6A
 ENC play clientbound 768 CSetTitle 0x6C
@@ -2103,6 +2131,7 @@ ENC play clientbound 769 CResourcePackPop 0x4A
 ENC play clientbound 769 CResourcePackPush 0x4B
 ENC play clientbound 769 CRespawn 0x4C
 ENC play clientbound 769 CSetCenterChunk 0x58
+ENC play clientbound 769 CSetContainerContent 0x13
 ENC play clientbound 769 CSetDefaultSpawnPosition 0x5B
 ENC play clientbound 769 CSetSubtitle 0x6A
 ENC play clientbound 769 CSetTitle 0x6C
@@ -2130,6 +2159,7 @@ ENC play clientbound 770 CResourcePackPop 0x49
 ENC play clientbound 770 CResourcePackPush 0x4A
 ENC play clientbound 770 CRespawn 0x4B
 ENC play clientbound 770 CSetCenterChunk 0x57
+ENC play clientbound 770 CSetContainerContent 0x12
 ENC play clientbound 770 CSetDefaultSpawnPosition 0x5A
 ENC play clientbound 770 CSetSubtitle 0x69
 ENC play clientbound 770 CSetTitle 0x6B
@@ -2157,6 +2187,7 @@ ENC play clientbound 771 CResourcePackPop 0x49
 ENC play clientbound 771 CResourcePackPush 0x4A
 ENC play clientbound 771 CRespawn 0x4B
 ENC play clientbound 771 CSetCenterChunk 0x57
+ENC play clientbound 771 CSetContainerContent 0x12
 ENC play clientbound 771 CSetDefaultSpawnPosition 0x5A
 ENC play clientbound 771 CSetSubtitle 0x69
 ENC play clientbound 771 CSetTitle 0x6B
@@ -2184,6 +2215,7 @@ ENC play clientbound 772 CResourcePackPop 0x49
 ENC play clientbound 772 CResourcePackPush 0x4A
 ENC play clientbound 772 CRespawn 0x4B
 ENC play clientbound 772 CSetCenterChunk 0x57
+ENC play clientbound 772 CSetContainerContent 0x12
 ENC play clientbound 772 CSetDefaultSpawnPosition 0x5A
 ENC play clientbound 772 CSetSubtitle 0x69
 ENC play clientbound 772 CSetTitle 0x6B
@@ -2211,6 +2243,7 @@ ENC play clientbound 773 CResourcePackPop 0x4E
 ENC play clientbound 773 CResourcePackPush 0x4F
 ENC play clientbound 773 CRespawn 0x50
 ENC play clientbound 773 CSetCenterChunk 0x5C
+ENC play clientbound 773 CSetContainerContent 0x12
 ENC play clientbound 773 CSetDefaultSpawnPosition 0x5F
 ENC play clientbound 773 CSetSubtitle 0x6E
 ENC play clientbound 773 CSetTitle 0x70
@@ -2238,6 +2271,7 @@ ENC play clientbound 774 CResourcePackPop 0x4E
 ENC play clientbound 774 CResourcePackPush 0x4F
 ENC play clientbound 774 CRespawn 0x50
 ENC play clientbound 774 CSetCenterChunk 0x5C
+ENC play clientbound 774 CSetContainerContent 0x12
 ENC play clientbound 774 CSetDefaultSpawnPosition 0x5F
 ENC play clientbound 774 CSetSubtitle 0x6E
 ENC play clientbound 774 CSetTitle 0x70
@@ -2265,6 +2299,7 @@ ENC play clientbound 775 CResourcePackPop 0x50
 ENC play clientbound 775 CResourcePackPush 0x51
 ENC play clientbound 775 CRespawn 0x52
 ENC play clientbound 775 CSetCenterChunk 0x5C
+ENC play clientbound 775 CSetContainerContent 0x12
 ENC play clientbound 775 CSetDefaultSpawnPosition 0x5F
 ENC play clientbound 775 CSetSubtitle 0x70
 ENC play clientbound 775 CSetTitle 0x72
@@ -2292,6 +2327,7 @@ ENC play clientbound 776 CResourcePackPop 0x50
 ENC play clientbound 776 CResourcePackPush 0x51
 ENC play clientbound 776 CRespawn 0x52
 ENC play clientbound 776 CSetCenterChunk 0x5C
+ENC play clientbound 776 CSetContainerContent 0x12
 ENC play clientbound 776 CSetDefaultSpawnPosition 0x5F
 ENC play clientbound 776 CSetSubtitle 0x70
 ENC play clientbound 776 CSetTitle 0x72
