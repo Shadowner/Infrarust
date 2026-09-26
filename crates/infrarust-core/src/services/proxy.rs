@@ -19,9 +19,9 @@ use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::plugin_messaging::PluginMessaging;
 use crate::provider::ProviderEvent;
-use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
 use crate::services::command_manager::CommandManagerImpl;
+use crate::session::connection_registry::ConnectionRegistry;
 
 /// Shared services passed to connection handlers.
 ///

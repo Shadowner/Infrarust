@@ -46,10 +46,10 @@ use crate::player::SHUTDOWN_REASON;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::provider::file::FileProvider;
 use crate::provider::registry::ProviderRegistry;
-use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
 use crate::services::command_manager::CommandManagerImpl;
+use crate::session::connection_registry::ConnectionRegistry;
 use crate::status::{FaviconCache, StatusCache, StatusHandler, StatusRelayClient};
 
 pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);

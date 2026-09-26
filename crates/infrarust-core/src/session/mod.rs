@@ -5,6 +5,7 @@ pub(crate) mod chat_intercept;
 pub(crate) mod chat_utils;
 pub(crate) mod client_bridge;
 pub(crate) mod client_login;
+pub mod connection_registry;
 pub(crate) mod context;
 pub(crate) mod frame_chain;
 pub(crate) mod initial_connect;

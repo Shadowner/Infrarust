@@ -34,7 +34,7 @@ pub struct PluginContextFactoryImpl {
     service_registry: Arc<ServiceRegistryImpl>,
     messaging: Option<(
         Arc<crate::plugin_messaging::PluginMessaging>,
-        Arc<crate::registry::ConnectionRegistry>,
+        Arc<crate::session::connection_registry::ConnectionRegistry>,
     )>,
 }
 
@@ -62,7 +62,7 @@ impl PluginContextFactoryImpl {
     pub fn with_messaging(
         mut self,
         messaging: Arc<crate::plugin_messaging::PluginMessaging>,
-        players: Arc<crate::registry::ConnectionRegistry>,
+        players: Arc<crate::session::connection_registry::ConnectionRegistry>,
     ) -> Self {
         self.messaging = Some((messaging, players));
         self

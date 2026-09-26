@@ -1,5 +1,3 @@
-//! Thread-safe registry of active proxy sessions.
-
 use std::hash::Hash;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -11,10 +9,6 @@ use uuid::Uuid;
 
 use crate::player::PlayerSession;
 
-/// Thread-safe registry of active proxy sessions.
-///
-/// Pure data structure backed by `DashMap` — no background tasks.
-/// Handlers call `register()` at start, `unregister()` at end.
 pub struct ConnectionRegistry {
     sessions: DashMap<Uuid, Arc<PlayerSession>>,
     id_index: DashMap<PlayerId, Uuid>,
@@ -53,7 +47,6 @@ fn name_key(username: &str) -> String {
 }
 
 impl ConnectionRegistry {
-    /// Creates an empty registry.
     pub fn new() -> Self {
         Self {
             sessions: DashMap::new(),
@@ -77,9 +70,6 @@ impl ConnectionRegistry {
             .remove(&session.remote_addr().ip().to_canonical(), session.id());
     }
 
-    /// Registers a player session, keyed by profile UUID.
-    ///
-    /// The returned guard unregisters the session when dropped.
     pub fn register(self: &Arc<Self>, session: Arc<PlayerSession>) -> SessionGuard {
         let uuid = session.profile().uuid;
         let player_id = session.id();
@@ -105,11 +95,6 @@ impl ConnectionRegistry {
         }
     }
 
-    /// Removes a session, marking it as disconnected.
-    ///
-    /// The `player_id` check is what makes this safe against UUID collisions:
-    /// a session replaced by [`register`](Self::register) must not be evicted
-    /// by the cleanup of the session it replaced.
     fn unregister(&self, session_uuid: &Uuid, player_id: PlayerId) -> Option<Arc<PlayerSession>> {
         let (_, session) = self
             .sessions
@@ -126,7 +111,6 @@ impl ConnectionRegistry {
         self.get(&uuid)
     }
 
-    /// Returns a reference-counted handle to the session.
     pub fn get(&self, session_uuid: &Uuid) -> Option<Arc<PlayerSession>> {
         self.sessions.get(session_uuid).map(|r| Arc::clone(&r))
     }
@@ -159,12 +143,10 @@ impl ConnectionRegistry {
             .count()
     }
 
-    /// Returns a snapshot of all active sessions.
     pub fn all(&self) -> Vec<Arc<PlayerSession>> {
         self.sessions.iter().map(|r| Arc::clone(&r)).collect()
     }
 
-    /// Finds all sessions from a given IP (may be multiple for multi-accounts).
     pub fn find_by_ip(&self, ip: &IpAddr) -> Vec<Arc<PlayerSession>> {
         self.ip_index
             .entries
@@ -173,9 +155,6 @@ impl ConnectionRegistry {
             .unwrap_or_default()
     }
 
-    /// Finds the session with the given Mojang UUID.
-    ///
-    /// Delegates to [`get()`](Self::get) — both are keyed by UUID.
     pub fn find_by_uuid(&self, uuid: &Uuid) -> Option<Arc<PlayerSession>> {
         self.get(uuid)
     }
@@ -332,7 +311,6 @@ mod tests {
         let uuid = first.profile().uuid;
         let first_guard = registry.register(first);
 
-        // Fast reconnect: same profile UUID, new session, replaces the first.
         let second = session(2, uuid, "alice", "lobby", &Arc::new(BackendLoad::new()));
         let _second_guard = registry.register(Arc::clone(&second));
 
@@ -412,20 +390,16 @@ mod tests {
         let guard = registry.register(Arc::clone(&alice));
         assert_eq!(load.active_connections_for_address(&a), 0);
 
-        // Initial connect
         alice.set_connected_address(Some(a.clone()));
         assert_eq!(load.active_connections_for_address(&a), 1);
 
-        // Server switch
         alice.set_connected_address(Some(b.clone()));
         assert_eq!(load.active_connections_for_address(&a), 0);
         assert_eq!(load.active_connections_for_address(&b), 1);
 
-        // Limbo: connected to no backend address
         alice.set_connected_address(None);
         assert_eq!(load.active_connections_for_address(&b), 0);
 
-        // Limbo exit then disconnect
         alice.set_connected_address(Some(a.clone()));
         assert_eq!(load.active_connections_for_address(&a), 1);
         drop(guard);
@@ -447,7 +421,6 @@ mod tests {
         let _second_guard = registry.register(Arc::clone(&second));
         second.set_connected_address(Some(a.clone()));
 
-        // The replaced session is disconnected by register, releasing its slot.
         assert_eq!(load.active_connections_for_address(&a), 1);
         drop(first_guard);
         assert_eq!(load.active_connections_for_address(&a), 1);

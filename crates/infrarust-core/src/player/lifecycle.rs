@@ -7,8 +7,8 @@ use infrarust_api::types::Component;
 
 use super::PlayerSession;
 use crate::event_bus::EventBusImpl;
-use crate::registry::SessionGuard;
 use crate::services::ProxyServices;
+use crate::session::connection_registry::SessionGuard;
 
 pub(crate) const REPLACED_REASON: &str = "You logged in from another location";
 

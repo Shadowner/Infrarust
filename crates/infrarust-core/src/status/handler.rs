@@ -34,7 +34,7 @@ use crate::event_bus::conversion::{core_to_api_ping_response, merge_ping_event};
 use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, peek_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
-use crate::registry::ConnectionRegistry;
+use crate::session::connection_registry::ConnectionRegistry;
 use crate::util::text::api_version;
 
 /// Handles modern (1.7+) status pings with relay, cache, and contextual MOTDs.

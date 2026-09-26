@@ -15,9 +15,9 @@ use crate::ban::manager::BanManager;
 use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::plugin::manager::PluginManager;
-use crate::registry::ConnectionRegistry;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::services::config_service::ConfigServiceImpl;
+use crate::session::connection_registry::ConnectionRegistry;
 
 pub struct ConsoleServices {
     pub player_registry: Arc<PlayerRegistryImpl>,

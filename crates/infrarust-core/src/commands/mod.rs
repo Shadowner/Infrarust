@@ -302,10 +302,10 @@ mod tests {
     use crate::permissions::PermissionService;
     use crate::player::registry::PlayerRegistryImpl;
     use crate::plugin::PluginRegistryImpl;
-    use crate::registry::ConnectionRegistry;
     use crate::routing::DomainRouter;
     use crate::services::command_manager::CommandManagerImpl;
     use crate::services::config_service::ConfigServiceImpl;
+    use crate::session::connection_registry::ConnectionRegistry;
 
     fn root_command(player_commands: &[&str]) -> InfrarustRootCommand {
         let permission_service = Arc::new(PermissionService::new_sync(&PermissionsConfig {

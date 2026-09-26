@@ -78,7 +78,7 @@ impl PluginChannels {
     pub fn new(
         plugin_id: &str,
         messaging: &PluginMessaging,
-        players: Arc<crate::registry::ConnectionRegistry>,
+        players: Arc<crate::session::connection_registry::ConnectionRegistry>,
     ) -> Self {
         Self {
             registrar: TrackingChannelRegistrar::new(Arc::clone(messaging.channels()), plugin_id),
@@ -104,7 +104,7 @@ impl Default for PluginChannels {
         Self::new(
             "",
             &PluginMessaging::default(),
-            Arc::new(crate::registry::ConnectionRegistry::new()),
+            Arc::new(crate::session::connection_registry::ConnectionRegistry::new()),
         )
     }
 }
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn a_plugin_loses_its_channels_on_cleanup() {
         let messaging = PluginMessaging::default();
-        let players = Arc::new(crate::registry::ConnectionRegistry::new());
+        let players = Arc::new(crate::session::connection_registry::ConnectionRegistry::new());
         let first = PluginChannels::new("first", &messaging, Arc::clone(&players));
         let second = PluginChannels::new("second", &messaging, players);
         let shared = ChannelId::modern("shared:main").unwrap();

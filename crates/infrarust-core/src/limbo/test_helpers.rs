@@ -30,11 +30,11 @@ use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::limbo::registry_cache::RegistryCodecCache;
 use crate::player::registry::PlayerRegistryImpl;
-use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::connection_registry::ConnectionRegistry;
 
 pub fn test_profile() -> GameProfile {
     GameProfile {

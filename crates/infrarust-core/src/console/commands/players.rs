@@ -480,10 +480,10 @@ mod tests {
     use crate::plugin::PluginRegistryImpl;
     use crate::plugin::manager::PluginManager;
     use crate::provider::ProviderId;
-    use crate::registry::{ConnectionRegistry, SessionGuard};
     use crate::routing::DomainRouter;
     use crate::services::command_manager::CommandManagerImpl;
     use crate::services::config_service::ConfigServiceImpl;
+    use crate::session::connection_registry::{ConnectionRegistry, SessionGuard};
 
     struct Surfaces {
         console: ConsoleServices,
