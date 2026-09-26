@@ -19,7 +19,6 @@ use toml::{Table, Value};
 const T: Duration = DEFAULT_TIMEOUT;
 const LOGINS: usize = 200;
 const MIN_RELOADS: usize = 5;
-const SETTLE: Duration = Duration::from_millis(600);
 
 fn server_file(proxy: &TestProxy, id: &str) -> PathBuf {
     proxy.dir().join("servers").join(format!("{id}.toml"))
@@ -71,10 +70,22 @@ async fn rewriting_a_server_file_keeps_its_domain_routable() {
     let path = server_file(&proxy, "lobby");
     let original = read_table(&path);
 
-    tokio::time::sleep(SETTLE).await;
+    std::fs::write(&path, with_motd(&original, "revision 1")).unwrap();
+    tokio::time::timeout(T, async {
+        while reloads.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the first rewrite never reached the proxy");
+    assert_eq!(
+        routed_motd(&proxy, &domain).as_deref(),
+        Some("revision 1"),
+        "the first reload the proxy saw was not the first rewrite"
+    );
     assert_eq!(
         reloads.load(Ordering::SeqCst),
-        0,
+        1,
         "the files the proxy started from were reloaded"
     );
 
@@ -83,7 +94,7 @@ async fn rewriting_a_server_file_keeps_its_domain_routable() {
         let stop = Arc::clone(&stop);
         let path = path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut revision = 0usize;
+            let mut revision = 1usize;
             while !stop.load(Ordering::SeqCst) {
                 revision += 1;
                 std::fs::write(&path, with_motd(&original, &format!("revision {revision}")))
