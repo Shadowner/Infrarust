@@ -20,7 +20,8 @@ pub struct ActivatedProvider {
 struct PluginProviderSenderImpl {
     sender: mpsc::Sender<ProviderEvent>,
     shutdown: CancellationToken,
-    provider_prefix: String,
+    plugin_id: String,
+    kind: String,
 }
 
 impl PluginProviderSender for PluginProviderSenderImpl {
@@ -33,12 +34,13 @@ impl PluginProviderSender for PluginProviderSenderImpl {
                 PluginProviderEvent::Updated(doc) => {
                     self.provider_config_from(&doc).map(ProviderEvent::Updated)
                 }
-                PluginProviderEvent::Removed(server_id) => Some(ProviderEvent::Removed(
-                    make_provider_id(&self.provider_prefix, server_id.as_str()),
-                )),
+                PluginProviderEvent::Removed(server_id) => {
+                    Some(ProviderEvent::Removed(self.provider_id(server_id.as_str())))
+                }
                 _ => {
                     tracing::warn!(
-                        provider = %self.provider_prefix,
+                        plugin = %self.plugin_id,
+                        provider = %self.kind,
                         "dropping unknown PluginProviderEvent variant"
                     );
                     None
@@ -60,15 +62,20 @@ impl PluginProviderSender for PluginProviderSenderImpl {
 }
 
 impl PluginProviderSenderImpl {
+    fn provider_id(&self, document: &str) -> ProviderId {
+        ProviderId::plugin(&self.plugin_id, &self.kind, document)
+    }
+
     fn provider_config_from(&self, doc: &ServerDocument) -> Option<ProviderConfig> {
         match parse_document(doc) {
             Ok(config) => Some(ProviderConfig {
-                id: make_provider_id(&self.provider_prefix, doc.id.as_str()),
+                id: self.provider_id(doc.id.as_str()),
                 config,
             }),
             Err(e) => {
                 tracing::warn!(
-                    provider = %self.provider_prefix,
+                    plugin = %self.plugin_id,
+                    provider = %self.kind,
                     document = %doc.id.as_str(),
                     error = %e,
                     "rejecting invalid server document"
@@ -105,10 +112,6 @@ fn log_validation_warnings(config: &infrarust_config::ServerConfig) -> Result<()
     Ok(())
 }
 
-fn make_provider_id(provider_prefix: &str, config_id: &str) -> ProviderId {
-    ProviderId::new(provider_prefix, config_id)
-}
-
 pub async fn activate_plugin_providers(
     providers: Vec<(String, Box<dyn PluginConfigProvider>)>,
     event_sender: mpsc::Sender<ProviderEvent>,
@@ -118,7 +121,7 @@ pub async fn activate_plugin_providers(
     let mut results = Vec::new();
 
     for (plugin_id, provider) in providers {
-        let provider_prefix = format!("plugin:{}:{}", plugin_id, provider.provider_type());
+        let kind = provider.provider_type().to_string();
         let mut loaded_ids = Vec::new();
 
         match provider.load_initial().await {
@@ -127,7 +130,7 @@ pub async fn activate_plugin_providers(
                 for doc in &documents {
                     match parse_document(doc) {
                         Ok(server_config) => {
-                            let pid = make_provider_id(&provider_prefix, doc.id.as_str());
+                            let pid = ProviderId::plugin(&plugin_id, &kind, doc.id.as_str());
                             domain_router.add(pid.clone(), server_config);
                             loaded_ids.push(pid);
                             count += 1;
@@ -163,17 +166,17 @@ pub async fn activate_plugin_providers(
         let sender_impl = Box::new(PluginProviderSenderImpl {
             sender: event_sender.clone(),
             shutdown: watch_token.clone(),
-            provider_prefix,
+            plugin_id: plugin_id.clone(),
+            kind: kind.clone(),
         });
 
-        let provider_type = provider.provider_type().to_string();
         let plugin_id_clone = plugin_id.clone();
 
         tokio::spawn(async move {
             if let Err(e) = provider.watch(sender_impl).await {
                 tracing::warn!(
                     plugin = %plugin_id_clone,
-                    provider = %provider_type,
+                    provider = %kind,
                     error = %e,
                     "plugin config provider watch exited with error"
                 );
@@ -287,7 +290,8 @@ mod tests {
             PluginProviderSenderImpl {
                 sender,
                 shutdown: CancellationToken::new(),
-                provider_prefix: "plugin:test:api".to_string(),
+                plugin_id: "test".to_string(),
+                kind: "api".to_string(),
             },
             receiver,
         )

@@ -8,6 +8,8 @@ use std::str::FromStr;
 
 use crate::error::CoreError;
 
+const PLUGIN_PROVIDER_PREFIX: &str = "plugin:";
+
 /// Identifies the source of a `ServerConfig`.
 ///
 /// Each config in the system is tagged with a `ProviderId` that tells
@@ -39,6 +41,22 @@ impl ProviderId {
     pub fn docker(container_name: impl Into<String>) -> Self {
         Self::new("docker", container_name)
     }
+
+    pub fn plugin(plugin_id: &str, kind: &str, document: impl Into<String>) -> Self {
+        Self::new(
+            format!("{PLUGIN_PROVIDER_PREFIX}{plugin_id}:{kind}"),
+            document,
+        )
+    }
+
+    pub fn plugin_owner(&self) -> Option<&str> {
+        let owned = self.provider_type.strip_prefix(PLUGIN_PROVIDER_PREFIX)?;
+        Some(
+            owned
+                .split_once(':')
+                .map_or(owned, |(plugin_id, _)| plugin_id),
+        )
+    }
 }
 
 impl fmt::Display for ProviderId {
@@ -55,5 +73,24 @@ impl FromStr for ProviderId {
             .split_once('@')
             .ok_or_else(|| CoreError::InvalidProviderId(s.to_string()))?;
         Ok(Self::new(ptype, uid))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    #[test]
+    fn plugin_ids_name_their_owner() {
+        let id = ProviderId::plugin("k8s", "api", "lobby");
+        assert_eq!(id.to_string(), "plugin:k8s:api@lobby");
+        assert_eq!(id.plugin_owner(), Some("k8s"));
+        assert_eq!(ProviderId::file("a.toml").plugin_owner(), None);
+        assert_eq!(
+            ProviderId::new("plugin:bare", "x").plugin_owner(),
+            Some("bare")
+        );
     }
 }

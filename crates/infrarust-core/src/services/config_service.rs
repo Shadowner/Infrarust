@@ -14,9 +14,6 @@ use toml_edit::DocumentMut;
 use crate::routing::DomainRouter;
 use crate::util::sync::lock;
 
-/// Provider types owned by a plugin are prefixed with `plugin:<id>:`.
-const PLUGIN_PROVIDER_PREFIX: &str = "plugin:";
-
 /// Wrapper around the proxy's configuration file and routing tables.
 pub struct ConfigServiceImpl {
     router: Arc<DomainRouter>,
@@ -139,9 +136,7 @@ impl ConfigService for ConfigServiceImpl {
             .map(|(provider_id, config)| ServerSource {
                 id: config.effective_id(),
                 provider_id: provider_id.to_string(),
-                editable: provider_id
-                    .provider_type
-                    .starts_with(PLUGIN_PROVIDER_PREFIX),
+                editable: provider_id.plugin_owner().is_some(),
                 provider_type: provider_id.provider_type,
             })
             .collect()
