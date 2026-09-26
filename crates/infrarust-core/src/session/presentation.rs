@@ -5,7 +5,7 @@ use bytes::Bytes;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::resource_pack::{PlayerResourcePackStatusEvent, ResourcePackOrigin};
 use infrarust_api::events::transfer::{PreTransferEvent, PreTransferResult, TransferOrigin};
-use infrarust_api::player::{Player, ResourcePackStatus, cookie_key};
+use infrarust_api::player::{Player, cookie_key};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::cookie::{
@@ -22,6 +22,7 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
+use crate::event_bus::conversion::pack_result_to_api;
 use crate::player::PlayerSession;
 use crate::player::packets::{
     boss_bar_added, boss_bar_removed, build_header_footer, encode_packet,
@@ -151,7 +152,7 @@ impl PresentationIds {
                 return false;
             }
         };
-        let status = ResourcePackStatus::from_id(result.id());
+        let status = pack_result_to_api(result);
         let (origin, pack_id) =
             session
                 .presentation()
