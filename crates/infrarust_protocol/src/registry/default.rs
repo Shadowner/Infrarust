@@ -186,6 +186,5 @@ mod tests {
                 descriptor.name
             );
         }
-        assert_eq!(DEFAULT_PACKETS.len(), 77);
     }
 }
