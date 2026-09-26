@@ -46,44 +46,26 @@ pub struct LocalManagerConfig {
     pub poll_interval: Duration,
 }
 
-/// Pterodactyl provider: REST API.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PterodactylManagerConfig {
-    pub api_url: String,
-    pub api_key: String,
-    pub server_id: String,
-    /// Idle duration before automatic shutdown (None = disabled)
-    #[serde(default)]
-    #[serde(with = "humantime_serde")]
-    pub shutdown_after: Option<Duration>,
-    /// Timeout for server startup
-    #[serde(default = "defaults::start_timeout")]
-    #[serde(with = "humantime_serde")]
-    pub start_timeout: Duration,
-    /// Polling interval to check server state
-    #[serde(default = "defaults::poll_interval")]
-    #[serde(with = "humantime_serde")]
-    pub poll_interval: Duration,
+macro_rules! rest_manager_config {
+    ($name:ident) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct $name {
+            pub api_url: String,
+            pub api_key: String,
+            pub server_id: String,
+            #[serde(default)]
+            #[serde(with = "humantime_serde")]
+            pub shutdown_after: Option<Duration>,
+            #[serde(default = "defaults::start_timeout")]
+            #[serde(with = "humantime_serde")]
+            pub start_timeout: Duration,
+            #[serde(default = "defaults::poll_interval")]
+            #[serde(with = "humantime_serde")]
+            pub poll_interval: Duration,
+        }
+    };
 }
 
-/// Crafty Controller provider: REST API.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CraftyManagerConfig {
-    pub api_url: String,
-    pub api_key: String,
-    pub server_id: String,
-    /// Idle duration before automatic shutdown (None = disabled)
-    #[serde(default)]
-    #[serde(with = "humantime_serde")]
-    pub shutdown_after: Option<Duration>,
-    /// Timeout for server startup
-    #[serde(default = "defaults::start_timeout")]
-    #[serde(with = "humantime_serde")]
-    pub start_timeout: Duration,
-    /// Polling interval to check server state
-    #[serde(default = "defaults::poll_interval")]
-    #[serde(with = "humantime_serde")]
-    pub poll_interval: Duration,
-}
+rest_manager_config!(PterodactylManagerConfig);
+rest_manager_config!(CraftyManagerConfig);
