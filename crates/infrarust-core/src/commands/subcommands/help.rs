@@ -3,28 +3,35 @@ use std::collections::HashMap;
 use infrarust_api::command::CommandContext;
 use infrarust_api::message::ProxyMessage;
 
-use crate::commands::{CommandServices, SubcommandHandler};
+use crate::commands::{AliasTarget, CommandServices, SubcommandHandler};
 
 pub(crate) fn handle_help(
     ctx: &CommandContext,
     args: &[String],
     subcommands: &HashMap<String, Box<dyn SubcommandHandler>>,
+    aliases: &HashMap<String, AliasTarget>,
     services: &CommandServices,
 ) {
     let player = &ctx.source;
+    let entry = |name: &str| -> Option<(&str, &str)> {
+        subcommands
+            .get(name)
+            .map(|sub| (sub.usage(), sub.description()))
+            .or_else(|| {
+                aliases
+                    .get(name)
+                    .map(|target| (target.alias.usage, target.alias.description))
+            })
+    };
 
     if let Some(cmd_name) = args.first() {
         let lower = cmd_name.to_lowercase();
-        if let Some(sub) = subcommands.get(&lower) {
+        if let Some((usage, description)) = entry(&lower) {
             if services
                 .permission_service
                 .is_command_allowed(&lower, player)
             {
-                player.send_message(ProxyMessage::info(&format!(
-                    "{} — {}",
-                    sub.usage(),
-                    sub.description()
-                )));
+                player.send_message(ProxyMessage::info(&format!("{usage} — {description}")));
             } else {
                 player.send_message(ProxyMessage::error(crate::commands::NO_PERMISSION));
             }
@@ -36,17 +43,15 @@ pub(crate) fn handle_help(
     } else {
         player.send_message(ProxyMessage::info("Available commands:"));
 
-        let mut names: Vec<&String> = subcommands.keys().collect();
+        let mut names: Vec<&String> = subcommands.keys().chain(aliases.keys()).collect();
         names.sort();
 
         for name in names {
-            if let Some(sub) = subcommands.get(name)
+            if let Some((_, description)) = entry(name)
                 && services.permission_service.is_command_allowed(name, player)
             {
                 player.send_message(ProxyMessage::detail(&format!(
-                    "  {:<12} - {}",
-                    sub.name(),
-                    sub.description()
+                    "  {name:<12} - {description}"
                 )));
             }
         }

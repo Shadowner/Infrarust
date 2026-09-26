@@ -28,6 +28,10 @@ pub(crate) trait SubcommandHandler: Send + Sync {
     fn description(&self) -> &str;
     fn usage(&self) -> &str;
 
+    fn aliases(&self) -> &'static [SubcommandAlias] {
+        &[]
+    }
+
     fn admin_only(&self) -> bool {
         false
     }
@@ -59,14 +63,27 @@ pub(crate) struct CommandServices {
     pub start_time: Instant,
 }
 
+pub(crate) struct SubcommandAlias {
+    pub(crate) name: &'static str,
+    pub(crate) description: &'static str,
+    pub(crate) usage: &'static str,
+}
+
+pub(crate) struct AliasTarget {
+    pub(crate) subcommand: String,
+    pub(crate) alias: &'static SubcommandAlias,
+}
+
 struct InfrarustRootCommand {
     subcommands: HashMap<String, Box<dyn SubcommandHandler>>,
+    aliases: HashMap<String, AliasTarget>,
     services: Arc<CommandServices>,
 }
 
 impl InfrarustRootCommand {
     fn new(services: Arc<CommandServices>) -> Self {
         let mut subcommands: HashMap<String, Box<dyn SubcommandHandler>> = HashMap::new();
+        let mut aliases = HashMap::new();
 
         let sub_list: Vec<Box<dyn SubcommandHandler>> = vec![
             Box::new(subcommands::help::HelpSubcommand),
@@ -77,19 +94,43 @@ impl InfrarustRootCommand {
             Box::new(subcommands::send::SendSubcommand),
             Box::new(subcommands::broadcast::BroadcastSubcommand),
             Box::new(subcommands::kick::KickSubcommand),
-            Box::new(subcommands::plugins::PluginsSubcommand),
             Box::new(subcommands::plugin::PluginSubcommand),
             Box::new(subcommands::reload::ReloadSubcommand),
         ];
 
         for sub in sub_list {
+            for alias in sub.aliases() {
+                aliases.insert(
+                    alias.name.to_string(),
+                    AliasTarget {
+                        subcommand: sub.name().to_string(),
+                        alias,
+                    },
+                );
+            }
             subcommands.insert(sub.name().to_string(), sub);
         }
 
         Self {
             subcommands,
+            aliases,
             services,
         }
+    }
+
+    fn permission_entries(&self) -> impl Iterator<Item = (&str, &str, bool)> {
+        let subcommands = self
+            .subcommands
+            .values()
+            .map(|sub| (sub.name(), sub.description(), sub.admin_only()));
+        let aliases = self.aliases.values().map(|target| {
+            (
+                target.alias.name,
+                target.alias.description,
+                self.subcommands[&target.subcommand].admin_only(),
+            )
+        });
+        subcommands.chain(aliases)
     }
 
     fn allowed(&self, name: &str, source: &CommandSource) -> bool {
@@ -104,6 +145,7 @@ impl InfrarustRootCommand {
                 let prefix = partial_args.first().map(String::as_str).unwrap_or("");
                 self.subcommands
                     .keys()
+                    .chain(self.aliases.keys())
                     .filter(|name| name.starts_with(prefix))
                     .filter(|name| self.allowed(name, source))
                     .cloned()
@@ -111,7 +153,7 @@ impl InfrarustRootCommand {
             }
             _ => {
                 let sub_name = partial_args[0].to_lowercase();
-                if !self.allowed(&sub_name, source) {
+                if !self.allowed(&sub_name, source) || self.aliases.contains_key(&sub_name) {
                     return vec![];
                 }
                 if let Some(sub) = self.subcommands.get(&sub_name) {
@@ -149,6 +191,7 @@ impl CommandHandler for InfrarustRootCommand {
                         &ctx,
                         &remaining_args,
                         &self.subcommands,
+                        &self.aliases,
                         &self.services,
                     );
                 }
@@ -158,8 +201,19 @@ impl CommandHandler for InfrarustRootCommand {
                         .execute(&ctx, &remaining_args, &self.services)
                         .await;
                 }
+                Some(name) if self.aliases.contains_key(name) => {
+                    self.subcommands[&self.aliases[name].subcommand]
+                        .execute(&ctx, &[], &self.services)
+                        .await;
+                }
                 _ => {
-                    subcommands::help::handle_help(&ctx, &[], &self.subcommands, &self.services);
+                    subcommands::help::handle_help(
+                        &ctx,
+                        &[],
+                        &self.subcommands,
+                        &self.aliases,
+                        &self.services,
+                    );
                 }
             }
         })
@@ -199,12 +253,9 @@ pub fn register_builtin_commands(
 
     let root_cmd = InfrarustRootCommand::new(services);
 
-    proxy_services.permission_service.register_subcommands(
-        root_cmd
-            .subcommands
-            .values()
-            .map(|sub| (sub.name(), sub.description(), sub.admin_only())),
-    );
+    proxy_services
+        .permission_service
+        .register_subcommands(root_cmd.permission_entries());
 
     command_manager.register_builtin(
         CommandSpec::new("infrarust")
@@ -253,11 +304,7 @@ mod tests {
         });
 
         let root = InfrarustRootCommand::new(services);
-        permission_service.register_subcommands(
-            root.subcommands
-                .values()
-                .map(|sub| (sub.name(), sub.description(), sub.admin_only())),
-        );
+        permission_service.register_subcommands(root.permission_entries());
         root
     }
 

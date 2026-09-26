@@ -2,7 +2,7 @@ use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::message::ProxyMessage;
 
-use crate::commands::{CommandServices, SubcommandHandler};
+use crate::commands::{CommandServices, SubcommandAlias, SubcommandHandler};
 use crate::services::command_manager::DispatchOutcome;
 
 pub(crate) struct PluginSubcommand;
@@ -14,6 +14,14 @@ impl SubcommandHandler for PluginSubcommand {
 
     fn description(&self) -> &str {
         "Run a plugin command by namespace"
+    }
+
+    fn aliases(&self) -> &'static [SubcommandAlias] {
+        &[SubcommandAlias {
+            name: "plugins",
+            description: "List loaded plugins",
+            usage: "/ir plugins",
+        }]
     }
 
     fn admin_only(&self) -> bool {
