@@ -24,9 +24,9 @@ use crate::pipeline::admission::{self, Admission};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::RoutingData;
 use crate::services::ProxyServices;
+use crate::status::motd::{DEFAULT_PROXY_MOTD, default_entry, state_max_players, state_motd};
 use crate::util::normalize_handshake;
 
-const DEFAULT_MOTD: &str = "An Infrarust Proxy";
 const LEGACY_REPLY_PREFIX: &str = "\u{a7}1\0";
 
 pub struct LegacyHandler {
@@ -268,13 +268,8 @@ impl LegacyHandler {
                 .cast_signed();
             (motd, online, max)
         } else {
-            let entry = self
-                .services
-                .config
-                .default_motd
-                .as_ref()
-                .and_then(|m| m.online.as_ref());
-            let motd = entry.map_or_else(|| DEFAULT_MOTD.to_string(), |e| e.text.clone());
+            let entry = default_entry(&self.services.config);
+            let motd = entry.map_or_else(|| DEFAULT_PROXY_MOTD.to_string(), |e| e.text.clone());
             let online = registry.count() as i32;
             let max = entry.and_then(|e| e.max_players).unwrap_or(0).cast_signed();
             (motd, online, max)
@@ -295,26 +290,14 @@ impl LegacyHandler {
         state: ServerState,
         config_id: &str,
     ) -> LegacyPingResponse {
-        let (motd_entry, default_text) = match state {
-            ServerState::Sleeping => (
-                cfg.motd.sleeping.as_ref(),
-                "\u{00a7}7Server sleeping \u{2014} \u{00a7}aConnect to wake up!",
-            ),
-            ServerState::Starting => (cfg.motd.starting.as_ref(), "\u{00a7}eServer is starting..."),
-            ServerState::Crashed => (cfg.motd.crashed.as_ref(), "\u{00a7}cServer unavailable"),
-            ServerState::Stopping => (cfg.motd.stopping.as_ref(), "\u{00a7}6Server is stopping..."),
-            _ => (None, "A Minecraft Server"),
-        };
+        let (entry, default_text) = state_motd(&cfg.motd, state);
 
         LegacyPingResponse {
             protocol_version: ProtocolVersion::CURRENT.0,
             server_version: ProtocolVersion::CURRENT.name().to_string(),
-            motd: motd_entry.map_or_else(|| default_text.to_string(), |e| e.text.clone()),
+            motd: entry.map_or_else(|| default_text.to_string(), |e| e.text.clone()),
             online_players: self.services.connection_registry.count_by_server(config_id) as i32,
-            max_players: motd_entry
-                .and_then(|e| e.max_players)
-                .unwrap_or(cfg.max_players)
-                .cast_signed(),
+            max_players: state_max_players(entry, cfg),
         }
     }
 
@@ -587,12 +570,8 @@ impl LegacyHandler {
     }
 
     fn default_motd_text(&self) -> String {
-        self.services
-            .config
-            .default_motd
-            .as_ref()
-            .and_then(|m| m.online.as_ref())
-            .map_or_else(|| DEFAULT_MOTD.to_string(), |e| e.text.clone())
+        default_entry(&self.services.config)
+            .map_or_else(|| DEFAULT_PROXY_MOTD.to_string(), |e| e.text.clone())
     }
 }
 
@@ -772,6 +751,48 @@ mod tests {
             0,
             "the count must be given back when the forward ends"
         );
+    }
+
+    #[test]
+    fn legacy_and_modern_state_motds_report_the_same_max_players_and_text() {
+        let services = test_proxy_services();
+        let handler = LegacyHandler::new(
+            services,
+            Arc::new(BackendConnector::new(
+                std::time::Duration::from_secs(2),
+                infrarust_config::KeepaliveConfig::default(),
+            )),
+            CancellationToken::new(),
+        );
+        let mut cfg: ServerConfig = toml::from_str(
+            "name = \"lobby\"\ndomains = [\"lobby.test\"]\naddresses = [\"127.0.0.1:25566\"]\nmax_players = 42\n",
+        )
+        .unwrap();
+
+        for state in [
+            ServerState::Sleeping,
+            ServerState::Starting,
+            ServerState::Crashed,
+            ServerState::Stopping,
+        ] {
+            let legacy = handler.state_response(&cfg, state, "lobby");
+            let modern = crate::status::StatusHandler::build_state_motd(&cfg, state);
+            assert_eq!(modern.players.max, legacy.max_players, "{state:?}");
+            assert_eq!(modern.players.max, 42, "{state:?}");
+            assert_eq!(modern.description["text"], legacy.motd, "{state:?}");
+        }
+
+        cfg.motd.sleeping = Some(infrarust_config::MotdEntry {
+            text: "zzz".into(),
+            favicon: None,
+            version_name: None,
+            max_players: Some(7),
+        });
+        let legacy = handler.state_response(&cfg, ServerState::Sleeping, "lobby");
+        let modern = crate::status::StatusHandler::build_state_motd(&cfg, ServerState::Sleeping);
+        assert_eq!((modern.players.max, legacy.max_players), (7, 7));
+        assert_eq!(modern.description["text"], "zzz");
+        assert_eq!(legacy.motd, "zzz");
     }
 
     #[test]

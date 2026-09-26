@@ -13,6 +13,7 @@ pub const STATUS_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V1_7_2;
 pub mod cache;
 pub mod favicon;
 pub mod handler;
+pub mod motd;
 pub mod relay;
 pub mod response;
 

@@ -25,6 +25,7 @@ use infrarust_server_manager::{ServerManagerService, ServerState};
 use super::STATUS_PROTOCOL_VERSION;
 use super::cache::StatusCache;
 use super::favicon::FaviconCache;
+use super::motd::{DEFAULT_PROXY_MOTD, state_max_players, state_motd};
 use super::relay::StatusRelayClient;
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
@@ -277,44 +278,30 @@ impl StatusHandler {
         self.get_unreachable_motd(config, connection_registry, config_id)
     }
 
-    /// Builds a synthetic MOTD for the given server manager state.
-    fn build_state_motd(config: &ServerConfig, state: ServerState) -> ServerPingResponse {
-        let (motd_entry, default_text) = match state {
-            ServerState::Sleeping => (
-                config.motd.sleeping.as_ref(),
-                "\u{00a7}7Server sleeping \u{2014} \u{00a7}aConnect to wake up!",
-            ),
-            ServerState::Starting => (
-                config.motd.starting.as_ref(),
-                "\u{00a7}eServer is starting...",
-            ),
-            ServerState::Crashed => (config.motd.crashed.as_ref(), "\u{00a7}cServer unavailable"),
-            ServerState::Stopping => (
-                config.motd.stopping.as_ref(),
-                "\u{00a7}6Server is stopping...",
-            ),
-            _ => (None, "A Minecraft Server"),
-        };
-
-        motd_entry.map_or_else(
-            || ServerPingResponse::synthetic(default_text, None, None, None),
+    pub(crate) fn build_state_motd(
+        config: &ServerConfig,
+        state: ServerState,
+    ) -> ServerPingResponse {
+        let (entry, default_text) = state_motd(&config.motd, state);
+        let max_players = Some(state_max_players(entry, config));
+        entry.map_or_else(
+            || ServerPingResponse::synthetic(default_text, None, None, max_players),
             |entry| {
                 ServerPingResponse::synthetic(
                     &entry.text,
                     entry.favicon.as_deref(),
                     entry.version_name.as_deref(),
-                    entry.max_players.map(u32::cast_signed),
+                    max_players,
                 )
             },
         )
     }
 
-    /// Builds a response from the global `default_motd` (unknown domain).
     fn build_default_motd_response(&self) -> ServerPingResponse {
         let entry = self.default_motd.as_ref().and_then(|m| m.online.as_ref());
 
         entry.map_or_else(
-            || ServerPingResponse::synthetic("An Infrarust Proxy", None, None, None),
+            || ServerPingResponse::synthetic(DEFAULT_PROXY_MOTD, None, None, None),
             |entry| {
                 ServerPingResponse::synthetic(
                     &entry.text,
