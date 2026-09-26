@@ -2,6 +2,22 @@ use crate::error::{ProtocolError, ProtocolResult};
 
 pub const DEFAULT_PACKET_COMPRESSION_LEVEL: u32 = 4;
 
+pub const MAX_PACKET_COMPRESSION_LEVEL: u32 = 9;
+
+fn invalid_level(level: u32) -> ProtocolError {
+    ProtocolError::invalid(format!(
+        "compression level {level} is outside 0..={MAX_PACKET_COMPRESSION_LEVEL}"
+    ))
+}
+
+fn checked_level(level: u32) -> ProtocolResult<u32> {
+    if level <= MAX_PACKET_COMPRESSION_LEVEL {
+        Ok(level)
+    } else {
+        Err(invalid_level(level))
+    }
+}
+
 pub trait ZlibCompressor {
     fn compress(&mut self, input: &[u8], output: &mut Vec<u8>) -> ProtocolResult<()>;
 }
@@ -22,9 +38,15 @@ pub struct Flate2Compressor {
 
 #[cfg_attr(feature = "libdeflater", allow(dead_code))]
 impl Flate2Compressor {
-    pub const fn new(level: u32) -> Self {
+    pub fn new(level: u32) -> ProtocolResult<Self> {
+        Ok(Self {
+            level: flate2::Compression::new(checked_level(level)?),
+        })
+    }
+
+    pub(crate) const fn with_default_level() -> Self {
         Self {
-            level: flate2::Compression::new(level),
+            level: flate2::Compression::new(DEFAULT_PACKET_COMPRESSION_LEVEL),
         }
     }
 }
@@ -85,11 +107,27 @@ pub struct LibdeflateCompressor {
 }
 
 #[cfg(feature = "libdeflater")]
+const DEFAULT_LIBDEFLATE_LEVEL: libdeflater::CompressionLvl =
+    match libdeflater::CompressionLvl::new(DEFAULT_PACKET_COMPRESSION_LEVEL as i32) {
+        Ok(level) => level,
+        Err(_) => panic!("the default packet compression level is not a libdeflate level"),
+    };
+
+#[cfg(feature = "libdeflater")]
 impl LibdeflateCompressor {
-    pub fn new(level: u32) -> Self {
-        let lvl = libdeflater::CompressionLvl::new(level as i32).unwrap_or_default();
-        Self {
+    pub fn new(level: u32) -> ProtocolResult<Self> {
+        let lvl = i32::try_from(checked_level(level)?)
+            .ok()
+            .and_then(|level| libdeflater::CompressionLvl::new(level).ok())
+            .ok_or_else(|| invalid_level(level))?;
+        Ok(Self {
             compressor: libdeflater::Compressor::new(lvl),
+        })
+    }
+
+    pub(crate) fn with_default_level() -> Self {
+        Self {
+            compressor: libdeflater::Compressor::new(DEFAULT_LIBDEFLATE_LEVEL),
         }
     }
 }
@@ -146,14 +184,25 @@ impl ZlibDecompressor for LibdeflateDecompressor {
     }
 }
 
-pub fn new_compressor(level: u32) -> Box<dyn ZlibCompressor + Send + Sync> {
+pub fn new_compressor(level: u32) -> ProtocolResult<Box<dyn ZlibCompressor + Send + Sync>> {
     #[cfg(feature = "libdeflater")]
     {
-        Box::new(LibdeflateCompressor::new(level))
+        Ok(Box::new(LibdeflateCompressor::new(level)?))
     }
     #[cfg(not(feature = "libdeflater"))]
     {
-        Box::new(Flate2Compressor::new(level))
+        Ok(Box::new(Flate2Compressor::new(level)?))
+    }
+}
+
+pub fn default_compressor() -> Box<dyn ZlibCompressor + Send + Sync> {
+    #[cfg(feature = "libdeflater")]
+    {
+        Box::new(LibdeflateCompressor::with_default_level())
+    }
+    #[cfg(not(feature = "libdeflater"))]
+    {
+        Box::new(Flate2Compressor::with_default_level())
     }
 }
 
@@ -175,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_compress_decompress_round_trip() {
-        let mut compressor = new_compressor(4);
+        let mut compressor = new_compressor(4).unwrap();
         let mut decompressor = new_decompressor();
 
         let original = b"Hello, Minecraft protocol compression!";
@@ -194,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_compress_decompress_large_data() {
-        let mut compressor = new_compressor(4);
+        let mut compressor = new_compressor(4).unwrap();
         let mut decompressor = new_decompressor();
 
         let original: Vec<u8> = (0..65536).map(|i: u32| (i % 251) as u8).collect();
@@ -210,6 +259,17 @@ mod tests {
     }
 
     #[test]
+    fn test_out_of_range_compression_level_is_rejected() {
+        let err = new_compressor(MAX_PACKET_COMPRESSION_LEVEL + 1)
+            .err()
+            .expect("a level above the maximum must be rejected");
+        assert!(matches!(err, ProtocolError::Invalid { .. }), "{err}");
+        assert!(new_compressor(MAX_PACKET_COMPRESSION_LEVEL).is_ok());
+        assert!(new_compressor(0).is_ok());
+        assert!(new_compressor(DEFAULT_PACKET_COMPRESSION_LEVEL).is_ok());
+    }
+
+    #[test]
     fn test_decompress_corrupted_data() {
         let mut decompressor = new_decompressor();
         let corrupted = vec![0x78, 0x9C, 0xFF, 0xFF, 0xFF];
@@ -220,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_flate2_corrupt_trailer_rejected() {
-        let mut compressor = Flate2Compressor::new(DEFAULT_PACKET_COMPRESSION_LEVEL);
+        let mut compressor = Flate2Compressor::new(DEFAULT_PACKET_COMPRESSION_LEVEL).unwrap();
         let original = b"trailer integrity check payload";
         let mut compressed = Vec::new();
         compressor.compress(original, &mut compressed).unwrap();
@@ -261,12 +321,13 @@ mod tests {
         };
 
         roundtrip(
-            Box::new(Flate2Compressor::new(DEFAULT_PACKET_COMPRESSION_LEVEL)),
+            Box::new(Flate2Compressor::new(DEFAULT_PACKET_COMPRESSION_LEVEL).unwrap()),
             Box::new(LibdeflateDecompressor::new()),
         );
         roundtrip(
-            Box::new(LibdeflateCompressor::new(DEFAULT_PACKET_COMPRESSION_LEVEL)),
+            Box::new(LibdeflateCompressor::new(DEFAULT_PACKET_COMPRESSION_LEVEL).unwrap()),
             Box::new(Flate2Decompressor::new()),
         );
+        roundtrip(default_compressor(), Box::new(Flate2Decompressor::new()));
     }
 }

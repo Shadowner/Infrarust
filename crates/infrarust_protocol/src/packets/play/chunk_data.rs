@@ -102,7 +102,7 @@ fn encode_pre_1_14_empty_chunk(
 fn zlib_compress(data: &[u8]) -> ProtocolResult<Vec<u8>> {
     use crate::io::compression::new_compressor;
 
-    let mut compressor = new_compressor(6);
+    let mut compressor = new_compressor(6)?;
     let mut out = Vec::new();
     compressor.compress(data, &mut out)?;
     Ok(out)
