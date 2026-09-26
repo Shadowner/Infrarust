@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::services::config_service::{
-    ConfigService, ConfigWriteError, ProxyMode, ServerConfig, ServerSource,
+    ConfigService, ConfigWriteError, ServerConfig, ServerSource,
 };
 use crate::types::{ServerAddress, ServerId};
 
@@ -50,18 +50,7 @@ impl MockConfigService {
 
     #[must_use]
     pub fn server(id: impl Into<ServerId>) -> ServerConfig {
-        ServerConfig::new(
-            id.into(),
-            None,
-            vec![],
-            vec![],
-            ProxyMode::Passthrough,
-            vec![],
-            0,
-            None,
-            false,
-            false,
-        )
+        ServerConfig::new(id.into())
     }
 
     #[must_use]

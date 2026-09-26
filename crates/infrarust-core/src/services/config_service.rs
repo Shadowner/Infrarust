@@ -72,25 +72,25 @@ impl ConfigServiceImpl {
 
     /// Converts an internal [`infrarust_config::ServerConfig`] to an API [`ServerConfig`].
     fn convert_config(id: &str, config: &infrarust_config::ServerConfig) -> ServerConfig {
-        ServerConfig::new(
-            ServerId::new(id),
-            config.network.clone(),
-            config
-                .addresses
-                .iter()
-                .map(|a| ServerAddress {
-                    host: a.address.host.clone(),
-                    port: a.address.port,
-                })
-                .collect(),
-            config.domains.clone(),
-            convert_proxy_mode(config.proxy_mode),
-            config.limbo_handlers.clone(),
-            config.max_players,
-            config.disconnect_message.clone(),
-            config.send_proxy_protocol,
-            config.server_manager.is_some(),
-        )
+        ServerConfig::new(ServerId::new(id))
+            .network(config.network.clone())
+            .addresses(
+                config
+                    .addresses
+                    .iter()
+                    .map(|a| ServerAddress {
+                        host: a.address.host.clone(),
+                        port: a.address.port,
+                    })
+                    .collect(),
+            )
+            .domains(config.domains.clone())
+            .proxy_mode(convert_proxy_mode(config.proxy_mode))
+            .limbo_handlers(config.limbo_handlers.clone())
+            .max_players(config.max_players)
+            .disconnect_message(config.disconnect_message.clone())
+            .send_proxy_protocol(config.send_proxy_protocol)
+            .has_server_manager(config.server_manager.is_some())
     }
 }
 
