@@ -8,6 +8,7 @@ use infrarust_api::player::Player;
 use uuid::Uuid;
 
 use crate::console::ConsoleServices;
+use crate::console::commands::{table, usage};
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{CommandCategory, CommandOutput};
 
@@ -37,7 +38,7 @@ impl ConsoleCommand for OpCommand {
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
             let Some(username) = args.first() else {
-                return CommandOutput::Error("Usage: op <username>".to_string());
+                return usage(self);
             };
             if let Some(refused) = delegated(services) {
                 return refused;
@@ -106,7 +107,7 @@ impl ConsoleCommand for DeopCommand {
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
             let Some(username) = args.first() else {
-                return CommandOutput::Error("Usage: deop <username>".to_string());
+                return usage(self);
             };
             if let Some(refused) = delegated(services) {
                 return refused;
@@ -178,9 +179,7 @@ impl ConsoleCommand for OpListCommand {
                 return CommandOutput::Success("No admins configured.".to_string());
             }
 
-            let renderer = crate::console::output::OutputRenderer::new();
-            let mut table = renderer.create_table();
-            table.set_header(vec!["UUID", "Username (if online)"]);
+            let mut table = table(&["UUID", "Username (if online)"]);
 
             for uuid in &admins {
                 let online_name = services
@@ -188,13 +187,10 @@ impl ConsoleCommand for OpListCommand {
                     .get(uuid)
                     .map(|p| p.profile().username.clone())
                     .unwrap_or_else(|| "-".to_string());
-                table.add_row(vec![Cell::new(uuid.to_string()), Cell::new(online_name)]);
+                table.row([Cell::new(uuid.to_string()), Cell::new(online_name)]);
             }
 
-            CommandOutput::Table {
-                table,
-                footer: Some(format!(" {} admin(s)", admins.len())),
-            }
+            table.finish("admin")
         })
     }
 }

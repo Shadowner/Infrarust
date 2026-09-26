@@ -9,6 +9,7 @@ use infrarust_api::types::{Component, ServerId};
 
 use crate::commands::actions::{broadcast, find_player, kick_player, send_player};
 use crate::console::ConsoleServices;
+use crate::console::commands::{args, table, usage};
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
 
@@ -53,9 +54,7 @@ impl ConsoleCommand for ListPlayersCommand {
                 return CommandOutput::Success("No players online".to_string());
             }
 
-            let renderer = crate::console::output::OutputRenderer::new();
-            let mut table = renderer.create_table();
-            table.set_header(vec!["Player", "IP", "Server", "Mode", "Protocol"]);
+            let mut table = table(&["Player", "IP", "Server", "Mode", "Protocol"]);
 
             for player in &players {
                 let server = player
@@ -67,7 +66,7 @@ impl ConsoleCommand for ListPlayersCommand {
                 } else {
                     "passthrough"
                 };
-                table.add_row(vec![
+                table.row([
                     Cell::new(player.profile().username.as_str()),
                     Cell::new(player.remote_addr().ip().to_string()),
                     Cell::new(server),
@@ -76,10 +75,7 @@ impl ConsoleCommand for ListPlayersCommand {
                 ]);
             }
 
-            CommandOutput::Table {
-                table,
-                footer: Some(format!(" {} player(s) online", players.len())),
-            }
+            table.finish("player")
         })
     }
 }
@@ -110,7 +106,7 @@ impl ConsoleCommand for FindPlayerCommand {
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
             let Some(name) = args.first() else {
-                return CommandOutput::Error("Usage: find <player>".to_string());
+                return usage(self);
             };
 
             match find_player(&*services.player_registry, name) {
@@ -166,9 +162,9 @@ impl ConsoleCommand for KickCommand {
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
             let Some((name, reason)) = args.split_first() else {
-                return CommandOutput::Error("Usage: kick <player> [reason...]".to_string());
+                return usage(self);
             };
-            let reason = (!reason.is_empty()).then(|| reason.join(" "));
+            let reason = args::rest(reason);
 
             match kick_player(&*services.player_registry, name, reason).await {
                 Ok(kicked) => CommandOutput::Success(format!(
@@ -210,9 +206,8 @@ impl ConsoleCommand for KickIpCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let ip_str = match args.first() {
-                Some(ip) => *ip,
-                None => return CommandOutput::Error("Usage: kick-ip <ip>".to_string()),
+            let Some(ip_str) = args.first() else {
+                return usage(self);
             };
 
             let ip: std::net::IpAddr = match ip_str.parse() {
@@ -268,7 +263,7 @@ impl ConsoleCommand for SendCommand {
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
             let [name, server, ..] = args else {
-                return CommandOutput::Error("Usage: send <player> <server>".to_string());
+                return usage(self);
             };
 
             match send_player(
@@ -317,13 +312,12 @@ impl ConsoleCommand for SendAllCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let server = match args.first() {
-                Some(s) => *s,
-                None => return CommandOutput::Error("Usage: send-all <server>".to_string()),
+            let Some(server) = args.first() else {
+                return usage(self);
             };
 
             let players = services.player_registry.get_all_players();
-            let target = ServerId::new(server);
+            let target = ServerId::new(*server);
             let mut sent = 0usize;
             let mut errors = 0usize;
 
@@ -387,7 +381,7 @@ impl ConsoleCommand for MsgCommand {
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
             if args.len() < 2 {
-                return CommandOutput::Error("Usage: msg <player> <message...>".to_string());
+                return usage(self);
             }
 
             let name = args[0];
@@ -443,7 +437,7 @@ impl ConsoleCommand for BroadcastCommand {
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
             if args.is_empty() {
-                return CommandOutput::Error("Usage: broadcast <message...>".to_string());
+                return usage(self);
             }
 
             match broadcast(

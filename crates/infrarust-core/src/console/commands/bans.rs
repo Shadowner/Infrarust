@@ -9,9 +9,10 @@ use infrarust_api::services::ban_service::{
 };
 
 use crate::console::ConsoleServices;
+use crate::console::commands::{args, table, usage};
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
-use crate::console::parser::{format_duration_short, parse_ban_target, parse_duration_arg};
+use crate::console::parser::{format_duration_short, parse_ban_target};
 
 pub struct BanCommand;
 
@@ -38,64 +39,12 @@ impl ConsoleCommand for BanCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let name = match args.first() {
-                Some(n) => *n,
-                None => {
-                    return CommandOutput::Error(
-                        "Usage: ban <player> [duration] [reason...]".to_string(),
-                    );
-                }
-            };
-
-            let (duration, reason_start) = if args.len() > 1 {
-                match parse_duration_arg(args[1]) {
-                    Ok(d) => (d, 2),
-                    Err(_) => (None, 1),
-                }
-            } else {
-                (None, args.len())
-            };
-
-            let reason = if reason_start < args.len() {
-                Some(args[reason_start..].join(" "))
-            } else {
-                None
+            let Some(name) = args.first() else {
+                return usage(self);
             };
 
             let target = BanTarget::Username(name.to_string());
-            let issued = match services
-                .ban_manager
-                .issue(console_ban(target, reason.clone(), duration))
-                .await
-            {
-                Ok(issued) => issued,
-                Err(e) => return CommandOutput::Error(format!("Failed to ban {name}: {e}")),
-            };
-
-            let duration_str = duration
-                .map(format_duration_short)
-                .unwrap_or_else(|| "permanently".to_string());
-            let reason_str = reason.as_deref().unwrap_or("No reason specified");
-
-            tracing::info!(
-                target: "console",
-                player = name,
-                duration = %duration_str,
-                reason = %reason_str,
-                "Player banned from console"
-            );
-
-            let mut lines = vec![OutputLine::Success(format!(
-                "Banned {name} {duration_str} (reason: {reason_str})"
-            ))];
-            if issued.kicked > 0 {
-                lines.push(OutputLine::Success(format!(
-                    "Kicked {} player(s)",
-                    issued.kicked
-                )));
-            }
-
-            CommandOutput::Lines(lines)
+            issue_ban(services, target, name, &args[1..], String::new()).await
         })
     }
 }
@@ -129,69 +78,21 @@ impl ConsoleCommand for BanIpCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let ip_str = match args.first() {
-                Some(ip) => *ip,
-                None => {
-                    return CommandOutput::Error(
-                        "Usage: ban-ip <ip|cidr> [duration] [reason...]".to_string(),
-                    );
-                }
+            let Some(ip_str) = args.first() else {
+                return usage(self);
             };
 
             let Some(target) = parse_address_target(ip_str) else {
                 return CommandOutput::Error(format!("Invalid IP address or range: '{ip_str}'"));
             };
-            let ip = ip_str;
-
-            let (duration, reason_start) = if args.len() > 1 {
-                match parse_duration_arg(args[1]) {
-                    Ok(d) => (d, 2),
-                    Err(_) => (None, 1),
-                }
-            } else {
-                (None, args.len())
-            };
-
-            let reason = if reason_start < args.len() {
-                Some(args[reason_start..].join(" "))
-            } else {
-                None
-            };
-
-            let issued = match services
-                .ban_manager
-                .issue(console_ban(target, reason.clone(), duration))
-                .await
-            {
-                Ok(issued) => issued,
-                Err(e) => return CommandOutput::Error(format!("Failed to ban IP {ip}: {e}")),
-            };
-
-            let duration_str = duration
-                .map(format_duration_short)
-                .unwrap_or_else(|| "permanently".to_string());
-            let reason_str = reason.as_deref().unwrap_or("No reason specified");
-
-            tracing::info!(
-                target: "console",
-                ip = %ip,
-                duration = %duration_str,
-                reason = %reason_str,
-                "IP banned from console"
-            );
-
-            let kicked = issued.kicked;
-            let mut lines = vec![OutputLine::Success(format!(
-                "Banned IP {ip} {duration_str} (reason: {reason_str})"
-            ))];
-
-            if kicked > 0 {
-                lines.push(OutputLine::Success(format!(
-                    "Kicked {kicked} player(s) from IP {ip}"
-                )));
-            }
-
-            CommandOutput::Lines(lines)
+            issue_ban(
+                services,
+                target,
+                &format!("IP {ip_str}"),
+                &args[1..],
+                format!(" from IP {ip_str}"),
+            )
+            .await
         })
     }
 }
@@ -225,9 +126,8 @@ impl ConsoleCommand for UnbanCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let name = match args.first() {
-                Some(n) => *n,
-                None => return CommandOutput::Error("Usage: unban <player>".to_string()),
+            let Some(name) = args.first() else {
+                return usage(self);
             };
 
             let target = BanTarget::Username(name.to_string());
@@ -272,9 +172,8 @@ impl ConsoleCommand for UnbanIpCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let ip_str = match args.first() {
-                Some(ip) => *ip,
-                None => return CommandOutput::Error("Usage: unban-ip <ip|cidr>".to_string()),
+            let Some(ip_str) = args.first() else {
+                return usage(self);
             };
 
             let Some(target) = parse_address_target(ip_str) else {
@@ -334,40 +233,18 @@ impl ConsoleCommand for BanListCommand {
                 return CommandOutput::Success("No active bans".to_string());
             }
 
-            let renderer = crate::console::output::OutputRenderer::new();
-            let mut table = renderer.create_table();
-            table.set_header(vec![
-                "ID",
-                "Target",
-                "Type",
-                "Reason",
-                "Source",
-                "Remaining",
-            ]);
-
+            let mut table = table(&["ID", "Target", "Type", "Reason", "Source", "Remaining"]);
             for ban in &active {
-                let remaining = if ban.is_permanent() {
-                    "permanent".to_string()
-                } else {
-                    ban.remaining()
-                        .map(format_duration_short)
-                        .unwrap_or_else(|| "expired".to_string())
-                };
-
-                table.add_row(vec![
+                table.row([
                     Cell::new(&ban.id),
                     Cell::new(format_ban_target(&ban.target)),
                     Cell::new(ban.target.display_type()),
                     Cell::new(ban.reason.as_deref().unwrap_or("-")),
                     Cell::new(&ban.source),
-                    Cell::new(remaining),
+                    Cell::new(remaining_of(ban)),
                 ]);
             }
-
-            CommandOutput::Table {
-                table,
-                footer: Some(format!(" {} active ban(s)", active.len())),
-            }
+            table.finish("active ban")
         })
     }
 }
@@ -397,23 +274,15 @@ impl ConsoleCommand for BanInfoCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let arg = match args.first() {
-                Some(a) => *a,
-                None => return CommandOutput::Error("Usage: baninfo <player|ip|uuid>".to_string()),
+            let Some(arg) = args.first() else {
+                return usage(self);
             };
 
             let target = parse_ban_target(arg);
 
             match services.ban_manager.get(&target).await {
                 Ok(Some(ban)) => {
-                    let remaining = if ban.is_permanent() {
-                        "permanent".to_string()
-                    } else {
-                        ban.remaining()
-                            .map(format_duration_short)
-                            .unwrap_or_else(|| "expired".to_string())
-                    };
-
+                    let remaining = remaining_of(&ban);
                     CommandOutput::Lines(vec![
                         OutputLine::Info(format!("  ID: {}", ban.id)),
                         OutputLine::Info(format!("  Target: {}", format_ban_target(&ban.target))),
@@ -432,6 +301,57 @@ impl ConsoleCommand for BanInfoCommand {
             }
         })
     }
+}
+
+async fn issue_ban(
+    services: &ConsoleServices,
+    target: BanTarget,
+    label: &str,
+    tail: &[&str],
+    kicked_scope: String,
+) -> CommandOutput {
+    let (duration, reason) = args::duration_and_reason(tail);
+    let issued = match services
+        .ban_manager
+        .issue(console_ban(target, reason.clone(), duration))
+        .await
+    {
+        Ok(issued) => issued,
+        Err(e) => return CommandOutput::Error(format!("Failed to ban {label}: {e}")),
+    };
+
+    let duration_str = duration
+        .map(format_duration_short)
+        .unwrap_or_else(|| "permanently".to_string());
+    let reason_str = reason.as_deref().unwrap_or("No reason specified");
+
+    tracing::info!(
+        target: "console",
+        banned = label,
+        duration = %duration_str,
+        reason = %reason_str,
+        "ban issued from console"
+    );
+
+    let mut lines = vec![OutputLine::Success(format!(
+        "Banned {label} {duration_str} (reason: {reason_str})"
+    ))];
+    if issued.kicked > 0 {
+        lines.push(OutputLine::Success(format!(
+            "Kicked {} player(s){kicked_scope}",
+            issued.kicked
+        )));
+    }
+    CommandOutput::Lines(lines)
+}
+
+fn remaining_of(ban: &BanEntry) -> String {
+    if ban.is_permanent() {
+        return "permanent".to_string();
+    }
+    ban.remaining()
+        .map(format_duration_short)
+        .unwrap_or_else(|| "expired".to_string())
 }
 
 fn format_ban_target(target: &BanTarget) -> String {

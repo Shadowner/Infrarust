@@ -6,6 +6,7 @@ use std::pin::Pin;
 use comfy_table::Cell;
 
 use crate::console::ConsoleServices;
+use crate::console::commands::{table, usage};
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
 use crate::plugin::PluginState;
@@ -46,9 +47,7 @@ impl ConsoleCommand for PluginsCommand {
                 return CommandOutput::Success("No plugins loaded".to_string());
             }
 
-            let renderer = crate::console::output::OutputRenderer::new();
-            let mut table = renderer.create_table();
-            table.set_header(vec!["ID", "Name", "Version", "State"]);
+            let mut table = table(&["ID", "Name", "Version", "State"]);
 
             for meta in &plugins {
                 let state = pm
@@ -56,7 +55,7 @@ impl ConsoleCommand for PluginsCommand {
                     .map(format_plugin_state)
                     .unwrap_or_else(|| "Unknown".to_string());
 
-                table.add_row(vec![
+                table.row([
                     Cell::new(&meta.id),
                     Cell::new(&meta.name),
                     Cell::new(&meta.version),
@@ -64,10 +63,7 @@ impl ConsoleCommand for PluginsCommand {
                 ]);
             }
 
-            CommandOutput::Table {
-                table,
-                footer: Some(format!(" {} plugin(s)", plugins.len())),
-            }
+            table.finish("plugin")
         })
     }
 }
@@ -97,15 +93,14 @@ impl ConsoleCommand for PluginCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let id = match args.first() {
-                Some(id) => *id,
-                None => return CommandOutput::Error("Usage: plugin <id>".to_string()),
+            let Some(id) = args.first() else {
+                return usage(self);
             };
 
             let pm = services.plugin_manager.read().await;
             let plugins = pm.list_plugins();
 
-            let meta = match plugins.iter().find(|p| p.id == id) {
+            let meta = match plugins.iter().find(|p| p.id == *id) {
                 Some(m) => m,
                 None => return CommandOutput::Error(format!("Plugin '{id}' not found")),
             };

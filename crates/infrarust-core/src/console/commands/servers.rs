@@ -9,6 +9,7 @@ use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::ServerId;
 
 use crate::console::ConsoleServices;
+use crate::console::commands::{table, usage};
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
 
@@ -58,14 +59,11 @@ impl ConsoleCommand for ServersCommand {
 
             let has_managed = !managed_states.is_empty();
 
-            let renderer = crate::console::output::OutputRenderer::new();
-            let mut table = renderer.create_table();
-
-            if has_managed {
-                table.set_header(vec!["Server", "Address", "Mode", "State", "Players"]);
+            let mut table = if has_managed {
+                table(&["Server", "Address", "Mode", "State", "Players"])
             } else {
-                table.set_header(vec!["Server", "Address", "Mode", "Players"]);
-            }
+                table(&["Server", "Address", "Mode", "Players"])
+            };
 
             for cfg in &configs {
                 let id = cfg.id.as_str();
@@ -74,36 +72,25 @@ impl ConsoleCommand for ServersCommand {
                     .first()
                     .map(|a| format!("{}:{}", a.host, a.port))
                     .unwrap_or_else(|| "-".to_string());
-
-                let mode = format!("{:?}", cfg.proxy_mode);
                 let players = services.player_registry.online_count_on(&cfg.id);
 
+                let mut cells = vec![
+                    Cell::new(id),
+                    Cell::new(address),
+                    Cell::new(format!("{:?}", cfg.proxy_mode)),
+                ];
                 if has_managed {
                     let state = managed_states
                         .get(id)
                         .map(|s| format_server_state(s, services.is_tty()))
                         .unwrap_or_else(|| "-".to_string());
-                    table.add_row(vec![
-                        Cell::new(id),
-                        Cell::new(address),
-                        Cell::new(mode),
-                        Cell::new(state),
-                        Cell::new(players),
-                    ]);
-                } else {
-                    table.add_row(vec![
-                        Cell::new(id),
-                        Cell::new(address),
-                        Cell::new(mode),
-                        Cell::new(players),
-                    ]);
+                    cells.push(Cell::new(state));
                 }
+                cells.push(Cell::new(players));
+                table.row(cells);
             }
 
-            CommandOutput::Table {
-                table,
-                footer: Some(format!(" {} server(s)", configs.len())),
-            }
+            table.finish("server")
         })
     }
 }
@@ -133,12 +120,11 @@ impl ConsoleCommand for ServerCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let id = match args.first() {
-                Some(id) => *id,
-                None => return CommandOutput::Error("Usage: server <id>".to_string()),
+            let Some(id) = args.first() else {
+                return usage(self);
             };
 
-            let server_id = ServerId::new(id);
+            let server_id = ServerId::new(*id);
             let cfg = match services.config_service.get_server_config(&server_id) {
                 Some(c) => c,
                 None => return CommandOutput::Error(format!("Server '{id}' not found")),
@@ -211,9 +197,8 @@ impl ConsoleCommand for StartServerCommand {
                 }
             };
 
-            let id = match args.first() {
-                Some(id) => *id,
-                None => return CommandOutput::Error("Usage: start <server_id>".to_string()),
+            let Some(id) = args.first() else {
+                return usage(self);
             };
 
             tracing::info!(target: "console", server = id, "Server start requested from console");
@@ -262,9 +247,8 @@ impl ConsoleCommand for StopServerCommand {
                 }
             };
 
-            let id = match args.first() {
-                Some(id) => *id,
-                None => return CommandOutput::Error("Usage: stop-server <server_id>".to_string()),
+            let Some(id) = args.first() else {
+                return usage(self);
             };
 
             tracing::info!(target: "console", server = id, "Server stop requested from console");
