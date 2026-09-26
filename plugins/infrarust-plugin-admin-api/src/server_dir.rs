@@ -675,8 +675,8 @@ fn migrate_legacy_store(data_dir: &Path, dir: &Path) {
     tracing::info!(count = migrated, path = %done.display(), "Migrated legacy servers.json");
 }
 
-#[cfg(test)]
-pub(crate) mod test_support {
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_support {
     //! [`PluginProviderSender`]s standing in for the proxy.
 
     use std::sync::{Arc, Mutex};
@@ -687,10 +687,10 @@ pub(crate) mod test_support {
     use super::{DocumentId, PluginProviderEvent, PluginProviderSender, ServerDir};
 
     #[derive(Clone, Default)]
-    pub(crate) struct RecordingSender(Arc<Mutex<Vec<String>>>);
+    pub struct RecordingSender(Arc<Mutex<Vec<String>>>);
 
     impl RecordingSender {
-        pub(crate) fn events(&self) -> Vec<String> {
+        pub fn events(&self) -> Vec<String> {
             self.0.lock().unwrap_or_else(|p| p.into_inner()).clone()
         }
     }
@@ -712,12 +712,12 @@ pub(crate) mod test_support {
         }
     }
 
-    pub(crate) struct SlowSender {
+    pub struct SlowSender {
         delay: Duration,
     }
 
     impl SlowSender {
-        pub(crate) fn new(delay: Duration) -> Self {
+        pub fn new(delay: Duration) -> Self {
             Self { delay }
         }
     }
@@ -735,16 +735,16 @@ pub(crate) mod test_support {
         }
     }
 
-    pub(crate) type Announcements = Arc<Mutex<Vec<(String, Option<String>)>>>;
+    pub type Announcements = Arc<Mutex<Vec<(String, Option<String>)>>>;
 
-    pub(crate) struct DocumentDuringSend {
+    pub struct DocumentDuringSend {
         dir: Arc<ServerDir>,
         delay: Duration,
         announcements: Announcements,
     }
 
     impl DocumentDuringSend {
-        pub(crate) fn new(dir: Arc<ServerDir>, delay: Duration) -> (Self, Announcements) {
+        pub fn new(dir: Arc<ServerDir>, delay: Duration) -> (Self, Announcements) {
             let announcements = Arc::new(Mutex::new(Vec::new()));
             (
                 Self {

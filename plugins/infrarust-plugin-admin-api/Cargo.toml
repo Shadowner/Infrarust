@@ -40,7 +40,13 @@ time = { workspace = true }
 rust-embed = { workspace = true }
 mime_guess = { workspace = true }
 
+[features]
+default = []
+test-util = []
+
 [dev-dependencies]
+infrarust-plugin-admin-api = { path = ".", features = ["test-util"] }
+infrarust-api = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tempfile = { workspace = true }
 http-body-util = { workspace = true }

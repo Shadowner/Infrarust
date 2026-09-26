@@ -2105,6 +2105,7 @@ dependencies = [
  "axum",
  "http-body-util",
  "infrarust-api",
+ "infrarust-plugin-admin-api",
  "infrarust_config",
  "infrarust_protocol",
  "mime_guess",
