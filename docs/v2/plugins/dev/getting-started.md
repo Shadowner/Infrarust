@@ -198,7 +198,7 @@ In `crates/infrarust/Cargo.toml`, add your plugin as an optional dependency and 
 
 ```toml{3,7}
 [features]
-default = []
+# ... existing features, default included ...
 plugin-greet = ["dep:infrarust-plugin-greet"]
 
 [dependencies]

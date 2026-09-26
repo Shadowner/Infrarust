@@ -358,6 +358,7 @@ interface events {
     };
     use limbo.{limbo-entry-context};
     use ban-service.{ban-entry, ban-source};
+    use permissions.{permission-snapshot};
 
     enum event-kind {
         pre-login,

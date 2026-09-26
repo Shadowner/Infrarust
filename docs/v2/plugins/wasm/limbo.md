@@ -20,7 +20,7 @@ path = "plugins/my-gate.wasm"
 permissions = ["limbo"]
 ```
 
-Without the capability, `reg.add` still compiles and runs, but the host refuses the registration and the handler never fires. The contract gives `register-limbo-handler` no error to return, so the plugin cannot tell; the host logs the refusal at `error` (once a minute at most) and warns at load that the plugin imports `register-limbo-handler` without `limbo`. With `strict_capabilities = true` the plugin is refused at load instead.
+Without the capability, `reg.add` still compiles and runs, but the host refuses the registration and the handler never fires. `register-limbo-handler` returns `result<_, host-error>` and the host answers `permission-denied`, but the SDK's `LimboRegistrar::add` drops that error, so the plugin cannot tell; the host logs the refusal at `error` (once a minute at most) and warns at load that the plugin imports `register-limbo-handler` without `limbo`. With `strict_capabilities = true` the plugin is refused at load instead.
 
 :::info
 Capabilities are listed in kebab-case. The baseline set (event bus, player read/write, command, scheduler, config read) is granted to every WASM plugin; `limbo` is one of the opt-ins you must list. See [Capabilities](./capabilities) for the full table.

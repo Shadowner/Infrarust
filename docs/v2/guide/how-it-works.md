@@ -17,10 +17,10 @@ flowchart TD
     TF -->|Accepted| CP[Common pipeline]
 
     CP --> IP[IP filter]
-    IP --> BAN_IP[Ban IP check]
-    BAN_IP --> HS[Handshake parser]
+    IP --> HS[Handshake parser]
     HS -->|Legacy client| LEGACY[Legacy handler]
-    HS -->|Modern client| RL[Rate limiter]
+    HS -->|Modern client| BAN_IP[Ban IP check]
+    BAN_IP --> RL[Rate limiter]
     RL --> DR[Domain router]
     DR -->|No match| REJECT[Kick or drop]
 
@@ -30,9 +30,9 @@ flowchart TD
     LP --> LS[Login start parser]
     LS --> BAN[Ban check]
     BAN --> TEL[Telemetry span]
-    TEL --> SM[Server manager]
+    TEL --> BS[Backend selection]
 
-    SM --> MODE{Proxy mode?}
+    BS --> MODE{Proxy mode?}
     MODE -->|passthrough / zero_copy / server_only| PT[Passthrough handler]
     MODE -->|client_only| CO[Intercepted handler + Mojang auth]
     MODE -->|offline| OFF[Intercepted handler, no auth]
@@ -56,10 +56,6 @@ Every connection runs through the common pipeline, a sequence of five middleware
 
 Checks the client IP against a global allow/deny list. Blocked IPs never reach the handshake parser.
 
-### Ban IP check
-
-Checks the client IP against the ban system. Unlike the username ban check in the login pipeline, this runs before the handshake is parsed. Banned IPs cannot receive the MOTD or status ping.
-
 ### Handshake parser
 
 The first real protocol work. The middleware reads bytes from the TCP stream with a 10-second timeout and attempts to decode them.
@@ -82,6 +78,10 @@ The handshake contains four fields:
 | `next_state` | VarInt | 1 = status ping, 2 = login |
 
 The middleware strips Forge Mod Loader markers (`\0FML\0`, `\0FML2\0`, `\0FML3\0`) from the domain, lowercases it, and stores the result as `HandshakeData` in the connection context. The raw packet bytes are preserved for forwarding to the backend later.
+
+### Ban IP check
+
+Runs after the handshake parser, and only for status connections: it checks the client IP against the ban system, so a banned IP cannot receive the MOTD or status ping. Login connections pass through and are checked by the ban check in the login pipeline. Legacy clients never reach it; the legacy handler checks bans itself.
 
 ### Rate limiter
 
@@ -158,7 +158,7 @@ In `client_only` mode, the handler performs Mojang authentication: it sends an e
 
 In `offline` mode, no authentication happens. The proxy accepts whatever username the client provides.
 
-After authentication, the handler resolves the initial connection mode. If the backend is reachable, it connects and starts a session loop that reads packets from both the client and the backend, passing them through codec filter chains registered by plugins. If the backend is unavailable and a limbo handler is registered, the player enters limbo (a virtual world hosted by the proxy itself) until the backend comes online.
+After authentication, the handler resolves the initial connection mode. If the server lists `limbo_handlers` that resolve, the player enters limbo (a virtual world hosted by the proxy itself) before any backend attempt, and stays there until a handler lets them through. Otherwise the handler connects to the backend and starts a session loop that reads packets from both the client and the backend, passing them through codec filter chains registered by plugins. If the backend cannot be reached, `KickedFromServerEvent` fires and the player is kicked unless a plugin sends them elsewhere.
 
 The session loop also supports server switching: a plugin can instruct the proxy to move a player to a different backend without disconnecting them from the proxy.
 

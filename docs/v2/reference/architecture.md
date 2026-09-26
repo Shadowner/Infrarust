@@ -53,8 +53,8 @@ Two pipelines run on every login connection, in this order.
 The common pipeline runs on every connection regardless of intent:
 
 1. `IpFilter` checks the peer address against the configured allow and deny rules.
-2. `BanIpCheck` rejects addresses that are IP-banned.
-3. `HandshakeParser` reads the handshake packet, detects legacy pings, strips FML markers from the domain, and records the protocol version and intent.
+2. `HandshakeParser` reads the handshake packet, detects legacy pings, strips FML markers from the domain, and records the protocol version and intent.
+3. `BanIpCheck` refuses status connections from IP-banned addresses. Login connections pass through to `BanCheck` in the login pipeline.
 4. `RateLimiter` applies the connection rate limit per source address.
 5. `DomainRouter` resolves the requested domain to a server config and inserts `RoutingData`.
 
@@ -67,7 +67,7 @@ The login pipeline runs only after a connection is identified as a login:
 
 Waking a managed server is not a pipeline step. The handlers wake it once the plugins have chosen the server the player connects to, after `ServerPreConnectEvent`, so a player refused at login or sent to another server never starts it. See [server wake](../plugins/dev/events#server-wake).
 
-The order matters. Cheap address-level checks run before the handshake is parsed, parsing runs before rate limiting and routing, and player-identity checks run only once routing has chosen a server. The IP filter and ban checks come first so that an unwanted peer is dropped before the proxy spends work decoding its packets.
+The order matters. The IP filter is the only check that runs before the handshake is parsed, so a filtered peer is dropped before the proxy spends work decoding its packets. The IP ban check needs the intent from the handshake, parsing runs before rate limiting and routing, and player-identity checks run only once routing has chosen a server.
 
 ## Proxy mode handlers
 
@@ -101,7 +101,7 @@ Alongside the registries, `ProxyServices` carries the event bus, the ban manager
 
 Server configs are not loaded directly by the server. A provider registry (`crates/infrarust-core/src/provider/`) owns the file provider, which is always on, and an optional Docker provider behind a feature flag. Providers load the initial configs into the domain router and start watchers that push live updates, which is how config hot-reload works without restarting the proxy.
 
-Permissions have exactly two levels, `Player` and `Admin`, ordered `Player < Admin`, in `crates/infrarust-api/src/permissions.rs`. There is no moderator or owner level. Plugins can register their own permission checkers through the permission service.
+Permissions are string nodes such as `infrarust.admin` or `infrarust.command.kick`. One `PermissionProvider` is active, the built-in one or the plugin named in `[permissions] provider`, and it builds a `PermissionChecker` per player that answers each node with a `Tristate` (`True`, `False` or `Undefined`). An `Undefined` answer falls back to the default the node was registered with (`True`, `False` or `Admin`), then to denied. `PermissionMap` holds node values with wildcard matching for providers that want it. The types live in `crates/infrarust-api/src/permissions.rs` and the permission service in `crates/infrarust-core/src/permissions/`. There are no permission levels: an admin is a player who holds `infrarust.admin`.
 
 ## Where to go next
 

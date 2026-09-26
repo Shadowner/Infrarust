@@ -102,7 +102,7 @@ Capability::VirtualBackend => "virtual-backend",
 
 Three pieces are missing before a WASM plugin can host a backend:
 
-- Enforcement: nothing in the host checks `virtual-backend`. The WASM host functions check `event-bus`, `player-read`, `player-write`, `raw-packet`, `command`, `scheduler`, `config-read`, `server-manage`, `ban`, `codec-filter` and `limbo` when they are called (`crates/infrarust-loader-wasm/src/imp/gates.rs` maps each import to its capability). No host function needs `virtual-backend`.
+- Enforcement: nothing in the host checks `virtual-backend`. The WASM host functions check `event-bus`, `player-read`, `player-write`, `raw-packet`, `command`, `scheduler`, `config-read`, `config-write`, `server-manage`, `ban`, `codec-filter`, `limbo`, `plugin-messaging`, `chat-intercept`, `permission-provider` and `ban-provider` when they are called (`crates/infrarust-loader-wasm/src/imp/gates.rs` maps each import to its capability). No host function needs `virtual-backend`.
 - Dispatch: the proxy has no path that routes a player's connection to a registered `VirtualBackendHandler`.
 - WASM bridge: there is no host wrapper that forwards `on_session_start`, `on_packet_received`, and `on_session_end` to guest exports.
 
@@ -138,9 +138,9 @@ For this to work, two contract changes are needed that do not exist today: a `vi
 
 ## Until then
 
-Use [Limbo](./limbo) to hold a player without a backend. The Limbo path is exposed to WASM through `infrarust:plugin@0.3.0` (`register-limbo-handler`, `hold-with-timeout`, `on-session-end`), covers idle worlds and queue screens, and runs today.
+Use [Limbo](./limbo) to hold a player without a backend. The Limbo path is exposed to WASM through `infrarust:plugin@0.3.0` (`register-limbo-handler`, `hold-with-timeout`, `limbo-on-session-end`), covers idle worlds and queue screens, and runs today.
 
-If you need packet-level control before Virtual Backend lands, use a [codec filter](./codec-filters); packet event subscriptions for WASM come in a later contract step.
+If you need packet-level control before Virtual Backend lands, use a [codec filter](./codec-filters), or subscribe to raw packets with `ctx.on_packets` (the `subscribe-packets` import), which needs `raw-packet`.
 
 ## See also
 

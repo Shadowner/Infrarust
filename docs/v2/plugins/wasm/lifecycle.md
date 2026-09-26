@@ -94,7 +94,7 @@ Both refusals are `LoaderError::InvalidFormat` and name the file. See [Migrating
 
 ## Metadata probe
 
-Before a plugin is loaded with capabilities, the loader instantiates the compiled component in a minimal probe context and calls the guest `metadata()` export. The probe context grants no capabilities (`CapabilitySet::default()`) and no plugin context: a host call made from `metadata()` returns `Unavailable` or a neutral value.
+Before a plugin is loaded with capabilities, the loader instantiates the compiled component in a minimal probe context and calls the guest `metadata()` export. The probe context grants no capabilities (`CapabilitySet::default()`) and no plugin context: a gated host call made from `metadata()` returns `PermissionDenied`, and an ungated one returns `Unavailable` or a neutral value.
 
 ```rust
 // extract_metadata in metadata.rs
@@ -148,7 +148,7 @@ store.limiter(|s: &mut PluginStoreState| s.limits_mut() as &mut dyn wasmtime::Re
 let bindings = self.pre.instantiate_async(&mut store).await?;
 ```
 
-The store enforces a linear-memory cap of `MEMORY_LIMIT` (64 MiB) and traps the guest on a memory-grow failure (`trap_on_grow_failure(true)`). An instantiation error that names a missing `infrarust:plugin/` import is reported as a capability denial rather than a generic failure.
+The store enforces the linear-memory cap set by `memory_limit_mb` (64 MiB by default, from `[wasm]` or `[plugins.<id>.wasm]`) and traps the guest on a memory-grow failure (`trap_on_grow_failure(true)`). Any instantiation error, a missing `infrarust:plugin/` import included, is reported as `WasmLoaderError::Instantiate` with wasmtime's message. `CapabilityDenied` is only returned with `strict_capabilities = true`, for a plugin that imports a host function whose capability it lacks.
 
 See [Capabilities](./capabilities) for which capabilities are granted by default and which are opt-in, and [Architecture](./architecture) for how the store, linker, and engine fit together.
 
@@ -223,7 +223,7 @@ Each call into the guest carries a deadline, fixed when the call is queued:
 
 The deadline has three effects:
 
-- **Host calls fail in time.** Every host call that waits on the proxy (`start` and `stop` on `server-manager`, every `ban-service` function, `switch-server`, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named` on `event-bus`) returns before the deadline, minus a margin. The margin is a fifth of the deadline, capped at 250 ms, so a 10 s `handler_timeout` leaves host calls 9.75 s and a 300 ms one leaves them 240 ms. On expiry the guest gets a `host-error` of kind `timeout`, and no trap. `host_call_timeout` still caps each host call on its own.
+- **Host calls fail in time.** Every host call that waits on the proxy (`start` and `stop` on `server-manager`, every `ban-service` function, `switch-server`, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named` on `event-bus`, `set-snapshot` and `release` on `permissions`) returns before the deadline, minus a margin. The margin is a fifth of the deadline, capped at 250 ms, so a 10 s `handler_timeout` leaves host calls 9.75 s and a 300 ms one leaves them 240 ms. On expiry the guest gets a `host-error` of kind `timeout`, and no trap. `host_call_timeout` still caps each host call on its own, except `switch-server`, which has its own 250 ms cap.
 - **The guest's decision counts.** Because the error arrives inside the margin, the guest still has time to decide and return before the event bus gives up. A PreLogin handler that denies when the ban service errors fails closed, and its denial is applied to the event. If the host call waited out `host_call_timeout` instead, the bus would already have moved on and the login would go through on the default result.
 - **The plugin stays available.** The call ends before its deadline instead of after `host_call_timeout`, so the plugin's next events do not queue behind a stalled service. A call whose deadline passed while it waited in the queue is dropped without running, since its caller can no longer use the result, and a warning names the plugin and the operation.
 

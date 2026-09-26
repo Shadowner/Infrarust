@@ -99,7 +99,7 @@ ctx.scheduler().delay(
 
 The handle is bound to your plugin, so the same ownership rules apply and cleanup still covers it. Players who are already connected see the new command straight away, see [The client command tree](#the-client-command-tree).
 
-`list()` returns a `CommandInfo` for every registered command, built-ins and other plugins included. `CommandInfo::plugin_id` is `None` for built-ins, and `namespaced()` returns the `<plugin_id>:<name>` form.
+`list()` returns a `CommandInfo` for every registered command, built-ins and other plugins included. `CommandInfo::plugin_id` is `None` for built-ins, and `namespaced()` returns `Some("<plugin_id>:<name>")`, or `None` for built-ins.
 
 ## CommandHandler
 
@@ -236,7 +236,8 @@ Before the handler runs, the proxy calls `ctx.source.has_permission(node)`. When
 ctx.register_permission_node(
     PermissionNode::new("auth.forcelogin", PermissionDefault::Admin)
         .description("Log a player in without a password"),
-)?;
+)
+.map_err(|e| PluginError::InitFailed(e.to_string()))?;
 ```
 
 With the built-in provider, admins hold every node, `infrarust.command.<name>` is granted to everyone when `<name>` is listed in `player_commands` (except the admin-only `/ir` subcommands), and any other node follows its registered default (denied when there is none). See [Permissions API](./permissions) for defaults, wildcards, providers and refreshing a player, and the [Permissions configuration](../../configuration/security/permissions.md) page for how operators set up admins.

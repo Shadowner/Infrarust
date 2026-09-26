@@ -17,7 +17,7 @@ The server wake plugin holds players in a limbo state while their target server 
 6. When the server comes online, all waiting players see "Server Ready!" and get forwarded.
 7. If the server crashes or the timeout expires, waiting players are kicked with an error message.
 
-If a player connects while the server is already stopping, the plugin holds them in limbo with the `stopping_*` messages and waits for the server to come back online rather than issuing a fresh start command.
+If a player connects while the server is already stopping, the plugin holds them in limbo, shows the `stopping_*` title as they enter, and waits for the server to come back online rather than issuing a fresh start command. From the first title refresh on, the animated title uses the `starting_*` messages.
 
 ## Activating the plugin
 
@@ -136,7 +136,7 @@ The plugin's `start_timeout_seconds` (180s default) is separate from the provide
 
 ### Messages
 
-Every message supports Minecraft color codes (`&a`, `&c`, `&7`, etc.) and placeholders: `{server}` for the server name, `{dots}` for the animated dots, and `{count}` for the waiting player count.
+Every message supports Minecraft color codes (`&a`, `&c`, `&7`, etc.). The placeholders depend on the message. The `starting_*` and `stopping_*` titles get `{server}` for the server name, `{dots}` for the animated dots, and `{count}` for the waiting player count. The `ready_*` title gets only `{server}`, `waiting_action_bar` gets `{server}` and `{count}`, and `failed_kick` and `timeout_kick` get none.
 
 ```toml
 [messages]
@@ -151,7 +151,7 @@ timeout_kick = "&cThe server took too long to start. Please try again."
 waiting_action_bar = "&7{count} player(s) waiting for &e{server}"
 ```
 
-The `starting_*` messages show while a server is booting. The `stopping_*` messages show when a player connects while the server is shutting down; the plugin holds them in limbo and forwards once the server comes back online. The `ready_*` title flashes briefly before the player gets forwarded.
+The `starting_*` messages show while a server is booting. The `stopping_*` messages show only as a player enters limbo while the server is shutting down; the refreshes that follow use the `starting_*` messages. The plugin holds them in limbo and forwards once the server comes back online. The `ready_*` title flashes briefly before the player gets forwarded.
 
 ## MOTD during startup
 

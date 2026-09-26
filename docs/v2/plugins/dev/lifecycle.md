@@ -247,7 +247,7 @@ Some of the available services:
 | `plugin_id()` | `&str` | This plugin's ID |
 | `data_dir()` | `PathBuf` | This plugin's data directory, `<plugins_dir>/<plugin_id>`, created if missing |
 | `proxy_shutdown()` | `CancellationToken` | A token that fires when the proxy shuts down |
-| `proxy_info()` | `&ProxyInfo` | Proxy name and version |
+| `proxy_info()` | `&ProxyInfo` | Proxy version and runtime settings |
 | `capabilities()` | `&CapabilitySet` | Capabilities granted to this plugin |
 
 The two filter registries return `None` unless the plugin holds the matching capability. Compiled-in native plugins are trusted and receive both; WASM plugins are gated by config.

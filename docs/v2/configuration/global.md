@@ -191,7 +191,7 @@ version_name = "Infrarust"
 max_players = 0
 ```
 
-The MOTD shown when a player pings a domain that doesn't match any server. You can set different MOTDs for different states: `online`, `offline`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`.
+The MOTD shown when a player pings a domain that doesn't match any server. The table accepts the same states as a server's `[motd]`: `online`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`. Any other key is a parse error. The unknown-domain response uses `online`. `unreachable` is the fallback for a server that is unreachable and has neither its own `unreachable` entry nor a cached status; the other states are not used here.
 
 Each MOTD entry supports these fields:
 
@@ -334,7 +334,7 @@ requests_per_minute = 60
 
 Enables the HTTP admin API (and optional web UI) used by management tools and the CLI. The section is optional; omit it entirely to keep the web interface off. `enable_webui` follows `enable_api` when you do not set it, so `enable_api = false` on its own turns both off. Setting `enable_webui = true` next to `enable_api = false` is rejected at startup, since the dashboard is served by the API's own HTTP server and calls it for every screen.
 
-`bind` defaults to `127.0.0.1:8080`. If you bind to a non-loopback address, `api_key` is required and must be at least 16 characters. When bound to loopback without a key, Infrarust generates an ephemeral key and logs it at startup.
+`bind` defaults to `127.0.0.1:8080`. If you bind to a non-loopback address, `api_key` is required. A key shorter than 16 characters is refused on any bind, and the placeholder `CHANGE-ME` counts as no key. When bound to loopback without a key, Infrarust generates an ephemeral key at startup and prints it once on stdout; the log only gets a warning that a key was generated, not the key.
 
 `cors_origins` accepts a list of allowed CORS origins (empty by default, meaning no cross-origin access).
 
@@ -439,7 +439,7 @@ Limits that apply to every WASM plugin. Each plugin runs in its own sandbox and 
 | `memory_limit_mb` | Linear memory of one plugin, in MiB. A plugin that grows past it traps. |
 | `cpu_budget` | CPU time one call into a plugin may use before it traps. Time spent waiting on a host call (a ban lookup, a server start) does not count. |
 | `codec_cpu_budget` | The same budget for each codec filter call (`create`, `filter` and the connection hooks). |
-| `host_call_timeout` | How long one ban-service or server-manager call made by a plugin may take. When it runs out the plugin gets a `service-error` and carries on. A host call also ends early, with the same error, shortly before the deadline of the call it belongs to (`[events] handler_timeout` for an event, `max_call_duration` for a command, a scheduled task or a limbo callback), so the plugin always gets to decide. |
+| `host_call_timeout` | How long one host call that waits on the proxy may take: server-manager `start` and `stop`, every ban-service call, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named`, `set-snapshot` and `release` on `permissions`, and the timeouts of each HTTP request. When it runs out the plugin gets a `host-error` of kind `timeout` and carries on. `switch-server` has its own 250 ms cap. A host call also ends early, with the same error, shortly before the deadline of the call it belongs to (`[events] handler_timeout` for an event, `max_call_duration` for a command, a scheduled task or a limbo callback), so the plugin always gets to decide. |
 | `max_call_duration` | Wall-clock limit on one call into a plugin, host calls included. A call still running at this limit is abandoned and the plugin's instance is replaced by a fresh one. |
 | `queue_capacity` | How many calls may wait for a busy plugin. When the queue is full a new call is refused on the spot: an event gets no answer from that plugin and a command does nothing. The refusal is logged as a warning, at most once every 5 seconds per plugin. |
 
@@ -507,7 +507,7 @@ Unknown capability names in `permissions` or `deny` are ignored with a warning. 
 
 ## Full example
 
-A complete `infrarust.toml` showing all sections and their defaults:
+A complete `infrarust.toml` showing the main sections and their defaults:
 
 ```toml
 bind = "0.0.0.0:25565"

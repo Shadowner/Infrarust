@@ -60,7 +60,7 @@ Pick WASM when you want to ship a plugin as a file, run untrusted or third-party
 
 ## The capability model
 
-Every WASM plugin starts with a baseline set of capabilities and gains more only by listing them in its config. Baseline capabilities are granted automatically: `event-bus`, `player-read`, `player-write`, `command`, `scheduler`, and `config-read`. Opt-in capabilities such as `ban`, `server-manage`, `codec-filter`, `limbo`, and `raw-packet` must appear in the plugin's `permissions` list. Capability strings are kebab-case, and unknown strings are rejected at load time. Native plugins receive every capability; a WASM plugin receives baseline plus its declared opt-ins.
+Every WASM plugin starts with a baseline set of capabilities and gains more only by listing them in its config. Baseline capabilities are granted automatically: `event-bus`, `player-read`, `player-write`, `command`, `scheduler`, and `config-read`. Opt-in capabilities such as `ban`, `server-manage`, `codec-filter`, `limbo`, and `raw-packet` must appear in the plugin's `permissions` list. Capability strings are kebab-case, and unknown strings are ignored with a warning at load time. Native plugins receive every capability except the ones in their `deny`; a WASM plugin receives baseline plus its declared opt-ins, minus its `deny`.
 
 ```toml
 [plugins.my-plugin]
@@ -142,7 +142,7 @@ flowchart LR
     E --> F[Plugin registers events,<br/>commands, handlers]
 ```
 
-The plugin runs single-threaded with no async runtime. Keep mutable state in `Cell` or `RefCell` fields rather than across threads. Read the [Architecture](./architecture) page for how the host instances, the sync codec path, and the async limbo instance fit together.
+The plugin runs single-threaded with no async runtime. Keep mutable state in `Cell` or `RefCell` fields rather than across threads. Read the [Architecture](./architecture) page for how the host instance, the sync codec path, and limbo callbacks fit together. Limbo callbacks run on the plugin's single actor, like every other call.
 
 If the plugin traps or runs past its limits, the host replaces its instance with a fresh one and runs `on_enable` again, with `ctx.enable_reason()` reporting the recovery, so anything kept only in memory is lost. Persist what matters to the data directory. See the [Fault Model](./fault-model).
 

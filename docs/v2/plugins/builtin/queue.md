@@ -6,7 +6,7 @@ description: Planned plugin for holding players in a wait room when a backend se
 # Queue Plugin
 
 ::: warning In development
-The queue plugin is not yet implemented. The `infrarust-plugin-queue` crate exists as a placeholder with no functional code. Do not configure it expecting results; the plugin currently does nothing.
+The queue plugin is not yet implemented. It is planned: there is no `infrarust-plugin-queue` crate in the repository yet, and nothing to configure.
 :::
 
 When it ships, the queue plugin will hold players in a limbo wait room when a backend server has reached its player limit. Instead of getting a "server is full" kick, a connecting player enters a proxy-managed screen showing their position in line and an estimated wait time. When a slot opens up, the player at the front of the queue gets forwarded automatically.
@@ -25,6 +25,6 @@ This is built on the same limbo mechanism that the [auth plugin](./auth) uses fo
 
 ## Current state
 
-The crate is a stub. Its `src/lib.rs` is a single placeholder comment and its `Cargo.toml` depends only on `infrarust-api`. There is no plugin struct, no `Plugin` implementation, no queue logic, no configuration, and no limbo handler registered. The crate is not yet wired into the workspace build.
+The plugin is planned. No crate exists for it yet: `plugins/` has no `infrarust-plugin-queue` and the workspace does not list one. There is no queue logic, no configuration and no limbo handler to register.
 
 If you need wait-room behavior today, a [WASM plugin](../wasm/getting-started) implementing a limbo handler is the practical path. A handler can read a backend's configured `max_players` and the set of connected players, then hold or forward each connecting player based on current occupancy. See [services](../wasm/services) for the data a plugin can read.

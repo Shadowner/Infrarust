@@ -146,10 +146,12 @@ The services without a mock in `test_util` (`ConfigService`, `ServerManager`, `L
 
 ### MockConfigService
 
-Returns `None` for all config lookups:
+Returns `None` for all config lookups and refuses writes:
 
 ```rust
-use infrarust_api::services::config_service::ServerConfig;
+use infrarust_api::services::config_service::{
+    ConfigWriteError, ServerConfig, ServerSource,
+};
 use infrarust_api::types::ServerId;
 
 pub struct MockConfigService;
@@ -166,6 +168,19 @@ impl infrarust_api::services::config_service::ConfigService
         None
     }
     fn get_all_server_configs(&self) -> Vec<ServerConfig> { vec![] }
+    fn get_server_document(&self, _server: &ServerId) -> Option<String> {
+        None
+    }
+    fn list_server_sources(&self) -> Vec<ServerSource> { vec![] }
+    fn get_proxy_config_document(&self) -> String { String::new() }
+    fn get_effective_proxy_config_document(&self) -> String {
+        String::new()
+    }
+    fn write_proxy_config_document(
+        &self, _toml: &str,
+    ) -> Result<(), ConfigWriteError> {
+        Err(ConfigWriteError::PermissionDenied)
+    }
     fn get_value(&self, _key: &str) -> Option<String> { None }
 }
 ```
@@ -517,7 +532,7 @@ Register a plugin, fire an event, and assert the handler was called:
 use infrarust_api::event::bus::EventBusExt;
 use infrarust_api::event::EventPriority;
 use infrarust_api::events::lifecycle::PostLoginEvent;
-use infrarust_api::types::{GameProfile, PlayerId, ProtocolVersion};
+use infrarust_api::test_util::MockPlayer;
 use infrarust_core::plugin::manager::PluginManager;
 use infrarust_core::plugin::static_loader::StaticPluginLoader;
 
@@ -566,15 +581,7 @@ async fn test_plugin_receives_post_login() {
     assert!(errors.is_empty());
 
     // Fire the event through the same EventBus
-    let event = PostLoginEvent {
-        profile: GameProfile {
-            uuid: uuid::Uuid::nil(),
-            username: "TestPlayer".into(),
-            properties: vec![],
-        },
-        player_id: PlayerId::new(1),
-        protocol_version: ProtocolVersion::MINECRAFT_1_21,
-    };
+    let event = PostLoginEvent::new(MockPlayer::new(1, "TestPlayer").into_arc());
     event_bus.fire(event).await;
 
     assert!(handler_called.load(Ordering::SeqCst));

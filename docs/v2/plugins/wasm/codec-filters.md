@@ -314,6 +314,6 @@ cargo build --release --target wasm32-wasip2
 
 - [Capabilities](./capabilities): baseline grants and the opt-in list, including `codec-filter`.
 - [Architecture](./architecture): how the host instantiates and drives codec instances.
-- [API Reference](./api-reference): the full `CodecFilter`, `Packet`, and `Verdict` types.
+- [API Reference](./api-reference#the-codec-filter-export): the WIT `codec-filter` interface that the SDK's `CodecFilter`, `Packet` and `Verdict` types are built on.
 - [Examples](./examples): runnable codec filter samples.
 - [Configuration](../../configuration/): where `permissions` lives in the config file.

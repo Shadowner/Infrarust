@@ -69,10 +69,12 @@ use infrarust_api::prelude::*;
 
 ctx.register_permission_node(
     PermissionNode::new("demo.use", PermissionDefault::True).description("Run /demo"),
-)?;
+)
+.map_err(|e| PluginError::InitFailed(e.to_string()))?;
 ctx.register_permission_node(
     PermissionNode::new("demo.reload", PermissionDefault::Admin).description("Reload the demo config"),
-)?;
+)
+.map_err(|e| PluginError::InitFailed(e.to_string()))?;
 ```
 
 | Default | A player without an answer from the provider |
@@ -115,7 +117,10 @@ provider = "builtin"      # the default: admins and player_commands below
 A plugin registers from `on_enable`:
 
 ```rust
-ctx.register_permission_provider(Arc::new(MyProvider::new(store)))?;
+match ctx.register_permission_provider(Arc::new(MyProvider::new(store))) {
+    Ok(()) | Err(PermissionProviderRejected::NotSelected { .. }) => {}
+    Err(e) => return Err(PluginError::InitFailed(e.to_string())),
+}
 ```
 
 See [Permissions configuration](../../configuration/security/permissions) for the operator side.

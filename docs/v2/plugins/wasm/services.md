@@ -254,7 +254,7 @@ A plugin can also be the ban provider itself, the one these calls reach; see [Ba
 
 ## Slow services and deadlines
 
-`start`, `stop`, every `Bans` function, `Player::connect`, `transfer`, `request_cookie`, `refresh_permissions` and `ctx.fire_named` wait for the proxy's answer, and that answer can be slow: a ban list kept in a remote database, a server that takes a while to boot. The host bounds each of these calls so that a slow service becomes an error your code can act on, rather than an answer that arrives after the proxy stopped listening.
+`start`, `stop`, every `Bans` function, `Player::connect`, `transfer`, `request_cookie`, `refresh_permissions`, `ctx.fire_named`, `Permissions::set_snapshot` and `Permissions::release` wait for the proxy's answer, and that answer can be slow: a ban list kept in a remote database, a server that takes a while to boot. The host bounds each of these calls so that a slow service becomes an error your code can act on, rather than an answer that arrives after the proxy stopped listening.
 
 Every call into your plugin carries a deadline, set when the proxy makes the call:
 

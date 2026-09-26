@@ -6,7 +6,7 @@ outline: [2, 3]
 
 # WASM Plugin Architecture
 
-A WASM plugin is a WebAssembly Component that Infrarust loads at startup. The proxy (the host) and the plugin (the guest) talk across a typed contract written in WIT (the WebAssembly Interface Type language). The contract is versioned `infrarust:plugin@0.3.0`; the loader refuses components built for another minor version before running any of their code.
+A WASM plugin is a WebAssembly Component that Infrarust loads at startup. The proxy (the host) and the plugin (the guest) talk across a typed contract written in WIT (the WebAssembly Interface Type language). The contract is versioned `infrarust:plugin@0.3.0`; the loader refuses components built for another minor version, or for a newer patch than the host's (a `0.3.1` plugin on a `0.3.0` host), before running any of their code.
 
 The contract splits into two halves:
 
@@ -42,11 +42,11 @@ The `infrarust:plugin@0.3.0` world has 19 host imports and 2 guest exports.
 | `events` | The event records and results; defines no functions | none |
 | `log` | `trace` / `debug` / `info` / `warn` / `error` | none |
 | `text` | Parse and serialize text components with the proxy's parser | none |
-| `event-bus` | `subscribe` / `unsubscribe` | `event-bus` |
+| `event-bus` | `subscribe` / `unsubscribe` | `event-bus`; `subscribe-packets` also needs `raw-packet`; subscribing to `chat-message` or `command-execute` needs `chat-intercept`, and to `plugin-message` needs `plugin-messaging` |
 | `players` | Look up players and act on them by id | `player-read`; actions need `player-write`, `send-packet` needs `raw-packet` |
 | `server-manager` | Read state, `start` / `stop` backends | `server-manage` |
 | `ban-service` | `ban` / `unban` / `get` / `list` | `ban` |
-| `config-service` | Read server configs and config values | `config-read` |
+| `config-service` | Read server configs and config values | `config-read`; `write-proxy-config-document` needs `config-write` |
 | `command-manager` | `register` / `unregister` a command | `command` |
 | `scheduler` | `delay` / `interval` / `cancel` tasks | `scheduler` |
 | `limbo` | `register-limbo-handler`; the session resources | `limbo` for `register-limbo-handler` |
@@ -137,7 +137,7 @@ The guest sees blocking calls. The `Plugin` trait is synchronous:
 fn on_enable(&self, ctx: &Context) -> Result<(), PluginError>;
 ```
 
-Several host imports are async on the host side. `start` and `stop` on `server-manager`, every `ban-service` function, `switch-server`, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, and `fire-named` on `event-bus` suspend the guest fiber: the host drives the async work to completion and resumes the guest with the result. To the guest it looks like an ordinary function that returns a value. Each of those calls runs under a host timeout (`host_call_timeout` in the `[wasm]` table, 30 s by default), cut shorter when the deadline of the guest call that made it is closer, and returns a `host-error` of kind `timeout` if it expires. See [Lifecycle](./lifecycle#deadlines).
+Several host imports are async on the host side. `start` and `stop` on `server-manager`, every `ban-service` function, `switch-server`, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named` on `event-bus`, and `set-snapshot` and `release` on `permissions` suspend the guest fiber: the host drives the async work to completion and resumes the guest with the result. To the guest it looks like an ordinary function that returns a value. Each of those calls except `switch-server` runs under a host timeout (`host_call_timeout` in the `[wasm]` table, 30 s by default), cut shorter when the deadline of the guest call that made it is closer, and returns a `host-error` of kind `timeout` if it expires. See [Lifecycle](./lifecycle#deadlines).
 
 `players.disconnect` queues the kick and returns immediately, so the guest does not wait for it. `players.switch-server` hands the request to the player's session and waits at most 250 ms for the session to take it, less when the guest call's deadline is closer, then returns a `timeout` error if it could not.
 

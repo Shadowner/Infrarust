@@ -93,6 +93,31 @@ interval = "10s"
 retries = 3
 ```
 
+### `[active_health]`
+
+Background probing of backend addresses. Recovery probing brings ejected addresses back; probing healthy addresses is opt-in. Any server can replace the whole block with its own `active_health` table. See [Load balancing](../configuration/load-balancing#active-probing).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `true` | Probe ejected addresses so they can recover |
+| `kind` | string | `"tcp"` | `"tcp"` (connect, then close) or `"status_ping"` (full Minecraft status exchange) |
+| `unhealthy_interval` | duration | `"10s"` | How often ejected addresses are checked |
+| `probe_healthy` | boolean | `false` | Also probe addresses that are currently healthy |
+| `interval` | duration | `"30s"` | Sweep interval when `probe_healthy` is set |
+| `timeout` | duration | `"3s"` | Timeout of one probe |
+| `max_concurrent` | integer | `8` | Probes in flight at once across the whole sweep. Read from the global block only |
+
+```toml
+[active_health]
+enabled = true
+kind = "tcp"
+unhealthy_interval = "10s"
+probe_healthy = false
+interval = "30s"
+timeout = "3s"
+max_concurrent = 8
+```
+
 ### `[ban]`
 
 Persistent ban system with automatic expiration.
@@ -114,10 +139,10 @@ enable_audit_log = true
 
 ### `[default_motd]`
 
-MOTD shown when a player pings a domain that doesn't match any server. Uses the same `[motd]` format described in the server config section below.
+MOTD shown when a player pings a domain that doesn't match any server. Uses the same `[motd]` format described in the server config section below. The unknown-domain response uses the `online` entry; `unreachable` is the fallback for a server that is unreachable and has neither its own `unreachable` entry nor a cached status. The other states are accepted but not used here.
 
 ```toml
-[default_motd.offline]
+[default_motd.online]
 text = "§cNo server found for this domain"
 version_name = "Infrarust"
 max_players = 0
@@ -327,11 +352,11 @@ Sandbox limits for every WASM plugin. Each plugin handles one call at a time; it
 | `memory_limit_mb` | integer | `64` | Linear-memory cap per plugin, in MiB. Growing past it traps the plugin |
 | `cpu_budget` | duration | `"3s"` | CPU time one call into a plugin may use before it traps. Waiting on a host call does not count |
 | `codec_cpu_budget` | duration | `"800ms"` | CPU time for one codec filter call (`create`, `filter`, connection hooks) before it traps |
-| `host_call_timeout` | duration | `"30s"` | Longest a ban-service or server-manager call made by a plugin may take. On expiry the plugin receives a `service-error` |
+| `host_call_timeout` | duration | `"30s"` | Longest a host call that waits on the proxy may take: server-manager `start` and `stop`, every ban-service call, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named`, `set-snapshot` and `release` on `permissions`, and the timeouts of each HTTP request. On expiry the plugin receives a `host-error` of kind `timeout`. `switch-server` has its own 250 ms cap |
 | `max_call_duration` | duration | `"60s"` | Wall-clock limit on one call into a plugin, host calls included. Past it the call is abandoned and the plugin's instance is replaced by a fresh one |
 | `queue_capacity` | integer | `1024` | Calls that may wait for a busy plugin. A call arriving at a full queue is refused immediately and logged as a rate-limited warning |
 
-Validation: `epoch_tick` must be between `1ms` and `1s`; `memory_limit_mb` between 1 and 4096; `cpu_budget` and `codec_cpu_budget` at least one `epoch_tick` and at most `1h`; `host_call_timeout` and `max_call_duration` greater than zero and at most `1h`; `queue_capacity` between 1 and 1048576. A `host_call_timeout` or `cpu_budget` longer than `max_call_duration` is accepted with a warning.
+Validation: `epoch_tick` must be between `1ms` and `1s`; `memory_limit_mb` between 1 and 4096; `cpu_budget` and `codec_cpu_budget` at least one `epoch_tick` and at most `1h`; `host_call_timeout` and `max_call_duration` greater than zero and at most `1h`; `queue_capacity` between 1 and 1048576. A `cpu_budget` longer than `max_call_duration` is accepted with a warning.
 
 A call that has started runs to the end even if its caller stops waiting, so an event listener cut off by `[events] handler_timeout` is not a fault. A call still queued when its caller gives up is skipped.
 
@@ -450,7 +475,7 @@ Each file in the `servers_dir` directory defines one backend server. The filenam
 | `id` | string | from filename | Server identifier. Overridden by `name` if set |
 | `name` | string | none | Human-readable name. Becomes the server ID if set. Must match `[a-z0-9_-]+` |
 | `network` | string | none | Network group for server switching. Only servers in the same network can switch between each other. Omit to isolate the server |
-| `domains` | array of strings | `[]` | Domains that route to this server. Supports wildcards like `"*.mc.example.com"`. Empty means the server is only reachable via server switching |
+| `domains` | array of strings | `[]` | Domains that route to this server. Supports wildcards like `"*.mc.example.com"`. Required on `passthrough`, `zero_copy` and `server_only`, where an empty list fails validation. On `client_only` and `offline` an empty list means the server is only reachable via server switching, so it needs a `network` |
 | `addresses` | array | **required** | Backend addresses, each either `"host:port"` or `{ address = "host:port", weight = 3 }`. Port defaults to 25565 if omitted. Ordered by `balance` |
 | `balance` | string | `"first_available"` | Address selection strategy: `"first_available"`, `"round_robin"`, or `"least_conn"` |
 | `slow_start` | duration | none | Ramp a freshly healthy address up to full weight over this window, e.g. `"45s"` |
@@ -496,6 +521,7 @@ limbo_handlers = ["server_wake"]
 | Client Only | `"client_only"` | Proxy handles Mojang authentication. Backend runs in `online_mode=false` |
 | Offline | `"offline"` | No authentication. Transparent relay with packet parsing |
 | Server Only | `"server_only"` | Authentication handled entirely by the backend |
+| Full | `"full"` | Accepted but not implemented: connections fall back to passthrough, with a warning logged for each one |
 
 ::: tip
 `passthrough`, `zero_copy`, and `server_only` forward raw bytes after the handshake. The proxy cannot inspect or modify packets in these modes.
@@ -523,7 +549,7 @@ Available states: `online`, `sleeping`, `starting`, `crashed`, `stopping`, `unre
 text = "§aServer Online §7— Welcome"
 favicon = "./icon.png"
 
-[motd.offline]
+[motd.unreachable]
 text = "§cServer Offline"
 version_name = "Maintenance"
 max_players = 0
@@ -540,8 +566,8 @@ Server-specific timeout overrides. If omitted, the global `connect_timeout` appl
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `connect` | duration | `"5s"` | Backend connection timeout |
-| `read` | duration | `"30s"` | Read timeout on the backend socket |
-| `write` | duration | `"30s"` | Write timeout on the backend socket |
+| `read` | duration | `"30s"` | Accepted but has no effect: no read timeout is applied to the backend socket |
+| `write` | duration | `"30s"` | Accepted but has no effect: no write timeout is applied to the backend socket |
 
 ```toml
 [timeouts]
@@ -705,7 +731,7 @@ window = "5m"
 backoff_initial = "1s"
 backoff_max = "5m"
 
-[default_motd.offline]
+[default_motd.online]
 text = "§cNo server found for this domain"
 version_name = "Infrarust"
 max_players = 0

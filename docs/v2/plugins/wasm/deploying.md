@@ -31,7 +31,7 @@ See [Building a Plugin](./building) for producing the `.wasm` artifact with `car
 
 ## The plugin id
 
-Each plugin reports a `PluginMetadata` from its guest code. The `id` is a unique `snake_case` string set in the SDK:
+Each plugin reports a `PluginMetadata` from its guest code. The `id` is a unique string set in the SDK. The `#[plugin]` macro accepts up to 64 lowercase letters, digits, `-` and `_`, starting with a letter or a digit:
 
 ```rust
 fn metadata(&self) -> PluginMetadata {
@@ -84,7 +84,7 @@ Baseline (always granted):
 
 Opt-in (must be listed in `permissions`):
 
-`ban`, `server-manage`, `codec-filter`, `limbo`, `raw-packet`, `chat-intercept`, `network`, `filesystem-extended`, `permission-provider`, `virtual-backend`.
+`ban`, `server-manage`, `codec-filter`, `limbo`, `raw-packet`, `chat-intercept`, `plugin-messaging`, `config-write`, `network`, `filesystem-extended`, `permission-provider`, `ban-provider`, `virtual-backend`.
 
 Capability strings are kebab-case. An unknown string, or one that is not grantable through config, is ignored with a warning at load and the plugin loads without it. The `transport-filter` capability exists internally but cannot be granted via config and is always rejected with a warning.
 
@@ -179,7 +179,7 @@ Each plugin runs in an isolated wasmtime instance with hard limits:
 |----------|-------|
 | CPU | Cooperative epoch interruption; a guest call that uses more than `cpu_budget` (3 s) traps instead of blocking the proxy. |
 | Memory | Linear memory is capped per instance at `memory_limit_mb` (64 MiB). |
-| Call time | One call may run for `max_call_duration` (60 s), host calls included; each host call that waits on the proxy (server start and stop, bans, `switch-server`, `connect`, `transfer`, cookies, permission refresh, named events) is capped at `host_call_timeout` (30 s). |
+| Call time | One call may run for `max_call_duration` (60 s), host calls included; each host call that waits on the proxy (server start and stop, bans, `connect`, `transfer`, `request-cookie`, permission refresh, permission snapshots with `set-snapshot` and `release`, named events) is capped at `host_call_timeout` (30 s), and `switch-server` at 250 ms. |
 | Call queue | The plugin handles one call at a time; up to `queue_capacity` (1024) calls wait, further calls are refused immediately. |
 | Filesystem | One preopened directory, `plugins_dir/<plugin-id>`, mounted as `/`. With `filesystem-extended`, the folders listed in `[[plugins.<id>.wasm.mounts]]` as well, read-only by default. |
 | Network | None by default. With `network`, only the destinations listed in `[plugins.<id>.wasm.network] allow`. |

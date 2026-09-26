@@ -28,7 +28,7 @@ That is enough. All fields have defaults:
 | `bind` | string | `"127.0.0.1:8080"` | Socket address the HTTP server listens on |
 | `api_key` | string | *(see below)* | Bearer token for authentication. Must be at least 16 characters. |
 | `cors_origins` | string[] | `[]` | Allowed CORS origins. Empty means no CORS headers are sent. |
-| `rate_limit.requests_per_minute` | u64 | `60` | Maximum requests per minute across all clients on authenticated endpoints |
+| `rate_limit.requests_per_minute` | u64 | `60` | Maximum requests per minute per client IP, on every endpoint except `/api/v1/health` |
 
 The dashboard is served by the same HTTP server as the API and calls it for every screen, so `enable_webui = true` with `enable_api = false` is refused at startup. To turn the whole thing off, set both to `false` or drop the `[web]` section.
 
@@ -42,11 +42,14 @@ enable_webui = false
 
 ### API key behavior
 
-If `api_key` is not set and `bind` resolves to a loopback address (`127.0.0.1`, `::1`, `localhost`), the plugin generates a random UUID v4 key at startup and logs it as a warning:
+If `api_key` is not set and `bind` resolves to a loopback address (`127.0.0.1`, `::1`, `localhost`), the plugin generates a random UUID v4 key at startup and prints it once on stdout:
 
 ```
-WARN No API key configured for loopback bind (127.0.0.1:8080) — generated an ephemeral key: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+[web] ephemeral API key for 127.0.0.1:8080: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+It changes on every restart and is not written to the configuration file.
 ```
+
+The log only gets a warning that a key was generated, without the key itself. The placeholder `CHANGE-ME` counts as no key.
 
 This key is not written to disk. It changes on every restart. For a persistent key, set one explicitly:
 
@@ -83,9 +86,9 @@ GET /api/v1/events?token=YOUR_API_KEY&types=player.join,player.leave
 
 ## Rate limiting
 
-Authenticated endpoints are rate-limited to `requests_per_minute` (default 60). The counter is shared across all clients. It tracks total requests to the API, not per-IP. The health endpoint is exempt.
+Every endpoint except `/api/v1/health` is rate-limited to `requests_per_minute` (default 60) per client IP, over a fixed 60-second window. The SSE routes count too, and so do requests that fail authentication.
 
-Response headers on every authenticated request:
+Response headers on every rate-limited request:
 
 | Header | Description |
 |--------|-------------|
@@ -251,7 +254,7 @@ Per-address load balancing status and drain controls for servers that list sever
 }
 ```
 
-`strategy` is `first_available`, `round_robin`, or `least_conn`. `effective_weight` is the weight selection actually uses, so it sits below `weight` while an address ramps through slow start. `healthy_since_secs` counts from the moment the address became healthy, which is what the ramp measures against; it is absent for an ejected address, and for one that has been stable long enough for the proxy to stop tracking it.
+`strategy` is `first_available`, `round_robin`, or `least_conn`. `effective_weight` is the weight selection actually uses, so it sits below `weight` while an address ramps through slow start. `healthy_since_secs` counts from the moment the address became healthy, which is what the ramp measures against; it is `null` for an ejected address, and for one that has been stable long enough for the proxy to stop tracking it.
 
 | `state` | Meaning |
 |---------|---------|
@@ -364,16 +367,21 @@ Available event types:
 
 Omit the `types` parameter to receive all events. The stream sends a keep-alive comment every 15 seconds.
 
+Each frame's SSE event name is the event type. Its data is a JSON object with the event's variant name in `type` (`PlayerJoin`, `PlayerLeave`, `BackendHealthChange`...) and its fields in `data`. `player.join` fires at login, before the player is routed, so its `server` is always an empty string; `player.switch` carries the servers.
+
 `player.leave` says why the player left. `cause` is `client_quit`, `kicked`, `backend_closed`, `shutdown` or `error`. `reason` is the plain text of the kick or backend message, or `null` when there was none:
 
 ```json
 {
-  "player_id": 42,
-  "username": "Steve",
-  "last_server": "lobby",
-  "cause": "kicked",
-  "reason": "You have been banned",
-  "timestamp": "2025-01-15T10:30:00Z"
+  "type": "PlayerLeave",
+  "data": {
+    "player_id": 42,
+    "username": "Steve",
+    "last_server": "lobby",
+    "cause": "kicked",
+    "reason": "You have been banned",
+    "timestamp": "2025-01-15T10:30:00Z"
+  }
 }
 ```
 
@@ -381,10 +389,13 @@ Omit the `types` parameter to receive all events. The stream sends a keep-alive 
 
 ```json
 {
-  "address": "10.0.0.1:25565",
-  "server_ids": ["lobby", "survival"],
-  "state": "draining",
-  "timestamp": "2025-01-15T10:30:00Z"
+  "type": "BackendHealthChange",
+  "data": {
+    "address": "10.0.0.1:25565",
+    "server_ids": ["lobby", "survival"],
+    "state": "draining",
+    "timestamp": "2025-01-15T10:30:00Z"
+  }
 }
 ```
 
@@ -394,11 +405,14 @@ The state is the one selection acts on, so a drained address reports `draining` 
 
 ```json
 {
-  "provider": "file",
-  "added": ["creative"],
-  "removed": [],
-  "updated": ["lobby", "survival"],
-  "timestamp": "2025-01-15T10:30:00Z"
+  "type": "ConfigReload",
+  "data": {
+    "provider": "file",
+    "added": ["creative"],
+    "removed": [],
+    "updated": ["lobby", "survival"],
+    "timestamp": "2025-01-15T10:30:00Z"
+  }
 }
 ```
 
@@ -475,12 +489,12 @@ const events = new EventSource(
 );
 
 events.addEventListener('player.join', (e) => {
-  const data = JSON.parse(e.data);
-  console.log(`${data.username} joined ${data.server}`);
+  const { data } = JSON.parse(e.data);
+  console.log(`${data.username} joined`);
 });
 
 events.addEventListener('player.leave', (e) => {
-  const data = JSON.parse(e.data);
+  const { data } = JSON.parse(e.data);
   console.log(`${data.username} left`);
 });
 ```

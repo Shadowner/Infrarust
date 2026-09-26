@@ -5,15 +5,26 @@ description: Password-based authentication and premium auto-login for Minecraft 
 
 # Auth Plugin
 
-The auth plugin adds password-based authentication to offline-mode proxies. When a player connects, they're held in a limbo state and must `/register` (first visit) or `/login` (returning player) before reaching the backend server.
+The auth plugin adds password-based authentication to offline-mode proxies. When a player joins a server that uses it, they're held in a limbo state and must `/register` (first visit) or `/login` (returning player) before reaching the backend server.
 
 Players with a paid Minecraft account (premium) skip this. When premium auto-login is enabled, the plugin queries the Mojang API and triggers the Mojang encryption handshake (RSA + `hasJoined`). If the client proves ownership, it goes straight to the backend.
+
+## Activation
+
+The plugin is compiled in by default (`plugin-auth` feature), but it only holds players on the servers that name its limbo handler. Add `"auth"` to `limbo_handlers` in each `client_only` or `offline` server config that should require a login:
+
+```toml
+proxy_mode = "offline"
+limbo_handlers = ["auth"]
+```
+
+Players joining any other server go straight to the backend. The forwarding modes (`passthrough`, `zero_copy`, `server_only`) have no limbo, so the plugin cannot hold players there.
 
 ## How it works
 
 ### Offline (cracked) players
 
-1. A player connects and enters the limbo state.
+1. A player connects to a server that lists `"auth"` in `limbo_handlers` and enters the limbo state.
 2. The plugin checks if an account exists for that username (case-insensitive).
 3. New players see `/register <password> <confirm>`. Returning players see `/login <password>`.
 4. A title and chat message remind the player what to do. Reminders repeat on an interval.
@@ -239,7 +250,7 @@ The detection pipeline has three layers:
 
 1. A `DashMap` cache keyed by lowercase username, with a configurable TTL (`cache_ttl_seconds`). Cache hits avoid any network call.
 
-2. `GET https://api.mojang.com/users/profiles/minecraft/<username>`. A 200 means the username is premium. A 404 means it's not. A 429 or network error triggers the `rate_limit_action` policy.
+2. `GET https://api.mojang.com/users/profiles/minecraft/<username>`. A 200 means the username is premium. A 404 means it's not. A 429, or a lookup held back by the local `rate_limit_per_second` governor, triggers the `rate_limit_action` policy. A network error, any other status or a malformed response triggers `lookup_error_action`.
 
 3. The API lookup alone is not trusted. It only determines whether to *attempt* the Mojang encryption handshake. The actual proof of identity is the RSA key exchange + `hasJoined` session verification, handled by the proxy core.
 

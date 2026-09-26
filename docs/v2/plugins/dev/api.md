@@ -108,7 +108,7 @@ The `PluginContext` trait provides access to every service and registration meth
 | `channel_registrar()` | `&dyn ChannelRegistrar` | Register the plugin message channels this plugin listens on, removed when it is disabled. See [Plugin messaging](./messaging) |
 | `server_messenger()` | `Arc<dyn ServerMessenger>` | Send a plugin message to a backend server through a player on it. See [Plugin messaging](./messaging#messages-to-a-server) |
 
-`codec_filters()` and `transport_filters()` return `None` unless the plugin holds the matching capability in its Infrarust config, with the transport filter capability reserved for trusted native plugins.
+`codec_filters()` and `transport_filters()` return `None` unless the plugin holds the matching capability. Compiled-in plugins are trusted and hold every capability except the ones in their `[plugins.<id>] deny`, so they get both unless denied. The transport filter capability cannot be granted through `permissions`, so it stays reserved for trusted native plugins.
 
 A filter belongs to the plugin that registered it. `register` and `unregister` return `Result<(), FilterRegistryError>`: registering an id that another plugin or the proxy owns fails with `FilterRegistryError::OwnedBy { id, owner }`, and registering one of your own ids again replaces it. `unregister` removes only a filter you own, and answers `OwnedBy` for someone else's id and `NotFound` for an id nobody registered. Filters the proxy registers itself are owned by `PROXY_FILTER_OWNER` (`"infrarust"`), which no plugin can take over. Every filter a plugin owns is removed when it is disabled, so connections opened afterwards no longer run its code.
 
@@ -817,4 +817,4 @@ Import everything you need with a single `use` statement:
 use infrarust_api::prelude::*;
 ```
 
-This brings in the common types, traits, events, services, and error types covered on this page, including `ServiceRegistryExt` for `provide` and `get`, plus `Arc` from the standard library. A few items live outside the prelude: `DefaultPermissionChecker`, `AllPermissionsChecker` and `normalize_node` are in `infrarust_api::permissions`, and `ProxyInfo` and `PluginRegistry` are in `infrarust_api::services`. Import those directly when you need them.
+This brings in the common types, traits, events, services, and error types covered on this page, including `ServiceRegistryExt` for `provide` and `get`, plus `Arc` from the standard library. A few items live outside the prelude: `DefaultPermissionChecker`, `AllPermissionsChecker` and `normalize_node` are in `infrarust_api::permissions`. Import those directly when you need them.

@@ -49,7 +49,7 @@ bus.subscribe::<PostLoginEvent, _>(EventPriority::NORMAL, |event| {
 
 What to do: replace `event.player_id` with `event.player_id()`, `event.username` with `event.username()`, and `event.profile` with `event.profile()` where the table says so. Drop the registry lookups that only turned the id back into a player.
 
-These events are also `#[non_exhaustive]` now, as are `ServerPostConnectEvent`, `ProxyPingEvent`, `ConfigReloadEvent` and the new events. Outside `infrarust-api` you can no longer build them with a struct literal: tests use their `new` constructor, with a `MockPlayer` from the `test-util` feature for the player. See [Testing](./testing#mockplayer).
+Outside `infrarust-api` you can no longer build these events with a struct literal. Most of them are `#[non_exhaustive]` now, as are `ServerPostConnectEvent`, `ProxyPingEvent`, `ConfigReloadEvent` and the new events; `PermissionsSetupEvent`, `PlayerChooseInitialServerEvent` and `ServerPreConnectEvent` are not, but a private `result` field has the same effect. Tests build them all with their `new` constructor, with a `MockPlayer` from the `test-util` feature for the player. See [Testing](./testing#mockplayer).
 
 ### `ServerSwitchEvent` is removed
 

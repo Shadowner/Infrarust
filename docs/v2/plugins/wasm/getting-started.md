@@ -222,7 +222,10 @@ permissions = ["ban", "server-manage"]
 | Field | Type | Notes |
 |-------|------|-------|
 | `enabled` | bool | Whether the plugin loads. Defaults to `true`. |
-| `permissions` | array of strings | Opt-in capabilities, kebab-case. Baseline grants are always present. |
+| `permissions` | array of strings | Opt-in capabilities, kebab-case, added to the baseline grants. |
+| `deny` | array of strings | Capabilities to remove, applied after the baseline and `permissions`, so it can revoke a baseline grant. |
+| `strict_capabilities` | bool | Refuse to load the plugin when it imports a host function whose capability it lacks. Defaults to `false`. |
+| `wasm` | table | Per-plugin sandbox limits, `network` rules and `mounts`, overriding `[wasm]`. |
 | `path` | string | Optional. WASM plugins are auto-discovered, so this is unset for them. |
 
 See [Capabilities](./capabilities) for the full baseline and opt-in tables, and the [configuration reference](../../configuration/) for the surrounding config.
@@ -235,14 +238,15 @@ Start the proxy. On startup the manager loads each enabled plugin and logs it:
 INFO Plugin enabled plugin=my-plugin
 ```
 
-Join the server with a Minecraft client. The `PostLoginEvent` handler fires and the host log shows the join. Running `/hello` (or `/hello Steve`) writes the command output:
+Join the server with a Minecraft client. The `PostLoginEvent` handler fires and the host log shows the join:
 
 ```
 INFO Steve joined
-INFO hello, Steve!
 ```
 
-Two log lines that match your handlers mean the plugin loaded, the capabilities resolved, and dispatch reached your code.
+Running `/hello` (or `/hello Steve`) sends `hello, world!` (or `hello, Steve!`) to your chat. `reply` answers the sender, so the text reaches the log only when the console runs the command.
+
+The log line and the chat reply mean the plugin loaded, the capabilities resolved, and dispatch reached your code.
 
 ```mermaid
 flowchart LR

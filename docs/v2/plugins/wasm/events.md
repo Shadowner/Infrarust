@@ -151,7 +151,7 @@ The events arrive in the order described in the native [player lifecycle](../dev
 
 Every reason and message is anything that converts into a `Component`, so `deny("Banned")` and `deny(Component::text("Banned").color(NamedColor::Red))` both work.
 
-`ConnectCause` is `Initial`, `Switch`, `LimboExit`, `KickRedirect` or `PluginMessage`. `KickCause` is `Unreachable(error)`, `LoginRefused`, `ConfigDisconnect`, `PlayDisconnect` or `ConnectionLost`. `KickedFromServerEvent` starts with `DisconnectPlayer(None)`, the proxy's default.
+`ConnectCause` is `Initial`, `Switch`, `LimboExit`, `KickRedirect` or `PluginMessage`. `KickCause` is `Unreachable(error)`, `LoginRefused`, `ConfigDisconnect`, `PlayDisconnect` or `ConnectionLost`. `KickedFromServerEvent` starts with the proxy's default, which depends on the case: `DisconnectPlayer(None)` for a kick from a server the player had finished joining; for a connection that failed, `Notify` with the reason when the player can stay on their current server, `SendToLimbo` with the server's `limbo_handlers` when those handlers resolve, and `DisconnectPlayer(None)` otherwise.
 
 `PingResponse` has `description`, `max_players`, `online_players`, `protocol`, `version_name`, `favicon` and `player_sample` (name and UUID pairs). Reading it leaves the response alone; `response_mut()` sends the whole response back. A description you did not change keeps the native component exactly as it was, including parts the contract cannot carry.
 

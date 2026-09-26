@@ -259,7 +259,7 @@ Every WASM plugin runs under limits enforced by the wasmtime runtime: a CPU budg
 | `cpu_budget` | `3s` | CPU time per guest call before an `Interrupt` trap |
 | `codec_cpu_budget` | `800ms` | CPU time per codec filter call before a trap |
 | `memory_limit_mb` | `64` | Linear memory per plugin instance |
-| `host_call_timeout` | `30s` | One ban-service or server-manager call made by the guest |
+| `host_call_timeout` | `30s` | One host call that waits on the proxy: server-manager `start` and `stop`, ban-service calls, `connect`, `transfer`, `request-cookie`, `refresh-permissions`, `fire-named`, `set-snapshot`, `release`, and HTTP request timeouts. `switch-server` has its own 250 ms cap |
 | `max_call_duration` | `60s` | Wall-clock time of one guest call, host calls included |
 | `queue_capacity` | `1024` | Calls waiting for a busy plugin |
 
@@ -321,7 +321,7 @@ Each plugin instance is owned by its own task. Every call into the guest (events
 The WASI context grants one preopened directory per plugin, mounted at `/` inside the guest and backed by the plugin's data directory on the host. The directory is created on load if it does not exist.
 
 ```rust
-// crates/infrarust-loader-wasm/src/store_state.rs
+// crates/infrarust-loader-wasm/src/imp/store_state.rs
 builder
     .preopened_dir(data_dir, "/", DirPerms::all(), FilePerms::all())?;
 ```

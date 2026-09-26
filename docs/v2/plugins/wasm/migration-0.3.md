@@ -24,7 +24,7 @@ Update the `infrarust-plugin-sdk` dependency, rebuild, and fix the compile error
 | `fn on_disable(&self, ctx: &Context) -> Result<(), String>` | `fn on_disable(&self, ctx: &Context) -> Result<(), PluginError>` |
 | `.map_err(\|e\| e.to_string())?` | `?` works on SDK errors, `std::io::Error`, `String` and `&str` |
 | `return Err(format!(...))` | `return Err(format!(...).into())` |
-| no reason | `ctx.enable_reason()` is `Initial` or `Recovered(RecoveryInfo { attempt, cause })`; `ctx.disable_reason()` is `Shutdown` or `Unload` |
+| no reason | `ctx.enable_reason()` is `Initial` or `Recovered(RecoveryInfo { attempt, cause })`; `ctx.disable_reason()` is `Shutdown`, `Unload` or `Quarantine` |
 | `PluginMetadata::depends_on(id, optional)` | `depends_on(id)` and `optional_dependency(id)`, as in the native API |
 
 ```rust

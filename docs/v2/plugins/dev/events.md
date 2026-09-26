@@ -51,7 +51,7 @@ PreLoginEvent ─────────────── Denied ──▶ dis
   → player registered
   → PostLoginEvent
   → PlayerChooseInitialServerEvent
-  → ServerPreConnectEvent (cause: initial)
+  → ServerPreConnectEvent (cause: initial), skipped when the previous event chose SendToLimbo
   → limbo gate, when the server or a listener asks for one (LimboEnterEvent → LimboExitEvent)
   → server wake, for a managed server ── unavailable ──▶ KickedFromServerEvent
   → backend login ────────────── refused ──▶ no ServerConnectedEvent
@@ -357,8 +357,6 @@ Fired when online-mode authentication fails, for example a cracked client that c
 |-------|------|-------------|
 | `username` | `String` | The username that failed online authentication |
 
-`OnlineAuthFailed` is not re-exported from the prelude. Import it from its module: `use infrarust_api::events::lifecycle::OnlineAuthFailed;`.
-
 ### GameProfileRequestEvent
 
 Fired right after authentication, before the proxy checks bans against the player's UUID and before the player exists. Change `profile` to give the player another UUID, name or properties, for example skin textures in offline mode. The profile left in the event when the last listener returns is the one the proxy uses from then on: for the UUID ban check, in the player registry and every later event, in the `LoginSuccess` the client receives, and in what forwarding sends to the backend.
@@ -426,8 +424,6 @@ ctx.event_bus().subscribe::<PermissionsSetupEvent, _>(
     },
 );
 ```
-
-Like `OnlineAuthFailed`, this type is reached through `infrarust_api::events::lifecycle`, not the prelude glob.
 
 ### LoginEvent
 
@@ -538,7 +534,7 @@ Fired after `PostLoginEvent`, before `ServerPreConnectEvent`. Allows you to over
 |---------|-------------|
 | `Allowed` (default) | Use the domain router's choice |
 | `Redirect(ServerId)` | Send to a different server |
-| `SendToLimbo { limbo_handlers }` | Route through limbo handlers |
+| `SendToLimbo { limbo_handlers }` | Route through limbo handlers. No `ServerPreConnectEvent` fires before the gate; it fires after `LimboExitEvent` instead |
 
 ```rust
 ctx.event_bus().subscribe::<PlayerChooseInitialServerEvent, _>(
@@ -737,7 +733,7 @@ Fired when the player leaves the handler chain, whatever ends it. Awaited in the
 | `TimedOut` (`timed_out`) | The client stopped answering keep-alives |
 | `Shutdown` (`shutdown`) | The proxy is shutting down |
 
-For one stay in limbo the order is `LimboEnterEvent`, then `LimboExitEvent`, then what the outcome leads to. After an initial gate that released the player, `ServerConnectedEvent` follows directly: the gate's `ServerPreConnectEvent` fired before `LimboEnterEvent`.
+For one stay in limbo the order is `LimboEnterEvent`, then `LimboExitEvent`, then what the outcome leads to. After an initial gate that released the player, `ServerConnectedEvent` follows directly: the gate's `ServerPreConnectEvent` fired before `LimboEnterEvent`. The exception is a gate that `PlayerChooseInitialServerEvent` asked for with `SendToLimbo`. No `ServerPreConnectEvent` fires before that gate; when it releases the player to the initial server, `ServerPreConnectEvent` fires after `LimboExitEvent`, with the cause `Initial`, before the proxy connects.
 
 WASM plugins (contract 0.3.0) receive `limbo-enter` and `limbo-exit` with the same fields.
 
