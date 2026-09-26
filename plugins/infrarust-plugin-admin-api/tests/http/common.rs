@@ -18,6 +18,7 @@ use infrarust_plugin_admin_api::config::{ApiConfig, RateLimitConfig};
 use infrarust_plugin_admin_api::drain_store::DrainStore;
 use infrarust_plugin_admin_api::health_cache::HealthCache;
 use infrarust_plugin_admin_api::health_checker::HealthChecker;
+use infrarust_plugin_admin_api::log_layer::LogBroadcast;
 use infrarust_plugin_admin_api::rate_limit::RateLimiter;
 use infrarust_plugin_admin_api::router::build_router;
 use infrarust_plugin_admin_api::server_dir::ServerDir;
@@ -149,6 +150,7 @@ pub struct TestApiBuilder {
     requests_per_minute: u64,
     config: Option<Arc<MockConfigService>>,
     ban_service: Option<Arc<MockBanService>>,
+    logs: Option<LogBroadcast>,
     files: Vec<(&'static str, &'static str)>,
 }
 
@@ -174,6 +176,12 @@ impl TestApiBuilder {
     #[must_use]
     pub fn ban_service(mut self, ban_service: Arc<MockBanService>) -> Self {
         self.ban_service = Some(ban_service);
+        self
+    }
+
+    #[must_use]
+    pub fn logs(mut self, logs: LogBroadcast) -> Self {
+        self.logs = Some(logs);
         self
     }
 
@@ -213,8 +221,7 @@ impl TestApiBuilder {
             event_tx,
             shutdown: CancellationToken::new(),
             proxy_shutdown: CancellationToken::new(),
-            log_tx: None,
-            log_history: None,
+            logs: self.logs,
             server_dir: Arc::new(ServerDir::open(dir.path()).unwrap()),
             provider_sender: Arc::new(tokio::sync::Mutex::new(None)),
             health_cache: Arc::new(HealthCache::new()),
@@ -246,6 +253,7 @@ impl TestApi {
             requests_per_minute: 1000,
             config: None,
             ban_service: None,
+            logs: None,
             files: Vec::new(),
         }
     }

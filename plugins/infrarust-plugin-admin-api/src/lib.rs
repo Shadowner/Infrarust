@@ -48,15 +48,17 @@ pub struct AdminApiPlugin {
     shutdown: CancellationToken,
     config: Mutex<Option<ApiConfig>>,
     enable_webui: bool,
+    logs: Option<LogBroadcast>,
 }
 
 impl AdminApiPlugin {
-    pub fn new(config: ApiConfig, enable_webui: bool) -> Self {
+    pub fn new(config: ApiConfig, enable_webui: bool, logs: Option<LogBroadcast>) -> Self {
         Self {
             server_handle: Mutex::new(None),
             shutdown: CancellationToken::new(),
             config: Mutex::new(Some(config)),
             enable_webui,
+            logs,
         }
     }
 }
@@ -94,17 +96,9 @@ impl Plugin for AdminApiPlugin {
 
             let rate_limiter = RateLimiter::new(config.rate_limit.requests_per_minute);
 
-            // Retrieve the log broadcast from the global singleton (set by main.rs)
-            let (log_tx, log_history) = match LogBroadcast::get() {
-                Some(lb) => (Some(lb.tx.clone()), Some(lb.history.clone())),
-                None => {
-                    tracing::warn!(
-                        "BroadcastLogLayer not installed \
-                         — /api/v1/logs and /api/v1/logs/history will return 503"
-                    );
-                    (None, None)
-                }
-            };
+            if self.logs.is_none() {
+                tracing::info!("No log broadcast: /api/v1/logs and /api/v1/logs/history are off");
+            }
 
             // Register API config provider for dynamic server management
             let server_dir = Arc::new(ServerDir::open(&data_dir).map_err(|e| {
@@ -147,8 +141,7 @@ impl Plugin for AdminApiPlugin {
                 event_tx: event_tx.clone(),
                 shutdown: self.shutdown.clone(),
                 proxy_shutdown: ctx.proxy_shutdown(),
-                log_tx,
-                log_history,
+                logs: self.logs.clone(),
                 server_dir,
                 provider_sender,
                 health_cache: Arc::new(HealthCache::new()),

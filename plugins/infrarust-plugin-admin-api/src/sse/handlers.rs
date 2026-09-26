@@ -79,16 +79,12 @@ pub async fn log_stream(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     verify_sse_auth(&state, &filter.token)?;
 
-    let log_tx = state.log_tx.as_ref().ok_or_else(|| {
-        ApiError::ServiceUnavailable(
-            "Log streaming is not available (BroadcastLogLayer not installed)".into(),
-        )
-    })?;
+    let logs = state.logs.as_ref().ok_or_else(logs_off)?;
 
     let min_level = parse_level(&filter.level);
     let target_prefix = filter.target.clone();
 
-    let mut receiver = log_tx.subscribe();
+    let mut receiver = logs.tx.subscribe();
 
     let stream = async_stream::stream! {
         loop {
@@ -139,15 +135,13 @@ pub async fn log_history(
     State(state): State<Arc<ApiState>>,
     Query(filter): Query<LogHistoryFilter>,
 ) -> Result<Json<ApiResponse<Vec<LogEntry>>>, ApiError> {
-    let history = state
-        .log_history
-        .as_ref()
-        .ok_or_else(|| ApiError::ServiceUnavailable("Log history is not available".into()))?;
+    let logs = state.logs.as_ref().ok_or_else(logs_off)?;
 
     let min_level = parse_level(&filter.level);
     let n = filter.n.unwrap_or(100).min(1000);
 
-    let history_guard = history
+    let history_guard = logs
+        .history
         .lock()
         .map_err(|_| ApiError::Internal("Log history lock poisoned".into()))?;
 
@@ -167,6 +161,10 @@ pub async fn log_history(
         .collect();
 
     Ok(ok(entries))
+}
+
+fn logs_off() -> ApiError {
+    ApiError::NotFound("Log streaming is not enabled on this proxy".into())
 }
 
 /// Maps a level string to a numeric value for comparison.

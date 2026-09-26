@@ -6,6 +6,7 @@ mod auth;
 mod backends;
 mod bans;
 mod config;
+mod logs;
 mod players;
 mod plugins;
 mod proxy;

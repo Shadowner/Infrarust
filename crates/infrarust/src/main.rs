@@ -16,6 +16,7 @@ use infrarust_config::ProxyConfig;
 use infrarust_core::runtime::{ProxyRuntime, proxy_info_from_config};
 use infrarust_core::services::config_service::ConfigServiceImpl;
 use infrarust_core::telemetry::formatter::InfrarustFormatter;
+use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
 
 mod migrate;
 mod plugins;
@@ -104,7 +105,16 @@ fn main() -> ExitCode {
         }
     };
 
-    let _tracing_guard = init_tracing(&cli.log_level, &config);
+    let log_broadcast = config
+        .web
+        .as_ref()
+        .is_some_and(|w| w.enable_api)
+        .then(|| LogBroadcast::new(512, 1000));
+    let _tracing_guard = init_tracing(
+        &cli.log_level,
+        &config,
+        log_broadcast.as_ref().map(LogBroadcast::layer),
+    );
 
     infrarust_core::telemetry::formatter::print_banner();
 
@@ -132,7 +142,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match runtime.block_on(run(config, cli.config)) {
+    match runtime.block_on(run(config, cli.config, log_broadcast)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!("{e:#}");
@@ -146,21 +156,15 @@ struct TracingGuard {
     _otel: Option<infrarust_core::telemetry::OtelGuard>,
 }
 
-fn init_tracing(log_level: &str, config: &ProxyConfig) -> TracingGuard {
+fn init_tracing(
+    log_level: &str,
+    #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))] config: &ProxyConfig,
+    log_layer: Option<BroadcastLogLayer>,
+) -> TracingGuard {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
-
-    let log_layer = if config.web.as_ref().is_some_and(|w| w.enable_api) {
-        use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
-        let lb = LogBroadcast::new(512, 1000);
-        let layer = BroadcastLogLayer::new(lb.tx.clone(), lb.history.clone(), 1000);
-        let _ = LogBroadcast::install(lb);
-        Some(layer)
-    } else {
-        None
-    };
 
     let registry = tracing_subscriber::registry()
         .with(filter)
@@ -227,7 +231,11 @@ fn finalize_config(
     Ok((config, warnings))
 }
 
-async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Result<()> {
+async fn run(
+    config: ProxyConfig,
+    config_path: std::path::PathBuf,
+    log_broadcast: Option<LogBroadcast>,
+) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
 
     // Signal handler in background
@@ -245,7 +253,7 @@ async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Re
     #[cfg(feature = "wasm")]
     let wasm_config = infrarust_loader_wasm::WasmLoaderConfig::from_proxy_config(&config);
 
-    let static_loader = plugins::build_static_loader(web_config.as_mut())?;
+    let static_loader = plugins::build_static_loader(web_config.as_mut(), log_broadcast)?;
     let static_ids = static_loader.registered_ids();
     let proxy_info = proxy_info_from_config(&config, env!("CARGO_PKG_VERSION"));
 

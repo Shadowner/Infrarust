@@ -1,6 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tokio::sync::broadcast;
@@ -10,15 +9,11 @@ use tracing_subscriber::layer::Context;
 
 use crate::util::now_iso8601;
 
-/// Global singleton for the log broadcast channels.
-/// Set by `main.rs` before plugins are loaded, read by the plugin in `on_enable()`.
-static LOG_BROADCAST: OnceLock<LogBroadcast> = OnceLock::new();
-
-/// Bundles the broadcast sender and ring buffer for log entries.
 #[derive(Clone)]
 pub struct LogBroadcast {
     pub tx: broadcast::Sender<LogEntry>,
     pub history: Arc<Mutex<VecDeque<LogEntry>>>,
+    max_history: usize,
 }
 
 impl LogBroadcast {
@@ -27,19 +22,16 @@ impl LogBroadcast {
         Self {
             tx,
             history: Arc::new(Mutex::new(VecDeque::with_capacity(max_history))),
+            max_history,
         }
     }
 
-    /// Stores the log broadcast in the global singleton.
-    /// Called once from `main.rs` before the tracing subscriber is initialized.
-    /// Returns `Err` if already set.
-    pub fn install(broadcast: LogBroadcast) -> Result<(), LogBroadcast> {
-        LOG_BROADCAST.set(broadcast)
-    }
-
-    /// Retrieves the global log broadcast, if installed.
-    pub fn get() -> Option<&'static LogBroadcast> {
-        LOG_BROADCAST.get()
+    pub fn layer(&self) -> BroadcastLogLayer {
+        BroadcastLogLayer {
+            log_tx: self.tx.clone(),
+            history: Arc::clone(&self.history),
+            max_history: self.max_history,
+        }
     }
 }
 
@@ -59,20 +51,6 @@ pub struct BroadcastLogLayer {
     log_tx: broadcast::Sender<LogEntry>,
     history: Arc<Mutex<VecDeque<LogEntry>>>,
     max_history: usize,
-}
-
-impl BroadcastLogLayer {
-    pub fn new(
-        log_tx: broadcast::Sender<LogEntry>,
-        history: Arc<Mutex<VecDeque<LogEntry>>>,
-        max_history: usize,
-    ) -> Self {
-        Self {
-            log_tx,
-            history,
-            max_history,
-        }
-    }
 }
 
 impl<S> Layer<S> for BroadcastLogLayer
@@ -182,7 +160,7 @@ mod tests {
     #[test]
     fn ring_buffer_evicts_old_entries() {
         let lb = LogBroadcast::new(64, 3);
-        let layer = BroadcastLogLayer::new(lb.tx.clone(), lb.history.clone(), 3);
+        let layer = lb.layer();
 
         // Simulate pushing entries directly to ring buffer
         for i in 0..5 {

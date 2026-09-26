@@ -16,7 +16,7 @@ use crate::config::ApiConfig;
 use crate::drain_store::DrainStore;
 use crate::health_cache::HealthCache;
 use crate::health_checker::HealthChecker;
-use crate::log_layer::LogEntry;
+use crate::log_layer::LogBroadcast;
 use crate::rate_limit::RateLimiter;
 use crate::server_dir::{ProviderSenderSlot, ServerDir};
 
@@ -34,10 +34,7 @@ pub struct ApiState {
     pub event_tx: broadcast::Sender<ApiEvent>,
     pub shutdown: CancellationToken,
     pub proxy_shutdown: CancellationToken,
-    /// Log broadcast sender. `None` if `BroadcastLogLayer` is not installed.
-    pub log_tx: Option<broadcast::Sender<LogEntry>>,
-    /// Ring buffer of recent log entries. `None` if `BroadcastLogLayer` is not installed.
-    pub log_history: Option<Arc<Mutex<VecDeque<LogEntry>>>>,
+    pub logs: Option<LogBroadcast>,
     /// TOML documents for API-managed servers, under `<data_dir>/servers/`.
     pub server_dir: Arc<ServerDir>,
     /// Sender for emitting config provider events (Added/Updated/Removed).
