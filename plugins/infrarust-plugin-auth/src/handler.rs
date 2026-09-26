@@ -718,4 +718,22 @@ mod tests {
             .await;
         assert!(!env.handler.is_in_auth_limbo(PlayerId::new(1)));
     }
+
+    #[tokio::test]
+    async fn the_registered_handler_forwards_session_callbacks_to_the_shared_handler() {
+        let env = TestEnv::new().await;
+        env.create_account("Steve", Some("hunter2hunter2")).await;
+        let registered: Box<dyn LimboHandler> = Box::new(Arc::clone(&env.handler));
+        let session = limbo_session(1, "Steve");
+
+        assert_eq!(registered.name(), "auth");
+        registered.on_player_enter(&*session).await;
+        assert!(env.handler.is_in_auth_limbo(PlayerId::new(1)));
+
+        registered.on_disconnect(PlayerId::new(1)).await;
+        registered
+            .on_session_end(PlayerId::new(1), SessionEndReason::Disconnected)
+            .await;
+        assert!(!env.handler.is_in_auth_limbo(PlayerId::new(1)));
+    }
 }

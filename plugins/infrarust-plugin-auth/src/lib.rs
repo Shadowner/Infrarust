@@ -18,10 +18,7 @@ use std::sync::{Arc, Mutex};
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::event::bus::EventBusExt;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
-use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
-use infrarust_api::types::PlayerId;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
@@ -177,7 +174,7 @@ impl Plugin for AuthPlugin {
                 premium_cache,
             ));
 
-            ctx.register_limbo_handler(Box::new(AuthLimbo(Arc::clone(&handler))))?;
+            ctx.register_limbo_handler(Box::new(Arc::clone(&handler)))?;
             commands::register_commands(ctx, Arc::clone(&handler));
 
             let save_cancel = CancellationToken::new();
@@ -238,44 +235,5 @@ impl Plugin for AuthPlugin {
             tracing::info!("[AuthPlugin] Disabled");
             Ok(())
         })
-    }
-}
-
-struct AuthLimbo(Arc<AuthHandler>);
-
-impl std::ops::Deref for AuthLimbo {
-    type Target = AuthHandler;
-    fn deref(&self) -> &AuthHandler {
-        &self.0
-    }
-}
-
-impl LimboHandler for AuthLimbo {
-    fn name(&self) -> &str {
-        (**self).name()
-    }
-
-    fn on_player_enter<'a>(
-        &'a self,
-        session: &'a dyn LimboSession,
-    ) -> BoxFuture<'a, HandlerResult> {
-        (**self).on_player_enter(session)
-    }
-
-    fn on_command<'a>(
-        &'a self,
-        session: &'a dyn LimboSession,
-        command: &'a str,
-        args: &'a [&'a str],
-    ) -> BoxFuture<'a, ()> {
-        (**self).on_command(session, command, args)
-    }
-
-    fn on_chat<'a>(&'a self, session: &'a dyn LimboSession, message: &'a str) -> BoxFuture<'a, ()> {
-        (**self).on_chat(session, message)
-    }
-
-    fn on_session_end(&self, player_id: PlayerId, reason: SessionEndReason) -> BoxFuture<'_, ()> {
-        (**self).on_session_end(player_id, reason)
     }
 }
