@@ -18,12 +18,12 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use super::packets::{self, encode_packet};
-use super::presentation::Presentation;
 use super::{BossBarCommand, ClientCommand, MessageTarget, OutgoingMessage, PlayerCommand};
 use crate::error::CoreError;
 use crate::plugin_messaging::channels::{self, MessageIds};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::presentation::Presentation;
 use crate::util::text::encode_text_component;
 
 #[derive(Debug)]

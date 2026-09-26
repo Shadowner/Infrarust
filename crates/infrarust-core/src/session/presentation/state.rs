@@ -11,7 +11,7 @@ use infrarust_api::events::resource_pack::ResourcePackOrigin;
 use infrarust_api::player::{BossBar, BossBarControl, BossBarUpdate, ResourcePackStatus};
 use infrarust_api::types::Component;
 
-use super::{BossBarCommand, PlayerCommand};
+use crate::player::{BossBarCommand, PlayerCommand};
 use crate::util::sync::lock;
 
 const MAX_TRACKED_COOKIE_KEYS: usize = 256;

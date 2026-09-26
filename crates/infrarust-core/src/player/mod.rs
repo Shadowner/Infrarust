@@ -8,7 +8,6 @@ pub(crate) mod command_queue;
 pub(crate) mod commands;
 pub(crate) mod lifecycle;
 pub(crate) mod packets;
-pub(crate) mod presentation;
 pub mod registry;
 
 use std::net::SocketAddr;
@@ -44,9 +43,9 @@ use crate::loadbalancer::BackendLoad;
 use crate::permissions::PermissionService;
 use crate::util::sync::{lock, read, write};
 
+use crate::session::presentation::{BarControl, Presentation};
 use client_state::ClientState;
 use command_queue::CommandQueue;
-use presentation::{BarControl, Presentation};
 
 const TAB_LIST_SINCE: WireVersion = WireVersion::V1_8;
 const BOSS_BAR_SINCE: WireVersion = WireVersion::V1_9;
