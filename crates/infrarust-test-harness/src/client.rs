@@ -211,16 +211,32 @@ impl FakeClient {
     }
 
     pub async fn status(&self) -> HarnessResult<StatusResult> {
-        tokio::time::timeout(self.timeout, self.status_exchange())
+        tokio::time::timeout(self.timeout, self.status_exchange(false))
             .await
             .map_err(|_| HarnessError::timeout("a status exchange", self.timeout))?
     }
 
-    async fn status_exchange(&self) -> HarnessResult<StatusResult> {
+    pub async fn status_pipelined(&self) -> HarnessResult<StatusResult> {
+        tokio::time::timeout(self.timeout, self.status_exchange(true))
+            .await
+            .map_err(|_| HarnessError::timeout("a pipelined status exchange", self.timeout))?
+    }
+
+    async fn status_exchange(&self, pipelined: bool) -> HarnessResult<StatusResult> {
         let version = self.version;
         let mut conn = self.open(ConnectionState::Status).await?;
-        conn.write_frame(&wire::encode(&SStatusRequest, version)?)
-            .await?;
+        let request = wire::encode(&SStatusRequest, version)?;
+        let ping = wire::encode(
+            &SPingRequest {
+                payload: STATUS_PING_PAYLOAD,
+            },
+            version,
+        )?;
+        if pipelined {
+            conn.write_frames(&[request, ping.clone()]).await?;
+        } else {
+            conn.write_frame(&request).await?;
+        }
         let frame = conn
             .read_frame()
             .await?
@@ -228,10 +244,9 @@ impl FakeClient {
         let response = wire::decode::<CStatusResponse>(&frame, version)?;
         let json = serde_json::from_str(&response.json_response)
             .map_err(|e| HarnessError::Unexpected(format!("status JSON: {e}")))?;
-        let ping = SPingRequest {
-            payload: STATUS_PING_PAYLOAD,
-        };
-        conn.write_frame(&wire::encode(&ping, version)?).await?;
+        if !pipelined {
+            conn.write_frame(&ping).await?;
+        }
         let frame = conn
             .read_frame()
             .await?

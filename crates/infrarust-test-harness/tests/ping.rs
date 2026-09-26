@@ -71,6 +71,37 @@ async fn an_unknown_domain_is_answered_with_the_default_motd(version: ProtocolVe
 
 version_matrix!(an_unknown_domain_is_answered_with_the_default_motd; p47 = 47, p764 = 764, p774 = 774);
 
+async fn a_ping_pipelined_with_the_status_request_is_answered(version: ProtocolVersion) {
+    let backend = FakeBackend::builder()
+        .status(json!({
+            "version": {"name": "fake", "protocol": version.0},
+            "players": {"max": 20, "online": 0},
+            "description": {"text": "A fake backend"},
+        }))
+        .spawn()
+        .await
+        .unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .start()
+        .await
+        .unwrap();
+
+    let status = proxy
+        .client(version)
+        .domain("lobby.test")
+        .status_pipelined()
+        .await
+        .unwrap();
+
+    assert_eq!(json_text(&status.json["description"]), "A fake backend");
+    assert_eq!(backend.status_requests(), 1);
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_ping_pipelined_with_the_status_request_is_answered; p47 = 47, p764 = 764, p774 = 774);
+
 fn legacy_backend_ping() -> LegacyPing {
     LegacyPing {
         protocol: Some(i32::from(LEGACY_PROTOCOL)),

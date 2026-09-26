@@ -45,6 +45,10 @@ impl FramedConn {
         self.writer.write_frame(frame).await
     }
 
+    pub async fn write_frames(&mut self, frames: &[PacketFrame]) -> HarnessResult<()> {
+        self.writer.write_frames(frames).await
+    }
+
     pub fn set_compression(&mut self, threshold: Option<i32>) {
         self.reader.set_compression(threshold);
         self.writer.set_compression(threshold);
@@ -109,7 +113,13 @@ pub struct FrameWriter {
 
 impl FrameWriter {
     pub async fn write_frame(&mut self, frame: &PacketFrame) -> HarnessResult<()> {
-        self.encoder.append_frame(frame)?;
+        self.write_frames(std::slice::from_ref(frame)).await
+    }
+
+    pub async fn write_frames(&mut self, frames: &[PacketFrame]) -> HarnessResult<()> {
+        for frame in frames {
+            self.encoder.append_frame(frame)?;
+        }
         let mut data = self.encoder.take();
         if let Some(cipher) = &mut self.encrypt {
             cipher.encrypt(&mut data);

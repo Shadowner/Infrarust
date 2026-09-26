@@ -113,7 +113,7 @@ impl StatusHandler {
         let routing = ctx.extensions.get::<RoutingData>().cloned();
         let handshake = ctx.extensions.get::<HandshakeData>().cloned();
 
-        self.read_status_request(ctx).await?;
+        let mut decoder = self.read_status_request(ctx).await?;
 
         let mut response = self
             .resolve_response(
@@ -156,7 +156,7 @@ impl StatusHandler {
         )
         .await?;
 
-        self.handle_ping_pong(ctx).await?;
+        self.handle_ping_pong(ctx, &mut decoder).await?;
 
         Ok(())
     }
@@ -377,7 +377,10 @@ impl StatusHandler {
         }
     }
 
-    async fn read_status_request(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
+    async fn read_status_request(
+        &self,
+        ctx: &mut ConnectionContext,
+    ) -> Result<PacketDecoder, CoreError> {
         let mut decoder = PacketDecoder::new();
         if !ctx.buffered_data.is_empty() {
             decoder.queue_bytes(&ctx.buffered_data);
@@ -390,14 +393,17 @@ impl StatusHandler {
             "status request",
         )
         .await?;
-        Ok(())
+        Ok(decoder)
     }
 
-    async fn handle_ping_pong(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
-        let mut decoder = PacketDecoder::new();
+    async fn handle_ping_pong(
+        &self,
+        ctx: &mut ConnectionContext,
+        decoder: &mut PacketDecoder,
+    ) -> Result<(), CoreError> {
         let frame = read_frame_within(
             ctx.stream_mut(),
-            &mut decoder,
+            decoder,
             STATUS_READ_TIMEOUT,
             "ping request",
         )
