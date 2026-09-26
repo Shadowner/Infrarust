@@ -111,7 +111,7 @@ Once running, Infrarust drops you into an interactive console. Type `help` to se
 | Command | Aliases | Usage | Description |
 |---------|---------|-------|-------------|
 | `reload` | | `reload` | Reload configuration |
-| `config` | | `config [key]` | Show configuration |
+| `config` | | `config [key]` | List the servers, or print one value of the running configuration by its dotted path, such as `keepalive.retries` (secrets redacted) |
 
 #### Plugins
 

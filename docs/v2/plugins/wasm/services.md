@@ -299,10 +299,12 @@ impl Config {
 }
 ```
 
-`get` reads a single string value by key. `server` and `servers` return `ServerConfig` records with the proxy's view of each backend (id, network, addresses, domains, proxy mode, limbo handlers, max players, disconnect message, proxy protocol, server manager).
+`get` reads one value of the configuration the proxy runs on by its dotted path, as the native `ConfigService::get_value` does: a string comes back as its text, a number or a boolean as its `to_string()`, a table or an array as inline TOML, a secret field as `<redacted>`, and a path with nothing at it as `None`. `server` and `servers` return `ServerConfig` records with the proxy's view of each backend (id, network, addresses, domains, proxy mode, limbo handlers, max players, disconnect message, proxy protocol, server manager).
 
 ```rust
-let greeting = Config::get("greeting")?.unwrap_or_else(|| "Welcome".to_string());
+let retries: u32 = Config::get("keepalive.retries")?
+    .and_then(|value| value.parse().ok())
+    .unwrap_or(3);
 ```
 
 The documents mirror the native `ConfigService`, with every secret field redacted:

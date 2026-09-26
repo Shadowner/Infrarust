@@ -838,7 +838,8 @@ conformance!(
 fn script_parser_accepts_the_grammar_and_rejects_mistakes() {
     let parsed = script::parse(
         "on pre-login early deny \"Banned\"\n\ncmd greet record\non post-login 32 cancelled\n\
-         named echo late respond \"pong\"\ncmd ask fire echo \"ping\"\nchannel test:echo",
+         named echo late respond \"pong\"\ncmd ask fire echo \"ping\"\nchannel test:echo\n\
+         config keepalive.retries",
     )
     .expect("valid script");
     assert_eq!(
@@ -870,6 +871,9 @@ fn script_parser_accepts_the_grammar_and_rejects_mistakes() {
             Directive::Channel {
                 id: "test:echo".to_owned(),
             },
+            Directive::Config {
+                key: "keepalive.retries".to_owned(),
+            },
         ]
     );
     for bad in [
@@ -886,6 +890,8 @@ fn script_parser_accepts_the_grammar_and_rejects_mistakes() {
         "named echo normal drop",
         "cmd ask fire",
         "channel",
+        "config",
+        "config web.bind extra",
     ] {
         assert!(script::parse(bad).is_err(), "`{bad}` must be rejected");
     }

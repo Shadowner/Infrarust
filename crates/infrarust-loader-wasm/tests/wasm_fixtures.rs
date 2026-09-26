@@ -22,9 +22,12 @@ use infrarust_api::loader::{LoaderError, PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
+use infrarust_config::ProxyConfig;
 use infrarust_core::event_bus::EventBusConfig;
 use infrarust_core::plugin::PluginContextFactoryImpl;
+use infrarust_core::routing::DomainRouter;
 use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutcome};
+use infrarust_core::services::config_service::ConfigServiceImpl;
 use infrarust_loader_wasm::WasmPluginLoader;
 use tracing::instrument::WithSubscriber;
 
@@ -221,6 +224,48 @@ async fn test_host_caller_reads_services() {
         std::fs::read_to_string(dir.join("greeting.txt")).expect("greeting.txt"),
         "hello-wasm",
         "guest read a config value via the host"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_guest_reads_the_running_proxy_config_by_dotted_path() {
+    let (tmp, plugins_dir) = stage("scripted");
+    write_script(
+        &plugins_dir,
+        "scripted",
+        "config bind\nconfig keepalive.retries\nconfig web.api_key\nconfig keepalive\n\
+         config nope.nothing",
+    );
+    let config: ProxyConfig = toml::from_str(
+        "bind = \"0.0.0.0:25577\"\n[web]\nbind = \"127.0.0.1:8080\"\n\
+         api_key = \"super-secret-key-value\"\n",
+    )
+    .unwrap();
+    let env = make_env_with(
+        plugins_dir.clone(),
+        EnvOptions {
+            config_service: Arc::new(ConfigServiceImpl::new(
+                Arc::new(DomainRouter::new()),
+                tmp.path().join("infrarust.toml"),
+                Arc::new(config),
+            )),
+            ..EnvOptions::default()
+        },
+    );
+    let loader = fresh_loader();
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "scripted").await;
+
+    assert_eq!(
+        read_log(&plugins_dir.join("scripted")),
+        [
+            "config bind 0.0.0.0:25577",
+            "config keepalive.retries 3",
+            "config web.api_key <redacted>",
+            "config keepalive { interval = \"10s\", retries = 3, time = \"30s\" }",
+            "config nope.nothing -",
+            "enable",
+        ]
     );
 }
 

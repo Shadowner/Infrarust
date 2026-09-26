@@ -154,7 +154,7 @@ pub trait ConfigService: Send + Sync + private::Sealed {
     /// See [`ConfigWriteError`].
     fn write_proxy_config_document(&self, toml: &str) -> Result<(), ConfigWriteError>;
 
-    /// Returns a configuration value by key, or `None` if not set.
+    /// Returns the value at a dotted path of the effective proxy config, or `None`.
     fn get_value(&self, key: &str) -> Option<String>;
 }
 

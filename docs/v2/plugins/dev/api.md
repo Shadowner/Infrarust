@@ -598,11 +598,13 @@ for server in config.get_all_server_configs() {
     tracing::info!("{}: {} domains", server.id, server.domains.len());
 }
 
-// Read arbitrary config values
-if let Some(val) = config.get_value("some.key") {
-    tracing::info!("config value: {val}");
+// Read one value of the running config by its dotted path
+if let Some(retries) = config.get_value("keepalive.retries") {
+    tracing::info!("keepalive retries: {retries}");
 }
 ```
+
+`get_value` looks its dotted path up in the document `get_effective_proxy_config_document()` returns, so it sees the CLI overrides and the defaults the proxy runs with. A string comes back as its text, a number or a boolean as its `to_string()`, and a table or an array as inline TOML: `get_value("keepalive")` answers `{ interval = "10s", retries = 3, time = "30s" }`. A secret field comes back as `<redacted>`, as in the document, and a path with nothing at it answers `None`.
 
 `ServerConfig` fields:
 

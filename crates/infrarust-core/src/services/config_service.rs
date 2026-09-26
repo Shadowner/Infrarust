@@ -188,11 +188,23 @@ impl ConfigService for ConfigServiceImpl {
         })
     }
 
-    /// Not implemented: this impl only holds routing tables, and the trait
-    /// is part of the frozen plugin surface, so it always returns `None` —
-    /// callers cannot distinguish "unimplemented" from "key absent".
-    fn get_value(&self, _key: &str) -> Option<String> {
-        None
+    fn get_value(&self, key: &str) -> Option<String> {
+        let document: toml::Table =
+            toml::from_str(&self.get_effective_proxy_config_document()).ok()?;
+        let mut path = key.split('.');
+        let mut value = document.get(path.next()?)?;
+        for segment in path {
+            value = value.as_table()?.get(segment)?;
+        }
+        Some(match value {
+            toml::Value::String(text) => text.clone(),
+            toml::Value::Integer(number) => number.to_string(),
+            toml::Value::Float(number) => number.to_string(),
+            toml::Value::Boolean(flag) => flag.to_string(),
+            toml::Value::Datetime(_) | toml::Value::Array(_) | toml::Value::Table(_) => {
+                value.to_string()
+            }
+        })
     }
 }
 
@@ -655,6 +667,88 @@ api_key = \"super-secret-key-value\"
 
         assert_eq!(effective.servers_dir, elsewhere);
         assert_eq!(stored.servers_dir, root.path().join("servers"));
+    }
+
+    #[test]
+    fn a_value_is_read_by_its_dotted_path() {
+        let (service, _root) = service(SAMPLE);
+
+        assert_eq!(service.get_value("bind").as_deref(), Some("0.0.0.0:25565"));
+        assert_eq!(service.get_value("connect_timeout").as_deref(), Some("5s"));
+        assert_eq!(
+            service.get_value("web.bind").as_deref(),
+            Some("127.0.0.1:8080")
+        );
+        assert_eq!(service.get_value("keepalive.retries").as_deref(), Some("3"));
+        assert_eq!(
+            service.get_value("receive_proxy_protocol").as_deref(),
+            Some("false")
+        );
+    }
+
+    #[test]
+    fn a_missing_path_has_no_value() {
+        let (service, _root) = service(SAMPLE);
+
+        for key in [
+            "",
+            "bnid",
+            "web.nope",
+            "bind.port",
+            "keepalive..retries",
+            "web.",
+        ] {
+            assert_eq!(service.get_value(key), None, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn a_table_or_an_array_comes_back_as_inline_toml() {
+        let (service, _root) = service(&format!(
+            "{SAMPLE}\n[permissions]\nadmins = [\"Notch\", \"jeb_\"]\n"
+        ));
+
+        assert_eq!(
+            service.get_value("permissions.admins").as_deref(),
+            Some("[\"Notch\", \"jeb_\"]")
+        );
+
+        assert_eq!(
+            service.get_value("keepalive").as_deref(),
+            Some("{ interval = \"10s\", retries = 3, time = \"30s\" }")
+        );
+    }
+
+    #[test]
+    fn a_value_never_carries_a_secret() {
+        let (service, _root) = service(SAMPLE);
+
+        assert_eq!(
+            service.get_value("web.api_key").as_deref(),
+            Some(infrarust_config::secrets::REDACTED)
+        );
+        let web = service.get_value("web").unwrap();
+        assert!(!web.contains("super-secret-key-value"), "{web}");
+        assert!(web.contains(infrarust_config::secrets::REDACTED), "{web}");
+    }
+
+    #[test]
+    fn a_value_comes_from_the_running_config() {
+        let (service, root) = service(SAMPLE);
+        let elsewhere = root.path().join("elsewhere");
+        let mut running: ProxyConfig = toml::from_str("").unwrap();
+        running.servers_dir.clone_from(&elsewhere);
+        let service = ConfigServiceImpl::new(
+            Arc::new(DomainRouter::new()),
+            service.config_path.clone(),
+            Arc::new(running),
+        );
+
+        assert_eq!(
+            service.get_value("servers_dir"),
+            Some(elsewhere.display().to_string())
+        );
+        assert_eq!(service.get_value("web.bind"), None);
     }
 
     /// The proxy may have been started with `--servers-dir`, so the directory

@@ -254,6 +254,13 @@ pub fn enable(ctx: &Context) -> Result<(), PluginError> {
             Directive::Channel { id } => {
                 Messaging::register(&ChannelId::modern(id))?;
             }
+            Directive::Config { key } => {
+                let line = match Config::get(&key) {
+                    Ok(value) => script::config_line(&key, value.as_deref()),
+                    Err(error) => format!("config {key} failed {error}"),
+                };
+                script::append(&log(), &line);
+            }
         }
     }
     let line = match ctx.enable_reason() {

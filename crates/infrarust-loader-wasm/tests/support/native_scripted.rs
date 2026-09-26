@@ -117,6 +117,10 @@ impl Plugin for ScriptedPlugin {
                             .map_err(|e| PluginError::InitFailed(e.to_string()))?;
                         ctx.channel_registrar().register(channel);
                     }
+                    Directive::Config { key } => {
+                        let value = ctx.config_service().get_value(&key);
+                        script::append(&log, &script::config_line(&key, value.as_deref()));
+                    }
                 }
             }
             script::append(&log, "enable");

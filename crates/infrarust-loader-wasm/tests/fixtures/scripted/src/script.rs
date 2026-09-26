@@ -235,6 +235,9 @@ pub enum Directive {
     Channel {
         id: String,
     },
+    Config {
+        key: String,
+    },
 }
 
 pub fn parse(script: &str) -> Result<Vec<Directive>, String> {
@@ -319,6 +322,15 @@ fn parse_line(line: &str) -> Result<Directive, String> {
             }
             Ok(Directive::Channel { id: id.to_owned() })
         }
+        "config" => {
+            let (key, rest) = word(rest);
+            if key.is_empty() || !rest.trim().is_empty() {
+                return Err("expected `config <key>`".to_owned());
+            }
+            Ok(Directive::Config {
+                key: key.to_owned(),
+            })
+        }
         other => Err(format!("unknown directive {other:?}")),
     }
 }
@@ -402,6 +414,10 @@ pub fn named_line(name: &str, priority: u8, fields: &[&str]) -> String {
         line.push_str(field);
     }
     line
+}
+
+pub fn config_line(key: &str, value: Option<&str>) -> String {
+    format!("config {key} {}", or_dash(value))
 }
 
 pub fn fired_line(command: &str, event: &str, cancelled: bool, response: Option<&str>) -> String {
