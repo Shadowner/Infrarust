@@ -572,8 +572,6 @@ Server-specific timeout overrides. If omitted, the global `connect_timeout` appl
 ```toml
 [timeouts]
 connect = "10s"
-read = "60s"
-write = "60s"
 ```
 
 ### `[ip_filter]`
@@ -677,7 +675,7 @@ shutdown_after = "15m"
 
 ## Full example
 
-A complete `infrarust.toml` with all sections:
+A complete `infrarust.toml` with the main sections:
 
 ```toml
 bind = "0.0.0.0:25565"
@@ -802,8 +800,6 @@ version_name = "Sleeping"
 
 [timeouts]
 connect = "10s"
-read = "60s"
-write = "60s"
 
 [ip_filter]
 blacklist = ["203.0.113.0/24"]

@@ -40,7 +40,7 @@ The fields are:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `path` | string | none | Reserved for future use (native `.so` loader, not yet available). |
+| `path` | string | none | Accepted for compatibility. WASM plugins are always loaded from `plugins_dir`, and native plugins are compiled in. |
 | `permissions` | string array | `[]` | Extra capabilities to grant beyond the baseline. Values are kebab-case strings. |
 | `deny` | string array | `[]` | Capabilities to remove, applied after the baseline and `permissions`. Also applies to built-in plugins. |
 | `strict_capabilities` | bool | `false` | WASM plugins: refuse to load the plugin when it imports a host function whose capability it lacks. |
