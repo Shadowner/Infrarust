@@ -46,6 +46,7 @@ impl<T: ?Sized> Registry<T> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use std::cell::Cell;
     use std::rc::Rc;
 

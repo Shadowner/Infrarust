@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;

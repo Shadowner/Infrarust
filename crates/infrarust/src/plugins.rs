@@ -74,6 +74,7 @@ pub fn build_static_loader(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn web(enable_api: bool) -> WebConfig {

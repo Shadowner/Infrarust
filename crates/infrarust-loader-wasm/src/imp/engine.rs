@@ -48,6 +48,7 @@ fn pooling(slots: u32) -> PoolingAllocationConfig {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

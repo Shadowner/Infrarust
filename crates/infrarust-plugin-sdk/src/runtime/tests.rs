@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;

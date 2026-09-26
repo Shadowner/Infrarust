@@ -153,6 +153,7 @@ async fn absorb_until(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use bytes::BytesMut;
     use tokio::net::{TcpListener, TcpStream};
 

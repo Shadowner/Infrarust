@@ -425,6 +425,7 @@ fn parse_ports(port: &str) -> Result<PortRange, String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn rule(text: &str) -> NetworkRule {

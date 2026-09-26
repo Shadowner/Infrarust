@@ -66,6 +66,7 @@ fn parse(version: &str) -> Option<(u64, u64, u64)> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn engine() -> Engine {

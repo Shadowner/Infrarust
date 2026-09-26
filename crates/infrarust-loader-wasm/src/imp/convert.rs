@@ -491,6 +491,7 @@ pub(crate) fn limbo_entry_context_to_wit(c: &LimboEntryContext) -> wl::LimboEntr
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn timeout_outcome_from_wit(t: &wl::TimeoutOutcome) -> Result<HandlerResult, ArenaError> {

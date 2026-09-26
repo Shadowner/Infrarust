@@ -96,6 +96,7 @@ pub(crate) fn map_instantiate_error(plugin_id: &str, e: &wasmtime::Error) -> Was
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::linker::build_linker;
 

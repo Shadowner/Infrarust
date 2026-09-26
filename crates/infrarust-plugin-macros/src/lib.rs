@@ -390,6 +390,7 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn expand_err(attr: TokenStream2, item: TokenStream2) -> String {

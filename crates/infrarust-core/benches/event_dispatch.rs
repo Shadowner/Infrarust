@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::future::Future;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};

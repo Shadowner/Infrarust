@@ -2,6 +2,7 @@
 //! `intercepted_pipeline` benches. Included via `#[path]` (not a bench target
 //! itself — cargo only auto-discovers `benches/<name>.rs`).
 #![allow(dead_code)] // each including bench uses a subset
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use bytes::Bytes;
 

@@ -85,6 +85,7 @@ impl WasmEvent for ConnectionRejectedEvent {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use infrarust_api::types::{Component, ProtocolVersion, ServerId};
 
     use super::*;

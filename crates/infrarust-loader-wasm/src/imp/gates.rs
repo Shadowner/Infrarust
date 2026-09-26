@@ -153,6 +153,7 @@ pub(crate) fn check_imports(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn engine() -> Engine {

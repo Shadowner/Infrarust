@@ -13,6 +13,8 @@
 //!
 //! Run with: `cargo bench -p infrarust-core --bench intercepted_pipeline`
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use divan::counter::BytesCount;
 use divan::{Bencher, black_box};
 

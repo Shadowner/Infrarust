@@ -440,6 +440,7 @@ fn usage_label(usage: SocketAddrUse) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use std::collections::HashMap;
     use std::sync::Mutex as StdMutex;
 

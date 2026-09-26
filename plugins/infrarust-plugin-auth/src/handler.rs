@@ -570,6 +570,7 @@ impl LimboHandler for AuthHandler {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::account::Username;
     use crate::test_support::{

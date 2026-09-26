@@ -76,6 +76,7 @@ pub(crate) fn resolve_mounts(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn mount(host: &std::path::Path, guest: &str, read_only: bool) -> WasmMount {

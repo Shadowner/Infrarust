@@ -99,6 +99,7 @@ fn is_bcrypt_hash(hash: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn test_config() -> HashingConfig {

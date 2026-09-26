@@ -179,6 +179,8 @@ all = { level = "warn", priority = -1 }
 await_holding_lock = "warn"
 dbg_macro = "warn"
 todo = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
 
 [workspace.lints.rust]
 unsafe_code = "warn"

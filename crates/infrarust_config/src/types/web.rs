@@ -176,6 +176,7 @@ impl Default for WebConfig {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn config(bind: &str, api_key: Option<&str>) -> WebConfig {

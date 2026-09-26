@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #[cfg(all(feature = "wasm", wasm_fixtures_available))]
 #[path = "../tests/support/mock_services.rs"]
 mod mock_services;

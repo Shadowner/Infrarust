@@ -94,6 +94,7 @@ pub(crate) fn snapshot_to_wit(snapshot: &PermissionSnapshot) -> wp::PermissionSn
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use infrarust_api::permissions::{PermissionChecker, Tristate};
 
     use super::*;

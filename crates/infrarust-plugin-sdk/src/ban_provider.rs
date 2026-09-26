@@ -313,6 +313,7 @@ pub trait BanProvider {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::types::time_from_millis;
 

@@ -667,6 +667,7 @@ pub(crate) fn from_host(arena: wt::Component) -> Component {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use infrarust_plugin_wit::arena::{MAX_DEPTH, MAX_NODES};
 
     use super::*;

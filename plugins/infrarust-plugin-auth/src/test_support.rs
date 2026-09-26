@@ -1,5 +1,7 @@
 //! Mocks over the infrarust-api player traits plus a handler test harness.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::collections::HashSet;
 use std::sync::Arc;
 

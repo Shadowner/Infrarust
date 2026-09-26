@@ -552,6 +552,7 @@ pub(crate) fn server_ids(ids: Vec<String>) -> Vec<ServerId> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

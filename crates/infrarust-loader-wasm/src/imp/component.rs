@@ -217,6 +217,7 @@ fn click_from_wit(click: &wt::ClickEvent) -> ClickEvent {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use infrarust_api::types::NamedColor;
 
     use super::*;

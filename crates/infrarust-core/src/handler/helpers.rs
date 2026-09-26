@@ -127,6 +127,7 @@ pub(crate) fn record_session_end(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use infrarust_api::types::{ClickEvent, NamedColor};
     use infrarust_protocol::{McBufReadExt, build_default_registry};
     use tokio::io::AsyncReadExt;
