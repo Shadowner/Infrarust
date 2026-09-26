@@ -138,16 +138,27 @@ impl Plugin for AuthPlugin {
                     );
 
                 let failure_cache = Arc::clone(&cache);
+                let refuse_premium_names = matches!(
+                    config.premium.premium_name_conflict_action,
+                    premium::config::NameConflictAction::Kick
+                );
                 ctx.event_bus().subscribe::<
                     infrarust_api::events::lifecycle::OnlineAuthFailed, _
                 >(
                     infrarust_api::event::EventPriority::NORMAL,
                     move |event| {
-                        failure_cache.mark_auth_failed(&event.username);
-                        tracing::info!(
-                            username = %event.username,
-                            "Remembered failed premium auth — next attempt will skip ForceOnline"
-                        );
+                        let failure = failure_cache.mark_auth_failed(&event.username);
+                        if refuse_premium_names && failure == premium::FailedAuth::PremiumName {
+                            tracing::info!(
+                                username = %event.username,
+                                "Remembered failed auth on a premium name — next attempts are refused"
+                            );
+                        } else {
+                            tracing::info!(
+                                username = %event.username,
+                                "Remembered failed auth — next attempt will skip online auth"
+                            );
+                        }
                     },
                 );
 

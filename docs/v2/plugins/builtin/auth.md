@@ -41,10 +41,10 @@ When `[premium] enabled = true`:
 3. If premium, the proxy forces the Mojang encryption handshake (RSA key exchange + `sessionserver.mojang.com/session/minecraft/hasJoined`).
 4. If the client proves it owns the account, the player's profile arrives with signed skin textures.
 5. The auth handler sees the signed textures and returns `Accept`, skipping `/login` and `/register`.
-6. If the client fails the encryption handshake (cracked client using a premium username), it gets disconnected. The plugin remembers the failure for the [second attempt](#cracked-players-using-premium-usernames-second-attempt).
+6. If the client fails the encryption handshake (cracked client using a premium username), it gets disconnected. The plugin remembers the failure: by default the name's next connections are refused, and with `premium_name_conflict_action = "allow_cracked"` they fall back to `/login` or `/register`. See the [second attempt](#cracked-players-using-premium-usernames-second-attempt).
 
 ::: tip
-In `client_only` proxy mode, premium players are already Mojang-authenticated by the proxy core. The auth handler sees signed textures and skips the limbo with no API call. Cracked players get kicked on first connection but can join on their second attempt via the [remember mechanism](#cracked-players-using-premium-usernames-second-attempt).
+In `client_only` proxy mode, premium players are already Mojang-authenticated by the proxy core. The auth handler sees signed textures and skips the limbo with no API call. Cracked players get kicked on first connection. One whose name is not premium joins on their second attempt via the [remember mechanism](#cracked-players-using-premium-usernames-second-attempt); one using a premium name only does with `premium_name_conflict_action = "allow_cracked"`.
 :::
 
 ## Configuration
@@ -146,8 +146,10 @@ failed_auth_remember_seconds = 600
 
 | Value | Behavior |
 |-------|----------|
-| `"kick"` (default) | The cracked client fails the Mojang encryption handshake and gets disconnected. |
-| `"allow_cracked"` | Fall back to the normal `/login` / `/register` flow. |
+| `"kick"` (default) | The cracked client fails the Mojang encryption handshake and gets disconnected. The plugin remembers the failure for `failed_auth_remember_seconds` and refuses the name's connections until then with the `premium_name_conflict` message. |
+| `"allow_cracked"` | After the failed handshake, the name's connections within `failed_auth_remember_seconds` skip online authentication and fall back to the normal `/login` / `/register` flow. |
+
+`"allow_cracked"` lets a cracked client play under a premium player's name: it needs that account's password, or registers the name itself while nobody has. With `"kick"`, a premium player whose session check failed once, for example with an expired launcher session, is refused the same way until `failed_auth_remember_seconds` runs out. Neither setting applies when the Mojang lookup itself fails and `rate_limit_action` or `lookup_error_action` lets the player through: the name was never found to be premium, so the player gets `/login` or `/register`.
 
 ::: warning
 The Mojang API has a rate limit of roughly 600 requests per 10 minutes. The `rate_limit_per_second` setting is a local governor to stay under that limit. On a high-traffic server with many first-time players, cached results handle most lookups, but a burst of new players will trigger the rate limit. The default `"allow_offline"` action ensures nobody is locked out.
@@ -164,6 +166,8 @@ cracked_disabled = "&aYou will now login as a premium player. Reconnect to apply
 rate_limited = "&cThe server is busy. Please try again in a moment."
 lookup_failed = "&cCould not verify your account status. Please try again later."
 ```
+
+`premium_name_conflict` is the reason given to a connection refused under `premium_name_conflict_action = "kick"`.
 
 ### Messages
 
@@ -263,7 +267,7 @@ If a cracked player registers "Steve" with a password, and then the real premium
 3. The auth handler sees signed textures and accepts.
 4. The existing account is updated with `premium_info`. The cracked player's password hash is preserved.
 
-If the cracked "Steve" tries to connect later, the proxy forces encryption again. The cracked client fails the handshake, but the plugin remembers the failure (see below), so on the next attempt they can join as cracked.
+If the cracked "Steve" tries to connect later, the proxy forces encryption again. The cracked client fails the handshake and the plugin remembers the failure (see below). With the default `premium_name_conflict_action = "kick"`, its next attempts are refused. With `"allow_cracked"`, it can join as cracked on the next attempt and `/login` with its password.
 
 If the premium "Steve" later changes their Mojang username, the cracked player can connect again and `/login` with their password as before. Premium identity is tracked by Mojang UUID, not by username.
 
@@ -271,19 +275,24 @@ If the premium "Steve" later changes their Mojang username, the cracked player c
 
 A cracked player using a premium username (e.g. "Hypixel") will be kicked on their **first** connection. This is unavoidable: the proxy sends an encryption request, and the cracked client can't respond.
 
-On the **second** connection, the plugin remembers the failure and sets `ForceOffline`. The player enters auth limbo and can `/register` or `/login` normally.
+The plugin remembers the failure, and `premium_name_conflict_action` decides what the **second** connection gets:
+
+- `"kick"` (default): the connection is refused with the `premium_name_conflict` message.
+- `"allow_cracked"`: the plugin sets `ForceOffline`. The player enters auth limbo and can `/register` or `/login` normally.
 
 This works in both proxy modes:
 
-| Mode | First connection | Second connection |
-|------|-----------------|-------------------|
-| `offline` + premium | ForceOnline → encryption fails → kick | ForceOffline (ignored, already offline) → auth limbo |
-| `client_only` | Default Mojang auth → encryption fails → kick | ForceOffline → skip Mojang auth → auth limbo |
+| Mode | First connection | Second connection, `"kick"` | Second connection, `"allow_cracked"` |
+|------|-----------------|-----------------------------|--------------------------------------|
+| `offline` + premium | ForceOnline → encryption fails → kick | Refused with `premium_name_conflict` | ForceOffline (ignored, already offline) → auth limbo |
+| `client_only` | Default Mojang auth → encryption fails → kick | Refused with `premium_name_conflict` | ForceOffline → skip Mojang auth → auth limbo |
+
+A name the Mojang API does not report as premium is no conflict. In `client_only` mode a cracked player using one fails the default Mojang auth once, and gets `ForceOffline` and auth limbo on the next attempt with either setting.
 
 The remember window is controlled by `failed_auth_remember_seconds` (default: 10 minutes). After it expires, the proxy retries authentication once. If the player still can't complete it, they're remembered again. If they've since bought Minecraft, the auth succeeds and they get premium auto-login.
 
 ::: tip
-This is the same approach used by FastLogin (`secondAttemptCracked`), LibreLogin, and other established Minecraft auth plugins. The first-connection kick is a protocol-level constraint that cannot be avoided.
+`"allow_cracked"` is the approach of FastLogin's `secondAttemptCracked` option. The first-connection kick is a protocol-level constraint that cannot be avoided.
 :::
 
 ## Mojang session authentication
@@ -300,6 +309,6 @@ In `client_only` mode, the proxy terminates the Minecraft connection and re-esta
 6. The proxy calls `sessionserver.mojang.com/session/minecraft/hasJoined?username=<name>&serverId=<hash>` to verify the player owns the account.
 7. If Mojang confirms the session, the proxy enables AES/CFB8 encryption on the connection and returns the player's game profile (UUID, username, skin data).
 
-Players using cracked or offline clients fail at step 6. With the auth plugin's premium detection enabled, cracked players get kicked on first connection but can join on their second attempt: the plugin remembers the failure and sets `ForceOffline` to bypass encryption.
+Players using cracked or offline clients fail at step 6. With the auth plugin's premium detection enabled, cracked players get kicked on first connection, and the plugin remembers the failure. On their next attempt it sets `ForceOffline` to bypass encryption, unless the name is premium and `premium_name_conflict_action` is `"kick"`: then the attempt is refused.
 
 The premium auto-login feature reuses this same flow in both directions. In `offline` mode, the proxy can switch a connection to online mode via `ForceOnline`. In `client_only` mode, it can switch to offline via `ForceOffline`. Both are controlled by plugins through the `PreLoginEvent`.
