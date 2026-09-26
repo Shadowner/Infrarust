@@ -65,6 +65,7 @@ pub struct FakeClient {
     hello: Option<ClientHello>,
     replies: ClientReplies,
     acks_configuration: bool,
+    answers_keepalives: bool,
     transfer: bool,
 }
 
@@ -112,8 +113,15 @@ impl FakeClient {
             hello: None,
             replies: ClientReplies::default(),
             acks_configuration: true,
+            answers_keepalives: true,
             transfer: false,
         }
+    }
+
+    #[must_use]
+    pub const fn ignore_keepalives(mut self) -> Self {
+        self.answers_keepalives = false;
+        self
     }
 
     #[must_use]
@@ -265,6 +273,7 @@ impl FakeClient {
             hello: self.hello.clone(),
             replies: self.replies.clone(),
             acks_configuration: self.acks_configuration,
+            answers_keepalives: self.answers_keepalives,
         };
         let driver = TaskGuard(tokio::spawn(driver.run()));
 
@@ -346,6 +355,7 @@ struct Driver {
     hello: Option<ClientHello>,
     replies: ClientReplies,
     acks_configuration: bool,
+    answers_keepalives: bool,
 }
 
 impl Driver {
@@ -514,8 +524,10 @@ impl Driver {
     async fn on_play(&mut self, frame: PacketFrame) -> HarnessResult<Flow> {
         let version = self.version;
         if wire::is::<CKeepAlive>(&frame, version) {
-            let keep_alive = wire::decode::<CKeepAlive>(&frame, version)?;
-            self.send(&SKeepAlive { id: keep_alive.id }).await?;
+            if self.answers_keepalives {
+                let keep_alive = wire::decode::<CKeepAlive>(&frame, version)?;
+                self.send(&SKeepAlive { id: keep_alive.id }).await?;
+            }
             return Ok(Flow::Continue);
         }
         if wire::is::<CStartConfiguration>(&frame, version) {

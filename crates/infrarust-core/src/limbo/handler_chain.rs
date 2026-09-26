@@ -24,6 +24,7 @@ use super::keepalive::{
 use super::session::LimboSessionImpl;
 use super::spawn::send_spawn_sequence;
 use super::virtual_session::VirtualSessionCore;
+use crate::error::CoreError;
 use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::player::packets::build_system_chat_message;
 use crate::services::command_manager::DispatchOutcome;
@@ -37,6 +38,7 @@ pub(crate) enum LimboChainResult {
     Switch(ServerId),
     Kick(Component),
     ClientDisconnected,
+    Error(CoreError),
     Shutdown,
     Timeout,
     SendToLimbo(Vec<String>),
@@ -236,7 +238,11 @@ async fn wait_for_hold(
                             }
                         }
                     }
-                    Ok(None) | Err(_) => return HandlerAction::Exit(LimboChainResult::ClientDisconnected),
+                    Ok(None) => return HandlerAction::Exit(LimboChainResult::ClientDisconnected),
+                    Err(e) if e.is_expected_disconnect() => {
+                        return HandlerAction::Exit(LimboChainResult::ClientDisconnected);
+                    }
+                    Err(e) => return HandlerAction::Exit(LimboChainResult::Error(e)),
                 }
             }
 

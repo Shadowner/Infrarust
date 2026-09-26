@@ -15,6 +15,7 @@ use super::handler_chain::{Limbo, LimboChainResult, run_handler_chain};
 use super::keepalive::KeepAliveState;
 use super::session::LimboSessionImpl;
 use super::virtual_session::VirtualSessionCore;
+use crate::error::CoreError;
 use crate::player::packets::build_disconnect;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
@@ -26,6 +27,7 @@ pub(crate) enum LimboExitResult {
     /// Disconnect packet already sent.
     Kicked(Component),
     ClientDisconnected,
+    Error(CoreError),
     Shutdown,
     Timeout,
     SendToLimbo(Vec<String>),
@@ -86,7 +88,9 @@ async fn map_chain_result(
         LimboChainResult::Completed => Some(SessionEndReason::Released),
         LimboChainResult::Switch(_) => Some(SessionEndReason::Redirected),
         LimboChainResult::Kick(_) => Some(SessionEndReason::Kicked),
-        LimboChainResult::ClientDisconnected => Some(SessionEndReason::Disconnected),
+        LimboChainResult::ClientDisconnected | LimboChainResult::Error(_) => {
+            Some(SessionEndReason::Disconnected)
+        }
         LimboChainResult::Shutdown => Some(SessionEndReason::Shutdown),
         LimboChainResult::Timeout => Some(SessionEndReason::TimedOut),
         LimboChainResult::SendToLimbo(_) => None,
@@ -108,6 +112,11 @@ async fn map_chain_result(
         LimboChainResult::ClientDisconnected => {
             fire_on_disconnect(handlers, player_id).await;
             LimboExitResult::ClientDisconnected
+        }
+
+        LimboChainResult::Error(error) => {
+            fire_on_disconnect(handlers, player_id).await;
+            LimboExitResult::Error(error)
         }
 
         LimboChainResult::Shutdown => LimboExitResult::Shutdown,

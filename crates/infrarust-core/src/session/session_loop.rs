@@ -304,8 +304,16 @@ pub(crate) async fn run_session_loop(
                     LimboExitResult::Kicked(reason) => {
                         break ProxyLoopOutcome::Kicked { reason };
                     }
-                    LimboExitResult::Timeout | LimboExitResult::ClientDisconnected => {
+                    LimboExitResult::ClientDisconnected => {
                         break ProxyLoopOutcome::ClientDisconnected;
+                    }
+                    LimboExitResult::Timeout => {
+                        break ProxyLoopOutcome::Error(CoreError::Timeout(
+                            "the client stopped answering limbo keepalives".into(),
+                        ));
+                    }
+                    LimboExitResult::Error(e) => {
+                        break ProxyLoopOutcome::Error(e);
                     }
                     LimboExitResult::Shutdown => {
                         break ProxyLoopOutcome::Shutdown;
@@ -339,7 +347,9 @@ fn limbo_exit(
             },
             None,
         ),
-        LimboExitResult::ClientDisconnected => (LimboExitReason::Disconnected, None),
+        LimboExitResult::ClientDisconnected | LimboExitResult::Error(_) => {
+            (LimboExitReason::Disconnected, None)
+        }
         LimboExitResult::Timeout => (LimboExitReason::TimedOut, None),
         LimboExitResult::Shutdown => (LimboExitReason::Shutdown, None),
     }
