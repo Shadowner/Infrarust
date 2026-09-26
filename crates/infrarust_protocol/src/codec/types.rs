@@ -78,14 +78,11 @@ macro_rules! impl_codec_be {
 
         impl Decode<'_> for $ty {
             fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
-                if r.len() < $size {
+                let Some((bytes, rest)) = r.split_first_chunk::<$size>() else {
                     return Err(ProtocolError::Incomplete { context: $ctx });
-                }
-                let (bytes, rest) = r.split_at($size);
-                let val =
-                    <$ty>::from_be_bytes(bytes.try_into().expect("split_at guarantees length"));
+                };
                 *r = rest;
-                Ok(val)
+                Ok(<$ty>::from_be_bytes(*bytes))
             }
         }
     };
