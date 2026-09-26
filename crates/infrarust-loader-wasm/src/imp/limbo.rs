@@ -1,14 +1,21 @@
+use std::future::Future;
 use std::sync::Arc;
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::{HandlerResult, LimboHandler, LimboSession, SessionEndReason};
 use infrarust_api::types::PlayerId;
+use wasmtime::Store;
 use wasmtime::component::Resource;
 
 use crate::actor::InstanceRef;
+use crate::bindings::Plugin as PluginBindings;
+use crate::bindings::infrarust::plugin::limbo as wl;
 use crate::component;
 use crate::convert;
 use crate::registrations::{Binding, Registrations};
+use crate::store_state::PluginStoreState;
+
+type LentSession = Resource<wl::LimboSession>;
 
 pub(crate) struct WasmLimboHandler {
     binding: Arc<Binding>,
@@ -31,6 +38,76 @@ impl WasmLimboHandler {
             registrations,
         }
     }
+
+    fn call_handler<T, F>(
+        &self,
+        op: &'static str,
+        call: F,
+    ) -> impl Future<Output = Option<T>> + Send + 'static
+    where
+        T: Send + 'static,
+        F: for<'a> FnOnce(
+                &'a mut Store<PluginStoreState>,
+                &'a PluginBindings,
+                u64,
+            ) -> BoxFuture<'a, wasmtime::Result<T>>
+            + Send
+            + 'static,
+    {
+        let instance = self.instance.clone();
+        let binding = Arc::clone(&self.binding);
+        async move {
+            instance
+                .call_or_none(op, move |store, bindings| {
+                    Box::pin(async move {
+                        let Some(handler) = binding.callback_for(store.data().generation()) else {
+                            return Ok(None);
+                        };
+                        call(store, bindings, handler).await.map(Some)
+                    })
+                })
+                .await
+                .flatten()
+        }
+    }
+
+    fn lend_session<T, F>(
+        &self,
+        op: &'static str,
+        refusal: &'static str,
+        session: Arc<dyn LimboSession>,
+        call: F,
+    ) -> impl Future<Output = Option<T>> + Send + 'static
+    where
+        T: Send + 'static,
+        F: for<'a> FnOnce(
+                &'a mut Store<PluginStoreState>,
+                &'a PluginBindings,
+                u64,
+                LentSession,
+            ) -> BoxFuture<'a, wasmtime::Result<T>>
+            + Send
+            + 'static,
+    {
+        let name = self.name.clone();
+        let called = self.call_handler(op, move |store, bindings, handler| {
+            Box::pin(async move {
+                let lent = match store.data_mut().push_limbo_session(session) {
+                    Ok(lent) => lent,
+                    Err(e) => {
+                        tracing::error!(plugin = %store.data().plugin_id(), handler = %name, error = %e,
+                            "{refusal}");
+                        return Ok(None);
+                    }
+                };
+                let rep = lent.rep();
+                let outcome = call(store, bindings, handler, lent).await;
+                let _ = store.data_mut().drop_limbo_session(Resource::new_own(rep));
+                outcome.map(Some)
+            })
+        });
+        async move { called.await.flatten() }
+    }
 }
 
 pub(crate) fn deny_unavailable() -> HandlerResult {
@@ -46,35 +123,25 @@ impl LimboHandler for WasmLimboHandler {
         &'a self,
         session: &'a dyn LimboSession,
     ) -> BoxFuture<'a, HandlerResult> {
-        let instance = self.instance.clone();
-        let binding = Arc::clone(&self.binding);
-        let name = self.name.clone();
         let handle = session.handle();
-        let arc_session = handle.as_session();
-        Box::pin(async move {
-            instance.call_or_none("limbo-on-player-enter", move |store, bindings| {
+        let entered = self.lend_session(
+            "limbo-on-player-enter",
+            "failed to lend limbo session to guest; denying",
+            handle.as_session(),
+            move |store, bindings, handler, lent| {
                 Box::pin(async move {
                     let generation = store.data().generation();
-                    let Some(handler_id) = binding.callback_for(generation) else {
-                        return Ok(deny_unavailable());
-                    };
-                    let res = match store.data_mut().push_limbo_session(arc_session) {
-                        Ok(res) => res,
-                        Err(e) => {
-                            tracing::error!(plugin = %store.data().plugin_id(), handler = %name, error = %e,
-                                "failed to lend limbo session to guest; denying");
-                            return Ok(deny_unavailable());
-                        }
-                    };
-                    let rep = res.rep();
                     let outcome = bindings
                         .infrarust_plugin_guest()
-                        .call_limbo_on_player_enter(&mut *store, handler_id, res)
-                        .await;
-                    let _ = store.data_mut().drop_limbo_session(Resource::new_own(rep));
+                        .call_limbo_on_player_enter(&mut *store, handler, lent)
+                        .await?;
                     let plugin = store.data().plugin_id().to_owned();
-                    let result = convert::handler_result_with(&outcome?, &mut |text| {
-                        Ok(component::from_wit_or_fallback(text, &plugin, "limbo handler result"))
+                    let result = convert::handler_result_with(&outcome, &mut |text| {
+                        Ok(component::from_wit_or_fallback(
+                            text,
+                            &plugin,
+                            "limbo handler result",
+                        ))
                     })
                     .unwrap_or_else(|_| deny_unavailable());
                     if matches!(
@@ -85,10 +152,9 @@ impl LimboHandler for WasmLimboHandler {
                     }
                     Ok(result)
                 })
-            })
-            .await
-            .unwrap_or_else(deny_unavailable)
-        })
+            },
+        );
+        Box::pin(async move { entered.await.unwrap_or_else(deny_unavailable) })
     }
 
     fn on_command<'a>(
@@ -97,119 +163,74 @@ impl LimboHandler for WasmLimboHandler {
         command: &'a str,
         args: &'a [&'a str],
     ) -> BoxFuture<'a, ()> {
-        let instance = self.instance.clone();
-        let binding = Arc::clone(&self.binding);
-        let name = self.name.clone();
-        let arc_session = session.handle().as_session();
         let command = command.to_string();
         let args: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
-        Box::pin(async move {
-            let _ = instance.call_or_none("limbo-on-command", move |store, bindings| {
+        let commanded = self.lend_session(
+            "limbo-on-command",
+            "failed to lend limbo session to guest; dropping command",
+            session.handle().as_session(),
+            move |store, bindings, handler, lent| {
                 Box::pin(async move {
-                    let Some(handler_id) = binding.callback_for(store.data().generation()) else {
-                        return Ok(());
-                    };
-                    let res = match store.data_mut().push_limbo_session(arc_session) {
-                        Ok(res) => res,
-                        Err(e) => {
-                            tracing::error!(plugin = %store.data().plugin_id(), handler = %name, error = %e,
-                                "failed to lend limbo session to guest; dropping command");
-                            return Ok(());
-                        }
-                    };
-                    let rep = res.rep();
-                    let outcome = bindings
+                    bindings
                         .infrarust_plugin_guest()
-                        .call_limbo_on_command(&mut *store, handler_id, res, &command, &args)
-                        .await;
-                    let _ = store.data_mut().drop_limbo_session(Resource::new_own(rep));
-                    outcome
+                        .call_limbo_on_command(&mut *store, handler, lent, &command, &args)
+                        .await
                 })
-            })
-            .await;
+            },
+        );
+        Box::pin(async move {
+            commanded.await;
         })
     }
 
     fn on_chat<'a>(&'a self, session: &'a dyn LimboSession, message: &'a str) -> BoxFuture<'a, ()> {
-        let instance = self.instance.clone();
-        let binding = Arc::clone(&self.binding);
-        let name = self.name.clone();
-        let arc_session = session.handle().as_session();
         let message = message.to_string();
-        Box::pin(async move {
-            let _ = instance.call_or_none("limbo-on-chat", move |store, bindings| {
+        let chatted = self.lend_session(
+            "limbo-on-chat",
+            "failed to lend limbo session to guest; dropping chat",
+            session.handle().as_session(),
+            move |store, bindings, handler, lent| {
                 Box::pin(async move {
-                    let Some(handler_id) = binding.callback_for(store.data().generation()) else {
-                        return Ok(());
-                    };
-                    let res = match store.data_mut().push_limbo_session(arc_session) {
-                        Ok(res) => res,
-                        Err(e) => {
-                            tracing::error!(plugin = %store.data().plugin_id(), handler = %name, error = %e,
-                                "failed to lend limbo session to guest; dropping chat");
-                            return Ok(());
-                        }
-                    };
-                    let rep = res.rep();
-                    let outcome = bindings
+                    bindings
                         .infrarust_plugin_guest()
-                        .call_limbo_on_chat(&mut *store, handler_id, res, &message)
-                        .await;
-                    let _ = store.data_mut().drop_limbo_session(Resource::new_own(rep));
-                    outcome
+                        .call_limbo_on_chat(&mut *store, handler, lent, &message)
+                        .await
                 })
-            })
-            .await;
+            },
+        );
+        Box::pin(async move {
+            chatted.await;
         })
     }
 
     fn on_disconnect(&self, player_id: PlayerId) -> BoxFuture<'_, ()> {
         self.registrations.release_hold(player_id);
-        let instance = self.instance.clone();
-        let binding = Arc::clone(&self.binding);
+        let told = self.call_handler("limbo-on-disconnect", move |store, bindings, handler| {
+            Box::pin(async move {
+                bindings
+                    .infrarust_plugin_guest()
+                    .call_limbo_on_disconnect(&mut *store, handler, player_id.as_u64())
+                    .await
+            })
+        });
         Box::pin(async move {
-            let _ = instance
-                .call_or_none("limbo-on-disconnect", move |store, bindings| {
-                    Box::pin(async move {
-                        let Some(handler_id) = binding.callback_for(store.data().generation())
-                        else {
-                            return Ok(());
-                        };
-                        bindings
-                            .infrarust_plugin_guest()
-                            .call_limbo_on_disconnect(&mut *store, handler_id, player_id.as_u64())
-                            .await
-                    })
-                })
-                .await;
+            told.await;
         })
     }
 
     fn on_session_end(&self, player_id: PlayerId, reason: SessionEndReason) -> BoxFuture<'_, ()> {
         self.registrations.release_hold(player_id);
-        let instance = self.instance.clone();
-        let binding = Arc::clone(&self.binding);
         let wit_reason = convert::session_end_reason_to_wit(reason);
+        let told = self.call_handler("limbo-on-session-end", move |store, bindings, handler| {
+            Box::pin(async move {
+                bindings
+                    .infrarust_plugin_guest()
+                    .call_limbo_on_session_end(&mut *store, handler, player_id.as_u64(), wit_reason)
+                    .await
+            })
+        });
         Box::pin(async move {
-            let _ = instance
-                .call_or_none("limbo-on-session-end", move |store, bindings| {
-                    Box::pin(async move {
-                        let Some(handler_id) = binding.callback_for(store.data().generation())
-                        else {
-                            return Ok(());
-                        };
-                        bindings
-                            .infrarust_plugin_guest()
-                            .call_limbo_on_session_end(
-                                &mut *store,
-                                handler_id,
-                                player_id.as_u64(),
-                                wit_reason,
-                            )
-                            .await
-                    })
-                })
-                .await;
+            told.await;
         })
     }
 }
