@@ -13,7 +13,7 @@ pub mod handle;
 pub mod handler;
 pub mod registration;
 pub mod session;
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 pub mod test_util;
 
 pub use context::LimboEntryContext;

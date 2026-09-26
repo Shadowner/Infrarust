@@ -10,12 +10,19 @@ use super::lock;
 #[derive(Default)]
 pub struct MockPlayerRegistry {
     players: Mutex<Vec<Arc<dyn Player>>>,
+    fake_online: Option<usize>,
 }
 
 impl MockPlayerRegistry {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[must_use]
+    pub const fn fake_online_count(mut self, count: usize) -> Self {
+        self.fake_online = Some(count);
+        self
     }
 
     #[must_use]
@@ -97,11 +104,13 @@ impl PlayerRegistry for MockPlayerRegistry {
     }
 
     fn online_count(&self) -> usize {
-        lock(&self.players).len()
+        self.fake_online
+            .unwrap_or_else(|| lock(&self.players).len())
     }
 
     fn online_count_on(&self, server: &ServerId) -> usize {
-        self.get_players_on_server(server).len()
+        self.fake_online
+            .unwrap_or_else(|| self.get_players_on_server(server).len())
     }
 }
 
@@ -128,5 +137,13 @@ mod tests {
 
         assert!(registry.remove(PlayerId::new(1)).is_some());
         assert!(registry.get_player_by_id(PlayerId::new(1)).is_none());
+    }
+
+    #[test]
+    fn a_fake_online_count_overrides_the_roster() {
+        let registry = MockPlayerRegistry::new().fake_online_count(7);
+        assert_eq!(registry.online_count(), 7);
+        assert_eq!(registry.online_count_on(&ServerId::new("hub")), 7);
+        assert!(registry.get_all_players().is_empty());
     }
 }

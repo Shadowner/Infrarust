@@ -1,16 +1,28 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 mod ban;
+mod ban_provider;
 mod command;
+mod config;
+mod gate;
 mod load_balancer;
 mod permissions;
 mod player;
+mod plugin_registry;
 mod registry;
+mod server_manager;
 
 pub use ban::MockBanService;
+pub use ban_provider::MemoryBanProvider;
 pub use command::{command_context, console, console_with, player_source};
+pub use config::MockConfigService;
+pub use gate::Gate;
 pub use load_balancer::MockLoadBalancerService;
 pub use permissions::MockPermissionChecker;
 pub use player::MockPlayer;
+pub use plugin_registry::MockPluginRegistry;
 pub use registry::MockPlayerRegistry;
+pub use server_manager::MockServerManager;
 
 pub use crate::limbo::test_util::RecordingLimboSession;
 

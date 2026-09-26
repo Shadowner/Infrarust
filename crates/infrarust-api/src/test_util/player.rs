@@ -32,6 +32,7 @@ pub struct MockPlayer {
     remote_addr: SocketAddr,
     online_mode: bool,
     active: bool,
+    stalled: bool,
     connected_at: SystemTime,
     permissions: Arc<MockPermissionChecker>,
     recorded: Mutex<Recorded>,
@@ -51,6 +52,7 @@ impl MockPlayer {
             remote_addr: SocketAddr::from(([127, 0, 0, 1], 25565)),
             online_mode: false,
             active: true,
+            stalled: false,
             connected_at: SystemTime::now(),
             permissions: Arc::new(MockPermissionChecker::new()),
             recorded: Mutex::new(Recorded::default()),
@@ -84,6 +86,12 @@ impl MockPlayer {
     #[must_use]
     pub const fn passive(mut self) -> Self {
         self.active = false;
+        self
+    }
+
+    #[must_use]
+    pub const fn stalled(mut self) -> Self {
+        self.stalled = true;
         self
     }
 
@@ -215,6 +223,9 @@ impl Player for MockPlayer {
     }
 
     fn disconnect(&self, reason: Component) -> BoxFuture<'_, ()> {
+        if self.stalled {
+            return Box::pin(std::future::pending());
+        }
         let mut recorded = lock(&self.recorded);
         if !recorded.disconnected {
             recorded.disconnected = true;
@@ -240,6 +251,9 @@ impl Player for MockPlayer {
     }
 
     fn switch_server(&self, target: ServerId) -> BoxFuture<'_, Result<(), PlayerError>> {
+        if self.stalled {
+            return Box::pin(std::future::pending());
+        }
         let result = self.deliver(|r| {
             r.switches.push(target.clone());
             r.server = Some(target);
@@ -299,6 +313,17 @@ mod tests {
             player.send_message(Component::text("late")),
             Err(PlayerError::Disconnected)
         ));
+    }
+
+    #[test]
+    fn a_stalled_player_never_finishes_leaving() {
+        let player = MockPlayer::new(1, "Steve").stalled();
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut leaving = player.disconnect(Component::text("bye"));
+        assert!(leaving.as_mut().poll(&mut cx).is_pending());
+        let mut moving = player.switch_server(ServerId::new("pvp"));
+        assert!(moving.as_mut().poll(&mut cx).is_pending());
+        assert!(player.is_connected());
     }
 
     #[test]

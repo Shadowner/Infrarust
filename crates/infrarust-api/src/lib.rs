@@ -80,7 +80,7 @@ pub mod plugin;
 pub mod prelude;
 pub mod provider;
 pub mod services;
-#[cfg(feature = "test-util")]
+#[cfg(any(test, feature = "test-util"))]
 pub mod test_util;
 pub mod types;
 pub mod virtual_backend;

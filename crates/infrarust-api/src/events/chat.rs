@@ -93,78 +93,11 @@ impl ResultedEvent for ChatMessageEvent {
 #[cfg(test)]
 pub(crate) mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use std::net::SocketAddr;
-    use std::time::SystemTime;
-
     use super::*;
-    use crate::error::PlayerError;
-    use crate::event::BoxFuture;
-    use crate::types::{ProtocolVersion, RawPacket, TitleData};
-
-    struct Steve(GameProfile);
-
-    impl crate::player::private::Sealed for Steve {}
-
-    impl Player for Steve {
-        fn id(&self) -> PlayerId {
-            PlayerId::new(1)
-        }
-        fn profile(&self) -> &GameProfile {
-            &self.0
-        }
-        fn protocol_version(&self) -> ProtocolVersion {
-            ProtocolVersion::MINECRAFT_1_21
-        }
-        fn remote_addr(&self) -> SocketAddr {
-            SocketAddr::from(([127, 0, 0, 1], 25565))
-        }
-        fn current_server(&self) -> Option<ServerId> {
-            None
-        }
-        fn is_connected(&self) -> bool {
-            true
-        }
-        fn is_active(&self) -> bool {
-            true
-        }
-        fn disconnect(&self, _reason: Component) -> BoxFuture<'_, ()> {
-            Box::pin(async {})
-        }
-        fn send_message(&self, _message: Component) -> Result<(), PlayerError> {
-            Ok(())
-        }
-        fn send_title(&self, _title: TitleData) -> Result<(), PlayerError> {
-            Ok(())
-        }
-        fn send_action_bar(&self, _message: Component) -> Result<(), PlayerError> {
-            Ok(())
-        }
-        fn send_packet(&self, _packet: RawPacket) -> Result<(), PlayerError> {
-            Ok(())
-        }
-        fn switch_server(&self, _target: ServerId) -> BoxFuture<'_, Result<(), PlayerError>> {
-            Box::pin(async { Ok(()) })
-        }
-        fn is_online_mode(&self) -> bool {
-            false
-        }
-        fn has_permission(&self, _permission: &str) -> bool {
-            false
-        }
-        fn refresh_permissions(&self) -> BoxFuture<'_, ()> {
-            Box::pin(async {})
-        }
-        fn connected_at(&self) -> SystemTime {
-            SystemTime::UNIX_EPOCH
-        }
-    }
+    use crate::test_util::MockPlayer;
 
     pub(crate) fn steve() -> Arc<dyn Player> {
-        Arc::new(Steve(GameProfile {
-            uuid: uuid::Uuid::nil(),
-            username: "Steve".into(),
-            properties: vec![],
-        }))
+        MockPlayer::new(1, "Steve").into_arc()
     }
 
     fn chat(message: &str) -> ChatMessageEvent {

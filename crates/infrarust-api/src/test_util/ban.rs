@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::error::ServiceError;
 use crate::event::BoxFuture;
@@ -7,7 +7,15 @@ use crate::services::ban_service::{
     BanVerdict, LoginAttempt, UnbanRequest,
 };
 
-use super::lock;
+use super::{Gate, lock};
+
+#[derive(Debug, Clone, Default)]
+enum Mode {
+    #[default]
+    Normal,
+    Gated(Arc<Gate>),
+    Panicking,
+}
 
 #[derive(Debug, Default)]
 struct State {
@@ -15,6 +23,7 @@ struct State {
     next_id: u64,
     checks: Vec<LoginAttempt>,
     unavailable: bool,
+    mode: Mode,
 }
 
 #[derive(Debug, Default)]
@@ -26,6 +35,22 @@ impl MockBanService {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[must_use]
+    pub fn gated(gate: Arc<Gate>) -> Self {
+        Self::with_mode(Mode::Gated(gate))
+    }
+
+    #[must_use]
+    pub fn panicking() -> Self {
+        Self::with_mode(Mode::Panicking)
+    }
+
+    fn with_mode(mode: Mode) -> Self {
+        let service = Self::new();
+        lock(&service.state).mode = mode;
+        service
     }
 
     #[must_use]
@@ -54,12 +79,23 @@ impl MockBanService {
         lock(&self.state).unavailable = unavailable;
     }
 
-    fn available(&self) -> Result<std::sync::MutexGuard<'_, State>, ServiceError> {
-        let state = lock(&self.state);
-        if state.unavailable {
-            return Err(ServiceError::Unavailable("mock ban service".into()));
-        }
-        Ok(state)
+    fn run<'a, T: Send + 'a>(
+        &'a self,
+        op: impl FnOnce(&mut State) -> T + Send + 'a,
+    ) -> BoxFuture<'a, Result<T, ServiceError>> {
+        let mode = lock(&self.state).mode.clone();
+        Box::pin(async move {
+            match mode {
+                Mode::Normal => {}
+                Mode::Gated(gate) => gate.pass().await,
+                Mode::Panicking => panic!("ban service panicked on purpose"),
+            }
+            let mut state = lock(&self.state);
+            if state.unavailable {
+                return Err(ServiceError::Unavailable("mock ban service".into()));
+            }
+            Ok(op(&mut state))
+        })
     }
 }
 
@@ -70,7 +106,7 @@ impl BanService for MockBanService {
         &'a self,
         attempt: &'a LoginAttempt,
     ) -> BoxFuture<'a, Result<Option<BanVerdict>, ServiceError>> {
-        let result = self.available().map(|mut state| {
+        self.run(move |state| {
             state.checks.push(attempt.clone());
             state
                 .entries
@@ -78,12 +114,11 @@ impl BanService for MockBanService {
                 .find(|e| !e.is_expired() && e.target.matches(attempt))
                 .cloned()
                 .map(BanVerdict::new)
-        });
-        Box::pin(async move { result })
+        })
     }
 
     fn ban(&self, request: BanRequest) -> BoxFuture<'_, Result<BanEntry, ServiceError>> {
-        let result = self.available().map(|mut state| {
+        self.run(move |state| {
             state.next_id += 1;
             let source = request.source.clone().unwrap_or(BanSource::System);
             let mut entry = BanEntry::new(
@@ -100,8 +135,7 @@ impl BanService for MockBanService {
             state.entries.retain(|e| e.target != entry.target);
             state.entries.push(entry.clone());
             entry
-        });
-        Box::pin(async move { result })
+        })
     }
 
     fn unban(
@@ -109,11 +143,10 @@ impl BanService for MockBanService {
         request: UnbanRequest,
     ) -> BoxFuture<'_, Result<Option<BanEntry>, ServiceError>> {
         let target = request.target.canonical();
-        let result = self.available().map(|mut state| {
+        self.run(move |state| {
             let at = state.entries.iter().position(|e| e.target == target)?;
             Some(state.entries.remove(at))
-        });
-        Box::pin(async move { result })
+        })
     }
 
     fn get<'a>(
@@ -121,18 +154,17 @@ impl BanService for MockBanService {
         target: &'a BanTarget,
     ) -> BoxFuture<'a, Result<Option<BanEntry>, ServiceError>> {
         let target = target.clone().canonical();
-        let result = self.available().map(|state| {
+        self.run(move |state| {
             state
                 .entries
                 .iter()
                 .find(|e| e.target == target && !e.is_expired())
                 .cloned()
-        });
-        Box::pin(async move { result })
+        })
     }
 
     fn list(&self, query: BanQuery) -> BoxFuture<'_, Result<BanPage, ServiceError>> {
-        let result = self.available().map(|state| {
+        self.run(move |state| {
             let start = query
                 .cursor
                 .as_deref()
@@ -150,8 +182,7 @@ impl BanService for MockBanService {
                 .then(|| entries.last().map(|e| e.id.clone()))
                 .flatten();
             BanPage::new(entries, next_cursor)
-        });
-        Box::pin(async move { result })
+        })
     }
 
     fn features(&self) -> BanFeatures {
