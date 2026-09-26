@@ -13,7 +13,7 @@ pub mod registry;
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock, Weak};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
 use bytes::Bytes;
@@ -179,7 +179,7 @@ pub struct PlayerSession {
     client: ClientState,
     presentation: Arc<Presentation>,
     events: Option<Arc<EventBusImpl>>,
-    shared: OnceLock<Weak<Self>>,
+    shared: Weak<Self>,
     connects: Mutex<Vec<(ServerId, oneshot::Sender<ConnectionResult>)>>,
     typed_commands: CommandQueue,
     self_waits: Mutex<WarnWindow>,
@@ -196,72 +196,145 @@ impl std::fmt::Debug for PlayerSession {
     }
 }
 
-impl PlayerSession {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        player_id: PlayerId,
-        profile: GameProfile,
-        protocol_version: ProtocolVersion,
-        remote_addr: SocketAddr,
-        current_server: Option<ServerId>,
-        active: bool,
-        online_mode: bool,
-        command_tx: mpsc::Sender<PlayerCommand>,
-        shutdown_token: CancellationToken,
-        permission_checker: Arc<dyn PermissionChecker>,
-        backend_load: Arc<BackendLoad>,
-    ) -> Self {
-        let typed_commands = CommandQueue::new(profile.username.clone());
-        Self {
-            player_id,
-            profile,
-            protocol_version,
-            remote_addr,
-            routing: RwLock::new(Routing {
-                current: current_server,
-                previous: None,
-                pending: None,
-            }),
-            connected_address: RwLock::new(None),
-            backend_load,
-            connected: AtomicBool::new(true),
-            active,
-            online_mode,
-            connected_at: SystemTime::now(),
-            command_tx,
-            shutdown_token,
-            permission_checker: RwLock::new(permission_checker),
-            permission_override: AtomicBool::new(false),
-            permissions: None,
-            permissions_changed: watch::Sender::new(0),
-            virtual_host: None,
-            released: CancellationToken::new(),
-            client: ClientState::default(),
-            presentation: Arc::default(),
-            events: None,
-            shared: OnceLock::new(),
-            connects: Mutex::new(Vec::new()),
-            typed_commands,
-            self_waits: Mutex::default(),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionKind {
+    Intercepted { online_mode: bool },
+    Forwarded,
+}
+
+impl SessionKind {
+    const fn active(self) -> bool {
+        matches!(self, Self::Intercepted { .. })
+    }
+
+    const fn online_mode(self) -> bool {
+        match self {
+            Self::Intercepted { online_mode } => online_mode,
+            Self::Forwarded => false,
         }
+    }
+}
+
+pub struct PlayerSessionBuilder {
+    player_id: PlayerId,
+    profile: GameProfile,
+    protocol_version: ProtocolVersion,
+    remote_addr: SocketAddr,
+    command_tx: mpsc::Sender<PlayerCommand>,
+    shutdown_token: CancellationToken,
+    backend_load: Arc<BackendLoad>,
+    kind: SessionKind,
+    current_server: Option<ServerId>,
+    permission_checker: Arc<dyn PermissionChecker>,
+    permissions: Option<Arc<PermissionService>>,
+    virtual_host: Option<String>,
+    events: Option<Arc<EventBusImpl>>,
+}
+
+impl PlayerSessionBuilder {
+    #[must_use]
+    pub const fn kind(mut self, kind: SessionKind) -> Self {
+        self.kind = kind;
+        self
     }
 
     #[must_use]
-    pub fn with_events(mut self, events: Arc<EventBusImpl>) -> Self {
+    pub fn current_server(mut self, server: ServerId) -> Self {
+        self.current_server = Some(server);
+        self
+    }
+
+    #[must_use]
+    pub fn permission_checker(mut self, checker: Arc<dyn PermissionChecker>) -> Self {
+        self.permission_checker = checker;
+        self
+    }
+
+    #[must_use]
+    pub fn permissions(mut self, permissions: Arc<PermissionService>) -> Self {
+        self.permissions = Some(permissions);
+        self
+    }
+
+    #[must_use]
+    pub fn virtual_host(mut self, host: impl Into<String>) -> Self {
+        self.virtual_host = Some(host.into());
+        self
+    }
+
+    #[must_use]
+    pub fn events(mut self, events: Arc<EventBusImpl>) -> Self {
         self.events = Some(events);
         self
     }
 
-    pub fn into_shared(self) -> Arc<Self> {
-        let shared = Arc::new(self);
-        let _ = shared.shared.set(Arc::downgrade(&shared));
-        shared
+    pub fn build(self) -> Arc<PlayerSession> {
+        let typed_commands = CommandQueue::new(self.profile.username.clone());
+        Arc::new_cyclic(|shared| PlayerSession {
+            player_id: self.player_id,
+            profile: self.profile,
+            protocol_version: self.protocol_version,
+            remote_addr: self.remote_addr,
+            routing: RwLock::new(Routing {
+                current: self.current_server,
+                previous: None,
+                pending: None,
+            }),
+            connected_address: RwLock::new(None),
+            backend_load: self.backend_load,
+            connected: AtomicBool::new(true),
+            active: self.kind.active(),
+            online_mode: self.kind.online_mode(),
+            connected_at: SystemTime::now(),
+            command_tx: self.command_tx,
+            shutdown_token: self.shutdown_token,
+            permission_checker: RwLock::new(self.permission_checker),
+            permission_override: AtomicBool::new(false),
+            permissions: self.permissions,
+            permissions_changed: watch::Sender::new(0),
+            virtual_host: self.virtual_host,
+            released: CancellationToken::new(),
+            client: ClientState::default(),
+            presentation: Arc::default(),
+            events: self.events,
+            shared: Weak::clone(shared),
+            connects: Mutex::new(Vec::new()),
+            typed_commands,
+            self_waits: Mutex::default(),
+        })
+    }
+}
+
+impl PlayerSession {
+    pub fn builder(
+        player_id: PlayerId,
+        profile: GameProfile,
+        protocol_version: ProtocolVersion,
+        remote_addr: SocketAddr,
+        command_tx: mpsc::Sender<PlayerCommand>,
+        shutdown_token: CancellationToken,
+        backend_load: Arc<BackendLoad>,
+    ) -> PlayerSessionBuilder {
+        PlayerSessionBuilder {
+            player_id,
+            profile,
+            protocol_version,
+            remote_addr,
+            command_tx,
+            shutdown_token,
+            backend_load,
+            kind: SessionKind::Intercepted { online_mode: false },
+            current_server: None,
+            permission_checker: Arc::new(DefaultPermissionChecker),
+            permissions: None,
+            virtual_host: None,
+            events: None,
+        }
     }
 
     fn shared_player(&self) -> Option<Arc<dyn Player>> {
         self.shared
-            .get()
-            .and_then(Weak::upgrade)
+            .upgrade()
             .map(|session| session as Arc<dyn Player>)
     }
 
@@ -283,41 +356,29 @@ impl PlayerSession {
         }
     }
 
-    #[must_use]
-    pub fn with_permissions(mut self, permissions: Arc<PermissionService>) -> Self {
-        self.permissions = Some(permissions);
-        self
-    }
-
-    #[must_use]
-    pub fn with_virtual_host(mut self, host: impl Into<String>) -> Self {
-        self.virtual_host = Some(host.into());
-        self
-    }
-
-    /// Creates a test session with a new channel and cancellation token.
-    ///
-    /// Returns `(session, command_rx)` so tests can inspect commands.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn new_test(active: bool) -> (Self, mpsc::Receiver<PlayerCommand>) {
+    pub fn new_test(active: bool) -> (Arc<Self>, mpsc::Receiver<PlayerCommand>) {
         let (tx, rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
-        let session = Self::new(
+        let kind = if active {
+            SessionKind::Intercepted { online_mode: false }
+        } else {
+            SessionKind::Forwarded
+        };
+        let session = Self::builder(
             PlayerId::new(1),
             GameProfile {
                 uuid: Uuid::new_v4(),
                 username: "TestPlayer".to_string(),
                 properties: vec![],
             },
-            ProtocolVersion::new(767), // 1.21
+            ProtocolVersion::new(767),
             SocketAddr::from(([127, 0, 0, 1], 12345)),
-            None,
-            active,
-            false,
             tx,
             CancellationToken::new(),
-            Arc::new(DefaultPermissionChecker),
             Arc::new(BackendLoad::new()),
-        );
+        )
+        .kind(kind)
+        .build();
         (session, rx)
     }
 

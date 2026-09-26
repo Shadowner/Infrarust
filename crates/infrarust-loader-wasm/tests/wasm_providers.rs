@@ -558,22 +558,18 @@ impl PlayerRegistry for Online {
 
 fn session(id: u64, name: &str, permissions: &Arc<PermissionService>) -> Arc<PlayerSession> {
     let (commands, _) = PlayerSession::channel();
-    Arc::new(
-        PlayerSession::new(
-            PlayerId::new(id),
-            profile(name),
-            ProtocolVersion::MINECRAFT_1_21,
-            "203.0.113.7:40000".parse().unwrap(),
-            None,
-            true,
-            true,
-            commands,
-            CancellationToken::new(),
-            infrarust_core::permissions::default_checker(),
-            Arc::new(infrarust_core::loadbalancer::BackendLoad::new()),
-        )
-        .with_permissions(Arc::clone(permissions)),
+    PlayerSession::builder(
+        PlayerId::new(id),
+        profile(name),
+        ProtocolVersion::MINECRAFT_1_21,
+        "203.0.113.7:40000".parse().unwrap(),
+        commands,
+        CancellationToken::new(),
+        Arc::new(infrarust_core::loadbalancer::BackendLoad::new()),
     )
+    .kind(infrarust_core::player::SessionKind::Intercepted { online_mode: true })
+    .permissions(Arc::clone(permissions))
+    .build()
 }
 
 async fn set_up_permissions(permissions: &PermissionService, player: &PlayerSession) {

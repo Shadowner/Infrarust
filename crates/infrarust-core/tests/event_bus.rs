@@ -453,7 +453,7 @@ async fn test_lifecycle_events_flow() {
     });
 
     let (player, _commands) = PlayerSession::new_test(true);
-    let event = PostLoginEvent::new(Arc::new(player));
+    let event = PostLoginEvent::new(player);
 
     let _ = bus.fire(event).await;
 

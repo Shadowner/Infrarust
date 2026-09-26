@@ -88,7 +88,7 @@ fn join(world: &World, username: &str, ip: &str) -> Online {
     let token = CancellationToken::new();
     let (tx, commands) = PlayerSession::channel();
     let uuid = Uuid::new_v4();
-    let session = Arc::new(PlayerSession::new(
+    let session = PlayerSession::builder(
         PlayerId::new(uuid.as_u128() as u64),
         GameProfile {
             uuid,
@@ -97,14 +97,12 @@ fn join(world: &World, username: &str, ip: &str) -> Online {
         },
         ProtocolVersion::new(767),
         std::net::SocketAddr::new(ip.parse().unwrap(), 12345),
-        Some(ServerId::new("lobby")),
-        true,
-        false,
         tx,
         token.clone(),
-        infrarust_core::permissions::default_checker(),
         Arc::new(infrarust_core::loadbalancer::BackendLoad::new()),
-    ));
+    )
+    .current_server(ServerId::new("lobby"))
+    .build();
     let guard = world.registry.register(session);
     Online {
         token,

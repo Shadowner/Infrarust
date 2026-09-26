@@ -160,7 +160,7 @@ mod tests {
     use super::*;
     use crate::auth::game_profile::offline_uuid;
     use crate::limbo::test_helpers::test_proxy_services;
-    use crate::player::PlayerCommand;
+    use crate::player::{PlayerCommand, SessionKind};
 
     type Log = Arc<Mutex<Vec<String>>>;
 
@@ -178,7 +178,7 @@ mod tests {
         username: &str,
     ) -> (Arc<PlayerSession>, mpsc::Receiver<PlayerCommand>) {
         let (tx, rx) = PlayerSession::channel();
-        let session = PlayerSession::new(
+        let session = PlayerSession::builder(
             PlayerId::new(id),
             GameProfile {
                 uuid: offline_uuid(username),
@@ -187,15 +187,12 @@ mod tests {
             },
             ProtocolVersion::new(767),
             "127.0.0.1:40000".parse().unwrap(),
-            None,
-            true,
-            false,
             tx,
             CancellationToken::new(),
-            crate::permissions::default_checker(),
             Arc::clone(&services.backend_load),
-        );
-        (Arc::new(session), rx)
+        )
+        .build();
+        (session, rx)
     }
 
     fn record(services: &ProxyServices) -> Log {
@@ -392,7 +389,7 @@ mod tests {
             .register_provider("perms", Arc::new(Toggle(Arc::clone(grant))))
             .unwrap();
         let (tx, rx) = PlayerSession::channel();
-        let session = PlayerSession::new(
+        let session = PlayerSession::builder(
             PlayerId::new(1),
             GameProfile {
                 uuid: offline_uuid("Steve"),
@@ -401,17 +398,15 @@ mod tests {
             },
             ProtocolVersion::new(767),
             "127.0.0.1:40000".parse().unwrap(),
-            None,
-            true,
-            true,
             tx,
             CancellationToken::new(),
-            crate::permissions::default_checker(),
             Arc::clone(&services.backend_load),
         )
-        .with_permissions(permissions)
-        .with_virtual_host("lobby.example.com");
-        (Arc::new(session), rx)
+        .kind(SessionKind::Intercepted { online_mode: true })
+        .permissions(permissions)
+        .virtual_host("lobby.example.com")
+        .build();
+        (session, rx)
     }
 
     #[tokio::test]

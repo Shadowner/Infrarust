@@ -33,7 +33,7 @@ use crate::loadbalancer::{PendingTicket, select_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::player::lifecycle::PlayerLifecycle;
-use crate::player::{PlayerCommand, PlayerSession, SHUTDOWN_REASON};
+use crate::player::{PlayerCommand, PlayerSession, SHUTDOWN_REASON, SessionKind};
 use crate::services::ProxyServices;
 use crate::session::kick::Kick;
 use crate::session::server_join::pre_connect;
@@ -221,23 +221,20 @@ impl ForwardedLogin<'_> {
 
         let session_token = self.shutdown.child_token();
         let (command_tx, commands) = PlayerSession::channel();
-        let player = Arc::new(
-            PlayerSession::new(
-                PlayerId::new(ctx.connection_id),
-                profile,
-                arrival.protocol_version,
-                remote_addr,
-                None,
-                false,
-                false,
-                command_tx,
-                session_token.clone(),
-                crate::permissions::default_checker(),
-                Arc::clone(&services.backend_load),
-            )
-            .with_permissions(Arc::clone(&services.permission_service))
-            .with_virtual_host(domain),
-        );
+        let player = PlayerSession::builder(
+            PlayerId::new(ctx.connection_id),
+            profile,
+            arrival.protocol_version,
+            remote_addr,
+            command_tx,
+            session_token.clone(),
+            Arc::clone(&services.backend_load),
+        )
+        .kind(SessionKind::Forwarded)
+        .permissions(Arc::clone(&services.permission_service))
+        .virtual_host(domain)
+        .events(Arc::clone(bus))
+        .build();
 
         player.setup_permissions(bus).await;
 

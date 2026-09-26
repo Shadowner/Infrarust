@@ -613,7 +613,7 @@ mod tests {
         let (player, _commands) = PlayerSession::new_test(true);
         let mode = resolve_initial_mode(
             &mut client,
-            &Arc::new(player),
+            &player,
             &auth_result,
             &mut false,
             &RoutingData {

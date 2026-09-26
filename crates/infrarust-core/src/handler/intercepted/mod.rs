@@ -22,7 +22,7 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::player::commands::CommandInbox;
 use crate::player::lifecycle::PlayerLifecycle;
-use crate::player::{PlayerSession, SHUTDOWN_REASON};
+use crate::player::{PlayerSession, SHUTDOWN_REASON, SessionKind};
 use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::ProxyLoopOutcome;
@@ -152,23 +152,20 @@ impl InterceptedHandler {
 
         let session_token = shutdown.child_token();
         let (cmd_tx, cmd_rx) = PlayerSession::channel();
-        let player = PlayerSession::new(
+        let player = PlayerSession::builder(
             PlayerId::new(ctx.connection_id),
             profile.clone(),
             api_version,
             remote_addr,
-            None,
-            true,
-            online_mode,
             cmd_tx,
             session_token.clone(),
-            crate::permissions::default_checker(),
             Arc::clone(&self.services.backend_load),
         )
-        .with_permissions(Arc::clone(&self.services.permission_service))
-        .with_virtual_host(handshake.domain.clone())
-        .with_events(Arc::clone(&self.services.event_bus))
-        .into_shared();
+        .kind(SessionKind::Intercepted { online_mode })
+        .permissions(Arc::clone(&self.services.permission_service))
+        .virtual_host(handshake.domain.clone())
+        .events(Arc::clone(&self.services.event_bus))
+        .build();
 
         player.setup_permissions(&self.services.event_bus).await;
 

@@ -217,7 +217,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::loadbalancer::{AddressConnectionCount, BackendLoad};
-    use crate::player::PlayerCommand;
+    use crate::player::{PlayerCommand, SessionKind};
     use infrarust_api::types::{GameProfile, PlayerId, ServerId};
     use infrarust_config::ServerAddress;
     use tokio::sync::mpsc;
@@ -231,7 +231,7 @@ mod tests {
         load: &Arc<BackendLoad>,
     ) -> Arc<PlayerSession> {
         let (tx, _rx) = mpsc::channel::<PlayerCommand>(32);
-        Arc::new(PlayerSession::new(
+        PlayerSession::builder(
             PlayerId::new(id),
             GameProfile {
                 uuid,
@@ -240,19 +240,18 @@ mod tests {
             },
             infrarust_api::types::ProtocolVersion::new(767),
             "127.0.0.1:12345".parse().unwrap(),
-            Some(ServerId::new(server)),
-            false,
-            false,
             tx,
             CancellationToken::new(),
-            crate::permissions::default_checker(),
             Arc::clone(load),
-        ))
+        )
+        .kind(SessionKind::Forwarded)
+        .current_server(ServerId::new(server))
+        .build()
     }
 
     fn connected(id: u64, uuid: Uuid, username: &str, addr: &str) -> Arc<PlayerSession> {
         let (tx, _rx) = mpsc::channel::<PlayerCommand>(32);
-        Arc::new(PlayerSession::new(
+        PlayerSession::builder(
             PlayerId::new(id),
             GameProfile {
                 uuid,
@@ -261,14 +260,11 @@ mod tests {
             },
             infrarust_api::types::ProtocolVersion::new(767),
             addr.parse().unwrap(),
-            None,
-            true,
-            false,
             tx,
             CancellationToken::new(),
-            crate::permissions::default_checker(),
             Arc::new(BackendLoad::new()),
-        ))
+        )
+        .build()
     }
 
     fn ids(sessions: &[Arc<PlayerSession>]) -> Vec<u64> {
@@ -391,7 +387,6 @@ mod tests {
     fn a_pending_initial_server_counts_until_the_player_joins_one() {
         let registry = Arc::new(ConnectionRegistry::new());
         let (held, _rx) = PlayerSession::new_test(true);
-        let held = Arc::new(held);
         let _guard = registry.register(Arc::clone(&held));
         assert_eq!(registry.count_by_server("lobby"), 0);
 

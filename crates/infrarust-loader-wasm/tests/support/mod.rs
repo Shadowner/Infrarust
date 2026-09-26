@@ -114,19 +114,17 @@ pub fn session_player(
     remote_addr: std::net::SocketAddr,
 ) -> Arc<dyn infrarust_api::player::Player> {
     let (commands, _) = infrarust_core::player::PlayerSession::channel();
-    Arc::new(infrarust_core::player::PlayerSession::new(
+    infrarust_core::player::PlayerSession::builder(
         infrarust_api::types::PlayerId::new(id),
         profile,
         infrarust_api::types::ProtocolVersion::new(protocol),
         remote_addr,
-        None,
-        true,
-        true,
         commands,
         CancellationToken::new(),
-        infrarust_core::permissions::default_checker(),
         Arc::new(infrarust_core::loadbalancer::BackendLoad::new()),
-    ))
+    )
+    .kind(infrarust_core::player::SessionKind::Intercepted { online_mode: true })
+    .build()
 }
 
 pub fn console() -> infrarust_api::command::CommandSource {

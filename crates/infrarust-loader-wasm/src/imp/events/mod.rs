@@ -374,7 +374,7 @@ const fn outcome_name(outcome: &we::EventOutcome) -> &'static str {
 #[cfg(test)]
 pub(crate) fn steve() -> std::sync::Arc<dyn infrarust_api::player::Player> {
     let (player, _commands) = infrarust_core::player::PlayerSession::new_test(true);
-    std::sync::Arc::new(player)
+    player
 }
 
 #[cfg(test)]

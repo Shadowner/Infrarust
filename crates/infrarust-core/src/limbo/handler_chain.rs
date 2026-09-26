@@ -442,7 +442,7 @@ mod tests {
             Arc::clone(&registry),
         );
 
-        (Arc::new(session), core, KeepAliveState::new(), registry)
+        (session, core, KeepAliveState::new(), registry)
     }
 
     fn complete_later(session: &Arc<LimboSessionImpl>, delay_ms: u64, result: HandlerResult) {

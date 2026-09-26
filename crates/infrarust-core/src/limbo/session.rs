@@ -4,7 +4,7 @@
 //! and an mpsc channel that the limbo engine loop drains.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -36,7 +36,7 @@ pub(crate) struct LimboSessionImpl {
     limbo_token: CancellationToken,
     hold_seq: AtomicU64,
     packet_registry: Arc<PacketRegistry>,
-    self_ref: OnceLock<Weak<Self>>,
+    self_ref: Weak<Self>,
 }
 
 impl LimboSessionImpl {
@@ -48,8 +48,8 @@ impl LimboSessionImpl {
         client_sender: mpsc::Sender<PacketFrame>,
         limbo_token: CancellationToken,
         packet_registry: Arc<PacketRegistry>,
-    ) -> Self {
-        Self {
+    ) -> Arc<Self> {
+        Arc::new_cyclic(|self_ref| Self {
             player_id,
             profile,
             protocol_version,
@@ -59,12 +59,8 @@ impl LimboSessionImpl {
             limbo_token,
             hold_seq: AtomicU64::new(0),
             packet_registry,
-            self_ref: OnceLock::new(),
-        }
-    }
-
-    pub(crate) fn set_self_ref(&self, weak: Weak<Self>) {
-        let _ = self.self_ref.set(weak);
+            self_ref: Weak::clone(self_ref),
+        })
     }
 
     pub(crate) fn begin_handler(&self) -> oneshot::Receiver<HandlerResult> {
@@ -150,11 +146,8 @@ impl LimboSession for LimboSessionImpl {
 
     #[allow(clippy::expect_used)]
     fn handle(&self) -> SessionHandle {
-        let weak = self
+        let arc = self
             .self_ref
-            .get()
-            .expect("LimboSessionImpl::set_self_ref must be called before handle()");
-        let arc = weak
             .upgrade()
             .expect("session Arc must be alive while session is in use");
         SessionHandle::new(arc as Arc<dyn LimboSession>, self.current_hold_id())
@@ -175,7 +168,7 @@ mod tests {
     use infrarust_api::types::PlayerId;
     use infrarust_protocol::version::ProtocolVersion;
 
-    fn make_session() -> (LimboSessionImpl, mpsc::Receiver<PacketFrame>) {
+    fn make_session() -> (Arc<LimboSessionImpl>, mpsc::Receiver<PacketFrame>) {
         let (tx, rx) = mpsc::channel(64);
         let registry = Arc::new(infrarust_protocol::registry::build_default_registry());
 
@@ -275,8 +268,6 @@ mod tests {
     #[test]
     fn stale_handle_cannot_complete_a_later_hold() {
         let (session, _rx) = make_session();
-        let session = Arc::new(session);
-        session.set_self_ref(Arc::downgrade(&session));
 
         let _rx1 = session.begin_handler(); // generation 1
         let stale = session.handle(); // captures generation 1

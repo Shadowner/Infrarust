@@ -43,7 +43,7 @@ async fn test_plugin_receives_events_end_to_end() {
     assert!(manager.is_plugin_loaded("test_plugin"));
 
     let (player, _commands) = PlayerSession::new_test(true);
-    let event = PostLoginEvent::new(Arc::new(player));
+    let event = PostLoginEvent::new(player);
     event_bus.fire(event).await;
 
     assert!(
