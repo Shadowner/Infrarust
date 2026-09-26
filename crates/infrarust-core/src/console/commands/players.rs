@@ -7,6 +7,7 @@ use comfy_table::Cell;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, ServerId};
 
+use crate::commands::actions::{broadcast, find_player, kick_player, send_player};
 use crate::console::ConsoleServices;
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
@@ -108,13 +109,12 @@ impl ConsoleCommand for FindPlayerCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let name = match args.first() {
-                Some(n) => *n,
-                None => return CommandOutput::Error("Usage: find <player>".to_string()),
+            let Some(name) = args.first() else {
+                return CommandOutput::Error("Usage: find <player>".to_string());
             };
 
-            match services.player_registry.get_player(name) {
-                Some(player) => {
+            match find_player(&*services.player_registry, name) {
+                Ok(player) => {
                     let server = player
                         .current_server()
                         .map(|s| s.as_str().to_string())
@@ -134,7 +134,7 @@ impl ConsoleCommand for FindPlayerCommand {
                         OutputLine::Info(format!("  Connected: {}", player.is_connected())),
                     ])
                 }
-                None => CommandOutput::Error(format!("Player '{name}' not found")),
+                Err(error) => CommandOutput::Error(error.to_string()),
             }
         })
     }
@@ -165,36 +165,17 @@ impl ConsoleCommand for KickCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let name = match args.first() {
-                Some(n) => *n,
-                None => {
-                    return CommandOutput::Error("Usage: kick <player> [reason...]".to_string());
-                }
+            let Some((name, reason)) = args.split_first() else {
+                return CommandOutput::Error("Usage: kick <player> [reason...]".to_string());
             };
+            let reason = (!reason.is_empty()).then(|| reason.join(" "));
 
-            let reason = if args.len() > 1 {
-                args[1..].join(" ")
-            } else {
-                "Kicked by administrator".to_string()
-            };
-
-            match services.player_registry.get_player(name) {
-                Some(player) => {
-                    let server = player
-                        .current_server()
-                        .map(|s| s.as_str().to_string())
-                        .unwrap_or_default();
-                    tracing::info!(
-                        target: "console",
-                        player = name,
-                        reason = %reason,
-                        server = %server,
-                        "Player kicked from console"
-                    );
-                    player.disconnect(Component::text(&reason)).await;
-                    CommandOutput::Success(format!("Kicked {name} (reason: {reason})"))
-                }
-                None => CommandOutput::Error(format!("Player '{name}' not found")),
+            match kick_player(&*services.player_registry, name, reason).await {
+                Ok(kicked) => CommandOutput::Success(format!(
+                    "Kicked {} (reason: {})",
+                    kicked.player, kicked.reason
+                )),
+                Err(error) => CommandOutput::Error(error.to_string()),
             }
         })
     }
@@ -286,36 +267,22 @@ impl ConsoleCommand for SendCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            if args.len() < 2 {
+            let [name, server, ..] = args else {
                 return CommandOutput::Error("Usage: send <player> <server>".to_string());
-            }
+            };
 
-            let name = args[0];
-            let server = args[1];
-
-            match services.player_registry.get_player(name) {
-                Some(player) => {
-                    if !player.is_active() {
-                        return CommandOutput::Error(format!(
-                            "Player '{name}' is on a passive proxy path and cannot be transferred"
-                        ));
-                    }
-                    match player.switch_server(ServerId::new(server)).await {
-                        Ok(()) => {
-                            tracing::info!(
-                                target: "console",
-                                player = name,
-                                server = server,
-                                "Player transferred from console"
-                            );
-                            CommandOutput::Success(format!("Sent {name} to {server}"))
-                        }
-                        Err(e) => {
-                            CommandOutput::Error(format!("Failed to send {name} to {server}: {e}"))
-                        }
-                    }
+            match send_player(
+                &*services.player_registry,
+                &*services.config_service,
+                name,
+                server,
+            )
+            .await
+            {
+                Ok(sent) => {
+                    CommandOutput::Success(format!("Sent {} to {}", sent.player, sent.server))
                 }
-                None => CommandOutput::Error(format!("Player '{name}' not found")),
+                Err(error) => CommandOutput::Error(error.to_string()),
             }
         })
     }
@@ -479,28 +446,166 @@ impl ConsoleCommand for BroadcastCommand {
                 return CommandOutput::Error("Usage: broadcast <message...>".to_string());
             }
 
-            let message = args.join(" ");
-            let component = Component::text(&message);
-            let players = services.player_registry.get_all_players();
-            let mut sent = 0usize;
-
-            for player in &players {
-                if !player.is_active() {
-                    continue;
-                }
-                if player.send_message(component.clone()).is_ok() {
-                    sent += 1;
-                }
+            match broadcast(
+                &*services.player_registry,
+                &*services.config_service,
+                None,
+                &args.join(" "),
+            ) {
+                Ok(sent) => CommandOutput::Success(format!(
+                    "Broadcast sent to {} player(s)",
+                    sent.recipients
+                )),
+                Err(error) => CommandOutput::Error(error.to_string()),
             }
-
-            tracing::info!(
-                target: "console",
-                message = %message,
-                recipients = sent,
-                "Broadcast sent from console"
-            );
-
-            CommandOutput::Success(format!("Broadcast sent to {sent} player(s)"))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use infrarust_api::command::CommandContext;
+    use infrarust_api::test_util::{MockPlayer, player_source};
+    use infrarust_config::PermissionsConfig;
+    use tokio::sync::mpsc;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::ban::manager::BanManager;
+    use crate::commands::{CommandServices, SubcommandHandler, subcommands};
+    use crate::event_bus::EventBusImpl;
+    use crate::permissions::PermissionService;
+    use crate::player::registry::PlayerRegistryImpl;
+    use crate::player::{PlayerCommand, PlayerSession};
+    use crate::plugin::PluginRegistryImpl;
+    use crate::plugin::manager::PluginManager;
+    use crate::provider::ProviderId;
+    use crate::registry::{ConnectionRegistry, SessionGuard};
+    use crate::routing::DomainRouter;
+    use crate::services::command_manager::CommandManagerImpl;
+    use crate::services::config_service::ConfigServiceImpl;
+
+    struct Surfaces {
+        console: ConsoleServices,
+        ir: CommandServices,
+        _guard: SessionGuard,
+        _commands: mpsc::Receiver<PlayerCommand>,
+    }
+
+    fn surfaces(active: bool) -> Surfaces {
+        let connection_registry = Arc::new(ConnectionRegistry::new());
+        let (session, commands) = PlayerSession::new_test(active);
+        let guard = connection_registry.register(session);
+        let player_registry = Arc::new(PlayerRegistryImpl::new(Arc::clone(&connection_registry)));
+        let domain_router = Arc::new(DomainRouter::new());
+        domain_router.add(
+            ProviderId::file("lobby"),
+            toml::from_str(
+                "name = \"lobby\"\ndomains = [\"lobby.test\"]\naddresses = [\"127.0.0.1:25566\"]\n",
+            )
+            .unwrap(),
+        );
+        let config_service = Arc::new(ConfigServiceImpl::new(
+            domain_router,
+            PathBuf::from("infrarust.toml"),
+            Arc::new(toml::from_str("").unwrap()),
+        ));
+        let permission_service =
+            Arc::new(PermissionService::new_sync(&PermissionsConfig::default()));
+        let command_manager = Arc::new(CommandManagerImpl::new());
+        let console = ConsoleServices::new(
+            Arc::clone(&player_registry),
+            Arc::clone(&connection_registry),
+            Arc::new(BanManager::disabled(
+                Arc::clone(&connection_registry),
+                Arc::new(EventBusImpl::new()),
+            )),
+            None,
+            Arc::clone(&config_service),
+            Arc::new(tokio::sync::RwLock::new(PluginManager::new(Vec::new()))),
+            Arc::clone(&permission_service),
+            Arc::clone(&command_manager),
+            CancellationToken::new(),
+            Instant::now(),
+        );
+        let ir = CommandServices {
+            player_registry,
+            config_service,
+            server_manager: None,
+            plugin_registry: Arc::new(PluginRegistryImpl::new()),
+            command_manager,
+            permission_service,
+            start_time: Instant::now(),
+        };
+        Surfaces {
+            console,
+            ir,
+            _guard: guard,
+            _commands: commands,
+        }
+    }
+
+    async fn ir_reply(
+        services: &CommandServices,
+        sub: &dyn SubcommandHandler,
+        args: &[&str],
+    ) -> String {
+        let admin = MockPlayer::new(9, "Admin")
+            .with_all_permissions()
+            .into_arc();
+        let ctx = CommandContext::new(player_source(&admin), "ir", args.join(" "));
+        let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
+        sub.execute(&ctx, &args, services).await;
+        admin.sent_text()
+    }
+
+    fn error_text(output: CommandOutput) -> String {
+        match output {
+            CommandOutput::Error(text) => text,
+            CommandOutput::Success(text) => panic!("expected an error, got success: {text}"),
+            _ => panic!("expected an error line"),
+        }
+    }
+
+    #[tokio::test]
+    async fn send_rejects_an_unknown_server_the_same_way_on_both_surfaces() {
+        let world = surfaces(true);
+        let console = error_text(
+            SendCommand
+                .execute(&["TestPlayer", "nowhere"], &world.console)
+                .await,
+        );
+        let ir = ir_reply(
+            &world.ir,
+            &subcommands::send::SendSubcommand,
+            &["TestPlayer", "nowhere"],
+        )
+        .await;
+        assert!(console.contains("nowhere"), "{console}");
+        assert!(ir.contains(&console), "console: {console}\n/ir: {ir}");
+    }
+
+    #[tokio::test]
+    async fn send_rejects_a_passive_player_the_same_way_on_both_surfaces() {
+        let world = surfaces(false);
+        let console = error_text(
+            SendCommand
+                .execute(&["TestPlayer", "lobby"], &world.console)
+                .await,
+        );
+        let ir = ir_reply(
+            &world.ir,
+            &subcommands::send::SendSubcommand,
+            &["TestPlayer", "lobby"],
+        )
+        .await;
+        assert!(console.contains("TestPlayer"), "{console}");
+        assert!(ir.contains(&console), "console: {console}\n/ir: {ir}");
     }
 }

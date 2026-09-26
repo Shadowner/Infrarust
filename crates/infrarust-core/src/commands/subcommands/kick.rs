@@ -1,9 +1,8 @@
 use infrarust_api::branding::ProxyMessage;
 use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
-use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::Component;
 
+use crate::commands::actions::kick_player;
 use crate::commands::{CommandServices, SubcommandHandler};
 
 pub(crate) struct KickSubcommand;
@@ -34,29 +33,19 @@ impl SubcommandHandler for KickSubcommand {
         Box::pin(async move {
             let sender = &ctx.source;
 
-            let Some(target_name) = args.first() else {
+            let Some((target_name, reason)) = args.split_first() else {
                 sender.send_message(ProxyMessage::error("Usage: /ir kick <player> [reason]"));
                 return;
             };
+            let reason = (!reason.is_empty()).then(|| reason.join(" "));
 
-            let Some(target) = services.player_registry.get_player(target_name) else {
-                sender.send_message(ProxyMessage::error(&format!(
-                    "Player '{target_name}' is not online."
-                )));
-                return;
+            let message = match kick_player(&*services.player_registry, target_name, reason).await {
+                Ok(kicked) => {
+                    ProxyMessage::success(&format!("Kicked {}: {}", kicked.player, kicked.reason))
+                }
+                Err(error) => ProxyMessage::error(&error.to_string()),
             };
-
-            let reason = if args.len() > 1 {
-                args[1..].join(" ")
-            } else {
-                "Kicked by proxy".to_string()
-            };
-
-            target.disconnect(Component::text(&reason)).await;
-
-            sender.send_message(ProxyMessage::success(&format!(
-                "Kicked {target_name}: {reason}"
-            )));
+            sender.send_message(message);
         })
     }
 
@@ -67,17 +56,10 @@ impl SubcommandHandler for KickSubcommand {
         services: &'a CommandServices,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async move {
-            if args.len() <= 1 {
-                let prefix = args.first().map(String::as_str).unwrap_or("");
-                services
-                    .player_registry
-                    .get_all_players()
-                    .into_iter()
-                    .map(|p| p.profile().username.clone())
-                    .filter(|name| name.to_lowercase().starts_with(&prefix.to_lowercase()))
-                    .collect()
-            } else {
-                vec![]
+            match args {
+                [] => services.complete_player_names(""),
+                [prefix] => services.complete_player_names(prefix),
+                _ => Vec::new(),
             }
         })
     }

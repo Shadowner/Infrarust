@@ -1,7 +1,8 @@
 //! Built-in proxy commands (`/infrarust`, `/ir`).
 
+pub mod actions;
 pub mod brigadier;
-mod subcommands;
+pub(crate) mod subcommands;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,6 +13,8 @@ use infrarust_api::command::{
     CommandContext, CommandHandler, CommandSource, CommandSpec, SuggestContext, Suggestion,
 };
 use infrarust_api::event::BoxFuture;
+use infrarust_api::services::config_service::ConfigService;
+use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
 
 use crate::permissions::PermissionService;
@@ -61,6 +64,27 @@ pub(crate) struct CommandServices {
     pub command_manager: Arc<CommandManagerImpl>,
     pub permission_service: Arc<PermissionService>,
     pub start_time: Instant,
+}
+
+impl CommandServices {
+    pub(crate) fn complete_player_names(&self, prefix: &str) -> Vec<String> {
+        let prefix = prefix.to_lowercase();
+        self.player_registry
+            .get_all_players()
+            .into_iter()
+            .map(|player| player.profile().username.clone())
+            .filter(|name| name.to_lowercase().starts_with(&prefix))
+            .collect()
+    }
+
+    pub(crate) fn complete_server_names(&self, prefix: &str) -> Vec<String> {
+        self.config_service
+            .get_all_server_configs()
+            .into_iter()
+            .map(|config| config.id.as_str().to_string())
+            .filter(|name| name.starts_with(prefix))
+            .collect()
+    }
 }
 
 pub(crate) struct SubcommandAlias {
