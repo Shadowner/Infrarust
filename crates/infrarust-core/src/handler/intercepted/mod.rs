@@ -4,12 +4,8 @@ pub(crate) mod auth;
 
 use std::sync::Arc;
 
-use infrarust_api::event::ResultedEvent;
-use infrarust_api::events::lifecycle::{
-    DisconnectCause, GameProfileRequestEvent, LoginEvent, LoginResult,
-};
+use infrarust_api::events::lifecycle::DisconnectCause;
 use infrarust_api::player::{Player, session_task};
-use infrarust_api::services::ban_service::LoginAttempt;
 use infrarust_api::types::{Component, PlayerId, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use tokio_util::sync::CancellationToken;
@@ -21,15 +17,16 @@ use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::player::commands::CommandInbox;
-use crate::player::lifecycle::PlayerLifecycle;
-use crate::player::{PlayerSession, SHUTDOWN_REASON, SessionKind};
+use crate::player::{SHUTDOWN_REASON, SessionKind};
 use crate::services::ProxyServices;
+use crate::session::admission::{Admission, Admitted, Arrival, admit};
 use crate::session::client_bridge::ClientBridge;
+use crate::session::client_login::complete_login;
 use crate::session::proxy_loop::ProxyLoopOutcome;
 
 use crate::session::initial_connect::{self, InitialMode};
 use crate::session::session_loop;
-use auth::{AuthResult, AuthStrategy};
+use auth::{AuthResult, AuthStrategy, Authenticated};
 
 pub struct InterceptedHandler {
     backend_connector: Arc<BackendConnector>,
@@ -110,7 +107,7 @@ impl InterceptedHandler {
 
         let mut client = ClientBridge::new(ctx.take_stream(), ctx.buffered_data.split(), version);
 
-        let authenticated = self
+        let (profile, online_mode) = match self
             .auth_strategy
             .authenticate(
                 &mut client,
@@ -120,77 +117,49 @@ impl InterceptedHandler {
                 remote_addr,
                 &handshake.domain,
             )
-            .await?;
-        let online_mode = authenticated.online_mode;
-
-        let request = self
-            .services
-            .event_bus
-            .fire(GameProfileRequestEvent::new(
-                authenticated.profile,
+            .await?
+        {
+            Authenticated::Denied(reason) => {
+                client.disconnect(&reason, registry).await.ok();
+                return Ok(());
+            }
+            Authenticated::Player {
+                profile,
                 online_mode,
-                remote_addr,
-                Some(handshake.domain.clone()),
-                api_version,
-            ))
-            .await;
-        let rewritten = request.is_modified();
-        let profile = request.profile;
+            } => (profile, online_mode),
+        };
 
-        let attempt = LoginAttempt::post_auth(
-            ctx.client_ip,
-            profile.username.clone(),
-            profile.uuid,
-            online_mode,
-        )
-        .virtual_host(handshake.domain.clone())
-        .server(ServerId::new(routing.config_id.clone()));
-        if let Some(reason) = self.services.ban_manager.refusal(&attempt).await {
-            client.disconnect(&reason, registry).await.ok();
-            return Ok(());
-        }
-
-        let session_token = shutdown.child_token();
-        let (cmd_tx, cmd_rx) = PlayerSession::channel();
-        let player = PlayerSession::builder(
-            PlayerId::new(ctx.connection_id),
-            profile.clone(),
-            api_version,
-            remote_addr,
-            cmd_tx,
-            session_token.clone(),
-            Arc::clone(&self.services.backend_load),
-        )
-        .kind(SessionKind::Intercepted { online_mode })
-        .permissions(Arc::clone(&self.services.permission_service))
-        .virtual_host(handshake.domain.clone())
-        .events(Arc::clone(&self.services.event_bus))
-        .build();
-
-        player.setup_permissions(&self.services.event_bus).await;
-
-        let login = self
-            .services
-            .event_bus
-            .fire(LoginEvent::new(
-                Arc::clone(&player) as Arc<dyn Player>,
-                online_mode,
-            ))
-            .await;
-        if let LoginResult::Denied { reason } = login.result() {
-            tracing::info!(username = %profile.username, "login denied by a plugin");
-            client.disconnect(reason, registry).await.ok();
-            return Ok(());
-        }
+        let arrival = Arrival {
+            profile,
+            protocol_version: api_version,
+            domain: handshake.domain.clone(),
+            origin: ServerId::new(routing.config_id.clone()),
+        };
+        let kind = SessionKind::Intercepted { online_mode };
+        let Admitted {
+            session: player,
+            lifecycle,
+            commands: cmd_rx,
+            token: session_token,
+            rewritten,
+        } = match admit(&self.services, &ctx, &shutdown, arrival, kind).await {
+            Admission::Admitted(admitted) => admitted,
+            Admission::Refused(reason) => {
+                client.disconnect(&reason, registry).await.ok();
+                return Ok(());
+            }
+        };
+        let profile = player.game_profile().clone();
 
         let mut login_completed = false;
         if online_mode {
-            crate::session::client_login::complete_login(&mut client, &profile, version, registry)
-                .await?;
+            if let Err(e) = complete_login(&mut client, &profile, version, registry).await {
+                lifecycle.end(DisconnectCause::Error).await;
+                return Err(e);
+            }
             login_completed = true;
         }
 
-        let lifecycle = PlayerLifecycle::begin(&self.services, Arc::clone(&player)).await;
         let mut commands =
             CommandInbox::new(cmd_rx).with_presentation(Arc::clone(player.presentation()));
         if let Some(reason) = commands.take_kick(&mut client, registry, false) {

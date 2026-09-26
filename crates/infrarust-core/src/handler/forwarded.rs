@@ -6,13 +6,9 @@ use infrarust_api::events::connection::{
     PlayerChooseInitialServerEvent, PlayerChooseInitialServerResult, ServerConnectedEvent,
     ServerPreConnectResult,
 };
-use infrarust_api::events::lifecycle::{
-    DisconnectCause, GameProfileRequestEvent, LoginEvent, LoginResult, PreLoginEvent,
-    PreLoginResult,
-};
+use infrarust_api::events::lifecycle::{DisconnectCause, PreLoginResult};
 use infrarust_api::player::Player;
-use infrarust_api::services::ban_service::LoginAttempt;
-use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
+use infrarust_api::types::{Component, GameProfile, ServerId};
 use infrarust_config::{ProxyMode, ServerAddress, ServerConfig};
 use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketEncoder;
@@ -35,6 +31,7 @@ use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::player::lifecycle::PlayerLifecycle;
 use crate::player::{PlayerCommand, PlayerSession, SHUTDOWN_REASON, SessionKind};
 use crate::services::ProxyServices;
+use crate::session::admission::{self, Admission, Admitted, PreLogin, pre_login};
 use crate::session::kick::Kick;
 use crate::session::server_join::pre_connect;
 use crate::session::wake::wake;
@@ -74,13 +71,6 @@ pub(crate) struct ForwardedLogin<'a> {
     pub(crate) connector: &'a BackendConnector,
     pub(crate) shutdown: &'a CancellationToken,
     pub(crate) wire: Wire,
-}
-
-struct Admitted {
-    player: Arc<PlayerSession>,
-    lifecycle: PlayerLifecycle,
-    commands: mpsc::Receiver<PlayerCommand>,
-    session_token: CancellationToken,
 }
 
 pub(crate) struct Ready {
@@ -125,9 +115,62 @@ impl ForwardedLogin<'_> {
         origin: Route,
         opening: Opening<'_>,
     ) -> Result<Option<Ready>, CoreError> {
-        let origin_server = ServerId::new(origin.routing.config_id.clone());
-        let Some(mut admitted) = self.admit(ctx, arrival, origin_server).await? else {
-            return Ok(None);
+        let services = self.services;
+        let remote_addr = ctx.client_addr();
+        let profile = GameProfile {
+            uuid: offline_profile_uuid(
+                services.config.auth.offline_uuid,
+                &arrival.username,
+                arrival.claimed_uuid,
+            ),
+            username: arrival.username,
+            properties: vec![],
+        };
+        match pre_login(
+            services,
+            profile.clone(),
+            remote_addr,
+            arrival.protocol_version,
+            &arrival.domain,
+        )
+        .await
+        {
+            PreLogin::Denied(reason) => {
+                tracing::info!(username = %profile.username, "login denied by a plugin");
+                self.kick(ctx, &reason).await;
+                return Ok(None);
+            }
+            PreLogin::Proceed(
+                result @ (PreLoginResult::ForceOffline | PreLoginResult::ForceOnline),
+            ) => {
+                tracing::debug!(
+                    username = %profile.username,
+                    result = ?result,
+                    "ignoring the PreLoginEvent authentication result, the backend runs this login"
+                );
+            }
+            PreLogin::Proceed(_) => {}
+        }
+        let arrival = admission::Arrival {
+            profile,
+            protocol_version: arrival.protocol_version,
+            domain: arrival.domain,
+            origin: ServerId::new(origin.routing.config_id.clone()),
+        };
+        let mut admitted = match admission::admit(
+            services,
+            ctx,
+            self.shutdown,
+            arrival,
+            SessionKind::Forwarded,
+        )
+        .await
+        {
+            Admission::Admitted(admitted) => admitted,
+            Admission::Refused(reason) => {
+                self.kick(ctx, &reason).await;
+                return Ok(None);
+            }
         };
         if let Some(cause) = self.interrupted(ctx, &mut admitted).await {
             admitted.lifecycle.end(cause).await;
@@ -138,7 +181,7 @@ impl ForwardedLogin<'_> {
             .services
             .event_bus
             .fire(PlayerChooseInitialServerEvent::new(
-                Arc::clone(&admitted.player) as Arc<dyn Player>,
+                Arc::clone(&admitted.session) as Arc<dyn Player>,
                 ServerId::new(origin.routing.config_id.clone()),
             ))
             .await;
@@ -155,110 +198,6 @@ impl ForwardedLogin<'_> {
         self.connect(ctx, admitted, target, &origin, &opening).await
     }
 
-    async fn admit(
-        &self,
-        ctx: &mut ConnectionContext,
-        arrival: Arrival,
-        origin_server: ServerId,
-    ) -> Result<Option<Admitted>, CoreError> {
-        let services = self.services;
-        let bus = &services.event_bus;
-        let remote_addr = ctx.client_addr();
-        let profile = GameProfile {
-            uuid: offline_profile_uuid(
-                services.config.auth.offline_uuid,
-                &arrival.username,
-                arrival.claimed_uuid,
-            ),
-            username: arrival.username,
-            properties: vec![],
-        };
-
-        let pre_login = bus
-            .fire(PreLoginEvent::new(
-                profile.clone(),
-                remote_addr,
-                arrival.protocol_version,
-                arrival.domain.clone(),
-            ))
-            .await;
-        match pre_login.result() {
-            PreLoginResult::Denied { reason } => {
-                tracing::info!(username = %profile.username, "login denied by a plugin");
-                self.kick(ctx, reason).await;
-                return Ok(None);
-            }
-            PreLoginResult::ForceOffline | PreLoginResult::ForceOnline => {
-                tracing::debug!(
-                    username = %profile.username,
-                    result = ?pre_login.result(),
-                    "ignoring the PreLoginEvent authentication result, the backend runs this login"
-                );
-            }
-            _ => {}
-        }
-
-        let request = bus
-            .fire(GameProfileRequestEvent::new(
-                profile,
-                false,
-                remote_addr,
-                Some(arrival.domain.clone()),
-                arrival.protocol_version,
-            ))
-            .await;
-        let profile = request.profile;
-
-        let domain = arrival.domain;
-        let attempt =
-            LoginAttempt::post_auth(ctx.client_ip, profile.username.clone(), profile.uuid, false)
-                .virtual_host(domain.clone())
-                .server(origin_server);
-        if let Some(reason) = services.ban_manager.refusal(&attempt).await {
-            self.kick(ctx, &reason).await;
-            return Ok(None);
-        }
-
-        let session_token = self.shutdown.child_token();
-        let (command_tx, commands) = PlayerSession::channel();
-        let player = PlayerSession::builder(
-            PlayerId::new(ctx.connection_id),
-            profile,
-            arrival.protocol_version,
-            remote_addr,
-            command_tx,
-            session_token.clone(),
-            Arc::clone(&services.backend_load),
-        )
-        .kind(SessionKind::Forwarded)
-        .permissions(Arc::clone(&services.permission_service))
-        .virtual_host(domain)
-        .events(Arc::clone(bus))
-        .build();
-
-        player.setup_permissions(bus).await;
-
-        let login = bus
-            .fire(LoginEvent::new(
-                Arc::clone(&player) as Arc<dyn Player>,
-                false,
-            ))
-            .await;
-        if let LoginResult::Denied { reason } = login.result() {
-            tracing::info!(username = %player.profile().username, "login denied by a plugin");
-            self.kick(ctx, reason).await;
-            return Ok(None);
-        }
-
-        let lifecycle = PlayerLifecycle::begin(services, Arc::clone(&player)).await;
-        Ok(Some(Admitted {
-            player,
-            lifecycle,
-            commands,
-            session_token,
-        }))
-    }
-
     async fn connect(
         &self,
         ctx: &mut ConnectionContext,
@@ -270,7 +209,7 @@ impl ForwardedLogin<'_> {
         let mut cause = ConnectCause::Initial;
         let mut redirects = 0;
         loop {
-            let pre = pre_connect(&self.services.event_bus, &admitted.player, target, cause).await;
+            let pre = pre_connect(&self.services.event_bus, &admitted.session, target, cause).await;
             let server = match pre.result() {
                 ServerPreConnectResult::ConnectTo(server) => server.clone(),
                 ServerPreConnectResult::Denied { reason } => {
@@ -312,12 +251,7 @@ impl ForwardedLogin<'_> {
                 }
             };
 
-            let woken = wake(
-                self.services,
-                &route.routing.server_config,
-                &admitted.session_token,
-            )
-            .await;
+            let woken = wake(self.services, &route.routing.server_config, &admitted.token).await;
             if let Some(ended) = self.interrupted(ctx, &mut admitted).await {
                 admitted.lifecycle.end(ended).await;
                 return Ok(None);
@@ -332,21 +266,21 @@ impl ForwardedLogin<'_> {
                             self.services
                                 .event_bus
                                 .fire(ServerConnectedEvent::new(
-                                    Arc::clone(&admitted.player) as Arc<dyn Player>,
+                                    Arc::clone(&admitted.session) as Arc<dyn Player>,
                                     server.clone(),
-                                    admitted.player.current_server(),
+                                    admitted.session.current_server(),
                                 ))
                                 .await;
-                            admitted.player.set_current_server(server.clone());
+                            admitted.session.set_current_server(server.clone());
                             ctx.extensions.remove::<PendingTicket>();
                             return Ok(Some(Ready {
-                                player: admitted.player,
+                                player: admitted.session,
                                 server,
                                 mode: route.routing.server_config.proxy_mode,
                                 backend,
                                 lifecycle: admitted.lifecycle,
                                 commands: admitted.commands,
-                                session_token: admitted.session_token,
+                                session_token: admitted.token,
                                 shutdown: self.shutdown.clone(),
                             }));
                         }
@@ -481,11 +415,11 @@ impl ForwardedLogin<'_> {
             )
             .await?;
         admitted
-            .player
+            .session
             .set_connected_address(Some(backend.server_address().clone()));
         let sent = match opening {
             Opening::Modern(handshake) => {
-                let profile = admitted.player.profile();
+                let profile = admitted.session.profile();
                 let data = ForwardingData {
                     real_ip: ctx.client_ip,
                     uuid: profile.uuid,
@@ -506,7 +440,7 @@ impl ForwardedLogin<'_> {
             Opening::Legacy(raw) => send_raw(backend.stream_mut(), raw).await,
         };
         if let Err(e) = sent {
-            admitted.player.set_connected_address(None);
+            admitted.session.set_connected_address(None);
             return Err(e);
         }
         Ok(backend)
@@ -514,12 +448,12 @@ impl ForwardedLogin<'_> {
 
     async fn fire_kicked(&self, admitted: &Admitted, kick: &Kick) -> KickedFromServerResult {
         let event = KickedFromServerEvent::new(
-            Arc::clone(&admitted.player) as Arc<dyn Player>,
+            Arc::clone(&admitted.session) as Arc<dyn Player>,
             kick.server.clone(),
             kick.reason(),
             kick.cause.clone(),
             kick.during_connect,
-            admitted.player.current_server(),
+            admitted.session.current_server(),
             KickedFromServerResult::DisconnectPlayer { reason: None },
         );
         self.services.event_bus.fire(event).await.result().clone()
@@ -530,7 +464,7 @@ impl ForwardedLogin<'_> {
         ctx: &mut ConnectionContext,
         admitted: &mut Admitted,
     ) -> Option<DisconnectCause> {
-        if !admitted.session_token.is_cancelled() {
+        if !admitted.token.is_cancelled() {
             return None;
         }
         let reason = queued_kick(&mut admitted.commands).or_else(|| {
@@ -546,7 +480,7 @@ impl ForwardedLogin<'_> {
 
     async fn refuse_limbo(&self, ctx: &mut ConnectionContext, admitted: Admitted, event: &str) {
         tracing::warn!(
-            player = %admitted.player.profile().username,
+            player = %admitted.session.profile().username,
             event,
             "a plugin sent a forwarded connection to limbo, which needs the offline or client_only proxy mode; disconnecting the player"
         );

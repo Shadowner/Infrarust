@@ -207,7 +207,7 @@ impl SessionKind {
         matches!(self, Self::Intercepted { .. })
     }
 
-    const fn online_mode(self) -> bool {
+    pub(crate) const fn online_mode(self) -> bool {
         match self {
             Self::Intercepted { online_mode } => online_mode,
             Self::Forwarded => false,

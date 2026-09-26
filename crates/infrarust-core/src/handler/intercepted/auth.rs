@@ -2,9 +2,8 @@
 
 use std::sync::Arc;
 
-use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::lifecycle::{OnlineAuthFailed, PreLoginResult};
-use infrarust_api::types::{GameProfile, PlayerId, ProfileProperty};
+use infrarust_api::types::{Component, GameProfile, PlayerId, ProfileProperty};
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::auth::game_profile::offline_profile_uuid;
@@ -12,11 +11,15 @@ use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
 use crate::pipeline::types::LoginData;
 use crate::services::ProxyServices;
+use crate::session::admission::{PreLogin, pre_login};
 use crate::session::client_bridge::ClientBridge;
 
-pub(crate) struct Authenticated {
-    pub profile: GameProfile,
-    pub online_mode: bool,
+pub(crate) enum Authenticated {
+    Denied(Component),
+    Player {
+        profile: GameProfile,
+        online_mode: bool,
+    },
 }
 
 pub(crate) struct AuthResult {
@@ -61,6 +64,7 @@ impl AuthStrategy {
         remote_addr: std::net::SocketAddr,
         domain: &str,
     ) -> Result<Authenticated, CoreError> {
+        let api_version = infrarust_api::types::ProtocolVersion::new(version.0);
         match self {
             Self::Mojang(auth) => {
                 let login_data = login_data.ok_or(CoreError::MissingExtension("LoginData"))?;
@@ -70,22 +74,25 @@ impl AuthStrategy {
                     username: login_data.username.clone(),
                     properties: vec![],
                 };
-                let pre_login_result = fire_pre_login(
-                    client,
+                let pre_login_result = match pre_login(
+                    services,
                     pre_login_profile,
                     remote_addr,
-                    version,
+                    api_version,
                     domain,
-                    services,
                 )
-                .await?;
+                .await
+                {
+                    PreLogin::Denied(reason) => return Ok(Authenticated::Denied(reason)),
+                    PreLogin::Proceed(result) => result,
+                };
 
                 if matches!(pre_login_result, PreLoginResult::ForceOffline) {
                     tracing::info!(
                         username = %login_data.username,
                         "ForceOffline: skipping Mojang auth for client_only player"
                     );
-                    return Ok(Authenticated {
+                    return Ok(Authenticated::Player {
                         profile: offline_profile(
                             &login_data.username,
                             login_data.player_uuid,
@@ -102,15 +109,13 @@ impl AuthStrategy {
                 let profile =
                     offline_profile(&username, login_data.and_then(|d| d.player_uuid), services);
 
-                let pre_login_result = fire_pre_login(
-                    client,
-                    profile.clone(),
-                    remote_addr,
-                    version,
-                    domain,
-                    services,
-                )
-                .await?;
+                let pre_login_result =
+                    match pre_login(services, profile.clone(), remote_addr, api_version, domain)
+                        .await
+                    {
+                        PreLogin::Denied(reason) => return Ok(Authenticated::Denied(reason)),
+                        PreLogin::Proceed(result) => result,
+                    };
 
                 if matches!(pre_login_result, PreLoginResult::ForceOnline) {
                     if let Some(auth) = mojang {
@@ -127,7 +132,7 @@ impl AuthStrategy {
                     );
                 }
 
-                Ok(Authenticated {
+                Ok(Authenticated::Player {
                     profile,
                     online_mode: false,
                 })
@@ -186,7 +191,7 @@ async fn online_auth(
         "client authenticated"
     );
 
-    Ok(Authenticated {
+    Ok(Authenticated::Player {
         profile: GameProfile {
             uuid: game_profile.uuid().unwrap_or_else(|_| uuid::Uuid::new_v4()),
             username: game_profile.name.clone(),
@@ -202,31 +207,4 @@ async fn online_auth(
         },
         online_mode: true,
     })
-}
-
-/// Fires PreLoginEvent; returns `Err` if the player is denied, otherwise the result.
-async fn fire_pre_login(
-    client: &mut ClientBridge,
-    profile: GameProfile,
-    remote_addr: std::net::SocketAddr,
-    version: ProtocolVersion,
-    domain: &str,
-    services: &ProxyServices,
-) -> Result<PreLoginResult, CoreError> {
-    let pre_login = infrarust_api::events::lifecycle::PreLoginEvent::new(
-        profile,
-        remote_addr,
-        infrarust_api::types::ProtocolVersion::new(version.0),
-        domain.to_string(),
-    );
-    let pre_login = services.event_bus.fire(pre_login).await;
-    let result = pre_login.result().clone();
-    if let PreLoginResult::Denied { reason } = &result {
-        client
-            .disconnect(reason, &services.packet_registry)
-            .await
-            .ok();
-        return Err(CoreError::ConnectionClosed);
-    }
-    Ok(result)
 }
