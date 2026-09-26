@@ -257,7 +257,7 @@ fn build_wasi_ctx(
         .preopened_dir(data_dir, "/", DirPerms::all(), FilePerms::all())
         .map_err(|e| WasmLoaderError::WasiSetup {
             path: data_dir.to_path_buf(),
-            source: std::io::Error::other(e.to_string()),
+            source: std::io::Error::other(e),
         })?;
     for mount in mounts {
         let (dirs, files) = mount.perms();
@@ -265,7 +265,7 @@ fn build_wasi_ctx(
             .preopened_dir(&mount.host, &mount.guest, dirs, files)
             .map_err(|e| WasmLoaderError::WasiSetup {
                 path: mount.host.clone(),
-                source: std::io::Error::other(e.to_string()),
+                source: std::io::Error::other(e),
             })?;
     }
     builder
