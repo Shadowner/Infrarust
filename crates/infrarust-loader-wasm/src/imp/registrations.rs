@@ -231,8 +231,8 @@ fn bind(
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use infrarust_api::limbo::test_util::RecordingLimboSession;
     use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboSession};
+    use infrarust_api::test_util::RecordingLimboSession;
     use infrarust_api::types::{GameProfile, ServerId};
 
     use super::*;

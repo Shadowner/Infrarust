@@ -172,8 +172,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::super::context::LimboEntryContext;
-    use super::super::test_util::RecordingLimboSession;
     use super::*;
+    use crate::test_util::RecordingLimboSession;
     use crate::types::GameProfile;
 
     #[derive(Default)]

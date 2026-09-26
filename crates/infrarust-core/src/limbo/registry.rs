@@ -274,7 +274,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use infrarust_api::limbo::context::LimboEntryContext;
-    use infrarust_api::limbo::test_util::RecordingLimboSession;
+    use infrarust_api::test_util::RecordingLimboSession;
     use infrarust_api::types::{GameProfile, ServerId};
 
     use super::*;

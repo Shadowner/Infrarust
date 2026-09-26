@@ -5,6 +5,7 @@ mod ban_provider;
 mod command;
 mod config;
 mod gate;
+mod limbo;
 mod load_balancer;
 mod permissions;
 mod player;
@@ -17,14 +18,13 @@ pub use ban_provider::MemoryBanProvider;
 pub use command::{command_context, console, console_with, player_source};
 pub use config::MockConfigService;
 pub use gate::Gate;
+pub use limbo::RecordingLimboSession;
 pub use load_balancer::MockLoadBalancerService;
 pub use permissions::MockPermissionChecker;
 pub use player::MockPlayer;
 pub use plugin_registry::MockPluginRegistry;
 pub use registry::MockPlayerRegistry;
 pub use server_manager::MockServerManager;
-
-pub use crate::limbo::test_util::RecordingLimboSession;
 
 fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
