@@ -9,7 +9,7 @@ use std::any::{Any, TypeId, type_name};
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, RwLock};
 use std::task::Poll;
 use std::time::Duration;
 
@@ -23,13 +23,17 @@ use infrarust_api::event::{
 };
 use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_config::EventsConfig;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
+
+use queue::Queued;
 
 use super::builtin::is_builtin_event;
 use super::diagnostic::{DiagnosticKind, HandlerDiagnostic, panic_message, short_type_name};
 use super::handler::{HandlerEntry, HandlerKind};
-use crate::util::sync::{lock, read, write};
+use crate::util::sync::{read, write};
+
+mod queue;
 
 pub const CORE_OWNER: &str = "infrarust";
 
@@ -64,17 +68,6 @@ struct PacketKey {
     packet_id: i32,
     state: ConnectionState,
     direction: PacketDirection,
-}
-
-enum Queued {
-    Event(PostedEvent),
-    Barrier(oneshot::Sender<()>),
-}
-
-struct PostedEvent {
-    type_id: TypeId,
-    event_type: &'static str,
-    event: Box<dyn Any + Send>,
 }
 
 /// The proxy's event bus implementation.
@@ -193,60 +186,6 @@ impl EventBusImpl {
         )
         .await;
         (event, decided_by)
-    }
-
-    pub fn post<E: Event>(&self, event: E) {
-        let posted = PostedEvent {
-            type_id: TypeId::of::<E>(),
-            event_type: type_name::<E>(),
-            event: Box::new(event),
-        };
-        if self.queue.send(Queued::Event(posted)).is_err() {
-            tracing::warn!(
-                event = short_type_name(type_name::<E>()),
-                "the event dispatcher has stopped; a posted event was dropped"
-            );
-        }
-    }
-
-    pub fn start_dispatcher(self: &Arc<Self>) {
-        let undispatched = lock(&self.undispatched).take();
-        if let Some(queue) = undispatched {
-            tokio::spawn(run_dispatcher(Arc::downgrade(self), queue));
-        }
-    }
-
-    pub async fn flush(&self) {
-        let undispatched = lock(&self.undispatched).as_mut().map(|queue| {
-            let mut drained = Vec::new();
-            while let Ok(queued) = queue.try_recv() {
-                drained.push(queued);
-            }
-            drained
-        });
-        let Some(queued) = undispatched else {
-            let (done, flushed) = oneshot::channel();
-            if self.queue.send(Queued::Barrier(done)).is_ok() {
-                let _ = flushed.await;
-            }
-            return;
-        };
-        for item in queued {
-            match item {
-                Queued::Barrier(done) => {
-                    let _ = done.send(());
-                }
-                Queued::Event(mut posted) => {
-                    self.dispatch(
-                        posted.type_id,
-                        posted.event_type,
-                        &mut *posted.event,
-                        &self.core_owner,
-                    )
-                    .await;
-                }
-            }
-        }
     }
 
     pub fn has_listeners<E: Event>(&self) -> bool {
@@ -643,29 +582,6 @@ impl EventBus for EventBusImpl {
     }
 }
 
-async fn run_dispatcher(bus: Weak<EventBusImpl>, mut queue: mpsc::UnboundedReceiver<Queued>) {
-    while let Some(queued) = queue.recv().await {
-        match queued {
-            Queued::Barrier(done) => {
-                let _ = done.send(());
-            }
-            Queued::Event(posted) => {
-                let Some(live) = bus.upgrade() else {
-                    return;
-                };
-                let mut posted = posted;
-                live.dispatch(
-                    posted.type_id,
-                    posted.event_type,
-                    &mut *posted.event,
-                    &live.core_owner,
-                )
-                .await;
-            }
-        }
-    }
-}
-
 fn snapshot<K: Eq + std::hash::Hash>(
     map: &RwLock<HashMap<K, Arc<Vec<HandlerEntry>>>>,
     key: &K,
@@ -746,25 +662,6 @@ mod tests {
         bus.unsubscribe(handle);
         assert!(bus.packet_handlers.read().unwrap().is_empty());
         assert_eq!(bus.packet_listener_count.load(Ordering::Relaxed), 0);
-    }
-
-    #[tokio::test]
-    async fn flush_without_a_dispatcher_delivers_the_posted_events() {
-        let bus = EventBusImpl::new();
-        let seen = Arc::new(AtomicBool::new(false));
-        let flag = Arc::clone(&seen);
-        bus.subscribe_erased(
-            TypeId::of::<TestEvent>(),
-            EventPriority::NORMAL,
-            Box::new(move |_| flag.store(true, Ordering::SeqCst)),
-        );
-
-        bus.post(TestEvent);
-        tokio::time::timeout(Duration::from_secs(1), bus.flush())
-            .await
-            .expect("flush must not wait for a dispatcher that never started");
-
-        assert!(seen.load(Ordering::SeqCst));
     }
 
     #[tokio::test]
