@@ -1,4 +1,4 @@
-use crate::codec::McBufReadExt;
+use crate::codec::{McBufReadExt, count_from_signed};
 use crate::error::{ProtocolError, ProtocolResult};
 
 const TAG_END: u8 = 0;
@@ -64,11 +64,8 @@ fn skip_tag_payload(r: &mut &[u8], tag_type: u8, depth: u32) -> ProtocolResult<(
         TAG_INT | TAG_FLOAT => skip_bytes(r, 4),
         TAG_LONG | TAG_DOUBLE => skip_bytes(r, 8),
         TAG_BYTE_ARRAY => {
-            let raw_len = r.read_i32_be()?;
-            if raw_len < 0 {
-                return Err(ProtocolError::invalid("negative NBT byte array length"));
-            }
-            skip_bytes(r, raw_len as usize)
+            let len = count_from_signed(r.read_i32_be()?, "NBT byte array length")?;
+            skip_bytes(r, len)
         }
         TAG_STRING => skip_nbt_string(r),
         TAG_LIST => {
@@ -84,21 +81,13 @@ fn skip_tag_payload(r: &mut &[u8], tag_type: u8, depth: u32) -> ProtocolResult<(
         }
         TAG_COMPOUND => skip_compound_payload(r, depth + 1),
         TAG_INT_ARRAY => {
-            let raw_count = r.read_i32_be()?;
-            if raw_count < 0 {
-                return Err(ProtocolError::invalid("negative NBT int array count"));
-            }
-            let byte_len = (raw_count as usize)
+            let byte_len = count_from_signed(r.read_i32_be()?, "NBT int array count")?
                 .checked_mul(4)
                 .ok_or_else(|| ProtocolError::invalid("NBT int array size overflow"))?;
             skip_bytes(r, byte_len)
         }
         TAG_LONG_ARRAY => {
-            let raw_count = r.read_i32_be()?;
-            if raw_count < 0 {
-                return Err(ProtocolError::invalid("negative NBT long array count"));
-            }
-            let byte_len = (raw_count as usize)
+            let byte_len = count_from_signed(r.read_i32_be()?, "NBT long array count")?
                 .checked_mul(8)
                 .ok_or_else(|| ProtocolError::invalid("NBT long array size overflow"))?;
             skip_bytes(r, byte_len)

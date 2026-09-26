@@ -1,5 +1,5 @@
 use crate::codec::McBufReadExt;
-use crate::error::{ProtocolError, ProtocolResult};
+use crate::error::ProtocolResult;
 use crate::nbt;
 use crate::version::ProtocolVersion;
 
@@ -29,10 +29,7 @@ pub fn extract_dimension_from_join_game(
     let _gamemode = r.read_u8()?;
     let _previous_gamemode = r.read_i8()?;
 
-    let world_count = r.read_var_int()?.0;
-    if world_count < 0 {
-        return Err(ProtocolError::invalid("negative world count"));
-    }
+    let world_count = r.read_count("world count")?;
     for _ in 0..world_count {
         let _world_name = r.read_string()?;
     }
@@ -55,6 +52,7 @@ mod tests {
     use super::*;
     use crate::codec::McBufWriteExt;
     use crate::codec::VarInt;
+    use crate::error::ProtocolError;
 
     fn build_pre_1_16_payload(gamemode: u8, dimension: i32) -> Vec<u8> {
         let mut buf = Vec::new();

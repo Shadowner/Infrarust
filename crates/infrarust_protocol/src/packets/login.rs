@@ -1,4 +1,4 @@
-use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
+use crate::codec::{McBufReadExt, McBufWriteExt, VarInt, count_from_signed};
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
@@ -12,11 +12,8 @@ pub struct Property {
 }
 
 fn read_byte_array_short(r: &mut &[u8]) -> ProtocolResult<Vec<u8>> {
-    let len = r.read_i16_be()?;
-    if len < 0 {
-        return Err(ProtocolError::invalid("negative byte array length"));
-    }
-    r.read_byte_array_bounded(len as usize)
+    let len = count_from_signed(r.read_i16_be()?, "byte array length")?;
+    r.read_byte_array_bounded(len)
 }
 
 fn write_byte_array_short(
@@ -385,11 +382,8 @@ impl Packet for CLoginSuccess {
         let username = r.read_string_bounded(16)?;
 
         let properties = if version.no_less_than(ProtocolVersion::V1_19) {
-            let count = r.read_var_int()?.0;
-            if count < 0 {
-                return Err(ProtocolError::invalid("negative property count"));
-            }
-            let mut props = Vec::with_capacity((count as usize).min(64));
+            let count = r.read_count("property count")?;
+            let mut props = Vec::with_capacity(count.min(64));
             for _ in 0..count {
                 let name = r.read_string()?;
                 let value = r.read_string()?;

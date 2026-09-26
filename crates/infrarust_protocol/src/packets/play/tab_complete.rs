@@ -89,11 +89,8 @@ impl Packet for CTabCompleteResponse {
         let transaction_id = r.read_var_int()?.0;
         let start = r.read_var_int()?.0;
         let length = r.read_var_int()?.0;
-        let count = r.read_var_int()?.0;
-        if count < 0 {
-            return Err(crate::error::ProtocolError::invalid("negative match count"));
-        }
-        let mut matches = Vec::with_capacity((count as usize).min(1024));
+        let count = r.read_count("match count")?;
+        let mut matches = Vec::with_capacity(count.min(1024));
         for _ in 0..count {
             let text = r.read_string()?;
             let has_tooltip = r.read_u8()? != 0;

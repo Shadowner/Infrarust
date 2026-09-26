@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use uuid::Uuid;
 
 use crate::codec::varint::VarInt;
-use crate::codec::{Decode, Encode, McBufWriteExt};
+use crate::codec::{Decode, Encode, McBufWriteExt, count_from_signed};
 use crate::error::{ProtocolError, ProtocolResult};
 
 const MAX_STRING_CHARS: usize = 32767;
@@ -123,11 +123,7 @@ pub(crate) fn encode_string(s: &str, w: &mut impl Write) -> ProtocolResult<()> {
 }
 
 pub(crate) fn decode_string(r: &mut &[u8], max_chars: usize) -> ProtocolResult<String> {
-    let raw_len = VarInt::decode(r)?.0;
-    if raw_len < 0 {
-        return Err(ProtocolError::invalid("negative length"));
-    }
-    let byte_len = raw_len as usize;
+    let byte_len = count_from_signed(VarInt::decode(r)?.0, "string length")?;
     let max_bytes = max_chars * 4;
     if byte_len > max_bytes {
         return Err(ProtocolError::too_large(max_bytes, byte_len));
@@ -168,11 +164,7 @@ impl Encode for Vec<u8> {
 
 impl Decode<'_> for Vec<u8> {
     fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
-        let raw_len = VarInt::decode(r)?.0;
-        if raw_len < 0 {
-            return Err(ProtocolError::invalid("negative length"));
-        }
-        let len = raw_len as usize;
+        let len = count_from_signed(VarInt::decode(r)?.0, "byte array length")?;
         if r.len() < len {
             return Err(ProtocolError::Incomplete {
                 context: "byte array",
@@ -216,11 +208,7 @@ pub(crate) fn read_string_bounded_from_reader(
     reader: &mut impl Read,
     max_chars: usize,
 ) -> ProtocolResult<String> {
-    let raw_len = read_varint_from_reader(reader)?.0;
-    if raw_len < 0 {
-        return Err(ProtocolError::invalid("negative length"));
-    }
-    let byte_len = raw_len as usize;
+    let byte_len = count_from_signed(read_varint_from_reader(reader)?.0, "string length")?;
     let max_bytes = max_chars * 4;
     if byte_len > max_bytes {
         return Err(ProtocolError::too_large(max_bytes, byte_len));

@@ -126,7 +126,7 @@ fn decode_1_20_2_up(
 ) -> ProtocolResult<CJoinGame> {
     let is_hardcore = r.read_bool()?;
 
-    let level_count = r.read_var_int()?.0 as usize;
+    let level_count = r.read_count("level count")?;
     let mut level_names = Vec::with_capacity(level_count.min(64));
     for _ in 0..level_count {
         level_names.push(r.read_string()?);
@@ -410,5 +410,19 @@ mod tests {
         let mut second = Vec::new();
         decoded.encode(&mut second, version).unwrap();
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_join_game_rejects_negative_level_count() {
+        let mut buf = Vec::new();
+        buf.write_i32_be(1).unwrap();
+        buf.write_bool(false).unwrap();
+        buf.write_var_int(&VarInt(-1)).unwrap();
+        buf.extend_from_slice(&[0u8; 64]);
+        let err = CJoinGame::decode(&mut buf.as_slice(), ProtocolVersion::V1_20_2).unwrap_err();
+        assert!(
+            matches!(&err, crate::error::ProtocolError::Invalid { context } if context.contains("negative")),
+            "{err}"
+        );
     }
 }

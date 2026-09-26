@@ -144,11 +144,6 @@ pub struct ArgumentSignature {
     pub signature: Vec<u8>,
 }
 
-fn read_count(r: &mut &[u8], what: &str) -> ProtocolResult<usize> {
-    let count = r.read_var_int()?.0;
-    usize::try_from(count).map_err(|_| ProtocolError::invalid(format!("negative {what} count")))
-}
-
 fn read_prefixed_signature(r: &mut &[u8]) -> ProtocolResult<Vec<u8>> {
     let available = r.len();
     r.read_byte_array(available)
@@ -188,7 +183,7 @@ fn encode_previous_message(
 }
 
 fn decode_previous_messages(r: &mut &[u8]) -> ProtocolResult<PreviousMessages> {
-    let count = read_count(r, "previous message")?;
+    let count = r.read_count("previous message count")?;
     let mut seen = Vec::with_capacity(count.min(16));
     for _ in 0..count {
         seen.push(decode_previous_message(r)?);
@@ -254,7 +249,7 @@ fn decode_argument_signatures(
     r: &mut &[u8],
     version: ProtocolVersion,
 ) -> ProtocolResult<Vec<ArgumentSignature>> {
-    let count = read_count(r, "argument signature")?;
+    let count = r.read_count("argument signature count")?;
     let mut signatures = Vec::with_capacity(count.min(8));
     for _ in 0..count {
         let name = r.read_string_bounded(ARGUMENT_NAME_MAX_CHARS)?;

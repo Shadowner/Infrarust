@@ -7,7 +7,12 @@ pub use varlong::VarLong;
 
 use std::io::{Read, Write};
 
-use crate::error::ProtocolResult;
+use crate::error::{ProtocolError, ProtocolResult};
+
+pub fn count_from_signed<T: TryInto<usize>>(raw: T, what: &str) -> ProtocolResult<usize> {
+    raw.try_into()
+        .map_err(|_| ProtocolError::invalid(format!("negative {what}")))
+}
 
 pub trait Encode {
     fn encode(&self, w: &mut impl Write) -> ProtocolResult<()>;
@@ -39,6 +44,7 @@ pub trait McBufReadExt: Read {
     fn read_byte_array(&mut self, max_len: usize) -> ProtocolResult<Vec<u8>>;
     fn read_byte_array_bounded(&mut self, count: usize) -> ProtocolResult<Vec<u8>>;
     fn read_remaining(&mut self) -> ProtocolResult<Vec<u8>>;
+    fn read_count(&mut self, what: &str) -> ProtocolResult<usize>;
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -153,13 +159,9 @@ impl<R: Read> McBufReadExt for R {
     }
 
     fn read_byte_array(&mut self, max_len: usize) -> ProtocolResult<Vec<u8>> {
-        let raw_len = self.read_var_int()?.0;
-        if raw_len < 0 {
-            return Err(crate::error::ProtocolError::invalid("negative length"));
-        }
-        let len = raw_len as usize;
+        let len = self.read_count("byte array length")?;
         if len > max_len {
-            return Err(crate::error::ProtocolError::too_large(max_len, len));
+            return Err(ProtocolError::too_large(max_len, len));
         }
         self.read_byte_array_bounded(len)
     }
@@ -174,6 +176,10 @@ impl<R: Read> McBufReadExt for R {
         let mut buf = Vec::new();
         self.read_to_end(&mut buf)?;
         Ok(buf)
+    }
+
+    fn read_count(&mut self, what: &str) -> ProtocolResult<usize> {
+        count_from_signed(self.read_var_int()?.0, what)
     }
 }
 
