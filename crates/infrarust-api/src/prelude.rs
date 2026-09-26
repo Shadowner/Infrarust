@@ -40,10 +40,10 @@ pub use crate::messaging::{
 
 // Services
 pub use crate::services::{
-    BackendState, BackendStatus, BanEntry, BanFeatures, BanPage, BanProvider, BanProviderRejected,
-    BanQuery, BanRequest, BanService, BanSource, BanTarget, BanVerdict, ConfigService,
-    ConfigWriteError, LbError, LoadBalancerService, LoginAttempt, LoginStage, PlayerRegistry,
-    PluginInfo, PluginRegistry, ProxyInfo, ProxyMode, Scheduler, ServerConfig, ServerManager,
+    BackendState, BackendStatus, BanEntry, BanFeatures, BanPage, BanProvider, BanQuery, BanRequest,
+    BanService, BanSource, BanTarget, BanVerdict, ConfigService, ConfigWriteError, LbError,
+    LoadBalancerService, LoginAttempt, LoginStage, PlayerRegistry, PluginInfo, PluginRegistry,
+    ProviderKind, ProviderRejected, ProxyInfo, ProxyMode, Scheduler, ServerConfig, ServerManager,
     ServerState, ServiceHandle, ServiceRegistry, ServiceRegistryExt, TaskHandle, UnbanRequest,
 };
 
@@ -51,8 +51,7 @@ pub use crate::services::{
 pub use crate::permissions::{
     ADMIN_PERMISSION, Capability, CapabilitySet, PermissionChecker, PermissionDefault,
     PermissionMap, PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
-    PermissionProviderRejected, PermissionSnapshot, PermissionSubject, SnapshotPermissionChecker,
-    Tristate,
+    PermissionSnapshot, PermissionSubject, SnapshotPermissionChecker, Tristate,
 };
 
 // Limbo

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use infrarust_api::permissions::{Capability, PermissionProvider, PermissionProviderRejected};
-use infrarust_api::services::ban_service::{BanFeatures, BanProvider, BanProviderRejected};
+use infrarust_api::permissions::PermissionProvider;
+use infrarust_api::services::ban_service::{BanFeatures, BanProvider};
+use infrarust_api::services::providers::ProviderRejected;
 
 use crate::actor::CallKind;
 use crate::bindings::infrarust::plugin::ban_service as wb;
@@ -39,8 +40,8 @@ impl PluginStoreState {
         let provider = Arc::new(WasmBanProvider::new(instance, features));
         ctx.register_ban_provider(Arc::clone(&provider) as Arc<dyn BanProvider>)
             .map_err(|rejected| match rejected {
-                BanProviderRejected::MissingCapability => {
-                    missing_capability(Capability::BanProvider)
+                ProviderRejected::MissingCapability { kind } => {
+                    missing_capability(kind.capability())
                 }
                 other => host_error(ErrorKind::Conflict, other.to_string()),
             })?;
@@ -62,8 +63,8 @@ impl PluginStoreState {
         let provider = Arc::new(WasmPermissionProvider::new(instance));
         ctx.register_permission_provider(Arc::clone(&provider) as Arc<dyn PermissionProvider>)
             .map_err(|rejected| match rejected {
-                PermissionProviderRejected::MissingCapability => {
-                    missing_capability(Capability::PermissionProvider)
+                ProviderRejected::MissingCapability { kind } => {
+                    missing_capability(kind.capability())
                 }
                 other => host_error(ErrorKind::Conflict, other.to_string()),
             })?;

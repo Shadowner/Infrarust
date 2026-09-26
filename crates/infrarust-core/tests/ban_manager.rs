@@ -8,9 +8,10 @@ use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{BoxFuture, EventPriority};
 use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::services::ban_service::{
-    BanFeatures, BanPage, BanProvider, BanProviderRejected, BanQuery, BanRequest, BanService,
-    BanVerdict, LoginAttempt, UnbanRequest,
+    BanFeatures, BanPage, BanProvider, BanQuery, BanRequest, BanService, BanVerdict, LoginAttempt,
+    UnbanRequest,
 };
+use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_api::types::{Component, GameProfile, PlayerId, ProtocolVersion, ServerId};
 use infrarust_core::ban::FileBanStorage;
 use infrarust_core::ban::manager::BanManager;
@@ -402,7 +403,8 @@ async fn only_the_selected_plugin_may_provide_bans() {
         .register_provider("other", Arc::new(TableProvider::default()));
     assert_eq!(
         rejected,
-        Err(BanProviderRejected::NotSelected {
+        Err(ProviderRejected::NotSelected {
+            kind: ProviderKind::Ban,
             selected: "guard".into()
         })
     );

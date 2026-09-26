@@ -560,15 +560,6 @@ pub trait BanService: BanProvider + private::Sealed {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum BanProviderRejected {
-    #[error("the plugin lacks the ban-provider capability")]
-    MissingCapability,
-    #[error("[ban] provider selects `{selected}`, not this plugin")]
-    NotSelected { selected: String },
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]

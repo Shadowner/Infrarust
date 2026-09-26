@@ -9,9 +9,10 @@ use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::handshake::RejectReason;
 use infrarust_api::player::Player;
 use infrarust_api::services::ban_service::{
-    BanFeatures, BanPage, BanProvider, BanProviderRejected, BanQuery, BanRequest, BanService,
-    BanVerdict, LoginAttempt, LoginStage, UnbanRequest,
+    BanFeatures, BanPage, BanProvider, BanQuery, BanRequest, BanService, BanVerdict, LoginAttempt,
+    LoginStage, UnbanRequest,
 };
+use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_api::types::Component;
 use infrarust_config::{BanConfig, BanProviderSelection};
 
@@ -319,7 +320,7 @@ impl BanManager {
         &self,
         plugin_id: &str,
         provider: Arc<dyn BanProvider>,
-    ) -> Result<(), BanProviderRejected> {
+    ) -> Result<(), ProviderRejected> {
         match &self.selection {
             BanProviderSelection::Plugin(id) if id == plugin_id => {
                 *write(&self.registered) = Some(provider);
@@ -332,7 +333,8 @@ impl BanManager {
                     selected = %selected,
                     "ignoring a ban provider: [ban] provider selects another one"
                 );
-                Err(BanProviderRejected::NotSelected {
+                Err(ProviderRejected::NotSelected {
+                    kind: ProviderKind::Ban,
                     selected: selected.to_string(),
                 })
             }

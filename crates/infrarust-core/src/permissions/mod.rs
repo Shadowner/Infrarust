@@ -10,8 +10,9 @@ use infrarust_api::command::CommandSource;
 use infrarust_api::permissions::{
     ADMIN_PERMISSION, AllPermissionsChecker, DefaultPermissionChecker, PermissionChecker,
     PermissionDefault, PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
-    PermissionProviderRejected, PermissionSubject, Tristate, WILDCARD,
+    PermissionSubject, Tristate, WILDCARD,
 };
+use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_config::{PermissionProviderSelection, PermissionsConfig};
 
 use crate::util::sync::{read, write};
@@ -84,7 +85,7 @@ impl PermissionService {
         &self,
         plugin_id: &str,
         provider: Arc<dyn PermissionProvider>,
-    ) -> Result<(), PermissionProviderRejected> {
+    ) -> Result<(), ProviderRejected> {
         match &self.selection {
             PermissionProviderSelection::Plugin(id) if id == plugin_id => {
                 *write(&self.registered) = Some(provider);
@@ -97,7 +98,8 @@ impl PermissionService {
                     selected = %selected,
                     "ignoring a permission provider: [permissions] provider selects another one"
                 );
-                Err(PermissionProviderRejected::NotSelected {
+                Err(ProviderRejected::NotSelected {
+                    kind: ProviderKind::Permission,
                     selected: selected.to_string(),
                 })
             }
@@ -454,14 +456,16 @@ mod tests {
 
         assert_eq!(
             svc.register_provider("other", Arc::clone(&provider)),
-            Err(PermissionProviderRejected::NotSelected {
+            Err(ProviderRejected::NotSelected {
+                kind: ProviderKind::Permission,
                 selected: "perms".into()
             })
         );
         let builtin = service(&PermissionsConfig::default());
         assert_eq!(
             builtin.register_provider("perms", Arc::clone(&provider)),
-            Err(PermissionProviderRejected::NotSelected {
+            Err(ProviderRejected::NotSelected {
+                kind: ProviderKind::Permission,
                 selected: "builtin".into()
             })
         );

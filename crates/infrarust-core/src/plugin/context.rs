@@ -12,15 +12,16 @@ use infrarust_api::filter::registry::{CodecFilterRegistry, TransportFilterRegist
 use infrarust_api::limbo::{LimboHandler, LimboHandlerError, LimboHandlerRegistration};
 use infrarust_api::permissions::{
     Capability, CapabilitySet, PermissionNode, PermissionNodeError, PermissionNodeInfo,
-    PermissionProvider, PermissionProviderRejected,
+    PermissionProvider,
 };
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::provider::PluginConfigProvider;
+use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_api::services::proxy_info::ProxyInfo;
 use infrarust_api::services::scheduler::Scheduler;
 use infrarust_api::services::service_registry::ServiceRegistry;
 use infrarust_api::services::{
-    ban_service::{BanProvider, BanProviderRejected, BanService},
+    ban_service::{BanProvider, BanService},
     config_service::ConfigService,
     load_balancer::LoadBalancerService,
     player_registry::PlayerRegistry,
@@ -296,16 +297,19 @@ impl PluginContext for PluginContextImpl {
     fn register_ban_provider(
         &self,
         provider: Arc<dyn BanProvider>,
-    ) -> Result<(), BanProviderRejected> {
+    ) -> Result<(), ProviderRejected> {
         if !self.capabilities.has(Capability::BanProvider) {
             tracing::warn!(
                 plugin = %self.plugin_id,
                 "register_ban_provider denied: missing ban-provider capability"
             );
-            return Err(BanProviderRejected::MissingCapability);
+            return Err(ProviderRejected::MissingCapability {
+                kind: ProviderKind::Ban,
+            });
         }
         let Some(bans) = &self.ban_providers else {
-            return Err(BanProviderRejected::NotSelected {
+            return Err(ProviderRejected::NotSelected {
+                kind: ProviderKind::Ban,
                 selected: infrarust_config::BanProviderSelection::BUILTIN.to_string(),
             });
         };
@@ -317,13 +321,15 @@ impl PluginContext for PluginContextImpl {
     fn register_permission_provider(
         &self,
         provider: Arc<dyn PermissionProvider>,
-    ) -> Result<(), PermissionProviderRejected> {
+    ) -> Result<(), ProviderRejected> {
         if !self.capabilities.has(Capability::PermissionProvider) {
             tracing::warn!(
                 plugin = %self.plugin_id,
                 "register_permission_provider denied: missing permission-provider capability"
             );
-            return Err(PermissionProviderRejected::MissingCapability);
+            return Err(ProviderRejected::MissingCapability {
+                kind: ProviderKind::Permission,
+            });
         }
         self.permissions
             .register_provider(&self.plugin_id, provider)?;

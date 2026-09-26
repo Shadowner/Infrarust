@@ -441,15 +441,6 @@ pub trait PermissionProvider: Send + Sync {
     ) -> BoxFuture<'a, Arc<dyn PermissionChecker>>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum PermissionProviderRejected {
-    #[error("the plugin lacks the permission-provider capability")]
-    MissingCapability,
-    #[error("[permissions] provider selects `{selected}`, not this plugin")]
-    NotSelected { selected: String },
-}
-
 pub use infrarust_plugin_common::capability::Capability;
 
 /// The set of [`Capability`]s granted to a plugin.

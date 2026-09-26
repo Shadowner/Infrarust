@@ -7,15 +7,15 @@ use infrarust_api::filter::registry::{CodecFilterRegistry, TransportFilterRegist
 use infrarust_api::limbo::{LimboHandler, LimboHandlerError, LimboHandlerRegistration};
 use infrarust_api::permissions::{
     CapabilitySet, PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
-    PermissionProviderRejected,
 };
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::provider::PluginConfigProvider;
-use infrarust_api::services::ban_service::{BanProvider, BanProviderRejected, BanService};
+use infrarust_api::services::ban_service::{BanProvider, BanService};
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::load_balancer::LoadBalancerService;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
+use infrarust_api::services::providers::ProviderRejected;
 use infrarust_api::services::proxy_info::ProxyInfo;
 use infrarust_api::services::scheduler::Scheduler;
 use infrarust_api::services::server_manager::ServerManager;
@@ -66,13 +66,13 @@ impl PluginContext for MockPluginContext {
     fn register_ban_provider(
         &self,
         _provider: Arc<dyn BanProvider>,
-    ) -> Result<(), BanProviderRejected> {
+    ) -> Result<(), ProviderRejected> {
         unimplemented!("mock")
     }
     fn register_permission_provider(
         &self,
         _provider: Arc<dyn PermissionProvider>,
-    ) -> Result<(), PermissionProviderRejected> {
+    ) -> Result<(), ProviderRejected> {
         unimplemented!("mock")
     }
     fn register_permission_node(&self, _node: PermissionNode) -> Result<(), PermissionNodeError> {

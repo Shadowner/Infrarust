@@ -17,14 +17,14 @@ use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use crate::limbo::{LimboHandler, LimboHandlerError, LimboHandlerRegistration};
 use crate::permissions::{
     PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
-    PermissionProviderRejected,
 };
 use crate::services::{
-    ban_service::{BanProvider, BanProviderRejected, BanService},
+    ban_service::{BanProvider, BanService},
     config_service::ConfigService,
     load_balancer::LoadBalancerService,
     player_registry::PlayerRegistry,
     plugin_registry::PluginRegistry,
+    providers::ProviderRejected,
     proxy_info::ProxyInfo,
     scheduler::Scheduler,
     server_manager::ServerManager,
@@ -191,15 +191,13 @@ pub trait PluginContext: Send + Sync + private::Sealed {
 
     fn ban_service(&self) -> Arc<dyn BanService>;
 
-    fn register_ban_provider(
-        &self,
-        provider: Arc<dyn BanProvider>,
-    ) -> Result<(), BanProviderRejected>;
+    fn register_ban_provider(&self, provider: Arc<dyn BanProvider>)
+    -> Result<(), ProviderRejected>;
 
     fn register_permission_provider(
         &self,
         provider: Arc<dyn PermissionProvider>,
-    ) -> Result<(), PermissionProviderRejected>;
+    ) -> Result<(), ProviderRejected>;
 
     fn register_permission_node(&self, node: PermissionNode) -> Result<(), PermissionNodeError>;
 

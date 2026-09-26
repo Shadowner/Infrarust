@@ -9,10 +9,11 @@ use infrarust_api::event::{BoxFuture, EventPriority, ResultedEvent};
 use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
 use infrarust_api::permissions::{
     PermissionChecker, PermissionDefault, PermissionMap, PermissionNode, PermissionProvider,
-    PermissionProviderRejected, PermissionSubject,
+    PermissionSubject,
 };
 use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
+use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_api::types::Component;
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_core::console::ConsoleServices;
@@ -534,11 +535,17 @@ async fn only_the_selected_and_capable_plugin_becomes_the_provider() {
         [
             (
                 "intruder",
-                Err(PermissionProviderRejected::NotSelected {
+                Err(ProviderRejected::NotSelected {
+                    kind: ProviderKind::Permission,
                     selected: PERMS.into()
                 })
             ),
-            (PERMS, Err(PermissionProviderRejected::MissingCapability)),
+            (
+                PERMS,
+                Err(ProviderRejected::MissingCapability {
+                    kind: ProviderKind::Permission
+                })
+            ),
         ]
     );
 

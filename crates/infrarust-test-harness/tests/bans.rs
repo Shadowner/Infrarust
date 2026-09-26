@@ -8,9 +8,10 @@ use std::time::Duration;
 use infrarust_api::error::ServiceError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::services::ban_service::{
-    BanEntry, BanFeatures, BanPage, BanProvider, BanProviderRejected, BanQuery, BanRequest,
-    BanService, BanSource, BanTarget, BanVerdict, LoginAttempt, LoginStage, UnbanRequest,
+    BanEntry, BanFeatures, BanPage, BanProvider, BanQuery, BanRequest, BanService, BanSource,
+    BanTarget, BanVerdict, LoginAttempt, LoginStage, UnbanRequest,
 };
+use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_api::types::Component;
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_core::ban::storage::BanStorage;
@@ -145,7 +146,7 @@ impl BanProvider for GuardProvider {
 }
 
 type ServiceSlot = Arc<Mutex<Option<Arc<dyn BanService>>>>;
-type RegistrationSlot = Arc<Mutex<Option<Result<(), BanProviderRejected>>>>;
+type RegistrationSlot = Arc<Mutex<Option<Result<(), ProviderRejected>>>>;
 
 struct Guard {
     service: ServiceSlot,
@@ -161,7 +162,7 @@ impl Guard {
             .expect("the guard plugin was enabled")
     }
 
-    fn registration(&self) -> Option<Result<(), BanProviderRejected>> {
+    fn registration(&self) -> Option<Result<(), ProviderRejected>> {
         self.registration.lock().unwrap().clone()
     }
 }
@@ -467,7 +468,8 @@ async fn no_provider_lets_everyone_in() {
 
     assert_eq!(
         guard.registration(),
-        Some(Err(BanProviderRejected::NotSelected {
+        Some(Err(ProviderRejected::NotSelected {
+            kind: ProviderKind::Ban,
             selected: "none".into()
         }))
     );
