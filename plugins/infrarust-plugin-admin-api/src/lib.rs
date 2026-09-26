@@ -109,6 +109,7 @@ impl Plugin for AdminApiPlugin {
             let provider = ApiConfigProvider {
                 dir: server_dir.clone(),
                 sender: provider_sender.clone(),
+                shutdown: self.shutdown.clone(),
             };
             ctx.register_config_provider(Box::new(provider));
 
