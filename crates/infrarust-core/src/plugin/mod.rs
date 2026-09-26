@@ -11,19 +11,7 @@ pub mod static_loader;
 pub mod tracking;
 
 pub use context_factory::{PluginContextFactory, PluginContextFactoryImpl, PluginPermissions};
+pub use infrarust_api::plugin::PluginState;
 pub use loader::{LoaderError, PluginLoader};
 pub use plugin_registry_impl::PluginRegistryImpl;
 pub use static_loader::{PluginFactory, StaticPluginLoader};
-
-/// Tracks the lifecycle state of a plugin.
-#[derive(Debug, Clone)]
-pub enum PluginState {
-    /// The plugin is being loaded (`on_enable` in progress).
-    Loading,
-    /// The plugin is active.
-    Enabled,
-    /// The plugin has been disabled.
-    Disabled,
-    /// The plugin encountered an error during initialization.
-    Error(String),
-}

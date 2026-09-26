@@ -1,11 +1,9 @@
 use std::sync::RwLock;
 
-use infrarust_api::plugin::PluginMetadata;
-use infrarust_api::services::plugin_registry::{PluginDependencyInfo, PluginInfo, PluginRegistry};
+use infrarust_api::plugin::{PluginMetadata, PluginState};
+use infrarust_api::services::plugin_registry::{PluginInfo, PluginRegistry};
 
 use crate::util::sync::{read, write};
-
-const ENABLED: &str = "enabled";
 
 pub struct PluginRegistryImpl {
     data: RwLock<Vec<PluginInfo>>,
@@ -20,28 +18,16 @@ impl PluginRegistryImpl {
 
     pub fn insert_enabled(&self, metadata: &PluginMetadata) {
         let info = PluginInfo {
-            id: metadata.id.clone(),
-            name: metadata.name.clone(),
-            version: metadata.version.clone(),
-            authors: metadata.authors.clone(),
-            description: metadata.description.clone(),
-            state: ENABLED.to_string(),
-            dependencies: metadata
-                .dependencies
-                .iter()
-                .map(|d| PluginDependencyInfo {
-                    id: d.id.clone(),
-                    optional: d.optional,
-                })
-                .collect(),
+            metadata: metadata.clone(),
+            state: PluginState::Enabled,
         };
         let mut data = write(&self.data);
-        data.retain(|p| p.id != info.id);
+        data.retain(|p| p.id() != info.id());
         data.push(info);
     }
 
     pub fn remove(&self, id: &str) {
-        write(&self.data).retain(|p| p.id != id);
+        write(&self.data).retain(|p| p.id() != id);
     }
 }
 
@@ -59,6 +45,6 @@ impl PluginRegistry for PluginRegistryImpl {
     }
 
     fn plugin_info(&self, id: &str) -> Option<PluginInfo> {
-        read(&self.data).iter().find(|p| p.id == id).cloned()
+        read(&self.data).iter().find(|p| p.id() == id).cloned()
     }
 }

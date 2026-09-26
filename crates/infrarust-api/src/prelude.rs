@@ -24,7 +24,7 @@ pub use crate::event::{
 pub use crate::events::*;
 
 // Plugin lifecycle
-pub use crate::plugin::{Plugin, PluginContext, PluginDependency, PluginMetadata};
+pub use crate::plugin::{Plugin, PluginContext, PluginDependency, PluginMetadata, PluginState};
 
 // Player
 pub use crate::player::{
@@ -43,8 +43,8 @@ pub use crate::services::{
     BackendState, BackendStatus, BanEntry, BanFeatures, BanPage, BanProvider, BanProviderRejected,
     BanQuery, BanRequest, BanService, BanSource, BanTarget, BanVerdict, ConfigService,
     ConfigWriteError, LbError, LoadBalancerService, LoginAttempt, LoginStage, PlayerRegistry,
-    PluginRegistry, ProxyInfo, ProxyMode, Scheduler, ServerConfig, ServerManager, ServerState,
-    ServiceHandle, ServiceRegistry, ServiceRegistryExt, TaskHandle, UnbanRequest,
+    PluginInfo, PluginRegistry, ProxyInfo, ProxyMode, Scheduler, ServerConfig, ServerManager,
+    ServerState, ServiceHandle, ServiceRegistry, ServiceRegistryExt, TaskHandle, UnbanRequest,
 };
 
 // Permissions and capabilities

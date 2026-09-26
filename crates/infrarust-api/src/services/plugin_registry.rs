@@ -1,24 +1,21 @@
 //! Plugin registry trait — read-only view of loaded plugins.
 
+use crate::plugin::{PluginMetadata, PluginState};
+
 pub mod private {
     pub trait Sealed {}
 }
 
 #[derive(Debug, Clone)]
 pub struct PluginInfo {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub authors: Vec<String>,
-    pub description: Option<String>,
-    pub state: String,
-    pub dependencies: Vec<PluginDependencyInfo>,
+    pub metadata: PluginMetadata,
+    pub state: PluginState,
 }
 
-#[derive(Debug, Clone)]
-pub struct PluginDependencyInfo {
-    pub id: String,
-    pub optional: bool,
+impl PluginInfo {
+    pub fn id(&self) -> &str {
+        &self.metadata.id
+    }
 }
 
 /// Read-only view of all loaded plugins.

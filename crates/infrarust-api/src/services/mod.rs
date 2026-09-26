@@ -20,7 +20,7 @@ pub use ban_service::{
 pub use config_service::{ConfigService, ConfigWriteError, ProxyMode, ServerConfig};
 pub use load_balancer::{BackendState, BackendStatus, LbError, LoadBalancerService};
 pub use player_registry::PlayerRegistry;
-pub use plugin_registry::{PluginDependencyInfo, PluginInfo, PluginRegistry};
+pub use plugin_registry::{PluginInfo, PluginRegistry};
 pub use proxy_info::ProxyInfo;
 pub use scheduler::{AsyncTask, RepeatingTask, Scheduler, TaskHandle};
 pub use server_manager::{ServerManager, ServerState};

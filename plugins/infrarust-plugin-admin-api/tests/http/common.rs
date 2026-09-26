@@ -6,9 +6,10 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{self, HeaderName, HeaderValue, Request, Response, StatusCode, header};
 use http_body_util::BodyExt;
+use infrarust_api::plugin::{PluginMetadata, PluginState};
 use infrarust_api::services::config_service::{ConfigWriteError, ServerSource};
 use infrarust_api::services::load_balancer::{BackendState, BackendStatus};
-use infrarust_api::services::plugin_registry::{PluginDependencyInfo, PluginInfo};
+use infrarust_api::services::plugin_registry::PluginInfo;
 use infrarust_api::test_util::{
     MockBanService, MockConfigService, MockLoadBalancerService, MockPlayer, MockPlayerRegistry,
     MockPluginRegistry, MockServerManager,
@@ -132,16 +133,11 @@ fn load_balancer() -> MockLoadBalancerService {
 
 fn plugin_registry() -> MockPluginRegistry {
     MockPluginRegistry::new().with_plugin(PluginInfo {
-        id: "admin_api".to_owned(),
-        name: "Admin API".to_owned(),
-        version: "0.1.0".to_owned(),
-        authors: vec!["Test".to_owned()],
-        description: Some("Test plugin".to_owned()),
-        state: "enabled".to_owned(),
-        dependencies: vec![PluginDependencyInfo {
-            id: "core".to_owned(),
-            optional: false,
-        }],
+        metadata: PluginMetadata::new("admin_api", "Admin API", "0.1.0")
+            .author("Test")
+            .description("Test plugin")
+            .depends_on("core"),
+        state: PluginState::Enabled,
     })
 }
 

@@ -12,14 +12,16 @@ type Sightings = Arc<Mutex<Vec<(String, Option<String>)>>>;
 type View = Arc<Mutex<Option<(Option<String>, Vec<String>)>>>;
 
 fn state_of(registry: &dyn PluginRegistry, id: &str) -> Option<String> {
-    registry.plugin_info(id).map(|info| info.state)
+    registry
+        .plugin_info(id)
+        .map(|info| info.state.as_str().to_owned())
 }
 
 fn ids(registry: &dyn PluginRegistry) -> Vec<String> {
     registry
         .list_plugin_info()
         .into_iter()
-        .map(|info| info.id)
+        .map(|info| info.metadata.id)
         .collect()
 }
 

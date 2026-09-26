@@ -51,10 +51,11 @@ impl SubcommandHandler for PluginSubcommand {
                     player
                         .send_message(ProxyMessage::info(&format!("Plugins ({}):", plugins.len())));
                     for info in &plugins {
-                        let desc = info.description.as_deref().unwrap_or("No description");
+                        let meta = &info.metadata;
+                        let desc = meta.description.as_deref().unwrap_or("No description");
                         player.send_message(ProxyMessage::detail(&format!(
                             "  {} v{} - {}",
-                            info.name, info.version, desc
+                            meta.name, meta.version, desc
                         )));
                     }
                 }
@@ -111,7 +112,7 @@ impl SubcommandHandler for PluginSubcommand {
                     let plugins = services.plugin_registry.list_plugin_info();
                     plugins
                         .into_iter()
-                        .map(|p| p.id)
+                        .map(|p| p.metadata.id)
                         .filter(|id| id.starts_with(prefix))
                         .collect()
                 }

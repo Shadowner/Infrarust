@@ -41,7 +41,7 @@ use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::messaging::{ChannelId, Endpoint, MessagePhase};
 use infrarust_api::permissions::{PermissionChecker, Tristate};
 use infrarust_api::player::MainHand;
-use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
+use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata, PluginState};
 use infrarust_api::services::ban_service::{BanEntry, BanSource, BanTarget};
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::RawPacket;
@@ -123,7 +123,10 @@ impl Plugin for ScriptedPlugin {
                     }
                     Directive::Plugin { id } => {
                         let state = ctx.plugin_registry().plugin_info(&id).map(|p| p.state);
-                        script::append(&log, &script::plugin_line(&id, state.as_deref()));
+                        script::append(
+                            &log,
+                            &script::plugin_line(&id, state.as_ref().map(PluginState::as_str)),
+                        );
                     }
                     Directive::Connect { command, server } => {
                         let spec = CommandSpec::new(command.as_str());

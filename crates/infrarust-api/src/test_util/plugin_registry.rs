@@ -18,7 +18,7 @@ impl MockPluginRegistry {
     #[must_use]
     pub fn with_plugin(self, info: PluginInfo) -> Self {
         let mut plugins = lock(&self.plugins);
-        plugins.retain(|p| p.id != info.id);
+        plugins.retain(|p| p.id() != info.id());
         plugins.push(info);
         drop(plugins);
         self
@@ -33,24 +33,20 @@ impl PluginRegistry for MockPluginRegistry {
     }
 
     fn plugin_info(&self, id: &str) -> Option<PluginInfo> {
-        lock(&self.plugins).iter().find(|p| p.id == id).cloned()
+        lock(&self.plugins).iter().find(|p| p.id() == id).cloned()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugin::{PluginMetadata, PluginState};
 
     #[test]
     fn lists_and_finds_registered_plugins() {
         let info = PluginInfo {
-            id: "hello".into(),
-            name: "Hello".into(),
-            version: "1.0.0".into(),
-            authors: vec![],
-            description: None,
-            state: "enabled".into(),
-            dependencies: vec![],
+            metadata: PluginMetadata::new("hello", "Hello", "1.0.0"),
+            state: PluginState::Enabled,
         };
         let registry = MockPluginRegistry::new().with_plugin(info);
         assert_eq!(registry.list_plugin_info().len(), 1);

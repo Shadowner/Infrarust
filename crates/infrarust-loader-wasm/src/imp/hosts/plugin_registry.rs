@@ -5,14 +5,16 @@ use crate::bindings::infrarust::plugin::types as wt;
 use crate::store_state::PluginStoreState;
 
 fn plugin_info(info: PluginInfo) -> wr::PluginInfo {
+    let state = info.state.as_str().to_string();
+    let meta = info.metadata;
     wr::PluginInfo {
-        id: info.id,
-        name: info.name,
-        version: info.version,
-        authors: info.authors,
-        description: info.description,
-        state: info.state,
-        dependencies: info
+        id: meta.id,
+        name: meta.name,
+        version: meta.version,
+        authors: meta.authors,
+        description: meta.description,
+        state,
+        dependencies: meta
             .dependencies
             .into_iter()
             .map(|dependency| wt::PluginDependency {

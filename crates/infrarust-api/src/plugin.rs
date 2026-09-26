@@ -49,6 +49,31 @@ pub struct PluginMetadata {
     pub dependencies: Vec<PluginDependency>,
 }
 
+/// Tracks the lifecycle state of a plugin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PluginState {
+    /// The plugin is being loaded (`on_enable` in progress).
+    Loading,
+    /// The plugin is active.
+    Enabled,
+    /// The plugin has been disabled.
+    Disabled,
+    /// The plugin encountered an error during initialization.
+    Error(String),
+}
+
+impl PluginState {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Loading => "loading",
+            Self::Enabled => "enabled",
+            Self::Disabled => "disabled",
+            Self::Error(_) => "error",
+        }
+    }
+}
+
 /// A dependency on another plugin.
 #[derive(Debug, Clone)]
 pub struct PluginDependency {

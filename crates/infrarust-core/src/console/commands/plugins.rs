@@ -159,5 +159,6 @@ fn format_plugin_state(state: &PluginState) -> String {
         PluginState::Enabled => "Enabled".to_string(),
         PluginState::Disabled => "Disabled".to_string(),
         PluginState::Error(e) => format!("Error: {e}"),
+        other => other.as_str().to_string(),
     }
 }

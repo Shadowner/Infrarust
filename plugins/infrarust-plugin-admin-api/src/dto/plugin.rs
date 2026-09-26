@@ -14,14 +14,16 @@ pub struct PluginResponse {
 
 impl PluginResponse {
     pub fn from_info(info: PluginInfo) -> Self {
+        let state = info.state.as_str().to_string();
+        let meta = info.metadata;
         Self {
-            id: info.id,
-            name: info.name,
-            version: info.version,
-            authors: info.authors,
-            description: info.description,
-            state: info.state,
-            dependencies: info
+            id: meta.id,
+            name: meta.name,
+            version: meta.version,
+            authors: meta.authors,
+            description: meta.description,
+            state,
+            dependencies: meta
                 .dependencies
                 .into_iter()
                 .map(|d| PluginDependencyResponse {
