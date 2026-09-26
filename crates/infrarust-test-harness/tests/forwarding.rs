@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
-use infrarust_api::types::Component;
+use infrarust_api::types::{Component, ServerId};
 use infrarust_config::ProxyMode;
 use infrarust_test_harness::{
     BackendConn, ClientSession, DEFAULT_TIMEOUT, EventKind, FakeBackend, HarnessError,
-    ProtocolVersion, Recorded, Recorder, ServerSpec, TestProxy,
+    LoginBehavior, ProtocolVersion, Recorded, Recorder, ServerSpec, TestProxy,
 };
 use serde_json::json;
 
@@ -273,3 +273,126 @@ async fn a_kick_is_reported_as_kicked(mode: ProxyMode, version: ProtocolVersion)
 }
 
 forwarded!(a_kick_is_reported_as_kicked);
+
+const VELOCITY_CHANNEL: &str = "velocity:player_info";
+
+struct Network {
+    proxy: TestProxy,
+    a: FakeBackend,
+    b: FakeBackend,
+    _secrets: tempfile::TempDir,
+}
+
+async fn velocity_network() -> Network {
+    let secrets = tempfile::tempdir().unwrap();
+    let secret_file = secrets.path().join("forwarding.secret");
+    let a = FakeBackend::builder().spawn().await.unwrap();
+    let b = FakeBackend::builder()
+        .login(LoginBehavior::PluginRequest {
+            channel: VELOCITY_CHANNEL.to_string(),
+            data: vec![0x04],
+        })
+        .spawn()
+        .await
+        .unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("a").backend(a.addr()).network("main"))
+        .server(
+            ServerSpec::offline("b")
+                .backend(b.addr())
+                .network("main")
+                .patch(|table| {
+                    table.insert("forwarding_mode".into(), toml::Value::String("none".into()));
+                }),
+        )
+        .patch_config(move |table| {
+            table.insert(
+                "forwarding".into(),
+                toml::Value::Table(toml::Table::from_iter([
+                    ("mode".to_string(), toml::Value::String("velocity".into())),
+                    (
+                        "secret_file".to_string(),
+                        toml::Value::String(secret_file.to_string_lossy().into_owned()),
+                    ),
+                ])),
+            );
+        })
+        .start()
+        .await
+        .unwrap();
+    Network {
+        proxy,
+        a,
+        b,
+        _secrets: secrets,
+    }
+}
+
+fn current() -> ProtocolVersion {
+    ProtocolVersion(infrarust_test_harness::versions::CURRENT)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_non_velocity_server_gets_not_understood_at_login() {
+    let network = velocity_network().await;
+
+    let session = network
+        .proxy
+        .client_for("b", current())
+        .unwrap()
+        .login("Steve")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let conn = network.b.next_connection(T).await.unwrap();
+
+    assert_eq!(conn.username(), "Steve");
+    let (understood, payload) = conn
+        .plugin_response()
+        .expect("the backend asked for velocity forwarding");
+    assert!(
+        !understood,
+        "a server without velocity forwarding must not get a signed reply"
+    );
+    assert!(payload.is_empty());
+
+    session.quit().await;
+    network.proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_non_velocity_server_gets_not_understood_after_a_switch() {
+    let network = velocity_network().await;
+
+    let mut session = network
+        .proxy
+        .client(current())
+        .login("Steve")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let conn_a = network.a.next_connection(T).await.unwrap();
+    assert_eq!(conn_a.username(), "Steve");
+    let player = network.proxy.wait_for_player("Steve", T).await.unwrap();
+    assert_eq!(player.current_server(), Some(ServerId::new("a")));
+
+    player.switch_server(ServerId::new("b")).await.unwrap();
+    session.expect_join(T).await.unwrap();
+    let conn_b = network.b.next_connection(T).await.unwrap();
+
+    assert_eq!(conn_b.username(), "Steve");
+    let (understood, payload) = conn_b
+        .plugin_response()
+        .expect("the backend asked for velocity forwarding");
+    assert!(
+        !understood,
+        "a server without velocity forwarding must not get a signed reply"
+    );
+    assert!(payload.is_empty());
+
+    drop(player);
+    session.quit().await;
+    network.proxy.shutdown().await.unwrap();
+}

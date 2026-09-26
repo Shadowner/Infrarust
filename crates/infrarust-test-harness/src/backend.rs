@@ -11,7 +11,8 @@ use infrarust_protocol::packets::config::{
     CConfigDisconnect, CFinishConfig, SAcknowledgeFinishConfig,
 };
 use infrarust_protocol::packets::login::{
-    CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged, SLoginStart,
+    CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression, SLoginAcknowledged,
+    SLoginPluginResponse, SLoginStart,
 };
 use infrarust_protocol::packets::play::chat::{CChatMessageLegacy, CSystemChatMessage};
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
@@ -41,6 +42,7 @@ pub enum LoginBehavior {
     Accept,
     Refuse(Value),
     Hang,
+    PluginRequest { channel: String, data: Vec<u8> },
 }
 
 impl LoginBehavior {
@@ -333,6 +335,7 @@ async fn serve_login(
         uuid: start.uuid,
         state: ConnectionState::Login,
         config_frames: Vec::new(),
+        plugin_response: None,
     };
 
     match &config.login {
@@ -345,6 +348,19 @@ async fn serve_login(
         }
         LoginBehavior::Hang => return Ok(BackendConn::start(conn, setup)),
         LoginBehavior::Accept => {}
+        LoginBehavior::PluginRequest { channel, data } => {
+            let request = CLoginPluginRequest {
+                message_id: VarInt(1),
+                channel: channel.clone(),
+                data: data.clone(),
+            };
+            send(&mut conn, &request, version).await?;
+            let response = wire::decode::<SLoginPluginResponse>(
+                &read_required(&mut conn, "login plugin response").await?,
+                version,
+            )?;
+            setup.plugin_response = Some((response.successful, response.data));
+        }
     }
 
     if let Some(threshold) = config.compression
@@ -409,6 +425,7 @@ struct ConnSetup {
     uuid: Option<Uuid>,
     state: ConnectionState,
     config_frames: Vec<PacketFrame>,
+    plugin_response: Option<(bool, Vec<u8>)>,
 }
 
 pub struct BackendConn {
@@ -471,6 +488,10 @@ impl BackendConn {
 
     pub fn config_frames(&self) -> &[PacketFrame] {
         &self.setup.config_frames
+    }
+
+    pub fn plugin_response(&self) -> Option<(bool, Vec<u8>)> {
+        self.setup.plugin_response.clone()
     }
 
     pub fn received(&self) -> Vec<PacketFrame> {

@@ -8,17 +8,16 @@ use infrarust_api::events::lifecycle::DisconnectCause;
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
 use infrarust_api::types::{Component, ServerId};
-use infrarust_protocol::packets::login::SLoginAcknowledged;
-use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
+use infrarust_protocol::version::ProtocolVersion;
 
 use super::session_loop::Pending;
 use crate::error::CoreError;
-use crate::forwarding::build_handshake_for_backend;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::loadbalancer::PendingTicket;
 use crate::middleware::backend_selection::BackendTargets;
 use crate::pipeline::types::RoutingData;
 use crate::session::backend_bridge::BackendBridge;
+use crate::session::backend_login::{Login, connect_backend};
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::kick::Kick;
@@ -259,9 +258,17 @@ pub(crate) async fn resolve_initial_mode(
         }
 
         let mut join = ServerJoin::new(player, target_server_id.clone());
-        match connect_to_backend(ctx, &mut join, progress.completed, routing, backend_targets).await
-        {
+        let addresses = BackendTargets::addresses_or_config(backend_targets, server_config);
+        let login = if progress.completed {
+            Login::Proxied
+        } else {
+            Login::Relay
+        };
+        match connect_backend(ctx, &routing.config_id, server_config, &addresses, login).await {
             Ok(backend) => {
+                if progress.completed {
+                    join.connected(&services.event_bus).await;
+                }
                 pending = Pending::join(join);
                 ConnectionMode::Backend(backend)
             }
@@ -302,81 +309,6 @@ fn fresh_targets(
         *pending_ticket = Some(services.pending_backends.reserve(picked));
     }
     targets
-}
-
-async fn connect_to_backend(
-    ctx: &SessionContext<'_>,
-    join: &mut ServerJoin,
-    login_completed: bool,
-    routing: &RoutingData,
-    backend_targets: Option<&BackendTargets>,
-) -> Result<BackendBridge, CoreError> {
-    let services = ctx.services;
-    let version = ctx.version();
-    let server_config = &routing.server_config;
-
-    let addresses = BackendTargets::addresses_or_config(backend_targets, server_config);
-
-    let backend_conn = ctx
-        .backend_connector
-        .connect(
-            &routing.config_id,
-            &addresses,
-            server_config.timeouts.as_ref().map(|t| t.connect),
-            server_config.send_proxy_protocol,
-            &ctx.connection_info,
-        )
-        .await?;
-
-    let connected_address = backend_conn.server_address().clone();
-    let mut backend = BackendBridge::new(backend_conn.into_stream(), version)
-        .with_server_address(connected_address);
-
-    if login_completed {
-        let handler = services.resolve_forwarding_handler(server_config);
-        let fwd_data = ctx.forwarding_data();
-
-        if handler.modifies_handshake() {
-            let mut hs = build_handshake_for_backend(&ctx.handshake, server_config);
-            handler.apply_handshake(&mut hs, &fwd_data);
-            backend
-                .send_handshake_and_login(&hs, ctx.username(), ctx.registry())
-                .await?;
-        } else {
-            backend
-                .send_initial_packets_offline(
-                    &ctx.handshake,
-                    server_config,
-                    ctx.username(),
-                    ctx.registry(),
-                )
-                .await?;
-        }
-
-        let velocity_ctx = if handler.is_velocity() {
-            services.forwarding_secret().map(|s| (&fwd_data, s))
-        } else {
-            None
-        };
-
-        backend
-            .consume_backend_login(ctx.registry(), version, velocity_ctx)
-            .await?;
-
-        if version.no_less_than(ProtocolVersion::V1_20_2) {
-            let ack = SLoginAcknowledged;
-            backend.send_packet(&ack, ctx.registry()).await?;
-            backend.set_state(ConnectionState::Config);
-            tracing::debug!("backend LoginAcknowledged -> Config");
-        }
-        join.connected(&services.event_bus).await;
-    } else {
-        backend
-            .send_initial_packets(&ctx.handshake, server_config)
-            .await?;
-    }
-
-    Ok(backend)
 }
 
 async fn prepare_client_for_limbo(

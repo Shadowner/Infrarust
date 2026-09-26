@@ -16,13 +16,12 @@ use infrarust_api::events::connection::{ConnectCause, ServerPreConnectResult};
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
 use infrarust_api::types::{Component, ServerId};
-use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
-use crate::forwarding::build_handshake_for_backend;
 use crate::session::backend_bridge::BackendBridge;
+use crate::session::backend_login::{Login, connect_backend};
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::kick::{BackendKick, Kick};
 use crate::session::server_join::{ServerJoin, pre_connect};
@@ -166,38 +165,24 @@ pub(crate) async fn perform_switch(
         services.backend_health.as_ref(),
     );
 
-    let backend_conn = match ctx
-        .backend_connector
-        .connect(
-            effective_target.as_str(),
-            &addresses,
-            server_config.timeouts.as_ref().map(|t| t.connect),
-            server_config.send_proxy_protocol,
-            &ctx.connection_info,
-        )
-        .await
+    let mut new_backend = match connect_backend(
+        ctx,
+        effective_target.as_str(),
+        &server_config,
+        &addresses,
+        Login::Proxied,
+    )
+    .await
     {
-        Ok(conn) => conn,
+        Ok(backend) => backend,
         Err(e) => {
             return Ok(SwitchResult::Failed(Kick::failed(
                 effective_target,
-                e.into(),
+                e,
                 false,
             )));
         }
     };
-
-    let connected_address = backend_conn.server_address().clone();
-    let mut new_backend = BackendBridge::new(backend_conn.into_stream(), version)
-        .with_server_address(connected_address);
-
-    if let Err(e) = login_to_backend(ctx, &mut new_backend, &server_config).await {
-        return Ok(SwitchResult::Failed(Kick::failed(
-            effective_target,
-            e,
-            false,
-        )));
-    }
 
     let mut join = ServerJoin::new(session, effective_target.clone());
     join.connected(&services.event_bus).await;
@@ -319,46 +304,4 @@ pub(crate) async fn perform_switch(
         new_backend,
         new_server_id: effective_target,
     }))
-}
-
-async fn login_to_backend(
-    ctx: &SessionContext<'_>,
-    new_backend: &mut BackendBridge,
-    server_config: &infrarust_config::ServerConfig,
-) -> Result<(), CoreError> {
-    let services = ctx.services;
-    let version = ctx.version();
-    let handler = services.resolve_forwarding_handler(server_config);
-    let fwd_data = ctx.forwarding_data();
-
-    if handler.modifies_handshake() {
-        let mut hs = build_handshake_for_backend(&ctx.handshake, server_config);
-        handler.apply_handshake(&mut hs, &fwd_data);
-        new_backend
-            .send_handshake_and_login(&hs, ctx.username(), ctx.registry())
-            .await?;
-    } else {
-        new_backend
-            .send_initial_packets_offline(
-                &ctx.handshake,
-                server_config,
-                ctx.username(),
-                ctx.registry(),
-            )
-            .await?;
-    }
-
-    let velocity_ctx = services.forwarding_secret().map(|s| (&fwd_data, s));
-    new_backend
-        .consume_backend_login(ctx.registry(), version, velocity_ctx)
-        .await?;
-
-    if version.no_less_than(ProtocolVersion::V1_20_2) {
-        new_backend
-            .send_packet(&SLoginAcknowledged, ctx.registry())
-            .await?;
-        new_backend.set_state(ConnectionState::Config);
-        tracing::debug!("backend LoginAcknowledged → Config");
-    }
-    Ok(())
 }
