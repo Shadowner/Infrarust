@@ -146,7 +146,7 @@ impl<R: Read + ?Sized> McBufReadExt for R {
     }
 
     fn read_string(&mut self) -> ProtocolResult<String> {
-        self.read_string_bounded(32767)
+        self.read_string_bounded(types::MAX_STRING_CHARS)
     }
 
     fn read_string_bounded(&mut self, max_len: usize) -> ProtocolResult<String> {
@@ -159,11 +159,7 @@ impl<R: Read + ?Sized> McBufReadExt for R {
     }
 
     fn read_byte_array(&mut self, max_len: usize) -> ProtocolResult<Vec<u8>> {
-        let len = self.read_count("byte array length")?;
-        if len > max_len {
-            return Err(ProtocolError::too_large(max_len, len));
-        }
-        self.read_byte_array_bounded(len)
+        types::read_length_prefixed(self, max_len, "byte array")
     }
 
     fn read_byte_array_bounded(&mut self, count: usize) -> ProtocolResult<Vec<u8>> {

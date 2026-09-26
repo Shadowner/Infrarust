@@ -8,7 +8,7 @@ const PROMPT_ADDED: ProtocolVersion = ProtocolVersion::V1_17;
 const HASH_REMOVED: ProtocolVersion = ProtocolVersion(210);
 const PACK_ID_ADDED: ProtocolVersion = ProtocolVersion::V1_20_3;
 
-pub const MAX_RESOURCE_PACK_URL: usize = 32767;
+pub const MAX_RESOURCE_PACK_URL: usize = crate::codec::types::MAX_STRING_CHARS;
 
 pub const MAX_RESOURCE_PACK_HASH: usize = 40;
 
