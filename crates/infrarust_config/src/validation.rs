@@ -106,18 +106,6 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
     Ok(())
 }
 
-/// Checks the forwarding mode a server ends up with against its proxy mode.
-///
-/// `default_mode` is the proxy-wide `[forwarding] mode`; a server's own
-/// `forwarding_mode` replaces it. Velocity forwarding is negotiated inside
-/// the login sequence, which a forwarding-mode server (passthrough,
-/// zero_copy, server_only) never parses, so that combination is rejected
-/// instead of being downgraded at connection time.
-///
-/// # Errors
-///
-/// Returns [`ConfigError::Validation`] when a forwarding-mode server resolves
-/// to Velocity forwarding.
 pub fn validate_server_forwarding(
     config: &ServerConfig,
     default_mode: ForwardingMode,
