@@ -10,7 +10,10 @@ pub struct SHandshake {
     pub server_address: String,
     pub server_port: u16,
     pub next_state: ConnectionState,
+    pub transfer: bool,
 }
+
+const TRANSFER_NEXT_STATE: i32 = 3;
 
 impl Packet for SHandshake {
     const NAME: &'static str = "SHandshake";
@@ -36,6 +39,7 @@ impl Packet for SHandshake {
             server_address,
             server_port,
             next_state,
+            transfer: next_state_id.0 == TRANSFER_NEXT_STATE,
         })
     }
 
@@ -54,6 +58,11 @@ impl Packet for SHandshake {
                 self.next_state
             ))
         })?;
+        let state_id = if self.transfer && self.next_state == ConnectionState::Login {
+            TRANSFER_NEXT_STATE
+        } else {
+            state_id
+        };
         w.write_var_int(&VarInt(state_id))?;
 
         Ok(())
@@ -73,12 +82,30 @@ mod tests {
     }
 
     #[test]
+    fn a_transfer_handshake_keeps_its_intent_across_a_round_trip() {
+        let original = SHandshake {
+            protocol_version: VarInt(767),
+            server_address: "play.example.com".to_string(),
+            server_port: 25565,
+            next_state: ConnectionState::Login,
+            transfer: true,
+        };
+
+        let encoded = encode_handshake(&original);
+        assert_eq!(*encoded.last().unwrap(), 3, "the wire carries next_state 3");
+        let decoded = SHandshake::decode(&mut encoded.as_slice(), ProtocolVersion::V1_21).unwrap();
+        assert_eq!(decoded.next_state, ConnectionState::Login);
+        assert!(decoded.transfer);
+    }
+
+    #[test]
     fn test_handshake_round_trip() {
         let original = SHandshake {
             protocol_version: VarInt(767),
             server_address: "play.example.com".to_string(),
             server_port: 25565,
             next_state: ConnectionState::Login,
+            transfer: false,
         };
 
         let encoded = encode_handshake(&original);
@@ -97,6 +124,7 @@ mod tests {
             server_address: "mc.server.com".to_string(),
             server_port: 25565,
             next_state: ConnectionState::Status,
+            transfer: false,
         };
 
         let encoded = encode_handshake(&hs);
@@ -111,6 +139,7 @@ mod tests {
             server_address: "mc.server.com".to_string(),
             server_port: 25565,
             next_state: ConnectionState::Login,
+            transfer: false,
         };
 
         let encoded = encode_handshake(&hs);
@@ -150,6 +179,7 @@ mod tests {
             server_address: address.to_string(),
             server_port: 25565,
             next_state: ConnectionState::Login,
+            transfer: false,
         };
 
         let encoded = encode_handshake(&hs);
@@ -164,6 +194,7 @@ mod tests {
             server_address: "mc.server.com".to_string(),
             server_port: 25565,
             next_state: ConnectionState::Login,
+            transfer: false,
         };
 
         let encoded = encode_handshake(&hs);
@@ -178,6 +209,7 @@ mod tests {
             server_address: "play.example.com".to_string(),
             server_port: 25565,
             next_state: ConnectionState::Login,
+            transfer: false,
         };
 
         let erased: Box<dyn ErasedPacket> = Box::new(hs);

@@ -599,7 +599,7 @@ impl ProxyServer {
 
         match intent {
             ConnectionIntent::Status => self.answer_status(&mut ctx, &shutdown).await?,
-            ConnectionIntent::Login => {
+            ConnectionIntent::Login | ConnectionIntent::Transfer => {
                 let login = tokio::select! {
                     biased;
                     () = shutdown.cancelled() => None,
@@ -669,9 +669,6 @@ impl ProxyServer {
                             .await?;
                     }
                 }
-            }
-            ConnectionIntent::Transfer => {
-                tracing::debug!("transfer intent — not supported in Phase 1");
             }
         }
 

@@ -47,6 +47,7 @@ pub async fn extract_registry_data(
         server_address: host.to_string(),
         server_port: port,
         next_state: ConnectionState::Login,
+        transfer: false,
     };
     send_packet(
         &mut stream,

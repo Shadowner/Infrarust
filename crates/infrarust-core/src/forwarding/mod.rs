@@ -109,6 +109,7 @@ pub fn build_handshake_for_backend(
         server_address: domain,
         server_port: handshake_data.port,
         next_state,
+        transfer: handshake_data.intent == ConnectionIntent::Transfer,
     }
 }
 

@@ -65,6 +65,7 @@ pub struct FakeClient {
     hello: Option<ClientHello>,
     replies: ClientReplies,
     acks_configuration: bool,
+    transfer: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -111,7 +112,14 @@ impl FakeClient {
             hello: None,
             replies: ClientReplies::default(),
             acks_configuration: true,
+            transfer: false,
         }
+    }
+
+    #[must_use]
+    pub const fn transferred(mut self) -> Self {
+        self.transfer = true;
+        self
     }
 
     #[must_use]
@@ -187,6 +195,7 @@ impl FakeClient {
             server_address: self.domain.clone(),
             server_port: self.port,
             next_state,
+            transfer: self.transfer && next_state == ConnectionState::Login,
         };
         conn.write_frame(&wire::encode(&handshake, self.version)?)
             .await?;

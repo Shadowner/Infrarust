@@ -249,6 +249,7 @@ async fn connect_and_login(
         server_address: args.server_address.clone(),
         server_port: args.port,
         next_state: ConnectionState::Login,
+        transfer: false,
     };
     let hs_id = registry
         .get_packet_id::<SHandshake>(version)

@@ -40,7 +40,7 @@ For each accepted socket the server spawns a task. The accept loop never reads f
 
 A status ping (`ConnectionIntent::Status`) goes straight to the status handler, which answers from the status cache or relays a live request to the backend. It never enters the login pipeline.
 
-A login (`ConnectionIntent::Login`) runs through the login pipeline and is then dispatched to a handler chosen by the resolved server's `proxy_mode`. The transfer intent is parsed but not yet handled.
+A login (`ConnectionIntent::Login`) runs through the login pipeline and is then dispatched to a handler chosen by the resolved server's `proxy_mode`. A client arriving with the transfer intent (handshake `next_state` 3, sent after a Transfer packet) takes the same path as a login; plugins see it as `HandshakeIntent::Transfer` and the backend receives the intent the client sent.
 
 Pipelines are sequential. A `Pipeline` (`crates/infrarust-core/src/pipeline/mod.rs`) holds a `Vec<Box<dyn Middleware>>` and runs each middleware in insertion order, stopping at the first non-continue result. Each middleware returns one of three outcomes defined by `MiddlewareResult`: `Continue` moves to the next middleware, `ShortCircuit` ends pipeline processing (for example when a legacy ping is detected and answered inline), and `Reject(String)` closes the connection, normally after sending a kick packet with the given reason.
 

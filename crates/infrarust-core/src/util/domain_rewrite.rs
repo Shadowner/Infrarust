@@ -63,6 +63,7 @@ pub(crate) fn encode_handshake_with_domain(
         server_address: new_domain.to_string(),
         server_port: handshake_data.port,
         next_state,
+        transfer: handshake_data.intent == ConnectionIntent::Transfer,
     };
 
     let mut payload = Vec::new();
@@ -87,6 +88,7 @@ mod tests {
             server_address: "play.example.com".to_string(),
             server_port: 25565,
             next_state: ConnectionState::Login,
+            transfer: false,
         };
         let mut payload = Vec::new();
         handshake

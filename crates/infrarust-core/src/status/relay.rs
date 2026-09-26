@@ -142,6 +142,7 @@ pub(crate) async fn status_exchange(
         server_address: relay_domain,
         server_port: address.port,
         next_state: ConnectionState::Status,
+        transfer: false,
     };
     send_packet(registry, stream, &handshake, STATUS_PROTOCOL_VERSION).await?;
 

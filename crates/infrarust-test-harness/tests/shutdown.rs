@@ -317,6 +317,7 @@ async fn connections_that_never_log_in_do_not_hold_shutdown() {
         server_address: proxy.domain("lobby").unwrap().to_string(),
         server_port: proxy.addr().port(),
         next_state: ConnectionState::Login,
+        transfer: false,
     };
     handshake_only
         .write_frame(&wire::encode(&handshake, version).unwrap())

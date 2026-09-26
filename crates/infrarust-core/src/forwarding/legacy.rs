@@ -71,6 +71,7 @@ mod tests {
             server_address: "play.example.com".to_string(),
             server_port: 25565,
             next_state: ConnectionState::Login,
+            transfer: false,
         }
     }
 

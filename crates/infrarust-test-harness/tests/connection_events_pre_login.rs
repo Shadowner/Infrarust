@@ -141,6 +141,40 @@ async fn the_handshake_event_describes_the_connection_before_the_login() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_transferred_client_logs_in_and_the_handshake_event_says_so() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .plugin(recorder.plugin())
+        .start()
+        .await
+        .unwrap();
+
+    let session = proxy
+        .client_for("lobby", VERSION)
+        .unwrap()
+        .transferred()
+        .login("Steve")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let conn = backend.next_connection(T).await.unwrap();
+    assert_eq!(
+        conn.handshake().next_state,
+        3,
+        "the backend sees the transfer intent"
+    );
+
+    let handshake = handshake_of(&recorder, |_| true);
+    assert_eq!(handshake["intent"], json!("transfer"), "{handshake:#}");
+    assert_eq!(handshake["result"], json!("allow"));
+    session.quit().await;
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_status_ping_to_an_unknown_domain_has_no_server() {
     let recorder = Recorder::new();
     let proxy = TestProxy::builder()
