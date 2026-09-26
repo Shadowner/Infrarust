@@ -347,6 +347,8 @@ async fn signal_handler() {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
 
     fn parse(args: &[&str]) -> Cli {
