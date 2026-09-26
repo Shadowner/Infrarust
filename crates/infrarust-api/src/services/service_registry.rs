@@ -2,6 +2,7 @@ use std::any::{Any, TypeId, type_name};
 use std::sync::Arc;
 
 use crate::error::ServiceError;
+use crate::types::Revocation;
 
 pub mod private {
     pub trait Sealed {}
@@ -9,17 +10,17 @@ pub mod private {
 
 pub type ErasedService = Arc<dyn Any + Send + Sync>;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ServiceHandle {
     service: &'static str,
-    revoke: Arc<dyn Fn() -> bool + Send + Sync>,
+    revocation: Revocation,
 }
 
 impl ServiceHandle {
     pub fn new(service: &'static str, revoke: impl Fn() -> bool + Send + Sync + 'static) -> Self {
         Self {
             service,
-            revoke: Arc::new(revoke),
+            revocation: Revocation::new(revoke),
         }
     }
 
@@ -28,15 +29,7 @@ impl ServiceHandle {
     }
 
     pub fn withdraw(&self) -> bool {
-        (self.revoke)()
-    }
-}
-
-impl std::fmt::Debug for ServiceHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ServiceHandle")
-            .field("service", &self.service)
-            .finish_non_exhaustive()
+        self.revocation.revoke()
     }
 }
 

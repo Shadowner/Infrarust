@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use crate::types::Revocation;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -9,17 +9,17 @@ pub enum LimboHandlerError {
     NameTaken { name: String, owner: String },
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LimboHandlerRegistration {
     name: String,
-    revoke: Arc<dyn Fn() -> bool + Send + Sync>,
+    revocation: Revocation,
 }
 
 impl LimboHandlerRegistration {
     pub fn new(name: impl Into<String>, revoke: impl Fn() -> bool + Send + Sync + 'static) -> Self {
         Self {
             name: name.into(),
-            revoke: Arc::new(revoke),
+            revocation: Revocation::new(revoke),
         }
     }
 
@@ -28,15 +28,7 @@ impl LimboHandlerRegistration {
     }
 
     pub fn unregister(&self) -> bool {
-        (self.revoke)()
-    }
-}
-
-impl std::fmt::Debug for LimboHandlerRegistration {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LimboHandlerRegistration")
-            .field("name", &self.name)
-            .finish_non_exhaustive()
+        self.revocation.revoke()
     }
 }
 
@@ -44,6 +36,7 @@ impl std::fmt::Debug for LimboHandlerRegistration {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
