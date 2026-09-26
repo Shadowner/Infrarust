@@ -59,11 +59,11 @@ async fn an_unknown_domain_is_answered_with_the_default_motd(version: ProtocolVe
     assert_eq!(status.json["players"]["max"], json!(42));
     let pings = recorder.of(EventKind::ProxyPing);
     assert_eq!(pings.len(), 1, "{pings:?}");
-    assert_eq!(pings[0].detail["description"], json!(DEFAULT_MOTD));
-    assert_eq!(pings[0].detail["server"], json!(null));
-    assert_eq!(pings[0].detail["virtual_host"], json!("nowhere.test"));
-    assert_eq!(pings[0].detail["protocol_version"], json!(version.0));
-    assert_eq!(pings[0].detail["legacy"], json!(false));
+    assert_eq!(pings[0].description(), DEFAULT_MOTD);
+    assert_eq!(pings[0].server(), None);
+    assert_eq!(pings[0].virtual_host(), Some("nowhere.test"));
+    assert_eq!(pings[0].protocol_version(), version.0);
+    assert!(!pings[0].legacy());
     assert_eq!(backend.status_requests(), 0);
 
     proxy.shutdown().await.unwrap();
@@ -238,12 +238,12 @@ async fn ping_fields_describe_the_request(version: ProtocolVersion) {
         .wait_for_kind(EventKind::ProxyPing, T)
         .await
         .unwrap();
-    assert_eq!(ping.detail["server"], json!("lobby"));
-    assert_eq!(ping.detail["virtual_host"], json!("lobby.test"));
-    assert_eq!(ping.detail["protocol_version"], json!(version.0));
-    assert_eq!(ping.detail["legacy"], json!(false));
-    assert_eq!(ping.detail["description"], json!("Infrarust fake backend"));
-    let remote = ping.detail["remote_addr"].as_str().unwrap();
+    assert_eq!(ping.server(), Some("lobby"));
+    assert_eq!(ping.virtual_host(), Some("lobby.test"));
+    assert_eq!(ping.protocol_version(), version.0);
+    assert!(!ping.legacy());
+    assert_eq!(ping.description(), "Infrarust fake backend");
+    let remote = ping.remote_addr();
     assert!(remote.starts_with("127.0.0.1:"), "{remote}");
 
     proxy.shutdown().await.unwrap();

@@ -7,7 +7,6 @@ use infrarust_api::services::{ServiceRegistry, ServiceRegistryExt};
 use infrarust_test_harness::{
     EventKind, RECORDER_PLUGIN_ID, Recorded, Recorder, ScriptedPlugin, TestProxy,
 };
-use serde_json::{Value, json};
 
 trait LoginState: Send + Sync {
     fn is_logged_in(&self, username: &str) -> bool;
@@ -28,11 +27,11 @@ struct Seen {
     view: Option<Arc<dyn ServiceRegistry>>,
 }
 
-fn plugins_of(recorder: &Recorder, kind: EventKind) -> Vec<Value> {
+fn plugins_of(recorder: &Recorder, kind: EventKind) -> Vec<Option<String>> {
     recorder
         .of(kind)
         .iter()
-        .map(|e| e.detail["plugin"].clone())
+        .map(|e| e.plugin().map(str::to_owned))
         .collect()
 }
 
@@ -91,20 +90,15 @@ async fn a_service_is_shared_refused_twice_and_withdrawn_with_its_provider() {
     assert_eq!(view.provider::<dyn LoginState>().as_deref(), Some("auth"));
     let provided = recorder.of(EventKind::ServiceProvided);
     assert_eq!(provided.len(), 1, "{provided:#?}");
-    assert_eq!(provided[0].detail["provider"], json!("auth"));
-    assert!(
-        provided[0].detail["service"]
-            .as_str()
-            .unwrap()
-            .contains("LoginState")
-    );
+    assert_eq!(provided[0].provider(), "auth");
+    assert!(provided[0].service().contains("LoginState"));
 
     proxy.disable_plugin("auth").await.unwrap();
 
     assert!(view.get::<dyn LoginState>().is_none());
     let removed = recorder.of(EventKind::ServiceRemoved);
     assert_eq!(removed.len(), 1, "{removed:#?}");
-    assert_eq!(removed[0].detail["provider"], json!("auth"));
+    assert_eq!(removed[0].provider(), "auth");
     let events = recorder.events();
     assert!(
         position(&events, |e| e.kind == EventKind::ServiceRemoved)
@@ -150,18 +144,18 @@ async fn plugin_lifecycle_events_follow_the_enable_and_disable_order() {
 
     assert_eq!(
         plugins_of(&recorder, EventKind::PluginEnabled),
-        [json!(RECORDER_PLUGIN_ID), json!("alpha"), json!("beta")]
+        [RECORDER_PLUGIN_ID, "alpha", "beta"].map(|id| Some(id.to_owned()))
     );
     assert!(
         recorder
             .of(EventKind::PluginEnabled)
             .iter()
-            .all(|e| e.detail["version"] == json!("0.0.0"))
+            .all(|e| e.version() == "0.0.0")
     );
     let events = recorder.events();
     assert!(
         position(&events, |e| e.kind == EventKind::PluginEnabled
-            && e.detail["plugin"] == json!("beta"))
+            && e.plugin() == Some("beta"))
             < position(&events, |e| e.kind == EventKind::ProxyInitialize),
         "{events:#?}"
     );
@@ -171,7 +165,7 @@ async fn plugin_lifecycle_events_follow_the_enable_and_disable_order() {
 
     assert_eq!(
         plugins_of(&recorder, EventKind::PluginDisabled),
-        [json!("beta"), json!("alpha")],
+        ["beta", "alpha"].map(|id| Some(id.to_owned())),
         "the recorder is disabled last and stops listening before its own event"
     );
     let events = recorder.events();

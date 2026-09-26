@@ -9,7 +9,6 @@ use infrarust_test_harness::{
     ConnectionState, DEFAULT_TIMEOUT, EventKind, FakeBackend, ProtocolVersion, Recorder,
     ServerSpec, TestProxy,
 };
-use serde_json::json;
 use toml::Value;
 
 const T: Duration = DEFAULT_TIMEOUT;
@@ -87,8 +86,8 @@ async fn a_username_ban_in_another_case_kicks_the_player() {
         .wait_for(|e| e.kind == EventKind::Disconnect, T)
         .await
         .unwrap();
-    assert_eq!(disconnect.detail["cause"], json!("kicked"));
-    assert_eq!(disconnect.detail["reason"], json!(kick));
+    assert_eq!(disconnect.cause(), "kicked");
+    assert_eq!(disconnect.reason(), Some(kick.as_str()));
     proxy.wait_for_connection_count(0, T).await.unwrap();
 
     proxy.shutdown().await.unwrap();

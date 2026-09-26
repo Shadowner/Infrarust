@@ -79,7 +79,7 @@ fn napping(spec: ServerSpec, message: &'static str) -> ServerSpec {
 async fn kicked(recorder: &Recorder, server: &str) -> Recorded {
     recorder
         .wait_for(
-            |e| e.kind == EventKind::KickedFromServer && e.detail["server"] == json!(server),
+            |e| e.kind == EventKind::KickedFromServer && e.server() == Some(server),
             T,
         )
         .await
@@ -130,19 +130,19 @@ async fn a_play_kick_reaches_the_client_as_sent(version: ProtocolVersion) {
     assert_eq!(info.raw, kick_payload(version), "{info:?}");
     let expected = component_value(&kick_component());
     let kick = kicked(&recorder, "lobby").await;
-    assert_eq!(kick.detail["reason"], expected, "{kick:?}");
-    assert_eq!(kick.detail["cause"], json!("play_disconnect"), "{kick:?}");
-    assert_eq!(kick.detail["during_connect"], json!(false), "{kick:?}");
-    assert_eq!(kick.detail["previous_server"], json!(null), "{kick:?}");
+    assert_eq!(kick.kick_reason(), Some(&expected), "{kick:?}");
+    assert_eq!(kick.cause(), "play_disconnect", "{kick:?}");
+    assert!(!kick.during_connect(), "{kick:?}");
+    assert_eq!(kick.previous_server(), None, "{kick:?}");
     assert_eq!(
-        kick.detail["result"],
+        *kick.result(),
         json!({ "disconnect_player": null }),
         "{kick:?}"
     );
     let disconnect = disconnected(&recorder).await;
-    assert_eq!(disconnect.detail["cause"], json!("backend_closed"));
-    assert_eq!(disconnect.detail["reason_json"], expected, "{disconnect:?}");
-    assert_eq!(disconnect.detail["last_server"], json!("lobby"));
+    assert_eq!(disconnect.cause(), "backend_closed");
+    assert_eq!(disconnect.reason_json(), Some(&expected), "{disconnect:?}");
+    assert_eq!(disconnect.last_server(), Some("lobby"));
 
     proxy.shutdown().await.unwrap();
 }
@@ -189,14 +189,14 @@ async fn a_play_kick_redirect_joins_the_target(version: ProtocolVersion) {
     assert_eq!(player.current_server(), Some(ServerId::new("b")));
 
     let kick = kicked(&recorder, "a").await;
-    assert_eq!(kick.detail["reason"], text_value("Restarting"));
-    assert_eq!(kick.detail["result"], json!({ "redirect_to": "b" }));
+    assert_eq!(kick.kick_reason(), Some(&text_value("Restarting")));
+    assert_eq!(*kick.result(), json!({ "redirect_to": "b" }));
     let pre_connects =
         recorder.filter(|e| e.kind == EventKind::ServerPreConnect && e.seq > kick.seq);
     assert_eq!(pre_connects.len(), 1, "{pre_connects:?}");
-    assert_eq!(pre_connects[0].detail["server"], json!("b"));
-    assert_eq!(pre_connects[0].detail["cause"], json!("kick_redirect"));
-    assert_eq!(pre_connects[0].detail["previous_server"], json!("a"));
+    assert_eq!(pre_connects[0].server(), Some("b"));
+    assert_eq!(pre_connects[0].cause(), "kick_redirect");
+    assert_eq!(pre_connects[0].previous_server(), Some("a"));
 
     session.chat("hello b").await.unwrap();
     assert_eq!(
@@ -208,9 +208,9 @@ async fn a_play_kick_redirect_joins_the_target(version: ProtocolVersion) {
     let info = session.expect_disconnect(T).await.unwrap();
     assert_eq!(info.text, "B closes", "{info:?}");
     let kick = kicked(&recorder, "b").await;
-    assert_eq!(kick.detail["during_connect"], json!(false), "{kick:?}");
-    assert_eq!(kick.detail["previous_server"], json!("a"), "{kick:?}");
-    assert_eq!(kick.detail["current_server"], json!("b"), "{kick:?}");
+    assert!(!kick.during_connect(), "{kick:?}");
+    assert_eq!(kick.previous_server(), Some("a"), "{kick:?}");
+    assert_eq!(kick.current_server(), Some("b"), "{kick:?}");
 
     proxy.shutdown().await.unwrap();
 }
@@ -301,10 +301,10 @@ async fn notify_after_a_play_kick_disconnects_with_the_message(version: Protocol
     assert_eq!(info.state, ConnectionState::Play, "{info:?}");
     assert_eq!(info.text, "Your server went away", "{info:?}");
     let disconnect = disconnected(&recorder).await;
-    assert_eq!(disconnect.detail["cause"], json!("backend_closed"));
+    assert_eq!(disconnect.cause(), "backend_closed");
     assert_eq!(
-        disconnect.detail["reason_json"],
-        text_value("Your server went away")
+        disconnect.reason_json(),
+        Some(&text_value("Your server went away"))
     );
 
     proxy.shutdown().await.unwrap();
@@ -315,7 +315,7 @@ version_matrix!(TEXT, notify_after_a_play_kick_disconnects_with_the_message);
 struct FailedSwitch {
     message: &'static str,
     cause: &'static str,
-    reason: Value,
+    reason: Option<Value>,
 }
 
 async fn assert_failed_switch_keeps_the_player(
@@ -367,12 +367,12 @@ async fn assert_failed_switch_keeps_the_player(
         expected.message
     );
     let kick = kicked(&recorder, "b").await;
-    assert_eq!(kick.detail["cause"], json!(expected.cause), "{kick:?}");
-    assert_eq!(kick.detail["reason"], expected.reason, "{kick:?}");
-    assert_eq!(kick.detail["during_connect"], json!(true), "{kick:?}");
-    assert_eq!(kick.detail["previous_server"], json!("a"), "{kick:?}");
+    assert_eq!(kick.cause(), expected.cause, "{kick:?}");
+    assert_eq!(kick.kick_reason(), expected.reason.as_ref(), "{kick:?}");
+    assert!(kick.during_connect(), "{kick:?}");
+    assert_eq!(kick.previous_server(), Some("a"), "{kick:?}");
     assert_eq!(
-        kick.detail["result"],
+        *kick.result(),
         json!({ "notify": expected.message }),
         "{kick:?}"
     );
@@ -396,7 +396,7 @@ async fn an_unreachable_switch_target_keeps_the_player(version: ProtocolVersion)
         FailedSwitch {
             message: "B is napping",
             cause: "unreachable",
-            reason: Value::Null,
+            reason: None,
         },
     )
     .await;
@@ -417,7 +417,7 @@ async fn a_refusing_switch_target_keeps_the_player(version: ProtocolVersion) {
         FailedSwitch {
             message: "B is full",
             cause: "login_refused",
-            reason: text_value("B is full"),
+            reason: Some(text_value("B is full")),
         },
     )
     .await;
@@ -434,7 +434,7 @@ async fn a_config_kick_during_a_switch_keeps_the_player(version: ProtocolVersion
         FailedSwitch {
             message: "B turned you away",
             cause: "config_disconnect",
-            reason: text_value("B turned you away"),
+            reason: Some(text_value("B turned you away")),
         },
     )
     .await;
@@ -462,17 +462,17 @@ async fn an_unreachable_initial_server_shows_its_message(version: ProtocolVersio
     assert_eq!(info.text, "Lobby is napping", "{info:?}");
 
     let kick = kicked(&recorder, "lobby").await;
-    assert_eq!(kick.detail["cause"], json!("unreachable"), "{kick:?}");
-    assert_eq!(kick.detail["reason"], Value::Null, "{kick:?}");
-    assert_eq!(kick.detail["during_connect"], json!(true), "{kick:?}");
-    assert_eq!(kick.detail["previous_server"], json!(null), "{kick:?}");
+    assert_eq!(kick.cause(), "unreachable", "{kick:?}");
+    assert_eq!(kick.kick_reason(), None, "{kick:?}");
+    assert!(kick.during_connect(), "{kick:?}");
+    assert_eq!(kick.previous_server(), None, "{kick:?}");
     assert_eq!(
-        kick.detail["result"],
+        *kick.result(),
         json!({ "disconnect_player": null }),
         "{kick:?}"
     );
     let disconnect = disconnected(&recorder).await;
-    assert_eq!(disconnect.detail["cause"], json!("error"));
+    assert_eq!(disconnect.cause(), "error");
     assert!(disconnect.seq > kick.seq);
 
     proxy.shutdown().await.unwrap();
@@ -523,11 +523,11 @@ async fn an_unreachable_initial_server_falls_back_to_its_limbo(version: Protocol
     }
     session.sync_with(player.as_ref(), T).await.unwrap();
     let kick = kicked(&recorder, "lobby").await;
-    assert_eq!(kick.detail["cause"], json!("unreachable"), "{kick:?}");
-    assert_eq!(kick.detail["during_connect"], json!(true), "{kick:?}");
-    assert_eq!(kick.detail["previous_server"], json!(null), "{kick:?}");
+    assert_eq!(kick.cause(), "unreachable", "{kick:?}");
+    assert!(kick.during_connect(), "{kick:?}");
+    assert_eq!(kick.previous_server(), None, "{kick:?}");
     assert_eq!(
-        kick.detail["result"],
+        *kick.result(),
         json!({ "send_to_limbo": [CATCH] }),
         "{kick:?}"
     );
@@ -569,15 +569,17 @@ async fn a_refused_initial_login_shows_the_backend_reason(version: ProtocolVersi
     assert_eq!(info.json, Some(refusal.clone()), "{info:?}");
 
     let kick = kicked(&recorder, "lobby").await;
-    assert_eq!(kick.detail["cause"], json!("login_refused"), "{kick:?}");
-    assert_eq!(kick.detail["during_connect"], json!(true), "{kick:?}");
+    assert_eq!(kick.cause(), "login_refused", "{kick:?}");
+    assert!(kick.during_connect(), "{kick:?}");
     assert_eq!(
-        kick.detail["reason"],
-        component_value(&Component::text("Whitelisted only").color(NamedColor::Gold))
+        kick.kick_reason(),
+        Some(&component_value(
+            &Component::text("Whitelisted only").color(NamedColor::Gold)
+        ))
     );
     let disconnect = disconnected(&recorder).await;
-    assert_eq!(disconnect.detail["cause"], json!("backend_closed"));
-    assert_eq!(disconnect.detail["reason"], json!("Whitelisted only"));
+    assert_eq!(disconnect.cause(), "backend_closed");
+    assert_eq!(disconnect.reason(), Some("Whitelisted only"));
 
     proxy.shutdown().await.unwrap();
 }
@@ -609,8 +611,8 @@ async fn a_refused_forwarded_login_reaches_the_client_as_sent(version: ProtocolV
     assert_eq!(info.state, ConnectionState::Login, "{info:?}");
     assert_eq!(info.raw, refusal.to_string().into_bytes(), "{info:?}");
     let kick = kicked(&recorder, "lobby").await;
-    assert_eq!(kick.detail["cause"], json!("login_refused"), "{kick:?}");
-    assert_eq!(kick.detail["during_connect"], json!(true), "{kick:?}");
+    assert_eq!(kick.cause(), "login_refused", "{kick:?}");
+    assert!(kick.during_connect(), "{kick:?}");
 
     proxy.shutdown().await.unwrap();
 }
@@ -647,17 +649,17 @@ async fn a_config_kick_during_the_initial_join_reaches_the_client(version: Proto
     assert_eq!(info.text, "Config says no", "{info:?}");
     let reason = component_value(&Component::text("Config says no").color(NamedColor::Red));
     let kick = kicked(&recorder, "lobby").await;
-    assert_eq!(kick.detail["cause"], json!("config_disconnect"), "{kick:?}");
-    assert_eq!(kick.detail["reason"], reason, "{kick:?}");
-    assert_eq!(kick.detail["during_connect"], json!(true), "{kick:?}");
+    assert_eq!(kick.cause(), "config_disconnect", "{kick:?}");
+    assert_eq!(kick.kick_reason(), Some(&reason), "{kick:?}");
+    assert!(kick.during_connect(), "{kick:?}");
     assert_eq!(
-        kick.detail["result"],
+        *kick.result(),
         json!({ "disconnect_player": null }),
         "{kick:?}"
     );
     let disconnect = disconnected(&recorder).await;
-    assert_eq!(disconnect.detail["cause"], json!("backend_closed"));
-    assert_eq!(disconnect.detail["reason_json"], reason);
+    assert_eq!(disconnect.cause(), "backend_closed");
+    assert_eq!(disconnect.reason_json(), Some(&reason));
 
     proxy.shutdown().await.unwrap();
 }
@@ -714,15 +716,11 @@ async fn kick_redirects_stop_after_three_attempts(version: ProtocolVersion) {
     assert_eq!(info.state, ConnectionState::Play, "{info:?}");
     assert_eq!(info.text, "B refuses", "{info:?}");
     disconnected(&recorder).await;
-    let kicks: Vec<Value> = recorder
-        .of(EventKind::KickedFromServer)
-        .iter()
-        .map(|e| e.detail["server"].clone())
-        .collect();
-    assert_eq!(kicks, [json!("a"), json!("b"), json!("c"), json!("b")]);
-    let redirects = recorder.filter(|e| {
-        e.kind == EventKind::ServerPreConnect && e.detail["cause"] == json!("kick_redirect")
-    });
+    let kicked_from = recorder.of(EventKind::KickedFromServer);
+    let kicks: Vec<Option<&str>> = kicked_from.iter().map(Recorded::server).collect();
+    assert_eq!(kicks, [Some("a"), Some("b"), Some("c"), Some("b")]);
+    let redirects =
+        recorder.filter(|e| e.kind == EventKind::ServerPreConnect && e.cause() == "kick_redirect");
     assert_eq!(redirects.len(), 3, "{redirects:?}");
 
     proxy.shutdown().await.unwrap();
@@ -776,10 +774,10 @@ async fn assert_initial_redirect_joins(
     assert_eq!(player.current_server(), Some(ServerId::new("b")));
 
     let kick = kicked(&recorder, "lobby").await;
-    assert_eq!(kick.detail["cause"], json!(cause), "{kick:?}");
-    assert_eq!(kick.detail["during_connect"], json!(true), "{kick:?}");
-    assert_eq!(kick.detail["result"], json!({ "redirect_to": "b" }));
-    let to_b = recorder.filter(|e| e.detail["server"] == json!("b"));
+    assert_eq!(kick.cause(), cause, "{kick:?}");
+    assert!(kick.during_connect(), "{kick:?}");
+    assert_eq!(*kick.result(), json!({ "redirect_to": "b" }));
+    let to_b = recorder.filter(|e| e.detail_get("server").and_then(Value::as_str) == Some("b"));
     let kinds: Vec<EventKind> = to_b.iter().map(|e| e.kind).collect();
     assert_eq!(
         kinds,
@@ -789,8 +787,8 @@ async fn assert_initial_redirect_joins(
             EventKind::ServerPostConnect
         ]
     );
-    assert_eq!(to_b[0].detail["cause"], json!("kick_redirect"));
-    assert_eq!(to_b[0].detail["previous_server"], json!(null));
+    assert_eq!(to_b[0].cause(), "kick_redirect");
+    assert_eq!(to_b[0].previous_server(), None);
 
     session.chat("hello b").await.unwrap();
     assert_eq!(
@@ -919,8 +917,8 @@ async fn a_redirect_after_a_kick_mid_reconfiguration_absorbs_the_late_ack(
     );
 
     let kick = kicked(&recorder, "a").await;
-    assert_eq!(kick.detail["cause"], json!("config_disconnect"));
-    assert_eq!(kick.detail["during_connect"], json!(false));
+    assert_eq!(kick.cause(), "config_disconnect");
+    assert!(!kick.during_connect());
     session.chat("landed").await.unwrap();
     assert_eq!(
         conn_b.expect::<SChatMessage>(T).await.unwrap().message,

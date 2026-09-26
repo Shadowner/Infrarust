@@ -171,6 +171,262 @@ impl Recorded {
     pub fn is_named(&self, username: &str) -> bool {
         self.username.as_deref() == Some(username)
     }
+
+    #[must_use]
+    pub fn detail_get(&self, key: &str) -> Option<&Value> {
+        self.detail.get(key).filter(|value| !value.is_null())
+    }
+
+    #[must_use]
+    pub fn detail_value(&self, key: &str) -> &Value {
+        self.detail.get(key).unwrap_or_else(|| {
+            let keys: Vec<&str> = self
+                .detail
+                .as_object()
+                .map(|map| map.keys().map(String::as_str).collect())
+                .unwrap_or_default();
+            panic!(
+                "no `{key}` in the detail of {} (available: {})",
+                self.kind,
+                keys.join(", ")
+            )
+        })
+    }
+
+    #[must_use]
+    pub fn detail_str(&self, key: &str) -> &str {
+        self.detail_opt_str(key)
+            .unwrap_or_else(|| panic!("`{key}` of {} is null", self.kind))
+    }
+
+    #[must_use]
+    pub fn detail_opt_str(&self, key: &str) -> Option<&str> {
+        match self.detail_value(key) {
+            Value::Null => None,
+            Value::String(text) => Some(text),
+            other => panic!("`{key}` of {} is not a string: {other}", self.kind),
+        }
+    }
+
+    #[must_use]
+    pub fn detail_opt_value(&self, key: &str) -> Option<&Value> {
+        match self.detail_value(key) {
+            Value::Null => None,
+            other => Some(other),
+        }
+    }
+
+    #[must_use]
+    pub fn detail_bool(&self, key: &str) -> bool {
+        self.detail_value(key)
+            .as_bool()
+            .unwrap_or_else(|| panic!("`{key}` of {} is not a bool", self.kind))
+    }
+
+    #[must_use]
+    pub fn detail_i64(&self, key: &str) -> i64 {
+        self.detail_value(key)
+            .as_i64()
+            .unwrap_or_else(|| panic!("`{key}` of {} is not an integer", self.kind))
+    }
+
+    #[must_use]
+    pub fn cause(&self) -> &str {
+        self.detail_str("cause")
+    }
+
+    #[must_use]
+    pub fn reason(&self) -> Option<&str> {
+        self.detail_opt_str("reason")
+    }
+
+    #[must_use]
+    pub fn kick_reason(&self) -> Option<&Value> {
+        self.detail_opt_value("reason")
+    }
+
+    #[must_use]
+    pub fn reason_json(&self) -> Option<&Value> {
+        self.detail_opt_value("reason_json")
+    }
+
+    #[must_use]
+    pub fn result(&self) -> &Value {
+        self.detail_value("result")
+    }
+
+    #[must_use]
+    pub fn server(&self) -> Option<&str> {
+        self.detail_opt_str("server")
+    }
+
+    #[must_use]
+    pub fn last_server(&self) -> Option<&str> {
+        self.detail_opt_str("last_server")
+    }
+
+    #[must_use]
+    pub fn previous_server(&self) -> Option<&str> {
+        self.detail_opt_str("previous_server")
+    }
+
+    #[must_use]
+    pub fn current_server(&self) -> Option<&str> {
+        self.detail_opt_str("current_server")
+    }
+
+    #[must_use]
+    pub fn next_server(&self) -> Option<&str> {
+        self.detail_opt_str("next_server")
+    }
+
+    #[must_use]
+    pub fn virtual_host(&self) -> Option<&str> {
+        self.detail_opt_str("virtual_host")
+    }
+
+    #[must_use]
+    pub fn server_domain(&self) -> Option<&str> {
+        self.detail_opt_str("server_domain")
+    }
+
+    #[must_use]
+    pub fn plugin(&self) -> Option<&str> {
+        self.detail_opt_str("plugin")
+    }
+
+    #[must_use]
+    pub fn pack_id(&self) -> Option<&str> {
+        self.detail_opt_str("pack_id")
+    }
+
+    #[must_use]
+    pub fn during_connect(&self) -> bool {
+        self.detail_bool("during_connect")
+    }
+
+    #[must_use]
+    pub fn online_mode(&self) -> bool {
+        self.detail_bool("online_mode")
+    }
+
+    #[must_use]
+    pub fn legacy(&self) -> bool {
+        self.detail_bool("legacy")
+    }
+
+    #[must_use]
+    pub fn silent(&self) -> bool {
+        self.detail_bool("silent")
+    }
+
+    #[must_use]
+    pub fn origin(&self) -> &str {
+        self.detail_str("origin")
+    }
+
+    #[must_use]
+    pub fn source(&self) -> &str {
+        self.detail_str("source")
+    }
+
+    #[must_use]
+    pub fn status(&self) -> &str {
+        self.detail_str("status")
+    }
+
+    #[must_use]
+    pub fn remote_addr(&self) -> &str {
+        self.detail_str("remote_addr")
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &str {
+        self.detail_str("id")
+    }
+
+    #[must_use]
+    pub fn target(&self) -> &str {
+        self.detail_str("target")
+    }
+
+    #[must_use]
+    pub fn provider(&self) -> &str {
+        self.detail_str("provider")
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        self.detail_str("message")
+    }
+
+    #[must_use]
+    pub fn description(&self) -> &str {
+        self.detail_str("description")
+    }
+
+    #[must_use]
+    pub fn version(&self) -> &str {
+        self.detail_str("version")
+    }
+
+    #[must_use]
+    pub fn service(&self) -> &str {
+        self.detail_str("service")
+    }
+
+    #[must_use]
+    pub fn new_state(&self) -> &str {
+        self.detail_str("new_state")
+    }
+
+    #[must_use]
+    pub fn intent(&self) -> &str {
+        self.detail_str("intent")
+    }
+
+    #[must_use]
+    pub fn host(&self) -> &str {
+        self.detail_str("host")
+    }
+
+    #[must_use]
+    pub fn protocol_version(&self) -> i32 {
+        i32::try_from(self.detail_i64("protocol_version"))
+            .unwrap_or_else(|_| panic!("protocol_version of {} overflows i32", self.kind))
+    }
+
+    #[must_use]
+    pub fn profile_username(&self) -> &str {
+        nested_str(
+            self.detail_value("profile"),
+            "profile",
+            "username",
+            self.kind,
+        )
+    }
+
+    #[must_use]
+    pub fn profile_uuid(&self) -> &str {
+        nested_str(self.detail_value("profile"), "profile", "uuid", self.kind)
+    }
+
+    #[must_use]
+    pub fn original_username(&self) -> &str {
+        nested_str(
+            self.detail_value("original"),
+            "original",
+            "username",
+            self.kind,
+        )
+    }
+}
+
+fn nested_str<'a>(value: &'a Value, parent: &str, key: &str, kind: EventKind) -> &'a str {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("`{parent}.{key}` of {kind} is not a string: {value}"))
 }
 
 #[derive(Debug, Default)]

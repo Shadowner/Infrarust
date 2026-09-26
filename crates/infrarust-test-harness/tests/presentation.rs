@@ -411,28 +411,25 @@ async fn statuses(recorder: &Recorder, origin: &str, count: usize) -> Vec<Record
         .wait_for(
             |e| {
                 e.kind == EventKind::PlayerResourcePackStatus
-                    && e.detail["origin"] == origin
-                    && e.detail["status"] == "successfully_loaded"
+                    && e.origin() == origin
+                    && e.status() == "successfully_loaded"
             },
             T,
         )
         .await
         .unwrap();
-    let seen = recorder
-        .filter(|e| e.kind == EventKind::PlayerResourcePackStatus && e.detail["origin"] == origin);
+    let seen =
+        recorder.filter(|e| e.kind == EventKind::PlayerResourcePackStatus && e.origin() == origin);
     assert_eq!(seen.len(), count, "{seen:#?}");
     seen
 }
 
 fn assert_proxy_statuses(seen: &[Recorded], pack: &ResourcePackRequest) {
     let pack_id = pack.id.to_string();
-    let statuses: Vec<&str> = seen
-        .iter()
-        .map(|e| e.detail["status"].as_str().unwrap())
-        .collect();
+    let statuses: Vec<&str> = seen.iter().map(|e| e.status()).collect();
     assert_eq!(statuses, ["accepted", "successfully_loaded"]);
     for event in seen {
-        assert_eq!(event.detail["pack_id"], pack_id.as_str(), "{event:?}");
+        assert_eq!(event.pack_id(), Some(pack_id.as_str()), "{event:?}");
     }
 }
 
@@ -569,13 +566,11 @@ async fn backend_resource_packs_pass_through(version: ProtocolVersion) {
         }
     }
     let seen = statuses(&recorder, "backend", 2).await;
-    let expected_id = if version.no_less_than(ProtocolVersion::V1_20_3) {
-        serde_json::json!(backend_pack.to_string())
-    } else {
-        serde_json::Value::Null
-    };
+    let expected_id = version
+        .no_less_than(ProtocolVersion::V1_20_3)
+        .then(|| backend_pack.to_string());
     assert!(
-        seen.iter().all(|e| e.detail["pack_id"] == expected_id),
+        seen.iter().all(|e| e.pack_id() == expected_id.as_deref()),
         "{seen:#?}"
     );
 

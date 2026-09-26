@@ -89,10 +89,10 @@ async fn assert_awaited_order(
     for event in events.iter().filter(|e| e.player.is_some()) {
         assert_eq!(event.player, Some(player), "{}", event.kind);
     }
-    assert_eq!(disconnect.detail["cause"], json!("client_quit"));
-    assert_eq!(disconnect.detail["last_server"], json!("lobby"));
+    assert_eq!(disconnect.cause(), "client_quit");
+    assert_eq!(disconnect.last_server(), Some("lobby"));
     let post_login = &recorder.of(EventKind::PostLogin)[0];
-    assert_eq!(post_login.detail["current_server"], json!(null));
+    assert_eq!(post_login.current_server(), None);
 }
 
 async fn offline_events_are_awaited_in_order(version: ProtocolVersion) {
@@ -107,8 +107,8 @@ async fn offline_events_are_awaited_in_order(version: ProtocolVersion) {
 
     assert_awaited_order(&proxy, &recorder, &backend, version, "Steve").await;
     let request = &recorder.of(EventKind::GameProfileRequest)[0];
-    assert_eq!(request.detail["online_mode"], json!(false));
-    assert_eq!(request.detail["virtual_host"], json!("lobby.test"));
+    assert!(!request.online_mode());
+    assert_eq!(request.virtual_host(), Some("lobby.test"));
 
     proxy.shutdown().await.unwrap();
 }
@@ -129,9 +129,9 @@ async fn client_only_events_are_awaited_in_order(version: ProtocolVersion) {
 
     assert_awaited_order(&proxy, &recorder, &backend, version, "Alex").await;
     let request = &recorder.of(EventKind::GameProfileRequest)[0];
-    assert_eq!(request.detail["online_mode"], json!(true));
+    assert!(request.online_mode());
     assert_eq!(
-        request.detail["profile"]["uuid"],
+        request.profile_uuid(),
         json!(offline_uuid("Alex").to_string())
     );
 
@@ -209,10 +209,7 @@ async fn assert_login_denied(proxy: &TestProxy, recorder: &Recorder, version: Pr
         .wait_for(|e| e.kind == EventKind::Login && e.is_named("Mallory"), T)
         .await
         .unwrap();
-    assert_eq!(
-        login.detail["result"],
-        json!({ "denied": "No entry for Mallory" })
-    );
+    assert_eq!(*login.result(), json!({ "denied": "No entry for Mallory" }));
     assert_eq!(recorder.count(EventKind::PostLogin), 0);
     assert_eq!(recorder.count(EventKind::Disconnect), 0);
     assert_eq!(proxy.connection_count(), 0);
@@ -291,9 +288,9 @@ async fn denied_initial_connect_ends_with_one_disconnect(version: ProtocolVersio
     assert_eq!(info.text, "Closed for maintenance", "{info:?}");
 
     let disconnect = assert_single_disconnect_after_post_login(&proxy, &recorder, "Steve").await;
-    assert_eq!(disconnect.detail["cause"], json!("kicked"));
-    assert_eq!(disconnect.detail["reason"], json!("Closed for maintenance"));
-    assert_eq!(disconnect.detail["last_server"], json!(null));
+    assert_eq!(disconnect.cause(), "kicked");
+    assert_eq!(disconnect.reason(), Some("Closed for maintenance"));
+    assert_eq!(disconnect.last_server(), None);
     proxy.shutdown().await.unwrap();
 }
 
@@ -318,7 +315,7 @@ async fn unreachable_initial_backend_ends_with_one_disconnect(version: ProtocolV
     assert_eq!(info.state, ConnectionState::Login, "{info:?}");
 
     let disconnect = assert_single_disconnect_after_post_login(&proxy, &recorder, "Steve").await;
-    assert_eq!(disconnect.detail["cause"], json!("error"));
+    assert_eq!(disconnect.cause(), "error");
     proxy.shutdown().await.unwrap();
 }
 
@@ -387,8 +384,8 @@ async fn last_server_follows_a_switch(version: ProtocolVersion) {
         )
         .await
         .unwrap();
-    assert_eq!(disconnect.detail["last_server"], json!("b"));
-    assert_eq!(disconnect.detail["cause"], json!("client_quit"));
+    assert_eq!(disconnect.last_server(), Some("b"));
+    assert_eq!(disconnect.cause(), "client_quit");
     conn_b.closed(T).await.unwrap();
 
     proxy.shutdown().await.unwrap();
@@ -563,10 +560,10 @@ async fn a_second_login_replaces_the_first(version: ProtocolVersion) {
     let disconnects = recorder.of(EventKind::Disconnect);
     assert_eq!(disconnects.len(), 1, "{disconnects:?}");
     assert_eq!(disconnects[0].player, first_id);
-    assert_eq!(disconnects[0].detail["cause"], json!("kicked"));
+    assert_eq!(disconnects[0].cause(), "kicked");
     assert_eq!(
-        disconnects[0].detail["reason"],
-        json!("You logged in from another location")
+        disconnects[0].reason(),
+        Some("You logged in from another location")
     );
     assert!(disconnects[0].seq < post_logins[1].seq);
     let online = proxy.wait_for_player("Steve", T).await.unwrap();
@@ -607,8 +604,8 @@ async fn a_kick_during_post_login_ends_in_login(version: ProtocolVersion) {
     assert_eq!(info.state, ConnectionState::Login, "{info:?}");
     assert_eq!(info.text, "Not today", "{info:?}");
     let disconnect = assert_single_disconnect_after_post_login(&proxy, &recorder, "Steve").await;
-    assert_eq!(disconnect.detail["cause"], json!("kicked"));
-    assert_eq!(disconnect.detail["reason"], json!("Not today"));
+    assert_eq!(disconnect.cause(), "kicked");
+    assert_eq!(disconnect.reason(), Some("Not today"));
     assert_eq!(recorder.count(EventKind::PlayerChooseInitialServer), 0);
 
     proxy.shutdown().await.unwrap();
@@ -715,12 +712,12 @@ async fn real_ip_comes_from_the_proxy_protocol_header(version: ProtocolVersion) 
         .wait_for(|e| e.kind == EventKind::PreLogin && e.is_named("Steve"), T)
         .await
         .unwrap();
-    assert_eq!(pre_login.detail["remote_addr"], json!(FORWARDED_SOURCE));
+    assert_eq!(pre_login.remote_addr(), FORWARDED_SOURCE);
     let post_login = recorder
         .wait_for(|e| e.kind == EventKind::PostLogin && e.is_named("Steve"), T)
         .await
         .unwrap();
-    assert_eq!(post_login.detail["remote_addr"], json!(FORWARDED_SOURCE));
+    assert_eq!(post_login.remote_addr(), FORWARDED_SOURCE);
     let player = proxy.wait_for_player("Steve", T).await.unwrap();
     assert_eq!(player.remote_addr(), source);
 
@@ -746,11 +743,7 @@ async fn post_login_uuid(proxy: &TestProxy, recorder: &Recorder, version: Protoc
         .await
         .unwrap();
     let player = proxy.wait_for_player("Steve", T).await.unwrap();
-    let uuid: Uuid = post_login.detail["profile"]["uuid"]
-        .as_str()
-        .unwrap()
-        .parse()
-        .unwrap();
+    let uuid: Uuid = post_login.profile_uuid().parse().unwrap();
     assert_eq!(player.profile().uuid, uuid);
     session.quit().await;
     uuid
@@ -855,10 +848,10 @@ async fn passthrough_post_login_precedes_disconnect(version: ProtocolVersion) {
     conn.close().await;
 
     let disconnect = assert_single_disconnect_after_post_login(&proxy, &recorder, "Steve").await;
-    assert_eq!(disconnect.detail["last_server"], json!("lobby"));
+    assert_eq!(disconnect.last_server(), Some("lobby"));
     let post_login = &recorder.of(EventKind::PostLogin)[0];
-    assert_eq!(post_login.detail["remote_addr"], json!(FORWARDED_SOURCE));
-    assert_eq!(post_login.detail["current_server"], json!(null));
+    assert_eq!(post_login.remote_addr(), FORWARDED_SOURCE);
+    assert_eq!(post_login.current_server(), None);
 
     proxy.shutdown().await.unwrap();
 }
@@ -897,13 +890,10 @@ async fn assert_rewritten_profile(
         .wait_for(|e| e.kind == EventKind::PostLogin, T)
         .await
         .unwrap();
-    assert_eq!(
-        post_login.detail["profile"]["uuid"],
-        json!(REWRITTEN.to_string())
-    );
-    assert_eq!(post_login.detail["profile"]["username"], json!("Renamed"));
+    assert_eq!(post_login.profile_uuid(), json!(REWRITTEN.to_string()));
+    assert_eq!(post_login.profile_username(), json!("Renamed"));
     let request = &recorder.of(EventKind::GameProfileRequest)[0];
-    assert_eq!(request.detail["original"]["username"], json!(username));
+    assert_eq!(request.original_username(), json!(username));
     assert_eq!(
         proxy
             .wait_for_player("Renamed", T)

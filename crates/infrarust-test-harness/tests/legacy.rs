@@ -107,15 +107,12 @@ async fn a_legacy_login_is_a_registered_player() {
         ]
     );
     let pre_login = &recorder.of(EventKind::PreLogin)[0];
-    assert_eq!(pre_login.detail["server_domain"], json!("old.test"));
-    assert_eq!(
-        pre_login.detail["protocol_version"],
-        json!(i32::from(LEGACY_PROTOCOL))
-    );
+    assert_eq!(pre_login.server_domain(), Some("old.test"));
+    assert_eq!(pre_login.protocol_version(), i32::from(LEGACY_PROTOCOL));
     let post_login = &recorder.of(EventKind::PostLogin)[0];
     assert_eq!(post_login.player, disconnect.player);
     assert_forwarding_ended(&disconnect);
-    assert_eq!(disconnect.detail["last_server"], json!("old"));
+    assert_eq!(disconnect.last_server(), Some("old"));
 
     proxy.shutdown().await.unwrap();
 }
@@ -204,7 +201,7 @@ async fn a_pre_login_denial_reaches_a_legacy_client_as_legacy_text() {
         .await
         .unwrap();
     assert_eq!(
-        pre_login.detail["result"],
+        *pre_login.result(),
         json!({ "denied": "Old clients stay out" })
     );
     assert_eq!(recorder.count(EventKind::PostLogin), 0);
@@ -231,10 +228,6 @@ async fn a_legacy_ping_is_relayed_from_the_backend() {
 }
 
 fn assert_forwarding_ended(disconnect: &Recorded) {
-    assert_eq!(
-        disconnect.detail["cause"],
-        json!("client_quit"),
-        "{disconnect:?}"
-    );
-    assert_eq!(disconnect.detail["reason"], json!(null), "{disconnect:?}");
+    assert_eq!(disconnect.cause(), "client_quit", "{disconnect:?}");
+    assert_eq!(disconnect.reason(), None, "{disconnect:?}");
 }

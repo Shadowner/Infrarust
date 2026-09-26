@@ -517,16 +517,16 @@ async fn a_plugin_ban_kicks_the_player_and_announces_who_issued_it() {
         .wait_for(|e| e.kind == EventKind::BanIssued, T)
         .await
         .unwrap();
-    assert_eq!(issued.detail["id"], json!(entry.id));
-    assert_eq!(issued.detail["source"], json!("plugin:guard"));
-    assert_eq!(issued.detail["target"], json!("username:Steve"));
-    assert_eq!(issued.detail["silent"], json!(false));
+    assert_eq!(issued.id(), entry.id);
+    assert_eq!(issued.source(), "plugin:guard");
+    assert_eq!(issued.target(), "username:Steve");
+    assert!(!issued.silent());
     let disconnect = recorder
         .wait_for(|e| e.kind == EventKind::Disconnect, T)
         .await
         .unwrap();
-    assert_eq!(disconnect.detail["cause"], json!("kicked"));
-    assert_eq!(disconnect.detail["reason"], json!("guard: spam"));
+    assert_eq!(disconnect.cause(), "kicked");
+    assert_eq!(disconnect.reason(), Some("guard: spam"));
 
     let removed = service
         .unban(UnbanRequest::new(target))
@@ -538,8 +538,8 @@ async fn a_plugin_ban_kicks_the_player_and_announces_who_issued_it() {
         .wait_for(|e| e.kind == EventKind::BanRevoked, T)
         .await
         .unwrap();
-    assert_eq!(revoked.detail["id"], json!(entry.id));
-    assert_eq!(revoked.detail["source"], json!("plugin:guard"));
+    assert_eq!(revoked.id(), entry.id);
+    assert_eq!(revoked.source(), "plugin:guard");
     let again = join(&proxy, &backend, "Steve", None).await;
 
     again.session.quit().await;
@@ -580,8 +580,8 @@ async fn a_console_range_ban_kicks_every_player_behind_the_range() {
         .wait_for(|e| e.kind == EventKind::BanIssued, T)
         .await
         .unwrap();
-    assert_eq!(issued.detail["source"], json!("console"));
-    assert_eq!(issued.detail["target"], json!("range:203.0.113.0/24"));
+    assert_eq!(issued.source(), "console");
+    assert_eq!(issued.target(), "range:203.0.113.0/24");
     let refused = proxy
         .client(VERSION)
         .proxy_protocol(from("203.0.113.99", 50001))
@@ -624,13 +624,13 @@ async fn console_bans_are_attributed_to_the_console() {
         .wait_for(|e| e.kind == EventKind::BanIssued, T)
         .await
         .unwrap();
-    assert_eq!(issued.detail["source"], json!("console"));
-    assert_eq!(issued.detail["id"], json!(entry.id));
+    assert_eq!(issued.source(), "console");
+    assert_eq!(issued.id(), entry.id);
     let revoked = recorder
         .wait_for(|e| e.kind == EventKind::BanRevoked, T)
         .await
         .unwrap();
-    assert_eq!(revoked.detail["source"], json!("console"));
+    assert_eq!(revoked.source(), "console");
     assert!(
         proxy
             .services()

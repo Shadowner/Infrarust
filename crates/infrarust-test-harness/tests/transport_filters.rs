@@ -18,7 +18,6 @@ use infrarust_test_harness::{
     DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeClient, FakeLegacyBackend, HarnessError,
     LegacyPing, ProtocolVersion, Recorder, ScriptedPlugin, ServerSpec, TestProxy, TestProxyBuilder,
 };
-use serde_json::json;
 use tokio::sync::{Notify, oneshot, watch};
 use toml::{Table, Value};
 use tracing_subscriber::fmt::MakeWriter;
@@ -502,9 +501,9 @@ async fn a_rejection_closes_only_the_filters_that_accepted_before_it() {
         .wait_for(|e| e.kind == EventKind::ConnectionRejected, T)
         .await
         .unwrap();
-    assert_eq!(rejected.detail["reason"], json!("plugin"));
-    assert_eq!(rejected.detail["plugin"], json!(OWNER));
-    assert_eq!(rejected.detail["virtual_host"], json!(null));
+    assert_eq!(rejected.reason(), Some("plugin"));
+    assert_eq!(rejected.plugin(), Some(OWNER));
+    assert_eq!(rejected.virtual_host(), None);
 
     proxy.shutdown().await.unwrap();
     log.assert_paired("outer", 1);
@@ -554,8 +553,8 @@ async fn a_faulty_filter_rejects_its_connection_only(
         .wait_for(|e| e.kind == EventKind::ConnectionRejected, T)
         .await
         .unwrap();
-    assert_eq!(rejected.detail["reason"], json!("plugin"));
-    assert_eq!(rejected.detail["plugin"], json!(OWNER));
+    assert_eq!(rejected.reason(), Some("plugin"));
+    assert_eq!(rejected.plugin(), Some(OWNER));
 
     proxy
         .client(VERSION)

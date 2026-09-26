@@ -181,24 +181,18 @@ async fn events_fire_once_in_order(mode: ProxyMode, version: ProtocolVersion) {
         }
     }
     let pre_login = &recorder.of(EventKind::PreLogin)[0];
-    assert_eq!(pre_login.detail["server_domain"], json!("lobby.test"));
-    assert_eq!(pre_login.detail["protocol_version"], json!(version.0));
+    assert_eq!(pre_login.server_domain(), Some("lobby.test"));
+    assert_eq!(pre_login.protocol_version(), version.0);
     let request = &recorder.of(EventKind::GameProfileRequest)[0];
-    assert_eq!(request.detail["online_mode"], json!(false));
-    assert_eq!(request.detail["virtual_host"], json!("lobby.test"));
-    assert_eq!(
-        recorder.of(EventKind::PermissionsSetup)[0].detail["online_mode"],
-        json!(false)
-    );
-    assert_eq!(
-        recorder.of(EventKind::Login)[0].detail["online_mode"],
-        json!(false)
-    );
+    assert!(!request.online_mode());
+    assert_eq!(request.virtual_host(), Some("lobby.test"));
+    assert!(!recorder.of(EventKind::PermissionsSetup)[0].online_mode());
+    assert!(!recorder.of(EventKind::Login)[0].online_mode());
     let pre_connect = &recorder.of(EventKind::ServerPreConnect)[0];
-    assert_eq!(pre_connect.detail["server"], json!("lobby"));
-    assert_eq!(pre_connect.detail["cause"], json!("initial"));
+    assert_eq!(pre_connect.server(), Some("lobby"));
+    assert_eq!(pre_connect.cause(), "initial");
     assert_forwarding_ended(&disconnect);
-    assert_eq!(disconnect.detail["last_server"], json!("lobby"));
+    assert_eq!(disconnect.last_server(), Some("lobby"));
 
     proxy.shutdown().await.unwrap();
 }
@@ -279,7 +273,7 @@ async fn a_login_denial_ends_in_login(mode: ProxyMode, version: ProtocolVersion)
         ]
     );
     assert_eq!(
-        recorder.of(EventKind::Login)[0].detail["result"],
+        *recorder.of(EventKind::Login)[0].result(),
         json!({ "denied": "No entry for Mallory" })
     );
     assert_never_admitted(&proxy, &recorder, &backend);
@@ -313,10 +307,10 @@ async fn assert_joined_other(
     conn.closed(T).await.unwrap();
     conn.close().await;
     let disconnect = assert_paired(proxy, recorder, STEVE).await;
-    assert_eq!(disconnect.detail["last_server"], json!("other"));
+    assert_eq!(disconnect.last_server(), Some("other"));
     let connected = recorder.of(EventKind::ServerConnected);
     assert_eq!(connected.len(), 1, "{connected:?}");
-    assert_eq!(connected[0].detail["server"], json!("other"));
+    assert_eq!(connected[0].server(), Some("other"));
     assert_eq!(lobby.accepted_connections(), 0);
 }
 
@@ -340,8 +334,8 @@ async fn an_initial_server_redirect_reaches_the_target(mode: ProxyMode, version:
     assert_joined_other(&proxy, &recorder, &lobby, &other, version).await;
     let pre_connects = recorder.of(EventKind::ServerPreConnect);
     assert_eq!(pre_connects.len(), 1, "{pre_connects:?}");
-    assert_eq!(pre_connects[0].detail["server"], json!("other"));
-    assert_eq!(pre_connects[0].detail["cause"], json!("initial"));
+    assert_eq!(pre_connects[0].server(), Some("other"));
+    assert_eq!(pre_connects[0].cause(), "initial");
 
     proxy.shutdown().await.unwrap();
 }
@@ -390,9 +384,9 @@ async fn assert_limbo_refused(
     assert_eq!(denied.state, ConnectionState::Login);
     assert_eq!(denied.text, LIMBO_REFUSED, "{denied:?}");
     let disconnect = assert_paired(proxy, recorder, STEVE).await;
-    assert_eq!(disconnect.detail["cause"], json!("kicked"));
-    assert_eq!(disconnect.detail["reason"], json!(LIMBO_REFUSED));
-    assert_eq!(disconnect.detail["last_server"], json!(null));
+    assert_eq!(disconnect.cause(), "kicked");
+    assert_eq!(disconnect.reason(), Some(LIMBO_REFUSED));
+    assert_eq!(disconnect.last_server(), None);
     assert_eq!(recorder.count(EventKind::ServerConnected), 0);
     assert_eq!(backend.accepted_connections(), 0);
 }
@@ -473,18 +467,15 @@ async fn an_unreachable_backend_disconnects_by_default(mode: ProxyMode, version:
     assert_eq!(denied.state, ConnectionState::Login);
     assert_eq!(denied.text, "Lobby is napping", "{denied:?}");
     let disconnect = assert_paired(&proxy, &recorder, STEVE).await;
-    assert_eq!(disconnect.detail["cause"], json!("error"));
+    assert_eq!(disconnect.cause(), "error");
     let kicks = recorder.of(EventKind::KickedFromServer);
     assert_eq!(kicks.len(), 1, "{kicks:?}");
-    assert_eq!(kicks[0].detail["server"], json!("lobby"));
-    assert_eq!(kicks[0].detail["cause"], json!("unreachable"));
-    assert_eq!(kicks[0].detail["during_connect"], json!(true));
-    assert_eq!(kicks[0].detail["previous_server"], json!(null));
-    assert_eq!(kicks[0].detail["reason"], json!(null));
-    assert_eq!(
-        kicks[0].detail["result"],
-        json!({ "disconnect_player": null })
-    );
+    assert_eq!(kicks[0].server(), Some("lobby"));
+    assert_eq!(kicks[0].cause(), "unreachable");
+    assert!(kicks[0].during_connect());
+    assert_eq!(kicks[0].previous_server(), None);
+    assert_eq!(kicks[0].kick_reason(), None);
+    assert_eq!(*kicks[0].result(), json!({ "disconnect_player": null }));
     assert_eq!(recorder.count(EventKind::ServerConnected), 0);
 
     proxy.shutdown().await.unwrap();
@@ -527,7 +518,7 @@ async fn an_unreachable_backend_can_redirect(mode: ProxyMode, version: ProtocolV
     conn.closed(T).await.unwrap();
     conn.close().await;
     let disconnect = assert_paired(&proxy, &recorder, STEVE).await;
-    assert_eq!(disconnect.detail["last_server"], json!("other"));
+    assert_eq!(disconnect.last_server(), Some("other"));
     assert_forwarding_ended(&disconnect);
 
     assert_eq!(
@@ -547,15 +538,15 @@ async fn an_unreachable_backend_can_redirect(mode: ProxyMode, version: ProtocolV
         ]
     );
     let kick = &recorder.of(EventKind::KickedFromServer)[0];
-    assert_eq!(kick.detail["cause"], json!("unreachable"));
-    assert_eq!(kick.detail["during_connect"], json!(true));
-    assert_eq!(kick.detail["result"], json!({ "redirect_to": "other" }));
+    assert_eq!(kick.cause(), "unreachable");
+    assert!(kick.during_connect());
+    assert_eq!(*kick.result(), json!({ "redirect_to": "other" }));
     let pre_connects = recorder.of(EventKind::ServerPreConnect);
-    assert_eq!(pre_connects[1].detail["server"], json!("other"));
-    assert_eq!(pre_connects[1].detail["cause"], json!("kick_redirect"));
-    assert_eq!(pre_connects[1].detail["previous_server"], json!(null));
+    assert_eq!(pre_connects[1].server(), Some("other"));
+    assert_eq!(pre_connects[1].cause(), "kick_redirect");
+    assert_eq!(pre_connects[1].previous_server(), None);
     let connected = &recorder.of(EventKind::ServerConnected)[0];
-    assert_eq!(connected.detail["server"], json!("other"));
+    assert_eq!(connected.server(), Some("other"));
 
     proxy.shutdown().await.unwrap();
 }
@@ -618,10 +609,7 @@ async fn a_rewritten_profile_reaches_bungeecord_forwarding(
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
     assert_eq!(player.profile().uuid, REWRITTEN);
     let post_login = &recorder.of(EventKind::PostLogin)[0];
-    assert_eq!(
-        post_login.detail["profile"]["uuid"],
-        json!(REWRITTEN.to_string())
-    );
+    assert_eq!(post_login.profile_uuid(), json!(REWRITTEN.to_string()));
     drop(player);
 
     session.quit().await;
@@ -669,7 +657,7 @@ async fn a_redirect_to_a_proxy_login_server_fails_closed(
         "{denied:?}"
     );
     let disconnect = assert_paired(&proxy, &recorder, STEVE).await;
-    assert_eq!(disconnect.detail["cause"], json!("kicked"));
+    assert_eq!(disconnect.cause(), "kicked");
     assert_eq!(recorder.count(EventKind::ServerConnected), 0);
     assert_eq!(lobby.accepted_connections(), 0);
     assert_eq!(secure.accepted_connections(), 0);
@@ -680,10 +668,6 @@ async fn a_redirect_to_a_proxy_login_server_fails_closed(
 family!(a_redirect_to_a_proxy_login_server_fails_closed);
 
 fn assert_forwarding_ended(disconnect: &Recorded) {
-    assert_eq!(
-        disconnect.detail["cause"],
-        json!("client_quit"),
-        "{disconnect:?}"
-    );
-    assert_eq!(disconnect.detail["reason"], json!(null), "{disconnect:?}");
+    assert_eq!(disconnect.cause(), "client_quit", "{disconnect:?}");
+    assert_eq!(disconnect.reason(), None, "{disconnect:?}");
 }

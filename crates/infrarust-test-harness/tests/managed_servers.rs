@@ -16,7 +16,6 @@ use infrarust_test_harness::{
     DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeServerProvider, ProtocolVersion, Recorder,
     ScriptedPlugin, ServerSpec, TestProxy, version_matrix,
 };
-use serde_json::json;
 
 const T: Duration = DEFAULT_TIMEOUT;
 const STEVE: &str = "Steve";
@@ -166,7 +165,7 @@ async fn a_login_wakes_the_server_once_plugins_chose_it(mode: ProxyMode) {
         "the server starts only after ServerPreConnectEvent picked it: {:?}",
         recorder.kinds()
     );
-    assert_eq!(chosen[0].detail["server"], json!("lobby"));
+    assert_eq!(chosen[0].server(), Some("lobby"));
     assert_eq!(recorder.count(EventKind::PostLogin), 1);
     assert_eq!(backend.accepted_connections(), 0);
 
@@ -181,7 +180,7 @@ async fn a_login_wakes_the_server_once_plugins_chose_it(mode: ProxyMode) {
     let _conn = backend.next_connection(T).await.unwrap();
     recorder
         .wait_for(
-            |e| e.kind == EventKind::ServerConnected && e.detail["server"] == json!("lobby"),
+            |e| e.kind == EventKind::ServerConnected && e.server() == Some("lobby"),
             T,
         )
         .await
@@ -225,7 +224,7 @@ async fn a_server_that_cannot_start_is_a_kick_plugins_can_redirect(mode: ProxyMo
     let _hub_conn = hub.next_connection(T).await.unwrap();
     recorder
         .wait_for(
-            |e| e.kind == EventKind::ServerConnected && e.detail["server"] == json!("hub"),
+            |e| e.kind == EventKind::ServerConnected && e.server() == Some("hub"),
             T,
         )
         .await
@@ -233,12 +232,12 @@ async fn a_server_that_cannot_start_is_a_kick_plugins_can_redirect(mode: ProxyMo
 
     let kicks = recorder.of(EventKind::KickedFromServer);
     assert_eq!(kicks.len(), 1, "{kicks:?}");
-    assert_eq!(kicks[0].detail["server"], json!("lobby"));
-    assert_eq!(kicks[0].detail["cause"], json!("unreachable"));
-    assert_eq!(kicks[0].detail["during_connect"], json!(true));
+    assert_eq!(kicks[0].server(), Some("lobby"));
+    assert_eq!(kicks[0].cause(), "unreachable");
+    assert!(kicks[0].during_connect());
     assert_eq!(
-        kicks[0].detail["reason"],
-        component_value(&Component::text(UNAVAILABLE))
+        kicks[0].kick_reason(),
+        Some(&component_value(&Component::text(UNAVAILABLE)))
     );
     assert_eq!(recorder.count(EventKind::ConnectionRejected), 0);
     assert_eq!(provider.starts(), 1);

@@ -14,7 +14,6 @@ use infrarust_test_harness::{
     ConnectionState, DEFAULT_TIMEOUT, EventKind, FakeBackend, FramedConn, ProtocolVersion,
     Recorded, Recorder, ScriptedPlugin, ServerSpec, TestProxy, text, version_matrix, wire,
 };
-use serde_json::json;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
@@ -89,8 +88,8 @@ async fn a_connected_player_is_kicked_before_plugins_stop(version: ProtocolVersi
     assert_eq!(info.text, SHUTDOWN_MESSAGE, "{info:?}");
     let events = recorder.events();
     let disconnect = disconnect_of(&events, "Steve");
-    assert_eq!(disconnect.detail["cause"], json!("shutdown"));
-    assert_eq!(disconnect.detail["last_server"], json!("lobby"));
+    assert_eq!(disconnect.cause(), "shutdown");
+    assert_eq!(disconnect.last_server(), Some("lobby"));
     let shutdown = position(&events, |e| e.kind == EventKind::ProxyShutdown);
     assert!(disconnect.seq < shutdown, "{events:#?}");
     let seen = disabled_after(&snapshot);
@@ -124,7 +123,7 @@ async fn a_passthrough_player_disconnects_before_proxy_shutdown(version: Protoco
     conn.closed(T).await.unwrap();
     let events = recorder.events();
     let disconnect = disconnect_of(&events, "Steve");
-    assert_eq!(disconnect.detail["cause"], json!("shutdown"));
+    assert_eq!(disconnect.cause(), "shutdown");
     let shutdown = position(&events, |e| e.kind == EventKind::ProxyShutdown);
     assert!(disconnect.seq < shutdown, "{events:#?}");
 }
@@ -295,7 +294,7 @@ async fn a_login_in_progress_gets_no_post_login_after_shutdown_began(version: Pr
     );
     let events = recorder.events();
     let disconnect = disconnect_of(&events, "Steve");
-    assert_eq!(disconnect.detail["cause"], json!("shutdown"));
+    assert_eq!(disconnect.cause(), "shutdown");
 }
 
 version_matrix!(a_login_in_progress_gets_no_post_login_after_shutdown_began; p47 = 47, p764 = 764, p774 = 774);

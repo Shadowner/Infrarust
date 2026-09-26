@@ -267,7 +267,7 @@ async fn switch_between_backends(version: ProtocolVersion) {
 
     let switch = recorder
         .wait_for(
-            |e| e.kind == EventKind::ServerPostConnect && e.detail["server"] == json!("b"),
+            |e| e.kind == EventKind::ServerPostConnect && e.server() == Some("b"),
             T,
         )
         .await
@@ -340,19 +340,19 @@ async fn recorder_sees_basic_lifecycle(version: ProtocolVersion) {
     }
 
     let pre_login = &recorder.of(EventKind::PreLogin)[0];
-    assert_eq!(pre_login.detail["server_domain"], json!("lobby.test"));
-    assert_eq!(pre_login.detail["protocol_version"], json!(version.0));
-    assert_eq!(pre_login.detail["result"], json!("allowed"));
+    assert_eq!(pre_login.server_domain(), Some("lobby.test"));
+    assert_eq!(pre_login.protocol_version(), version.0);
+    assert_eq!(*pre_login.result(), json!("allowed"));
     let pre_connect = &recorder.of(EventKind::ServerPreConnect)[0];
-    assert_eq!(pre_connect.detail["server"], json!("lobby"));
-    assert_eq!(pre_connect.detail["cause"], json!("initial"));
-    assert_eq!(pre_connect.detail["result"], json!("allowed"));
+    assert_eq!(pre_connect.server(), Some("lobby"));
+    assert_eq!(pre_connect.cause(), "initial");
+    assert_eq!(*pre_connect.result(), json!("allowed"));
     let connected = &recorder.of(EventKind::ServerConnected)[0];
     assert_eq!(
         connected.detail,
         json!({ "server": "lobby", "previous_server": null, "current_server": null })
     );
-    assert_eq!(disconnect.detail["last_server"], json!("lobby"));
+    assert_eq!(disconnect.last_server(), Some("lobby"));
 
     let order: Vec<EventKind> = recorder
         .for_username("Steve")
@@ -463,10 +463,7 @@ async fn scripted_plugin_hooks(version: ProtocolVersion) {
         )
         .await
         .unwrap();
-    assert_eq!(
-        pre_login.detail["result"],
-        json!({ "denied": "No Mallory" })
-    );
+    assert_eq!(*pre_login.result(), json!({ "denied": "No Mallory" }));
 
     let session = proxy
         .client(version)
@@ -486,13 +483,13 @@ async fn scripted_plugin_hooks(version: ProtocolVersion) {
     );
     let chat = recorder
         .wait_for(
-            |e| e.kind == EventKind::ChatMessage && e.detail["message"] == "secret",
+            |e| e.kind == EventKind::ChatMessage && e.message() == "secret",
             T,
         )
         .await
         .unwrap();
     assert_eq!(chat.username.as_deref(), Some("Steve"));
-    assert_eq!(chat.detail["result"], json!({ "deny": "hidden" }));
+    assert_eq!(*chat.result(), json!({ "deny": "hidden" }));
 
     proxy.shutdown().await.unwrap();
 }

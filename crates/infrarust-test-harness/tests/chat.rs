@@ -292,7 +292,7 @@ async fn limbo_chat_goes_through_the_event_first(version: ProtocolVersion) {
     let seen: Vec<Value> = recorder
         .of(EventKind::ChatMessage)
         .into_iter()
-        .map(|event| json!([event.detail["message"], event.detail["server"]]))
+        .map(|event| json!([event.message(), event.server()]))
         .collect();
     assert_eq!(
         seen,

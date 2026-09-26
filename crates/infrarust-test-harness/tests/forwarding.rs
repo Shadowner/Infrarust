@@ -8,7 +8,6 @@ use infrarust_test_harness::{
     BackendConn, ClientSession, DEFAULT_TIMEOUT, EventKind, FakeBackend, HarnessError,
     LoginBehavior, ProtocolVersion, Recorded, Recorder, ServerSpec, TestProxy,
 };
-use serde_json::json;
 
 const T: Duration = DEFAULT_TIMEOUT;
 const ROUNDS: usize = 50;
@@ -141,11 +140,7 @@ async fn assert_proxy_let_go(conn: &mut BackendConn) {
 }
 
 fn assert_cause(disconnect: &Recorded, cause: &str, context: &str) {
-    assert_eq!(
-        disconnect.detail["cause"],
-        json!(cause),
-        "{context}: {disconnect:?}"
-    );
+    assert_eq!(disconnect.cause(), cause, "{context}: {disconnect:?}");
 }
 
 async fn a_client_quit_is_reported_as_client_quit(mode: ProxyMode, version: ProtocolVersion) {
@@ -161,7 +156,7 @@ async fn a_client_quit_is_reported_as_client_quit(mode: ProxyMode, version: Prot
 
         let disconnect = pipe.disconnect_of(&username).await;
         assert_cause(&disconnect, "client_quit", &format!("round {round}"));
-        assert_eq!(disconnect.detail["reason"], json!(null));
+        assert_eq!(disconnect.reason(), None);
     }
 
     pipe.proxy.wait_for_connection_count(0, T).await.unwrap();
@@ -183,7 +178,7 @@ async fn a_backend_close_is_reported_as_backend_closed(mode: ProxyMode, version:
 
         let disconnect = pipe.disconnect_of(&username).await;
         assert_cause(&disconnect, "backend_closed", &format!("round {round}"));
-        assert_eq!(disconnect.detail["reason"], json!(null));
+        assert_eq!(disconnect.reason(), None);
     }
 
     pipe.proxy.wait_for_connection_count(0, T).await.unwrap();
@@ -265,7 +260,7 @@ async fn a_kick_is_reported_as_kicked(mode: ProxyMode, version: ProtocolVersion)
 
         let disconnect = pipe.disconnect_of(&username).await;
         assert_cause(&disconnect, "kicked", &format!("round {round}"));
-        assert_eq!(disconnect.detail["reason"], json!("Bye"));
+        assert_eq!(disconnect.reason(), Some("Bye"));
     }
 
     pipe.proxy.wait_for_connection_count(0, T).await.unwrap();

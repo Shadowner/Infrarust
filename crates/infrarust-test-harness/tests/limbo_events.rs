@@ -153,12 +153,12 @@ async fn a_limbo_redirect_names_the_next_server(version: ProtocolVersion) {
         .iter()
         .position(|e| e.kind == EventKind::LimboExit)
         .unwrap();
-    assert_eq!(events[exit].detail["reason"], json!("redirected"));
-    assert_eq!(events[exit].detail["next_server"], json!("game"));
+    assert_eq!(events[exit].reason(), Some("redirected"));
+    assert_eq!(events[exit].next_server(), Some("game"));
     let pre_connect = &events[exit + 1];
     assert_eq!(pre_connect.kind, EventKind::ServerPreConnect, "{events:#?}");
-    assert_eq!(pre_connect.detail["server"], json!("game"));
-    assert_eq!(pre_connect.detail["cause"], json!("limbo_exit"));
+    assert_eq!(pre_connect.server(), Some("game"));
+    assert_eq!(pre_connect.cause(), "limbo_exit");
     assert_eq!(hub.accepted_connections(), 0);
 
     session.quit().await;

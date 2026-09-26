@@ -221,7 +221,7 @@ async fn assert_initial_events(
     for event in recorder.filter(|e| e.is_named(STEVE) && e.player.is_some()) {
         assert_eq!(event.player, Some(player), "{}", event.kind);
     }
-    assert_eq!(disconnect.detail["last_server"], json!("lobby"));
+    assert_eq!(disconnect.last_server(), Some("lobby"));
     assert_eq!(backend.accepted_connections(), 1);
 
     proxy.shutdown().await.unwrap();
@@ -409,7 +409,7 @@ async fn a_refused_backend_login_is_never_connected(version: ProtocolVersion) {
     assert_eq!(recorder.count(EventKind::ServerPreConnect), 1);
     assert_eq!(recorder.count(EventKind::ServerConnected), 0);
     assert_eq!(recorder.count(EventKind::ServerPostConnect), 0);
-    assert_eq!(disconnect.detail["last_server"], json!(null));
+    assert_eq!(disconnect.last_server(), None);
     proxy.shutdown().await.unwrap();
 }
 
@@ -484,10 +484,10 @@ async fn a_refused_switch_keeps_the_player_where_they_are(version: ProtocolVersi
     assert_eq!(session.expect_system_text(T).await.unwrap(), "full");
     let _refused = backend_b.next_connection(T).await.unwrap();
 
-    let to_b = |e: &Recorded| e.detail["server"] == json!("b");
+    let to_b = |e: &Recorded| e.server() == Some("b");
     let pre_connects = recorder.filter(|e| e.kind == EventKind::ServerPreConnect && to_b(e));
     assert_eq!(pre_connects.len(), 1, "{pre_connects:?}");
-    assert_eq!(pre_connects[0].detail["cause"], json!("switch"));
+    assert_eq!(pre_connects[0].cause(), "switch");
     let joined_b = recorder.filter(|e| {
         matches!(
             e.kind,
@@ -859,9 +859,7 @@ async fn server_wake_holds_the_player_until_the_server_is_online() {
     let registry = &proxy.services().connection_registry;
     recorder
         .wait_for(
-            |e| {
-                e.kind == EventKind::ServerStateChange && e.detail["new_state"] == json!("starting")
-            },
+            |e| e.kind == EventKind::ServerStateChange && e.new_state() == "starting",
             T,
         )
         .await
@@ -878,7 +876,7 @@ async fn server_wake_holds_the_player_until_the_server_is_online() {
 
     let pre_connects = recorder.of(EventKind::ServerPreConnect);
     assert_eq!(pre_connects.len(), 1, "{pre_connects:?}");
-    assert_eq!(pre_connects[0].detail["server"], json!("lobby"));
+    assert_eq!(pre_connects[0].server(), Some("lobby"));
     let joined = recorder.of(EventKind::ServerPostConnect);
     assert_eq!(joined.len(), 1, "{joined:?}");
     assert_eq!(

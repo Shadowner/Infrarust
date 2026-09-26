@@ -121,6 +121,14 @@ impl World {
             .map(|event| event.detail)
             .collect()
     }
+
+    fn results(&self) -> Vec<Value> {
+        self.recorder
+            .of(EventKind::CommandExecute)
+            .iter()
+            .map(|event| event.result().clone())
+            .collect()
+    }
 }
 
 fn packets(seen: &[ChatFrame]) -> Vec<ChatPacket> {
@@ -199,11 +207,7 @@ async fn denied_command_is_dropped_acknowledged_and_explained(version: ProtocolV
         "after",
         "the silent denial showed the player a message"
     );
-    let results: Vec<Value> = world
-        .commands()
-        .into_iter()
-        .map(|detail| detail["result"].clone())
-        .collect();
+    let results = world.results();
     assert_eq!(
         results,
         [json!({ "deny": "no blocked" }), json!({ "deny": null })]

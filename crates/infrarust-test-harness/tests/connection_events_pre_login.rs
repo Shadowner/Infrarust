@@ -132,7 +132,7 @@ async fn the_handshake_event_describes_the_connection_before_the_login() {
         .await
         .unwrap();
     assert!(status.json.get("description").is_some(), "{status:?}");
-    let status = handshake_of(&recorder, |e| e.detail["intent"] == json!("status"));
+    let status = handshake_of(&recorder, |e| e.intent() == "status");
     assert_eq!(status["remote_addr"], json!("203.0.113.9:50002"));
     assert_eq!(status["server"], json!("lobby"));
 
@@ -231,9 +231,9 @@ async fn a_denied_handshake_disconnects_the_login_with_the_reason() {
     settle(&proxy).await;
     let rejected = recorder.of(EventKind::ConnectionRejected);
     assert_eq!(rejected.len(), 1, "{:#?}", recorder.events());
-    assert_eq!(rejected[0].detail["reason"], json!("plugin"));
-    assert_eq!(rejected[0].detail["plugin"], json!(GATEKEEPER));
-    assert_eq!(rejected[0].detail["virtual_host"], json!("guarded.test"));
+    assert_eq!(rejected[0].reason(), Some("plugin"));
+    assert_eq!(rejected[0].plugin(), Some(GATEKEEPER));
+    assert_eq!(rejected[0].virtual_host(), Some("guarded.test"));
     assert_eq!(recorder.count(EventKind::PreLogin), 0);
     assert_eq!(backend.accepted_connections(), 0);
 
@@ -262,7 +262,7 @@ async fn a_dropped_handshake_closes_the_connection_without_an_answer() {
     let handshakes = recorder.of(EventKind::ConnectionHandshake);
     assert_eq!(handshakes.len(), 2, "{:#?}", recorder.events());
     for handshake in &handshakes {
-        assert_eq!(handshake.detail["result"], json!("drop_silently"));
+        assert_eq!(*handshake.result(), json!("drop_silently"));
     }
     settle(&proxy).await;
     assert_eq!(recorder.count(EventKind::ConnectionRejected), 2);

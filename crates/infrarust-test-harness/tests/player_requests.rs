@@ -136,15 +136,7 @@ async fn plugin_transfers(version: ProtocolVersion) {
     );
 
     let events = recorder.of(EventKind::PreTransfer);
-    let seen: Vec<(&str, &str)> = events
-        .iter()
-        .map(|e| {
-            (
-                e.detail["host"].as_str().unwrap(),
-                e.detail["origin"].as_str().unwrap(),
-            )
-        })
-        .collect();
+    let seen: Vec<(&str, &str)> = events.iter().map(|e| (e.host(), e.origin())).collect();
     assert_eq!(
         seen,
         [
@@ -212,7 +204,7 @@ async fn backend_transfers_are_intercepted(version: ProtocolVersion) {
     let origins: Vec<String> = recorder
         .of(EventKind::PreTransfer)
         .iter()
-        .map(|e| e.detail["origin"].as_str().unwrap().to_string())
+        .map(|e| e.origin().to_string())
         .collect();
     assert_eq!(origins, ["backend", "backend", "backend"]);
     drop(player);
@@ -605,8 +597,8 @@ async fn answers_given_in_limbo_reach_the_proxy() {
         .wait_for(
             |e| {
                 e.kind == EventKind::PlayerResourcePackStatus
-                    && e.detail["status"] == "successfully_loaded"
-                    && e.detail["origin"] == "proxy"
+                    && e.status() == "successfully_loaded"
+                    && e.origin() == "proxy"
             },
             T,
         )
@@ -683,7 +675,7 @@ async fn a_switch_configuration_phase_keeps_backend_requests(version: ProtocolVe
         .wait_for_kind(EventKind::PreTransfer, T)
         .await
         .unwrap();
-    assert_eq!(transfer.detail["origin"], "backend");
+    assert_eq!(transfer.origin(), "backend");
 
     proxy.shutdown().await.unwrap();
 }
