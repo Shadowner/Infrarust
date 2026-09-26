@@ -62,6 +62,7 @@ pub use crate::limbo::{
 };
 
 // Virtual backend
+#[cfg(feature = "unstable")]
 pub use crate::virtual_backend::{VirtualBackendHandler, VirtualBackendSession};
 
 // Commands

@@ -232,6 +232,8 @@ The filter trait is unchanged. `CodecSessionInit` now carries `remote_addr: Sock
 
 The SDK now exports `PlayerId`, `ServerId`, `PlayerRef`, `GameProfile`, `ServerAddress`, `ServerState`, `ProxyMode`, `ChannelId`, `ClientSettings`, `PacketDirection`, `Capability` and re-exports `Uuid`. `ServerId` converts from `&str` and `String`, so `redirect_to("lobby")` still compiles.
 
+The colours, `Capability` and the data-only enums (`ServerState`, `ProxyMode`, `PacketDirection`, `ChatMode`, `MainHand`, `ParticleStatus`, `HandshakeIntent`, `ConnectCause`, `TransferOrigin`, `LoginStage`, `SessionEndReason`, `BackendState`, `ResourcePackStatus`, `FilterPriority`, `MessagePhase`, `UnknownDomainBehavior`) are the same types as in the native `infrarust-api`: both crates re-export them from `infrarust-plugin-common`. Their SDK paths are unchanged. `Capability::as_str` is gone: use `Capability::to_kebab()` (or `to_string()`, the `Display` impl prints the same kebab-case name), and `"chat-intercept".parse::<Capability>()` works. `FilterPriority` now derives `PartialEq`, `Eq`, `Ord` and `Hash`, and the shared enums are `#[non_exhaustive]`, so a `match` on them needs a wildcard arm.
+
 ## Checklist
 
 1. Bump `infrarust-plugin-sdk` and rebuild for `wasm32-wasip2`.
@@ -245,6 +247,7 @@ The SDK now exports `PlayerId`, `ServerId`, `PlayerRef`, `GameProfile`, `ServerA
 9. Add `#![forbid(unsafe_code)]` to your crate root.
 10. Grant `plugin-messaging` to a plugin that uses plugin channels, and `chat-intercept` to one that listens to commands.
 11. Grant `ban-provider` or `permission-provider`, and select the plugin in `[ban] provider` or `[permissions] provider`, for a plugin that provides bans or permissions.
+12. Replace `Capability::as_str()` with `to_kebab()`.
 
 ## See also
 

@@ -44,7 +44,7 @@
 //! |------|-----------|------------|
 //! | 1 | Event listeners, commands | [`Plugin`](plugin::Plugin), [`EventBus`](event::bus::EventBus) |
 //! | 2 | Limbo handlers (proxy handles protocol) | [`LimboHandler`](limbo::LimboHandler) |
-//! | 3 | Virtual backends (full packet control) — *planned, not yet dispatched by the proxy* | [`VirtualBackendHandler`](virtual_backend::VirtualBackendHandler) |
+//! | 3 | Virtual backends (full packet control) — *planned, behind the `unstable` feature* | `virtual_backend::VirtualBackendHandler` |
 //!
 //! ## Modules
 //!
@@ -57,7 +57,7 @@
 //! - [`permissions`] — Permission nodes, providers and plugin capabilities
 //! - [`services`] — Proxy service traits
 //! - [`limbo`] — Limbo handler system (Tier 2)
-//! - [`virtual_backend`] — Virtual backend system (Tier 3, planned)
+//! - `virtual_backend` — Virtual backend system (Tier 3, planned; `unstable` feature)
 //! - [`command`] — Command system
 //! - [`loader`] — Plugin discovery and loading traits
 //! - [`message`] — Proxy-branded chat message helpers
@@ -83,4 +83,5 @@ pub mod services;
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;
 pub mod types;
+#[cfg(feature = "unstable")]
 pub mod virtual_backend;

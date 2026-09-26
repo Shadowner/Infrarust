@@ -688,6 +688,18 @@ With `"client"`, the proxy uses the UUID from the login start packet when the cl
 
 What to do: if your plugin stored data by the UUIDs of offline players under beta.3 (bans by UUID, economy balances, statistics), either migrate those records to the name-based UUIDs or set `offline_uuid = "client"`. See [Authentication](../../configuration/global#authentication).
 
+## Shared plugin types
+
+**Breaks the build only where `Capability` is matched or `ip_in_range` was reimplemented.**
+
+The types that `infrarust-api` and the WASM guest SDK (`infrarust-plugin-sdk`) used to define twice now live in one dependency-free crate, `infrarust-plugin-common`: the colours (`NamedColor`, `TextColor`, `Decoration`, `IntoTextColor`), `Capability` with its kebab-case table and the capability gate table, the data-only enums (`ServerState`, `ProxyMode`, `PacketDirection`, `UnknownDomainBehavior`, `MessagePhase`, `ChatMode`, `MainHand`, `ParticleStatus`, `HandshakeIntent`, `ConnectCause`, `TransferOrigin`, `LoginStage`, `SessionEndReason`, `BackendState`, `ResourcePackStatus`, `FilterPriority`) and the ban matching helpers (`ip_in_range`, `parse_ip_range`, `username_matches`).
+
+Every path you import today keeps working: `infrarust_api::types::NamedColor`, `infrarust_api::permissions::Capability`, `infrarust_api::services::ServerState` and the rest are `pub use` re-exports of the shared crate, and the prelude is unchanged. `SessionEndReason` is now `Copy`, `BackendState` and `UnknownDomainBehavior` gained `Hash`, and `Capability` implements `Display` and `FromStr` (kebab-case, `UnknownCapability` on error).
+
+The Tier 3 virtual backend API (`infrarust_api::virtual_backend`, `VirtualBackendHandler`, `VirtualBackendSession` and their prelude entries) moved behind the `unstable` feature of `infrarust-api`, off by default, because the proxy does not dispatch to virtual backends yet. `Capability::VirtualBackend` stays, since the WIT contract carries the `virtual-backend` case.
+
+What to do: nothing for most plugins. If you implement `VirtualBackendHandler`, enable `infrarust-api = { features = ["unstable"] }`. If you match on `Capability`, it is `#[non_exhaustive]` from a foreign crate, so keep a wildcard arm.
+
 ## Checklist
 
 - [ ] Bump `infrarust-api` and fix the build.
@@ -712,6 +724,7 @@ What to do: if your plugin stored data by the UUIDs of offline players under bet
 - [ ] Move `[forwarding] bungeecord_channel` to `[plugin_messaging]` and the server files.
 - [ ] Review `[events]`, `[ban]` and `[permissions]` defaults for your deployment.
 - [ ] Decide what to do with data keyed by offline UUIDs, or set `[auth] offline_uuid = "client"`.
+- [ ] Enable the `unstable` feature if you implement `VirtualBackendHandler`.
 
 ## See also
 
