@@ -7,9 +7,9 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::branding::ProxyMessage;
 use infrarust_api::command::{CommandSource, Suggestion};
 use infrarust_api::event::BoxFuture;
-use infrarust_api::message::ProxyMessage;
 use infrarust_api::player::Player;
 
 use super::PlayerSession;

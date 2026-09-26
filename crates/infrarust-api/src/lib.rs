@@ -60,11 +60,12 @@
 //! - `virtual_backend` — Virtual backend system (Tier 3, planned; `unstable` feature)
 //! - [`command`] — Command system
 //! - [`loader`] — Plugin discovery and loading traits
-//! - [`message`] — Proxy-branded chat message helpers
+//! - [`branding`] — Proxy-branded chat message helpers
 //! - [`provider`] — Plugin-provided server config sources
 //! - [`error`] — Error types
 //! - [`prelude`] — Convenience re-exports
 
+pub mod branding;
 pub mod command;
 pub mod error;
 pub mod event;
@@ -72,7 +73,6 @@ pub mod events;
 pub mod filter;
 pub mod limbo;
 pub mod loader;
-pub mod message;
 pub mod messaging;
 pub mod permissions;
 pub mod player;

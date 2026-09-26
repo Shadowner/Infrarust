@@ -1,6 +1,6 @@
+use infrarust_api::branding::ProxyMessage;
 use infrarust_api::command::CommandContext;
 use infrarust_api::event::BoxFuture;
-use infrarust_api::message::ProxyMessage;
 
 use crate::commands::{CommandServices, SubcommandHandler};
 

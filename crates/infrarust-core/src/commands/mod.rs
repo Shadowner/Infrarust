@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use infrarust_api::branding::ProxyMessage;
 use infrarust_api::command::{
     CommandContext, CommandHandler, CommandSource, CommandSpec, SuggestContext, Suggestion,
 };
 use infrarust_api::event::BoxFuture;
-use infrarust_api::message::ProxyMessage;
 use infrarust_api::services::plugin_registry::PluginRegistry;
 
 use crate::permissions::PermissionService;

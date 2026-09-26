@@ -72,7 +72,7 @@ pub use crate::command::{
 };
 
 // Proxy messages
-pub use crate::message::ProxyMessage;
+pub use crate::branding::ProxyMessage;
 
 // Filters
 pub use crate::filter::{

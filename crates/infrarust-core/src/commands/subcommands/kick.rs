@@ -1,6 +1,6 @@
+use infrarust_api::branding::ProxyMessage;
 use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
-use infrarust_api::message::ProxyMessage;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::Component;
 

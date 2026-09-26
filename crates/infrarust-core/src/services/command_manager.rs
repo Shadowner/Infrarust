@@ -3,12 +3,12 @@ use std::sync::{Arc, RwLock};
 
 use tokio::sync::watch;
 
+use infrarust_api::branding::ProxyMessage;
 use infrarust_api::command::{
     CommandContext, CommandError, CommandHandler, CommandInfo, CommandRegistration, CommandSource,
     CommandSpec, SuggestContext, Suggestion, split_label,
 };
 use infrarust_api::event::BoxFuture;
-use infrarust_api::message::ProxyMessage;
 
 use crate::util::sync::{read, write};
 

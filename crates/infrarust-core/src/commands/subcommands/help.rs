@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
+use infrarust_api::branding::ProxyMessage;
 use infrarust_api::command::CommandContext;
-use infrarust_api::message::ProxyMessage;
 
 use crate::commands::{AliasTarget, CommandServices, SubcommandHandler};
 
