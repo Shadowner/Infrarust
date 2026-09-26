@@ -13,7 +13,7 @@ pub mod validation;
 
 // Main re-exports for ergonomics
 pub use domain::DomainIndex;
-pub use error::ConfigError;
+pub use error::{ConfigError, ProxyValidationError, ServerValidationError, WasmValidationError};
 pub use provider::{ConfigChange, ConfigProvider};
 pub use proxy::{ProxyConfig, UnknownDomainBehavior};
 pub use server::ServerConfig;

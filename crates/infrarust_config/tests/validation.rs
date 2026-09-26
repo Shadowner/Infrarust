@@ -1,7 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use infrarust_config::{
-    ForwardingMode, ProxyConfig, ServerConfig, validate_proxy_config, validate_server_config,
+    ConfigError, ForwardingMode, ProxyConfig, ProxyValidationError, ServerConfig,
+    ServerValidationError, WasmValidationError, validate_proxy_config, validate_server_config,
     validate_server_configs, validate_server_forwarding, validate_wasm_config, wasm_warnings,
 };
 
@@ -95,7 +96,18 @@ fn full_mode_is_reserved_and_rejected() {
         proxy_mode = "full"
     "#,
     );
-    let error = validate_server_config(&config).unwrap_err().to_string();
+    let error = validate_server_config(&config).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            ConfigError::Server {
+                reason: ServerValidationError::FullModeReserved,
+                ..
+            }
+        ),
+        "{error}"
+    );
+    let error = error.to_string();
     assert!(error.contains("full"), "{error}");
     assert!(error.contains("not implemented"), "{error}");
 }
@@ -419,8 +431,17 @@ fn test_proxy_ban_check_timeout_defaults_to_five_seconds_and_rejects_zero() {
     );
     assert!(validate_proxy_config(&config).is_ok());
     let config = proxy_from_toml("[ban]\ncheck_timeout = \"0s\"", dir.path());
-    let err = validate_proxy_config(&config).unwrap_err().to_string();
-    assert!(err.contains("ban.check_timeout"), "{err}");
+    let err = validate_proxy_config(&config).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ConfigError::Proxy(ProxyValidationError::ZeroDuration {
+                key: "ban.check_timeout"
+            })
+        ),
+        "{err}"
+    );
+    assert!(err.to_string().contains("ban.check_timeout"), "{err}");
 }
 
 #[test]
@@ -507,8 +528,20 @@ fn test_proxy_invalid_plugin_wasm_override_names_the_plugin() {
         "[plugins.chatty.wasm]\nqueue_capacity = 0\n\n[plugins.quiet.wasm]\nqueue_capacity = 8",
         dir.path(),
     );
-    let err = validate_wasm_config(&config).unwrap_err().to_string();
-    assert!(err.contains("plugins.chatty.wasm.queue_capacity"), "{err}");
+    let err = validate_wasm_config(&config).unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            ConfigError::Wasm(WasmValidationError::QueueCapacityOutOfRange { scope, value: 0 })
+                if scope == "plugins.chatty.wasm"
+        ),
+        "{err}"
+    );
+    assert!(
+        err.to_string()
+            .contains("plugins.chatty.wasm.queue_capacity"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -561,8 +594,21 @@ fn test_bungeecord_channel_needs_an_intercepted_mode() {
             bungeecord_channel = true
         "#
         ));
-        let err = validate_server_config(&config).unwrap_err().to_string();
-        assert!(err.contains("bungeecord_channel"), "{mode}: {err}");
+        let err = validate_server_config(&config).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ConfigError::Server {
+                    id,
+                    reason: ServerValidationError::BungeecordChannelNotIntercepted { .. }
+                } if id == "unknown"
+            ),
+            "{mode}: {err}"
+        );
+        assert!(
+            err.to_string().contains("bungeecord_channel"),
+            "{mode}: {err}"
+        );
     }
     for mode in ["offline", "client_only"] {
         let config = from_toml(&format!(
@@ -674,7 +720,7 @@ fn test_proxy_wasm_mount_guest_paths_are_checked() {
         let err = validate_proxy_config(&config)
             .expect_err(expected)
             .to_string();
-        assert_eq!(err, format!("validation error: {expected}"));
+        assert_eq!(err, expected);
     }
 
     let fine = proxy_from_toml(
@@ -711,7 +757,21 @@ fn velocity_forwarding_on_a_passthrough_server_is_invalid() {
         forwarding_mode = "velocity"
     "#,
     );
-    let error = validate_server_config(&config).unwrap_err().to_string();
+    let error = validate_server_config(&config).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            ConfigError::Server {
+                reason: ServerValidationError::VelocityOnForwardingServer {
+                    mode_source: "its forwarding_mode",
+                    ..
+                },
+                ..
+            }
+        ),
+        "{error}"
+    );
+    let error = error.to_string();
     assert!(error.contains("velocity"), "{error}");
     assert!(error.to_lowercase().contains("passthrough"), "{error}");
 }
@@ -725,10 +785,21 @@ fn a_proxy_wide_velocity_default_is_rejected_for_a_forwarding_server() {
         proxy_mode = "server_only"
     "#,
     );
-    let error = validate_server_forwarding(&config, ForwardingMode::Velocity)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("velocity"), "{error}");
+    let error = validate_server_forwarding(&config, ForwardingMode::Velocity).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            ConfigError::Server {
+                reason: ServerValidationError::VelocityOnForwardingServer {
+                    mode_source: "the proxy-wide [forwarding] mode",
+                    ..
+                },
+                ..
+            }
+        ),
+        "{error}"
+    );
+    assert!(error.to_string().contains("velocity"), "{error}");
     assert!(validate_server_forwarding(&config, ForwardingMode::BungeeCord).is_ok());
 }
 
