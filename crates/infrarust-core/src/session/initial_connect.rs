@@ -13,10 +13,10 @@ use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
 
-use super::auth::AuthResult;
 use super::session_loop::Pending;
 use crate::error::CoreError;
 use crate::forwarding::{ForwardingData, build_handshake_for_backend};
+use crate::handler::intercepted::auth::AuthResult;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::loadbalancer::PendingTicket;
 use crate::middleware::backend_selection::BackendTargets;
@@ -29,13 +29,13 @@ use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
 use crate::session::wake::wake;
 
-pub(super) enum ConnectionMode {
+pub(crate) enum ConnectionMode {
     Backend(BackendBridge),
     Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
     Kicked(Kick),
 }
 
-pub(super) enum InitialMode {
+pub(crate) enum InitialMode {
     Connected {
         mode: Box<ConnectionMode>,
         server_id: infrarust_api::types::ServerId,
@@ -87,7 +87,7 @@ async fn deny_no_limbo_handlers(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn resolve_initial_mode(
+pub(crate) async fn resolve_initial_mode(
     client: &mut ClientBridge,
     player: &Arc<PlayerSession>,
     auth_result: &AuthResult,
@@ -490,7 +490,7 @@ async fn ensure_login_complete(
         return Ok(());
     }
 
-    super::auth::complete_login(
+    crate::session::client_login::complete_login(
         client,
         &auth_result.api_profile,
         version,

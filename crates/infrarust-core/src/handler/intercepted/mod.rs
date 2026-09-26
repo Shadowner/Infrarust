@@ -1,8 +1,6 @@
 //! Unified handler for `ClientOnly` and `Offline` intercepted proxy modes.
 
-mod auth;
-mod initial_connect;
-mod session_loop;
+pub(crate) mod auth;
 
 use std::sync::Arc;
 
@@ -29,8 +27,9 @@ use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::proxy_loop::ProxyLoopOutcome;
 
+use crate::session::initial_connect::{self, InitialMode};
+use crate::session::session_loop;
 use auth::{AuthResult, AuthStrategy};
-use initial_connect::InitialMode;
 
 pub struct InterceptedHandler {
     backend_connector: Arc<BackendConnector>,
@@ -189,7 +188,8 @@ impl InterceptedHandler {
 
         let mut login_completed = false;
         if online_mode {
-            auth::complete_login(&mut client, &profile, version, registry).await?;
+            crate::session::client_login::complete_login(&mut client, &profile, version, registry)
+                .await?;
             login_completed = true;
         }
 

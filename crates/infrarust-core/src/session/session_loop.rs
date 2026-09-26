@@ -50,7 +50,7 @@ struct Route<'a> {
 /// Alternates between Backend (`proxy_loop`) and Limbo (`enter_limbo`),
 /// handling server switches, kicks, and limbo transitions.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn run_session_loop(
+pub(crate) async fn run_session_loop(
     client: &mut ClientBridge,
     initial_mode: ConnectionMode,
     player_id: PlayerId,
@@ -399,27 +399,27 @@ fn limbo_exit(
     }
 }
 
-pub(super) struct Pending {
+pub(crate) struct Pending {
     join: Option<ServerJoin>,
     approved: Option<ServerId>,
 }
 
 impl Pending {
-    pub(super) const fn join(join: ServerJoin) -> Self {
+    pub(crate) const fn join(join: ServerJoin) -> Self {
         Self {
             join: Some(join),
             approved: None,
         }
     }
 
-    pub(super) const fn approved(server: ServerId) -> Self {
+    pub(crate) const fn approved(server: ServerId) -> Self {
         Self {
             join: None,
             approved: Some(server),
         }
     }
 
-    pub(super) const fn nothing() -> Self {
+    pub(crate) const fn nothing() -> Self {
         Self {
             join: None,
             approved: None,
@@ -710,7 +710,7 @@ async fn chat(route: &Route<'_>, client: &mut ClientBridge, message: &Component)
 
 async fn leave_login(route: &Route<'_>, client: &mut ClientBridge) -> Result<(), CoreError> {
     if client.state() == ConnectionState::Login {
-        super::auth::complete_login(
+        crate::session::client_login::complete_login(
             client,
             route.profile,
             route.version,
