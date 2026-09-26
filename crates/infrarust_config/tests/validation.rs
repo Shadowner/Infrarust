@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use infrarust_config::{
-    ProxyConfig, ServerConfig, validate_proxy_config, validate_server_config,
-    validate_server_configs, validate_wasm_config, wasm_warnings,
+    ForwardingMode, ProxyConfig, ServerConfig, validate_proxy_config, validate_server_config,
+    validate_server_configs, validate_server_forwarding, validate_wasm_config, wasm_warnings,
 };
 
 fn from_toml(toml: &str) -> ServerConfig {
@@ -712,4 +712,62 @@ fn test_proxy_wasm_mount_hosts_are_not_checked_by_the_document_validation() {
         validate_proxy_config(&config).is_ok(),
         "a missing host directory fails the plugin load, not the proxy"
     );
+}
+
+#[test]
+fn velocity_forwarding_on_a_passthrough_server_is_invalid() {
+    let config = from_toml(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "passthrough"
+        forwarding_mode = "velocity"
+    "#,
+    );
+    let error = validate_server_config(&config).unwrap_err().to_string();
+    assert!(error.contains("velocity"), "{error}");
+    assert!(error.to_lowercase().contains("passthrough"), "{error}");
+}
+
+#[test]
+fn a_proxy_wide_velocity_default_is_rejected_for_a_forwarding_server() {
+    let config = from_toml(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "server_only"
+    "#,
+    );
+    let error = validate_server_forwarding(&config, ForwardingMode::Velocity)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("velocity"), "{error}");
+    assert!(validate_server_forwarding(&config, ForwardingMode::BungeeCord).is_ok());
+}
+
+#[test]
+fn a_server_override_can_opt_out_of_a_proxy_wide_velocity_default() {
+    let config = from_toml(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "passthrough"
+        forwarding_mode = "none"
+    "#,
+    );
+    assert!(validate_server_forwarding(&config, ForwardingMode::Velocity).is_ok());
+}
+
+#[test]
+fn velocity_forwarding_on_an_intercepted_server_is_valid() {
+    let config = from_toml(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "offline"
+        forwarding_mode = "velocity"
+    "#,
+    );
+    assert!(validate_server_config(&config).is_ok());
+    assert!(validate_server_forwarding(&config, ForwardingMode::Velocity).is_ok());
 }

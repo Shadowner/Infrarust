@@ -8,7 +8,8 @@ use crate::error::ConfigError;
 use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
 use crate::types::{
-    BalanceStrategy, ForwardingConfig, PluginWasmConfig, WasmLimits, WasmRecoveryConfig,
+    BalanceStrategy, ForwardingConfig, ForwardingMode, PluginWasmConfig, WasmLimits,
+    WasmRecoveryConfig,
 };
 
 /// Validates a single server configuration.
@@ -54,6 +55,8 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
         }
     }
 
+    validate_server_forwarding(config, ForwardingMode::None)?;
+
     if config.addresses.is_empty() {
         return Err(ConfigError::NoAddresses { id });
     }
@@ -93,6 +96,40 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
         );
     }
 
+    Ok(())
+}
+
+/// Checks the forwarding mode a server ends up with against its proxy mode.
+///
+/// `default_mode` is the proxy-wide `[forwarding] mode`; a server's own
+/// `forwarding_mode` replaces it. Velocity forwarding is negotiated inside
+/// the login sequence, which a forwarding-mode server (passthrough,
+/// zero_copy, server_only) never parses, so that combination is rejected
+/// instead of being downgraded at connection time.
+///
+/// # Errors
+///
+/// Returns [`ConfigError::Validation`] when a forwarding-mode server resolves
+/// to Velocity forwarding.
+pub fn validate_server_forwarding(
+    config: &ServerConfig,
+    default_mode: ForwardingMode,
+) -> Result<(), ConfigError> {
+    let mode = config.forwarding_mode.as_ref().unwrap_or(&default_mode);
+    if config.proxy_mode.is_forwarding() && *mode == ForwardingMode::Velocity {
+        let source = if config.forwarding_mode.is_some() {
+            "its forwarding_mode"
+        } else {
+            "the proxy-wide [forwarding] mode"
+        };
+        return Err(ConfigError::Validation(format!(
+            "server '{}' uses {:?} mode, where the proxy does not parse the login, but {source} \
+             is velocity: velocity forwarding needs offline or client_only, or set \
+             forwarding_mode = \"none\", \"bungeecord\" or \"bungeeguard\" on the server",
+            config.effective_id(),
+            config.proxy_mode
+        )));
+    }
     Ok(())
 }
 

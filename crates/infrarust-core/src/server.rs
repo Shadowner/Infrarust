@@ -146,6 +146,11 @@ impl ProxyServer {
             Arc::clone(&status_cache),
             Arc::clone(&favicon_cache),
             background.clone(),
+            config
+                .forwarding
+                .as_ref()
+                .map(|forwarding| forwarding.mode.clone())
+                .unwrap_or_default(),
         );
 
         // File provider (always enabled)

@@ -614,15 +614,11 @@ async fn send_initial_packets(
     let handler = services.resolve_forwarding_handler(server_config);
 
     if matches!(handler, ForwardingHandler::Velocity(_)) {
-        tracing::warn!(
-            "Velocity forwarding is configured for server '{}' in passthrough mode. \
-             Velocity requires packet parsing and cannot work with passthrough. \
-             Falling back to BungeeCord legacy forwarding.",
+        return Err(CoreError::Other(format!(
+            "server '{}' resolves to velocity forwarding in a forwarding proxy mode, which \
+             configuration validation rejects",
             server_config.effective_id()
-        );
-        let fallback =
-            ForwardingHandler::Legacy(crate::forwarding::legacy::LegacyForwardingHandler);
-        return send_with_forwarding(backend, handshake, server_config, data, &fallback).await;
+        )));
     }
 
     if handler.modifies_handshake() {

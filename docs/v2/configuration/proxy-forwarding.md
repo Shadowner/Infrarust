@@ -71,6 +71,8 @@ forwarding_mode = "velocity"
 
 Useful for mixed networks, like a Paper lobby with Velocity forwarding alongside a vanilla server with forwarding disabled.
 
+Velocity forwarding is negotiated inside the login sequence, which the forwarding proxy modes (`passthrough`, `zero_copy`, `server_only`) never parse. A server in one of those modes that resolves to `velocity`, from its own `forwarding_mode` or from the proxy-wide `[forwarding] mode`, is rejected when its configuration is loaded. Give it `forwarding_mode = "none"`, `"bungeecord"` or `"bungeeguard"`, or move it to an intercepted mode.
+
 ## Velocity forwarding
 
 Velocity is the recommended forwarding mode. It uses a plugin message channel (`velocity:player_info`) during login, and every message is signed with HMAC-SHA256 to prevent forgery.
