@@ -212,6 +212,13 @@ What to do: rename `new_message` to `message`, wrap `Deny` reasons in `Some`, an
 
 `PreLoginEvent` and `OnlineAuthFailed` are unchanged.
 
+### Server wake and player ids
+
+**Compiles unchanged.** Two behaviours moved:
+
+- A managed server that is asleep is started only once `ServerPreConnectEvent` picked it, after `PreLoginEvent`, authentication and `PlayerChooseInitialServerEvent`. A player refused at login or redirected elsewhere no longer wakes it. A server that cannot start, is stopping or whose provider fails now ends in `KickedFromServerEvent` with the `Unreachable` cause, so a listener can redirect the player or send them to limbo, instead of refusing the login before any event.
+- `PlayerId` values come from a per-connection counter, so they have gaps (status pings use ids too). They were never meant to be read as a count; keep treating them as opaque.
+
 ### New events
 
 | Event | Resulted | What it reports |
@@ -586,7 +593,48 @@ if let Some(codecs) = ctx.codec_filters() {
 
 What to do: handle the `Result` of `register` and `unregister`, and drop manual cleanup of filters in `on_disable`. See [Architecture & Pipeline](./architecture).
 
-<!-- transport-filter: pending -->
+### Transport filters
+
+`TransportFilter` is now a connection gate. In 2.0.0-beta.3 its data hooks were never called, `on_close` was never called, and `on_accept` ran inside the accept loop with an empty `real_ip` and a zero `connection_id`.
+
+| | 2.0.0-beta.3 | Current |
+|-|--------------|---------|
+| `on_client_data`, `on_server_data` | Required, never called | Removed. There is no byte-stream access; use a codec filter or events |
+| `FilterVerdict` | `Continue`, `Modified`, `Reject`, `#[non_exhaustive]` | `Continue`, `Reject`, exhaustive |
+| `TransportContext::bytes_received`, `bytes_sent` | Always 0 | Removed |
+| `on_accept` | Awaited in the accept loop, so a slow filter stalled every new connection | Runs in the connection's own task, after the PROXY protocol header is decoded |
+| `real_ip` | Always `None` | The address from the PROXY protocol header, when enabled |
+| `connection_id` | Always 0 | Non-zero, equal to the player's `PlayerId` for a login |
+| `on_close` | Never called | Called once for every filter that returned `Continue`, in reverse order, however the connection ended; not for the rejecting filter or the ones after it |
+| A panic or a slow `on_accept` | Panic killed the accept loop; no bound | Rejects the connection (fail closed) after `[events] transport_filter_timeout`, with a warning naming the filter and its plugin |
+| Rejection | Not reported | Posts `ConnectionRejectedEvent` with `RejectReason::Plugin { plugin_id }` |
+
+```rust
+// 2.0.0-beta.3
+impl TransportFilter for Gate {
+    fn metadata(&self) -> FilterMetadata { FilterMetadata::new("gate") }
+    fn on_accept<'a>(&'a self, ctx: &'a mut TransportContext) -> BoxFuture<'a, FilterVerdict> {
+        Box::pin(async move { FilterVerdict::Continue })
+    }
+    fn on_client_data<'a>(&'a self, _: &'a mut TransportContext, _: &'a mut BytesMut) -> BoxFuture<'a, FilterVerdict> {
+        Box::pin(async { FilterVerdict::Continue })
+    }
+    fn on_server_data<'a>(&'a self, _: &'a mut TransportContext, _: &'a mut BytesMut) -> BoxFuture<'a, FilterVerdict> {
+        Box::pin(async { FilterVerdict::Continue })
+    }
+}
+
+// current
+impl TransportFilter for Gate {
+    fn metadata(&self) -> FilterMetadata { FilterMetadata::new("gate") }
+    fn on_accept<'a>(&'a self, ctx: &'a mut TransportContext) -> BoxFuture<'a, FilterVerdict> {
+        Box::pin(async move { FilterVerdict::Continue })
+    }
+    fn on_close(&self, ctx: &TransportContext) {}
+}
+```
+
+What to do: delete the two data hooks and any use of the byte counters or `FilterVerdict::Modified`, and move per-connection cleanup into `on_close`, which now runs. See [Architecture & Pipeline](./architecture#layer-1-transportfilter).
 
 ## Plugin messaging
 
@@ -615,9 +663,10 @@ See [Plugin Messaging](./messaging).
 | `[plugin_messaging.bungeecord_permissions]` | | New: which BungeeCord subchannels are allowed |
 | `bungeecord_channel` in a server file | `false` | New: the per-server opt-in for the BungeeCord channel |
 | `[forwarding] bungeecord_channel`, `[forwarding.channel_permissions]` | | Removed: ignored with a warning |
+| `[events] transport_filter_timeout` | `5s` | New: bounds each transport filter's `on_accept`; a timeout rejects the connection |
 | `[auth] offline_uuid` | `"offline"` | New: see [Offline UUIDs](#offline-uuids) |
 
-`[wasm]`, `[plugins.<id>.wasm]`, `[plugins.<id>] deny` and `[plugins.<id>] strict_capabilities` only apply to WASM plugins. Every key is described in [Global Settings](../../configuration/global).
+`[wasm]`, `[plugins.<id>.wasm]` (including `wasm.network` and `wasm.mounts`), `[plugins.<id>] deny` and `[plugins.<id>] strict_capabilities` only apply to WASM plugins. Every key is described in [Global Settings](../../configuration/global).
 
 ## Offline UUIDs
 
