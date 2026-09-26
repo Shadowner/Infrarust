@@ -1,7 +1,8 @@
 use infrarust_api::services::ban_service::BanEntry;
 use serde::Serialize;
 
-use crate::util::{ban_target_type_str, ban_target_value, format_duration, format_system_time};
+use crate::error::ApiError;
+use crate::util::{BanTargetParts, format_duration, format_system_time};
 
 #[derive(Serialize)]
 pub struct BanResponse {
@@ -17,18 +18,19 @@ pub struct BanResponse {
 }
 
 impl BanResponse {
-    pub fn from_entry(entry: &BanEntry) -> Self {
-        Self {
+    pub fn from_entry(entry: &BanEntry) -> Result<Self, ApiError> {
+        let target = BanTargetParts::try_from(&entry.target)?;
+        Ok(Self {
             id: entry.id.clone(),
-            target_type: ban_target_type_str(&entry.target).to_string(),
-            target_value: ban_target_value(&entry.target),
+            target_type: target.kind.to_string(),
+            target_value: target.value,
             reason: entry.reason.clone(),
             expires_at: entry.expires_at.map(format_system_time),
             expires_in: entry.remaining().map(format_duration),
             created_at: format_system_time(entry.created_at),
             source: entry.source.to_string(),
             permanent: entry.is_permanent(),
-        }
+        })
     }
 }
 

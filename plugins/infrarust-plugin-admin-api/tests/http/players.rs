@@ -97,3 +97,10 @@ async fn test_message_text_too_long_returns_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"]["code"], "BAD_REQUEST");
 }
+
+#[tokio::test]
+async fn listing_players_by_an_unknown_mode_is_a_bad_request() {
+    let (status, body) = TestApi::new().get("/api/v1/players?mode=turbo").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "BAD_REQUEST");
+}

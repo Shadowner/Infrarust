@@ -65,3 +65,10 @@ async fn test_delete_ban_not_found() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["error"]["code"], "NOT_FOUND");
 }
+
+#[tokio::test]
+async fn listing_bans_by_an_unknown_target_type_is_a_bad_request() {
+    let (status, body) = TestApi::new().get("/api/v1/bans?target_type=email").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "BAD_REQUEST");
+}

@@ -15,7 +15,7 @@ use crate::response::{
     default_per_page, mutation_ok, ok,
 };
 use crate::state::{ApiEvent, ApiState};
-use crate::util::{ban_target_type_str, ban_target_value, now_iso8601, parse_ban_target};
+use crate::util::{BanTargetKind, BanTargetParts, now_iso8601, parse_ban_target};
 
 #[derive(Debug, Deserialize)]
 pub struct BanListQuery {
@@ -37,15 +37,18 @@ pub async fn list(
     };
     pagination.normalize();
 
+    let target_kind = query
+        .target_type
+        .as_deref()
+        .map(str::parse::<BanTargetKind>)
+        .transpose()?
+        .map(|kind| kind.to_string());
+
     let mut bans = state
         .ban_service
         .list_all()
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to fetch bans: {e}")))?;
-
-    if let Some(ref tt) = query.target_type {
-        bans.retain(|b| ban_target_type_str(&b.target) == tt.as_str());
-    }
 
     if let Some(ref src) = query.source {
         bans.retain(|b| b.source.to_string() == *src);
@@ -53,7 +56,14 @@ pub async fn list(
 
     bans.sort_by_key(|b| std::cmp::Reverse(b.created_at));
 
-    let responses: Vec<BanResponse> = bans.iter().map(BanResponse::from_entry).collect();
+    let mut responses = bans
+        .iter()
+        .map(BanResponse::from_entry)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if let Some(kind) = target_kind {
+        responses.retain(|ban| ban.target_type == kind);
+    }
 
     Ok(Json(pagination.apply(responses)))
 }
@@ -73,7 +83,7 @@ pub async fn check(
     let response = match ban_entry {
         Some(entry) if !entry.is_expired() => BanCheckResponse {
             banned: true,
-            ban: Some(BanResponse::from_entry(&entry)),
+            ban: Some(BanResponse::from_entry(&entry)?),
         },
         _ => BanCheckResponse {
             banned: false,
@@ -120,8 +130,7 @@ pub async fn create(
         "Ban created via Admin API"
     );
 
-    let target_type = ban_target_type_str(&target);
-    let target_value = ban_target_value(&target);
+    let parts = BanTargetParts::try_from(&target)?;
 
     let mut request = BanRequest::new(target).source(web_api());
     request.reason = body.reason.clone();
@@ -133,8 +142,8 @@ pub async fn create(
         .map_err(|e| ApiError::Internal(format!("Failed to create ban: {e}")))?;
 
     let _ = state.event_tx.send(ApiEvent::BanCreated {
-        target_type: target_type.to_string(),
-        target_value,
+        target_type: parts.kind.to_string(),
+        target_value: parts.value,
         reason: body.reason,
         source: "admin_api".to_string(),
         timestamp: now_iso8601(),
@@ -168,9 +177,10 @@ pub async fn delete(
         .map_err(|e| ApiError::Internal(format!("Failed to remove ban: {e}")))?;
 
     if removed.is_some() {
+        let parts = BanTargetParts::try_from(&target)?;
         let _ = state.event_tx.send(ApiEvent::BanRemoved {
-            target_type: ban_target_type_str(&target).to_string(),
-            target_value: ban_target_value(&target),
+            target_type: parts.kind.to_string(),
+            target_value: parts.value,
             timestamp: now_iso8601(),
         });
         Ok(mutation_ok("Ban removed"))

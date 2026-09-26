@@ -622,10 +622,11 @@ fn migrate_legacy_store(data_dir: &Path, dir: &Path) {
             continue;
         }
 
-        let proxy_mode = crate::util::proxy_mode_str(
-            crate::util::parse_proxy_mode(&server.proxy_mode)
-                .unwrap_or(infrarust_api::services::config_service::ProxyMode::Passthrough),
-        );
+        let proxy_mode = server
+            .proxy_mode
+            .parse::<crate::util::ProxyModeName>()
+            .unwrap_or(crate::util::ProxyModeName::Passthrough)
+            .as_str();
         let document = match toml::to_string_pretty(&MigratedServer {
             id: &server.id,
             domains: &server.domains,

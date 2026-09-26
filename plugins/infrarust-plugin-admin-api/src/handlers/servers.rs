@@ -21,7 +21,7 @@ use crate::error::ApiError;
 use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
 use crate::server_dir::{Committed, DocumentId, MAX_ID_LEN, Ownership, to_document_text};
 use crate::state::ApiState;
-use crate::util::{proxy_mode_str, server_state_str};
+use crate::util::{ProxyModeName, server_state_str};
 
 const UNKNOWN_SOURCE: &str = "unknown";
 
@@ -112,31 +112,29 @@ pub async fn list(
         .map(|(id, st)| (id.as_str().to_string(), st))
         .collect();
 
-    let mut servers: Vec<ServerResponse> = configs
-        .iter()
-        .map(|config| {
-            let id_str = config.id.as_str().to_string();
-            let server_state = states.get(&id_str);
-            let player_count = state.player_registry.online_count_on(&config.id);
-            let providers = sources.get(&id_str);
+    let mut servers = Vec::with_capacity(configs.len());
+    for config in &configs {
+        let id_str = config.id.as_str().to_string();
+        let server_state = states.get(&id_str);
+        let player_count = state.player_registry.online_count_on(&config.id);
+        let providers = sources.get(&id_str);
 
-            ServerResponse {
-                source: source_label(providers),
-                editable: is_editable(&state, &id_str, providers),
-                has_server_manager: config.has_server_manager,
-                id: id_str,
-                addresses: config
-                    .addresses
-                    .iter()
-                    .map(|a| format!("{}:{}", a.host, a.port))
-                    .collect(),
-                domains: config.domains.clone(),
-                proxy_mode: proxy_mode_str(config.proxy_mode).to_string(),
-                state: server_state.map(server_state_str).map(String::from),
-                player_count,
-            }
-        })
-        .collect();
+        servers.push(ServerResponse {
+            source: source_label(providers),
+            editable: is_editable(&state, &id_str, providers),
+            has_server_manager: config.has_server_manager,
+            id: id_str,
+            addresses: config
+                .addresses
+                .iter()
+                .map(|a| format!("{}:{}", a.host, a.port))
+                .collect(),
+            domains: config.domains.clone(),
+            proxy_mode: ProxyModeName::try_from(config.proxy_mode)?.to_string(),
+            state: server_state.map(server_state_str).map(String::from),
+            player_count,
+        });
+    }
 
     servers.sort_by(|a, b| a.id.cmp(&b.id));
 
@@ -169,7 +167,7 @@ pub async fn get(
             .map(|a| format!("{}:{}", a.host, a.port))
             .collect(),
         domains: config.domains.clone(),
-        proxy_mode: proxy_mode_str(config.proxy_mode).to_string(),
+        proxy_mode: ProxyModeName::try_from(config.proxy_mode)?.to_string(),
         limbo_handlers: config.limbo_handlers.clone(),
         state: server_state
             .as_ref()

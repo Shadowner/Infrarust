@@ -1,5 +1,7 @@
+use std::fmt;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::{Duration, SystemTime};
 
 use infrarust_api::error::ServiceError;
@@ -11,9 +13,7 @@ use infrarust_api::types::ServerAddress;
 use crate::error::ApiError;
 
 pub fn now_iso8601() -> String {
-    let now = time::OffsetDateTime::now_utc();
-    now.format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| "unknown".to_string())
+    format_system_time(SystemTime::now())
 }
 
 pub fn get_memory_rss() -> Option<u64> {
@@ -72,69 +72,196 @@ pub fn format_duration(d: Duration) -> String {
 }
 
 pub fn format_system_time(time: SystemTime) -> String {
-    let dt = time::OffsetDateTime::from(time);
-    dt.format(&time::format_description::well_known::Rfc3339)
+    time::OffsetDateTime::from(time)
+        .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
-pub fn ban_target_type_str(target: &BanTarget) -> &'static str {
-    match target {
-        BanTarget::Ip(_) => "ip",
-        BanTarget::IpRange(_) => "ip_range",
-        BanTarget::Username(_) => "username",
-        BanTarget::Uuid(_) => "uuid",
-        other => {
-            tracing::warn!(?other, "Unknown BanTarget variant");
-            "unknown"
+#[derive(Debug, thiserror::Error)]
+#[error("unsupported {kind} variant {variant}")]
+pub struct UnsupportedVariant {
+    kind: &'static str,
+    variant: String,
+}
+
+impl From<UnsupportedVariant> for ApiError {
+    fn from(error: UnsupportedVariant) -> Self {
+        tracing::error!(error = %error, "Value outside the API's vocabulary");
+        ApiError::Internal(error.to_string())
+    }
+}
+
+fn expected<T: fmt::Display>(names: &[T]) -> String {
+    names
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BanTargetKind {
+    Ip,
+    IpRange,
+    Username,
+    Uuid,
+}
+
+impl BanTargetKind {
+    pub const ALL: [Self; 4] = [Self::Ip, Self::IpRange, Self::Username, Self::Uuid];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ip => "ip",
+            Self::IpRange => "ip_range",
+            Self::Username => "username",
+            Self::Uuid => "uuid",
+        }
+    }
+
+    pub fn parse_target(self, value: &str) -> Result<BanTarget, ApiError> {
+        match self {
+            Self::Ip => value
+                .parse()
+                .map(BanTarget::Ip)
+                .or_else(|_| value.parse().map(BanTarget::IpRange))
+                .map_err(|_| ApiError::BadRequest(format!("Invalid IP address: {value}"))),
+            Self::IpRange => value
+                .parse()
+                .map(BanTarget::IpRange)
+                .map_err(|_| ApiError::BadRequest(format!("Invalid IP range: {value}"))),
+            Self::Username => Ok(BanTarget::Username(value.to_string())),
+            Self::Uuid => value
+                .parse()
+                .map(BanTarget::Uuid)
+                .map_err(|_| ApiError::BadRequest(format!("Invalid UUID: {value}"))),
         }
     }
 }
 
-pub fn ban_target_value(target: &BanTarget) -> String {
-    match target {
-        BanTarget::Ip(ip) => ip.to_string(),
-        BanTarget::IpRange(net) => net.to_string(),
-        BanTarget::Username(name) => name.clone(),
-        BanTarget::Uuid(uuid) => uuid.to_string(),
-        other => {
-            tracing::warn!(?other, "Unknown BanTarget variant");
-            "unknown".to_string()
-        }
+impl fmt::Display for BanTargetKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for BanTargetKind {
+    type Err = ApiError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.as_str() == s)
+            .ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "Invalid target type '{s}'. Expected: {}",
+                    expected(&Self::ALL)
+                ))
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BanTargetParts {
+    pub kind: BanTargetKind,
+    pub value: String,
+}
+
+impl TryFrom<&BanTarget> for BanTargetParts {
+    type Error = UnsupportedVariant;
+
+    fn try_from(target: &BanTarget) -> Result<Self, Self::Error> {
+        let (kind, value) = match target {
+            BanTarget::Ip(ip) => (BanTargetKind::Ip, ip.to_string()),
+            BanTarget::IpRange(net) => (BanTargetKind::IpRange, net.to_string()),
+            BanTarget::Username(name) => (BanTargetKind::Username, name.clone()),
+            BanTarget::Uuid(uuid) => (BanTargetKind::Uuid, uuid.to_string()),
+            other => {
+                return Err(UnsupportedVariant {
+                    kind: "BanTarget",
+                    variant: format!("{other:?}"),
+                });
+            }
+        };
+        Ok(Self { kind, value })
     }
 }
 
 pub fn parse_ban_target(target_type: &str, value: &str) -> Result<BanTarget, ApiError> {
-    match target_type {
-        "ip" => value
-            .parse()
-            .map(BanTarget::Ip)
-            .or_else(|_| value.parse().map(BanTarget::IpRange))
-            .map_err(|_| ApiError::BadRequest(format!("Invalid IP address: {value}"))),
-        "ip_range" => value
-            .parse()
-            .map(BanTarget::IpRange)
-            .map_err(|_| ApiError::BadRequest(format!("Invalid IP range: {value}"))),
-        "username" => Ok(BanTarget::Username(value.to_string())),
-        "uuid" => value
-            .parse()
-            .map(BanTarget::Uuid)
-            .map_err(|_| ApiError::BadRequest(format!("Invalid UUID: {value}"))),
-        _ => Err(ApiError::BadRequest(format!(
-            "Invalid target type '{target_type}'. Expected: ip, ip_range, username, uuid"
-        ))),
+    target_type.parse::<BanTargetKind>()?.parse_target(value)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProxyModeName {
+    Passthrough,
+    ZeroCopy,
+    ClientOnly,
+    Offline,
+    ServerOnly,
+}
+
+impl ProxyModeName {
+    pub const ALL: [Self; 5] = [
+        Self::Passthrough,
+        Self::ZeroCopy,
+        Self::ClientOnly,
+        Self::Offline,
+        Self::ServerOnly,
+    ];
+
+    const ZERO_COPY_ALIAS: &str = "zerocopy";
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Passthrough => "passthrough",
+            Self::ZeroCopy => "zero_copy",
+            Self::ClientOnly => "client_only",
+            Self::Offline => "offline",
+            Self::ServerOnly => "server_only",
+        }
     }
 }
 
-pub fn parse_proxy_mode(s: &str) -> Result<ProxyMode, ApiError> {
-    match s {
-        "passthrough" => Ok(ProxyMode::Passthrough),
-        "zero_copy" | "zerocopy" => Ok(ProxyMode::ZeroCopy),
-        "client_only" => Ok(ProxyMode::ClientOnly),
-        "offline" => Ok(ProxyMode::Offline),
-        "server_only" => Ok(ProxyMode::ServerOnly),
-        _ => Err(ApiError::BadRequest(format!(
-            "Invalid proxy mode '{s}'. Expected: passthrough, zero_copy, client_only, offline, server_only"
-        ))),
+impl fmt::Display for ProxyModeName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ProxyModeName {
+    type Err = ApiError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == Self::ZERO_COPY_ALIAS {
+            return Ok(Self::ZeroCopy);
+        }
+        Self::ALL
+            .into_iter()
+            .find(|mode| mode.as_str() == s)
+            .ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "Invalid proxy mode '{s}'. Expected: {}",
+                    expected(&Self::ALL)
+                ))
+            })
+    }
+}
+
+impl TryFrom<ProxyMode> for ProxyModeName {
+    type Error = UnsupportedVariant;
+
+    fn try_from(mode: ProxyMode) -> Result<Self, Self::Error> {
+        match mode {
+            ProxyMode::Passthrough => Ok(Self::Passthrough),
+            ProxyMode::ZeroCopy => Ok(Self::ZeroCopy),
+            ProxyMode::ClientOnly => Ok(Self::ClientOnly),
+            ProxyMode::Offline => Ok(Self::Offline),
+            ProxyMode::ServerOnly => Ok(Self::ServerOnly),
+            other => Err(UnsupportedVariant {
+                kind: "ProxyMode",
+                variant: format!("{other:?}"),
+            }),
+        }
     }
 }
 
@@ -148,20 +275,6 @@ pub fn server_state_str(state: &ServerState) -> &'static str {
         ServerState::Crashed => "crashed",
         other => {
             tracing::warn!(?other, "Unknown ServerState variant");
-            "unknown"
-        }
-    }
-}
-
-pub fn proxy_mode_str(mode: ProxyMode) -> &'static str {
-    match mode {
-        ProxyMode::Passthrough => "passthrough",
-        ProxyMode::ZeroCopy => "zero_copy",
-        ProxyMode::ClientOnly => "client_only",
-        ProxyMode::Offline => "offline",
-        ProxyMode::ServerOnly => "server_only",
-        other => {
-            tracing::warn!(?other, "Unknown ProxyMode variant");
             "unknown"
         }
     }
@@ -301,8 +414,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_ban_target_invalid_type() {
-        assert!(parse_ban_target("email", "test@test.com").is_err());
+    fn an_unknown_target_type_is_a_bad_request() {
+        let error = parse_ban_target("email", "test@test.com").unwrap_err();
+        assert!(
+            matches!(error, ApiError::BadRequest(ref m) if m.contains("ip, ip_range, username, uuid"))
+        );
     }
 
     #[test]
@@ -311,8 +427,48 @@ mod tests {
     }
 
     #[test]
-    fn proxy_mode_str_values() {
-        assert_eq!(proxy_mode_str(ProxyMode::Passthrough), "passthrough");
-        assert_eq!(proxy_mode_str(ProxyMode::ClientOnly), "client_only");
+    fn ban_target_kinds_round_trip_through_their_names() {
+        for kind in BanTargetKind::ALL {
+            assert_eq!(kind.to_string().parse::<BanTargetKind>().unwrap(), kind);
+        }
+    }
+
+    #[test]
+    fn ban_target_parts_carry_the_kind_and_the_value() {
+        let parts = BanTargetParts::try_from(&BanTarget::Username("Steve".into())).unwrap();
+        assert_eq!(parts.kind, BanTargetKind::Username);
+        assert_eq!(parts.value, "Steve");
+
+        let range =
+            BanTargetParts::try_from(&BanTarget::IpRange("10.0.0.0/8".parse().unwrap())).unwrap();
+        assert_eq!(range.kind, BanTargetKind::IpRange);
+        assert_eq!(range.value, "10.0.0.0/8");
+    }
+
+    #[test]
+    fn proxy_mode_names_round_trip() {
+        for mode in ProxyModeName::ALL {
+            assert_eq!(mode.to_string().parse::<ProxyModeName>().unwrap(), mode);
+        }
+        assert_eq!(ProxyModeName::Passthrough.as_str(), "passthrough");
+        assert_eq!(ProxyModeName::ClientOnly.as_str(), "client_only");
+        assert_eq!(
+            "zerocopy".parse::<ProxyModeName>().unwrap(),
+            ProxyModeName::ZeroCopy
+        );
+    }
+
+    #[test]
+    fn an_unknown_proxy_mode_is_a_bad_request() {
+        let error = "turbo".parse::<ProxyModeName>().unwrap_err();
+        assert!(matches!(error, ApiError::BadRequest(ref m) if m.contains("passthrough")));
+    }
+
+    #[test]
+    fn proxy_mode_names_follow_the_service_modes() {
+        assert_eq!(
+            ProxyModeName::try_from(ProxyMode::ServerOnly).unwrap(),
+            ProxyModeName::ServerOnly
+        );
     }
 }
