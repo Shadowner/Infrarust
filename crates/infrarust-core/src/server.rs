@@ -33,7 +33,7 @@ use crate::middleware::handshake_parser::HandshakeParserMiddleware;
 use crate::middleware::ip_filter::IpFilterMiddleware;
 use crate::middleware::login_start_parser::LoginStartParserMiddleware;
 use crate::middleware::rate_limiter::RateLimiterMiddleware;
-use crate::middleware::domain_router::DomainRouterMiddleware;
+use crate::middleware::routing_middleware::DomainRouterMiddleware;
 use crate::middleware::telemetry::{ConnectionSpan, TelemetryMiddleware};
 use crate::pipeline::Pipeline;
 use crate::pipeline::admission::{self, Admission};
