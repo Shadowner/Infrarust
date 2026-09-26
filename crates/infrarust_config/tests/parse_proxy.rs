@@ -65,7 +65,7 @@ fn test_parse_proxy_telemetry() {
         .expect("telemetry should be present");
     assert!(!tc.enabled);
     assert_eq!(tc.endpoint.as_deref(), Some("http://localhost:4317"));
-    assert_eq!(tc.protocol, "grpc");
+    assert_eq!(tc.protocol, infrarust_config::OtlpProtocol::Grpc);
     assert_eq!(tc.resource.service_name, "infrarust");
     assert_eq!(tc.resource.service_version, "2.0.0");
 }

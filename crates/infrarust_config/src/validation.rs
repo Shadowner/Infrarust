@@ -231,7 +231,6 @@ pub fn validate_server_configs(configs: &[ServerConfig]) -> Result<(), ConfigErr
 /// Checks:
 /// - `servers_dir` exists on disk
 /// - `connect_timeout`, rate-limit windows and `docker.poll_interval` are non-zero
-/// - `telemetry.protocol` is `"grpc"` or `"http"`
 /// - `web.bind` is a parseable `host:port` and does not collide with `bind`
 /// - `web.api_key` is one [`WebConfig::resolve_api_key`](crate::WebConfig::resolve_api_key) accepts
 ///
@@ -339,15 +338,6 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<(), ConfigError> 
         return Err(ConfigError::Validation(
             "docker.poll_interval must be greater than zero".to_string(),
         ));
-    }
-
-    if let Some(telemetry) = &config.telemetry
-        && !matches!(telemetry.protocol.as_str(), "grpc" | "http")
-    {
-        return Err(ConfigError::Validation(format!(
-            "telemetry.protocol must be \"grpc\" or \"http\" (got '{}')",
-            telemetry.protocol
-        )));
     }
 
     if let Some(web) = &config.web {

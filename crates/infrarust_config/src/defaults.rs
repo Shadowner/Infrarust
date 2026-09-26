@@ -78,10 +78,6 @@ pub fn service_name() -> String {
     "infrarust".to_string()
 }
 
-pub fn telemetry_protocol() -> String {
-    "grpc".to_string()
-}
-
 pub const fn true_val() -> bool {
     true
 }

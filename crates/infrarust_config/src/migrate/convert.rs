@@ -652,7 +652,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
     let telemetry = v1.telemetry.as_ref().map(|t| TelemetryConfig {
         enabled: t.enabled,
         endpoint: t.export_url.clone(),
-        protocol: crate::defaults::telemetry_protocol(),
+        protocol: crate::types::OtlpProtocol::default(),
         metrics: MetricsConfig {
             enabled: t.enable_metrics.unwrap_or(true),
             export_interval: t

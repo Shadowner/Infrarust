@@ -282,22 +282,6 @@ fn test_proxy_zero_docker_poll_interval_is_invalid() {
 }
 
 #[test]
-fn test_proxy_telemetry_protocol_is_checked() {
-    let dir = tempfile::tempdir().unwrap();
-    for (protocol, ok) in [("grpc", true), ("http", true), ("udp", false)] {
-        let config = proxy_from_toml(
-            &format!("[telemetry]\nprotocol = \"{protocol}\""),
-            dir.path(),
-        );
-        assert_eq!(
-            validate_proxy_config(&config).is_ok(),
-            ok,
-            "telemetry.protocol = {protocol}"
-        );
-    }
-}
-
-#[test]
 fn test_proxy_web_bind_is_checked() {
     let dir = tempfile::tempdir().unwrap();
     for (bind, ok) in [
