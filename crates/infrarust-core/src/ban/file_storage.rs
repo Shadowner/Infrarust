@@ -231,7 +231,7 @@ impl FileBanStorage {
             bans,
             audit_log: audit_log.to_vec(),
         };
-        serde_json::to_string_pretty(&data).map_err(|e| CoreError::Other(e.to_string()))
+        Ok(serde_json::to_string_pretty(&data)?)
     }
 
     fn populate(&self, data: BanFileData) {
@@ -356,7 +356,7 @@ impl BanStorage for FileBanStorage {
     fn add_ban(&self, entry: BanEntry) -> StorageFuture<'_, BanEntry> {
         Box::pin(async move {
             let Some(key) = key_of(&entry.target) else {
-                return Err(CoreError::Other(format!(
+                return Err(CoreError::Ban(format!(
                     "unsupported ban target type: {}",
                     entry.target
                 )));
@@ -417,7 +417,7 @@ impl BanStorage for FileBanStorage {
                 match query.cursor.as_deref() {
                     None => None,
                     Some(cursor) => Some(cursor.parse::<u64>().map_err(|_| {
-                        CoreError::Other(format!("invalid ban list cursor: {cursor}"))
+                        CoreError::Ban(format!("invalid ban list cursor: {cursor}"))
                     })?),
                 };
             Ok(self.read().page(after, query.effective_limit()))

@@ -148,7 +148,7 @@ impl ProxyRuntimeBuilder {
         plugin_manager
             .discover_all(&plugins_dir)
             .await
-            .map_err(|e| CoreError::Other(format!("failed to discover plugins: {e}")))?;
+            .map_err(|e| CoreError::Startup(format!("failed to discover plugins: {e}")))?;
 
         let services = server.services();
         let plugin_registry = Arc::new(PluginRegistryImpl::new());
@@ -234,13 +234,13 @@ fn register_server_providers(
         return Ok(());
     }
     let Some(manager) = server.services().server_manager.as_ref() else {
-        return Err(CoreError::Other(
+        return Err(CoreError::Startup(
             "a server provider was given but no server has a [server_manager] section".to_string(),
         ));
     };
     for provider in providers {
         if manager.get_state(&provider.server_id).is_none() {
-            return Err(CoreError::Other(format!(
+            return Err(CoreError::Startup(format!(
                 "a server provider was given for {}, which has no [server_manager] section",
                 provider.server_id
             )));
@@ -421,7 +421,7 @@ impl RunningProxy {
     pub async fn wait(mut self) -> Result<(), CoreError> {
         let result = match (&mut self.serve_task).await {
             Ok(result) => result,
-            Err(e) => Err(CoreError::Other(format!("proxy server task failed: {e}"))),
+            Err(e) => Err(CoreError::Startup(format!("proxy server task failed: {e}"))),
         };
 
         self.server.close_sessions();

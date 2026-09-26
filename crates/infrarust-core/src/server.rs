@@ -649,13 +649,17 @@ impl ProxyServer {
                             .await?;
                     }
                     ProxyMode::Full => {
-                        return Err(CoreError::Other(format!(
-                            "server '{}' is configured with the reserved proxy_mode = \"full\", \
-                             which configuration validation rejects",
-                            ctx.require_extension::<RoutingData>("RoutingData")?
+                        tracing::error!(
+                            server = %ctx
+                                .require_extension::<RoutingData>("RoutingData")?
                                 .server_config
-                                .effective_id()
-                        )));
+                                .effective_id(),
+                            "server configured with the reserved proxy_mode = \"full\", \
+                             which configuration validation rejects"
+                        );
+                        return Err(CoreError::InvalidState(
+                            "reserved proxy_mode = \"full\" reached the session handler",
+                        ));
                     }
                     _ => {
                         self.passthrough_handler

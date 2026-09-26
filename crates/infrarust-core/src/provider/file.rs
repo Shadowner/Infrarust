@@ -141,12 +141,9 @@ fn watch_directory(
                     _ => {}
                 }
             }
-        })
-        .map_err(|e| CoreError::Other(format!("failed to create watcher: {e}")))?;
+        })?;
 
-    watcher
-        .watch(dir, RecursiveMode::NonRecursive)
-        .map_err(|e| CoreError::Other(format!("failed to watch directory: {e}")))?;
+    watcher.watch(dir, RecursiveMode::NonRecursive)?;
 
     Ok(watcher)
 }

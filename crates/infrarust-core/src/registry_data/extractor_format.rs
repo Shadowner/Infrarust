@@ -51,9 +51,7 @@ impl ExtractedRegistryData {
     ///
     /// Layout: `MAGIC (4 bytes) + FORMAT_VERSION (1 byte) + JSON length (4 bytes LE) + JSON bytes`
     pub fn to_binary(&self) -> Result<Vec<u8>, CoreError> {
-        let json = self
-            .to_json()
-            .map_err(|e| CoreError::Other(e.to_string()))?;
+        let json = self.to_json()?;
         let mut buf = Vec::with_capacity(9 + json.len());
         buf.extend_from_slice(MAGIC);
         buf.push(FORMAT_VERSION);
@@ -65,23 +63,22 @@ impl ExtractedRegistryData {
     /// Deserialize from compact binary format.
     pub fn from_binary(data: &[u8]) -> Result<Self, CoreError> {
         if data.len() < 9 {
-            return Err(CoreError::Other("Registry data file too short".into()));
+            return Err(CoreError::RegistryData("file too short".into()));
         }
         if &data[0..4] != MAGIC {
-            return Err(CoreError::Other("Invalid registry data magic".into()));
+            return Err(CoreError::RegistryData("invalid magic".into()));
         }
         let version = data[4];
         if version != FORMAT_VERSION {
-            return Err(CoreError::Other(format!(
-                "Unsupported registry data format version: {version}"
+            return Err(CoreError::RegistryData(format!(
+                "unsupported format version: {version}"
             )));
         }
         let json_len = u32::from_le_bytes([data[5], data[6], data[7], data[8]]) as usize;
         if data.len() < 9 + json_len {
-            return Err(CoreError::Other("Registry data file truncated".into()));
+            return Err(CoreError::RegistryData("file truncated".into()));
         }
-        Self::from_json(&data[9..9 + json_len])
-            .map_err(|e| CoreError::Other(format!("Registry data JSON parse error: {e}")))
+        Ok(Self::from_json(&data[9..9 + json_len])?)
     }
 }
 

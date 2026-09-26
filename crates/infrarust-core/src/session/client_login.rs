@@ -95,8 +95,8 @@ async fn consume_login_acknowledged(
             tracing::debug!("client LoginAcknowledged -> Config");
             Ok(())
         }
-        _ => Err(CoreError::Auth(
-            "expected LoginAcknowledged from client".to_string(),
+        _ => Err(CoreError::Protocol(
+            infrarust_protocol::ProtocolError::invalid("expected LoginAcknowledged from client"),
         )),
     }
 }

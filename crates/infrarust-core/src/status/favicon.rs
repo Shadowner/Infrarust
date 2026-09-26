@@ -22,16 +22,19 @@ const DATA_URI_PREFIX: &str = "data:image/png;base64,";
 /// - File path — read, base64-encoded, and prefixed
 ///
 /// # Errors
-/// Returns `CoreError::Other` if a file path cannot be read.
+/// Returns `CoreError::Io` if a file path cannot be read.
 pub async fn load_favicon(value: &str) -> Result<String, CoreError> {
     if value.starts_with(DATA_URI_PREFIX) {
         return Ok(value.to_string());
     }
 
     if is_file_path(value) {
-        let bytes = tokio::fs::read(value)
-            .await
-            .map_err(|e| CoreError::Other(format!("failed to read favicon file '{value}': {e}")))?;
+        let bytes = tokio::fs::read(value).await.map_err(|e| {
+            std::io::Error::new(
+                e.kind(),
+                format!("failed to read favicon file '{value}': {e}"),
+            )
+        })?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
         return Ok(format!("{DATA_URI_PREFIX}{encoded}"));
     }

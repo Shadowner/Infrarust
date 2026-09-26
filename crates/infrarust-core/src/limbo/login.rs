@@ -35,7 +35,7 @@ const LIMBO_CONFIG_PHASE_TIMEOUT_SECS: u64 = 10;
 ///
 /// # Errors
 ///
-/// Returns [`CoreError::Other`] if no registry data is available for the
+/// Returns [`CoreError::RegistryData`] if no registry data is available for the
 /// client's protocol version, or [`CoreError::ConnectionClosed`] if the
 /// client disconnects.
 pub(crate) async fn complete_config_for_limbo(

@@ -52,8 +52,8 @@ pub(crate) struct EmbeddedRegistryDataProvider;
 impl RegistryDataProvider for EmbeddedRegistryDataProvider {
     fn registry_frames(&self, version: ProtocolVersion) -> Result<Vec<PacketFrame>, CoreError> {
         let data = EMBEDDED_DATA.get(&version.0).ok_or_else(|| {
-            CoreError::Other(format!(
-                "No registry data available for protocol version {} ({}). \
+            CoreError::RegistryData(format!(
+                "no registry data available for protocol version {} ({}). \
                  Either connect a player to a real backend first, \
                  or add embedded registry data for this version.",
                 version.0,
@@ -73,8 +73,8 @@ impl RegistryDataProvider for EmbeddedRegistryDataProvider {
         version: ProtocolVersion,
     ) -> Result<Option<PacketFrame>, CoreError> {
         let data = EMBEDDED_DATA.get(&version.0).ok_or_else(|| {
-            CoreError::Other(format!(
-                "No registry data available for protocol version {} ({}). \
+            CoreError::RegistryData(format!(
+                "no registry data available for protocol version {} ({}). \
                  Either connect a player to a real backend first, \
                  or add embedded registry data for this version.",
                 version.0,

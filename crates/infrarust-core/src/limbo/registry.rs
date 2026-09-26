@@ -232,7 +232,7 @@ impl LimboHandlerRegistry {
             .iter()
             .map(|name| {
                 self.get(name)
-                    .ok_or_else(|| CoreError::Other(format!("limbo handler not found: {name}")))
+                    .ok_or_else(|| CoreError::UnknownLimboHandler(name.clone()))
             })
             .collect()
     }

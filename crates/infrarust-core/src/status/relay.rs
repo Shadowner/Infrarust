@@ -85,7 +85,7 @@ impl StatusRelayClient {
         )
         .await
         .map_err(|_| {
-            CoreError::Other(format!(
+            CoreError::Timeout(format!(
                 "status relay timeout after {:?} for '{}'",
                 self.timeout, server_id
             ))
@@ -166,14 +166,19 @@ pub(crate) async fn status_exchange(
             .as_any()
             .downcast_ref::<CStatusResponse>()
             .map(|p| p.json_response.clone())
-            .ok_or_else(|| CoreError::Other("unexpected packet type for status response".into()))?,
+            .ok_or_else(|| {
+                CoreError::InvalidStatus("unexpected packet type for status response".into())
+            })?,
         DecodedPacket::Opaque { .. } => {
-            return Err(CoreError::Other("received opaque status response".into()));
+            return Err(CoreError::InvalidStatus(
+                "received opaque status response".into(),
+            ));
         }
     };
 
-    let response: ServerPingResponse = serde_json::from_str(&json_response)
-        .map_err(|e| CoreError::Other(format!("invalid status JSON from '{server_id}': {e}")))?;
+    let response: ServerPingResponse = serde_json::from_str(&json_response).map_err(|e| {
+        CoreError::InvalidStatus(format!("invalid status JSON from '{server_id}': {e}"))
+    })?;
 
     let ping_payload = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

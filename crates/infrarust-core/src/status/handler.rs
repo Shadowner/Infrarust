@@ -144,9 +144,7 @@ impl StatusHandler {
             api_version(client_version),
         );
 
-        let json = response
-            .to_json()
-            .map_err(|e| CoreError::Other(format!("failed to serialize status JSON: {e}")))?;
+        let json = response.to_json()?;
         let status_resp = CStatusResponse {
             json_response: json,
         };

@@ -53,8 +53,26 @@ pub enum CoreError {
     #[error("invalid session state: {0}")]
     InvalidState(&'static str),
 
-    #[error("{0}")]
-    Other(String),
+    #[error("invalid status response: {0}")]
+    InvalidStatus(String),
+
+    #[error("serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+
+    #[error("registry data error: {0}")]
+    RegistryData(String),
+
+    #[error("limbo handler not found: {0}")]
+    UnknownLimboHandler(String),
+
+    #[error("file watcher error: {0}")]
+    Watcher(#[from] notify::Error),
+
+    #[error("startup error: {0}")]
+    Startup(String),
+
+    #[error("ban storage error: {0}")]
+    Ban(String),
 }
 
 impl CoreError {

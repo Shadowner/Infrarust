@@ -122,12 +122,14 @@ impl BackendBridge {
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
         if self.state != P::STATE {
-            return Err(CoreError::Auth(format!(
-                "cannot send {} ({}) while the bridge is in {}",
-                P::NAME,
-                P::STATE,
-                self.state
-            )));
+            return Err(CoreError::Protocol(
+                infrarust_protocol::ProtocolError::invalid(format!(
+                    "cannot send {} ({}) while the bridge is in {}",
+                    P::NAME,
+                    P::STATE,
+                    self.state
+                )),
+            ));
         }
 
         let packet_id = packet_id::<P>(registry, self.protocol_version)?;

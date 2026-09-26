@@ -538,11 +538,14 @@ async fn send_initial_packets(
     let handler = services.resolve_forwarding_handler(server_config);
 
     if matches!(handler, ForwardingHandler::Velocity(_)) {
-        return Err(CoreError::Other(format!(
-            "server '{}' resolves to velocity forwarding in a forwarding proxy mode, which \
-             configuration validation rejects",
-            server_config.effective_id()
-        )));
+        tracing::error!(
+            server = %server_config.effective_id(),
+            "server resolves to velocity forwarding in a forwarding proxy mode, which \
+             configuration validation rejects"
+        );
+        return Err(CoreError::InvalidState(
+            "velocity forwarding reached a forwarding proxy mode",
+        ));
     }
 
     if handler.modifies_handshake() {
