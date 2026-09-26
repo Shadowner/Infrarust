@@ -38,10 +38,6 @@ const AWAITED_ORDER: [EventKind; 10] = [
     EventKind::Disconnect,
 ];
 
-fn named(event: &Recorded, username: &str) -> bool {
-    event.username.as_deref() == Some(username)
-}
-
 fn patch_section(
     builder: TestProxyBuilder,
     section: &'static str,
@@ -77,7 +73,10 @@ async fn assert_awaited_order(
 
     session.quit().await;
     let disconnect = recorder
-        .wait_for(|e| e.kind == EventKind::Disconnect && named(e, username), T)
+        .wait_for(
+            |e| e.kind == EventKind::Disconnect && e.is_named(username),
+            T,
+        )
         .await
         .unwrap();
     conn.closed(T).await.unwrap();
@@ -207,7 +206,7 @@ async fn assert_login_denied(proxy: &TestProxy, recorder: &Recorder, version: Pr
     assert_eq!(info.state, ConnectionState::Login, "{info:?}");
     assert_eq!(info.text, "No entry for Mallory", "{info:?}");
     let login = recorder
-        .wait_for(|e| e.kind == EventKind::Login && named(e, "Mallory"), T)
+        .wait_for(|e| e.kind == EventKind::Login && e.is_named("Mallory"), T)
         .await
         .unwrap();
     assert_eq!(
@@ -331,7 +330,10 @@ async fn assert_single_disconnect_after_post_login(
     username: &str,
 ) -> Recorded {
     let disconnect = recorder
-        .wait_for(|e| e.kind == EventKind::Disconnect && named(e, username), T)
+        .wait_for(
+            |e| e.kind == EventKind::Disconnect && e.is_named(username),
+            T,
+        )
         .await
         .unwrap();
     proxy.wait_for_connection_count(0, T).await.unwrap();
@@ -379,7 +381,10 @@ async fn last_server_follows_a_switch(version: ProtocolVersion) {
 
     session.quit().await;
     let disconnect = recorder
-        .wait_for(|e| e.kind == EventKind::Disconnect && named(e, "Steve"), T)
+        .wait_for(
+            |e| e.kind == EventKind::Disconnect && e.is_named("Steve"),
+            T,
+        )
         .await
         .unwrap();
     assert_eq!(disconnect.detail["last_server"], json!("b"));
@@ -707,12 +712,12 @@ async fn real_ip_comes_from_the_proxy_protocol_header(version: ProtocolVersion) 
         .joined()
         .unwrap();
     let pre_login = recorder
-        .wait_for(|e| e.kind == EventKind::PreLogin && named(e, "Steve"), T)
+        .wait_for(|e| e.kind == EventKind::PreLogin && e.is_named("Steve"), T)
         .await
         .unwrap();
     assert_eq!(pre_login.detail["remote_addr"], json!(FORWARDED_SOURCE));
     let post_login = recorder
-        .wait_for(|e| e.kind == EventKind::PostLogin && named(e, "Steve"), T)
+        .wait_for(|e| e.kind == EventKind::PostLogin && e.is_named("Steve"), T)
         .await
         .unwrap();
     assert_eq!(post_login.detail["remote_addr"], json!(FORWARDED_SOURCE));
@@ -737,7 +742,7 @@ async fn post_login_uuid(proxy: &TestProxy, recorder: &Recorder, version: Protoc
         .joined()
         .unwrap();
     let post_login = recorder
-        .wait_for(|e| e.kind == EventKind::PostLogin && named(e, "Steve"), T)
+        .wait_for(|e| e.kind == EventKind::PostLogin && e.is_named("Steve"), T)
         .await
         .unwrap();
     let player = proxy.wait_for_player("Steve", T).await.unwrap();

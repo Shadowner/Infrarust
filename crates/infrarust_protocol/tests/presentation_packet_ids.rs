@@ -2,8 +2,10 @@
 
 use infrarust_protocol::codec::McBufReadExt;
 use infrarust_protocol::packets::Packet;
-use infrarust_protocol::registry::{PacketRegistry, build_default_registry};
+use infrarust_protocol::registry::build_default_registry;
 use infrarust_protocol::version::ProtocolVersion;
+mod common;
+use common::{assert_decodable, assert_ids};
 use infrarust_protocol::{
     CBossBar, CClearTitles, CConfigCookieRequest, CConfigResourcePack, CConfigResourcePackPop,
     CConfigResourcePackPush, CConfigStoreCookie, CConfigTransfer, CCookieRequest,
@@ -1045,36 +1047,6 @@ const C_TITLE_LEGACY: &[(i32, Option<i32>)] = &[
     (775, None),
     (776, None),
 ];
-
-fn assert_ids<P: Packet>(expected: &[(i32, Option<i32>)]) {
-    let registry = build_default_registry();
-    let mismatches: Vec<String> = expected
-        .iter()
-        .filter_map(|&(protocol, id)| {
-            let actual = registry.get_packet_id::<P>(ProtocolVersion(protocol));
-            (actual != id)
-                .then(|| format!("protocol {protocol}: expected {id:02X?}, got {actual:02X?}"))
-        })
-        .collect();
-    assert!(
-        mismatches.is_empty(),
-        "{} id mismatches:\n{}",
-        P::NAME,
-        mismatches.join("\n")
-    );
-}
-
-fn assert_decodable<P: Packet>(registry: &PacketRegistry, expected: &[(i32, Option<i32>)]) {
-    for &(protocol, id) in expected {
-        if let Some(id) = id {
-            assert!(
-                registry.has_decoder(P::STATE, P::DIRECTION, ProtocolVersion(protocol), id),
-                "{} has no decoder on 0x{id:02X} at protocol {protocol}",
-                P::NAME
-            );
-        }
-    }
-}
 
 #[test]
 fn tab_list_header_footer_ids_match_every_protocol() {

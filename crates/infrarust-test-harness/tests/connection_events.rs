@@ -4,14 +4,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use infrarust_api::event::{BoxFuture, EventPriority};
+use infrarust_api::event::EventPriority;
 use infrarust_api::events::connection::{
     PlayerChooseInitialServerEvent, ServerConnectedEvent, ServerPostConnectEvent,
     ServerPreConnectEvent,
 };
-use infrarust_api::limbo::handle::SessionHandle;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
-use infrarust_api::limbo::session::LimboSession;
+use infrarust_api::limbo::handler::HandlerResult;
 use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, ServerId};
@@ -22,12 +20,12 @@ use infrarust_plugin_server_wake::ServerWakePlugin;
 use infrarust_protocol::packets::play::chat::SChatMessage;
 use infrarust_test_harness::versions::{CURRENT, LIMBO};
 use infrarust_test_harness::{
-    ClientSession, DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeServerProvider, FakeSessionServer,
-    LoginBehavior, ProtocolVersion, Recorded, Recorder, ScriptedPlugin, ServerSpec, TestProxy,
-    version_matrix,
+    DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeServerProvider, FakeSessionServer, LoginBehavior,
+    ProtocolVersion, Recorded, Recorder, ScriptedPlugin, ServerSpec, TestProxy, holding_gate,
+    next_hold, version_matrix,
 };
 use serde_json::{Value, json};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 const T: Duration = DEFAULT_TIMEOUT;
@@ -152,10 +150,6 @@ fn seen(sightings: &Sightings) -> Vec<Sighting> {
     sightings.lock().unwrap().clone()
 }
 
-fn named(event: &Recorded, username: &str) -> bool {
-    event.username.as_deref() == Some(username)
-}
-
 fn connection_kinds(recorder: &Recorder) -> Vec<EventKind> {
     recorder
         .for_username(STEVE)
@@ -173,11 +167,6 @@ fn connection_kinds(recorder: &Recorder) -> Vec<EventKind> {
             )
         })
         .collect()
-}
-
-async fn sync(session: &mut ClientSession, player: &dyn Player) {
-    player.send_message(Component::text("sync")).unwrap();
-    assert_eq!(session.expect_system_text(T).await.unwrap(), "sync");
 }
 
 fn network(spec: ServerSpec) -> ServerSpec {
@@ -201,7 +190,7 @@ async fn assert_initial_events(
     let conn = backend.next_connection(T).await.unwrap();
     session.quit().await;
     let disconnect = recorder
-        .wait_for(|e| e.kind == EventKind::Disconnect && named(e, STEVE), T)
+        .wait_for(|e| e.kind == EventKind::Disconnect && e.is_named(STEVE), T)
         .await
         .unwrap();
     conn.closed(T).await.unwrap();
@@ -229,7 +218,7 @@ async fn assert_initial_events(
         ]
     );
     let player = disconnect.player.expect("Disconnect carries the player");
-    for event in recorder.filter(|e| named(e, STEVE) && e.player.is_some()) {
+    for event in recorder.filter(|e| e.is_named(STEVE) && e.player.is_some()) {
         assert_eq!(event.player, Some(player), "{}", event.kind);
     }
     assert_eq!(disconnect.detail["last_server"], json!("lobby"));
@@ -311,7 +300,7 @@ async fn a_switch_carries_the_previous_server(version: ProtocolVersion) {
     session.expect_join(T).await.unwrap();
     let mut conn_b = backend_b.next_connection(T).await.unwrap();
     conn_a.closed(T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
 
     assert_eq!(
         seen(&sightings)[4..],
@@ -368,7 +357,7 @@ async fn a_switch_to_the_current_server_fires_nothing(version: ProtocolVersion) 
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
 
     player.switch_server(ServerId::new("a")).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
 
     for kind in [
         EventKind::ServerPreConnect,
@@ -413,7 +402,7 @@ async fn a_refused_backend_login_is_never_connected(version: ProtocolVersion) {
         .unwrap();
     assert_eq!(info.text, "go away", "{info:?}");
     let disconnect = recorder
-        .wait_for(|e| e.kind == EventKind::Disconnect && named(e, STEVE), T)
+        .wait_for(|e| e.kind == EventKind::Disconnect && e.is_named(STEVE), T)
         .await
         .unwrap();
 
@@ -454,7 +443,7 @@ async fn a_hung_backend_login_is_never_connected(version: ProtocolVersion) {
         .unwrap();
     conn.closed(T).await.unwrap();
     recorder
-        .wait_for(|e| e.kind == EventKind::Disconnect && named(e, STEVE), T)
+        .wait_for(|e| e.kind == EventKind::Disconnect && e.is_named(STEVE), T)
         .await
         .unwrap();
 
@@ -519,37 +508,10 @@ async fn a_refused_switch_keeps_the_player_where_they_are(version: ProtocolVersi
 
 version_matrix!(SWITCH, a_refused_switch_keeps_the_player_where_they_are);
 
-struct Gate {
-    held: mpsc::UnboundedSender<SessionHandle>,
-}
-
-impl LimboHandler for Gate {
-    fn name(&self) -> &str {
-        GATE
-    }
-
-    fn on_player_enter<'a>(
-        &'a self,
-        session: &'a dyn LimboSession,
-    ) -> BoxFuture<'a, HandlerResult> {
-        let _ = self.held.send(session.handle());
-        Box::pin(async { HandlerResult::Hold })
-    }
-}
-
-fn gatekeeper() -> (ScriptedPlugin, mpsc::UnboundedReceiver<SessionHandle>) {
-    let (held, holds) = mpsc::unbounded_channel();
-    let plugin = ScriptedPlugin::new("gatekeeper").on_enable(move |ctx| {
-        ctx.register_limbo_handler(Box::new(Gate { held: held.clone() }))
-            .expect("the limbo handler registers");
-    });
-    (plugin, holds)
-}
-
 async fn a_limbo_gate_on_the_initial_server_connects_once(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let sightings = Sightings::default();
-    let (gate, mut holds) = gatekeeper();
+    let (gate, mut holds) = holding_gate("gatekeeper", GATE);
     let proxy = TestProxy::builder()
         .server(
             ServerSpec::offline("lobby")
@@ -569,10 +531,7 @@ async fn a_limbo_gate_on_the_initial_server_connects_once(version: ProtocolVersi
         .unwrap()
         .joined()
         .unwrap();
-    let handle = tokio::time::timeout(T, holds.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let handle = next_hold(&mut holds, T).await.unwrap().handle;
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
     let lobby = ServerId::new("lobby");
     let registry = &proxy.services().connection_registry;
@@ -584,7 +543,7 @@ async fn a_limbo_gate_on_the_initial_server_connects_once(version: ProtocolVersi
     handle.complete(HandlerResult::Accept);
     let _conn = backend.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
 
     assert_eq!(
         seen(&sightings),
@@ -608,7 +567,7 @@ async fn leaving_an_initial_gate_for_another_server_is_a_limbo_exit(version: Pro
     let hub = FakeBackend::builder().spawn().await.unwrap();
     let game = FakeBackend::builder().spawn().await.unwrap();
     let sightings = Sightings::default();
-    let (gate, mut holds) = gatekeeper();
+    let (gate, mut holds) = holding_gate("gatekeeper", GATE);
     let counters = vec![
         ("hub", hub.accept_counter()),
         ("game", game.accept_counter()),
@@ -634,16 +593,13 @@ async fn leaving_an_initial_gate_for_another_server_is_a_limbo_exit(version: Pro
         .unwrap()
         .joined()
         .unwrap();
-    let handle = tokio::time::timeout(T, holds.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let handle = next_hold(&mut holds, T).await.unwrap().handle;
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
 
     handle.complete(HandlerResult::Redirect(ServerId::new("game")));
     let _conn = game.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
 
     assert_eq!(
         seen(&sightings),
@@ -691,7 +647,7 @@ async fn passthrough_announces_the_initial_connection(version: ProtocolVersion) 
     conn.closed(T).await.unwrap();
     conn.close().await;
     recorder
-        .wait_for(|e| e.kind == EventKind::Disconnect && named(e, STEVE), T)
+        .wait_for(|e| e.kind == EventKind::Disconnect && e.is_named(STEVE), T)
         .await
         .unwrap();
 
@@ -758,13 +714,13 @@ async fn the_admin_api_reports_a_switch_but_not_a_first_join(version: ProtocolVe
         .unwrap();
     let _conn_a = backend_a.next_connection(T).await.unwrap();
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
     assert_eq!(switches(&mut received), Vec::<Value>::new());
 
     player.switch_server(ServerId::new("b")).await.unwrap();
     session.expect_join(T).await.unwrap();
     let _conn_b = backend_b.next_connection(T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
 
     assert_eq!(
         switches(&mut received),
@@ -918,7 +874,7 @@ async fn server_wake_holds_the_player_until_the_server_is_online() {
     provider.boot();
     let _conn = backend.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
 
     let pre_connects = recorder.of(EventKind::ServerPreConnect);
     assert_eq!(pre_connects.len(), 1, "{pre_connects:?}");

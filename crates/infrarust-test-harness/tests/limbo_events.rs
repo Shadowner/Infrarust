@@ -2,62 +2,19 @@
 
 use std::time::Duration;
 
-use infrarust_api::event::{BoxFuture, EventPriority, ResultedEvent};
+use infrarust_api::event::{EventPriority, ResultedEvent};
 use infrarust_api::events::connection::{KickedFromServerEvent, KickedFromServerResult};
-use infrarust_api::limbo::handle::SessionHandle;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
-use infrarust_api::limbo::session::LimboSession;
-use infrarust_api::player::Player;
+use infrarust_api::limbo::handler::HandlerResult;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_test_harness::{
-    ClientSession, DEFAULT_TIMEOUT, EventKind, FakeBackend, ProtocolVersion, Recorded, Recorder,
-    ScriptedPlugin, ServerSpec, TestProxy, version_matrix,
+    DEFAULT_TIMEOUT, EventKind, FakeBackend, ProtocolVersion, Recorded, Recorder, ScriptedPlugin,
+    ServerSpec, TestProxy, holding_gate, next_hold, version_matrix,
 };
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
 
 const T: Duration = DEFAULT_TIMEOUT;
 const STEVE: &str = "Steve";
 const GATE: &str = "gate";
-
-struct Gate {
-    held: mpsc::UnboundedSender<SessionHandle>,
-}
-
-impl LimboHandler for Gate {
-    fn name(&self) -> &str {
-        GATE
-    }
-
-    fn on_player_enter<'a>(
-        &'a self,
-        session: &'a dyn LimboSession,
-    ) -> BoxFuture<'a, HandlerResult> {
-        let _ = self.held.send(session.handle());
-        Box::pin(async { HandlerResult::Hold })
-    }
-}
-
-fn gatekeeper() -> (ScriptedPlugin, mpsc::UnboundedReceiver<SessionHandle>) {
-    let (held, holds) = mpsc::unbounded_channel();
-    let plugin = ScriptedPlugin::new("gatekeeper").on_enable(move |ctx| {
-        ctx.register_limbo_handler(Box::new(Gate { held: held.clone() }))
-            .expect("the limbo handler registers");
-    });
-    (plugin, holds)
-}
-
-async fn next_hold(holds: &mut mpsc::UnboundedReceiver<SessionHandle>) -> SessionHandle {
-    tokio::time::timeout(T, holds.recv())
-        .await
-        .expect("the player must reach the limbo handler")
-        .expect("the limbo handler must stay registered")
-}
-
-async fn sync(session: &mut ClientSession, player: &dyn Player) {
-    player.send_message(Component::text("sync")).unwrap();
-    assert_eq!(session.expect_system_text(T).await.unwrap(), "sync");
-}
 
 fn steve(recorder: &Recorder) -> Vec<Recorded> {
     recorder.filter(|e| e.username.as_deref() == Some(STEVE) && e.player.is_some())
@@ -76,7 +33,7 @@ fn one(events: &[Recorded], kind: EventKind) -> Value {
 async fn an_initial_gate_enters_and_leaves_limbo_before_the_server(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let recorder = Recorder::new();
-    let (gate, mut holds) = gatekeeper();
+    let (gate, mut holds) = holding_gate("gatekeeper", GATE);
     let proxy = TestProxy::builder()
         .server(
             ServerSpec::offline("lobby")
@@ -96,7 +53,7 @@ async fn an_initial_gate_enters_and_leaves_limbo_before_the_server(version: Prot
         .unwrap()
         .joined()
         .unwrap();
-    let handle = next_hold(&mut holds).await;
+    let handle = next_hold(&mut holds, T).await.unwrap().handle;
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
     assert_eq!(recorder.count(EventKind::LimboEnter), 1);
     assert_eq!(recorder.count(EventKind::LimboExit), 0);
@@ -104,7 +61,7 @@ async fn an_initial_gate_enters_and_leaves_limbo_before_the_server(version: Prot
     handle.complete(HandlerResult::Accept);
     let _conn = backend.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
 
     let events = steve(&recorder);
     let from_post_login: Vec<EventKind> = kinds(&events)
@@ -156,7 +113,7 @@ async fn a_limbo_redirect_names_the_next_server(version: ProtocolVersion) {
     let hub = FakeBackend::builder().spawn().await.unwrap();
     let game = FakeBackend::builder().spawn().await.unwrap();
     let recorder = Recorder::new();
-    let (gate, mut holds) = gatekeeper();
+    let (gate, mut holds) = holding_gate("gatekeeper", GATE);
     let proxy = TestProxy::builder()
         .server(
             ServerSpec::offline("hub")
@@ -183,13 +140,13 @@ async fn a_limbo_redirect_names_the_next_server(version: ProtocolVersion) {
         .unwrap()
         .joined()
         .unwrap();
-    let handle = next_hold(&mut holds).await;
+    let handle = next_hold(&mut holds, T).await.unwrap().handle;
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
 
     handle.complete(HandlerResult::Redirect(ServerId::new("game")));
     let _conn = game.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
 
     let events = steve(&recorder);
     let exit = events
@@ -215,7 +172,7 @@ async fn a_kick_to_limbo_then_a_disconnect_exits_before_the_disconnect_event(
 ) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let recorder = Recorder::new();
-    let (gate, mut holds) = gatekeeper();
+    let (gate, mut holds) = holding_gate("gatekeeper", GATE);
     let to_limbo = ScriptedPlugin::new("to_limbo").on::<KickedFromServerEvent>(
         EventPriority::NORMAL,
         |event| {
@@ -242,10 +199,10 @@ async fn a_kick_to_limbo_then_a_disconnect_exits_before_the_disconnect_event(
         .unwrap();
     let mut conn = backend.next_connection(T).await.unwrap();
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
 
     conn.kick_json(r#"{"text":"Crashed"}"#).await.unwrap();
-    let _handle = next_hold(&mut holds).await;
+    let _hold = next_hold(&mut holds, T).await.unwrap();
     player.disconnect(Component::text("Bye from limbo")).await;
 
     let info = session.expect_disconnect(T).await.unwrap();
@@ -296,7 +253,7 @@ version_matrix!(a_kick_to_limbo_then_a_disconnect_exits_before_the_disconnect_ev
 async fn a_shutdown_in_limbo_exits_before_the_disconnect_event() {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let recorder = Recorder::new();
-    let (gate, mut holds) = gatekeeper();
+    let (gate, mut holds) = holding_gate("gatekeeper", GATE);
     let proxy = TestProxy::builder()
         .server(
             ServerSpec::offline("lobby")
@@ -316,7 +273,7 @@ async fn a_shutdown_in_limbo_exits_before_the_disconnect_event() {
         .unwrap()
         .joined()
         .unwrap();
-    let _handle = next_hold(&mut holds).await;
+    let _hold = next_hold(&mut holds, T).await.unwrap();
 
     proxy.shutdown().await.unwrap();
 

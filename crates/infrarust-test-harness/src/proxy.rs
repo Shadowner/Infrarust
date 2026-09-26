@@ -233,6 +233,12 @@ impl TestProxyBuilder {
     }
 
     #[must_use]
+    pub fn offline_pair(self, a: SocketAddr, b: SocketAddr) -> Self {
+        self.server(ServerSpec::offline("a").backend(a).network("main"))
+            .server(ServerSpec::offline("b").backend(b).network("main"))
+    }
+
+    #[must_use]
     pub fn plugin(mut self, plugin: impl Plugin + 'static) -> Self {
         self.plugins.push(Box::new(plugin));
         self

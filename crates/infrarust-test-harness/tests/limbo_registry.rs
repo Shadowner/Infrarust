@@ -3,52 +3,16 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use infrarust_api::event::BoxFuture;
-use infrarust_api::limbo::handle::SessionHandle;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
-use infrarust_api::limbo::session::LimboSession;
+use infrarust_api::limbo::handler::HandlerResult;
 use infrarust_api::limbo::{HANDLER_UNAVAILABLE, LimboHandlerError, LimboHandlerRegistration};
 use infrarust_test_harness::{
     ClientSession, DEFAULT_TIMEOUT, FakeBackend, ProtocolVersion, ScriptedPlugin, ServerSpec,
-    TestProxy,
+    TestProxy, holding_handler, next_hold,
 };
-use tokio::sync::mpsc;
 
 const T: Duration = DEFAULT_TIMEOUT;
 const GATE: &str = "late_gate";
 const VERSION: ProtocolVersion = ProtocolVersion::V1_21;
-
-type Holds = mpsc::UnboundedReceiver<SessionHandle>;
-
-struct Gate {
-    held: mpsc::UnboundedSender<SessionHandle>,
-}
-
-impl LimboHandler for Gate {
-    fn name(&self) -> &str {
-        GATE
-    }
-
-    fn on_player_enter<'a>(
-        &'a self,
-        session: &'a dyn LimboSession,
-    ) -> BoxFuture<'a, HandlerResult> {
-        let _ = self.held.send(session.handle());
-        Box::pin(async { HandlerResult::Hold })
-    }
-}
-
-fn gate() -> (Box<Gate>, Holds) {
-    let (held, holds) = mpsc::unbounded_channel();
-    (Box::new(Gate { held }), holds)
-}
-
-async fn next_hold(holds: &mut Holds) -> SessionHandle {
-    tokio::time::timeout(T, holds.recv())
-        .await
-        .expect("the player must reach the limbo handler")
-        .expect("the limbo handler must stay registered")
-}
 
 async fn gated_proxy(backend: &FakeBackend, plugins: Vec<ScriptedPlugin>) -> TestProxy {
     plugins
@@ -81,13 +45,13 @@ async fn a_handler_registered_after_startup_holds_the_player() {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let proxy = gated_proxy(&backend, vec![ScriptedPlugin::new("late")]).await;
 
-    let (handler, mut holds) = gate();
+    let (handler, mut holds) = holding_handler(GATE);
     let ctx = proxy.plugin_context("late").await.unwrap();
     ctx.register_limbo_handler(handler)
         .expect("the limbo handler registers");
 
     let mut session = join(&proxy, "Steve").await;
-    let handle = next_hold(&mut holds).await;
+    let handle = next_hold(&mut holds, T).await.unwrap().handle;
 
     handle.complete(HandlerResult::Accept);
     let _conn = backend.next_connection(T).await.unwrap();
@@ -98,7 +62,7 @@ async fn a_handler_registered_after_startup_holds_the_player() {
 #[tokio::test]
 async fn disabling_the_plugin_releases_the_players_its_handler_holds() {
     let backend = FakeBackend::builder().spawn().await.unwrap();
-    let (handler, mut holds) = gate();
+    let (handler, mut holds) = holding_handler(GATE);
     let handler = Mutex::new(Some(handler));
     let gatekeeper = ScriptedPlugin::new("gatekeeper").on_enable(move |ctx| {
         let handler = handler.lock().unwrap().take().unwrap();
@@ -108,7 +72,7 @@ async fn disabling_the_plugin_releases_the_players_its_handler_holds() {
     let proxy = gated_proxy(&backend, vec![gatekeeper]).await;
 
     let mut steve = join(&proxy, "Steve").await;
-    next_hold(&mut holds).await;
+    next_hold(&mut holds, T).await.unwrap();
 
     proxy.disable_plugin("gatekeeper").await.unwrap();
 
@@ -129,7 +93,7 @@ async fn disabling_the_plugin_releases_the_players_its_handler_holds() {
 async fn unregistering_through_the_handle_releases_the_held_player() {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let proxy = gated_proxy(&backend, vec![ScriptedPlugin::new("owner")]).await;
-    let (handler, mut holds) = gate();
+    let (handler, mut holds) = holding_handler(GATE);
     let registration: LimboHandlerRegistration = proxy
         .plugin_context("owner")
         .await
@@ -139,7 +103,7 @@ async fn unregistering_through_the_handle_releases_the_held_player() {
     assert_eq!(registration.name(), GATE);
 
     let mut steve = join(&proxy, "Steve").await;
-    next_hold(&mut holds).await;
+    next_hold(&mut holds, T).await.unwrap();
 
     assert!(registration.unregister());
     assert!(!registration.unregister());
@@ -153,14 +117,16 @@ async fn a_second_plugin_cannot_take_a_registered_name() {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let refused: Arc<Mutex<Option<Result<(), LimboHandlerError>>>> = Arc::default();
     let first = ScriptedPlugin::new("first").on_enable(|ctx| {
-        ctx.register_limbo_handler(gate().0)
+        ctx.register_limbo_handler(holding_handler(GATE).0)
             .expect("the first registration wins");
     });
     let slot = Arc::clone(&refused);
     let second = ScriptedPlugin::new("second")
         .after("first")
         .on_enable(move |ctx| {
-            let outcome = ctx.register_limbo_handler(gate().0).map(|_| ());
+            let outcome = ctx
+                .register_limbo_handler(holding_handler(GATE).0)
+                .map(|_| ());
             *slot.lock().unwrap() = Some(outcome);
         });
     let proxy = gated_proxy(&backend, vec![first, second]).await;

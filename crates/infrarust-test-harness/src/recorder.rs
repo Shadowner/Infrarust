@@ -166,6 +166,13 @@ pub struct Recorded {
     pub detail: Value,
 }
 
+impl Recorded {
+    #[must_use]
+    pub fn is_named(&self, username: &str) -> bool {
+        self.username.as_deref() == Some(username)
+    }
+}
+
 #[derive(Debug, Default)]
 struct Log {
     events: Vec<Recorded>,

@@ -119,10 +119,6 @@ macro_rules! family {
     };
 }
 
-fn named(event: &Recorded, username: &str) -> bool {
-    event.username.as_deref() == Some(username)
-}
-
 fn kinds(recorder: &Recorder, username: &str) -> Vec<EventKind> {
     recorder
         .for_username(username)
@@ -134,7 +130,10 @@ fn kinds(recorder: &Recorder, username: &str) -> Vec<EventKind> {
 
 async fn disconnected(recorder: &Recorder, username: &str) -> Recorded {
     recorder
-        .wait_for(|e| e.kind == EventKind::Disconnect && named(e, username), T)
+        .wait_for(
+            |e| e.kind == EventKind::Disconnect && e.is_named(username),
+            T,
+        )
         .await
         .unwrap()
 }

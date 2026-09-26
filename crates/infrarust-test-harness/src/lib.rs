@@ -5,6 +5,7 @@ pub mod client_replies;
 pub mod error;
 pub mod framing;
 pub mod legacy;
+pub mod limbo;
 pub mod managed;
 pub mod plugin_message;
 pub mod proxy;
@@ -30,6 +31,7 @@ pub use legacy::{
     FakeLegacyBackend, LegacyBackendConn, LegacyClient, LegacyHandshake, LegacyLogin, LegacyPing,
     LegacySession,
 };
+pub use limbo::{Hold, Holds, holding_gate, holding_handler, next_hold};
 pub use managed::FakeServerProvider;
 pub use proxy::{ServerSpec, TestProxy, TestProxyBuilder};
 pub use recorder::{EventKind, RECORDER_PLUGIN_ID, Recorded, Recorder, RecordingPlugin};

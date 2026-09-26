@@ -74,16 +74,7 @@ async fn two_servers() -> (FakeBackend, FakeBackend, TestProxy, Recorder) {
     let backend_b = FakeBackend::builder().spawn().await.unwrap();
     let recorder = Recorder::new();
     let proxy = TestProxy::builder()
-        .server(
-            ServerSpec::offline("a")
-                .backend(backend_a.addr())
-                .network("main"),
-        )
-        .server(
-            ServerSpec::offline("b")
-                .backend(backend_b.addr())
-                .network("main"),
-        )
+        .offline_pair(backend_a.addr(), backend_b.addr())
         .plugin(recorder.plugin())
         .start()
         .await

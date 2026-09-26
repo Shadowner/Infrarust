@@ -12,7 +12,7 @@ use infrarust_protocol::packets::play::chat::SChatMessage;
 use infrarust_test_harness::versions::{CURRENT, LIMBO};
 use infrarust_test_harness::{
     ConnectionState, DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeSessionServer, LoginOutcome,
-    ProtocolVersion, Recorded, Recorder, ScriptedPlugin, ServerSpec, TestProxy, version_matrix,
+    ProtocolVersion, Recorder, ScriptedPlugin, ServerSpec, TestProxy, version_matrix,
 };
 use serde_json::json;
 
@@ -133,7 +133,7 @@ async fn client_only_rejected_by_the_session_server() {
     assert_eq!(call.username, "Mallory");
     recorder
         .wait_for(
-            |e| e.kind == EventKind::OnlineAuthFailed && named(e, "Mallory"),
+            |e| e.kind == EventKind::OnlineAuthFailed && e.is_named("Mallory"),
             T,
         )
         .await
@@ -285,10 +285,6 @@ async fn switch_between_backends(version: ProtocolVersion) {
 
 version_matrix!(SWITCH, switch_between_backends);
 
-fn named(event: &Recorded, username: &str) -> bool {
-    event.username.as_deref() == Some(username)
-}
-
 async fn recorder_sees_basic_lifecycle(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let recorder = Recorder::new();
@@ -309,7 +305,7 @@ async fn recorder_sees_basic_lifecycle(version: ProtocolVersion) {
     let conn = backend.next_connection(T).await.unwrap();
 
     let post_login = recorder
-        .wait_for(|e| e.kind == EventKind::PostLogin && named(e, "Steve"), T)
+        .wait_for(|e| e.kind == EventKind::PostLogin && e.is_named("Steve"), T)
         .await
         .unwrap();
     let player = post_login.player.expect("PostLogin carries the player id");
@@ -333,10 +329,10 @@ async fn recorder_sees_basic_lifecycle(version: ProtocolVersion) {
         EventKind::Disconnect,
     ] {
         recorder
-            .wait_for(|e| e.kind == kind && named(e, "Steve"), T)
+            .wait_for(|e| e.kind == kind && e.is_named("Steve"), T)
             .await
             .unwrap();
-        let seen = recorder.filter(|e| e.kind == kind && named(e, "Steve"));
+        let seen = recorder.filter(|e| e.kind == kind && e.is_named("Steve"));
         assert_eq!(seen.len(), 1, "{kind} for Steve: {seen:?}");
         if kind != EventKind::PreLogin {
             assert_eq!(seen[0].player, Some(player), "{kind}");
@@ -461,7 +457,10 @@ async fn scripted_plugin_hooks(version: ProtocolVersion) {
     assert_eq!(denied.state, ConnectionState::Login);
     assert_eq!(denied.text, "No Mallory", "{denied:?}");
     let pre_login = recorder
-        .wait_for(|e| e.kind == EventKind::PreLogin && named(e, "Mallory"), T)
+        .wait_for(
+            |e| e.kind == EventKind::PreLogin && e.is_named("Mallory"),
+            T,
+        )
         .await
         .unwrap();
     assert_eq!(

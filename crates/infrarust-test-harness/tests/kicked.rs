@@ -2,22 +2,19 @@
 
 use std::time::Duration;
 
-use infrarust_api::event::{BoxFuture, EventPriority, ResultedEvent};
+use infrarust_api::event::{EventPriority, ResultedEvent};
 use infrarust_api::events::connection::{KickedFromServerEvent, KickedFromServerResult};
 use infrarust_api::limbo::context::LimboEntryContext;
-use infrarust_api::limbo::handle::SessionHandle;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
-use infrarust_api::limbo::session::LimboSession;
-use infrarust_api::player::Player;
+use infrarust_api::limbo::handler::HandlerResult;
 use infrarust_api::types::{Component, NamedColor, ServerId};
 use infrarust_protocol::packets::play::chat::SChatMessage;
 use infrarust_protocol::packets::play::start_configuration::SAcknowledgeConfiguration;
 use infrarust_test_harness::plugin_message::{self, PluginMessage};
 use infrarust_test_harness::recorder::component_value;
 use infrarust_test_harness::{
-    ClientSession, ConnectionState, DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeSessionServer,
+    ConnectionState, DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeSessionServer, Hold,
     LoginBehavior, PacketFrame, ProtocolVersion, Recorded, Recorder, ScriptedPlugin, ServerSpec,
-    TestProxy, version_matrix, wire,
+    TestProxy, holding_gate, next_hold, version_matrix, wire,
 };
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
@@ -66,10 +63,6 @@ fn text_value(text: &str) -> Value {
     component_value(&Component::text(text))
 }
 
-fn named(event: &Recorded, username: &str) -> bool {
-    event.username.as_deref() == Some(username)
-}
-
 fn network(spec: ServerSpec) -> ServerSpec {
     spec.network("main")
 }
@@ -81,11 +74,6 @@ fn napping(spec: ServerSpec, message: &'static str) -> ServerSpec {
             toml::Value::String(message.into()),
         );
     })
-}
-
-async fn sync(session: &mut ClientSession, player: &dyn Player) {
-    player.send_message(Component::text("sync")).unwrap();
-    assert_eq!(session.expect_system_text(T).await.unwrap(), "sync");
 }
 
 async fn kicked(recorder: &Recorder, server: &str) -> Recorded {
@@ -100,7 +88,7 @@ async fn kicked(recorder: &Recorder, server: &str) -> Recorded {
 
 async fn disconnected(recorder: &Recorder) -> Recorded {
     recorder
-        .wait_for(|e| e.kind == EventKind::Disconnect && named(e, STEVE), T)
+        .wait_for(|e| e.kind == EventKind::Disconnect && e.is_named(STEVE), T)
         .await
         .unwrap()
 }
@@ -110,44 +98,6 @@ fn on_kick(
     decide: impl Fn(&mut KickedFromServerEvent) + Send + Sync + 'static,
 ) -> ScriptedPlugin {
     ScriptedPlugin::new(id).on::<KickedFromServerEvent>(EventPriority::NORMAL, decide)
-}
-
-type Held = mpsc::UnboundedReceiver<(SessionHandle, LimboEntryContext)>;
-
-struct Catch {
-    held: mpsc::UnboundedSender<(SessionHandle, LimboEntryContext)>,
-}
-
-impl LimboHandler for Catch {
-    fn name(&self) -> &str {
-        CATCH
-    }
-
-    fn on_player_enter<'a>(
-        &'a self,
-        session: &'a dyn LimboSession,
-    ) -> BoxFuture<'a, HandlerResult> {
-        let _ = self
-            .held
-            .send((session.handle(), session.entry_context().clone()));
-        Box::pin(async { HandlerResult::Hold })
-    }
-}
-
-fn catcher() -> (ScriptedPlugin, Held) {
-    let (held, holds) = mpsc::unbounded_channel();
-    let plugin = ScriptedPlugin::new("catcher").on_enable(move |ctx| {
-        ctx.register_limbo_handler(Box::new(Catch { held: held.clone() }))
-            .expect("the limbo handler registers");
-    });
-    (plugin, holds)
-}
-
-async fn next_hold(holds: &mut Held) -> (SessionHandle, LimboEntryContext) {
-    tokio::time::timeout(T, holds.recv())
-        .await
-        .expect("the player must reach the limbo handler")
-        .expect("the limbo handler must stay registered")
 }
 
 async fn a_play_kick_reaches_the_client_as_sent(version: ProtocolVersion) {
@@ -235,7 +185,7 @@ async fn a_play_kick_redirect_joins_the_target(version: ProtocolVersion) {
 
     session.expect_join(T).await.unwrap();
     let mut conn_b = backend_b.next_connection(T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
     assert_eq!(player.current_server(), Some(ServerId::new("b")));
 
     let kick = kicked(&recorder, "a").await;
@@ -269,7 +219,7 @@ version_matrix!(TEXT, a_play_kick_redirect_joins_the_target);
 
 async fn a_play_kick_can_park_the_player_in_limbo(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
-    let (catch, mut holds) = catcher();
+    let (catch, mut holds) = holding_gate("catcher", CATCH);
     let to_limbo = on_kick("to_limbo", |e| {
         e.set_result(KickedFromServerResult::SendToLimbo {
             limbo_handlers: vec![CATCH.to_string()],
@@ -295,7 +245,10 @@ async fn a_play_kick_can_park_the_player_in_limbo(version: ProtocolVersion) {
 
     first.kick_json(r#"{"text":"Crashed"}"#).await.unwrap();
 
-    let (handle, context) = next_hold(&mut holds).await;
+    let Hold {
+        handle,
+        entry: context,
+    } = next_hold(&mut holds, T).await.unwrap();
     match context {
         LimboEntryContext::KickedFromServer { server, reason } => {
             assert_eq!(server, ServerId::new("lobby"));
@@ -303,12 +256,12 @@ async fn a_play_kick_can_park_the_player_in_limbo(version: ProtocolVersion) {
         }
         other => panic!("expected a kick context, got {other:?}"),
     }
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
 
     handle.complete(HandlerResult::Accept);
     let _second = backend.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
     assert_eq!(player.current_server(), Some(ServerId::new("lobby")));
 
     session.quit().await;
@@ -529,7 +482,7 @@ version_matrix!(TEXT, an_unreachable_initial_server_shows_its_message);
 
 async fn an_unreachable_initial_server_falls_back_to_its_limbo(version: ProtocolVersion) {
     let recorder = Recorder::new();
-    let (catch, mut holds) = catcher();
+    let (catch, mut holds) = holding_gate("catcher", CATCH);
     let proxy = TestProxy::builder()
         .server(napping(ServerSpec::offline("lobby"), "Lobby is napping").limbo_handlers([CATCH]))
         .plugin(catch)
@@ -546,7 +499,10 @@ async fn an_unreachable_initial_server_falls_back_to_its_limbo(version: Protocol
         .joined()
         .unwrap();
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
-    let (gate, context) = next_hold(&mut holds).await;
+    let Hold {
+        handle: gate,
+        entry: context,
+    } = next_hold(&mut holds, T).await.unwrap();
     assert!(
         matches!(context, LimboEntryContext::InitialConnection { .. }),
         "{context:?}"
@@ -554,7 +510,10 @@ async fn an_unreachable_initial_server_falls_back_to_its_limbo(version: Protocol
 
     gate.complete(HandlerResult::Accept);
 
-    let (parked, context) = next_hold(&mut holds).await;
+    let Hold {
+        handle: parked,
+        entry: context,
+    } = next_hold(&mut holds, T).await.unwrap();
     match context {
         LimboEntryContext::KickedFromServer { server, reason } => {
             assert_eq!(server, ServerId::new("lobby"));
@@ -562,7 +521,7 @@ async fn an_unreachable_initial_server_falls_back_to_its_limbo(version: Protocol
         }
         other => panic!("expected a kick context, got {other:?}"),
     }
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
     let kick = kicked(&recorder, "lobby").await;
     assert_eq!(kick.detail["cause"], json!("unreachable"), "{kick:?}");
     assert_eq!(kick.detail["during_connect"], json!(true), "{kick:?}");
@@ -813,7 +772,7 @@ async fn assert_initial_redirect_joins(
         .unwrap();
     let mut conn_b = backend_b.next_connection(T).await.unwrap();
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
-    sync(&mut session, player.as_ref()).await;
+    session.sync_with(player.as_ref(), T).await.unwrap();
     assert_eq!(player.current_server(), Some(ServerId::new("b")));
 
     let kick = kicked(&recorder, "lobby").await;

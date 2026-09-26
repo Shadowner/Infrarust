@@ -72,8 +72,7 @@ async fn two_servers(
     recorder: &Recorder,
 ) -> TestProxy {
     TestProxy::builder()
-        .server(ServerSpec::offline("a").backend(a.addr()).network("main"))
-        .server(ServerSpec::offline("b").backend(b.addr()).network("main"))
+        .offline_pair(a.addr(), b.addr())
         .plugin(plugin)
         .plugin(recorder.plugin())
         .start()

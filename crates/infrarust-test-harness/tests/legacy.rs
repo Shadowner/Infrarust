@@ -28,10 +28,6 @@ fn backend_ping() -> LegacyPing {
     }
 }
 
-fn named(event: &Recorded, username: &str) -> bool {
-    event.username.as_deref() == Some(username)
-}
-
 async fn legacy_proxy(backend: &FakeLegacyBackend, plugins: Vec<ScriptedPlugin>) -> TestProxy {
     let mut builder =
         TestProxy::builder().server(ServerSpec::passthrough("old").backend(backend.addr()));
@@ -86,7 +82,7 @@ async fn a_legacy_login_is_a_registered_player() {
     conn.closed(T).await.unwrap();
     conn.close().await;
     let disconnect = recorder
-        .wait_for(|e| e.kind == EventKind::Disconnect && named(e, NOTCH), T)
+        .wait_for(|e| e.kind == EventKind::Disconnect && e.is_named(NOTCH), T)
         .await
         .unwrap();
     proxy.wait_for_connection_count(0, T).await.unwrap();
@@ -204,7 +200,7 @@ async fn a_pre_login_denial_reaches_a_legacy_client_as_legacy_text() {
 
     assert_eq!(reason, "\u{a7}cOld clients stay out");
     let pre_login = recorder
-        .wait_for(|e| e.kind == EventKind::PreLogin && named(e, NOTCH), T)
+        .wait_for(|e| e.kind == EventKind::PreLogin && e.is_named(NOTCH), T)
         .await
         .unwrap();
     assert_eq!(

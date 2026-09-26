@@ -2,6 +2,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use infrarust_api::player::Player;
+use infrarust_api::types::Component;
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_core::auth::mojang::minecraft_server_hash;
 use infrarust_protocol::codec::{McBufReadExt, VarInt};
@@ -710,6 +712,21 @@ impl ClientSession {
     pub async fn expect_system_text(&mut self, timeout: Duration) -> HarnessResult<String> {
         let raw = self.expect_system_message(timeout).await?;
         Ok(component_text(&raw, self.version))
+    }
+
+    pub async fn sync_with(&mut self, player: &dyn Player, timeout: Duration) -> HarnessResult<()> {
+        const MARKER: &str = "sync";
+        player
+            .send_message(Component::text(MARKER))
+            .map_err(|error| HarnessError::Unexpected(format!("sync message refused: {error}")))?;
+        let text = self.expect_system_text(timeout).await?;
+        if text == MARKER {
+            Ok(())
+        } else {
+            Err(HarnessError::Unexpected(format!(
+                "expected the sync marker, got {text:?}"
+            )))
+        }
     }
 
     pub async fn expect_disconnect(&mut self, timeout: Duration) -> HarnessResult<DisconnectInfo> {
