@@ -26,14 +26,14 @@ pub fn run(input: &Path, output: &Path, config: Option<&Path>) -> ExitCode {
     println!();
 
     match infrarust_config::migrate::migrate_directory(input, output) {
-        Ok(warnings) => {
-            print_warnings(&warnings, &mut has_errors);
-
-            if let Some(summary) = warnings.iter().find(|w| w.file == "summary") {
-                println!("\n{}", summary.message);
-                if summary.message.starts_with("0 file(s) converted") {
-                    has_errors = true;
-                }
+        Ok(report) => {
+            print_warnings(&report.warnings, &mut has_errors);
+            println!(
+                "\n{} file(s) converted, {} skipped",
+                report.converted, report.skipped
+            );
+            if report.converted == 0 {
+                has_errors = true;
             }
         }
         Err(e) => {
@@ -51,9 +51,6 @@ pub fn run(input: &Path, output: &Path, config: Option<&Path>) -> ExitCode {
 
 fn print_warnings(warnings: &[MigrationWarning], has_errors: &mut bool) {
     for w in warnings {
-        if w.file == "summary" {
-            continue;
-        }
         let prefix = match w.severity {
             MigrationSeverity::Error => {
                 *has_errors = true;

@@ -8,10 +8,17 @@ use super::convert::{
 use super::v1_types::{V1InfrarustConfig, V1ServerConfig};
 use crate::error::ConfigError;
 
+#[derive(Debug, Default)]
+pub struct MigrationReport {
+    pub converted: usize,
+    pub skipped: usize,
+    pub warnings: Vec<MigrationWarning>,
+}
+
 pub fn migrate_directory(
     input_dir: &Path,
     output_dir: &Path,
-) -> Result<Vec<MigrationWarning>, ConfigError> {
+) -> Result<MigrationReport, ConfigError> {
     if !input_dir.is_dir() {
         return Err(ConfigError::Validation(format!(
             "Input directory does not exist: {}",
@@ -27,8 +34,8 @@ pub fn migrate_directory(
     })?;
 
     let mut all_warnings = Vec::new();
-    let mut converted = 0u32;
-    let mut skipped = 0u32;
+    let mut converted = 0usize;
+    let mut skipped = 0usize;
 
     let mut entries = Vec::new();
     for result in std::fs::read_dir(input_dir).map_err(|e| {
@@ -143,13 +150,11 @@ pub fn migrate_directory(
         )));
     }
 
-    all_warnings.push(MigrationWarning {
-        severity: MigrationSeverity::Info,
-        file: "summary".to_string(),
-        message: format!("{converted} file(s) converted, {skipped} skipped"),
-    });
-
-    Ok(all_warnings)
+    Ok(MigrationReport {
+        converted,
+        skipped,
+        warnings: all_warnings,
+    })
 }
 
 pub fn migrate_proxy_config(
@@ -226,7 +231,7 @@ motds:
         )
         .unwrap();
 
-        let warnings = migrate_directory(&input, &output).unwrap();
+        let report = migrate_directory(&input, &output).unwrap();
 
         let out_path = output.join("survival.toml");
         assert!(out_path.exists());
@@ -237,8 +242,29 @@ motds:
         assert!(config.motd.sleeping.is_some());
         assert!(config.motd.online.is_some());
 
-        let summary = warnings.iter().find(|w| w.file == "summary").unwrap();
-        assert!(summary.message.contains("1 file(s) converted"));
+        assert_eq!(report.converted, 1);
+        assert_eq!(report.skipped, 0);
+        assert!(report.warnings.iter().all(|w| w.file != "summary"));
+    }
+
+    #[test]
+    fn test_migrate_counts_skipped_files_next_to_converted_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let input = tmp.path().join("v1");
+        let output = tmp.path().join("v2");
+        fs::create_dir_all(&input).unwrap();
+        fs::write(
+            input.join("lobby.yaml"),
+            "domains:\n  - lobby.example.com\naddresses:\n  - 127.0.0.1:25566\n",
+        )
+        .unwrap();
+        fs::write(input.join("empty.yaml"), "domains: []\naddresses: []\n").unwrap();
+
+        let report = migrate_directory(&input, &output).unwrap();
+        assert_eq!(report.converted, 1);
+        assert_eq!(report.skipped, 1);
+        assert!(report.warnings.iter().any(|w| w.file == "empty.yaml"));
+        assert!(report.warnings.iter().all(|w| w.file != "summary"));
     }
 
     #[test]
@@ -266,8 +292,9 @@ motds:
         let output = tmp.path().join("v2");
         fs::create_dir_all(&input).unwrap();
 
-        let warnings = migrate_directory(&input, &output).unwrap();
-        let summary = warnings.iter().find(|w| w.file == "summary").unwrap();
-        assert!(summary.message.contains("0 file(s) converted"));
+        let report = migrate_directory(&input, &output).unwrap();
+        assert_eq!(report.converted, 0);
+        assert_eq!(report.skipped, 0);
+        assert!(report.warnings.is_empty());
     }
 }
