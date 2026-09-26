@@ -234,16 +234,10 @@ fn encode_1_20_2_up(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::packets::round_trip;
 
-    fn round_trip_version(packet: &CJoinGame, version: ProtocolVersion) -> CJoinGame {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        CJoinGame::decode(&mut buf.as_slice(), version).unwrap()
-    }
-
-    #[test]
-    fn test_join_game_round_trip_modern() {
-        let pkt = CJoinGame {
+    fn modern_fixture() -> CJoinGame {
+        CJoinGame {
             entity_id: 42,
             is_hardcore: true,
             gamemode: 1,
@@ -270,69 +264,34 @@ mod tests {
             death_dimension: None,
             death_position: None,
             raw_payload: None,
-        };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_21);
-        assert_eq!(decoded.entity_id, 42);
-        assert!(decoded.is_hardcore);
-        assert_eq!(decoded.gamemode, 1);
-        assert_eq!(decoded.previous_gamemode, 0);
-        assert_eq!(decoded.max_players, 100);
-        assert_eq!(decoded.view_distance, 16);
-        assert_eq!(decoded.simulation_distance, 12);
-        assert!(decoded.enable_respawn_screen);
-        assert_eq!(decoded.level_names.len(), 2);
-        assert_eq!(decoded.level_name, "minecraft:overworld");
-        assert_eq!(decoded.hashed_seed, 123_456_789);
-        assert_eq!(decoded.portal_cooldown, 20);
-        assert!(decoded.enforces_secure_chat);
-        assert!(decoded.raw_payload.is_none());
+        }
     }
 
     #[test]
-    fn test_join_game_round_trip_1_20_2() {
-        let pkt = CJoinGame {
-            entity_id: 42,
-            is_hardcore: true,
-            gamemode: 1,
-            previous_gamemode: 0,
-            max_players: 100,
-            view_distance: 16,
-            simulation_distance: 12,
-            reduced_debug_info: false,
-            enable_respawn_screen: true,
-            do_limited_crafting: false,
-            level_names: vec![
-                "minecraft:overworld".to_string(),
-                "minecraft:the_nether".to_string(),
-            ],
-            level_name: "minecraft:overworld".to_string(),
-            hashed_seed: 123_456_789,
-            is_debug: false,
-            is_flat: false,
-            dimension: 0,
-            dimension_type: "minecraft:overworld".to_string(),
-            portal_cooldown: 20,
-            sea_level: 63,
-            enforces_secure_chat: true,
-            death_dimension: None,
-            death_position: None,
-            raw_payload: None,
-        };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_20_2);
-        assert_eq!(decoded.entity_id, 42);
-        assert!(decoded.is_hardcore);
-        assert_eq!(decoded.gamemode, 1);
-        assert_eq!(decoded.previous_gamemode, 0);
-        assert_eq!(decoded.max_players, 100);
-        assert_eq!(decoded.view_distance, 16);
-        assert_eq!(decoded.simulation_distance, 12);
-        assert!(decoded.enable_respawn_screen);
-        assert_eq!(decoded.level_names.len(), 2);
-        assert_eq!(decoded.level_name, "minecraft:overworld");
-        assert_eq!(decoded.hashed_seed, 123_456_789);
-        assert_eq!(decoded.portal_cooldown, 20);
-        assert!(!decoded.enforces_secure_chat);
-        assert!(decoded.raw_payload.is_none());
+    fn test_join_game_round_trip_1_20_2_and_up() {
+        for (version, enforces_secure_chat) in [
+            (ProtocolVersion::V1_20_2, false),
+            (ProtocolVersion::V1_21, true),
+        ] {
+            let decoded = round_trip(&modern_fixture(), version);
+            assert_eq!(decoded.entity_id, 42, "{version}");
+            assert!(decoded.is_hardcore, "{version}");
+            assert_eq!(decoded.gamemode, 1, "{version}");
+            assert_eq!(decoded.previous_gamemode, 0, "{version}");
+            assert_eq!(decoded.max_players, 100, "{version}");
+            assert_eq!(decoded.view_distance, 16, "{version}");
+            assert_eq!(decoded.simulation_distance, 12, "{version}");
+            assert!(decoded.enable_respawn_screen, "{version}");
+            assert_eq!(decoded.level_names.len(), 2, "{version}");
+            assert_eq!(decoded.level_name, "minecraft:overworld", "{version}");
+            assert_eq!(decoded.hashed_seed, 123_456_789, "{version}");
+            assert_eq!(decoded.portal_cooldown, 20, "{version}");
+            assert_eq!(
+                decoded.enforces_secure_chat, enforces_secure_chat,
+                "{version}"
+            );
+            assert!(decoded.raw_payload.is_none(), "{version}");
+        }
     }
 
     #[test]
@@ -341,7 +300,7 @@ mod tests {
             entity_id: -12345,
             ..Default::default()
         };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_20_5);
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_20_5);
         assert_eq!(decoded.entity_id, -12345);
     }
 
@@ -371,7 +330,7 @@ mod tests {
             level_name: "minecraft:overworld".to_string(),
             ..Default::default()
         };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_20_5);
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_20_5);
         assert_eq!(
             decoded.death_dimension.as_deref(),
             Some("minecraft:the_nether")
@@ -388,7 +347,7 @@ mod tests {
             level_name: "minecraft:overworld".to_string(),
             ..Default::default()
         };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_21_2);
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_21_2);
         assert_eq!(decoded.sea_level, 128);
     }
 

@@ -165,12 +165,7 @@ fn encode_1_20_2_up(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-
-    fn round_trip_version(packet: &CRespawn, version: ProtocolVersion) -> CRespawn {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        CRespawn::decode(&mut buf.as_slice(), version).unwrap()
-    }
+    use crate::packets::round_trip;
 
     #[test]
     fn test_respawn_round_trip() {
@@ -190,7 +185,7 @@ mod tests {
             sea_level: 63,
             raw_payload: None,
         };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_21);
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
         assert_eq!(decoded.dimension, 1);
         assert_eq!(decoded.level_name, "minecraft:the_nether");
         assert_eq!(decoded.hashed_seed, 987_654_321);
@@ -217,7 +212,7 @@ mod tests {
             sea_level: 63,
             raw_payload: None,
         };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_20_5);
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_20_5);
         assert_eq!(
             decoded.death_dimension.as_deref(),
             Some("minecraft:overworld")
