@@ -21,7 +21,6 @@ use infrarust_api::event::{
     BoxFuture, ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection,
     PacketFilter, ResultedEvent,
 };
-use infrarust_api::events::named::NamedEvent;
 use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_config::EventsConfig;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -173,30 +172,26 @@ impl EventBusImpl {
         E: ResultedEvent,
         E::Result: Clone + PartialEq,
     {
-        let snapshot = {
-            let map = read(&self.handlers);
-            map.get(&TypeId::of::<E>()).cloned()
-        };
+        let handlers = snapshot(&self.handlers, &TypeId::of::<E>());
         let mut decided_by = None;
-        if let Some(handlers) = snapshot {
-            let mut clock = Instant::now();
-            for entry in handlers.iter() {
-                let before = event.result().clone();
-                clock = self
-                    .dispatch_one(
-                        entry,
-                        &mut event,
-                        type_name::<E>(),
-                        &self.core_owner,
-                        self.config.handler_timeout,
-                        clock,
-                    )
-                    .await;
-                if *event.result() != before {
+        let mut last = event.result().clone();
+        self.run_handlers(
+            handlers,
+            &mut event,
+            type_name::<E>(),
+            &self.core_owner,
+            self.config.handler_timeout,
+            |entry, event| {
+                let Some(event) = event.downcast_ref::<E>() else {
+                    return;
+                };
+                if *event.result() != last {
                     decided_by = Some(Arc::clone(&entry.owner));
+                    last = event.result().clone();
                 }
-            }
-        }
+            },
+        )
+        .await;
         (event, decided_by)
     }
 
@@ -260,16 +255,6 @@ impl EventBusImpl {
             .is_some_and(|entries| !entries.is_empty())
     }
 
-    async fn dispatch_posted(self: Arc<Self>, mut posted: PostedEvent) {
-        self.dispatch(
-            posted.type_id,
-            posted.event_type,
-            &mut *posted.event,
-            &self.core_owner,
-        )
-        .await;
-    }
-
     pub(crate) async fn fire_from(
         &self,
         fired_by: &Arc<str>,
@@ -286,9 +271,6 @@ impl EventBusImpl {
             );
             return Err(FireError::Reserved);
         }
-        if let Some(named) = event.downcast_mut::<NamedEvent>() {
-            named.source_plugin = fired_by.to_string();
-        }
         self.dispatch(type_id, event_type, event, fired_by).await;
         Ok(())
     }
@@ -300,25 +282,36 @@ impl EventBusImpl {
         event: &mut (dyn Any + Send),
         fired_by: &Arc<str>,
     ) {
-        let snapshot = {
-            let map = read(&self.handlers);
-            map.get(&type_id).cloned()
-        };
+        let handlers = snapshot(&self.handlers, &type_id);
+        self.run_handlers(
+            handlers,
+            event,
+            event_type,
+            fired_by,
+            self.config.handler_timeout,
+            |_, _| {},
+        )
+        .await;
+    }
 
-        if let Some(handlers) = snapshot {
-            let mut clock = Instant::now();
-            for entry in handlers.iter() {
-                clock = self
-                    .dispatch_one(
-                        entry,
-                        &mut *event,
-                        event_type,
-                        fired_by,
-                        self.config.handler_timeout,
-                        clock,
-                    )
-                    .await;
-            }
+    async fn run_handlers(
+        &self,
+        handlers: Option<Arc<Vec<HandlerEntry>>>,
+        event: &mut (dyn Any + Send),
+        event_type: &'static str,
+        fired_by: &Arc<str>,
+        timeout: Duration,
+        mut after_each: impl FnMut(&HandlerEntry, &(dyn Any + Send)),
+    ) {
+        let Some(handlers) = handlers else {
+            return;
+        };
+        let mut clock = Instant::now();
+        for entry in handlers.iter() {
+            clock = self
+                .dispatch_one(entry, &mut *event, event_type, fired_by, timeout, clock)
+                .await;
+            after_each(entry, &*event);
         }
     }
 
@@ -374,26 +367,16 @@ impl EventBusImpl {
             state,
             direction,
         };
-        let snapshot = {
-            let map = read(&self.packet_handlers);
-            map.get(&key).cloned()
-        };
-
-        if let Some(handlers) = snapshot {
-            let mut clock = Instant::now();
-            for entry in handlers.iter() {
-                clock = self
-                    .dispatch_one(
-                        entry,
-                        &mut *event,
-                        type_name::<RawPacketEvent>(),
-                        &self.core_owner,
-                        self.config.packet_handler_timeout,
-                        clock,
-                    )
-                    .await;
-            }
-        }
+        let handlers = snapshot(&self.packet_handlers, &key);
+        self.run_handlers(
+            handlers,
+            event,
+            type_name::<RawPacketEvent>(),
+            &self.core_owner,
+            self.config.packet_handler_timeout,
+            |_, _| {},
+        )
+        .await;
     }
 
     async fn dispatch_one(
@@ -670,17 +653,24 @@ async fn run_dispatcher(bus: Weak<EventBusImpl>, mut queue: mpsc::UnboundedRecei
                 let Some(live) = bus.upgrade() else {
                     return;
                 };
-                let event = short_type_name(posted.event_type);
-                if let Err(error) = tokio::spawn(live.dispatch_posted(posted)).await {
-                    tracing::error!(
-                        event,
-                        error = %error,
-                        "dispatching a posted event failed; the queue continues with the next event"
-                    );
-                }
+                let mut posted = posted;
+                live.dispatch(
+                    posted.type_id,
+                    posted.event_type,
+                    &mut *posted.event,
+                    &live.core_owner,
+                )
+                .await;
             }
         }
     }
+}
+
+fn snapshot<K: Eq + std::hash::Hash>(
+    map: &RwLock<HashMap<K, Arc<Vec<HandlerEntry>>>>,
+    key: &K,
+) -> Option<Arc<Vec<HandlerEntry>>> {
+    read(map).get(key).cloned()
 }
 
 fn remove_handler<K: Copy + Eq + std::hash::Hash>(
@@ -775,6 +765,40 @@ mod tests {
             .expect("flush must not wait for a dispatcher that never started");
 
         assert!(seen.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn run_handlers_reports_each_handler_once_in_priority_order() {
+        let bus = EventBusImpl::new();
+        let last = bus.subscribe_erased(
+            TypeId::of::<TestEvent>(),
+            EventPriority::LAST,
+            noop_handler(),
+        );
+        let first = bus.subscribe_erased(
+            TypeId::of::<TestEvent>(),
+            EventPriority::FIRST,
+            noop_handler(),
+        );
+        let normal = bus.subscribe_erased(
+            TypeId::of::<TestEvent>(),
+            EventPriority::NORMAL,
+            noop_handler(),
+        );
+
+        let mut seen = Vec::new();
+        let handlers = snapshot(&bus.handlers, &TypeId::of::<TestEvent>());
+        bus.run_handlers(
+            handlers,
+            &mut TestEvent,
+            type_name::<TestEvent>(),
+            &bus.core_owner,
+            Duration::from_secs(1),
+            |entry, _| seen.push(entry.handle),
+        )
+        .await;
+
+        assert_eq!(seen, vec![first, normal, last]);
     }
 
     #[test]

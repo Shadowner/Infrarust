@@ -14,6 +14,7 @@ use infrarust_api::event::bus::{
 use infrarust_api::event::{
     BoxFuture, ConnectionState, ListenerHandle, PacketDirection, PacketFilter,
 };
+use infrarust_api::events::named::NamedEvent;
 use infrarust_api::filter::{
     CodecFilterFactory, CodecFilterRegistry, FilterRegistryError, TransportFilter,
     TransportFilterRegistry,
@@ -150,6 +151,9 @@ impl EventBus for TrackingEventBus {
         &'a self,
         event: &'a mut dyn ErasedEvent,
     ) -> BoxFuture<'a, Result<(), FireError>> {
+        if let Some(named) = event.as_any_mut().downcast_mut::<NamedEvent>() {
+            named.source_plugin = self.owner.to_string();
+        }
         Box::pin(self.inner.fire_from(&self.owner, event))
     }
 }
