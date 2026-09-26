@@ -242,6 +242,15 @@ impl CommandInbox {
         self.messages = kept;
     }
 
+    pub(crate) fn discard_deferred_presentation(&mut self) {
+        self.deferred.retain(|command| {
+            !matches!(
+                command,
+                PlayerCommand::HeaderFooter(_) | PlayerCommand::BossBar(..)
+            )
+        });
+    }
+
     pub(crate) async fn recv(&mut self) -> Option<PlayerCommand> {
         self.receiver.recv().await
     }

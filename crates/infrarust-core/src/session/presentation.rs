@@ -298,6 +298,21 @@ pub(crate) async fn restore_after_switch(
     registry: &PacketRegistry,
     version: ProtocolVersion,
 ) -> Result<(), CoreError> {
+    let frames = restore_frames(session, registry, version)?;
+    if frames.is_empty() {
+        return Ok(());
+    }
+    for frame in &frames {
+        client.queue_frame(frame)?;
+    }
+    client.flush().await
+}
+
+pub(crate) fn restore_frames(
+    session: &PlayerSession,
+    registry: &PacketRegistry,
+    version: ProtocolVersion,
+) -> Result<Vec<PacketFrame>, CoreError> {
     let presentation = session.presentation();
     let stale = presentation.take_backend_bars();
     let mut frames = Vec::new();
@@ -321,11 +336,5 @@ pub(crate) async fn restore_after_switch(
     {
         frames.push(build_header_footer(&header, &footer, version, registry)?);
     }
-    if frames.is_empty() {
-        return Ok(());
-    }
-    for frame in &frames {
-        client.queue_frame(frame)?;
-    }
-    client.flush().await
+    Ok(frames)
 }

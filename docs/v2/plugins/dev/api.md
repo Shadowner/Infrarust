@@ -300,7 +300,7 @@ match player.connect(ServerId::new("minigames")).await? {
 
 #### Tab list, titles and boss bars
 
-`set_player_list_header_footer(header, footer)` sets the text above and below the player list (1.8 and later, `Err(PlayerError::Unsupported)` on 1.7). The proxy keeps the last header and footer a plugin set and sends them again after every server switch, right after the new server's `JoinGame`: from 1.20.2 the configuration phase of a switch clears them on the client, and before that the new server may send its own. A backend can still replace them; the last packet the client gets wins.
+`set_player_list_header_footer(header, footer)` sets the text above and below the player list (1.8 and later, `Err(PlayerError::Unsupported)` on 1.7). The proxy keeps the last header and footer a plugin set and sends them again after every server switch, right after the new server's `JoinGame`: from 1.20.2 the configuration phase of a switch clears them on the client, and before that the new server may send its own. The same happens when a 1.20.2+ backend sends the player back to the configuration phase on its own: the header and footer go out again, once, right after the `JoinGame` that ends it. A backend can still replace them; the last packet the client gets wins.
 
 `clear_title(reset)` removes the title on screen. With `reset`, the fade times go back to the client's defaults too. From 1.17 it sends Clear Titles; from 1.8 to 1.16.4 it sends the Title packet with the hide action, or the reset action when `reset` is set. On 1.7, which has no titles, it does nothing.
 
@@ -335,6 +335,8 @@ Server switches:
 
 - **Before 1.20.2** the client keeps its boss bars across a `JoinGame`. The proxy's bars stay on screen, and the proxy removes the bars the previous server showed, which it tracks as they pass, so they do not linger.
 - **From 1.20.2** the configuration phase of a switch clears every bar. The proxy shows its own bars again, with their latest title, progress, style and flags, right after the new server's `JoinGame`.
+
+A 1.20.2+ backend can also send the player back to the configuration phase without a switch, which clears the bars as well. The proxy shows its bars again, once each, with their latest state, right after the `JoinGame` that ends that configuration phase. Bars hidden before it are not shown again, and changes made while it runs are folded into that one update.
 
 #### Resource packs
 

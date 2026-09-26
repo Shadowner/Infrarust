@@ -15,6 +15,9 @@ use infrarust_protocol::packets::login::{
 };
 use infrarust_protocol::packets::play::chat::{CChatMessageLegacy, CSystemChatMessage};
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
+use infrarust_protocol::packets::play::start_configuration::{
+    CStartConfiguration, SAcknowledgeConfiguration,
+};
 use infrarust_protocol::packets::status::{
     CPingResponse, CStatusResponse, SPingRequest, SStatusRequest,
 };
@@ -502,6 +505,24 @@ impl BackendConn {
     pub async fn send_packet<P: Packet>(&mut self, packet: &P) -> HarnessResult<()> {
         let frame = wire::encode(packet, self.setup.version)?;
         self.send_frame(&frame).await
+    }
+
+    pub async fn start_configuration(&mut self) -> HarnessResult<()> {
+        if self.setup.state != ConnectionState::Play {
+            return Err(HarnessError::Unexpected(format!(
+                "cannot start a configuration phase in {} state",
+                self.setup.state
+            )));
+        }
+        self.send_packet(&CStartConfiguration).await?;
+        self.setup.state = ConnectionState::Config;
+        Ok(())
+    }
+
+    pub async fn reconfigure(&mut self, timeout: Duration) -> HarnessResult<()> {
+        self.start_configuration().await?;
+        self.expect::<SAcknowledgeConfiguration>(timeout).await?;
+        Ok(())
     }
 
     pub async fn finish_config(&mut self, timeout: Duration) -> HarnessResult<()> {

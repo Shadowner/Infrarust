@@ -54,7 +54,7 @@ use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::kick::BackendKick;
-use crate::session::presentation::PresentationIds;
+use crate::session::presentation::{self, PresentationIds};
 use crate::session::server_join::ServerJoin;
 use crate::util::text::encode_text_component;
 
@@ -194,6 +194,7 @@ struct LoopState {
     keepalives: VecDeque<(i64, Instant)>,
     config_closing: bool,
     reconfiguring: bool,
+    presentation_lost: bool,
 }
 
 impl LoopState {
@@ -203,6 +204,7 @@ impl LoopState {
             keepalives: VecDeque::new(),
             config_closing: false,
             reconfiguring: false,
+            presentation_lost: false,
         }
     }
 
@@ -271,6 +273,34 @@ fn deliver(
 ) {
     let open = state.client_open(client, in_game);
     commands.deliver_messages(client, Some(backend), registry, open);
+}
+
+fn restore_presentation(
+    client: &mut ClientBridge,
+    commands: &mut CommandInbox,
+    registry: &PacketRegistry,
+    state: &mut LoopState,
+) {
+    if !std::mem::take(&mut state.presentation_lost) {
+        return;
+    }
+    let Some(session) = state.session.as_ref() else {
+        return;
+    };
+    commands.discard_deferred_presentation();
+    let frames = match presentation::restore_frames(session, registry, client.protocol_version) {
+        Ok(frames) => frames,
+        Err(e) => {
+            tracing::warn!("failed to rebuild the player list and boss bars: {e}");
+            return;
+        }
+    };
+    for frame in &frames {
+        if let Err(e) = client.queue_frame(frame) {
+            tracing::warn!("failed to restore the player list and boss bars: {e}");
+            return;
+        }
+    }
 }
 
 fn announce_channels(
@@ -502,6 +532,9 @@ pub async fn proxy_loop(
                     .await;
                     in_game |= joins && result.is_ok();
                     in_game &= !state.reconfiguring;
+                    if joins && result.is_ok() {
+                        restore_presentation(client, commands, registry, &mut state);
+                    }
                     let mut command_outcome = commands.drain(client, registry, in_game);
                     while milestone.is_none()
                         && matches!(result, Ok(BackendAction::Continue))
@@ -531,6 +564,9 @@ pub async fn proxy_loop(
                                 .await;
                                 in_game |= joins && result.is_ok();
                                 in_game &= !state.reconfiguring;
+                                if joins && result.is_ok() {
+                                    restore_presentation(client, commands, registry, &mut state);
+                                }
                                 command_outcome = commands.drain(client, registry, in_game);
                             }
                             Ok(None) => break,
@@ -1076,6 +1112,7 @@ async fn handle_backend_to_client(
             client.queue_frame(&frame)?;
             client.set_state(ConnectionState::Config);
             loop_state.reconfiguring = true;
+            loop_state.presentation_lost = true;
             tracing::debug!("state transition: Play → Config (backend StartConfiguration)");
             return Ok(BackendAction::Continue);
         }

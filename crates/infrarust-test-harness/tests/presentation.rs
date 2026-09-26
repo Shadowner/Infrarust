@@ -9,14 +9,18 @@ use infrarust_api::player::{
     ResourcePackRequest,
 };
 use infrarust_api::types::{Component, ServerId};
+use infrarust_protocol::packets::config::CConfigPluginMessage;
 use infrarust_protocol::packets::play::boss_bar::{BossBarAction, CBossBar};
-use infrarust_protocol::packets::play::chat::{CChatMessageLegacy, CSystemChatMessage};
+use infrarust_protocol::packets::play::chat::{
+    CChatMessageLegacy, CSystemChatMessage, SChatMessage,
+};
 use infrarust_protocol::packets::play::tab_list::CTabListHeaderFooter;
 use infrarust_protocol::packets::play::title::{CClearTitles, CTitleLegacy};
 use infrarust_protocol::packets::resource_pack::{
     CConfigResourcePack, CConfigResourcePackPush, CResourcePack, CResourcePackPop,
     CResourcePackPush, ResourcePackResult, SConfigResourcePackResponse, SResourcePackResponse,
 };
+use infrarust_test_harness::plugin_message;
 use infrarust_test_harness::text::component_text;
 use infrarust_test_harness::{
     BackendConn, ClientSession, DEFAULT_TIMEOUT, EventKind, FakeBackend, LoginOutcome, PacketFrame,
@@ -314,6 +318,94 @@ async fn boss_bars_after_a_switch(version: ProtocolVersion) {
 }
 
 version_matrix!(boss_bars_after_a_switch; p340 = 340, p764 = 764, p774 = 774);
+
+fn added_bar_titles(bars: &[CBossBar], version: ProtocolVersion) -> Vec<(Uuid, String)> {
+    bars.iter()
+        .filter_map(|bar| match &bar.action {
+            BossBarAction::Add { title, .. } => Some((bar.id, component_text(title, version))),
+            _ => None,
+        })
+        .collect()
+}
+
+async fn presentation_survives_a_backend_reconfiguration(version: ProtocolVersion) {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .start()
+        .await
+        .unwrap();
+    let (mut session, player) = join(&proxy, version).await;
+    let mut conn = backend.next_connection(T).await.unwrap();
+
+    player
+        .set_player_list_header_footer(Component::text("Top"), Component::text("Bottom"))
+        .unwrap();
+    let kept = player
+        .show_boss_bar(BossBar::new(Component::text("Kept")))
+        .unwrap();
+    let hidden = player
+        .show_boss_bar(BossBar::new(Component::text("Hidden")))
+        .unwrap();
+    let renamed = player
+        .show_boss_bar(BossBar::new(Component::text("Before")))
+        .unwrap();
+    hidden.hide().unwrap();
+    frames_until_marker(&mut session, player.as_ref(), "shown").await;
+
+    conn.reconfigure(T).await.unwrap();
+    renamed.set_title(Component::text("During")).unwrap();
+    player
+        .set_player_list_header_footer(Component::text("New top"), Component::text("Bottom"))
+        .unwrap();
+    plugin_message::send_to_client(&mut conn, "harness:sync", b"sync".to_vec())
+        .await
+        .unwrap();
+    session
+        .expect_config::<CConfigPluginMessage>(T)
+        .await
+        .unwrap();
+    conn.finish_config(T).await.unwrap();
+    session.expect_join(T).await.unwrap();
+
+    let frames = frames_until_marker(&mut session, player.as_ref(), "reconfigured").await;
+    let headers: Vec<(String, String)> = frames
+        .iter()
+        .filter(|frame| wire::is::<CTabListHeaderFooter>(frame, version))
+        .map(|frame| {
+            header_footer_text(
+                &wire::decode::<CTabListHeaderFooter>(frame, version).unwrap(),
+                version,
+            )
+        })
+        .collect();
+    assert_eq!(
+        headers,
+        vec![("New top".to_string(), "Bottom".to_string())],
+        "the player list header and footer are shown again, once"
+    );
+    let bars = boss_bars(&frames, version);
+    assert_eq!(
+        added_bar_titles(&bars, version),
+        vec![
+            (kept.id(), "Kept".to_string()),
+            (renamed.id(), "During".to_string()),
+        ],
+        "every live bar is shown again, once, and the hidden one is not: {bars:?}"
+    );
+    assert_eq!(bars.len(), 2, "{bars:?}");
+
+    session.chat("still here").await.unwrap();
+    assert_eq!(
+        conn.expect::<SChatMessage>(T).await.unwrap().message,
+        "still here"
+    );
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(presentation_survives_a_backend_reconfiguration;
+    p764 = 764, p765 = 765, p766 = 766, p770 = 770, p774 = 774, p776 = 776);
 
 fn pack_request() -> ResourcePackRequest {
     ResourcePackRequest::new(PACK_URL)
