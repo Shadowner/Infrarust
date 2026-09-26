@@ -61,7 +61,7 @@ impl LimboHandler for WasmLimboHandler {
                     let res = match store.data_mut().push_limbo_session(arc_session) {
                         Ok(res) => res,
                         Err(e) => {
-                            tracing::error!(plugin = %store.data().plugin_id, handler = %name, error = %e,
+                            tracing::error!(plugin = %store.data().plugin_id(), handler = %name, error = %e,
                                 "failed to lend limbo session to guest; denying");
                             return Ok(deny_unavailable());
                         }
@@ -72,7 +72,7 @@ impl LimboHandler for WasmLimboHandler {
                         .call_limbo_on_player_enter(&mut *store, handler_id, res)
                         .await;
                     let _ = store.data_mut().drop_limbo_session(Resource::new_own(rep));
-                    let plugin = store.data().plugin_id.clone();
+                    let plugin = store.data().plugin_id().to_owned();
                     let result = convert::handler_result_with(&outcome?, &mut |text| {
                         Ok(component::from_wit_or_fallback(text, &plugin, "limbo handler result"))
                     })
@@ -112,7 +112,7 @@ impl LimboHandler for WasmLimboHandler {
                     let res = match store.data_mut().push_limbo_session(arc_session) {
                         Ok(res) => res,
                         Err(e) => {
-                            tracing::error!(plugin = %store.data().plugin_id, handler = %name, error = %e,
+                            tracing::error!(plugin = %store.data().plugin_id(), handler = %name, error = %e,
                                 "failed to lend limbo session to guest; dropping command");
                             return Ok(());
                         }
@@ -145,7 +145,7 @@ impl LimboHandler for WasmLimboHandler {
                     let res = match store.data_mut().push_limbo_session(arc_session) {
                         Ok(res) => res,
                         Err(e) => {
-                            tracing::error!(plugin = %store.data().plugin_id, handler = %name, error = %e,
+                            tracing::error!(plugin = %store.data().plugin_id(), handler = %name, error = %e,
                                 "failed to lend limbo session to guest; dropping chat");
                             return Ok(());
                         }

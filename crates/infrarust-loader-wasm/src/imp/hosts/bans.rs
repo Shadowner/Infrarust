@@ -38,7 +38,7 @@ impl wb::Host for PluginStoreState {
 
 impl PluginStoreState {
     fn plugin_source(&self) -> BanSource {
-        BanSource::Plugin(self.plugin_id.clone())
+        BanSource::Plugin(self.plugin_id().to_owned())
     }
 
     async fn ban_target(&mut self, request: wb::BanRequest) -> HostResult<wb::BanEntry> {

@@ -41,58 +41,117 @@ pub(crate) struct PluginSetup {
     pub(crate) mounts: Arc<[Mount]>,
 }
 
-pub(crate) struct PluginStoreState {
+struct Sandbox {
     table: ResourceTable,
     wasi: WasiCtx,
     http: WasiHttpCtx,
     http_hooks: HttpHooks,
     limits: StoreLimits,
+    deadline: Option<Deadline>,
+    epoch_yields: u32,
+}
+
+impl Sandbox {
+    fn new(wasi: WasiCtx, network: Arc<NetworkPolicy>, limits: &SandboxLimits) -> Self {
+        Self {
+            table: ResourceTable::new(),
+            wasi,
+            http: WasiHttpCtx::new(),
+            http_hooks: HttpHooks::new(network, limits.host_call_timeout),
+            limits: StoreLimitsBuilder::new()
+                .memory_size(limits.memory_bytes)
+                .trap_on_grow_failure(true)
+                .build(),
+            deadline: None,
+            epoch_yields: 0,
+        }
+    }
+}
+
+struct Guest {
+    plugin_id: String,
+    generation: u64,
     capabilities: CapabilitySet,
     ctx: Option<Arc<dyn PluginContext>>,
     instance: Option<InstanceRef>,
-    deadline: Option<Deadline>,
-    pub(crate) plugin_id: String,
-    pub(crate) epoch_yields: u32,
-    host_call_timeout: Duration,
-    generation: u64,
     registrations: Arc<Registrations>,
+    codec: Option<Arc<CodecInstantiator>>,
+    host_call_timeout: Duration,
+}
+
+struct HostResources {
     next_listener_id: u64,
     listeners: HashMap<u64, Vec<ListenerHandle>>,
     tasks: HashSet<u64>,
     boss_bars: HashMap<uuid::Uuid, BossBarHandle>,
-    codec: Option<Arc<CodecInstantiator>>,
+}
+
+impl HostResources {
+    fn new() -> Self {
+        Self {
+            next_listener_id: 1,
+            listeners: HashMap::new(),
+            tasks: HashSet::new(),
+            boss_bars: HashMap::new(),
+        }
+    }
+}
+
+struct Throttles {
     denials: HashMap<Capability, RateLimit>,
     command_refusals: RateLimit,
     codec_refusals: RateLimit,
 }
 
+impl Throttles {
+    fn new() -> Self {
+        Self {
+            denials: HashMap::new(),
+            command_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, COMMAND_REFUSAL_BURST),
+            codec_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, CODEC_REFUSAL_BURST),
+        }
+    }
+}
+
+pub(crate) struct PluginStoreState {
+    sandbox: Sandbox,
+    guest: Guest,
+    resources: HostResources,
+    throttles: Throttles,
+}
+
 impl PluginStoreState {
     pub(crate) fn limits_mut(&mut self) -> &mut StoreLimits {
-        &mut self.limits
+        &mut self.sandbox.limits
     }
 
     pub(crate) fn table_mut(&mut self) -> &mut ResourceTable {
-        &mut self.table
+        &mut self.sandbox.table
+    }
+
+    pub(crate) fn plugin_id(&self) -> &str {
+        &self.guest.plugin_id
     }
 
     pub(crate) fn ctx(&self) -> Option<&Arc<dyn PluginContext>> {
-        self.ctx.as_ref()
+        self.guest.ctx.as_ref()
     }
 
     pub(crate) fn host_call_timeout(&self) -> Duration {
-        self.host_call_timeout
+        self.guest.host_call_timeout
     }
 
     pub(crate) fn host_call_limit(&self, timeout: Duration) -> HostCallLimit {
-        HostCallLimit::new(timeout, self.deadline)
+        HostCallLimit::new(timeout, self.sandbox.deadline)
     }
 
     pub(crate) fn capabilities(&self) -> &CapabilitySet {
-        &self.capabilities
+        &self.guest.capabilities
     }
 
     pub(crate) fn report_denied(&mut self, capability: Capability, call: fmt::Arguments<'_>) {
         let Some(suppressed) = self
+            .throttles
             .denials
             .entry(capability)
             .or_insert_with(|| RateLimit::new(DENIED_CALL_LOG_INTERVAL, 1))
@@ -102,99 +161,102 @@ impl PluginStoreState {
         };
         let name = capability.to_kebab();
         if capability == Capability::Limbo {
-            tracing::error!(plugin = %self.plugin_id, %call, capability = name, suppressed,
+            tracing::error!(plugin = %self.guest.plugin_id, %call, capability = name, suppressed,
                 "wasm plugin call refused: missing capability `{name}`; the call did nothing");
         } else {
-            tracing::warn!(plugin = %self.plugin_id, %call, capability = name, suppressed,
+            tracing::warn!(plugin = %self.guest.plugin_id, %call, capability = name, suppressed,
                 "wasm plugin call refused: missing capability `{name}`");
         }
     }
 
     pub(crate) fn report_command_refusal(&mut self, name: &str, reason: &str) {
-        let Some(suppressed) = self.command_refusals.admit(Instant::now()) else {
+        let Some(suppressed) = self.throttles.command_refusals.admit(Instant::now()) else {
             return;
         };
-        tracing::warn!(plugin = %self.plugin_id, command = name, suppressed,
+        tracing::warn!(plugin = %self.guest.plugin_id, command = name, suppressed,
             "wasm plugin command registration: {reason}");
     }
 
     pub(crate) fn report_codec_refusal(&mut self, filter: &str, reason: &str) {
-        let Some(suppressed) = self.codec_refusals.admit(Instant::now()) else {
+        let Some(suppressed) = self.throttles.codec_refusals.admit(Instant::now()) else {
             return;
         };
-        tracing::warn!(plugin = %self.plugin_id, filter, suppressed,
+        tracing::warn!(plugin = %self.guest.plugin_id, filter, suppressed,
             "wasm plugin codec filter registration: {reason}");
     }
 
     pub(crate) fn instance_ref(&self, kind: CallKind) -> HostResult<InstanceRef> {
-        self.instance
+        self.guest
+            .instance
             .as_ref()
             .map(|instance| instance.for_calls(kind))
             .ok_or_else(no_services)
     }
 
     pub(crate) fn generation(&self) -> u64 {
-        self.generation
+        self.guest.generation
     }
 
     pub(crate) fn registrations(&self) -> &Arc<Registrations> {
-        &self.registrations
+        &self.guest.registrations
     }
 
     pub(crate) fn begin_call(&mut self, deadline: Option<Deadline>) {
-        self.epoch_yields = 0;
-        self.deadline = deadline;
+        self.sandbox.epoch_yields = 0;
+        self.sandbox.deadline = deadline;
     }
 
     pub(crate) fn end_call(&mut self) {
-        self.deadline = None;
+        self.sandbox.deadline = None;
     }
 
     pub(crate) fn mint_listener_id(&mut self) -> u64 {
-        let id = self.next_listener_id;
-        self.next_listener_id += 1;
+        let id = self.resources.next_listener_id;
+        self.resources.next_listener_id += 1;
         id
     }
 
     pub(crate) fn record_listener(&mut self, id: u64, handles: Vec<ListenerHandle>) {
-        self.listeners.insert(id, handles);
+        self.resources.listeners.insert(id, handles);
     }
 
     pub(crate) fn take_listener(&mut self, id: u64) -> Option<Vec<ListenerHandle>> {
-        self.listeners.remove(&id)
+        self.resources.listeners.remove(&id)
     }
 
     pub(crate) fn boss_bar_count(&self) -> usize {
-        self.boss_bars.len()
+        self.resources.boss_bars.len()
     }
 
     pub(crate) fn record_boss_bar(&mut self, handle: BossBarHandle) {
-        self.boss_bars.insert(handle.id(), handle);
+        self.resources.boss_bars.insert(handle.id(), handle);
     }
 
     pub(crate) fn boss_bar(&self, id: uuid::Uuid) -> Option<&BossBarHandle> {
-        self.boss_bars.get(&id)
+        self.resources.boss_bars.get(&id)
     }
 
     pub(crate) fn forget_boss_bar(&mut self, id: uuid::Uuid) -> Option<BossBarHandle> {
-        self.boss_bars.remove(&id)
+        self.resources.boss_bars.remove(&id)
     }
 
     pub(crate) fn record_task(&mut self, handle: u64) {
-        self.tasks.insert(handle);
+        self.resources.tasks.insert(handle);
     }
 
     pub(crate) fn forget_task(&mut self, handle: u64) {
-        self.tasks.remove(&handle);
+        self.resources.tasks.remove(&handle);
     }
 
     pub(crate) fn release_host_resources(&mut self) {
-        let listeners: Vec<ListenerHandle> = self.listeners.drain().flat_map(|(_, h)| h).collect();
-        let tasks: Vec<u64> = self.tasks.drain().collect();
-        for (_, bar) in self.boss_bars.drain() {
+        let resources = &mut self.resources;
+        let listeners: Vec<ListenerHandle> =
+            resources.listeners.drain().flat_map(|(_, h)| h).collect();
+        let tasks: Vec<u64> = resources.tasks.drain().collect();
+        for (_, bar) in resources.boss_bars.drain() {
             let _ = bar.hide();
         }
-        let Some(ctx) = self.ctx.as_ref() else {
+        let Some(ctx) = self.guest.ctx.as_ref() else {
             return;
         };
         for handle in listeners {
@@ -206,24 +268,24 @@ impl PluginStoreState {
     }
 
     pub(crate) fn codec_instantiator(&self) -> Option<&Arc<CodecInstantiator>> {
-        self.codec.as_ref()
+        self.guest.codec.as_ref()
     }
 
     #[cfg(test)]
     pub(crate) fn with_capabilities(mut self, capabilities: CapabilitySet) -> Self {
-        self.capabilities = capabilities;
+        self.guest.capabilities = capabilities;
         self
     }
 
     #[cfg(test)]
     pub(crate) fn with_ctx(mut self, ctx: Arc<dyn PluginContext>) -> Self {
-        self.ctx = Some(ctx);
+        self.guest.ctx = Some(ctx);
         self
     }
 
     #[cfg(test)]
     pub(crate) fn with_instance(mut self, instance: InstanceRef) -> Self {
-        self.instance = Some(instance);
+        self.guest.instance = Some(instance);
         self
     }
 }
@@ -231,8 +293,8 @@ impl PluginStoreState {
 impl WasiView for PluginStoreState {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
-            ctx: &mut self.wasi,
-            table: &mut self.table,
+            ctx: &mut self.sandbox.wasi,
+            table: &mut self.sandbox.table,
         }
     }
 }
@@ -240,18 +302,11 @@ impl WasiView for PluginStoreState {
 impl WasiHttpView for PluginStoreState {
     fn http(&mut self) -> WasiHttpCtxView<'_> {
         WasiHttpCtxView {
-            ctx: &mut self.http,
-            table: &mut self.table,
-            hooks: &mut self.http_hooks,
+            ctx: &mut self.sandbox.http,
+            table: &mut self.sandbox.table,
+            hooks: &mut self.sandbox.http_hooks,
         }
     }
-}
-
-fn store_limits(sandbox: &SandboxLimits) -> StoreLimits {
-    StoreLimitsBuilder::new()
-        .memory_size(sandbox.memory_bytes)
-        .trap_on_grow_failure(true)
-        .build()
 }
 
 fn build_wasi_ctx(
@@ -293,55 +348,41 @@ pub(crate) fn build_load_state(
     let wasi = build_wasi_ctx(&setup.data_dir, &setup.network, &setup.mounts)?;
     setup.network.warm_in_background();
     Ok(PluginStoreState {
-        table: ResourceTable::new(),
-        wasi,
-        http: WasiHttpCtx::new(),
-        http_hooks: HttpHooks::new(Arc::clone(&setup.network), setup.sandbox.host_call_timeout),
-        limits: store_limits(&setup.sandbox),
-        capabilities: setup.capabilities.clone(),
-        ctx: Some(Arc::clone(&setup.ctx)),
-        instance: Some(instance),
-        deadline: None,
-        plugin_id: setup.plugin_id.clone(),
-        epoch_yields: 0,
-        host_call_timeout: setup.sandbox.host_call_timeout,
-        generation,
-        registrations: Arc::clone(&setup.registrations),
-        next_listener_id: 1,
-        listeners: HashMap::new(),
-        tasks: HashSet::new(),
-        boss_bars: HashMap::new(),
-        codec: setup.codec.clone(),
-        denials: HashMap::new(),
-        command_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, COMMAND_REFUSAL_BURST),
-        codec_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, CODEC_REFUSAL_BURST),
+        sandbox: Sandbox::new(wasi, Arc::clone(&setup.network), &setup.sandbox),
+        guest: Guest {
+            plugin_id: setup.plugin_id.clone(),
+            generation,
+            capabilities: setup.capabilities.clone(),
+            ctx: Some(Arc::clone(&setup.ctx)),
+            instance: Some(instance),
+            registrations: Arc::clone(&setup.registrations),
+            codec: setup.codec.clone(),
+            host_call_timeout: setup.sandbox.host_call_timeout,
+        },
+        resources: HostResources::new(),
+        throttles: Throttles::new(),
     })
 }
 
 pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> PluginStoreState {
     PluginStoreState {
-        table: ResourceTable::new(),
-        wasi: WasiCtxBuilder::new().build(),
-        http: WasiHttpCtx::new(),
-        http_hooks: HttpHooks::new(probe_policy(plugin_id.clone()), sandbox.host_call_timeout),
-        limits: store_limits(sandbox),
-        capabilities: CapabilitySet::default(),
-        ctx: None,
-        instance: None,
-        deadline: None,
-        plugin_id,
-        epoch_yields: 0,
-        host_call_timeout: sandbox.host_call_timeout,
-        generation: 0,
-        registrations: Arc::default(),
-        next_listener_id: 1,
-        listeners: HashMap::new(),
-        tasks: HashSet::new(),
-        boss_bars: HashMap::new(),
-        codec: None,
-        denials: HashMap::new(),
-        command_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, COMMAND_REFUSAL_BURST),
-        codec_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, CODEC_REFUSAL_BURST),
+        sandbox: Sandbox::new(
+            WasiCtxBuilder::new().build(),
+            probe_policy(plugin_id.clone()),
+            sandbox,
+        ),
+        guest: Guest {
+            plugin_id,
+            generation: 0,
+            capabilities: CapabilitySet::default(),
+            ctx: None,
+            instance: None,
+            registrations: Arc::default(),
+            codec: None,
+            host_call_timeout: sandbox.host_call_timeout,
+        },
+        resources: HostResources::new(),
+        throttles: Throttles::new(),
     }
 }
 
@@ -349,11 +390,11 @@ pub(crate) fn install_epoch_control(store: &mut Store<PluginStoreState>, max_epo
     store.set_epoch_deadline(EPOCH_DEADLINE_TICKS);
     store.epoch_deadline_callback(move |mut ctx| {
         let state = ctx.data_mut();
-        state.epoch_yields += 1;
-        if state.epoch_yields > max_epoch_yields {
+        state.sandbox.epoch_yields += 1;
+        if state.sandbox.epoch_yields > max_epoch_yields {
             tracing::warn!(
-                plugin = %state.plugin_id,
-                yields = state.epoch_yields,
+                plugin = %state.guest.plugin_id,
+                yields = state.sandbox.epoch_yields,
                 "wasm guest exceeded CPU budget — trapping"
             );
             Ok(UpdateDeadline::Interrupt)

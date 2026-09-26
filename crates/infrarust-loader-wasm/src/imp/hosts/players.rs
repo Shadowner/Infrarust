@@ -314,7 +314,7 @@ impl wp::Host for PluginStoreState {
         Ok((|| {
             let player = self.writable_player("disconnect", player)?;
             let reason = parse_text(&reason)?;
-            let plugin_id = self.plugin_id.clone();
+            let plugin_id = self.plugin_id().to_owned();
             let limit = self.host_call_timeout();
             tokio::spawn(async move {
                 let player_id = player.id().as_u64();

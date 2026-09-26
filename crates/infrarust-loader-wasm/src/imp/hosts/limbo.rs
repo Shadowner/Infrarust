@@ -41,7 +41,7 @@ impl PluginStoreState {
                 Arc::clone(self.registrations()),
             )))
             .map_err(|error| {
-                tracing::warn!(plugin = %self.plugin_id, %error, "limbo handler refused");
+                tracing::warn!(plugin = %self.plugin_id(), %error, "limbo handler refused");
                 limbo_error(&error)
             })?;
         self.registrations()

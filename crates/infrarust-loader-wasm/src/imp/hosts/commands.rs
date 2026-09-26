@@ -66,7 +66,7 @@ impl PluginStoreState {
                     .map_or_else(
                         || wcm::CommandRegistration {
                             name: name.clone(),
-                            namespaced: format!("{}:{name}", self.plugin_id),
+                            namespaced: format!("{}:{name}", self.plugin_id()),
                             aliases: Vec::new(),
                             rejected_aliases: Vec::new(),
                         },
