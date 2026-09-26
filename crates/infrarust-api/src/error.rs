@@ -76,32 +76,25 @@ pub enum PluginError {
     #[error("plugin initialization failed: {0}")]
     InitFailed(String),
 
-    /// A custom plugin error.
-    #[error("{0}")]
-    Custom(String),
+    #[error(transparent)]
+    Service(#[from] ServiceError),
+
+    #[error(transparent)]
+    Limbo(#[from] crate::limbo::LimboHandlerError),
+
+    #[error(transparent)]
+    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl From<String> for PluginError {
     fn from(s: String) -> Self {
-        Self::Custom(s)
+        Self::Other(s.into())
     }
 }
 
 impl From<&str> for PluginError {
     fn from(s: &str) -> Self {
-        Self::Custom(s.to_owned())
-    }
-}
-
-impl From<ServiceError> for PluginError {
-    fn from(e: ServiceError) -> Self {
-        Self::InitFailed(e.to_string())
-    }
-}
-
-impl From<crate::limbo::LimboHandlerError> for PluginError {
-    fn from(e: crate::limbo::LimboHandlerError) -> Self {
-        Self::InitFailed(e.to_string())
+        Self::Other(s.into())
     }
 }
 
@@ -128,14 +121,36 @@ mod tests {
     #[test]
     fn plugin_error_from_string() {
         let err: PluginError = "something went wrong".into();
-        assert!(matches!(err, PluginError::Custom(_)));
-        assert!(err.to_string().contains("something went wrong"));
+        assert!(matches!(err, PluginError::Other(_)));
+        assert_eq!(err.to_string(), "something went wrong");
     }
 
     #[test]
     fn plugin_error_from_owned_string() {
         let err: PluginError = String::from("failure").into();
-        assert!(matches!(err, PluginError::Custom(_)));
+        assert!(matches!(err, PluginError::Other(_)));
+    }
+
+    #[test]
+    fn plugin_error_keeps_the_service_and_limbo_errors_it_wraps() {
+        let service: PluginError = ServiceError::NotFound("lobby".into()).into();
+        assert!(matches!(
+            service,
+            PluginError::Service(ServiceError::NotFound(ref id)) if id == "lobby"
+        ));
+        assert_eq!(service.to_string(), "not found: lobby");
+
+        let limbo: PluginError = crate::limbo::LimboHandlerError::MissingCapability.into();
+        assert!(matches!(
+            limbo,
+            PluginError::Limbo(crate::limbo::LimboHandlerError::MissingCapability)
+        ));
+        assert!(std::error::Error::source(&limbo).is_none());
+
+        let io: PluginError =
+            Box::<dyn std::error::Error + Send + Sync>::from(std::io::Error::other("disk")).into();
+        assert!(matches!(io, PluginError::Other(_)));
+        assert_eq!(io.to_string(), "disk");
     }
 
     #[test]

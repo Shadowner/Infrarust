@@ -271,7 +271,7 @@ impl PluginManager {
 
     pub async fn disable_plugin(&mut self, id: &str) -> Result<(), PluginError> {
         let Some(at) = self.plugins.iter().position(|p| p.metadata.id == id) else {
-            return Err(PluginError::Custom(format!("plugin `{id}` is not enabled")));
+            return Err(PluginError::from(format!("plugin `{id}` is not enabled")));
         };
         if let Some(dependent) = self.plugins.iter().find(|p| {
             p.metadata.id != id
@@ -281,7 +281,7 @@ impl PluginManager {
                     .iter()
                     .any(|dep| dep.id == id && !dep.optional)
         }) {
-            return Err(PluginError::Custom(format!(
+            return Err(PluginError::from(format!(
                 "plugin `{id}` is required by `{}`",
                 dependent.metadata.id
             )));

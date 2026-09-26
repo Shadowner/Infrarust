@@ -109,7 +109,7 @@ impl Plugin for WasmPlugin {
                 Ok(Err(message)) => {
                     tracing::warn!(plugin = %self.plugin_id, %message,
                         "wasm guest on_disable returned an error");
-                    Err(PluginError::Custom(message))
+                    Err(PluginError::from(message))
                 }
                 Err(CallFailure::Quarantined) => {
                     tracing::warn!(plugin = %self.plugin_id,
@@ -126,9 +126,9 @@ impl Plugin for WasmPlugin {
                         "skipping on_disable for a wasm plugin that is already stopped");
                     Ok(())
                 }
-                Err(failure) => Err(PluginError::Custom(
-                    self.lifecycle_error("on-disable", failure).to_string(),
-                )),
+                Err(failure) => Err(PluginError::Other(Box::new(
+                    self.lifecycle_error("on-disable", failure),
+                ))),
             }
         })
     }
