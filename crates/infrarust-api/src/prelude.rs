@@ -41,10 +41,11 @@ pub use crate::messaging::{
 // Services
 pub use crate::services::{
     BackendState, BackendStatus, BanEntry, BanFeatures, BanPage, BanProvider, BanQuery, BanRequest,
-    BanService, BanSource, BanTarget, BanVerdict, ConfigService, ConfigWriteError, LbError,
-    LoadBalancerService, LoginAttempt, LoginStage, PlayerRegistry, PluginInfo, PluginRegistry,
-    ProviderKind, ProviderRejected, ProxyInfo, ProxyMode, Scheduler, ServerConfig, ServerManager,
-    ServerState, ServiceHandle, ServiceRegistry, ServiceRegistryExt, TaskHandle, UnbanRequest,
+    BanService, BanSource, BanTarget, BanVerdict, ConfigService, ConfigWriteError, KeepaliveInfo,
+    LbError, LoadBalancerService, LoginAttempt, LoginStage, PlayerRegistry, PluginInfo,
+    PluginRegistry, ProviderKind, ProviderRejected, ProxyInfo, ProxyMode, RateLimitInfo, Scheduler,
+    ServerConfig, ServerManager, ServerSource, ServerState, ServiceHandle, ServiceRegistry,
+    ServiceRegistryExt, StatusCacheInfo, TaskHandle, UnbanRequest, UnknownDomainBehavior,
 };
 
 // Permissions and capabilities
