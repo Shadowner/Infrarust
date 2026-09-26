@@ -234,6 +234,15 @@ The SDK now exports `PlayerId`, `ServerId`, `PlayerRef`, `GameProfile`, `ServerA
 
 The colours, `Capability` and the data-only enums (`ServerState`, `ProxyMode`, `PacketDirection`, `ChatMode`, `MainHand`, `ParticleStatus`, `HandshakeIntent`, `ConnectCause`, `TransferOrigin`, `LoginStage`, `SessionEndReason`, `BackendState`, `ResourcePackStatus`, `FilterPriority`, `MessagePhase`, `UnknownDomainBehavior`) are the same types as in the native `infrarust-api`: both crates re-export them from `infrarust-plugin-common`. Their SDK paths are unchanged. `Capability::as_str` is gone: use `Capability::to_kebab()` (or `to_string()`, the `Display` impl prints the same kebab-case name), and `"chat-intercept".parse::<Capability>()` works. `FilterPriority` now derives `PartialEq`, `Eq`, `Ord` and `Hash`, and the shared enums are `#[non_exhaustive]`, so a `match` on them needs a wildcard arm.
 
+## Behaviour changes without a build break
+
+These do not show up as compile errors, so check them by hand:
+
+- **Import gate.** The host checks every capability a host function needs when the component is loaded, not only when the function is called. A plugin that imports `subscribe-packets` needs both `raw-packet` and `event-bus`; with one of them missing it is refused at load, and the report names each missing capability. Under 0.2.3 such a plugin loaded and then had every subscription refused.
+- **Ban ranges in a guest `BanProvider`.** The SDK's `ip_in_range` now matches v4-mapped ranges (`::ffff:10.0.0.0/104` is `10.0.0.0/8`) and compares usernames with the same Unicode lowercase the native api uses, so a guest provider and the built-in store agree on what a ban matches.
+- **Limbo handlers across a recovery.** When a plugin is restarted after a trap, the limbo handler names its new generation does not register again are released instead of staying taken and answering "unavailable".
+- **Shared enums.** `ServerState`, `ProxyMode`, `Capability` and the other enums listed under [Types](#types) are the same types as in the native api and are `#[non_exhaustive]`.
+
 ## Checklist
 
 1. Bump `infrarust-plugin-sdk` and rebuild for `wasm32-wasip2`.
@@ -242,12 +251,12 @@ The colours, `Capability` and the data-only enums (`ServerState`, `ProxyMode`, `
 4. Rewrite `ctx.command(name, handler)` as `ctx.command(name).handler(handler)`.
 5. Replace `player_id` fields with `player.id`, `Players.get_by_id` with `Players::get`, and resource calls with `Player` handle calls.
 6. Remove `into_json()` calls; pass components or strings directly.
-7. Review every `allow()`: it now overrides earlier handlers.
-8. Replace `ServerSwitchEvent` with `ServerPostConnectEvent` and `switched_from()`.
-9. Add `#![forbid(unsafe_code)]` to your crate root.
-10. Grant `plugin-messaging` to a plugin that uses plugin channels, and `chat-intercept` to one that listens to commands.
-11. Grant `ban-provider` or `permission-provider`, and select the plugin in `[ban] provider` or `[permissions] provider`, for a plugin that provides bans or permissions.
-12. Replace `Capability::as_str()` with `to_kebab()`.
+7. Replace `Capability::as_str()` with `to_kebab()`, and give every `match` on a shared enum a wildcard arm.
+8. Review every `allow()`: it now overrides earlier handlers.
+9. Replace `ServerSwitchEvent` with `ServerPostConnectEvent` and `switched_from()`.
+10. Add `#![forbid(unsafe_code)]` to your crate root.
+11. Grant every capability the plugin's imports need: `plugin-messaging` for plugin channels, `chat-intercept` for command listeners, `raw-packet` and `event-bus` for packet subscriptions.
+12. Grant `ban-provider` or `permission-provider`, and select the plugin in `[ban] provider` or `[permissions] provider`, for a plugin that provides bans or permissions.
 
 ## See also
 
