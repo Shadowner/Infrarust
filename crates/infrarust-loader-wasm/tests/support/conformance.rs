@@ -21,8 +21,8 @@ use infrarust_api::events::handshake::{
 };
 use infrarust_api::events::lifecycle::{
     DisconnectCause, DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult,
-    OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent,
-    PreLoginResult,
+    OnlineAuthFailedEvent, PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent,
+    PreLoginEvent, PreLoginResult,
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
 use infrarust_api::events::messaging::{PluginMessageEvent, PluginMessageResult};
@@ -267,7 +267,7 @@ fn pre_login(result: &PreLoginResult) -> Outcome {
 fn server_pre_connect(result: &ServerPreConnectResult) -> Outcome {
     match result {
         ServerPreConnectResult::Allowed => Outcome::same("allowed"),
-        ServerPreConnectResult::ConnectTo(server) => {
+        ServerPreConnectResult::Redirect(server) => {
             Outcome::same(format!("connect-to:{}", server.as_str()))
         }
         ServerPreConnectResult::SendToLimbo { limbo_handlers } => limbo(limbo_handlers),
@@ -282,7 +282,7 @@ fn kicked(result: &KickedFromServerResult) -> Outcome {
             reason: Some(reason),
         } => Outcome::component("disconnect", reason),
         KickedFromServerResult::DisconnectPlayer { reason: None } => Outcome::same("disconnect"),
-        KickedFromServerResult::RedirectTo(server) => {
+        KickedFromServerResult::Redirect(server) => {
             Outcome::same(format!("redirect:{}", server.as_str()))
         }
         KickedFromServerResult::SendToLimbo { limbo_handlers } => limbo(limbo_handlers),
@@ -451,7 +451,7 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             Outcome::same("none")
         }
         EventName::OnlineAuthFailed => {
-            bus.fire(OnlineAuthFailed {
+            bus.fire(OnlineAuthFailedEvent {
                 username: USERNAME.to_owned(),
             })
             .await;

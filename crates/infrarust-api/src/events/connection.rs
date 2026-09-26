@@ -38,7 +38,7 @@ impl ServerPreConnectEvent {
 
     /// Shortcut: redirect to a different server.
     pub fn redirect_to(&mut self, server: ServerId) {
-        self.result = ServerPreConnectResult::ConnectTo(server);
+        self.result = ServerPreConnectResult::Redirect(server);
     }
 
     /// Shortcut: deny the connection with a reason.
@@ -55,7 +55,7 @@ pub enum ServerPreConnectResult {
     #[default]
     Allowed,
     /// Redirect to a different backend server.
-    ConnectTo(ServerId),
+    Redirect(ServerId),
     /// Send the player to the limbo handler chain.
     SendToLimbo { limbo_handlers: Vec<String> },
     /// Deny the connection with a reason.
@@ -180,7 +180,7 @@ impl KickedFromServerEvent {
     }
 
     pub fn redirect_to(&mut self, server: ServerId) {
-        self.result = KickedFromServerResult::RedirectTo(server);
+        self.result = KickedFromServerResult::Redirect(server);
     }
 
     pub fn disconnect(&mut self, reason: Component) {
@@ -202,7 +202,7 @@ impl KickedFromServerEvent {
 #[non_exhaustive]
 pub enum KickedFromServerResult {
     DisconnectPlayer { reason: Option<Component> },
-    RedirectTo(ServerId),
+    Redirect(ServerId),
     SendToLimbo { limbo_handlers: Vec<String> },
     Notify { message: Component },
 }
@@ -300,7 +300,7 @@ mod tests {
         event.redirect_to(ServerId::new("survival"));
         assert!(matches!(
             event.result(),
-            ServerPreConnectResult::ConnectTo(_)
+            ServerPreConnectResult::Redirect(_)
         ));
     }
 
@@ -363,7 +363,7 @@ mod tests {
         event.redirect_to(ServerId::new("hub"));
         assert_eq!(
             event.result(),
-            &KickedFromServerResult::RedirectTo(ServerId::new("hub"))
+            &KickedFromServerResult::Redirect(ServerId::new("hub"))
         );
         event.disconnect(Component::text("bye"));
         assert_eq!(
@@ -442,7 +442,7 @@ mod tests {
         #[allow(unreachable_patterns)]
         match result {
             KickedFromServerResult::DisconnectPlayer { .. }
-            | KickedFromServerResult::RedirectTo(_)
+            | KickedFromServerResult::Redirect(_)
             | KickedFromServerResult::SendToLimbo { .. }
             | KickedFromServerResult::Notify { .. }
             | _ => {}

@@ -101,7 +101,7 @@ pub(crate) async fn perform_switch(
                 pre_connect(&services.event_bus, session, server.clone(), cause).await;
             let effective = match pre_connect.result() {
                 ServerPreConnectResult::Allowed => server,
-                ServerPreConnectResult::ConnectTo(redirect) => {
+                ServerPreConnectResult::Redirect(redirect) => {
                     tracing::info!(
                         original = %server,
                         redirect = %redirect,

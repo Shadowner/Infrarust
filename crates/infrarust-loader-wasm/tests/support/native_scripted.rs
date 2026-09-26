@@ -23,7 +23,7 @@ use infrarust_api::events::handshake::{
     ConnectionHandshakeEvent, ConnectionHandshakeResult, ConnectionRejectedEvent, RejectReason,
 };
 use infrarust_api::events::lifecycle::{
-    DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult, OnlineAuthFailed,
+    DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult, OnlineAuthFailedEvent,
     PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent, PreLoginResult,
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
@@ -636,7 +636,7 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
                 e.cause.as_str(),
             ]);
         }),
-        EventName::OnlineAuthFailed => bus.subscribe(at, move |e: &mut OnlineAuthFailed| {
+        EventName::OnlineAuthFailed => bus.subscribe(at, move |e: &mut OnlineAuthFailedEvent| {
             seen.record(&[&e.username]);
         }),
         EventName::PermissionsSetup => bus.subscribe(at, move |e: &mut PermissionsSetupEvent| {
@@ -661,7 +661,7 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
             let result = match &seen.action {
                 Action::Allow => ServerPreConnectResult::Allowed,
                 Action::ConnectTo(server) => {
-                    ServerPreConnectResult::ConnectTo(ServerId::new(server.as_str()))
+                    ServerPreConnectResult::Redirect(ServerId::new(server.as_str()))
                 }
                 Action::Limbo(handlers) => ServerPreConnectResult::SendToLimbo {
                     limbo_handlers: handlers.clone(),
@@ -698,7 +698,7 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
             ]);
             let result = match &seen.action {
                 Action::Redirect(server) => {
-                    KickedFromServerResult::RedirectTo(ServerId::new(server.as_str()))
+                    KickedFromServerResult::Redirect(ServerId::new(server.as_str()))
                 }
                 Action::Limbo(handlers) => KickedFromServerResult::SendToLimbo {
                     limbo_handlers: handlers.clone(),

@@ -211,7 +211,7 @@ impl ForwardedLogin<'_> {
         loop {
             let pre = pre_connect(&self.services.event_bus, &admitted.session, target, cause).await;
             let server = match pre.result() {
-                ServerPreConnectResult::ConnectTo(server) => server.clone(),
+                ServerPreConnectResult::Redirect(server) => server.clone(),
                 ServerPreConnectResult::Denied { reason } => {
                     let reason = reason.clone();
                     self.kick(ctx, &reason).await;
@@ -300,13 +300,13 @@ impl ForwardedLogin<'_> {
                 }
             };
             let reason = match self.fire_kicked(&admitted, &kick).await {
-                KickedFromServerResult::RedirectTo(next) if redirects < MAX_KICK_REDIRECTS => {
+                KickedFromServerResult::Redirect(next) if redirects < MAX_KICK_REDIRECTS => {
                     redirects += 1;
                     target = next;
                     cause = ConnectCause::KickRedirect;
                     continue;
                 }
-                KickedFromServerResult::RedirectTo(next) => {
+                KickedFromServerResult::Redirect(next) => {
                     tracing::warn!(
                         server = %kick.server,
                         target = %next,

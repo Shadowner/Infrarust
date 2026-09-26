@@ -2,7 +2,7 @@
 
 use crate::types::{PlayerId, RawPacket};
 
-pub use infrarust_plugin_common::enums::PacketDirection;
+pub use crate::event::PacketDirection;
 
 /// Fired when a raw packet passes through the proxy.
 ///

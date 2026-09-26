@@ -77,7 +77,7 @@ impl WasmEvent for ServerPreConnectEvent {
             previous_server: previous(self.previous_server.as_ref()),
             cause: connect_cause(self.cause),
             result: match self.result() {
-                ServerPreConnectResult::ConnectTo(target) => {
+                ServerPreConnectResult::Redirect(target) => {
                     we::ServerPreConnectResult::ConnectTo(server(target))
                 }
                 ServerPreConnectResult::SendToLimbo { limbo_handlers } => {
@@ -99,7 +99,7 @@ impl WasmEvent for ServerPreConnectEvent {
         self.set_result(match result {
             we::ServerPreConnectResult::Allowed => ServerPreConnectResult::Allowed,
             we::ServerPreConnectResult::ConnectTo(target) => {
-                ServerPreConnectResult::ConnectTo(ServerId::from(target))
+                ServerPreConnectResult::Redirect(ServerId::from(target))
             }
             we::ServerPreConnectResult::SendToLimbo(limbo_handlers) => {
                 ServerPreConnectResult::SendToLimbo { limbo_handlers }
@@ -158,7 +158,7 @@ impl WasmEvent for KickedFromServerEvent {
             during_connect: self.during_connect,
             previous_server: previous(self.previous_server.as_ref()),
             result: match self.result() {
-                KickedFromServerResult::RedirectTo(target) => {
+                KickedFromServerResult::Redirect(target) => {
                     we::KickedFromServerResult::RedirectTo(server(target))
                 }
                 KickedFromServerResult::SendToLimbo { limbo_handlers } => {
@@ -189,7 +189,7 @@ impl WasmEvent for KickedFromServerEvent {
                 }
             }
             we::KickedFromServerResult::RedirectTo(target) => {
-                KickedFromServerResult::RedirectTo(ServerId::from(target))
+                KickedFromServerResult::Redirect(ServerId::from(target))
             }
             we::KickedFromServerResult::SendToLimbo(limbo_handlers) => {
                 KickedFromServerResult::SendToLimbo { limbo_handlers }

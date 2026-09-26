@@ -17,7 +17,7 @@ use infrarust_api::events::handshake::{
     ConnectionHandshakeEvent, ConnectionHandshakeResult, ConnectionRejectedEvent, RejectReason,
 };
 use infrarust_api::events::lifecycle::{
-    DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult, OnlineAuthFailed,
+    DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult, OnlineAuthFailedEvent,
     PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent, PreLoginResult,
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
@@ -694,7 +694,7 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
             }),
         )
     });
-    on::<OnlineAuthFailed>(bus, recorder, |e| {
+    on::<OnlineAuthFailedEvent>(bus, recorder, |e| {
         (
             EventKind::OnlineAuthFailed,
             None,
@@ -740,7 +740,7 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
     on::<ServerPreConnectEvent>(bus, recorder, |e| {
         let result = match e.result() {
             ServerPreConnectResult::Allowed => json!("allowed"),
-            ServerPreConnectResult::ConnectTo(id) => json!({ "connect_to": id.as_str() }),
+            ServerPreConnectResult::Redirect(id) => json!({ "connect_to": id.as_str() }),
             ServerPreConnectResult::SendToLimbo { limbo_handlers } => {
                 json!({ "send_to_limbo": limbo_handlers })
             }
@@ -792,7 +792,7 @@ fn subscribe_all(bus: &dyn EventBus, recorder: &Recorder) {
             KickedFromServerResult::DisconnectPlayer { reason } => {
                 json!({ "disconnect_player": reason.as_ref().map(ToString::to_string) })
             }
-            KickedFromServerResult::RedirectTo(id) => json!({ "redirect_to": id.as_str() }),
+            KickedFromServerResult::Redirect(id) => json!({ "redirect_to": id.as_str() }),
             KickedFromServerResult::SendToLimbo { limbo_handlers } => {
                 json!({ "send_to_limbo": limbo_handlers })
             }

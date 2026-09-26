@@ -450,7 +450,7 @@ async fn settle(
         }
         can_stay &= !kick.stranded;
         match fire_kicked(ctx, &kick, can_stay).await {
-            KickedFromServerResult::RedirectTo(target) if redirects < MAX_KICK_REDIRECTS => {
+            KickedFromServerResult::Redirect(target) if redirects < MAX_KICK_REDIRECTS => {
                 redirects += 1;
                 if let Err(e) = leave_login(ctx, &mut io.client).await {
                     return Settled::End(ProxyLoopOutcome::Error(e));
@@ -479,7 +479,7 @@ async fn settle(
                     }
                 }
             }
-            KickedFromServerResult::RedirectTo(target) => {
+            KickedFromServerResult::Redirect(target) => {
                 tracing::warn!(
                     server = %kick.server,
                     target = %target,

@@ -20,8 +20,8 @@ use infrarust_api::events::connection::{
 };
 use infrarust_api::events::handshake::{ConnectionHandshakeEvent, ConnectionRejectedEvent};
 use infrarust_api::events::lifecycle::{
-    DisconnectEvent, GameProfileRequestEvent, LoginEvent, OnlineAuthFailed, PermissionsSetupEvent,
-    PostLoginEvent, PreLoginEvent,
+    DisconnectEvent, GameProfileRequestEvent, LoginEvent, OnlineAuthFailedEvent,
+    PermissionsSetupEvent, PostLoginEvent, PreLoginEvent,
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
 use infrarust_api::events::messaging::PluginMessageEvent;
@@ -243,7 +243,7 @@ const BUILTIN_NAMES: [Probe; 36] = [
     ("LoginEvent", TypeId::of::<LoginEvent>),
     ("PostLoginEvent", TypeId::of::<PostLoginEvent>),
     ("PermissionsSetupEvent", TypeId::of::<PermissionsSetupEvent>),
-    ("OnlineAuthFailed", TypeId::of::<OnlineAuthFailed>),
+    ("OnlineAuthFailedEvent", TypeId::of::<OnlineAuthFailedEvent>),
     ("DisconnectEvent", TypeId::of::<DisconnectEvent>),
     (
         "PlayerChooseInitialServerEvent",

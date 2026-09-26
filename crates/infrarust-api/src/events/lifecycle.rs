@@ -196,12 +196,12 @@ impl DisconnectCause {
 /// Covers both forced online auth (`ForceOnline` in offline mode) and default
 /// online auth (`client_only` mode). Plugins can listen for this to remember
 /// the username and set `ForceOffline` on the next connection attempt.
-pub struct OnlineAuthFailed {
+pub struct OnlineAuthFailedEvent {
     /// The username that failed online authentication.
     pub username: String,
 }
 
-impl Event for OnlineAuthFailed {}
+impl Event for OnlineAuthFailedEvent {}
 
 /// Fired after authentication, once the active permission provider has built
 /// the player's checker.

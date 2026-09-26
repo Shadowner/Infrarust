@@ -98,7 +98,7 @@ pub struct PacketFilter {
     pub direction: PacketDirection,
 }
 
-pub use crate::events::packet::PacketDirection;
+pub use infrarust_plugin_common::enums::PacketDirection;
 
 /// Marker trait for all proxy events.
 ///

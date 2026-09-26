@@ -1,8 +1,8 @@
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::lifecycle::{
     DisconnectCause, DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult,
-    OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent,
-    PreLoginResult,
+    OnlineAuthFailedEvent, PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent,
+    PreLoginEvent, PreLoginResult,
 };
 
 use infrarust_api::permissions::PermissionSnapshot;
@@ -86,7 +86,7 @@ impl WasmEvent for DisconnectEvent {
     }
 }
 
-impl WasmEvent for OnlineAuthFailed {
+impl WasmEvent for OnlineAuthFailedEvent {
     const KIND: EventKind = EventKind::OnlineAuthFailed;
 
     fn to_wit(&self) -> we::Event {

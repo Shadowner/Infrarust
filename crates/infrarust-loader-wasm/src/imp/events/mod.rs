@@ -25,8 +25,8 @@ use infrarust_api::events::connection::{
 };
 use infrarust_api::events::handshake::{ConnectionHandshakeEvent, ConnectionRejectedEvent};
 use infrarust_api::events::lifecycle::{
-    DisconnectEvent, GameProfileRequestEvent, LoginEvent, OnlineAuthFailed, PermissionsSetupEvent,
-    PostLoginEvent, PreLoginEvent,
+    DisconnectEvent, GameProfileRequestEvent, LoginEvent, OnlineAuthFailedEvent,
+    PermissionsSetupEvent, PostLoginEvent, PreLoginEvent,
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
 use infrarust_api::events::messaging::PluginMessageEvent;
@@ -113,7 +113,9 @@ pub(crate) fn register(
         EventKind::PreLogin => subscribe::<PreLoginEvent>(bus, instance, at, listener),
         EventKind::PostLogin => subscribe::<PostLoginEvent>(bus, instance, at, listener),
         EventKind::Disconnect => subscribe::<DisconnectEvent>(bus, instance, at, listener),
-        EventKind::OnlineAuthFailed => subscribe::<OnlineAuthFailed>(bus, instance, at, listener),
+        EventKind::OnlineAuthFailed => {
+            subscribe::<OnlineAuthFailedEvent>(bus, instance, at, listener)
+        }
         EventKind::PermissionsSetup => {
             subscribe::<PermissionsSetupEvent>(bus, instance, at, listener)
         }

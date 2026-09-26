@@ -171,7 +171,7 @@ pub(crate) async fn resolve_initial_mode(
                     },
                 ));
             }
-            infrarust_api::events::connection::ServerPreConnectResult::ConnectTo(id) => {
+            infrarust_api::events::connection::ServerPreConnectResult::Redirect(id) => {
                 target_server_id = id.clone();
             }
             _ => {}

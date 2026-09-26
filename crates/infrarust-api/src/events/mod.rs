@@ -44,8 +44,8 @@ pub use handshake::{
 };
 pub use lifecycle::{
     DisconnectCause, DisconnectEvent, GameProfileRequestEvent, LoginEvent, LoginResult,
-    OnlineAuthFailed, PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent, PreLoginEvent,
-    PreLoginResult,
+    OnlineAuthFailedEvent, PermissionsSetupEvent, PermissionsSetupResult, PostLoginEvent,
+    PreLoginEvent, PreLoginResult,
 };
 pub use limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
 pub use messaging::{PluginMessageEvent, PluginMessageResult};

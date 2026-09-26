@@ -594,7 +594,7 @@ fn pre_connect() -> ServerPreConnectEvent {
 fn outcome(event: &ServerPreConnectEvent) -> String {
     match event.result() {
         ServerPreConnectResult::Allowed => "allowed".to_string(),
-        ServerPreConnectResult::ConnectTo(server) => format!("connect-to:{}", server.as_str()),
+        ServerPreConnectResult::Redirect(server) => format!("connect-to:{}", server.as_str()),
         _ => "other".to_string(),
     }
 }

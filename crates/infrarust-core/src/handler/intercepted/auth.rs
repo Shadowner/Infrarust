@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use infrarust_api::events::lifecycle::{OnlineAuthFailed, PreLoginResult};
+use infrarust_api::events::lifecycle::{OnlineAuthFailedEvent, PreLoginResult};
 use infrarust_api::types::{Component, GameProfile, ProfileProperty};
 use infrarust_protocol::version::ProtocolVersion;
 
@@ -157,7 +157,7 @@ async fn online_auth(
             );
             let _ = services
                 .event_bus
-                .fire(OnlineAuthFailed {
+                .fire(OnlineAuthFailedEvent {
                     username: login_data.username.clone(),
                 })
                 .await;

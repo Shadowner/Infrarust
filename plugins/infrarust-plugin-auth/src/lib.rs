@@ -141,7 +141,7 @@ impl Plugin for AuthPlugin {
                     premium::config::NameConflictAction::Kick
                 );
                 ctx.event_bus().subscribe::<
-                    infrarust_api::events::lifecycle::OnlineAuthFailed, _
+                    infrarust_api::events::lifecycle::OnlineAuthFailedEvent, _
                 >(
                     infrarust_api::event::EventPriority::NORMAL,
                     move |event| {
