@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use infrarust_api::event::{BoxFuture, ResultedEvent};
 use infrarust_api::events::lifecycle::{PreLoginEvent, PreLoginResult};
-use infrarust_api::types::Component;
 
 use crate::storage::AuthStorage;
 use crate::util::parse_colored;
@@ -101,7 +100,7 @@ impl PremiumDetector {
                         }
                         RateLimitAction::Deny => {
                             tracing::warn!(%username, "Mojang API rate limited — denying");
-                            event.deny(Component::error(&detector.config.messages.rate_limited));
+                            event.deny(parse_colored(&detector.config.messages.rate_limited));
                         }
                     },
                     Err(e) => match detector.config.lookup_error_action {
@@ -110,7 +109,7 @@ impl PremiumDetector {
                         }
                         RateLimitAction::Deny => {
                             tracing::warn!(%username, error = %e, "Mojang API error — denying");
-                            event.deny(Component::error(&detector.config.messages.lookup_failed));
+                            event.deny(parse_colored(&detector.config.messages.lookup_failed));
                         }
                     },
                 }
@@ -138,11 +137,6 @@ mod tests {
     }
 
     async fn fixture(action: Option<NameConflictAction>) -> Fixture {
-        let env = TestEnv::new().await;
-        let cache = Arc::new(PremiumCache::new(
-            Duration::from_secs(60),
-            Duration::from_secs(60),
-        ));
         let mut config = PremiumConfig {
             enabled: true,
             ..PremiumConfig::default()
@@ -150,9 +144,18 @@ mod tests {
         if let Some(action) = action {
             config.premium_name_conflict_action = action;
         }
+        fixture_with(config, MojangApiLookup::new(1)).await
+    }
+
+    async fn fixture_with(config: PremiumConfig, lookup: MojangApiLookup) -> Fixture {
+        let env = TestEnv::new().await;
+        let cache = Arc::new(PremiumCache::new(
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        ));
         let detector = Arc::new(PremiumDetector::new(
             Arc::clone(&cache),
-            Arc::new(MojangApiLookup::new(1)),
+            Arc::new(lookup),
             Arc::clone(&env.storage),
             Arc::new(config),
         ));
@@ -184,6 +187,56 @@ mod tests {
                 },
             );
         }
+    }
+
+    async fn mojang_answering(status: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut request = [0u8; 1024];
+                let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut request).await;
+                let response =
+                    format!("HTTP/1.1 {status}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+                let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, response.as_bytes()).await;
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    async fn denial(config: PremiumConfig, status: &'static str) -> String {
+        let lookup = MojangApiLookup::with_base_url(mojang_answering(status).await, 10);
+        let fx = fixture_with(config, lookup).await;
+        match fx.pre_login("Steve").await {
+            PreLoginResult::Denied { reason } => flatten(&reason),
+            other => panic!("the lookup failure should deny the login: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rate_limited_lookup_denies_with_its_colours_rendered() {
+        let config = PremiumConfig {
+            enabled: true,
+            rate_limit_action: RateLimitAction::Deny,
+            ..PremiumConfig::default()
+        };
+        assert_eq!(
+            denial(config, "429 Too Many Requests").await,
+            "The server is busy. Please try again in a moment."
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_lookup_denies_with_its_colours_rendered() {
+        let config = PremiumConfig {
+            enabled: true,
+            lookup_error_action: RateLimitAction::Deny,
+            ..PremiumConfig::default()
+        };
+        assert_eq!(
+            denial(config, "500 Internal Server Error").await,
+            "Could not verify your account status. Please try again later."
+        );
     }
 
     #[tokio::test]
