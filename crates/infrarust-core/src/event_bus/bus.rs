@@ -14,7 +14,9 @@ use std::task::Poll;
 use std::time::Duration;
 
 use futures_util::FutureExt;
-use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus, FireError};
+use infrarust_api::event::bus::{
+    ErasedAsyncHandler, ErasedEvent, ErasedHandler, EventBus, FireError,
+};
 use infrarust_api::event::{
     BoxFuture, ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection,
     PacketFilter, ResultedEvent,
@@ -271,9 +273,10 @@ impl EventBusImpl {
     pub(crate) async fn fire_from(
         &self,
         fired_by: &Arc<str>,
-        event_type: &'static str,
-        event: &mut (dyn Any + Send),
+        event: &mut dyn ErasedEvent,
     ) -> Result<(), FireError> {
+        let event_type = event.type_name();
+        let event = event.as_any_mut();
         let type_id = (*event).type_id();
         if is_builtin_event(type_id) {
             tracing::warn!(
@@ -651,10 +654,9 @@ impl EventBus for EventBusImpl {
 
     fn fire_erased<'a>(
         &'a self,
-        event_type: &'static str,
-        event: &'a mut (dyn Any + Send),
+        event: &'a mut dyn ErasedEvent,
     ) -> BoxFuture<'a, Result<(), FireError>> {
-        Box::pin(self.fire_from(&self.core_owner, event_type, event))
+        Box::pin(self.fire_from(&self.core_owner, event))
     }
 }
 

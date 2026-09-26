@@ -18,6 +18,22 @@ pub type ErasedHandler = Box<dyn Fn(&mut dyn Any) + Send + Sync>;
 /// A type-erased asynchronous event handler.
 pub type ErasedAsyncHandler = Box<dyn Fn(&mut dyn Any) -> BoxFuture<'_, ()> + Send + Sync>;
 
+pub trait ErasedEvent: Any + Send {
+    fn type_name(&self) -> &'static str;
+
+    fn as_any_mut(&mut self) -> &mut (dyn Any + Send);
+}
+
+impl<E: super::Event> ErasedEvent for E {
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<E>()
+    }
+
+    fn as_any_mut(&mut self) -> &mut (dyn Any + Send) {
+        self
+    }
+}
+
 /// The event bus allows plugins to subscribe to proxy events.
 ///
 /// Obtained via [`PluginContext::event_bus()`](crate::plugin::PluginContext::event_bus).
@@ -92,8 +108,7 @@ pub trait EventBus: Send + Sync + private::Sealed {
 
     fn fire_erased<'a>(
         &'a self,
-        event_type: &'static str,
-        event: &'a mut (dyn Any + Send),
+        event: &'a mut dyn ErasedEvent,
     ) -> BoxFuture<'a, Result<(), FireError>>;
 }
 
@@ -241,8 +256,7 @@ impl EventBusExt for dyn EventBus + '_ {
     fn fire<E: super::Event>(&self, event: E) -> BoxFuture<'_, Result<E, FireError>> {
         Box::pin(async move {
             let mut event = event;
-            self.fire_erased(std::any::type_name::<E>(), &mut event)
-                .await?;
+            self.fire_erased(&mut event).await?;
             Ok(event)
         })
     }

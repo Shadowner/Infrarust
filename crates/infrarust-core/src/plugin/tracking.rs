@@ -1,6 +1,6 @@
 //! Tracking wrappers that record registered resources for automatic cleanup.
 
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -8,7 +8,9 @@ use std::time::Duration;
 use infrarust_api::command::{
     CommandError, CommandHandler, CommandInfo, CommandManager, CommandRegistration, CommandSpec,
 };
-use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus, FireError};
+use infrarust_api::event::bus::{
+    ErasedAsyncHandler, ErasedEvent, ErasedHandler, EventBus, FireError,
+};
 use infrarust_api::event::{
     BoxFuture, ConnectionState, ListenerHandle, PacketDirection, PacketFilter,
 };
@@ -146,10 +148,9 @@ impl EventBus for TrackingEventBus {
 
     fn fire_erased<'a>(
         &'a self,
-        event_type: &'static str,
-        event: &'a mut (dyn Any + Send),
+        event: &'a mut dyn ErasedEvent,
     ) -> BoxFuture<'a, Result<(), FireError>> {
-        Box::pin(self.inner.fire_from(&self.owner, event_type, event))
+        Box::pin(self.inner.fire_from(&self.owner, event))
     }
 }
 
