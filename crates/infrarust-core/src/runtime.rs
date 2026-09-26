@@ -151,6 +151,7 @@ impl ProxyRuntimeBuilder {
 
         let services = server.services();
         let plugin_registry = Arc::new(PluginRegistryImpl::new());
+        plugin_manager.set_plugin_registry(Arc::clone(&plugin_registry));
         let start_time = Instant::now();
 
         crate::commands::register_builtin_commands(
@@ -185,10 +186,6 @@ impl ProxyRuntimeBuilder {
         }
         services.ban_manager.report_missing_provider();
         services.permission_service.report_missing_provider();
-
-        plugin_registry.update_from(&plugin_manager.list_plugins(), &|id| {
-            plugin_manager.plugin_state(id).cloned()
-        });
 
         activate_config_providers(&plugin_manager, services, server.background_token()).await;
 
@@ -420,13 +417,7 @@ impl RunningProxy {
     }
 
     pub async fn disable_plugin(&self, id: &str) -> Result<(), infrarust_api::error::PluginError> {
-        let mut manager = self.plugin_manager.write().await;
-        manager.disable_plugin(id).await?;
-        self.plugin_registry
-            .update_from(&manager.list_plugins(), &|id| {
-                manager.plugin_state(id).cloned()
-            });
-        Ok(())
+        self.plugin_manager.write().await.disable_plugin(id).await
     }
 
     pub const fn start_time(&self) -> Instant {

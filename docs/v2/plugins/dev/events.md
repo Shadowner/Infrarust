@@ -1220,7 +1220,7 @@ Posted right after a plugin's `on_enable` succeeded, once per plugin, in enable 
 | `plugin_id` | `String` | The plugin that was enabled |
 | `version` | `String` | Its version from `PluginMetadata` |
 
-The manager waits for the event to be delivered before it enables the next plugin. A plugin sees its own `PluginEnabledEvent` and those of every plugin enabled after it. The plugins enabled before it are in the [plugin registry](./api#plugincontext).
+The manager waits for the event to be delivered before it enables the next plugin. A plugin sees its own `PluginEnabledEvent` and those of every plugin enabled after it. The plugins enabled before it are in the [plugin registry](./api#plugincontext), which lists a plugin as `enabled` from the moment its `on_enable` returns: a listener already finds the plugin the event names there.
 
 ### PluginDisabledEvent
 
@@ -1232,7 +1232,7 @@ Posted after a plugin was disabled and its resources cleaned up, on shutdown or 
 |-------|------|-------------|
 | `plugin_id` | `String` | The plugin that was disabled |
 
-A plugin does not receive its own `PluginDisabledEvent`: its listeners are removed before the event is posted.
+A plugin does not receive its own `PluginDisabledEvent`: its listeners are removed before the event is posted. The plugin has also left the [plugin registry](./api#plugincontext) by then: it is taken out when its disabling starts, before its `on_disable` runs.
 
 ### ServiceProvidedEvent
 

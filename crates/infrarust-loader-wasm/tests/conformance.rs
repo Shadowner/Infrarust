@@ -839,7 +839,7 @@ fn script_parser_accepts_the_grammar_and_rejects_mistakes() {
     let parsed = script::parse(
         "on pre-login early deny \"Banned\"\n\ncmd greet record\non post-login 32 cancelled\n\
          named echo late respond \"pong\"\ncmd ask fire echo \"ping\"\nchannel test:echo\n\
-         config keepalive.retries",
+         config keepalive.retries\nplugin auth",
     )
     .expect("valid script");
     assert_eq!(
@@ -874,6 +874,9 @@ fn script_parser_accepts_the_grammar_and_rejects_mistakes() {
             Directive::Config {
                 key: "keepalive.retries".to_owned(),
             },
+            Directive::Plugin {
+                id: "auth".to_owned(),
+            },
         ]
     );
     for bad in [
@@ -892,6 +895,8 @@ fn script_parser_accepts_the_grammar_and_rejects_mistakes() {
         "channel",
         "config",
         "config web.bind extra",
+        "plugin",
+        "plugin auth extra",
     ] {
         assert!(script::parse(bad).is_err(), "`{bad}` must be rejected");
     }

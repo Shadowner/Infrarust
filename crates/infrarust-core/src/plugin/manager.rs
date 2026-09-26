@@ -20,6 +20,7 @@ use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::services::scheduler::SchedulerImpl;
 
+use super::PluginRegistryImpl;
 use super::PluginState;
 use super::context::PluginContextImpl;
 use super::context_factory::PluginContextFactory;
@@ -54,6 +55,7 @@ pub struct PluginManager {
     loaded_loaders: Vec<String>,             // loaders whose on_load() succeeded
     disabled: HashSet<String>,               // plugin ids disabled via config
     event_bus: Option<Arc<EventBusImpl>>,
+    registry: Option<Arc<PluginRegistryImpl>>,
 }
 
 struct LoadedPlugin {
@@ -74,11 +76,16 @@ impl PluginManager {
             loaded_loaders: Vec::new(),
             disabled: HashSet::new(),
             event_bus: None,
+            registry: None,
         }
     }
 
     pub fn set_event_bus(&mut self, event_bus: Arc<EventBusImpl>) {
         self.event_bus = Some(event_bus);
+    }
+
+    pub fn set_plugin_registry(&mut self, registry: Arc<PluginRegistryImpl>) {
+        self.registry = Some(registry);
     }
 
     async fn announce<E: Event>(&self, event: E) {
@@ -208,6 +215,9 @@ impl PluginManager {
                 Ok(()) => {
                     self.states.insert(plugin_id.clone(), PluginState::Enabled);
                     tracing::info!(plugin = %plugin_id, "Plugin enabled");
+                    if let Some(registry) = &self.registry {
+                        registry.insert_enabled(&metadata);
+                    }
                     self.announce(PluginEnabledEvent::new(
                         plugin_id.clone(),
                         metadata.version.clone(),
@@ -290,6 +300,9 @@ impl PluginManager {
 
         tracing::info!(plugin = %id, "Disabling plugin");
         self.states.insert(id.clone(), PluginState::Disabled);
+        if let Some(registry) = &self.registry {
+            registry.remove(id);
+        }
 
         if let Err(e) = loaded.plugin.on_disable().await {
             tracing::error!(plugin = %id, error = %e, "Plugin on_disable() failed");

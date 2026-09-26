@@ -3,7 +3,7 @@ use std::sync::RwLock;
 use infrarust_api::plugin::PluginMetadata;
 use infrarust_api::services::plugin_registry::{PluginDependencyInfo, PluginInfo, PluginRegistry};
 
-use super::PluginState;
+const ENABLED: &str = "enabled";
 
 pub struct PluginRegistryImpl {
     data: RwLock<Vec<PluginInfo>>,
@@ -16,43 +16,33 @@ impl PluginRegistryImpl {
         }
     }
 
-    pub fn update_from(
-        &self,
-        plugins: &[&PluginMetadata],
-        states: &dyn Fn(&str) -> Option<PluginState>,
-    ) {
-        let infos = plugins
-            .iter()
-            .map(|meta| {
-                let state = states(&meta.id)
-                    .map(|s| match s {
-                        PluginState::Loading => "loading".to_string(),
-                        PluginState::Enabled => "enabled".to_string(),
-                        PluginState::Disabled => "disabled".to_string(),
-                        PluginState::Error(e) => format!("error: {e}"),
-                    })
-                    .unwrap_or_else(|| "unknown".to_string());
+    pub fn insert_enabled(&self, metadata: &PluginMetadata) {
+        let info = PluginInfo {
+            id: metadata.id.clone(),
+            name: metadata.name.clone(),
+            version: metadata.version.clone(),
+            authors: metadata.authors.clone(),
+            description: metadata.description.clone(),
+            state: ENABLED.to_string(),
+            dependencies: metadata
+                .dependencies
+                .iter()
+                .map(|d| PluginDependencyInfo {
+                    id: d.id.clone(),
+                    optional: d.optional,
+                })
+                .collect(),
+        };
+        let mut data = self.data.write().expect("lock poisoned");
+        data.retain(|p| p.id != info.id);
+        data.push(info);
+    }
 
-                PluginInfo {
-                    id: meta.id.clone(),
-                    name: meta.name.clone(),
-                    version: meta.version.clone(),
-                    authors: meta.authors.clone(),
-                    description: meta.description.clone(),
-                    state,
-                    dependencies: meta
-                        .dependencies
-                        .iter()
-                        .map(|d| PluginDependencyInfo {
-                            id: d.id.clone(),
-                            optional: d.optional,
-                        })
-                        .collect(),
-                }
-            })
-            .collect();
-
-        *self.data.write().expect("lock poisoned") = infos;
+    pub fn remove(&self, id: &str) {
+        self.data
+            .write()
+            .expect("lock poisoned")
+            .retain(|p| p.id != id);
     }
 }
 

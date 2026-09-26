@@ -380,7 +380,7 @@ impl Plugins {
 }
 ```
 
-`ProxyDetails` mirrors the native `ProxyInfo`: the version, the bind address, the connection limits and timeouts, the rate limits, the status cache and keepalive settings, which optional features are on, and what happens to an unknown domain. `granted_capabilities` lists what this plugin was granted, so a plugin can switch a feature off instead of failing a call. A `PluginInfo` has the `id`, `name`, `version`, `authors`, `description`, `state` and `dependencies` of each loaded plugin.
+`ProxyDetails` mirrors the native `ProxyInfo`: the version, the bind address, the connection limits and timeouts, the rate limits, the status cache and keepalive settings, which optional features are on, and what happens to an unknown domain. `granted_capabilities` lists what this plugin was granted, so a plugin can switch a feature off instead of failing a call. A `PluginInfo` has the `id`, `name`, `version`, `authors`, `description`, `state` and `dependencies` of each loaded plugin. The list holds the plugins enabled right now, each with the state `enabled`: a plugin appears as soon as its `on_enable` returns, so `on_enable` sees every plugin enabled before this one, and it leaves the list when its disabling starts.
 
 ```rust
 if Proxy::has_capability(Capability::Ban) && Plugins::is_loaded("auth") {

@@ -174,7 +174,7 @@ Errors during loading or enabling don't stop other plugins. The manager collects
 
 ## Disabling one plugin
 
-`PluginManager::disable_plugin(id)` (and `RunningProxy::disable_plugin(id)`, which also refreshes the plugin registry) disables a single enabled plugin while the proxy keeps running. It runs the same steps as shutdown for that plugin: `on_disable()`, cleanup, `PluginDisabledEvent`, then `loader.unload()`.
+`PluginManager::disable_plugin(id)` (and `RunningProxy::disable_plugin(id)`, which calls it) disables a single enabled plugin while the proxy keeps running. It runs the same steps as shutdown for that plugin: `on_disable()`, cleanup, `PluginDisabledEvent`, then `loader.unload()`.
 
 It refuses with an error when the plugin is not enabled, or when another enabled plugin lists it with `depends_on`. A plugin that declared it with `optional_dependency` does not block it, so such a plugin must cope with the dependency going away, for example by looking its [services](./services) up each time instead of caching them.
 
@@ -187,7 +187,7 @@ The plugin manager posts two reserved events:
 | `PluginEnabledEvent` | `plugin_id`, `version` | Right after a plugin's `on_enable` succeeded |
 | `PluginDisabledEvent` | `plugin_id` | Right after a plugin's cleanup, on shutdown or `disable_plugin` |
 
-The manager waits for each event to be delivered before it moves to the next plugin, so the events arrive in enable and disable order. A plugin receives the `PluginEnabledEvent` of itself and of every plugin enabled after it; use the [plugin registry](./api#plugincontext) for those enabled before. A plugin never receives its own `PluginDisabledEvent`, because its listeners are removed in the cleanup that comes first. On shutdown, the disabled events are posted after `ProxyShutdownEvent`.
+The manager waits for each event to be delivered before it moves to the next plugin, so the events arrive in enable and disable order. A plugin receives the `PluginEnabledEvent` of itself and of every plugin enabled after it; use the [plugin registry](./api#plugincontext) for those enabled before. The registry lists the plugins that are enabled right now, each with the state `enabled`: the manager adds a plugin as soon as its `on_enable` returns, before its `PluginEnabledEvent`, and removes it when its disabling starts, before `on_disable`, on shutdown as with `disable_plugin`. A plugin whose `on_enable` failed never appears in it, and a plugin does not find itself there during its own `on_enable` or `on_disable`. A plugin never receives its own `PluginDisabledEvent`, because its listeners are removed in the cleanup that comes first. On shutdown, the disabled events are posted after `ProxyShutdownEvent`.
 
 ## Automatic resource cleanup
 

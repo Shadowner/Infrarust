@@ -261,6 +261,10 @@ pub fn enable(ctx: &Context) -> Result<(), PluginError> {
                 };
                 script::append(&log(), &line);
             }
+            Directive::Plugin { id } => {
+                let state = Plugins::get(&id).map(|info| info.state);
+                script::append(&log(), &script::plugin_line(&id, state.as_deref()));
+            }
         }
     }
     let line = match ctx.enable_reason() {

@@ -121,6 +121,10 @@ impl Plugin for ScriptedPlugin {
                         let value = ctx.config_service().get_value(&key);
                         script::append(&log, &script::config_line(&key, value.as_deref()));
                     }
+                    Directive::Plugin { id } => {
+                        let state = ctx.plugin_registry().plugin_info(&id).map(|p| p.state);
+                        script::append(&log, &script::plugin_line(&id, state.as_deref()));
+                    }
                 }
             }
             script::append(&log, "enable");

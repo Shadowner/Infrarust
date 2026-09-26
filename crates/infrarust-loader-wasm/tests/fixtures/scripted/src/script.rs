@@ -238,6 +238,9 @@ pub enum Directive {
     Config {
         key: String,
     },
+    Plugin {
+        id: String,
+    },
 }
 
 pub fn parse(script: &str) -> Result<Vec<Directive>, String> {
@@ -331,6 +334,13 @@ fn parse_line(line: &str) -> Result<Directive, String> {
                 key: key.to_owned(),
             })
         }
+        "plugin" => {
+            let (id, rest) = word(rest);
+            if id.is_empty() || !rest.trim().is_empty() {
+                return Err("expected `plugin <id>`".to_owned());
+            }
+            Ok(Directive::Plugin { id: id.to_owned() })
+        }
         other => Err(format!("unknown directive {other:?}")),
     }
 }
@@ -418,6 +428,10 @@ pub fn named_line(name: &str, priority: u8, fields: &[&str]) -> String {
 
 pub fn config_line(key: &str, value: Option<&str>) -> String {
     format!("config {key} {}", or_dash(value))
+}
+
+pub fn plugin_line(id: &str, state: Option<&str>) -> String {
+    format!("plugin {id} {}", or_dash(state))
 }
 
 pub fn fired_line(command: &str, event: &str, cancelled: bool, response: Option<&str>) -> String {

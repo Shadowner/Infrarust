@@ -99,6 +99,33 @@ async fn a_plugin_without_plugin_messaging_cannot_register_a_channel() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wasm_plugin_sees_the_plugins_enabled_before_it_in_the_registry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let plugins_dir = tmp.path().to_path_buf();
+    add_fixture(&plugins_dir, "scripted", "scripted");
+    write_script(&plugins_dir, "scripted", "plugin first\nplugin scripted");
+    let dir = plugins_dir.clone();
+    let proxy = TestProxy::builder()
+        .plugin(infrarust_test_harness::ScriptedPlugin::new("first"))
+        .loader(Box::new(fresh_loader()))
+        .patch_config(move |table| {
+            table.insert(
+                "plugins_dir".into(),
+                Value::String(dir.to_string_lossy().into_owned()),
+            );
+        })
+        .start()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        read_log(&plugins_dir.join("scripted")),
+        ["plugin first enabled", "plugin scripted -", "enable"]
+    );
+    proxy.shutdown().await.unwrap();
+}
+
 fn grant_messaging(plugins_dir: std::path::PathBuf) -> impl FnOnce(&mut Table) + Send + 'static {
     move |table| {
         table.insert(
