@@ -1,8 +1,7 @@
-use std::time::Duration;
-
 use infrarust_config::CraftyManagerConfig;
 
 use crate::error::ServerManagerError;
+use crate::http::{HTTP_TIMEOUT, check_response};
 use crate::provider::{ProviderStatus, ServerProvider};
 
 /// Provider for Crafty Controller servers via REST API.
@@ -22,69 +21,39 @@ impl CraftyProvider {
             server_id: config.server_id.clone(),
         }
     }
+
+    async fn send_action(&self, action: &str) -> Result<(), ServerManagerError> {
+        tracing::info!(server_id = %self.server_id, action, "sending action to Crafty");
+
+        let url = format!(
+            "{}/api/v2/servers/{}/action/{action}",
+            self.api_url, self.server_id
+        );
+
+        let resp = self
+            .http_client
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .timeout(HTTP_TIMEOUT)
+            .send()
+            .await?;
+
+        check_response(resp, &format!("Crafty {action}")).await?;
+        Ok(())
+    }
 }
 
 impl ServerProvider for CraftyProvider {
     fn start(
         &self,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
-        Box::pin(async move {
-            tracing::info!(server_id = %self.server_id, "sending start action to Crafty");
-
-            let url = format!(
-                "{}/api/v2/servers/{}/action/start_server",
-                self.api_url, self.server_id
-            );
-
-            let resp = self
-                .http_client
-                .post(&url)
-                .bearer_auth(&self.api_key)
-                .timeout(Duration::from_secs(10))
-                .send()
-                .await?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                return Err(ServerManagerError::ApiResponse(format!(
-                    "Crafty start_server returned {status}: {body}"
-                )));
-            }
-
-            Ok(())
-        })
+        Box::pin(self.send_action("start_server"))
     }
 
     fn stop(
         &self,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
-        Box::pin(async move {
-            tracing::info!(server_id = %self.server_id, "sending stop action to Crafty");
-
-            let url = format!(
-                "{}/api/v2/servers/{}/action/stop_server",
-                self.api_url, self.server_id
-            );
-
-            let resp = self
-                .http_client
-                .post(&url)
-                .bearer_auth(&self.api_key)
-                .timeout(Duration::from_secs(10))
-                .send()
-                .await?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                return Err(ServerManagerError::ApiResponse(format!(
-                    "Crafty stop_server returned {status}: {body}"
-                )));
-            }
-
-            Ok(())
-        })
+        Box::pin(self.send_action("stop_server"))
     }
 
     fn check_status(
@@ -99,19 +68,12 @@ impl ServerProvider for CraftyProvider {
                 .http_client
                 .get(&url)
                 .bearer_auth(&self.api_key)
-                .timeout(Duration::from_secs(10))
+                .timeout(HTTP_TIMEOUT)
                 .send()
                 .await?;
 
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                return Err(ServerManagerError::ApiResponse(format!(
-                    "Crafty stats returned {status}: {body}"
-                )));
-            }
-
-            let body: serde_json::Value = resp.json().await?;
+            let body: serde_json::Value =
+                check_response(resp, "Crafty stats").await?.json().await?;
             let Some(running) = body["data"]["running"].as_bool() else {
                 tracing::warn!(
                     server_id = %self.server_id,
