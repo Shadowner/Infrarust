@@ -6,6 +6,7 @@
 
 mod component;
 mod extensions;
+pub mod namespaced_key;
 mod player_id;
 mod protocol_version;
 mod raw_packet;

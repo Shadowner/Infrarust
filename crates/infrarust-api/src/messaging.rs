@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::types::{ProtocolVersion, ServerId};
+use crate::types::{ProtocolVersion, ServerId, namespaced_key};
 
 pub const MAX_CHANNEL_LENGTH: usize = 128;
 pub const MAX_LEGACY_CHANNEL_LENGTH: usize = 20;
@@ -37,19 +37,8 @@ pub enum ChannelIdError {
     InvalidLegacy(String),
 }
 
-fn is_namespace_char(c: char) -> bool {
-    c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.')
-}
-
 pub fn is_modern_channel(id: &str) -> bool {
-    let Some((namespace, name)) = id.split_once(':') else {
-        return false;
-    };
-    id.len() <= MAX_CHANNEL_LENGTH
-        && !namespace.is_empty()
-        && !name.is_empty()
-        && namespace.chars().all(is_namespace_char)
-        && name.chars().all(|c| is_namespace_char(c) || c == '/')
+    id.len() <= MAX_CHANNEL_LENGTH && namespaced_key::parse(id).is_some()
 }
 
 fn is_legacy_channel(name: &str) -> bool {

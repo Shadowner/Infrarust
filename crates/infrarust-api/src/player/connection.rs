@@ -1,4 +1,4 @@
-use crate::types::Component;
+use crate::types::{Component, namespaced_key};
 
 pub const MAX_COOKIE_SIZE: usize = 5120;
 
@@ -28,17 +28,9 @@ impl ConnectionResult {
     }
 }
 
-fn is_namespace_char(c: char) -> bool {
-    c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.')
-}
-
 pub fn cookie_key(key: &str) -> Result<String, String> {
     let (namespace, path) = key.split_once(':').unwrap_or(("minecraft", key));
-    let valid = !namespace.is_empty()
-        && !path.is_empty()
-        && namespace.chars().all(is_namespace_char)
-        && path.chars().all(|c| is_namespace_char(c) || c == '/');
-    if valid {
+    if namespaced_key::is_valid(namespace, path) {
         Ok(format!("{namespace}:{path}"))
     } else {
         Err(format!(
