@@ -80,13 +80,15 @@ impl Plugin for HelloPlugin {
             ctx.register_limbo_handler(Box::new(TestGateHandler))?;
 
             let player_registry = ctx.player_registry();
-            ctx.scheduler().interval(
+            ctx.scheduler().repeat(
                 std::time::Duration::from_secs(60),
+                None,
                 Box::new(move || {
                     tracing::info!("[HelloPlugin] 60 seconds have passed!");
                     player_registry.get_all_players().iter().for_each(|player| {
                         let _ = player.send_message(Component::text("Hello from the scheduler!"));
                     });
+                    Box::pin(async {})
                 }),
             );
 

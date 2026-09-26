@@ -288,29 +288,8 @@ impl TrackingScheduler {
 impl infrarust_api::services::scheduler::private::Sealed for TrackingScheduler {}
 
 impl Scheduler for TrackingScheduler {
-    fn delay(&self, duration: Duration, task: Box<dyn FnOnce() + Send>) -> TaskHandle {
+    fn delay(&self, duration: Duration, task: AsyncTask) -> TaskHandle {
         self.inner.delay_for(&self.owner, duration, task)
-    }
-
-    fn interval(&self, period: Duration, task: Box<dyn Fn() + Send + Sync>) -> TaskHandle {
-        self.inner.interval_for(&self.owner, period, period, task)
-    }
-
-    fn interval_with_delay(
-        &self,
-        period: Duration,
-        delay: Duration,
-        task: Box<dyn Fn() + Send + Sync>,
-    ) -> TaskHandle {
-        self.inner.interval_for(&self.owner, period, delay, task)
-    }
-
-    fn spawn(&self, task: BoxFuture<'static, ()>) -> TaskHandle {
-        self.inner.spawn_for(&self.owner, task)
-    }
-
-    fn delay_async(&self, duration: Duration, task: AsyncTask) -> TaskHandle {
-        self.inner.delay_async_for(&self.owner, duration, task)
     }
 
     fn repeat(
@@ -321,6 +300,10 @@ impl Scheduler for TrackingScheduler {
     ) -> TaskHandle {
         self.inner
             .repeat_for(&self.owner, period, initial_delay, task)
+    }
+
+    fn spawn(&self, task: BoxFuture<'static, ()>) -> TaskHandle {
+        self.inner.spawn_for(&self.owner, task)
     }
 
     fn spawn_blocking(&self, task: Box<dyn FnOnce() + Send>) -> TaskHandle {

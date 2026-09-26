@@ -34,7 +34,10 @@ impl PluginStoreState {
         let instance = self.instance_ref(CallKind::Callback)?;
         let handle = ctx.scheduler().delay(
             Duration::from_millis(after),
-            Box::new(move || proxies::dispatch_scheduled_task(instance, handler)),
+            Box::new(move || {
+                proxies::dispatch_scheduled_task(instance, handler);
+                Box::pin(async {})
+            }),
         );
         self.record_task(handle.as_u64());
         Ok(handle.as_u64())
@@ -49,15 +52,14 @@ impl PluginStoreState {
         self.check("scheduler", "interval")?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?;
-        let task = Box::new(move || proxies::dispatch_scheduled_task(instance.clone(), handler));
-        let period = Duration::from_millis(period);
-        let handle = match initial_delay {
-            Some(delay) => {
-                ctx.scheduler()
-                    .interval_with_delay(period, Duration::from_millis(delay), task)
-            }
-            None => ctx.scheduler().interval(period, task),
-        };
+        let handle = ctx.scheduler().repeat(
+            Duration::from_millis(period),
+            initial_delay.map(Duration::from_millis),
+            Box::new(move || {
+                proxies::dispatch_scheduled_task(instance.clone(), handler);
+                Box::pin(async {})
+            }),
+        );
         self.record_task(handle.as_u64());
         Ok(handle.as_u64())
     }

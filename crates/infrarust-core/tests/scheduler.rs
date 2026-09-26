@@ -33,6 +33,7 @@ async fn a_delay_runs_once_after_its_duration() {
         10 * MS,
         Box::new(move || {
             runs.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {})
         }),
     );
 
@@ -46,13 +47,15 @@ async fn a_delay_runs_once_after_its_duration() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_interval_runs_every_period_until_cancelled() {
+async fn a_repeat_runs_every_period_until_cancelled() {
     let scheduler = SchedulerImpl::new();
     let (runs, seen) = counter();
-    let handle = scheduler.interval(
+    let handle = scheduler.repeat(
         10 * MS,
+        None,
         Box::new(move || {
             runs.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {})
         }),
     );
 
@@ -65,14 +68,15 @@ async fn an_interval_runs_every_period_until_cancelled() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_interval_with_delay_starts_after_the_delay() {
+async fn a_repeat_with_an_initial_delay_starts_after_the_delay() {
     let scheduler = SchedulerImpl::new();
     let (runs, seen) = counter();
-    scheduler.interval_with_delay(
+    scheduler.repeat(
         10 * MS,
-        3 * MS,
+        Some(3 * MS),
         Box::new(move || {
             runs.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {})
         }),
     );
 
@@ -138,10 +142,10 @@ async fn repeat_honours_an_initial_delay() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn delay_async_awaits_the_future_after_the_delay() {
+async fn delay_awaits_the_future_after_the_delay() {
     let scheduler = SchedulerImpl::new();
     let (runs, seen) = counter();
-    scheduler.delay_async(
+    scheduler.delay(
         10 * MS,
         Box::new(move || {
             Box::pin(async move {
@@ -198,12 +202,14 @@ async fn spawn_blocking_runs_off_the_async_workers() {
 async fn a_repeating_task_survives_a_panicking_run() {
     let scheduler = SchedulerImpl::new();
     let (runs, seen) = counter();
-    scheduler.interval(
+    scheduler.repeat(
         10 * MS,
+        None,
         Box::new(move || {
             if runs.fetch_add(1, Ordering::SeqCst) == 0 {
                 panic!("first run fails");
             }
+            Box::pin(async {})
         }),
     );
     advance(35 * MS).await;
@@ -213,9 +219,9 @@ async fn a_repeating_task_survives_a_panicking_run() {
 #[tokio::test(start_paused = true)]
 async fn panicking_tasks_are_pruned_and_the_scheduler_keeps_going() {
     let scheduler = SchedulerImpl::new();
-    scheduler.delay(MS, Box::new(|| panic!("sync boom")));
+    scheduler.delay(MS, Box::new(|| Box::pin(async { panic!("sync boom") })));
     scheduler.spawn(Box::pin(async { panic!("async boom") }));
-    scheduler.delay_async(MS, Box::new(|| panic!("building the future fails")));
+    scheduler.delay(MS, Box::new(|| panic!("building the future fails")));
     let (runs, seen) = counter();
     scheduler.repeat(
         10 * MS,
@@ -237,7 +243,7 @@ async fn panicking_tasks_are_pruned_and_the_scheduler_keeps_going() {
 async fn tracking_scheduler_forgets_finished_tasks() {
     let scheduler = TrackingScheduler::new(Arc::new(SchedulerImpl::new()), "p");
     for _ in 0..3 {
-        scheduler.delay(10 * MS, Box::new(|| {}));
+        scheduler.delay(10 * MS, Box::new(|| Box::pin(async {})));
     }
     assert_eq!(scheduler.tracked_count(), 3);
     advance(20 * MS).await;
@@ -254,6 +260,7 @@ async fn a_plugin_cannot_cancel_another_plugins_task() {
         10 * MS,
         Box::new(move || {
             runs.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {})
         }),
     );
 
@@ -291,13 +298,16 @@ async fn disabling_a_plugin_cancels_every_task_it_scheduled() {
             })
         }),
     );
-    ctx.scheduler().delay(time_to_never(), Box::new(|| {}));
+    ctx.scheduler()
+        .delay(time_to_never(), Box::new(|| Box::pin(async {})));
     ctx.scheduler()
         .spawn(Box::pin(std::future::pending::<()>()));
-    bystander.scheduler().interval(
+    bystander.scheduler().repeat(
         10 * MS,
+        None,
         Box::new(move || {
             other_runs.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {})
         }),
     );
 

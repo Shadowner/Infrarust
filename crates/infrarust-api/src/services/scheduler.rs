@@ -32,23 +32,7 @@ impl TaskHandle {
 /// Tasks run on the proxy's async runtime. The scheduler does not
 /// depend on tokio in the API — the proxy provides the implementation.
 pub trait Scheduler: Send + Sync + private::Sealed {
-    /// Schedules a one-shot task after a delay.
-    fn delay(&self, duration: Duration, task: Box<dyn FnOnce() + Send>) -> TaskHandle;
-
-    /// Schedules a repeating task at a fixed interval.
-    fn interval(&self, period: Duration, task: Box<dyn Fn() + Send + Sync>) -> TaskHandle;
-
-    /// Schedules a repeating task at a fixed interval, starting after an initial delay.
-    fn interval_with_delay(
-        &self,
-        period: Duration,
-        delay: Duration,
-        task: Box<dyn Fn() + Send + Sync>,
-    ) -> TaskHandle;
-
-    fn spawn(&self, task: BoxFuture<'static, ()>) -> TaskHandle;
-
-    fn delay_async(&self, duration: Duration, task: AsyncTask) -> TaskHandle;
+    fn delay(&self, duration: Duration, task: AsyncTask) -> TaskHandle;
 
     fn repeat(
         &self,
@@ -56,6 +40,8 @@ pub trait Scheduler: Send + Sync + private::Sealed {
         initial_delay: Option<Duration>,
         task: RepeatingTask,
     ) -> TaskHandle;
+
+    fn spawn(&self, task: BoxFuture<'static, ()>) -> TaskHandle;
 
     fn spawn_blocking(&self, task: Box<dyn FnOnce() + Send>) -> TaskHandle;
 

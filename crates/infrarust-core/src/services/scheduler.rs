@@ -7,7 +7,6 @@ use dashmap::DashMap;
 use futures_util::FutureExt;
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
-use tokio::time::{Instant, MissedTickBehavior};
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::services::scheduler::{AsyncTask, RepeatingTask, Scheduler, TaskHandle};
@@ -98,44 +97,6 @@ impl SchedulerImpl {
             .count()
     }
 
-    pub(crate) fn delay_for(
-        &self,
-        owner: &Arc<str>,
-        duration: Duration,
-        task: Box<dyn FnOnce() + Send>,
-    ) -> TaskHandle {
-        let label = Arc::clone(owner);
-        self.launch(
-            owner,
-            Body::Async(Box::pin(async move {
-                tokio::time::sleep(duration).await;
-                run_sync(&label, task);
-            })),
-        )
-    }
-
-    pub(crate) fn interval_for(
-        &self,
-        owner: &Arc<str>,
-        period: Duration,
-        first: Duration,
-        task: Box<dyn Fn() + Send + Sync>,
-    ) -> TaskHandle {
-        let label = Arc::clone(owner);
-        let period = period.max(MIN_PERIOD);
-        self.launch(
-            owner,
-            Body::Async(Box::pin(async move {
-                let mut ticks = tokio::time::interval_at(Instant::now() + first, period);
-                ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
-                loop {
-                    ticks.tick().await;
-                    run_sync(&label, &task);
-                }
-            })),
-        )
-    }
-
     pub(crate) fn spawn_for(&self, owner: &Arc<str>, task: BoxFuture<'static, ()>) -> TaskHandle {
         let label = Arc::clone(owner);
         self.launch(
@@ -144,7 +105,7 @@ impl SchedulerImpl {
         )
     }
 
-    pub(crate) fn delay_async_for(
+    pub(crate) fn delay_for(
         &self,
         owner: &Arc<str>,
         duration: Duration,
@@ -275,29 +236,8 @@ async fn run_async(owner: &str, future: BoxFuture<'static, ()>) {
 impl infrarust_api::services::scheduler::private::Sealed for SchedulerImpl {}
 
 impl Scheduler for SchedulerImpl {
-    fn delay(&self, duration: Duration, task: Box<dyn FnOnce() + Send>) -> TaskHandle {
+    fn delay(&self, duration: Duration, task: AsyncTask) -> TaskHandle {
         self.delay_for(&self.core_owner, duration, task)
-    }
-
-    fn interval(&self, period: Duration, task: Box<dyn Fn() + Send + Sync>) -> TaskHandle {
-        self.interval_for(&self.core_owner, period, period, task)
-    }
-
-    fn interval_with_delay(
-        &self,
-        period: Duration,
-        delay: Duration,
-        task: Box<dyn Fn() + Send + Sync>,
-    ) -> TaskHandle {
-        self.interval_for(&self.core_owner, period, delay, task)
-    }
-
-    fn spawn(&self, task: BoxFuture<'static, ()>) -> TaskHandle {
-        self.spawn_for(&self.core_owner, task)
-    }
-
-    fn delay_async(&self, duration: Duration, task: AsyncTask) -> TaskHandle {
-        self.delay_async_for(&self.core_owner, duration, task)
     }
 
     fn repeat(
@@ -307,6 +247,10 @@ impl Scheduler for SchedulerImpl {
         task: RepeatingTask,
     ) -> TaskHandle {
         self.repeat_for(&self.core_owner, period, initial_delay, task)
+    }
+
+    fn spawn(&self, task: BoxFuture<'static, ()>) -> TaskHandle {
+        self.spawn_for(&self.core_owner, task)
     }
 
     fn spawn_blocking(&self, task: Box<dyn FnOnce() + Send>) -> TaskHandle {
