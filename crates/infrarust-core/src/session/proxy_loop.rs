@@ -691,12 +691,15 @@ fn command_tree_frame(
         ),
     };
     let mut modified = tree.clone();
-    crate::commands::brigadier::inject_proxy_commands(
+    if let Err(e) = crate::commands::brigadier::inject_proxy_commands(
         &mut modified,
         version,
         &proxy_tree,
         Some(&visible),
-    );
+    ) {
+        tracing::warn!("failed to inject proxy commands into CCommands: {e}");
+        return None;
+    }
     let mut buf = Vec::new();
     match infrarust_protocol::packets::Packet::encode(&modified, &mut buf, version) {
         Ok(()) => Some(PacketFrame::new(id, buf.into())),

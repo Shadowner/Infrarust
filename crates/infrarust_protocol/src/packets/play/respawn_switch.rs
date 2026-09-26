@@ -18,13 +18,13 @@ const HAS_DEATH_LOCATION: bool = false;
 const PORTAL_COOLDOWN: VarInt = VarInt(0);
 const SEA_LEVEL: i32 = 63;
 
-pub fn for_switch(dimension: &DimensionInfo, version: ProtocolVersion) -> CRespawn {
+pub fn for_switch(dimension: &DimensionInfo, version: ProtocolVersion) -> ProtocolResult<CRespawn> {
     if version.no_less_than(ProtocolVersion::V1_20_2) {
         let (dim_id, level_name) = match dimension {
             DimensionInfo::Legacy(id) => (*id, "minecraft:overworld".to_string()),
             DimensionInfo::Named(name) => (0, name.clone()),
         };
-        return CRespawn {
+        return Ok(CRespawn {
             dimension: dim_id,
             level_name,
             hashed_seed: HASHED_SEED,
@@ -38,16 +38,15 @@ pub fn for_switch(dimension: &DimensionInfo, version: ProtocolVersion) -> CRespa
             portal_cooldown: PORTAL_COOLDOWN.0,
             sea_level: SEA_LEVEL,
             raw_payload: None,
-        };
+        });
     }
 
     let mut raw = Vec::with_capacity(64);
-    encode_switch_respawn(&mut raw, dimension, version)
-        .expect("respawn switch encoding should not fail with valid DimensionInfo");
-    CRespawn {
+    encode_switch_respawn(&mut raw, dimension, version)?;
+    Ok(CRespawn {
         raw_payload: Some(raw),
         ..Default::default()
-    }
+    })
 }
 
 fn encode_switch_respawn(
@@ -132,7 +131,7 @@ mod tests {
     #[test]
     fn test_for_switch_pre_1_14() {
         let dim = DimensionInfo::Legacy(0);
-        let respawn = for_switch(&dim, ProtocolVersion::V1_8);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_8).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert_eq!(&raw[0..4], &0i32.to_be_bytes());
         assert_eq!(raw[4], 2);
@@ -142,7 +141,7 @@ mod tests {
     #[test]
     fn test_for_switch_pre_1_14_nether() {
         let dim = DimensionInfo::Legacy(-1);
-        let respawn = for_switch(&dim, ProtocolVersion::V1_8);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_8).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert_eq!(&raw[0..4], &(-1i32).to_be_bytes());
     }
@@ -150,7 +149,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_14() {
         let dim = DimensionInfo::Legacy(0);
-        let respawn = for_switch(&dim, ProtocolVersion::V1_14);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_14).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert_eq!(&raw[0..4], &0i32.to_be_bytes());
         assert_eq!(raw[4], 0);
@@ -159,7 +158,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_15() {
         let dim = DimensionInfo::Legacy(1);
-        let respawn = for_switch(&dim, ProtocolVersion::V1_15);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_15).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert_eq!(&raw[0..4], &1i32.to_be_bytes());
         assert_eq!(&raw[4..12], &0i64.to_be_bytes());
@@ -169,7 +168,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_16_2() {
         let dim = DimensionInfo::Named("minecraft:the_nether".to_string());
-        let respawn = for_switch(&dim, ProtocolVersion::V1_16_2);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_16_2).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert!(!raw.is_empty());
     }
@@ -177,7 +176,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_19() {
         let dim = DimensionInfo::Named("minecraft:overworld".to_string());
-        let respawn = for_switch(&dim, ProtocolVersion::V1_19);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_19).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert!(!raw.is_empty());
     }
@@ -185,7 +184,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_19_3() {
         let dim = DimensionInfo::Named("minecraft:overworld".to_string());
-        let respawn = for_switch(&dim, ProtocolVersion::V1_19_3);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_19_3).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert!(!raw.is_empty());
     }
@@ -193,7 +192,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_19_4() {
         let dim = DimensionInfo::Named("minecraft:overworld".to_string());
-        let respawn = for_switch(&dim, ProtocolVersion::V1_19_4);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_19_4).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert!(!raw.is_empty());
     }
@@ -201,7 +200,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_20_2() {
         let dim = DimensionInfo::Named("minecraft:overworld".to_string());
-        let respawn = for_switch(&dim, ProtocolVersion::V1_20_2);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_20_2).unwrap();
         assert!(respawn.raw_payload.is_none());
         assert_eq!(respawn.level_name, "minecraft:overworld");
         assert_eq!(respawn.data_to_keep, 0x01);

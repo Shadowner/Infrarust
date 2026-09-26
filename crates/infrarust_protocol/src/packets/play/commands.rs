@@ -419,10 +419,10 @@ impl Packet for CCommands {
     }
 }
 
-pub fn string_parser(mode: i32, version: ProtocolVersion) -> Parser {
+pub fn string_parser(mode: i32, version: ProtocolVersion) -> ProtocolResult<Parser> {
     let mut props = Vec::new();
-    VarInt(mode).encode(&mut props).expect("VarInt encode");
-    if version.no_less_than(ProtocolVersion::V1_19) {
+    VarInt(mode).encode(&mut props)?;
+    Ok(if version.no_less_than(ProtocolVersion::V1_19) {
         Parser::Indexed {
             id: 5,
             properties: props,
@@ -432,7 +432,7 @@ pub fn string_parser(mode: i32, version: ProtocolVersion) -> Parser {
             identifier: "brigadier:string".to_string(),
             properties: props,
         }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -510,7 +510,7 @@ mod tests {
 
     #[test]
     fn argument_node_with_string_parser_1_19_plus() {
-        let parser = string_parser(0, ProtocolVersion::V1_21);
+        let parser = string_parser(0, ProtocolVersion::V1_21).unwrap();
         let pkt = CCommands {
             nodes: vec![
                 CommandNode {
@@ -539,7 +539,7 @@ mod tests {
 
     #[test]
     fn argument_node_with_string_parser_pre_1_19() {
-        let parser = string_parser(2, ProtocolVersion::V1_16);
+        let parser = string_parser(2, ProtocolVersion::V1_16).unwrap();
         let pkt = CCommands {
             nodes: vec![
                 CommandNode {

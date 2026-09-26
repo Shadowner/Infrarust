@@ -78,7 +78,7 @@ fn encode_pre_1_14_empty_chunk(w: &mut impl Write, version: ProtocolVersion) -> 
     if version.less_than(ProtocolVersion::V1_8) {
         w.write_u16_be(0)?;
         w.write_u16_be(0)?;
-        let compressed = zlib_compress(&[0u8; 256]);
+        let compressed = zlib_compress(&[0u8; 256])?;
         #[allow(clippy::cast_possible_truncation)]
         w.write_i32_be(compressed.len() as i32)?;
         w.write_all(&compressed)?;
@@ -96,15 +96,13 @@ fn encode_pre_1_14_empty_chunk(w: &mut impl Write, version: ProtocolVersion) -> 
     Ok(())
 }
 
-fn zlib_compress(data: &[u8]) -> Vec<u8> {
+fn zlib_compress(data: &[u8]) -> ProtocolResult<Vec<u8>> {
     use crate::io::compression::new_compressor;
 
     let mut compressor = new_compressor(6);
     let mut out = Vec::new();
-    compressor
-        .compress(data, &mut out)
-        .expect("zlib compression should not fail");
-    out
+    compressor.compress(data, &mut out)?;
+    Ok(out)
 }
 
 fn encode_empty_chunk_sections(

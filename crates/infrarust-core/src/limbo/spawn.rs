@@ -198,7 +198,7 @@ async fn send_limbo_respawn(
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let respawn = respawn_switch::for_switch(dimension, version);
+    let respawn = respawn_switch::for_switch(dimension, version)?;
     let packet_id = registry
         .get_packet_id::<CRespawn>(version)
         .ok_or_else(|| CoreError::Other("no Respawn packet ID".to_string()))?;
