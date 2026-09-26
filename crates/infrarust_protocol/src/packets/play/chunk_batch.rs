@@ -54,7 +54,7 @@ impl Packet for CChunkBatchFinished {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&VarInt(self.batch_size))?;

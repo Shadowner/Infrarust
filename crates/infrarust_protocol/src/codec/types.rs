@@ -22,7 +22,7 @@ pub(crate) fn bool_from_byte(byte: u8) -> ProtocolResult<bool> {
 }
 
 impl Encode for bool {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         w.write_bool(*self)
     }
 }
@@ -34,7 +34,7 @@ impl Decode<'_> for bool {
 }
 
 impl Encode for u8 {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         w.write_all(&[*self])?;
         Ok(())
     }
@@ -52,7 +52,7 @@ impl Decode<'_> for u8 {
 }
 
 impl Encode for i8 {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         w.write_all(&[(*self).cast_unsigned()])?;
         Ok(())
     }
@@ -68,7 +68,7 @@ impl Decode<'_> for i8 {
 macro_rules! impl_codec_be {
     ($ty:ty, $size:literal, $ctx:literal) => {
         impl Encode for $ty {
-            fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+            fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
                 w.write_all(&self.to_be_bytes())?;
                 Ok(())
             }
@@ -100,7 +100,7 @@ impl_codec_be!(f32, 4, "f32");
 impl_codec_be!(f64, 8, "f64");
 
 impl Encode for String {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         encode_string(self.as_str(), w)
     }
 }
@@ -111,7 +111,7 @@ impl Decode<'_> for String {
     }
 }
 
-pub(crate) fn encode_string(s: &str, w: &mut impl Write) -> ProtocolResult<()> {
+pub(crate) fn encode_string(s: &str, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
     let char_len = s.chars().count();
     if char_len > MAX_STRING_CHARS {
         return Err(ProtocolError::too_large(MAX_STRING_CHARS, char_len));
@@ -144,7 +144,7 @@ pub(crate) fn decode_string(r: &mut &[u8], max_chars: usize) -> ProtocolResult<S
 }
 
 impl Encode for Uuid {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         w.write_uuid(self)
     }
 }
@@ -157,7 +157,7 @@ impl Decode<'_> for Uuid {
 }
 
 impl Encode for Vec<u8> {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         w.write_byte_array(self)
     }
 }
@@ -179,7 +179,7 @@ impl Decode<'_> for Vec<u8> {
 }
 
 impl<T: Encode> Encode for Option<T> {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         match self {
             Some(val) => {
                 true.encode(w)?;
@@ -205,7 +205,7 @@ impl<'a, T: Decode<'a>> Decode<'a> for Option<T> {
 }
 
 pub(crate) fn read_string_bounded_from_reader(
-    reader: &mut impl Read,
+    reader: &mut (impl Read + ?Sized),
     max_chars: usize,
 ) -> ProtocolResult<String> {
     let byte_len = count_from_signed(read_varint_from_reader(reader)?.0, "string length")?;
@@ -230,7 +230,7 @@ pub(crate) fn read_string_bounded_from_reader(
 
 macro_rules! impl_var_reader {
     ($fn_name:ident, $int_ty:ty, $wrapper:path, $max_size:expr, $err:literal) => {
-        pub(crate) fn $fn_name(reader: &mut impl Read) -> ProtocolResult<$wrapper> {
+        pub(crate) fn $fn_name(reader: &mut (impl Read + ?Sized)) -> ProtocolResult<$wrapper> {
             let mut val: $int_ty = 0;
             for i in 0..$max_size {
                 let mut byte = [0u8; 1];

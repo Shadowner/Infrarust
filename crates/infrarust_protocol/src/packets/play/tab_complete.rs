@@ -44,7 +44,7 @@ impl Packet for STabCompleteRequest {
 
     fn encode(
         &self,
-        mut w: &mut (impl Write + ?Sized),
+        w: &mut (impl Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&VarInt(self.transaction_id))?;
@@ -111,7 +111,7 @@ impl Packet for CTabCompleteResponse {
 
     fn encode(
         &self,
-        mut w: &mut (impl Write + ?Sized),
+        w: &mut (impl Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&VarInt(self.transaction_id))?;

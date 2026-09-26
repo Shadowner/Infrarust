@@ -90,7 +90,7 @@ impl Packet for CBossBar {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_uuid(&self.id)?;
@@ -103,7 +103,7 @@ impl Packet for CBossBar {
                 division,
                 flags,
             } => {
-                write_text_component(&mut w, title, version, Self::NAME, "title")?;
+                write_text_component(w, title, version, Self::NAME, "title")?;
                 w.write_f32_be(*health)?;
                 w.write_var_int(&VarInt(*color))?;
                 w.write_var_int(&VarInt(*division))?;
@@ -112,7 +112,7 @@ impl Packet for CBossBar {
             BossBarAction::Remove => {}
             BossBarAction::UpdateHealth(health) => w.write_f32_be(*health)?,
             BossBarAction::UpdateTitle(title) => {
-                write_text_component(&mut w, title, version, Self::NAME, "title")?;
+                write_text_component(w, title, version, Self::NAME, "title")?;
             }
             BossBarAction::UpdateStyle { color, division } => {
                 w.write_var_int(&VarInt(*color))?;

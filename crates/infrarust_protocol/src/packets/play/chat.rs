@@ -61,7 +61,7 @@ impl Packet for CSystemChatMessage {
 
     fn encode(
         &self,
-        mut w: &mut (impl Write + ?Sized),
+        w: &mut (impl Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         write_text_component(w, &self.content, version, Self::NAME, "content")?;
@@ -105,7 +105,7 @@ impl Packet for CChatMessageLegacy {
 
     fn encode(
         &self,
-        mut w: &mut (impl Write + ?Sized),
+        w: &mut (impl Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_string(&self.content)?;
@@ -175,7 +175,7 @@ fn decode_previous_message(r: &mut &[u8]) -> ProtocolResult<PreviousMessage> {
 }
 
 fn encode_previous_message(
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     message: &PreviousMessage,
 ) -> ProtocolResult<()> {
     w.write_uuid(&message.sender)?;
@@ -200,7 +200,7 @@ fn decode_previous_messages(r: &mut &[u8]) -> ProtocolResult<PreviousMessages> {
 }
 
 fn encode_previous_messages(
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     messages: &PreviousMessages,
 ) -> ProtocolResult<()> {
     w.write_var_int(&VarInt(messages.seen.len() as i32))?;
@@ -233,7 +233,7 @@ fn decode_last_seen(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<L
 }
 
 fn encode_last_seen(
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     last_seen: &LastSeenMessages,
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
@@ -264,7 +264,7 @@ fn decode_argument_signatures(
 }
 
 fn encode_argument_signatures(
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     signatures: &[ArgumentSignature],
     version: ProtocolVersion,
     packet_name: &str,
@@ -361,7 +361,7 @@ impl Packet for SChatMessage {
 
     fn encode(
         &self,
-        mut w: &mut (impl Write + ?Sized),
+        w: &mut (impl Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_string(&self.message)?;
@@ -461,7 +461,7 @@ impl Packet for SChatCommand {
 
     fn encode(
         &self,
-        mut w: &mut (impl Write + ?Sized),
+        w: &mut (impl Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_string(&self.command)?;
@@ -523,7 +523,7 @@ impl Packet for SChatCommandSigned {
 
     fn encode(
         &self,
-        mut w: &mut (impl Write + ?Sized),
+        w: &mut (impl Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_string(&self.command)?;
@@ -569,7 +569,7 @@ impl Packet for SChatAcknowledgement {
 
     fn encode(
         &self,
-        mut w: &mut (impl Write + ?Sized),
+        w: &mut (impl Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         if version.less_than(ProtocolVersion::V1_19_3) {

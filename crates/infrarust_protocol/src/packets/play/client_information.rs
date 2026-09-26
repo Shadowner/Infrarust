@@ -70,7 +70,7 @@ pub(crate) fn decode_client_information(
 }
 
 pub(crate) fn encode_client_information(
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     information: &ClientInformation,
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {

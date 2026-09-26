@@ -15,7 +15,7 @@ pub fn count_from_signed<T: TryInto<usize>>(raw: T, what: &str) -> ProtocolResul
 }
 
 pub trait Encode {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()>;
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()>;
 }
 
 pub trait Decode<'a>: Sized {
@@ -68,7 +68,7 @@ pub trait McBufWriteExt: Write {
     fn write_byte_array(&mut self, data: &[u8]) -> ProtocolResult<()>;
 }
 
-impl<R: Read> McBufReadExt for R {
+impl<R: Read + ?Sized> McBufReadExt for R {
     fn read_u8(&mut self) -> ProtocolResult<u8> {
         let mut buf = [0u8; 1];
         self.read_exact(&mut buf)?;
@@ -183,7 +183,7 @@ impl<R: Read> McBufReadExt for R {
     }
 }
 
-impl<W: Write> McBufWriteExt for W {
+impl<W: Write + ?Sized> McBufWriteExt for W {
     fn write_u8(&mut self, value: u8) -> ProtocolResult<()> {
         self.write_all(&[value])?;
         Ok(())

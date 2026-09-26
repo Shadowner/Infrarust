@@ -86,7 +86,7 @@ impl Packet for CSetDefaultSpawnPosition {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         if version.no_less_than(ProtocolVersion::V1_21_9) {

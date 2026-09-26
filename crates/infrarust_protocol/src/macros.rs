@@ -118,10 +118,9 @@ macro_rules! define_twin_packets {
                 $decode_body
             }
 
-            #[allow(unused_mut)]
             fn encode(
                 &$self_,
-                mut $w: &mut (impl std::io::Write + ?Sized),
+                $w: &mut (impl std::io::Write + ?Sized),
                 $encode_ver: $crate::version::ProtocolVersion,
             ) -> $crate::error::ProtocolResult<()> {
                 $encode_body

@@ -137,7 +137,7 @@ fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<C
 
 fn encode_1_20_2_up(
     pkt: &CRespawn,
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
     if version.no_less_than(ProtocolVersion::V1_20_5) {

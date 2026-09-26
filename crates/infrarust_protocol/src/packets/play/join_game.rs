@@ -105,7 +105,7 @@ impl Packet for CJoinGame {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_i32_be(self.entity_id)?;
@@ -190,7 +190,7 @@ fn decode_1_20_2_up(
 
 fn encode_1_20_2_up(
     pkt: &CJoinGame,
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
     w.write_bool(pkt.is_hardcore)?;

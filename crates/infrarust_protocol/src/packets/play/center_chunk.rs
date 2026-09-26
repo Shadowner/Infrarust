@@ -42,7 +42,7 @@ impl Packet for CSetCenterChunk {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&VarInt(self.chunk_x))?;

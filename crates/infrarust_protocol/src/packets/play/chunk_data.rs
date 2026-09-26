@@ -47,32 +47,35 @@ impl Packet for CChunkData {
 
     fn encode(
         &self,
-        mut w: &mut (impl Write + ?Sized),
+        w: &mut (impl Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_i32_be(self.chunk_x)?;
         w.write_i32_be(self.chunk_z)?;
 
         if version.less_than(ProtocolVersion::V1_14) {
-            return encode_pre_1_14_empty_chunk(&mut w, version);
+            return encode_pre_1_14_empty_chunk(w, version);
         }
 
         let sections = encode_empty_chunk_sections(self.num_sections, version)?;
-        encode_empty_heightmaps(&mut w, version)?;
+        encode_empty_heightmaps(w, version)?;
         #[allow(clippy::cast_possible_truncation)]
         w.write_var_int(&VarInt(sections.len() as i32))?;
         w.write_all(&sections)?;
         w.write_var_int(&VarInt(0))?;
 
         if version.no_less_than(ProtocolVersion::V1_18) {
-            encode_light_data(&mut w, self.num_sections)?;
+            encode_light_data(w, self.num_sections)?;
         }
 
         Ok(())
     }
 }
 
-fn encode_pre_1_14_empty_chunk(w: &mut impl Write, version: ProtocolVersion) -> ProtocolResult<()> {
+fn encode_pre_1_14_empty_chunk(
+    w: &mut (impl Write + ?Sized),
+    version: ProtocolVersion,
+) -> ProtocolResult<()> {
     w.write_u8(1)?;
 
     if version.less_than(ProtocolVersion::V1_8) {
@@ -116,7 +119,10 @@ fn encode_empty_chunk_sections(
     Ok(buf)
 }
 
-fn encode_empty_section(w: &mut impl Write, version: ProtocolVersion) -> ProtocolResult<()> {
+fn encode_empty_section(
+    w: &mut (impl Write + ?Sized),
+    version: ProtocolVersion,
+) -> ProtocolResult<()> {
     let needs_data_length = version.less_than(ProtocolVersion::V1_21_5);
 
     w.write_i16_be(0)?;
@@ -135,7 +141,10 @@ fn encode_empty_section(w: &mut impl Write, version: ProtocolVersion) -> Protoco
     Ok(())
 }
 
-fn encode_empty_heightmaps(w: &mut impl Write, version: ProtocolVersion) -> ProtocolResult<()> {
+fn encode_empty_heightmaps(
+    w: &mut (impl Write + ?Sized),
+    version: ProtocolVersion,
+) -> ProtocolResult<()> {
     if version.less_than(ProtocolVersion::V1_21_5) {
         encode_empty_heightmaps_nbt(w, version)
     } else {
@@ -143,7 +152,10 @@ fn encode_empty_heightmaps(w: &mut impl Write, version: ProtocolVersion) -> Prot
     }
 }
 
-fn encode_empty_heightmaps_nbt(w: &mut impl Write, version: ProtocolVersion) -> ProtocolResult<()> {
+fn encode_empty_heightmaps_nbt(
+    w: &mut (impl Write + ?Sized),
+    version: ProtocolVersion,
+) -> ProtocolResult<()> {
     w.write_u8(0x0A)?;
     if version.less_than(ProtocolVersion::V1_20_2) {
         w.write_u16_be(0)?;
@@ -154,7 +166,7 @@ fn encode_empty_heightmaps_nbt(w: &mut impl Write, version: ProtocolVersion) -> 
     Ok(())
 }
 
-fn encode_empty_heightmaps_map(w: &mut impl Write) -> ProtocolResult<()> {
+fn encode_empty_heightmaps_map(w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
     w.write_var_int(&VarInt(3))?;
     for index in [1, 4, 5] {
         w.write_var_int(&VarInt(index))?;
@@ -166,7 +178,11 @@ fn encode_empty_heightmaps_map(w: &mut impl Write) -> ProtocolResult<()> {
     Ok(())
 }
 
-fn encode_nbt_long_array(w: &mut impl Write, name: &str, count: i32) -> ProtocolResult<()> {
+fn encode_nbt_long_array(
+    w: &mut (impl Write + ?Sized),
+    name: &str,
+    count: i32,
+) -> ProtocolResult<()> {
     w.write_u8(0x0C)?;
     let name_bytes = name.as_bytes();
     #[allow(clippy::cast_possible_truncation)]
@@ -179,7 +195,7 @@ fn encode_nbt_long_array(w: &mut impl Write, name: &str, count: i32) -> Protocol
     Ok(())
 }
 
-fn encode_light_data(w: &mut impl Write, num_sections: usize) -> ProtocolResult<()> {
+fn encode_light_data(w: &mut (impl Write + ?Sized), num_sections: usize) -> ProtocolResult<()> {
     let total_bits = num_sections + 2;
     let num_longs: usize = total_bits.div_ceil(64);
     let all_set: u64 = if total_bits >= 64 {

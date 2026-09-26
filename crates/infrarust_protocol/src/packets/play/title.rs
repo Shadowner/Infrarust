@@ -101,7 +101,7 @@ impl Packet for CSetTitleTimes {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_i32_be(self.fade_in)?;
@@ -188,7 +188,7 @@ impl Packet for CTitleLegacy {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&VarInt(self.action_id(version)))?;
@@ -239,7 +239,7 @@ impl Packet for CClearTitles {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_bool(self.reset)?;

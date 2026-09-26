@@ -45,7 +45,7 @@ impl Packet for SHandshake {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&self.protocol_version)?;

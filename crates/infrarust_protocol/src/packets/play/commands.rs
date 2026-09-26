@@ -166,7 +166,7 @@ fn decode_node(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Comman
 
 fn encode_node(
     node: &CommandNode,
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
     w.write_u8(node.flags)?;
@@ -219,7 +219,7 @@ fn decode_parser(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Pars
 
 fn encode_parser(
     parser: &Parser,
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
     match parser {
@@ -401,7 +401,7 @@ impl Packet for CCommands {
 
     fn encode(
         &self,
-        mut w: &mut (impl Write + ?Sized),
+        w: &mut (impl Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&VarInt(self.nodes.len() as i32))?;

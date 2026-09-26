@@ -17,7 +17,7 @@ fn read_byte_array_short(r: &mut &[u8]) -> ProtocolResult<Vec<u8>> {
 }
 
 fn write_byte_array_short(
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     data: &[u8],
 ) -> ProtocolResult<()> {
     if data.len() > i16::MAX as usize {
@@ -42,7 +42,7 @@ fn read_uuid_int_array(r: &mut &[u8]) -> ProtocolResult<uuid::Uuid> {
 }
 
 fn write_uuid_int_array(
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     uuid: &uuid::Uuid,
 ) -> ProtocolResult<()> {
     let val = uuid.as_u128();
@@ -117,7 +117,7 @@ impl Packet for SLoginStart {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_string(&self.name)?;
@@ -197,7 +197,7 @@ impl Packet for CEncryptionRequest {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_string(&self.server_id)?;
@@ -276,7 +276,7 @@ impl Packet for SEncryptionResponse {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         let signed_band = version.no_less_than(ProtocolVersion::V1_19)
@@ -338,7 +338,7 @@ impl Packet for CSetCompression {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&self.threshold)?;
@@ -427,7 +427,7 @@ impl Packet for CLoginSuccess {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         if version.no_less_than(ProtocolVersion::V1_19) {
@@ -492,7 +492,7 @@ impl Packet for CLoginDisconnect {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_string(&self.reason)?;
@@ -529,7 +529,7 @@ impl Packet for CLoginPluginRequest {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&self.message_id)?;
@@ -568,7 +568,7 @@ impl Packet for SLoginPluginResponse {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&self.message_id)?;

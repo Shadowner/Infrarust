@@ -13,7 +13,7 @@ fn decode_keepalive_id(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResul
 }
 
 fn encode_keepalive_id(
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     id: i64,
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {

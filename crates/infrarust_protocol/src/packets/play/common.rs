@@ -41,7 +41,7 @@ pub fn read_nested_text_component(
 }
 
 pub fn write_text_component(
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     text: &[u8],
     version: ProtocolVersion,
     packet_name: &str,
@@ -71,7 +71,7 @@ pub fn decode_death_location(r: &mut &[u8]) -> ProtocolResult<(Option<String>, O
 }
 
 pub fn encode_death_location(
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     death_dimension: Option<&str>,
     death_position: Option<i64>,
 ) -> ProtocolResult<()> {
@@ -96,7 +96,7 @@ pub fn decode_world_info(r: &mut &[u8], version: ProtocolVersion) -> ProtocolRes
 }
 
 pub fn encode_world_info(
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     portal_cooldown: i32,
     sea_level: i32,
     version: ProtocolVersion,

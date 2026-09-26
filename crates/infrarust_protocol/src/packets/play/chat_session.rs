@@ -45,7 +45,7 @@ impl Packet for SChatSessionUpdate {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_uuid(&self.session_id)?;

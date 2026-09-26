@@ -68,14 +68,14 @@ fn read_prompt(r: &mut &[u8], version: ProtocolVersion) -> crate::ProtocolResult
 }
 
 fn write_prompt(
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     prompt: Option<&[u8]>,
     version: ProtocolVersion,
     packet_name: &str,
 ) -> crate::ProtocolResult<()> {
     w.write_bool(prompt.is_some())?;
     if let Some(prompt) = prompt {
-        write_text_component(&mut w, prompt, version, packet_name, "prompt")?;
+        write_text_component(w, prompt, version, packet_name, "prompt")?;
     }
     Ok(())
 }
