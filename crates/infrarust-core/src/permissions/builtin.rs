@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 
 use dashmap::DashSet;
 use uuid::Uuid;
@@ -190,25 +190,17 @@ async fn resolve_username(client: &reqwest::Client, username: &str) -> Result<Uu
         .await
         .map_err(|e| format!("failed to parse Mojang response: {e}"))?;
 
-    let uuid_str = if profile.id.len() == 32 && !profile.id.contains('-') {
-        format!(
-            "{}-{}-{}-{}-{}",
-            &profile.id[..8],
-            &profile.id[8..12],
-            &profile.id[12..16],
-            &profile.id[16..20],
-            &profile.id[20..]
-        )
-    } else {
-        profile.id
-    };
-
-    Uuid::parse_str(&uuid_str).map_err(|e| format!("invalid UUID from Mojang: {e}"))
+    mojang_uuid(&profile.id)
 }
 
+fn mojang_uuid(id: &str) -> Result<Uuid, String> {
+    Uuid::try_parse(id).map_err(|e| format!("invalid UUID from Mojang: {e}"))
+}
+
+static MOJANG_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
 pub async fn resolve_username_to_uuid(username: &str) -> Result<Uuid, String> {
-    let client = reqwest::Client::new();
-    resolve_username(&client, username).await
+    resolve_username(&MOJANG_CLIENT, username).await
 }
 
 #[cfg(test)]
@@ -318,5 +310,19 @@ mod tests {
         let console = provider.checker_for(&PermissionSubject::Console);
         assert_eq!(console.value("infrarust.command.kick"), Tristate::True);
         assert_eq!(console.value("demo.use"), Tristate::True);
+    }
+
+    #[test]
+    fn mojang_ids_parse_with_and_without_hyphens() {
+        let expected = Uuid::parse_str("069a79f4-44e9-4726-a5be-fca90e38aaf5").unwrap();
+        assert_eq!(
+            mojang_uuid("069a79f444e94726a5befca90e38aaf5").unwrap(),
+            expected
+        );
+        assert_eq!(
+            mojang_uuid("069a79f4-44e9-4726-a5be-fca90e38aaf5").unwrap(),
+            expected
+        );
+        assert!(mojang_uuid("not-a-uuid").is_err());
     }
 }
