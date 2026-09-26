@@ -179,7 +179,7 @@ Each plugin runs in an isolated wasmtime instance with hard limits:
 |----------|-------|
 | CPU | Cooperative epoch interruption; a guest call that uses more than `cpu_budget` (3 s) traps instead of blocking the proxy. |
 | Memory | Linear memory is capped per instance at `memory_limit_mb` (64 MiB). |
-| Call time | One call may run for `max_call_duration` (60 s), host calls included; each ban or server-manager call is capped at `host_call_timeout` (30 s). |
+| Call time | One call may run for `max_call_duration` (60 s), host calls included; each host call that waits on the proxy (server start and stop, bans, `switch-server`, `connect`, `transfer`, cookies, permission refresh, named events) is capped at `host_call_timeout` (30 s). |
 | Call queue | The plugin handles one call at a time; up to `queue_capacity` (1024) calls wait, further calls are refused immediately. |
 | Filesystem | One preopened directory, `plugins_dir/<plugin-id>`, mounted as `/`. With `filesystem-extended`, the folders listed in `[[plugins.<id>.wasm.mounts]]` as well, read-only by default. |
 | Network | None by default. With `network`, only the destinations listed in `[plugins.<id>.wasm.network] allow`. |

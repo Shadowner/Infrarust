@@ -32,9 +32,9 @@ Infrarust instantiates one wasmtime `Store` per plugin. Each store holds its own
 
 ## The contract: imports and exports
 
-The `infrarust:plugin@0.3.0` world has 13 host imports and 2 guest exports.
+The `infrarust:plugin@0.3.0` world has 19 host imports and 2 guest exports.
 
-### 13 host imports (plugin-callable)
+### 19 host imports (plugin-callable)
 
 | Import | Purpose | Capability gate |
 |--------|---------|-----------------|
@@ -51,6 +51,12 @@ The `infrarust:plugin@0.3.0` world has 13 host imports and 2 guest exports.
 | `scheduler` | `delay` / `interval` / `cancel` tasks | `scheduler` |
 | `limbo` | `register-limbo-handler`; the session resources | `limbo` for `register-limbo-handler` |
 | `codec-registry` | `register-codec-filter` / `unregister-codec-filter` | `codec-filter` |
+| `load-balancer` | Read a server's strategy and backend health; drain or reset a backend | `config-read` to read; `server-manage` for `set-drained` / `reset-backend` |
+| `messaging` | Register plugin channels and send plugin messages to a player, a backend or a server | `plugin-messaging` |
+| `proxy-info` | Proxy version and details, and the capabilities this plugin holds | none |
+| `plugin-registry` | List the loaded plugins and read one | none |
+| `permissions` | Replace or release a player's permission snapshot | `permission-provider` |
+| `providers` | Become the ban provider or the permission provider | `ban-provider` / `permission-provider` |
 
 `types` and `events` carry the shared data shapes and have no linker entry. Every other import is linked for every plugin, and the gated functions check the plugin's capabilities when they are called; see [How capabilities gate imports](#how-capabilities-gate-imports). Every fallible host function returns `result<T, host-error>`; a host function traps the guest only on a host invariant bug.
 
@@ -71,7 +77,7 @@ The host calls guest exports. A plugin does not push events to the proxy; the pr
 flowchart LR
     subgraph Guest["WASM plugin (guest)"]
         EX["Exports (host-callable)<br/>on-enable / on-disable<br/>handle-event<br/>handle-command / tab-complete<br/>on-scheduled-task<br/>limbo-on-* / codec-filter"]
-        IM["Imports (plugin-callable)<br/>log · text · event-bus · players<br/>server-manager · ban-service<br/>config-service · command-manager<br/>scheduler · limbo · codec-registry"]
+        IM["Imports (plugin-callable)<br/>log · text · event-bus · players<br/>server-manager · ban-service<br/>config-service · command-manager<br/>scheduler · limbo · codec-registry<br/>load-balancer · messaging · proxy-info<br/>plugin-registry · permissions · providers"]
     end
     subgraph Host["Infrarust proxy (host)"]
         H["Event bus · services · runtime"]
@@ -131,7 +137,7 @@ The guest sees blocking calls. The `Plugin` trait is synchronous:
 fn on_enable(&self, ctx: &Context) -> Result<(), PluginError>;
 ```
 
-Several host imports are async on the host side. `start` and `stop` on `server-manager` and every `ban-service` function suspend the guest fiber: the host drives the async work to completion and resumes the guest with the result. To the guest it looks like an ordinary function that returns a value. Each of those calls runs under a host timeout (`host_call_timeout` in the `[wasm]` table, 30 s by default), cut shorter when the deadline of the guest call that made it is closer, and returns a `host-error` of kind `timeout` if it expires. See [Lifecycle](./lifecycle#deadlines).
+Several host imports are async on the host side. `start` and `stop` on `server-manager`, every `ban-service` function, `switch-server`, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, and `fire-named` on `event-bus` suspend the guest fiber: the host drives the async work to completion and resumes the guest with the result. To the guest it looks like an ordinary function that returns a value. Each of those calls runs under a host timeout (`host_call_timeout` in the `[wasm]` table, 30 s by default), cut shorter when the deadline of the guest call that made it is closer, and returns a `host-error` of kind `timeout` if it expires. See [Lifecycle](./lifecycle#deadlines).
 
 `players.disconnect` queues the kick and returns immediately, so the guest does not wait for it. `players.switch-server` hands the request to the player's session and waits at most 250 ms for the session to take it, less when the guest call's deadline is closer, then returns a `timeout` error if it could not.
 

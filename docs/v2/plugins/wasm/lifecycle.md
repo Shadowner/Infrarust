@@ -217,12 +217,13 @@ Each call into the guest carries a deadline, fixed when the call is queued:
 | Call | Deadline | Why |
 |------|----------|-----|
 | Event handler | `[events] handler_timeout` (10 s by default) | The event bus stops waiting for the listener at that point |
+| Ban provider call, permission snapshot | `[events] handler_timeout` (10 s by default); a ban check is also bounded by `[ban] check_timeout` | The login waits on the answer; see [Bans](./bans) and [Permissions](./permissions) |
 | Command, tab completion, scheduled task, limbo callback | `max_call_duration` (60 s by default) | Nothing in the proxy stops waiting earlier, and the call is cut off at that limit |
 | `on_enable`, `on_disable` | none | The proxy waits for them, and `on_disable` must run |
 
 The deadline has three effects:
 
-- **Host calls fail in time.** Every host call that waits on the proxy (`start` and `stop` on `server-manager`, every `ban-service` function, `switch-server` on `players`) returns before the deadline, minus a margin. The margin is a fifth of the deadline, capped at 250 ms, so a 10 s `handler_timeout` leaves host calls 9.75 s and a 300 ms one leaves them 240 ms. On expiry the guest gets a `host-error` of kind `timeout`, and no trap. `host_call_timeout` still caps each host call on its own.
+- **Host calls fail in time.** Every host call that waits on the proxy (`start` and `stop` on `server-manager`, every `ban-service` function, `switch-server`, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named` on `event-bus`) returns before the deadline, minus a margin. The margin is a fifth of the deadline, capped at 250 ms, so a 10 s `handler_timeout` leaves host calls 9.75 s and a 300 ms one leaves them 240 ms. On expiry the guest gets a `host-error` of kind `timeout`, and no trap. `host_call_timeout` still caps each host call on its own.
 - **The guest's decision counts.** Because the error arrives inside the margin, the guest still has time to decide and return before the event bus gives up. A PreLogin handler that denies when the ban service errors fails closed, and its denial is applied to the event. If the host call waited out `host_call_timeout` instead, the bus would already have moved on and the login would go through on the default result.
 - **The plugin stays available.** The call ends before its deadline instead of after `host_call_timeout`, so the plugin's next events do not queue behind a stalled service. A call whose deadline passed while it waited in the queue is dropped without running, since its caller can no longer use the result, and a warning names the plugin and the operation.
 
