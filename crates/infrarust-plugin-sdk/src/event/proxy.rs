@@ -2,8 +2,8 @@ use std::net::SocketAddr;
 
 use uuid::Uuid;
 
-use super::{GuestEvent, ResultCell};
-use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
+use super::ResultCell;
+use crate::bindings::events as we;
 use crate::component::{Component, from_host};
 use crate::types::{
     FromWit, ServerAddress, ServerId, ServerState, server_ids, socket_from_wit, uuid_from_wit,
@@ -85,51 +85,30 @@ impl ProxyPingEvent {
     }
 }
 
-impl GuestEvent for ProxyPingEvent {
-    const KIND: EventKind = EventKind::ProxyPing;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::ProxyPing(e) = ev else { return None };
-        Some(Self {
-            remote_addr: socket_from_wit(e.remote_addr),
-            server: e.server.map(ServerId::from),
-            virtual_host: e.virtual_host,
-            protocol: e.protocol,
-            legacy: e.legacy,
-            response: ResultCell::new(PingResponse::from_wit(e.result)),
-        })
-    }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.response
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::ProxyPing(r.to_wit())
-            })
-    }
-}
+guest_event!(
+    ProxyPingEvent,
+    ProxyPing,
+    |e| Self {
+        remote_addr: socket_from_wit(e.remote_addr),
+        server: e.server.map(ServerId::from),
+        virtual_host: e.virtual_host,
+        protocol: e.protocol,
+        legacy: e.legacy,
+        response: ResultCell::new(PingResponse::from_wit(e.result)),
+    },
+    response,
+    |r| r.to_wit()
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProxyInitializeEvent;
 
-impl GuestEvent for ProxyInitializeEvent {
-    const KIND: EventKind = EventKind::ProxyInitialize;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        matches!(ev, Event::ProxyInitialize).then_some(Self)
-    }
-}
+guest_event!(ProxyInitializeEvent, ProxyInitialize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProxyShutdownEvent;
 
-impl GuestEvent for ProxyShutdownEvent {
-    const KIND: EventKind = EventKind::ProxyShutdown;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        matches!(ev, Event::ProxyShutdown).then_some(Self)
-    }
-}
+guest_event!(ProxyShutdownEvent, ProxyShutdown);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -147,21 +126,12 @@ impl ConfigReloadEvent {
     }
 }
 
-impl GuestEvent for ConfigReloadEvent {
-    const KIND: EventKind = EventKind::ConfigReload;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::ConfigReload(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            provider: e.provider,
-            added: server_ids(e.added),
-            removed: server_ids(e.removed),
-            updated: server_ids(e.updated),
-        })
-    }
-}
+guest_event!(ConfigReloadEvent, ConfigReload, |e| Self {
+    provider: e.provider,
+    added: server_ids(e.added),
+    removed: server_ids(e.removed),
+    updated: server_ids(e.updated),
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -171,20 +141,11 @@ pub struct ServerStateChangeEvent {
     pub new_state: ServerState,
 }
 
-impl GuestEvent for ServerStateChangeEvent {
-    const KIND: EventKind = EventKind::ServerStateChange;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::ServerStateChange(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            server: ServerId::from(e.server),
-            old_state: ServerState::from_wit(e.old_state),
-            new_state: ServerState::from_wit(e.new_state),
-        })
-    }
-}
+guest_event!(ServerStateChangeEvent, ServerStateChange, |e| Self {
+    server: ServerId::from(e.server),
+    old_state: ServerState::from_wit(e.old_state),
+    new_state: ServerState::from_wit(e.new_state),
+});
 
 pub use infrarust_plugin_common::enums::BackendState;
 
@@ -196,26 +157,19 @@ pub struct BackendHealthEvent {
     pub state: BackendState,
 }
 
-impl GuestEvent for BackendHealthEvent {
-    const KIND: EventKind = EventKind::BackendHealth;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::BackendHealth(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            address: ServerAddress::from_wit(e.address),
-            servers: server_ids(e.servers),
-            state: BackendState::from_wit(e.state),
-        })
-    }
-}
+guest_event!(BackendHealthEvent, BackendHealth, |e| Self {
+    address: ServerAddress::from_wit(e.address),
+    servers: server_ids(e.servers),
+    state: BackendState::from_wit(e.state),
+});
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::bindings::events::{Event, EventOutcome};
     use crate::bindings::types as wt;
+    use crate::event::GuestEvent;
 
     fn ping() -> ProxyPingEvent {
         ProxyPingEvent::from_event(Event::ProxyPing(we::ProxyPingEvent {

@@ -1,5 +1,5 @@
-use super::{GuestEvent, ResultCell};
-use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
+use super::ResultCell;
+use crate::bindings::events as we;
 use crate::component::{Component, from_host};
 use crate::types::{PlayerRef, ServerId};
 
@@ -48,42 +48,31 @@ impl ChatMessageEvent {
     }
 }
 
-impl GuestEvent for ChatMessageEvent {
-    const KIND: EventKind = EventKind::ChatMessage;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::ChatMessage(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            message: e.message,
-            signed: e.signed,
-            server: e.server.map(ServerId::from),
-            result: ResultCell::new(match e.result {
-                we::ChatMessageResult::Allow => ChatMessageResult::Allow,
-                we::ChatMessageResult::Deny(reason) => {
-                    ChatMessageResult::Deny(reason.map(from_host))
-                }
-                we::ChatMessageResult::Modify(message) => ChatMessageResult::Modify(message),
-            }),
-        })
+guest_event!(
+    ChatMessageEvent,
+    ChatMessage,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        message: e.message,
+        signed: e.signed,
+        server: e.server.map(ServerId::from),
+        result: ResultCell::new(match e.result {
+            we::ChatMessageResult::Allow => ChatMessageResult::Allow,
+            we::ChatMessageResult::Deny(reason) => {
+                ChatMessageResult::Deny(reason.map(from_host))
+            }
+            we::ChatMessageResult::Modify(message) => ChatMessageResult::Modify(message),
+        }),
+    },
+    result,
+    |r| match r {
+        ChatMessageResult::Allow => we::ChatMessageResult::Allow,
+        ChatMessageResult::Deny(reason) => {
+            we::ChatMessageResult::Deny(reason.as_ref().map(Component::to_arena))
+        }
+        ChatMessageResult::Modify(message) => we::ChatMessageResult::Modify(message),
     }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::ChatMessage(match r {
-                    ChatMessageResult::Allow => we::ChatMessageResult::Allow,
-                    ChatMessageResult::Deny(reason) => {
-                        we::ChatMessageResult::Deny(reason.as_ref().map(Component::to_arena))
-                    }
-                    ChatMessageResult::Modify(message) => we::ChatMessageResult::Modify(message),
-                })
-            })
-    }
-}
+);
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -142,56 +131,47 @@ impl CommandExecuteEvent {
     }
 }
 
-impl GuestEvent for CommandExecuteEvent {
-    const KIND: EventKind = EventKind::CommandExecute;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::CommandExecute(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            command: e.command,
-            signed: e.signed,
-            server: e.server.map(ServerId::from),
-            result: ResultCell::new(match e.result {
-                we::CommandExecuteResult::Allow => CommandExecuteResult::Allow,
-                we::CommandExecuteResult::Deny(reason) => {
-                    CommandExecuteResult::Deny(reason.map(from_host))
-                }
-                we::CommandExecuteResult::Modify(command) => CommandExecuteResult::Modify(command),
-                we::CommandExecuteResult::ForwardToBackend => {
-                    CommandExecuteResult::ForwardToBackend
-                }
-            }),
-        })
+guest_event!(
+    CommandExecuteEvent,
+    CommandExecute,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        command: e.command,
+        signed: e.signed,
+        server: e.server.map(ServerId::from),
+        result: ResultCell::new(match e.result {
+            we::CommandExecuteResult::Allow => CommandExecuteResult::Allow,
+            we::CommandExecuteResult::Deny(reason) => {
+                CommandExecuteResult::Deny(reason.map(from_host))
+            }
+            we::CommandExecuteResult::Modify(command) => CommandExecuteResult::Modify(command),
+            we::CommandExecuteResult::ForwardToBackend => {
+                CommandExecuteResult::ForwardToBackend
+            }
+        }),
+    },
+    result,
+    |r| match r {
+        CommandExecuteResult::Allow => we::CommandExecuteResult::Allow,
+        CommandExecuteResult::Deny(reason) => {
+            we::CommandExecuteResult::Deny(reason.as_ref().map(Component::to_arena))
+        }
+        CommandExecuteResult::Modify(command) => {
+            we::CommandExecuteResult::Modify(command)
+        }
+        CommandExecuteResult::ForwardToBackend => {
+            we::CommandExecuteResult::ForwardToBackend
+        }
     }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::CommandExecute(match r {
-                    CommandExecuteResult::Allow => we::CommandExecuteResult::Allow,
-                    CommandExecuteResult::Deny(reason) => {
-                        we::CommandExecuteResult::Deny(reason.as_ref().map(Component::to_arena))
-                    }
-                    CommandExecuteResult::Modify(command) => {
-                        we::CommandExecuteResult::Modify(command)
-                    }
-                    CommandExecuteResult::ForwardToBackend => {
-                        we::CommandExecuteResult::ForwardToBackend
-                    }
-                })
-            })
-    }
-}
+);
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::bindings::events::{Event, EventOutcome};
     use crate::bindings::types as wt;
+    use crate::event::GuestEvent;
 
     fn chat(result: we::ChatMessageResult) -> ChatMessageEvent {
         ChatMessageEvent::from_event(Event::ChatMessage(we::ChatMessageEvent {

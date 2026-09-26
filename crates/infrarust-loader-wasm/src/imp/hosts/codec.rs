@@ -3,18 +3,13 @@ use infrarust_api::filter::{FilterMetadata, FilterPriority};
 use crate::bindings::infrarust::plugin::codec_registry as wcr;
 use crate::bindings::infrarust::plugin::types::{ErrorKind, HostError};
 use crate::codec::WasmCodecFilterFactory;
+use crate::convert::wit_enum_map;
 use crate::host_error::{HostResult, filter_error, host_error};
 use crate::store_state::PluginStoreState;
 
-fn priority_from_wit(priority: wcr::FilterPriority) -> FilterPriority {
-    match priority {
-        wcr::FilterPriority::First => FilterPriority::First,
-        wcr::FilterPriority::Early => FilterPriority::Early,
-        wcr::FilterPriority::Normal => FilterPriority::Normal,
-        wcr::FilterPriority::Late => FilterPriority::Late,
-        wcr::FilterPriority::Last => FilterPriority::Last,
-    }
-}
+wit_enum_map!(priority_from_wit: wcr::FilterPriority => FilterPriority {
+    First, Early, Normal, Late, Last
+});
 
 fn no_registry() -> HostError {
     host_error(

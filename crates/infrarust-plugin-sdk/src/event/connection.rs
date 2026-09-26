@@ -1,5 +1,5 @@
-use super::{GuestEvent, ResultCell};
-use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
+use super::ResultCell;
+use crate::bindings::events as we;
 use crate::component::{Component, from_host};
 use crate::types::{FromWit, PlayerRef, ServerId};
 
@@ -42,48 +42,37 @@ impl PlayerChooseInitialServerEvent {
     }
 }
 
-impl GuestEvent for PlayerChooseInitialServerEvent {
-    const KIND: EventKind = EventKind::PlayerChooseInitialServer;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PlayerChooseInitialServer(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            initial_server: ServerId::from(e.initial_server),
-            result: ResultCell::new(match e.result {
-                we::PlayerChooseInitialServerResult::Allowed => {
-                    PlayerChooseInitialServerResult::Allowed
-                }
-                we::PlayerChooseInitialServerResult::Redirect(server) => {
-                    PlayerChooseInitialServerResult::Redirect(ServerId::from(server))
-                }
-                we::PlayerChooseInitialServerResult::SendToLimbo(handlers) => {
-                    PlayerChooseInitialServerResult::SendToLimbo(handlers)
-                }
-            }),
-        })
+guest_event!(
+    PlayerChooseInitialServerEvent,
+    PlayerChooseInitialServer,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        initial_server: ServerId::from(e.initial_server),
+        result: ResultCell::new(match e.result {
+            we::PlayerChooseInitialServerResult::Allowed => {
+                PlayerChooseInitialServerResult::Allowed
+            }
+            we::PlayerChooseInitialServerResult::Redirect(server) => {
+                PlayerChooseInitialServerResult::Redirect(ServerId::from(server))
+            }
+            we::PlayerChooseInitialServerResult::SendToLimbo(handlers) => {
+                PlayerChooseInitialServerResult::SendToLimbo(handlers)
+            }
+        }),
+    },
+    result,
+    |r| match r {
+        PlayerChooseInitialServerResult::Allowed => {
+            we::PlayerChooseInitialServerResult::Allowed
+        }
+        PlayerChooseInitialServerResult::Redirect(server) => {
+            we::PlayerChooseInitialServerResult::Redirect(server.into_string())
+        }
+        PlayerChooseInitialServerResult::SendToLimbo(handlers) => {
+            we::PlayerChooseInitialServerResult::SendToLimbo(handlers)
+        }
     }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::PlayerChooseInitialServer(match r {
-                    PlayerChooseInitialServerResult::Allowed => {
-                        we::PlayerChooseInitialServerResult::Allowed
-                    }
-                    PlayerChooseInitialServerResult::Redirect(server) => {
-                        we::PlayerChooseInitialServerResult::Redirect(server.into_string())
-                    }
-                    PlayerChooseInitialServerResult::SendToLimbo(handlers) => {
-                        we::PlayerChooseInitialServerResult::SendToLimbo(handlers)
-                    }
-                })
-            })
-    }
-}
+);
 
 pub use infrarust_plugin_common::enums::ConnectCause;
 
@@ -133,52 +122,41 @@ impl ServerPreConnectEvent {
     }
 }
 
-impl GuestEvent for ServerPreConnectEvent {
-    const KIND: EventKind = EventKind::ServerPreConnect;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::ServerPreConnect(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            server: ServerId::from(e.server),
-            previous_server: e.previous_server.map(ServerId::from),
-            cause: ConnectCause::from_wit(e.cause),
-            result: ResultCell::new(match e.result {
-                we::ServerPreConnectResult::Allowed => ServerPreConnectResult::Allowed,
-                we::ServerPreConnectResult::ConnectTo(server) => {
-                    ServerPreConnectResult::ConnectTo(ServerId::from(server))
-                }
-                we::ServerPreConnectResult::SendToLimbo(handlers) => {
-                    ServerPreConnectResult::SendToLimbo(handlers)
-                }
-                we::ServerPreConnectResult::Denied(reason) => {
-                    ServerPreConnectResult::Denied(from_host(reason))
-                }
-            }),
-        })
+guest_event!(
+    ServerPreConnectEvent,
+    ServerPreConnect,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        server: ServerId::from(e.server),
+        previous_server: e.previous_server.map(ServerId::from),
+        cause: ConnectCause::from_wit(e.cause),
+        result: ResultCell::new(match e.result {
+            we::ServerPreConnectResult::Allowed => ServerPreConnectResult::Allowed,
+            we::ServerPreConnectResult::ConnectTo(server) => {
+                ServerPreConnectResult::ConnectTo(ServerId::from(server))
+            }
+            we::ServerPreConnectResult::SendToLimbo(handlers) => {
+                ServerPreConnectResult::SendToLimbo(handlers)
+            }
+            we::ServerPreConnectResult::Denied(reason) => {
+                ServerPreConnectResult::Denied(from_host(reason))
+            }
+        }),
+    },
+    result,
+    |r| match r {
+        ServerPreConnectResult::Allowed => we::ServerPreConnectResult::Allowed,
+        ServerPreConnectResult::ConnectTo(server) => {
+            we::ServerPreConnectResult::ConnectTo(server.into_string())
+        }
+        ServerPreConnectResult::SendToLimbo(handlers) => {
+            we::ServerPreConnectResult::SendToLimbo(handlers)
+        }
+        ServerPreConnectResult::Denied(reason) => {
+            we::ServerPreConnectResult::Denied(reason.to_arena())
+        }
     }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::ServerPreConnect(match r {
-                    ServerPreConnectResult::Allowed => we::ServerPreConnectResult::Allowed,
-                    ServerPreConnectResult::ConnectTo(server) => {
-                        we::ServerPreConnectResult::ConnectTo(server.into_string())
-                    }
-                    ServerPreConnectResult::SendToLimbo(handlers) => {
-                        we::ServerPreConnectResult::SendToLimbo(handlers)
-                    }
-                    ServerPreConnectResult::Denied(reason) => {
-                        we::ServerPreConnectResult::Denied(reason.to_arena())
-                    }
-                })
-            })
-    }
-}
+);
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -188,20 +166,11 @@ pub struct ServerConnectedEvent {
     pub previous_server: Option<ServerId>,
 }
 
-impl GuestEvent for ServerConnectedEvent {
-    const KIND: EventKind = EventKind::ServerConnected;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::ServerConnected(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            server: ServerId::from(e.server),
-            previous_server: e.previous_server.map(ServerId::from),
-        })
-    }
-}
+guest_event!(ServerConnectedEvent, ServerConnected, |e| Self {
+    player: PlayerRef::from_wit(e.player),
+    server: ServerId::from(e.server),
+    previous_server: e.previous_server.map(ServerId::from),
+});
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -220,20 +189,11 @@ impl ServerPostConnectEvent {
     }
 }
 
-impl GuestEvent for ServerPostConnectEvent {
-    const KIND: EventKind = EventKind::ServerPostConnect;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::ServerPostConnect(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            server: ServerId::from(e.server),
-            previous_server: e.previous_server.map(ServerId::from),
-        })
-    }
-}
+guest_event!(ServerPostConnectEvent, ServerPostConnect, |e| Self {
+    player: PlayerRef::from_wit(e.player),
+    server: ServerId::from(e.server),
+    previous_server: e.previous_server.map(ServerId::from),
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -307,66 +267,55 @@ impl KickedFromServerEvent {
     }
 }
 
-impl GuestEvent for KickedFromServerEvent {
-    const KIND: EventKind = EventKind::KickedFromServer;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::KickedFromServer(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            server: ServerId::from(e.server),
-            reason: e.reason.map(from_host),
-            cause: KickCause::from_wit(e.cause),
-            during_connect: e.during_connect,
-            previous_server: e.previous_server.map(ServerId::from),
-            result: ResultCell::new(match e.result {
-                we::KickedFromServerResult::DisconnectPlayer(reason) => {
-                    KickedFromServerResult::DisconnectPlayer(reason.map(from_host))
-                }
-                we::KickedFromServerResult::RedirectTo(server) => {
-                    KickedFromServerResult::RedirectTo(ServerId::from(server))
-                }
-                we::KickedFromServerResult::SendToLimbo(handlers) => {
-                    KickedFromServerResult::SendToLimbo(handlers)
-                }
-                we::KickedFromServerResult::Notify(message) => {
-                    KickedFromServerResult::Notify(from_host(message))
-                }
-            }),
-        })
+guest_event!(
+    KickedFromServerEvent,
+    KickedFromServer,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        server: ServerId::from(e.server),
+        reason: e.reason.map(from_host),
+        cause: KickCause::from_wit(e.cause),
+        during_connect: e.during_connect,
+        previous_server: e.previous_server.map(ServerId::from),
+        result: ResultCell::new(match e.result {
+            we::KickedFromServerResult::DisconnectPlayer(reason) => {
+                KickedFromServerResult::DisconnectPlayer(reason.map(from_host))
+            }
+            we::KickedFromServerResult::RedirectTo(server) => {
+                KickedFromServerResult::RedirectTo(ServerId::from(server))
+            }
+            we::KickedFromServerResult::SendToLimbo(handlers) => {
+                KickedFromServerResult::SendToLimbo(handlers)
+            }
+            we::KickedFromServerResult::Notify(message) => {
+                KickedFromServerResult::Notify(from_host(message))
+            }
+        }),
+    },
+    result,
+    |r| match r {
+        KickedFromServerResult::DisconnectPlayer(reason) => {
+            we::KickedFromServerResult::DisconnectPlayer(reason.as_ref().map(Component::to_arena))
+        }
+        KickedFromServerResult::RedirectTo(server) => {
+            we::KickedFromServerResult::RedirectTo(server.into_string())
+        }
+        KickedFromServerResult::SendToLimbo(handlers) => {
+            we::KickedFromServerResult::SendToLimbo(handlers)
+        }
+        KickedFromServerResult::Notify(message) => {
+            we::KickedFromServerResult::Notify(message.to_arena())
+        }
     }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::KickedFromServer(match r {
-                    KickedFromServerResult::DisconnectPlayer(reason) => {
-                        we::KickedFromServerResult::DisconnectPlayer(
-                            reason.as_ref().map(Component::to_arena),
-                        )
-                    }
-                    KickedFromServerResult::RedirectTo(server) => {
-                        we::KickedFromServerResult::RedirectTo(server.into_string())
-                    }
-                    KickedFromServerResult::SendToLimbo(handlers) => {
-                        we::KickedFromServerResult::SendToLimbo(handlers)
-                    }
-                    KickedFromServerResult::Notify(message) => {
-                        we::KickedFromServerResult::Notify(message.to_arena())
-                    }
-                })
-            })
-    }
-}
+);
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::bindings::events::{Event, EventOutcome};
     use crate::bindings::types as wt;
+    use crate::event::GuestEvent;
 
     fn steve() -> wt::PlayerRef {
         wt::PlayerRef {

@@ -70,7 +70,7 @@ impl WasmEvent for DisconnectEvent {
         let reason = |reason: &Option<_>| reason.as_ref().map(component::to_wit);
         we::Event::Disconnect(we::DisconnectEvent {
             player: convert::player_ref(&*self.player),
-            last_server: self.last_server.as_ref().map(|s| s.as_str().to_owned()),
+            last_server: convert::server_id_opt(&self.last_server),
             cause: match &self.cause {
                 DisconnectCause::ClientQuit => we::DisconnectCause::ClientQuit,
                 DisconnectCause::Kicked { reason: text } => {

@@ -1,7 +1,7 @@
 use uuid::Uuid;
 
-use super::{GuestEvent, ResultCell};
-use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
+use super::ResultCell;
+use crate::bindings::events as we;
 use crate::component::{Component, from_host};
 use crate::types::{
     ClientSettings, FromWit, PacketDirection, PlayerRef, ServerAddress, uuid_from_wit,
@@ -14,19 +14,10 @@ pub struct PlayerClientBrandEvent {
     pub brand: String,
 }
 
-impl GuestEvent for PlayerClientBrandEvent {
-    const KIND: EventKind = EventKind::PlayerClientBrand;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PlayerClientBrand(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            brand: e.brand,
-        })
-    }
-}
+guest_event!(PlayerClientBrandEvent, PlayerClientBrand, |e| Self {
+    player: PlayerRef::from_wit(e.player),
+    brand: e.brand,
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -35,19 +26,12 @@ pub struct PlayerSettingsChangedEvent {
     pub settings: ClientSettings,
 }
 
-impl GuestEvent for PlayerSettingsChangedEvent {
-    const KIND: EventKind = EventKind::PlayerSettingsChanged;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PlayerSettingsChanged(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            settings: ClientSettings::from_wit(e.settings),
-        })
+guest_event!(PlayerSettingsChangedEvent, PlayerSettingsChanged, |e| {
+    Self {
+        player: PlayerRef::from_wit(e.player),
+        settings: ClientSettings::from_wit(e.settings),
     }
-}
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -57,20 +41,13 @@ pub struct PlayerChannelRegisterEvent {
     pub direction: PacketDirection,
 }
 
-impl GuestEvent for PlayerChannelRegisterEvent {
-    const KIND: EventKind = EventKind::PlayerChannelRegister;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PlayerChannelRegister(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            channels: e.channels,
-            direction: PacketDirection::from_wit(e.direction),
-        })
+guest_event!(PlayerChannelRegisterEvent, PlayerChannelRegister, |e| {
+    Self {
+        player: PlayerRef::from_wit(e.player),
+        channels: e.channels,
+        direction: PacketDirection::from_wit(e.direction),
     }
-}
+});
 
 pub use infrarust_plugin_common::enums::ResourcePackStatus;
 
@@ -90,24 +67,19 @@ pub struct PlayerResourcePackStatusEvent {
     pub origin: ResourcePackOrigin,
 }
 
-impl GuestEvent for PlayerResourcePackStatusEvent {
-    const KIND: EventKind = EventKind::PlayerResourcePackStatus;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PlayerResourcePackStatus(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            pack_id: e.pack_id.map(uuid_from_wit),
-            status: ResourcePackStatus::from_wit(e.status),
-            origin: match e.origin {
-                we::ResourcePackOrigin::Proxy => ResourcePackOrigin::Proxy,
-                we::ResourcePackOrigin::Backend => ResourcePackOrigin::Backend,
-            },
-        })
+guest_event!(
+    PlayerResourcePackStatusEvent,
+    PlayerResourcePackStatus,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        pack_id: e.pack_id.map(uuid_from_wit),
+        status: ResourcePackStatus::from_wit(e.status),
+        origin: match e.origin {
+            we::ResourcePackOrigin::Proxy => ResourcePackOrigin::Proxy,
+            we::ResourcePackOrigin::Backend => ResourcePackOrigin::Backend,
+        },
     }
-}
+);
 
 pub use infrarust_plugin_common::enums::TransferOrigin;
 
@@ -152,52 +124,43 @@ impl PreTransferEvent {
     }
 }
 
-impl GuestEvent for PreTransferEvent {
-    const KIND: EventKind = EventKind::PreTransfer;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PreTransfer(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            host: e.host,
-            port: e.port,
-            origin: TransferOrigin::from_wit(e.origin),
-            result: ResultCell::new(match e.result {
-                we::PreTransferResult::Allowed => PreTransferResult::Allowed,
-                we::PreTransferResult::Denied(reason) => {
-                    PreTransferResult::Denied(from_host(reason))
-                }
-                we::PreTransferResult::Redirect(target) => {
-                    PreTransferResult::Redirect(ServerAddress::from_wit(target))
-                }
-            }),
-        })
+guest_event!(
+    PreTransferEvent,
+    PreTransfer,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        host: e.host,
+        port: e.port,
+        origin: TransferOrigin::from_wit(e.origin),
+        result: ResultCell::new(match e.result {
+            we::PreTransferResult::Allowed => PreTransferResult::Allowed,
+            we::PreTransferResult::Denied(reason) => {
+                PreTransferResult::Denied(from_host(reason))
+            }
+            we::PreTransferResult::Redirect(target) => {
+                PreTransferResult::Redirect(ServerAddress::from_wit(target))
+            }
+        }),
+    },
+    result,
+    |r| match r {
+        PreTransferResult::Allowed => we::PreTransferResult::Allowed,
+        PreTransferResult::Denied(reason) => {
+            we::PreTransferResult::Denied(reason.to_arena())
+        }
+        PreTransferResult::Redirect(target) => {
+            we::PreTransferResult::Redirect(target.to_wit())
+        }
     }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::PreTransfer(match r {
-                    PreTransferResult::Allowed => we::PreTransferResult::Allowed,
-                    PreTransferResult::Denied(reason) => {
-                        we::PreTransferResult::Denied(reason.to_arena())
-                    }
-                    PreTransferResult::Redirect(target) => {
-                        we::PreTransferResult::Redirect(target.to_wit())
-                    }
-                })
-            })
-    }
-}
+);
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::bindings::events::{Event, EventOutcome};
     use crate::bindings::types as wt;
+    use crate::event::GuestEvent;
 
     #[test]
     fn a_transfer_redirect_becomes_the_outcome() {

@@ -15,7 +15,7 @@ impl WasmEvent for ChatMessageEvent {
             player: convert::player_ref(&*self.player),
             message: self.message.clone(),
             signed: self.signed,
-            server: self.server.as_ref().map(|s| s.as_str().to_owned()),
+            server: convert::server_id_opt(&self.server),
             result: match self.result() {
                 ChatMessageResult::Deny { reason } => {
                     we::ChatMessageResult::Deny(reason.as_ref().map(component::to_wit))
@@ -52,7 +52,7 @@ impl WasmEvent for CommandExecuteEvent {
             player: convert::player_ref(&*self.player),
             command: self.command.clone(),
             signed: self.signed,
-            server: self.server.as_ref().map(|s| s.as_str().to_owned()),
+            server: convert::server_id_opt(&self.server),
             result: match self.result() {
                 CommandExecuteResult::Deny { reason } => {
                     we::CommandExecuteResult::Deny(reason.as_ref().map(component::to_wit))

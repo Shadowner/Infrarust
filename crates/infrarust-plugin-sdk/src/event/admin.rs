@@ -1,6 +1,4 @@
-use super::GuestEvent;
 use crate::bindings::ban_service as wb;
-use crate::bindings::events::{Event, EventKind};
 use crate::services::BanEntry;
 use crate::types::{uuid_from_wit, uuid_to_wit};
 
@@ -50,20 +48,11 @@ pub struct BanIssuedEvent {
     pub silent: bool,
 }
 
-impl GuestEvent for BanIssuedEvent {
-    const KIND: EventKind = EventKind::BanIssued;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::BanIssued(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            entry: BanEntry::from_wit(e.entry),
-            source: BanSource::from_wit(e.source),
-            silent: e.silent,
-        })
-    }
-}
+guest_event!(BanIssuedEvent, BanIssued, |e| Self {
+    entry: BanEntry::from_wit(e.entry),
+    source: BanSource::from_wit(e.source),
+    silent: e.silent,
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -73,20 +62,11 @@ pub struct BanRevokedEvent {
     pub silent: bool,
 }
 
-impl GuestEvent for BanRevokedEvent {
-    const KIND: EventKind = EventKind::BanRevoked;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::BanRevoked(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            entry: BanEntry::from_wit(e.entry),
-            source: BanSource::from_wit(e.source),
-            silent: e.silent,
-        })
-    }
-}
+guest_event!(BanRevokedEvent, BanRevoked, |e| Self {
+    entry: BanEntry::from_wit(e.entry),
+    source: BanSource::from_wit(e.source),
+    silent: e.silent,
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -95,19 +75,10 @@ pub struct PluginEnabledEvent {
     pub version: String,
 }
 
-impl GuestEvent for PluginEnabledEvent {
-    const KIND: EventKind = EventKind::PluginEnabled;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PluginEnabled(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            plugin_id: e.plugin_id,
-            version: e.version,
-        })
-    }
-}
+guest_event!(PluginEnabledEvent, PluginEnabled, |e| Self {
+    plugin_id: e.plugin_id,
+    version: e.version,
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -115,15 +86,6 @@ pub struct PluginDisabledEvent {
     pub plugin_id: String,
 }
 
-impl GuestEvent for PluginDisabledEvent {
-    const KIND: EventKind = EventKind::PluginDisabled;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PluginDisabled(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            plugin_id: e.plugin_id,
-        })
-    }
-}
+guest_event!(PluginDisabledEvent, PluginDisabled, |e| Self {
+    plugin_id: e.plugin_id,
+});

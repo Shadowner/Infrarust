@@ -7,15 +7,11 @@ use infrarust_api::events::handshake::{
 use super::{Applied, Texts, WasmEvent, unmatched};
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::component;
-use crate::convert;
+use crate::convert::{self, wit_enum_map};
 
-const fn intent(intent: HandshakeIntent) -> we::HandshakeIntent {
-    match intent {
-        HandshakeIntent::Status => we::HandshakeIntent::Status,
-        HandshakeIntent::Transfer => we::HandshakeIntent::Transfer,
-        _ => we::HandshakeIntent::Login,
-    }
-}
+wit_enum_map!(intent: HandshakeIntent => we::HandshakeIntent {
+    Status, Login, Transfer
+} else Login);
 
 impl WasmEvent for ConnectionHandshakeEvent {
     const KIND: EventKind = EventKind::ConnectionHandshake;
@@ -29,7 +25,7 @@ impl WasmEvent for ConnectionHandshakeEvent {
             protocol: self.protocol_version.raw(),
             intent: intent(self.intent),
             legacy: self.legacy,
-            server: self.server.as_ref().map(|s| s.as_str().to_owned()),
+            server: convert::server_id_opt(&self.server),
             result: match self.result() {
                 ConnectionHandshakeResult::Deny { reason } => {
                     we::ConnectionHandshakeResult::Deny(reason.as_ref().map(component::to_wit))

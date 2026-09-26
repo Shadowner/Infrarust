@@ -26,7 +26,7 @@ pub(crate) fn player_info(player: &dyn Player) -> wp::PlayerInfo {
         profile: convert::game_profile_to_wit(player.profile()),
         protocol: player.protocol_version().raw(),
         remote_addr: convert::socket_to_wit(player.remote_addr()),
-        current_server: player.current_server().map(|s| s.as_str().to_owned()),
+        current_server: convert::server_id_opt(&player.current_server()),
         online_mode: player.is_online_mode(),
         connected: player.is_connected(),
         active: player.is_active(),

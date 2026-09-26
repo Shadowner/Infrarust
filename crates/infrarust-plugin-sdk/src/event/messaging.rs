@@ -1,5 +1,5 @@
-use super::{GuestEvent, ResultCell};
-use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
+use super::ResultCell;
+use crate::bindings::events as we;
 use crate::types::{ChannelId, FromWit, PlayerRef, ServerId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -59,45 +59,34 @@ impl PluginMessageEvent {
     }
 }
 
-impl GuestEvent for PluginMessageEvent {
-    const KIND: EventKind = EventKind::PluginMessage;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PluginMessage(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            source: match e.source {
-                we::MessageEndpoint::Client => MessageEndpoint::Client,
-                we::MessageEndpoint::Backend(server) => {
-                    MessageEndpoint::Backend(ServerId::from(server))
-                }
-            },
-            channel: ChannelId::from_wit(e.channel),
-            raw_channel: e.raw_channel,
-            data: e.data,
-            phase: MessagePhase::from_wit(e.phase),
-            result: ResultCell::new(match e.result {
-                we::PluginMessageResult::Forward => PluginMessageResult::Forward,
-                we::PluginMessageResult::Handled => PluginMessageResult::Handled,
-                we::PluginMessageResult::Replace(data) => PluginMessageResult::Replace(data),
-            }),
-        })
+guest_event!(
+    PluginMessageEvent,
+    PluginMessage,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        source: match e.source {
+            we::MessageEndpoint::Client => MessageEndpoint::Client,
+            we::MessageEndpoint::Backend(server) => {
+                MessageEndpoint::Backend(ServerId::from(server))
+            }
+        },
+        channel: ChannelId::from_wit(e.channel),
+        raw_channel: e.raw_channel,
+        data: e.data,
+        phase: MessagePhase::from_wit(e.phase),
+        result: ResultCell::new(match e.result {
+            we::PluginMessageResult::Forward => PluginMessageResult::Forward,
+            we::PluginMessageResult::Handled => PluginMessageResult::Handled,
+            we::PluginMessageResult::Replace(data) => PluginMessageResult::Replace(data),
+        }),
+    },
+    result,
+    |r| match r {
+        PluginMessageResult::Forward => we::PluginMessageResult::Forward,
+        PluginMessageResult::Handled => we::PluginMessageResult::Handled,
+        PluginMessageResult::Replace(data) => we::PluginMessageResult::Replace(data),
     }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::PluginMessage(match r {
-                    PluginMessageResult::Forward => we::PluginMessageResult::Forward,
-                    PluginMessageResult::Handled => we::PluginMessageResult::Handled,
-                    PluginMessageResult::Replace(data) => we::PluginMessageResult::Replace(data),
-                })
-            })
-    }
-}
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamedResponse {
@@ -198,35 +187,26 @@ impl NamedEvent {
     }
 }
 
-impl GuestEvent for NamedEvent {
-    const KIND: EventKind = EventKind::NamedEvent;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::NamedEvent(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            name: e.name,
-            source_plugin: e.source_plugin,
-            content_type: e.content_type,
-            payload: e.payload,
-            outcome: ResultCell::new(NamedOutcome::from_wit(e.result)),
-        })
-    }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.outcome
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |outcome| {
-                EventOutcome::NamedEvent(outcome.to_wit())
-            })
-    }
-}
+guest_event!(
+    NamedEvent,
+    NamedEvent,
+    |e| Self {
+        name: e.name,
+        source_plugin: e.source_plugin,
+        content_type: e.content_type,
+        payload: e.payload,
+        outcome: ResultCell::new(NamedOutcome::from_wit(e.result)),
+    },
+    outcome,
+    |outcome| outcome.to_wit()
+);
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::bindings::events::{Event, EventOutcome};
+    use crate::event::GuestEvent;
 
     fn named(result: we::NamedEventResult) -> NamedEvent {
         NamedEvent::from_event(Event::NamedEvent(we::NamedEventEvent {

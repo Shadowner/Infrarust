@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
-use super::{GuestEvent, ResultCell};
-use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
+use super::ResultCell;
+use crate::bindings::events as we;
 use crate::component::{Component, from_host};
 use crate::permissions::PermissionSnapshot;
 use crate::types::{GameProfile, PlayerRef, ServerId, socket_from_wit};
@@ -72,28 +72,19 @@ impl PreLoginEvent {
     }
 }
 
-impl GuestEvent for PreLoginEvent {
-    const KIND: EventKind = EventKind::PreLogin;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PreLogin(e) = ev else { return None };
-        Some(Self {
-            profile: GameProfile::from_wit(e.profile),
-            remote_addr: socket_from_wit(e.remote_addr),
-            protocol: e.protocol,
-            server_domain: e.server_domain,
-            result: ResultCell::new(PreLoginResult::from_wit(e.result)),
-        })
-    }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::PreLogin(r.to_wit())
-            })
-    }
-}
+guest_event!(
+    PreLoginEvent,
+    PreLogin,
+    |e| Self {
+        profile: GameProfile::from_wit(e.profile),
+        remote_addr: socket_from_wit(e.remote_addr),
+        protocol: e.protocol,
+        server_domain: e.server_domain,
+        result: ResultCell::new(PreLoginResult::from_wit(e.result)),
+    },
+    result,
+    |r| r.to_wit()
+);
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -103,18 +94,11 @@ pub struct PostLoginEvent {
     pub protocol: i32,
 }
 
-impl GuestEvent for PostLoginEvent {
-    const KIND: EventKind = EventKind::PostLogin;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PostLogin(e) = ev else { return None };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            profile: GameProfile::from_wit(e.profile),
-            protocol: e.protocol,
-        })
-    }
-}
+guest_event!(PostLoginEvent, PostLogin, |e| Self {
+    player: PlayerRef::from_wit(e.player),
+    profile: GameProfile::from_wit(e.profile),
+    protocol: e.protocol,
+});
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -156,20 +140,11 @@ pub struct DisconnectEvent {
     pub cause: DisconnectCause,
 }
 
-impl GuestEvent for DisconnectEvent {
-    const KIND: EventKind = EventKind::Disconnect;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::Disconnect(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            last_server: e.last_server.map(ServerId::from),
-            cause: DisconnectCause::from_wit(e.cause),
-        })
-    }
-}
+guest_event!(DisconnectEvent, Disconnect, |e| Self {
+    player: PlayerRef::from_wit(e.player),
+    last_server: e.last_server.map(ServerId::from),
+    cause: DisconnectCause::from_wit(e.cause),
+});
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -177,18 +152,9 @@ pub struct OnlineAuthFailedEvent {
     pub username: String,
 }
 
-impl GuestEvent for OnlineAuthFailedEvent {
-    const KIND: EventKind = EventKind::OnlineAuthFailed;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::OnlineAuthFailed(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            username: e.username,
-        })
-    }
-}
+guest_event!(OnlineAuthFailedEvent, OnlineAuthFailed, |e| Self {
+    username: e.username,
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -238,28 +204,17 @@ impl PermissionsSetupEvent {
     }
 }
 
-impl GuestEvent for PermissionsSetupEvent {
-    const KIND: EventKind = EventKind::PermissionsSetup;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::PermissionsSetup(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            online_mode: e.online_mode,
-            result: ResultCell::new(PermissionsSetupResult::from_wit(e.result)),
-        })
-    }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::PermissionsSetup(r.to_wit())
-            })
-    }
-}
+guest_event!(
+    PermissionsSetupEvent,
+    PermissionsSetup,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        online_mode: e.online_mode,
+        result: ResultCell::new(PermissionsSetupResult::from_wit(e.result)),
+    },
+    result,
+    |r| r.to_wit()
+);
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -295,32 +250,23 @@ impl LoginEvent {
     }
 }
 
-impl GuestEvent for LoginEvent {
-    const KIND: EventKind = EventKind::Login;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::Login(e) = ev else { return None };
-        Some(Self {
-            player: PlayerRef::from_wit(e.player),
-            online_mode: e.online_mode,
-            result: ResultCell::new(match e.result {
-                we::LoginResult::Allowed => LoginResult::Allowed,
-                we::LoginResult::Denied(reason) => LoginResult::Denied(from_host(reason)),
-            }),
-        })
+guest_event!(
+    LoginEvent,
+    Login,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        online_mode: e.online_mode,
+        result: ResultCell::new(match e.result {
+            we::LoginResult::Allowed => LoginResult::Allowed,
+            we::LoginResult::Denied(reason) => LoginResult::Denied(from_host(reason)),
+        }),
+    },
+    result,
+    |r| match r {
+        LoginResult::Allowed => we::LoginResult::Allowed,
+        LoginResult::Denied(reason) => we::LoginResult::Denied(reason.to_arena()),
     }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::Login(match r {
-                    LoginResult::Allowed => we::LoginResult::Allowed,
-                    LoginResult::Denied(reason) => we::LoginResult::Denied(reason.to_arena()),
-                })
-            })
-    }
-}
+);
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -353,39 +299,30 @@ impl GameProfileRequestEvent {
     }
 }
 
-impl GuestEvent for GameProfileRequestEvent {
-    const KIND: EventKind = EventKind::GameProfileRequest;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::GameProfileRequest(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            original: GameProfile::from_wit(e.original),
-            online_mode: e.online_mode,
-            remote_addr: socket_from_wit(e.remote_addr),
-            virtual_host: e.virtual_host,
-            protocol: e.protocol,
-            profile: ResultCell::new(GameProfile::from_wit(e.result.profile)),
-        })
+guest_event!(
+    GameProfileRequestEvent,
+    GameProfileRequest,
+    |e| Self {
+        original: GameProfile::from_wit(e.original),
+        online_mode: e.online_mode,
+        remote_addr: socket_from_wit(e.remote_addr),
+        virtual_host: e.virtual_host,
+        protocol: e.protocol,
+        profile: ResultCell::new(GameProfile::from_wit(e.result.profile)),
+    },
+    profile,
+    |profile| we::GameProfileRequestResult {
+        profile: profile.to_wit(),
     }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.profile
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |profile| {
-                EventOutcome::GameProfileRequest(we::GameProfileRequestResult {
-                    profile: profile.to_wit(),
-                })
-            })
-    }
-}
+);
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::bindings::events::{Event, EventOutcome};
     use crate::bindings::types as wt;
+    use crate::event::GuestEvent;
 
     fn pre_login(result: we::PreLoginResult) -> Event {
         Event::PreLogin(we::PreLoginEvent {

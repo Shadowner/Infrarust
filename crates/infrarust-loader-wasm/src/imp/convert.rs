@@ -28,6 +28,71 @@ use crate::bindings::infrarust::plugin::types as wt;
 use crate::component;
 use crate::host_error::{HostResult, host_error};
 
+macro_rules! wit_enum_map {
+    (
+        $name:ident: $native:ident => $module:ident::$wit:ident { $($variant:ident),+ $(,)? }
+        $(else $fallback:ident)?
+    ) => {
+        pub(crate) const fn $name(value: $native) -> $module::$wit {
+            match value {
+                $($native::$variant => $module::$wit::$variant,)+
+                $(_ => $module::$wit::$fallback,)?
+            }
+        }
+    };
+    ($name:ident: $module:ident::$wit:ident => $native:ident { $($variant:ident),+ $(,)? }) => {
+        pub(crate) const fn $name(value: $module::$wit) -> $native {
+            match value {
+                $($module::$wit::$variant => $native::$variant,)+
+            }
+        }
+    };
+}
+
+pub(crate) use wit_enum_map;
+
+wit_enum_map!(server_state_to_wit: ServerState => wt::ServerState {
+    Online, Offline, Starting, Stopping, Sleeping, Crashed
+} else Offline);
+
+wit_enum_map!(proxy_mode_to_wit: ProxyMode => wt::ProxyMode {
+    Passthrough, ZeroCopy, ClientOnly, Offline, ServerOnly
+} else Passthrough);
+
+wit_enum_map!(packet_direction_to_wit: PacketDirection => wt::PacketDirection {
+    Serverbound, Clientbound
+} else Serverbound);
+
+wit_enum_map!(packet_direction_from_wit: wt::PacketDirection => PacketDirection {
+    Serverbound, Clientbound
+});
+
+wit_enum_map!(connection_state_from_wit: wt::ConnectionState => ConnectionState {
+    Handshake, Status, Login, Configuration, Play
+});
+
+wit_enum_map!(session_end_reason_to_wit: SessionEndReason => wl::SessionEndReason {
+    Disconnected, Released, Kicked, Redirected, TimedOut, Shutdown
+} else Disconnected);
+
+wit_enum_map!(login_stage_to_wit: LoginStage => wb::LoginStage {
+    Status, PreAuth, PostAuth
+} else PostAuth);
+
+wit_enum_map!(chat_mode_to_wit: ChatMode => wt::ChatMode {
+    Enabled, CommandsOnly, Hidden
+} else Enabled);
+
+wit_enum_map!(main_hand_to_wit: MainHand => wt::MainHand { Left, Right } else Right);
+
+wit_enum_map!(particle_status_to_wit: ParticleStatus => wt::ParticleStatus {
+    All, Decreased, Minimal
+} else All);
+
+pub(crate) fn server_id_opt(server: &Option<ServerId>) -> Option<String> {
+    server.as_ref().map(|server| server.as_str().to_owned())
+}
+
 pub(crate) fn system_time_to_millis(t: SystemTime) -> u64 {
     t.duration_since(UNIX_EPOCH)
         .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
@@ -130,29 +195,6 @@ pub(crate) fn server_address_to_wit(address: &ServerAddress) -> wt::ServerAddres
     }
 }
 
-pub(crate) fn server_state_to_wit(s: ServerState) -> wt::ServerState {
-    match s {
-        ServerState::Online => wt::ServerState::Online,
-        ServerState::Offline => wt::ServerState::Offline,
-        ServerState::Starting => wt::ServerState::Starting,
-        ServerState::Stopping => wt::ServerState::Stopping,
-        ServerState::Sleeping => wt::ServerState::Sleeping,
-        ServerState::Crashed => wt::ServerState::Crashed,
-        _ => wt::ServerState::Offline,
-    }
-}
-
-pub(crate) fn proxy_mode_to_wit(m: ProxyMode) -> wt::ProxyMode {
-    match m {
-        ProxyMode::Passthrough => wt::ProxyMode::Passthrough,
-        ProxyMode::ZeroCopy => wt::ProxyMode::ZeroCopy,
-        ProxyMode::ClientOnly => wt::ProxyMode::ClientOnly,
-        ProxyMode::Offline => wt::ProxyMode::Offline,
-        ProxyMode::ServerOnly => wt::ProxyMode::ServerOnly,
-        _ => wt::ProxyMode::Passthrough,
-    }
-}
-
 pub(crate) fn server_config_to_wit(c: &ServerConfig) -> wc::ServerConfig {
     wc::ServerConfig {
         id: c.id.as_str().to_owned(),
@@ -242,17 +284,13 @@ pub(crate) fn ban_record_from_wit(record: wb::BanRecord) -> HostResult<BanEntry>
 
 pub(crate) fn login_attempt_to_wit(attempt: &LoginAttempt) -> wb::LoginAttempt {
     wb::LoginAttempt {
-        stage: match attempt.stage {
-            LoginStage::Status => wb::LoginStage::Status,
-            LoginStage::PreAuth => wb::LoginStage::PreAuth,
-            _ => wb::LoginStage::PostAuth,
-        },
+        stage: login_stage_to_wit(attempt.stage),
         ip: ip_to_wit(attempt.ip),
         username: attempt.username.clone(),
         uuid: attempt.uuid.map(uuid_to_wit),
         uuid_verified: attempt.uuid_verified,
         virtual_host: attempt.virtual_host.clone(),
-        server: attempt.server.as_ref().map(|s| s.as_str().to_owned()),
+        server: server_id_opt(&attempt.server),
     }
 }
 
@@ -335,24 +373,13 @@ pub(crate) fn client_settings_to_wit(settings: &ClientSettings) -> wt::ClientSet
     wt::ClientSettings {
         locale: settings.locale.clone(),
         view_distance: settings.view_distance,
-        chat_mode: match settings.chat_mode {
-            ChatMode::CommandsOnly => wt::ChatMode::CommandsOnly,
-            ChatMode::Hidden => wt::ChatMode::Hidden,
-            _ => wt::ChatMode::Enabled,
-        },
+        chat_mode: chat_mode_to_wit(settings.chat_mode),
         chat_colors: settings.chat_colors,
         skin_parts: skin_parts_to_wit(settings.skin_parts),
-        main_hand: match settings.main_hand {
-            MainHand::Left => wt::MainHand::Left,
-            _ => wt::MainHand::Right,
-        },
+        main_hand: main_hand_to_wit(settings.main_hand),
         text_filtering: settings.text_filtering,
         allow_listing: settings.allow_listing,
-        particle_status: match settings.particle_status {
-            ParticleStatus::Decreased => wt::ParticleStatus::Decreased,
-            ParticleStatus::Minimal => wt::ParticleStatus::Minimal,
-            _ => wt::ParticleStatus::All,
-        },
+        particle_status: particle_status_to_wit(settings.particle_status),
     }
 }
 
@@ -369,30 +396,6 @@ fn skin_parts_to_wit(parts: SkinParts) -> wt::SkinParts {
     .into_iter()
     .filter(|(bit, _)| parts.shows(*bit))
     .fold(wt::SkinParts::empty(), |shown, (_, part)| shown | part)
-}
-
-pub(crate) fn packet_direction_to_wit(direction: PacketDirection) -> wt::PacketDirection {
-    match direction {
-        PacketDirection::Clientbound => wt::PacketDirection::Clientbound,
-        _ => wt::PacketDirection::Serverbound,
-    }
-}
-
-pub(crate) const fn packet_direction_from_wit(direction: wt::PacketDirection) -> PacketDirection {
-    match direction {
-        wt::PacketDirection::Serverbound => PacketDirection::Serverbound,
-        wt::PacketDirection::Clientbound => PacketDirection::Clientbound,
-    }
-}
-
-pub(crate) const fn connection_state_from_wit(state: wt::ConnectionState) -> ConnectionState {
-    match state {
-        wt::ConnectionState::Handshake => ConnectionState::Handshake,
-        wt::ConnectionState::Status => ConnectionState::Status,
-        wt::ConnectionState::Login => ConnectionState::Login,
-        wt::ConnectionState::Configuration => ConnectionState::Configuration,
-        wt::ConnectionState::Play => ConnectionState::Play,
-    }
 }
 
 pub(crate) fn raw_packet_to_wit(p: &RawPacket) -> wt::RawPacket {
@@ -459,18 +462,6 @@ pub(crate) fn complete_result_from_wit(r: &wl::HandlerResult) -> Result<HandlerR
     })
 }
 
-pub(crate) fn session_end_reason_to_wit(r: SessionEndReason) -> wl::SessionEndReason {
-    match r {
-        SessionEndReason::Disconnected => wl::SessionEndReason::Disconnected,
-        SessionEndReason::Released => wl::SessionEndReason::Released,
-        SessionEndReason::Kicked => wl::SessionEndReason::Kicked,
-        SessionEndReason::Redirected => wl::SessionEndReason::Redirected,
-        SessionEndReason::TimedOut => wl::SessionEndReason::TimedOut,
-        SessionEndReason::Shutdown => wl::SessionEndReason::Shutdown,
-        _ => wl::SessionEndReason::Disconnected,
-    }
-}
-
 pub(crate) fn limbo_entry_context_to_wit(c: &LimboEntryContext) -> wl::LimboEntryContext {
     match c {
         LimboEntryContext::InitialConnection { target_server } => {
@@ -482,9 +473,9 @@ pub(crate) fn limbo_entry_context_to_wit(c: &LimboEntryContext) -> wl::LimboEntr
                 component::to_wit(reason),
             ))
         }
-        LimboEntryContext::PluginRedirect { from_server } => wl::LimboEntryContext::PluginRedirect(
-            from_server.as_ref().map(|s| s.as_str().to_owned()),
-        ),
+        LimboEntryContext::PluginRedirect { from_server } => {
+            wl::LimboEntryContext::PluginRedirect(server_id_opt(from_server))
+        }
         _ => wl::LimboEntryContext::PluginRedirect(None),
     }
 }

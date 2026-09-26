@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
-use super::{GuestEvent, ResultCell};
-use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
+use super::ResultCell;
+use crate::bindings::events as we;
 use crate::component::{Component, from_host};
 use crate::types::{FromWit, ServerId, socket_from_wit};
 
@@ -56,50 +56,38 @@ impl ConnectionHandshakeEvent {
     }
 }
 
-impl GuestEvent for ConnectionHandshakeEvent {
-    const KIND: EventKind = EventKind::ConnectionHandshake;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::ConnectionHandshake(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            remote_addr: socket_from_wit(e.remote_addr),
-            virtual_host: e.virtual_host,
-            raw_host: e.raw_host,
-            port: e.port,
-            protocol: e.protocol,
-            intent: HandshakeIntent::from_wit(e.intent),
-            legacy: e.legacy,
-            server: e.server.map(ServerId::from),
-            result: ResultCell::new(match e.result {
-                we::ConnectionHandshakeResult::Allow => ConnectionHandshakeResult::Allow,
-                we::ConnectionHandshakeResult::Deny(reason) => {
-                    ConnectionHandshakeResult::Deny(reason.map(from_host))
-                }
-                we::ConnectionHandshakeResult::DropSilently => {
-                    ConnectionHandshakeResult::DropSilently
-                }
-            }),
-        })
+guest_event!(
+    ConnectionHandshakeEvent,
+    ConnectionHandshake,
+    |e| Self {
+        remote_addr: socket_from_wit(e.remote_addr),
+        virtual_host: e.virtual_host,
+        raw_host: e.raw_host,
+        port: e.port,
+        protocol: e.protocol,
+        intent: HandshakeIntent::from_wit(e.intent),
+        legacy: e.legacy,
+        server: e.server.map(ServerId::from),
+        result: ResultCell::new(match e.result {
+            we::ConnectionHandshakeResult::Allow => ConnectionHandshakeResult::Allow,
+            we::ConnectionHandshakeResult::Deny(reason) => {
+                ConnectionHandshakeResult::Deny(reason.map(from_host))
+            }
+            we::ConnectionHandshakeResult::DropSilently => {
+                ConnectionHandshakeResult::DropSilently
+            }
+        }),
+    },
+    result,
+    |r| match r {
+        ConnectionHandshakeResult::Allow => we::ConnectionHandshakeResult::Allow,
+        ConnectionHandshakeResult::Deny(reason) =>
+            we::ConnectionHandshakeResult::Deny(reason.as_ref().map(Component::to_arena),),
+        ConnectionHandshakeResult::DropSilently => {
+            we::ConnectionHandshakeResult::DropSilently
+        }
     }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::ConnectionHandshake(match r {
-                    ConnectionHandshakeResult::Allow => we::ConnectionHandshakeResult::Allow,
-                    ConnectionHandshakeResult::Deny(reason) => we::ConnectionHandshakeResult::Deny(
-                        reason.as_ref().map(Component::to_arena),
-                    ),
-                    ConnectionHandshakeResult::DropSilently => {
-                        we::ConnectionHandshakeResult::DropSilently
-                    }
-                })
-            })
-    }
-}
+);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -121,34 +109,27 @@ pub struct ConnectionRejectedEvent {
     pub reason: RejectReason,
 }
 
-impl GuestEvent for ConnectionRejectedEvent {
-    const KIND: EventKind = EventKind::ConnectionRejected;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::ConnectionRejected(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            remote_addr: socket_from_wit(e.remote_addr),
-            virtual_host: e.virtual_host,
-            reason: match e.reason {
-                we::RejectReason::IpFilter => RejectReason::IpFilter,
-                we::RejectReason::RateLimit => RejectReason::RateLimit,
-                we::RejectReason::UnknownDomain => RejectReason::UnknownDomain,
-                we::RejectReason::IpBanned => RejectReason::IpBanned,
-                we::RejectReason::Banned => RejectReason::Banned,
-                we::RejectReason::ServerUnavailable => RejectReason::ServerUnavailable,
-                we::RejectReason::Plugin(plugin) => RejectReason::Plugin(plugin),
-            },
-        })
-    }
-}
+guest_event!(ConnectionRejectedEvent, ConnectionRejected, |e| Self {
+    remote_addr: socket_from_wit(e.remote_addr),
+    virtual_host: e.virtual_host,
+    reason: match e.reason {
+        we::RejectReason::IpFilter => RejectReason::IpFilter,
+        we::RejectReason::RateLimit => RejectReason::RateLimit,
+        we::RejectReason::UnknownDomain => RejectReason::UnknownDomain,
+        we::RejectReason::IpBanned => RejectReason::IpBanned,
+        we::RejectReason::Banned => RejectReason::Banned,
+        we::RejectReason::ServerUnavailable => RejectReason::ServerUnavailable,
+        we::RejectReason::Plugin(plugin) => RejectReason::Plugin(plugin),
+    },
+});
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::bindings::events::{Event, EventOutcome};
     use crate::bindings::types as wt;
+    use crate::event::GuestEvent;
 
     #[test]
     fn a_handshake_drop_becomes_the_outcome() {

@@ -1,6 +1,6 @@
-use super::{GuestEvent, ResultCell};
+use super::ResultCell;
 use crate::bindings::event_bus as wb;
-use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
+use crate::bindings::events as we;
 use crate::bindings::types as wt;
 use crate::codec::ConnectionState;
 use crate::types::{FromWit, PacketDirection, PlayerId, ToWit};
@@ -85,48 +85,39 @@ impl RawPacketEvent {
     }
 }
 
-impl GuestEvent for RawPacketEvent {
-    const KIND: EventKind = EventKind::RawPacket;
-
-    fn from_event(ev: Event) -> Option<Self> {
-        let Event::RawPacket(e) = ev else {
-            return None;
-        };
-        Some(Self {
-            player: PlayerId::new(e.player),
-            direction: PacketDirection::from_wit(e.direction),
-            packet_id: e.packet.packet_id,
-            data: e.packet.data,
-            result: ResultCell::new(match e.result {
-                we::RawPacketResult::Pass => RawPacketResult::Pass,
-                we::RawPacketResult::Modify(packet) => RawPacketResult::Modify {
-                    packet_id: packet.packet_id,
-                    data: packet.data,
-                },
-                we::RawPacketResult::Drop => RawPacketResult::Drop,
-            }),
-        })
+guest_event!(
+    RawPacketEvent,
+    RawPacket,
+    |e| Self {
+        player: PlayerId::new(e.player),
+        direction: PacketDirection::from_wit(e.direction),
+        packet_id: e.packet.packet_id,
+        data: e.packet.data,
+        result: ResultCell::new(match e.result {
+            we::RawPacketResult::Pass => RawPacketResult::Pass,
+            we::RawPacketResult::Modify(packet) => RawPacketResult::Modify {
+                packet_id: packet.packet_id,
+                data: packet.data,
+            },
+            we::RawPacketResult::Drop => RawPacketResult::Drop,
+        }),
+    },
+    result,
+    |r| match r {
+        RawPacketResult::Pass => we::RawPacketResult::Pass,
+        RawPacketResult::Modify { packet_id, data } => {
+            we::RawPacketResult::Modify(wt::RawPacket { packet_id, data })
+        }
+        RawPacketResult::Drop => we::RawPacketResult::Drop,
     }
-
-    fn into_outcome(self) -> EventOutcome {
-        self.result
-            .into_changed()
-            .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::RawPacket(match r {
-                    RawPacketResult::Pass => we::RawPacketResult::Pass,
-                    RawPacketResult::Modify { packet_id, data } => {
-                        we::RawPacketResult::Modify(wt::RawPacket { packet_id, data })
-                    }
-                    RawPacketResult::Drop => we::RawPacketResult::Drop,
-                })
-            })
-    }
-}
+);
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::bindings::events::{Event, EventOutcome};
+    use crate::event::GuestEvent;
 
     #[test]
     fn a_dropped_packet_answers_drop() {

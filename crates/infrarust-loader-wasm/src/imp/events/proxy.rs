@@ -35,7 +35,7 @@ impl WasmEvent for ProxyPingEvent {
     fn to_wit(&self) -> we::Event {
         we::Event::ProxyPing(we::ProxyPingEvent {
             remote_addr: convert::socket_to_wit(self.remote_addr),
-            server: self.server.as_ref().map(|s| s.as_str().to_owned()),
+            server: convert::server_id_opt(&self.server),
             virtual_host: self.virtual_host.clone(),
             protocol: self.protocol_version.raw(),
             legacy: self.legacy,

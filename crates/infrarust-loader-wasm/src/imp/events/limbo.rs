@@ -40,7 +40,7 @@ impl WasmEvent for LimboExitEvent {
         we::Event::LimboExit(we::LimboExitEvent {
             player: convert::player_ref(&*self.player),
             reason: exit_reason(&self.reason),
-            next_server: self.next_server.as_ref().map(|s| s.as_str().to_owned()),
+            next_server: convert::server_id_opt(&self.next_server),
         })
     }
 }

@@ -1,3 +1,51 @@
+macro_rules! guest_event {
+    ($event:ident, $kind:ident) => {
+        impl $crate::event::GuestEvent for $event {
+            const KIND: $crate::bindings::events::EventKind =
+                $crate::bindings::events::EventKind::$kind;
+
+            fn from_event(ev: $crate::bindings::events::Event) -> Option<Self> {
+                matches!(ev, $crate::bindings::events::Event::$kind).then_some(Self)
+            }
+        }
+    };
+    ($event:ident, $kind:ident, |$e:ident| $build:expr) => {
+        impl $crate::event::GuestEvent for $event {
+            const KIND: $crate::bindings::events::EventKind =
+                $crate::bindings::events::EventKind::$kind;
+
+            fn from_event(ev: $crate::bindings::events::Event) -> Option<Self> {
+                let $crate::bindings::events::Event::$kind($e) = ev else {
+                    return None;
+                };
+                Some($build)
+            }
+        }
+    };
+    (
+        $event:ident, $kind:ident, |$e:ident| $build:expr, $cell:ident, |$changed:ident| $outcome:expr
+    ) => {
+        impl $crate::event::GuestEvent for $event {
+            const KIND: $crate::bindings::events::EventKind =
+                $crate::bindings::events::EventKind::$kind;
+
+            fn from_event(ev: $crate::bindings::events::Event) -> Option<Self> {
+                let $crate::bindings::events::Event::$kind($e) = ev else {
+                    return None;
+                };
+                Some($build)
+            }
+
+            fn into_outcome(self) -> $crate::bindings::events::EventOutcome {
+                self.$cell.into_changed().map_or(
+                    $crate::bindings::events::EventOutcome::Unchanged,
+                    |$changed| $crate::bindings::events::EventOutcome::$kind($outcome),
+                )
+            }
+        }
+    };
+}
+
 mod admin;
 mod chat;
 mod client;

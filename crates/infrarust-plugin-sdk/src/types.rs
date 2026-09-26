@@ -17,6 +17,31 @@ use crate::bindings::proxy_info as wi;
 use crate::bindings::types as wt;
 use crate::player::Player;
 
+macro_rules! wit_enum_map {
+    (from $module:ident::$wit:ident => $native:ident { $($variant:ident),+ $(,)? }) => {
+        impl FromWit<$module::$wit> for $native {
+            fn from_wit(w: $module::$wit) -> Self {
+                match w {
+                    $($module::$wit::$variant => Self::$variant,)+
+                }
+            }
+        }
+    };
+    (
+        to $module:ident::$wit:ident <= $native:ident { $($variant:ident),+ $(,)? }
+        $(else $fallback:ident)?
+    ) => {
+        impl ToWit<$module::$wit> for $native {
+            fn to_wit(&self) -> $module::$wit {
+                match self {
+                    $(Self::$variant => $module::$wit::$variant,)+
+                    $(_ => $module::$wit::$fallback,)?
+                }
+            }
+        }
+    };
+}
+
 pub(crate) trait FromWit<W>: Sized {
     fn from_wit(w: W) -> Self;
 }
@@ -338,199 +363,53 @@ impl ClientSettings {
 
 pub use infrarust_plugin_common::capability::Capability;
 
-impl FromWit<wt::ServerState> for ServerState {
-    fn from_wit(w: wt::ServerState) -> Self {
-        match w {
-            wt::ServerState::Online => Self::Online,
-            wt::ServerState::Offline => Self::Offline,
-            wt::ServerState::Starting => Self::Starting,
-            wt::ServerState::Stopping => Self::Stopping,
-            wt::ServerState::Sleeping => Self::Sleeping,
-            wt::ServerState::Crashed => Self::Crashed,
-        }
-    }
-}
+wit_enum_map!(from wt::ServerState => ServerState {
+    Online, Offline, Starting, Stopping, Sleeping, Crashed
+});
 
-impl FromWit<wt::ProxyMode> for ProxyMode {
-    fn from_wit(w: wt::ProxyMode) -> Self {
-        match w {
-            wt::ProxyMode::Passthrough => Self::Passthrough,
-            wt::ProxyMode::ZeroCopy => Self::ZeroCopy,
-            wt::ProxyMode::ClientOnly => Self::ClientOnly,
-            wt::ProxyMode::Offline => Self::Offline,
-            wt::ProxyMode::ServerOnly => Self::ServerOnly,
-        }
-    }
-}
+wit_enum_map!(from wt::ProxyMode => ProxyMode {
+    Passthrough, ZeroCopy, ClientOnly, Offline, ServerOnly
+});
 
-impl FromWit<wt::PacketDirection> for PacketDirection {
-    fn from_wit(w: wt::PacketDirection) -> Self {
-        match w {
-            wt::PacketDirection::Serverbound => Self::Serverbound,
-            wt::PacketDirection::Clientbound => Self::Clientbound,
-        }
-    }
-}
+wit_enum_map!(from wt::PacketDirection => PacketDirection { Serverbound, Clientbound });
 
-impl ToWit<wt::PacketDirection> for PacketDirection {
-    fn to_wit(&self) -> wt::PacketDirection {
-        match self {
-            Self::Clientbound => wt::PacketDirection::Clientbound,
-            _ => wt::PacketDirection::Serverbound,
-        }
-    }
-}
+wit_enum_map!(to wt::PacketDirection <= PacketDirection {
+    Serverbound, Clientbound
+} else Serverbound);
 
-impl FromWit<wt::ChatMode> for ChatMode {
-    fn from_wit(w: wt::ChatMode) -> Self {
-        match w {
-            wt::ChatMode::Enabled => Self::Enabled,
-            wt::ChatMode::CommandsOnly => Self::CommandsOnly,
-            wt::ChatMode::Hidden => Self::Hidden,
-        }
-    }
-}
+wit_enum_map!(from wt::ChatMode => ChatMode { Enabled, CommandsOnly, Hidden });
 
-impl FromWit<wt::MainHand> for MainHand {
-    fn from_wit(w: wt::MainHand) -> Self {
-        match w {
-            wt::MainHand::Left => Self::Left,
-            wt::MainHand::Right => Self::Right,
-        }
-    }
-}
+wit_enum_map!(from wt::MainHand => MainHand { Left, Right });
 
-impl FromWit<wt::ParticleStatus> for ParticleStatus {
-    fn from_wit(w: wt::ParticleStatus) -> Self {
-        match w {
-            wt::ParticleStatus::All => Self::All,
-            wt::ParticleStatus::Decreased => Self::Decreased,
-            wt::ParticleStatus::Minimal => Self::Minimal,
-        }
-    }
-}
+wit_enum_map!(from wt::ParticleStatus => ParticleStatus { All, Decreased, Minimal });
 
-impl FromWit<wt::Capability> for Capability {
-    fn from_wit(w: wt::Capability) -> Self {
-        match w {
-            wt::Capability::EventBus => Self::EventBus,
-            wt::Capability::PlayerRead => Self::PlayerRead,
-            wt::Capability::PlayerWrite => Self::PlayerWrite,
-            wt::Capability::RawPacket => Self::RawPacket,
-            wt::Capability::ServerManage => Self::ServerManage,
-            wt::Capability::Ban => Self::Ban,
-            wt::Capability::Command => Self::Command,
-            wt::Capability::Scheduler => Self::Scheduler,
-            wt::Capability::ConfigRead => Self::ConfigRead,
-            wt::Capability::ConfigWrite => Self::ConfigWrite,
-            wt::Capability::CodecFilter => Self::CodecFilter,
-            wt::Capability::TransportFilter => Self::TransportFilter,
-            wt::Capability::Limbo => Self::Limbo,
-            wt::Capability::VirtualBackend => Self::VirtualBackend,
-            wt::Capability::PermissionProvider => Self::PermissionProvider,
-            wt::Capability::FilesystemExtended => Self::FilesystemExtended,
-            wt::Capability::Network => Self::Network,
-            wt::Capability::ChatIntercept => Self::ChatIntercept,
-            wt::Capability::BanProvider => Self::BanProvider,
-            wt::Capability::PluginMessaging => Self::PluginMessaging,
-        }
-    }
-}
+wit_enum_map!(from wt::Capability => Capability {
+    EventBus, PlayerRead, PlayerWrite, RawPacket, ServerManage, Ban, Command, Scheduler,
+    ConfigRead, ConfigWrite, CodecFilter, TransportFilter, Limbo, VirtualBackend,
+    PermissionProvider, FilesystemExtended, Network, ChatIntercept, BanProvider, PluginMessaging
+});
 
-impl FromWit<wi::UnknownDomainBehavior> for UnknownDomainBehavior {
-    fn from_wit(w: wi::UnknownDomainBehavior) -> Self {
-        match w {
-            wi::UnknownDomainBehavior::DefaultMotd => Self::DefaultMotd,
-            wi::UnknownDomainBehavior::Drop => Self::Drop,
-        }
-    }
-}
+wit_enum_map!(from wi::UnknownDomainBehavior => UnknownDomainBehavior { DefaultMotd, Drop });
 
-impl FromWit<we::MessagePhase> for MessagePhase {
-    fn from_wit(w: we::MessagePhase) -> Self {
-        match w {
-            we::MessagePhase::Configuration => Self::Configuration,
-            we::MessagePhase::Play => Self::Play,
-        }
-    }
-}
+wit_enum_map!(from we::MessagePhase => MessagePhase { Configuration, Play });
 
-impl FromWit<we::HandshakeIntent> for HandshakeIntent {
-    fn from_wit(w: we::HandshakeIntent) -> Self {
-        match w {
-            we::HandshakeIntent::Status => Self::Status,
-            we::HandshakeIntent::Login => Self::Login,
-            we::HandshakeIntent::Transfer => Self::Transfer,
-        }
-    }
-}
+wit_enum_map!(from we::HandshakeIntent => HandshakeIntent { Status, Login, Transfer });
 
-impl FromWit<we::ConnectCause> for ConnectCause {
-    fn from_wit(w: we::ConnectCause) -> Self {
-        match w {
-            we::ConnectCause::Initial => Self::Initial,
-            we::ConnectCause::Switch => Self::Switch,
-            we::ConnectCause::LimboExit => Self::LimboExit,
-            we::ConnectCause::KickRedirect => Self::KickRedirect,
-            we::ConnectCause::PluginMessage => Self::PluginMessage,
-        }
-    }
-}
+wit_enum_map!(from we::ConnectCause => ConnectCause {
+    Initial, Switch, LimboExit, KickRedirect, PluginMessage
+});
 
-impl FromWit<we::TransferOrigin> for TransferOrigin {
-    fn from_wit(w: we::TransferOrigin) -> Self {
-        match w {
-            we::TransferOrigin::Plugin => Self::Plugin,
-            we::TransferOrigin::Backend => Self::Backend,
-        }
-    }
-}
+wit_enum_map!(from we::TransferOrigin => TransferOrigin { Plugin, Backend });
 
-impl FromWit<we::BackendState> for BackendState {
-    fn from_wit(w: we::BackendState) -> Self {
-        match w {
-            we::BackendState::Healthy => Self::Healthy,
-            we::BackendState::Probing => Self::Probing,
-            we::BackendState::Unhealthy => Self::Unhealthy,
-            we::BackendState::Draining => Self::Draining,
-        }
-    }
-}
+wit_enum_map!(from we::BackendState => BackendState { Healthy, Probing, Unhealthy, Draining });
 
-impl FromWit<wb::LoginStage> for LoginStage {
-    fn from_wit(w: wb::LoginStage) -> Self {
-        match w {
-            wb::LoginStage::Status => Self::Status,
-            wb::LoginStage::PreAuth => Self::PreAuth,
-            wb::LoginStage::PostAuth => Self::PostAuth,
-        }
-    }
-}
+wit_enum_map!(from wb::LoginStage => LoginStage { Status, PreAuth, PostAuth });
 
-impl FromWit<wg::SessionEndReason> for SessionEndReason {
-    fn from_wit(w: wg::SessionEndReason) -> Self {
-        match w {
-            wg::SessionEndReason::Disconnected => Self::Disconnected,
-            wg::SessionEndReason::Released => Self::Released,
-            wg::SessionEndReason::Kicked => Self::Kicked,
-            wg::SessionEndReason::Redirected => Self::Redirected,
-            wg::SessionEndReason::TimedOut => Self::TimedOut,
-            wg::SessionEndReason::Shutdown => Self::Shutdown,
-        }
-    }
-}
+wit_enum_map!(from wg::SessionEndReason => SessionEndReason {
+    Disconnected, Released, Kicked, Redirected, TimedOut, Shutdown
+});
 
-impl ToWit<wc::FilterPriority> for FilterPriority {
-    fn to_wit(&self) -> wc::FilterPriority {
-        match self {
-            Self::First => wc::FilterPriority::First,
-            Self::Early => wc::FilterPriority::Early,
-            Self::Normal => wc::FilterPriority::Normal,
-            Self::Late => wc::FilterPriority::Late,
-            Self::Last => wc::FilterPriority::Last,
-        }
-    }
-}
+wit_enum_map!(to wc::FilterPriority <= FilterPriority { First, Early, Normal, Late, Last });
 
 impl FromWit<we::ResourcePackStatus> for ResourcePackStatus {
     fn from_wit(w: we::ResourcePackStatus) -> Self {
