@@ -3,6 +3,7 @@ use std::fmt;
 use std::future::Future;
 use std::ops::ControlFlow;
 use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::FutureExt;
@@ -26,8 +27,9 @@ enum Health {
     Failed,
 }
 
-enum Fault {
-    Trapped(wasmtime::Error),
+#[derive(Debug)]
+pub(crate) enum Fault {
+    Trapped(Arc<wasmtime::Error>),
     Panicked(String),
     Overran(Duration),
     Refused(String),
@@ -47,10 +49,10 @@ impl fmt::Display for Fault {
 }
 
 impl Fault {
-    fn failure(&self) -> CallFailure {
-        match self {
-            Self::Trapped(trap) => CallFailure::Trapped(trap.to_string()),
-            other => CallFailure::Abandoned(other.to_string()),
+    fn failure(self: &Arc<Self>) -> CallFailure {
+        match &**self {
+            Self::Trapped(trap) => CallFailure::Trapped(Arc::clone(trap)),
+            _ => CallFailure::Abandoned(Arc::clone(self)),
         }
     }
 }
@@ -145,6 +147,7 @@ impl Supervisor {
                 call.answer();
             }
             Err(fault) => {
+                let fault = Arc::new(fault);
                 let failure = fault.failure();
                 self.fail(op, &fault).await;
                 call.refuse(failure);
@@ -204,6 +207,7 @@ impl Supervisor {
         match run_guest(live, call.as_mut(), None, limit, chain).await {
             Ok(()) => call.answer(),
             Err(fault) => {
+                let fault = Arc::new(fault);
                 self.report(op, &fault);
                 call.refuse(fault.failure());
             }
@@ -353,7 +357,7 @@ async fn contain<T>(
 ) -> Result<T, Fault> {
     match tokio::time::timeout(limit, AssertUnwindSafe(running).catch_unwind()).await {
         Ok(Ok(Ok(value))) => Ok(value),
-        Ok(Ok(Err(trap))) => Err(Fault::Trapped(trap)),
+        Ok(Ok(Err(trap))) => Err(Fault::Trapped(Arc::new(trap))),
         Ok(Err(payload)) => Err(Fault::Panicked(panic_message(payload.as_ref()).to_owned())),
         Err(_) => Err(Fault::Overran(limit)),
     }

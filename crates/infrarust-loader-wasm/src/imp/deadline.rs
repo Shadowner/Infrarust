@@ -50,19 +50,28 @@ impl HostCallLimit {
         }
     }
 
-    pub(crate) async fn run<T>(self, call: impl Future<Output = T>) -> Result<T, String> {
+    pub(crate) async fn run<T>(self, call: impl Future<Output = T>) -> Result<T, HostCallTimeout> {
         tokio::time::timeout_at(self.until, call)
             .await
-            .map_err(|_| self.expiry_message().to_string())
+            .map_err(|_| self.expiry())
     }
 
-    fn expiry_message(self) -> &'static str {
+    fn expiry(self) -> HostCallTimeout {
         if self.set_by_deadline {
-            "host call timed out: the plugin call is close to its deadline"
+            HostCallTimeout::NearDeadline
         } else {
-            "host call timed out"
+            HostCallTimeout::Elapsed
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum HostCallTimeout {
+    #[error("host call timed out")]
+    Elapsed,
+
+    #[error("host call timed out: the plugin call is close to its deadline")]
+    NearDeadline,
 }
 
 fn later(now: Instant, by: Duration) -> Instant {
@@ -105,10 +114,7 @@ mod tests {
         );
 
         let pending = spent.run(std::future::pending::<()>()).await;
-        assert_eq!(
-            pending,
-            Err("host call timed out: the plugin call is close to its deadline".to_string())
-        );
+        assert_eq!(pending, Err(HostCallTimeout::NearDeadline));
         assert_eq!(spent.run(std::future::ready(7)).await, Ok(7));
     }
 

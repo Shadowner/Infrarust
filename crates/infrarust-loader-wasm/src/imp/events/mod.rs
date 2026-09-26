@@ -46,13 +46,14 @@ use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::component;
+use crate::snapshots::SnapshotError;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Applied {
     Unchanged,
     Set,
     Fallback(ArenaError),
-    Degraded(String),
+    Degraded(SnapshotError),
     Mismatched,
 }
 

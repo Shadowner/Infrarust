@@ -33,7 +33,7 @@ impl PluginStoreState {
     ) -> HostResult<()> {
         self.check("permissions", "set-snapshot")?;
         let snapshot = snapshot_from_wit(snapshot)
-            .map_err(|reason| host_error(ErrorKind::InvalidArgument, reason))?;
+            .map_err(|reason| host_error(ErrorKind::InvalidArgument, reason.to_string()))?;
         let online = self.online_player(player)?;
         if !self
             .registrations()

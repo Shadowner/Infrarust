@@ -9,6 +9,7 @@ use infrarust_api::services::load_balancer::LbError;
 use infrarust_plugin_wit::arena::ArenaError;
 
 use crate::bindings::infrarust::plugin::types::{ErrorKind, HostError};
+use crate::deadline::HostCallTimeout;
 
 pub(crate) type HostResult<T> = Result<T, HostError>;
 
@@ -44,8 +45,8 @@ pub(crate) fn no_services() -> HostError {
     )
 }
 
-pub(crate) fn timed_out(message: String) -> HostError {
-    host_error(ErrorKind::Timeout, message)
+pub(crate) fn timed_out(expired: HostCallTimeout) -> HostError {
+    host_error(ErrorKind::Timeout, expired.to_string())
 }
 
 pub(crate) fn player_error(error: PlayerError) -> HostError {

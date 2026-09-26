@@ -39,15 +39,15 @@ impl WasmPlugin {
 
     fn lifecycle_error(&self, op: &'static str, failure: CallFailure) -> WasmLoaderError {
         match failure {
-            CallFailure::Trapped(reason) => WasmLoaderError::Trap {
+            CallFailure::Trapped(trap) => WasmLoaderError::Trap {
                 plugin_id: self.plugin_id.clone(),
                 op,
-                reason,
+                trap,
             },
-            other => WasmLoaderError::CallFailed {
+            failure => WasmLoaderError::CallFailed {
                 plugin_id: self.plugin_id.clone(),
                 op,
-                reason: other.to_string(),
+                source: Box::new(failure),
             },
         }
     }

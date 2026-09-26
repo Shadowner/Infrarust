@@ -4,9 +4,21 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use infrarust_api::permissions::{PermissionSnapshot, SnapshotPermissionChecker};
 use infrarust_api::types::PlayerId;
 
+use crate::actor::CallFailure;
 use crate::bindings::infrarust::plugin::permissions as wp;
 
 pub(crate) const MAX_PERMISSION_RULES: usize = 65_536;
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum SnapshotError {
+    #[error(
+        "a permission snapshot holds at most {MAX_PERMISSION_RULES} rules, this one has {rules}"
+    )]
+    TooManyRules { rules: usize },
+
+    #[error("the plugin gave no snapshot: {0}")]
+    Call(CallFailure),
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct PermissionSnapshots {
@@ -62,12 +74,11 @@ impl PermissionSnapshots {
 
 pub(crate) fn snapshot_from_wit(
     snapshot: &wp::PermissionSnapshot,
-) -> Result<PermissionSnapshot, String> {
+) -> Result<PermissionSnapshot, SnapshotError> {
     if snapshot.rules.len() > MAX_PERMISSION_RULES {
-        return Err(format!(
-            "a permission snapshot holds at most {MAX_PERMISSION_RULES} rules, this one has {}",
-            snapshot.rules.len()
-        ));
+        return Err(SnapshotError::TooManyRules {
+            rules: snapshot.rules.len(),
+        });
     }
     let mut native = PermissionSnapshot::new().with_admin(snapshot.admin);
     for rule in &snapshot.rules {
@@ -166,7 +177,11 @@ mod tests {
             rules: vec![rule("x", true); MAX_PERMISSION_RULES + 1],
             admin: false,
         };
-        let error = snapshot_from_wit(&wit).unwrap_err();
-        assert!(error.contains("at most"), "{error}");
+        assert_eq!(
+            snapshot_from_wit(&wit),
+            Err(SnapshotError::TooManyRules {
+                rules: MAX_PERMISSION_RULES + 1
+            })
+        );
     }
 }

@@ -7,7 +7,7 @@ use infrarust_api::permissions::{
 
 use crate::actor::InstanceRef;
 use crate::convert;
-use crate::snapshots::snapshot_from_wit;
+use crate::snapshots::{SnapshotError, snapshot_from_wit};
 
 pub(crate) struct WasmPermissionProvider {
     instance: InstanceRef,
@@ -18,7 +18,7 @@ impl WasmPermissionProvider {
         Self { instance }
     }
 
-    async fn ask(&self, subject: &PermissionSubject) -> Result<PermissionSnapshot, String> {
+    async fn ask(&self, subject: &PermissionSubject) -> Result<PermissionSnapshot, SnapshotError> {
         let subject = convert::permission_subject_to_wit(subject);
         let snapshot = self
             .instance
@@ -31,7 +31,7 @@ impl WasmPermissionProvider {
                 })
             })
             .await
-            .map_err(|failure| failure.to_string())?;
+            .map_err(SnapshotError::Call)?;
         snapshot_from_wit(&snapshot)
     }
 

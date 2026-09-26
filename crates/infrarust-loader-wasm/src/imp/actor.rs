@@ -21,9 +21,10 @@ use crate::instance::InstanceFactory;
 use crate::rate_limit::SharedRateLimit;
 use crate::snapshots::PermissionSnapshots;
 use crate::store_state::PluginStoreState;
+use crate::supervisor::Fault;
 use crate::supervisor::Supervisor;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) enum CallFailure {
     Stopped,
     QueueFull,
@@ -32,10 +33,24 @@ pub(crate) enum CallFailure {
     Replaced,
     Expired,
     TimedOut,
-    Trapped(String),
-    Abandoned(String),
+    Trapped(Arc<wasmtime::Error>),
+    Abandoned(Arc<Fault>),
     Dropped,
 }
+
+impl PartialEq for CallFailure {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Trapped(a), Self::Trapped(b)) => Arc::ptr_eq(a, b),
+            (Self::Abandoned(a), Self::Abandoned(b)) => Arc::ptr_eq(a, b),
+            (a, b) => std::mem::discriminant(a) == std::mem::discriminant(b),
+        }
+    }
+}
+
+impl Eq for CallFailure {}
+
+impl std::error::Error for CallFailure {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CallKind {
@@ -62,8 +77,8 @@ impl fmt::Display for CallFailure {
             }
             Self::Expired => f.write_str("the call's deadline passed while it was queued"),
             Self::TimedOut => f.write_str("the plugin did not answer before the call's deadline"),
-            Self::Trapped(reason) => write!(f, "the guest trapped: {reason}"),
-            Self::Abandoned(reason) => write!(f, "the call was abandoned: {reason}"),
+            Self::Trapped(trap) => write!(f, "the guest trapped: {}", trap.root_cause()),
+            Self::Abandoned(fault) => write!(f, "the call was abandoned: {fault}"),
             Self::Dropped => f.write_str("the call was dropped before it completed"),
         }
     }

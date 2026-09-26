@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use infrarust_api::error::PluginError;
 use infrarust_api::loader::LoaderError;
@@ -42,18 +43,19 @@ pub enum WasmLoaderError {
     Instantiate { plugin_id: String, reason: String },
 
     /// A guest export trapped (panic/OOB/epoch interrupt/resource limit) during a call.
-    #[error("wasm guest '{plugin_id}' trapped during {op}: {reason}")]
+    #[error("wasm guest '{plugin_id}' trapped during {op}: {trap:#}")]
     Trap {
         plugin_id: String,
         op: &'static str,
-        reason: String,
+        trap: Arc<wasmtime::Error>,
     },
 
-    #[error("wasm guest '{plugin_id}' could not run {op}: {reason}")]
+    #[error("wasm guest '{plugin_id}' could not run {op}: {source}")]
     CallFailed {
         plugin_id: String,
         op: &'static str,
-        reason: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     /// Could not extract or validate [`PluginMetadata`] from a component.
@@ -83,7 +85,22 @@ pub enum WasmLoaderError {
 
 impl WasmLoaderError {
     pub(crate) fn into_plugin_error(self) -> PluginError {
-        PluginError::InitFailed(self.to_string())
+        match self {
+            Self::Instantiate { .. } | Self::CapabilityDenied { .. } => {
+                PluginError::InitFailed(self.to_string())
+            }
+            Self::Engine(_)
+            | Self::Config(_)
+            | Self::Precompile { .. }
+            | Self::Deserialize { .. }
+            | Self::CacheIo { .. }
+            | Self::WasiSetup { .. }
+            | Self::Trap { .. }
+            | Self::CallFailed { .. }
+            | Self::Metadata { .. }
+            | Self::WorldIncompatible { .. }
+            | Self::NotAPlugin { .. } => PluginError::Other(Box::new(self)),
+        }
     }
 
     pub(crate) fn into_loader_error(self, plugin_id: &str) -> LoaderError {
@@ -112,7 +129,7 @@ impl WasmLoaderError {
             other => LoaderError::LoadFailed {
                 plugin_id: plugin_id.to_owned(),
                 reason: other.to_string(),
-                source: None,
+                source: Some(Box::new(other)),
             },
         }
     }
