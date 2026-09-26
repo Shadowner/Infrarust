@@ -13,7 +13,7 @@ pub(crate) mod test_support;
 pub mod util;
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
@@ -118,9 +118,10 @@ impl Plugin for AuthPlugin {
                     std::time::Duration::from_secs(config.premium.cache_ttl_seconds),
                     std::time::Duration::from_secs(config.premium.failed_auth_remember_seconds),
                 ));
-                let lookup = Arc::new(premium::MojangApiLookup::new(
-                    config.premium.rate_limit_per_second,
-                ));
+                let lookup = Arc::new(
+                    premium::MojangApiLookup::new(config.premium.rate_limit_per_second)
+                        .map_err(|e| PluginError::InitFailed(e.to_string()))?,
+                );
                 let detector = Arc::new(premium::PremiumDetector::new(
                     Arc::clone(&cache),
                     lookup,
@@ -207,7 +208,7 @@ impl Plugin for AuthPlugin {
                 }
             });
 
-            let mut guard = self.state.lock().expect("auth plugin state mutex poisoned");
+            let mut guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             *guard = Some(PluginState {
                 storage,
                 save_cancel,
@@ -222,7 +223,7 @@ impl Plugin for AuthPlugin {
         let state = self
             .state
             .lock()
-            .expect("auth plugin state mutex poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .take();
 
         Box::pin(async move {

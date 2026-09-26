@@ -61,7 +61,7 @@ pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
 
     let bind: SocketAddr = Input::new()
         .with_prompt("Proxy listen address")
-        .default("0.0.0.0:25565".parse().expect("valid default address"))
+        .default(SocketAddr::from(([0, 0, 0, 0], 25565)))
         .interact_text()?;
 
     let servers_dir: String = Input::new()
@@ -384,6 +384,7 @@ fn sanitize_filename(domain: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn assert_safe(input: &str) -> String {

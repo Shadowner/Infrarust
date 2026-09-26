@@ -144,7 +144,7 @@ pub async fn run(args: LoadArgs) -> std::io::Result<()> {
 
     // Drain samples into the aggregate histogram while workers run.
     let mut hist: Histogram<u64> =
-        Histogram::new_with_bounds(1, 60_000_000, 3).expect("histogram bounds");
+        Histogram::new_with_bounds(1, 60_000_000, 3).map_err(|e| invalid(e.to_string()))?;
     while let Some(Sample(us)) = rx.recv().await {
         hist.saturating_record(us);
     }

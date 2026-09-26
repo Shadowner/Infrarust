@@ -144,7 +144,7 @@ mod tests {
         if let Some(action) = action {
             config.premium_name_conflict_action = action;
         }
-        fixture_with(config, MojangApiLookup::new(1)).await
+        fixture_with(config, MojangApiLookup::new(1).unwrap()).await
     }
 
     async fn fixture_with(config: PremiumConfig, lookup: MojangApiLookup) -> Fixture {
@@ -205,7 +205,7 @@ mod tests {
     }
 
     async fn denial(config: PremiumConfig, status: &'static str) -> String {
-        let lookup = MojangApiLookup::with_base_url(mojang_answering(status).await, 10);
+        let lookup = MojangApiLookup::with_base_url(mojang_answering(status).await, 10).unwrap();
         let fx = fixture_with(config, lookup).await;
         match fx.pre_login("Steve").await {
             PreLoginResult::Denied { reason } => flatten(&reason),

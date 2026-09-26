@@ -2,7 +2,7 @@ pub mod config;
 pub mod handler;
 pub mod state;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use infrarust_api::error::PluginError;
 use infrarust_api::event::bus::EventBusExt;
@@ -68,10 +68,7 @@ impl Plugin for ServerWakePlugin {
                 });
 
             {
-                let mut guard = self
-                    .state
-                    .lock()
-                    .expect("server_wake plugin state mutex poisoned");
+                let mut guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
                 *guard = Some(state);
             }
 
@@ -84,7 +81,7 @@ impl Plugin for ServerWakePlugin {
         let state = self
             .state
             .lock()
-            .expect("server_wake plugin state mutex poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .take();
 
         Box::pin(async move {

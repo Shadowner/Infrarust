@@ -50,26 +50,28 @@ pub struct MojangApiLookup {
 }
 
 impl MojangApiLookup {
-    pub fn new(requests_per_second: u32) -> Self {
+    pub fn new(requests_per_second: u32) -> Result<Self, reqwest::Error> {
         Self::with_base_url(MOJANG_API_URL, requests_per_second)
     }
 
-    pub(crate) fn with_base_url(base_url: impl Into<String>, requests_per_second: u32) -> Self {
-        let max = NonZeroU32::new(requests_per_second.max(1)).expect("max(1) is always non-zero");
+    pub(crate) fn with_base_url(
+        base_url: impl Into<String>,
+        requests_per_second: u32,
+    ) -> Result<Self, reqwest::Error> {
+        let max = NonZeroU32::new(requests_per_second).unwrap_or(NonZeroU32::MIN);
         let quota = Quota::per_second(max);
         let rate_limiter = RateLimiter::direct(quota);
 
         let http_client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .user_agent(USER_AGENT)
-            .build()
-            .expect("failed to build Mojang API HTTP client");
+            .build()?;
 
-        Self {
+        Ok(Self {
             http_client,
             rate_limiter,
             base_url: base_url.into(),
-        }
+        })
     }
 
     pub async fn lookup_username(&self, username: &str) -> Result<Option<Uuid>, LookupError> {

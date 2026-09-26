@@ -329,10 +329,14 @@ async fn signal_handler() {
 
     #[cfg(unix)]
     {
-        #[allow(clippy::expect_used)]
-        // Fatal: if we can't install the signal handler, there's no recovery
-        let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler");
+        let mut sigterm = match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(sigterm) => sigterm,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to install SIGTERM handler; only Ctrl-C will stop the proxy");
+                ctrl_c.await.ok();
+                return;
+            }
+        };
         tokio::select! {
             biased;
             _ = sigterm.recv() => {}
