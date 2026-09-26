@@ -1,9 +1,8 @@
 pub mod changepassword;
-pub mod cracked;
+pub mod cracked_mode;
 pub mod forcechangepassword;
 pub mod forcelogin;
 pub mod forceunregister;
-pub mod premium;
 #[cfg(test)]
 mod tests;
 pub mod unregister;
@@ -11,10 +10,54 @@ pub mod unregister;
 use std::sync::Arc;
 
 use infrarust_api::command::{CommandHandler, CommandSource, CommandSpec};
+use infrarust_api::player::Player;
 use infrarust_api::plugin::PluginContext;
+use infrarust_api::types::Component;
 
+use crate::account::{AuthAccount, Username};
 use crate::config::AuthConfig;
 use crate::handler::AuthHandler;
+use crate::password;
+use crate::util::parse_colored;
+
+pub(crate) const INTERNAL_ERROR: &str = "Internal error.";
+
+pub(crate) async fn verify_current_password(
+    handler: &AuthHandler,
+    player: &dyn Player,
+    password: &str,
+    wrong_password: &str,
+) -> Option<(Username, AuthAccount)> {
+    let username = Username::new(&player.profile().username);
+
+    let account = match handler.storage().get_account(&username) {
+        Ok(Some(account)) => account,
+        _ => {
+            let _ = player.send_message(Component::error("No account found."));
+            return None;
+        }
+    };
+
+    let Some(ref password_hash) = account.password_hash else {
+        let _ = player.send_message(Component::error(
+            "This is a premium account with no password set.",
+        ));
+        return None;
+    };
+
+    match password::verify_password(password, password_hash).await {
+        Ok(true) => Some((username, account)),
+        Ok(false) => {
+            let _ = player.send_message(parse_colored(wrong_password));
+            None
+        }
+        Err(e) => {
+            tracing::error!("Password verification error: {e}");
+            let _ = player.send_message(Component::error(INTERNAL_ERROR));
+            None
+        }
+    }
+}
 
 pub fn register_commands(ctx: &dyn PluginContext, handler: Arc<AuthHandler>) {
     let commands = ctx.command_manager();
@@ -66,13 +109,13 @@ pub fn register_commands(ctx: &dyn PluginContext, handler: Arc<AuthHandler>) {
         specs.push((
             CommandSpec::new("cracked")
                 .description("Force cracked mode (use /login instead of premium auto-login)"),
-            Box::new(cracked::CrackedCommand {
+            Box::new(cracked_mode::CrackedCommand {
                 handler: Arc::clone(&handler),
             }),
         ));
         specs.push((
             CommandSpec::new("premium").description("Re-enable premium auto-login"),
-            Box::new(premium::PremiumCommand {
+            Box::new(cracked_mode::PremiumCommand {
                 handler: Arc::clone(&handler),
             }),
         ));

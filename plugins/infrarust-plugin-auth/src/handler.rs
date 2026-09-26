@@ -104,6 +104,13 @@ impl AuthHandler {
         );
     }
 
+    fn accept(&self, session: &dyn LimboSession, message: Component) {
+        let _ = session.send_message(message);
+        Self::clear_title(session);
+        self.cleanup_session(session.player_id());
+        session.complete(HandlerResult::Accept);
+    }
+
     fn spawn_reminder_task(&self, player_id: PlayerId, cancel_token: CancellationToken) {
         let interval_secs = self.config.security.title_reminder_interval_seconds;
         if interval_secs == 0 {
@@ -323,10 +330,7 @@ impl LimboHandler for AuthHandler {
             .get(&player_id)
             .is_some_and(|e| e.force_completed)
         {
-            let _ = session.send_message(self.msg(&self.config.messages.login_success, &[]));
-            Self::clear_title(session);
-            self.cleanup_session(player_id);
-            session.complete(HandlerResult::Accept);
+            self.accept(session, self.msg(&self.config.messages.login_success, &[]));
             return Box::pin(async {});
         }
 
@@ -393,11 +397,10 @@ impl LimboHandler for AuthHandler {
                                 });
                             }
 
-                            let _ = session
-                                .send_message(self.msg(&self.config.messages.login_success, &[]));
-                            Self::clear_title(session);
-                            self.cleanup_session(player_id);
-                            session.complete(HandlerResult::Accept);
+                            self.accept(
+                                session,
+                                self.msg(&self.config.messages.login_success, &[]),
+                            );
                         }
                         Ok((false, _)) => {
                             let (should_kick, attempts_left) =
@@ -509,12 +512,10 @@ impl LimboHandler for AuthHandler {
 
                     match storage.create_account(&account).await {
                         Ok(()) => {
-                            let _ = session.send_message(
+                            self.accept(
+                                session,
                                 self.msg(&self.config.messages.register_success, &[]),
                             );
-                            Self::clear_title(session);
-                            self.cleanup_session(player_id);
-                            session.complete(HandlerResult::Accept);
                         }
                         Err(crate::error::AuthStorageError::AccountAlreadyExists { .. }) => {
                             let _ = session.send_message(
@@ -550,10 +551,7 @@ impl LimboHandler for AuthHandler {
             .get(&player_id)
             .is_some_and(|e| e.force_completed)
         {
-            let _ = session.send_message(self.msg(&self.config.messages.login_success, &[]));
-            Self::clear_title(session);
-            self.cleanup_session(player_id);
-            session.complete(HandlerResult::Accept);
+            self.accept(session, self.msg(&self.config.messages.login_success, &[]));
             return Box::pin(async {});
         }
 

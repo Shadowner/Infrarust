@@ -4,9 +4,8 @@ use infrarust_api::command::{CommandContext, CommandHandler};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::types::Component;
 
-use crate::account::Username;
+use super::{INTERNAL_ERROR, verify_current_password};
 use crate::handler::AuthHandler;
-use crate::password;
 use crate::util::parse_colored;
 
 pub struct UnregisterCommand {
@@ -30,43 +29,26 @@ impl CommandHandler for UnregisterCommand {
             }
 
             let password = &ctx.args[0];
-            let username = Username::new(&player.profile().username);
             let storage = self.handler.storage();
             let config = self.handler.config();
 
-            let account = match storage.get_account(&username) {
-                Ok(Some(a)) => a,
-                _ => {
-                    let _ = player.send_message(Component::error("No account found."));
-                    return;
-                }
-            };
-
-            let Some(ref password_hash) = account.password_hash else {
-                let _ = player.send_message(Component::error(
-                    "This is a premium account with no password set.",
-                ));
+            let Some((username, _)) = verify_current_password(
+                &self.handler,
+                player.as_ref(),
+                password,
+                &config.messages.unregister_wrong_password,
+            )
+            .await
+            else {
                 return;
             };
 
-            match password::verify_password(password, password_hash).await {
-                Ok(true) => {
-                    if let Err(e) = storage.delete_account(&username).await {
-                        tracing::error!("Account deletion error: {e}");
-                        let _ = player.send_message(Component::error("Internal error."));
-                        return;
-                    }
-                    let _ = player.send_message(parse_colored(&config.messages.unregister_success));
-                }
-                Ok(false) => {
-                    let _ = player
-                        .send_message(parse_colored(&config.messages.unregister_wrong_password));
-                }
-                Err(e) => {
-                    tracing::error!("Password verification error: {e}");
-                    let _ = player.send_message(Component::error("Internal error."));
-                }
+            if let Err(e) = storage.delete_account(&username).await {
+                tracing::error!("Account deletion error: {e}");
+                let _ = player.send_message(Component::error(INTERNAL_ERROR));
+                return;
             }
+            let _ = player.send_message(parse_colored(&config.messages.unregister_success));
         })
     }
 }

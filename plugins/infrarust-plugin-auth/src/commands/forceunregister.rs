@@ -4,6 +4,7 @@ use infrarust_api::command::{CommandContext, CommandHandler};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::types::Component;
 
+use super::INTERNAL_ERROR;
 use crate::account::Username;
 use crate::handler::AuthHandler;
 use crate::util::parse_colored;
@@ -49,7 +50,7 @@ impl CommandHandler for ForceUnregisterCommand {
                 }
                 Err(e) => {
                     tracing::error!("Force unregister error: {e}");
-                    ctx.source.send_message(Component::error("Internal error."));
+                    ctx.source.send_message(Component::error(INTERNAL_ERROR));
                 }
             }
         })

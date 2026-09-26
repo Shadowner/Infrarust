@@ -4,6 +4,7 @@ use infrarust_api::command::{CommandContext, CommandHandler};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::types::Component;
 
+use super::INTERNAL_ERROR;
 use crate::account::Username;
 use crate::handler::AuthHandler;
 use crate::password;
@@ -49,7 +50,7 @@ impl CommandHandler for ForceChangePasswordCommand {
                 Ok(new_hash) => {
                     if let Err(e) = storage.update_password_hash(&username, new_hash).await {
                         tracing::error!("Password update error: {e}");
-                        ctx.source.send_message(Component::error("Internal error."));
+                        ctx.source.send_message(Component::error(INTERNAL_ERROR));
                         return;
                     }
                     let msg = config.messages.format_message(
@@ -60,7 +61,7 @@ impl CommandHandler for ForceChangePasswordCommand {
                 }
                 Err(e) => {
                     tracing::error!("Password hashing error: {e}");
-                    ctx.source.send_message(Component::error("Internal error."));
+                    ctx.source.send_message(Component::error(INTERNAL_ERROR));
                 }
             }
         })

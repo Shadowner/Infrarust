@@ -172,7 +172,7 @@ async fn cracked_sets_force_cracked() {
     env.set_premium_info("Notch", false).await;
     env.registry.add(player(1, "Notch"));
 
-    let cmd = super::cracked::CrackedCommand {
+    let cmd = super::cracked_mode::CrackedCommand {
         handler: Arc::clone(&env.handler),
     };
     cmd.execute(ctx(&env, 1, &[])).await;
@@ -192,7 +192,7 @@ async fn premium_unsets_force_cracked() {
     env.set_premium_info("Notch", true).await;
     env.registry.add(player(1, "Notch"));
 
-    let cmd = super::premium::PremiumCommand {
+    let cmd = super::cracked_mode::PremiumCommand {
         handler: Arc::clone(&env.handler),
     };
     cmd.execute(ctx(&env, 1, &[])).await;
@@ -203,4 +203,36 @@ async fn premium_unsets_force_cracked() {
         .unwrap()
         .unwrap();
     assert!(!account.premium_info.unwrap().force_cracked);
+}
+
+#[tokio::test]
+async fn cracked_tells_a_cracked_player_they_already_are() {
+    let env = TestEnv::new().await;
+    env.create_account("Notch", None).await;
+    env.set_premium_info("Notch", true).await;
+    let notch = player(1, "Notch");
+    env.registry.add(Arc::clone(&notch));
+
+    let cmd = super::cracked_mode::CrackedCommand {
+        handler: Arc::clone(&env.handler),
+    };
+    cmd.execute(ctx(&env, 1, &[])).await;
+
+    assert!(notch.sent_text().contains("already in cracked mode"));
+}
+
+#[tokio::test]
+async fn premium_tells_a_premium_player_they_already_are() {
+    let env = TestEnv::new().await;
+    env.create_account("Notch", None).await;
+    env.set_premium_info("Notch", false).await;
+    let notch = player(1, "Notch");
+    env.registry.add(Arc::clone(&notch));
+
+    let cmd = super::cracked_mode::PremiumCommand {
+        handler: Arc::clone(&env.handler),
+    };
+    cmd.execute(ctx(&env, 1, &[])).await;
+
+    assert!(notch.sent_text().contains("already in premium mode"));
 }
