@@ -4,6 +4,7 @@ use std::fmt;
 use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
 
+use infrarust_plugin_common::ban::{ip_in_range, username_matches};
 pub use ipnet::IpNet;
 use ipnet::Ipv4Net;
 use uuid::Uuid;
@@ -98,10 +99,9 @@ impl BanTarget {
     }
 
     pub fn matches_ip(&self, ip: IpAddr) -> bool {
-        let ip = ip.to_canonical();
         match self {
-            Self::Ip(banned) => banned.to_canonical() == ip,
-            Self::IpRange(net) => canonical_net(*net).contains(&ip),
+            Self::Ip(banned) => banned.to_canonical() == ip.to_canonical(),
+            Self::IpRange(net) => ip_in_range(ip, net.addr(), net.prefix_len()),
             _ => false,
         }
     }
@@ -112,7 +112,7 @@ impl BanTarget {
             Self::Username(name) => attempt
                 .username
                 .as_deref()
-                .is_some_and(|username| username.to_lowercase() == name.to_lowercase()),
+                .is_some_and(|username| username_matches(name, username)),
             Self::Uuid(uuid) => attempt.uuid == Some(*uuid),
         }
     }
@@ -336,13 +336,7 @@ impl UnbanRequest {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum LoginStage {
-    Status,
-    PreAuth,
-    PostAuth,
-}
+pub use infrarust_plugin_common::enums::LoginStage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

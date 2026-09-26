@@ -2,15 +2,7 @@
 
 use crate::types::{PlayerId, RawPacket};
 
-/// Direction of packet flow relative to the proxy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum PacketDirection {
-    /// Client → Server (through proxy).
-    Serverbound,
-    /// Server → Client (through proxy).
-    Clientbound,
-}
+pub use infrarust_plugin_common::enums::PacketDirection;
 
 /// Fired when a raw packet passes through the proxy.
 ///

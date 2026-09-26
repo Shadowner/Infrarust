@@ -9,23 +9,7 @@ pub mod private {
     pub trait Sealed {}
 }
 
-/// The state of a backend server.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ServerState {
-    /// Server is online and accepting connections.
-    Online,
-    /// Server is offline.
-    Offline,
-    /// Server is in the process of starting.
-    Starting,
-    /// Server is in the process of stopping.
-    Stopping,
-    /// Server is in sleep mode (can be woken on demand).
-    Sleeping,
-    /// Server has crashed.
-    Crashed,
-}
+pub use infrarust_plugin_common::enums::ServerState;
 
 /// Service for managing backend server lifecycle.
 ///

@@ -6,27 +6,7 @@ use crate::event::{Event, ResultedEvent};
 use crate::player::Player;
 use crate::types::{Component, GameProfile, PlayerId, ServerId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ConnectCause {
-    Initial,
-    Switch,
-    LimboExit,
-    KickRedirect,
-    PluginMessage,
-}
-
-impl ConnectCause {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Initial => "initial",
-            Self::Switch => "switch",
-            Self::LimboExit => "limbo_exit",
-            Self::KickRedirect => "kick_redirect",
-            Self::PluginMessage => "plugin_message",
-        }
-    }
-}
+pub use infrarust_plugin_common::enums::ConnectCause;
 
 /// Fired before the proxy connects a player to a backend server.
 ///

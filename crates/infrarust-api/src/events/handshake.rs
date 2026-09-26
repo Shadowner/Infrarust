@@ -3,23 +3,7 @@ use std::net::SocketAddr;
 use crate::event::{Event, ResultedEvent};
 use crate::types::{Component, ProtocolVersion, ServerId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum HandshakeIntent {
-    Status,
-    Login,
-    Transfer,
-}
-
-impl HandshakeIntent {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Status => "status",
-            Self::Login => "login",
-            Self::Transfer => "transfer",
-        }
-    }
-}
+pub use infrarust_plugin_common::enums::HandshakeIntent;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]

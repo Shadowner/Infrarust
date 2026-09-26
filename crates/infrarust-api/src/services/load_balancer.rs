@@ -7,32 +7,7 @@ pub mod private {
     pub trait Sealed {}
 }
 
-/// Selection state of one backend address.
-///
-/// Mirrors the proxy's internal state so plugins never link against the core.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum BackendState {
-    /// In rotation.
-    Healthy,
-    /// Ejected, but its backoff elapsed so the next sweep may retry it.
-    Probing,
-    /// Ejected and still inside its backoff.
-    Unhealthy,
-    /// Taken out of rotation by an operator.
-    Draining,
-}
-
-impl BackendState {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Healthy => "healthy",
-            Self::Probing => "probing",
-            Self::Unhealthy => "unhealthy",
-            Self::Draining => "draining",
-        }
-    }
-}
+pub use infrarust_plugin_common::enums::BackendState;
 
 /// Live view of one backend address of a server.
 #[derive(Debug, Clone)]

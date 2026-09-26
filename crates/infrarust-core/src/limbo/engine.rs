@@ -164,7 +164,7 @@ async fn fire_on_session_end(
     reason: SessionEndReason,
 ) {
     for handler in handlers {
-        handler.on_session_end(player_id, reason.clone()).await;
+        handler.on_session_end(player_id, reason).await;
     }
 }
 

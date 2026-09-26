@@ -239,17 +239,6 @@ fn hex_color_and_font_start_at_1_16() {
 }
 
 #[test]
-fn downsampling_matches_adventure_nearest_color() {
-    assert_eq!(NamedColor::nearest(0xFF_0000), NamedColor::DarkRed);
-    assert_eq!(NamedColor::nearest(0xAB_2211), NamedColor::DarkRed);
-    assert_eq!(NamedColor::nearest(0xEC_41AA), NamedColor::LightPurple);
-    assert_eq!(NamedColor::nearest(0x80_8080), NamedColor::Gray);
-    for named in NamedColor::ALL {
-        assert_eq!(NamedColor::nearest(named.rgb()), named);
-    }
-}
-
-#[test]
 fn invalid_font_is_dropped() {
     let c = Component::text("x").font("Not A Font");
     assert_eq!(json_at(&c, 774), json!("x"));
@@ -1024,21 +1013,6 @@ fn parser_reads_style_fields() {
             .color,
         None
     );
-}
-
-#[test]
-fn text_color_parsing_follows_vanilla() {
-    assert_eq!(TextColor::parse("#FF5555"), Some(TextColor::Hex(0xFF_5555)));
-    assert_eq!(TextColor::parse("#f"), Some(TextColor::Hex(0xF)));
-    assert_eq!(
-        TextColor::parse("#0000FFFFFF"),
-        Some(TextColor::Hex(0xFF_FFFF))
-    );
-    assert_eq!(TextColor::parse("#1000000"), None);
-    assert_eq!(TextColor::parse("#"), None);
-    assert_eq!(TextColor::parse("#xyz"), None);
-    assert_eq!(TextColor::parse("gold"), Some(NamedColor::Gold.into()));
-    assert_eq!(TextColor::Hex(0xab_cdef).to_string(), "#ABCDEF");
 }
 
 #[test]

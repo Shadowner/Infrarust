@@ -70,67 +70,7 @@ impl ResourcePackRequest {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ResourcePackStatus {
-    SuccessfullyLoaded,
-    Declined,
-    FailedDownload,
-    Accepted,
-    Downloaded,
-    InvalidUrl,
-    FailedReload,
-    Discarded,
-    Unknown(i32),
-}
-
-impl ResourcePackStatus {
-    pub const fn from_id(id: i32) -> Self {
-        match id {
-            0 => Self::SuccessfullyLoaded,
-            1 => Self::Declined,
-            2 => Self::FailedDownload,
-            3 => Self::Accepted,
-            4 => Self::Downloaded,
-            5 => Self::InvalidUrl,
-            6 => Self::FailedReload,
-            7 => Self::Discarded,
-            other => Self::Unknown(other),
-        }
-    }
-
-    pub const fn id(self) -> i32 {
-        match self {
-            Self::SuccessfullyLoaded => 0,
-            Self::Declined => 1,
-            Self::FailedDownload => 2,
-            Self::Accepted => 3,
-            Self::Downloaded => 4,
-            Self::InvalidUrl => 5,
-            Self::FailedReload => 6,
-            Self::Discarded => 7,
-            Self::Unknown(id) => id,
-        }
-    }
-
-    pub const fn is_final(self) -> bool {
-        !matches!(self, Self::Accepted | Self::Downloaded | Self::Unknown(_))
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::SuccessfullyLoaded => "successfully_loaded",
-            Self::Declined => "declined",
-            Self::FailedDownload => "failed_download",
-            Self::Accepted => "accepted",
-            Self::Downloaded => "downloaded",
-            Self::InvalidUrl => "invalid_url",
-            Self::FailedReload => "failed_reload",
-            Self::Discarded => "discarded",
-            Self::Unknown(_) => "unknown",
-        }
-    }
-}
+pub use infrarust_plugin_common::enums::ResourcePackStatus;
 
 #[cfg(test)]
 mod tests {

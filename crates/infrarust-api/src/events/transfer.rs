@@ -4,21 +4,7 @@ use crate::event::{Event, ResultedEvent};
 use crate::player::Player;
 use crate::types::{Component, PlayerId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum TransferOrigin {
-    Plugin,
-    Backend,
-}
-
-impl TransferOrigin {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Plugin => "plugin",
-            Self::Backend => "backend",
-        }
-    }
-}
+pub use infrarust_plugin_common::enums::TransferOrigin;
 
 #[non_exhaustive]
 pub struct PreTransferEvent {

@@ -44,23 +44,7 @@ impl HandlerResult {
     }
 }
 
-/// Why a player's limbo session ended. Passed to [`LimboHandler::on_session_end`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SessionEndReason {
-    /// The client disconnected while in limbo.
-    Disconnected,
-    /// A handler completed the chain, the player is released to the backend.
-    Released,
-    /// A handler denied the player (kick).
-    Kicked,
-    /// A handler redirected the player to another server.
-    Redirected,
-    /// The keepalive liveness check timed out.
-    TimedOut,
-    /// The proxy is shutting down.
-    Shutdown,
-}
+pub use infrarust_plugin_common::enums::SessionEndReason;
 
 /// A handler for a limbo stage (Tier 2).
 ///

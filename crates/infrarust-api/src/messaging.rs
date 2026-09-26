@@ -177,12 +177,7 @@ pub enum Endpoint {
     Backend(ServerId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum MessagePhase {
-    Configuration,
-    Play,
-}
+pub use infrarust_plugin_common::enums::MessagePhase;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]

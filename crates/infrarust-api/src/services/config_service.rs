@@ -7,21 +7,7 @@ pub mod private {
     pub trait Sealed {}
 }
 
-/// The proxy mode for a server connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ProxyMode {
-    /// Raw TCP forwarding — proxy cannot inspect or inject packets.
-    Passthrough,
-    /// Zero-copy forwarding — similar to Passthrough but with optimizations.
-    ZeroCopy,
-    /// Proxy terminates the client connection and re-encodes packets.
-    ClientOnly,
-    /// Offline mode — no Mojang authentication.
-    Offline,
-    /// Full server-side integration.
-    ServerOnly,
-}
+pub use infrarust_plugin_common::enums::ProxyMode;
 
 /// Configuration for a backend server.
 #[derive(Debug, Clone)]
