@@ -62,7 +62,6 @@ use crate::util::text::encode_text_component;
 
 /// Result of the proxy loop, determining what happens after the loop ends.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum ProxyLoopOutcome {
     /// Client closed its connection — full cleanup.
     ClientDisconnected,
@@ -91,7 +90,6 @@ pub enum ProxyLoopOutcome {
 
 /// Action to take after processing a backend → client packet.
 #[derive(Debug)]
-#[non_exhaustive]
 enum BackendAction {
     /// Continue the loop normally.
     Continue,
