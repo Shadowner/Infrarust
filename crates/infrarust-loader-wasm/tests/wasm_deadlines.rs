@@ -20,13 +20,13 @@ use infrarust_api::limbo::test_util::RecordingLimboSession;
 use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboHandler};
 use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
+use infrarust_api::test_util::{Gate, MockBanService};
 use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
 use infrarust_core::event_bus::EventBusConfig;
 use infrarust_core::plugin::context::PluginContextImpl;
 use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutcome};
 use infrarust_loader_wasm::WasmPluginLoader;
 
-use support::mock_services::{Gate, GatedBanService};
 use support::{
     EnvOptions, TestEnv, load_enabled, loader_from_toml, make_env_with, nil_profile, read_log,
     stage,
@@ -53,9 +53,7 @@ async fn enable_probe(proxy_toml: &str, handler_timeout: Duration) -> Probe {
     let env = make_env_with(
         plugins_dir.clone(),
         EnvOptions {
-            ban_service: Arc::new(GatedBanService {
-                gate: Arc::clone(&gate),
-            }),
+            ban_service: Arc::new(MockBanService::gated(Arc::clone(&gate))),
             bus_config: EventBusConfig {
                 handler_timeout,
                 ..EventBusConfig::default()

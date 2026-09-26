@@ -16,6 +16,7 @@ use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboHandler};
 use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
 use infrarust_api::services::ban_service::BanService;
+use infrarust_api::test_util::{Gate, MockBanService};
 use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
 use infrarust_core::event_bus::{EventBusConfig, EventBusImpl};
 use infrarust_core::plugin::context::PluginContextImpl;
@@ -25,7 +26,6 @@ use tracing::Level;
 use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
-use support::mock_services::{Gate, GatedBanService, PanickingBanService};
 use support::{
     EnvOptions, TestEnv, fresh_loader, load_enabled, loader_from_toml, make_env, make_env_with,
     nil_profile, read_log, script, stage, write_script,
@@ -252,12 +252,7 @@ async fn a_trapped_handler_leaves_its_event_unchanged_and_a_fresh_instance_handl
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_command_that_trapped_still_dispatches_to_the_recovered_instance() {
-    let fx = enable_with_bans(
-        "deadline-probe",
-        Arc::new(support::mock_services::MockBanService),
-        "",
-    )
-    .await;
+    let fx = enable_with_bans("deadline-probe", Arc::new(MockBanService::new()), "").await;
     let log = break_the_log(&fx.data);
 
     assert!(
@@ -282,9 +277,7 @@ async fn a_call_cut_off_by_max_call_duration_is_recovered() {
     async {
         let fx = enable_with_bans(
             "slow-handler",
-            Arc::new(GatedBanService {
-                gate: Arc::clone(&gate),
-            }),
+            Arc::new(MockBanService::gated(Arc::clone(&gate))),
             "[plugins.slow-handler.wasm]\nmax_call_duration = \"200ms\"\n",
         )
         .await;
@@ -318,7 +311,7 @@ async fn a_host_panic_inside_a_guest_call_is_recovered() {
     let logs = LogCapture::at(Level::ERROR);
 
     async {
-        let fx = enable_with_bans("slow-handler", Arc::new(PanickingBanService), "").await;
+        let fx = enable_with_bans("slow-handler", Arc::new(MockBanService::panicking()), "").await;
 
         tokio::time::timeout(PROMPTLY, fx.env.event_bus.fire(post_login()))
             .await

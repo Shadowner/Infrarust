@@ -2,7 +2,6 @@
 
 pub mod conformance;
 pub mod log_capture;
-pub mod mock_services;
 pub mod native_scripted;
 #[path = "../fixtures/scripted/src/script.rs"]
 pub mod script;
@@ -14,24 +13,16 @@ use std::sync::Arc;
 use infrarust_api::services::ban_service::BanService;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::services::proxy_info::ProxyInfo;
+use infrarust_api::test_util::{MockBanService, MockConfigService, MockPlayerRegistry};
 use infrarust_api::types::GameProfile;
 use infrarust_core::ban::BanManager;
 use infrarust_core::event_bus::{EventBusConfig, EventBusImpl};
 use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
-use infrarust_core::filter::transport_registry::TransportFilterRegistryImpl;
 use infrarust_core::permissions::PermissionService;
 use infrarust_core::plugin::manager::PluginServices;
-use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions, PluginRegistryImpl};
-use infrarust_core::routing::DomainRouter;
+use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions};
 use infrarust_core::services::command_manager::CommandManagerImpl;
-use infrarust_core::services::scheduler::SchedulerImpl;
-use infrarust_core::services::server_manager_bridge::NoopServerManager;
 use tokio_util::sync::CancellationToken;
-
-use mock_services::{
-    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
-};
 
 pub struct TestEnv {
     pub factory: PluginContextFactoryImpl,
@@ -53,9 +44,9 @@ pub struct EnvOptions {
 impl Default for EnvOptions {
     fn default() -> Self {
         Self {
-            player_registry: Arc::new(MockPlayerRegistry),
-            config_service: Arc::new(MockConfigService),
-            ban_service: Arc::new(MockBanService),
+            player_registry: Arc::new(MockPlayerRegistry::new()),
+            config_service: Arc::new(MockConfigService::new()),
+            ban_service: Arc::new(MockBanService::new()),
             bus_config: EventBusConfig::default(),
             grants: HashMap::new(),
             ban_providers: None,
@@ -93,21 +84,13 @@ pub fn make_env_with(plugins_dir: PathBuf, options: EnvOptions) -> TestEnv {
     let command_manager = Arc::new(CommandManagerImpl::new());
     let codec_registry = Arc::new(CodecFilterRegistryImpl::new());
     let services = PluginServices {
-        event_bus: Arc::clone(&event_bus),
         player_registry: options.player_registry,
-        server_manager: Arc::new(NoopServerManager),
         ban_service: options.ban_service,
         command_manager: Arc::clone(&command_manager),
-        scheduler: Arc::new(SchedulerImpl::new()),
         config_service: options.config_service,
-        load_balancer_service: Arc::new(MockLoadBalancerService),
-        plugin_registry: Arc::new(PluginRegistryImpl::new()),
         codec_filter_registry: Arc::clone(&codec_registry),
-        transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),
-        domain_router: Arc::new(DomainRouter::new()),
-        proxy_shutdown: CancellationToken::new(),
-        proxy_info: ProxyInfo::default(),
         plugins_dir,
+        ..PluginServices::for_tests_with(Arc::clone(&event_bus))
     };
     let mut factory = PluginContextFactoryImpl::new(services, options.grants);
     if let Some(bans) = options.ban_providers {

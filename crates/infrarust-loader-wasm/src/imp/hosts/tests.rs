@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -22,27 +21,17 @@ use infrarust_api::player::{
     Player, ResourcePackRequest,
 };
 use infrarust_api::plugin::PluginContext;
-use infrarust_api::services::config_service::{
-    ConfigService, ConfigWriteError, ServerConfig, ServerSource,
+use infrarust_api::test_util::{
+    MockConfigService, MockLoadBalancerService, MockPlayer, MockPlayerRegistry,
 };
-use infrarust_api::services::load_balancer::{BackendStatus, LbError, LoadBalancerService};
-use infrarust_api::services::proxy_info::ProxyInfo;
-use infrarust_api::test_util::{MockBanService, MockPlayer, MockPlayerRegistry};
 use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerAddress, ServerId,
     TitleData,
 };
-use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::filter::FilterOwner;
 use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
-use infrarust_core::filter::transport_registry::TransportFilterRegistryImpl;
 use infrarust_core::plugin::manager::PluginServices;
-use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions, PluginRegistryImpl};
-use infrarust_core::routing::DomainRouter;
-use infrarust_core::services::command_manager::CommandManagerImpl;
-use infrarust_core::services::scheduler::SchedulerImpl;
-use infrarust_core::services::server_manager_bridge::NoopServerManager;
-use tokio_util::sync::CancellationToken;
+use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions};
 
 use crate::bindings::infrarust::plugin::events::EventKind;
 use crate::bindings::infrarust::plugin::{
@@ -54,61 +43,6 @@ use crate::config::SandboxLimits;
 use crate::deadline::Deadline;
 use crate::store_state::{PluginStoreState, build_probe_state};
 
-struct NoConfig;
-
-impl infrarust_api::services::config_service::private::Sealed for NoConfig {}
-
-impl ConfigService for NoConfig {
-    fn get_server_config(&self, _server: &ServerId) -> Option<ServerConfig> {
-        None
-    }
-    fn get_all_server_configs(&self) -> Vec<ServerConfig> {
-        Vec::new()
-    }
-    fn get_server_document(&self, _server: &ServerId) -> Option<String> {
-        None
-    }
-    fn list_server_sources(&self) -> Vec<ServerSource> {
-        Vec::new()
-    }
-    fn get_proxy_config_document(&self) -> String {
-        String::new()
-    }
-    fn get_effective_proxy_config_document(&self) -> String {
-        String::new()
-    }
-    fn write_proxy_config_document(&self, _toml: &str) -> Result<(), ConfigWriteError> {
-        Err(ConfigWriteError::PermissionDenied)
-    }
-    fn get_value(&self, key: &str) -> Option<String> {
-        (key == "greeting").then(|| "hello".to_owned())
-    }
-}
-
-struct NoBalancer;
-
-impl infrarust_api::services::load_balancer::private::Sealed for NoBalancer {}
-
-impl LoadBalancerService for NoBalancer {
-    fn strategy(&self, _server: &ServerId) -> Option<String> {
-        None
-    }
-    fn backends(&self, _server: &ServerId) -> Vec<BackendStatus> {
-        Vec::new()
-    }
-    fn set_drained(
-        &self,
-        _server: &ServerId,
-        _addr: &ServerAddress,
-        _drained: bool,
-    ) -> Result<(), LbError> {
-        Ok(())
-    }
-    fn reset_backend(&self, _server: &ServerId, _addr: &ServerAddress) -> Result<(), LbError> {
-        Ok(())
-    }
-}
-
 fn context(players: Vec<Arc<dyn Player>>) -> Arc<dyn PluginContext> {
     PluginContextFactoryImpl::new(services(players), HashMap::new()).create_context("test")
 }
@@ -118,22 +52,19 @@ fn services(players: Vec<Arc<dyn Player>>) -> PluginServices {
     for player in players {
         registry.add_dyn(player);
     }
+    let lobby_backend = ServerAddress {
+        host: "10.0.0.2".to_owned(),
+        port: 25565,
+    };
     PluginServices {
-        event_bus: Arc::new(EventBusImpl::new()),
         player_registry: Arc::new(registry),
-        server_manager: Arc::new(NoopServerManager),
-        ban_service: Arc::new(MockBanService::new()),
-        command_manager: Arc::new(CommandManagerImpl::new()),
-        scheduler: Arc::new(SchedulerImpl::new()),
-        config_service: Arc::new(NoConfig),
-        load_balancer_service: Arc::new(NoBalancer),
-        plugin_registry: Arc::new(PluginRegistryImpl::new()),
-        codec_filter_registry: Arc::new(CodecFilterRegistryImpl::new()),
-        transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),
-        domain_router: Arc::new(DomainRouter::new()),
-        proxy_shutdown: CancellationToken::new(),
-        proxy_info: ProxyInfo::default(),
-        plugins_dir: PathBuf::from("plugins"),
+        config_service: Arc::new(MockConfigService::new().with_value("greeting", "hello")),
+        load_balancer_service: Arc::new(MockLoadBalancerService::new().with_server(
+            "lobby",
+            "round_robin",
+            [lobby_backend],
+        )),
+        ..PluginServices::for_tests()
     }
 }
 
@@ -147,76 +78,11 @@ fn text_of(message: &str) -> wt::Component {
     component::to_wit(&Component::text(message))
 }
 
-struct StalledPlayer {
-    profile: GameProfile,
-}
-
-impl StalledPlayer {
-    fn shared() -> Arc<dyn Player> {
-        Arc::new(Self {
-            profile: GameProfile {
-                uuid: uuid::Uuid::nil(),
-                username: "tester".to_owned(),
-                properties: vec![],
-            },
-        })
-    }
-}
-
-impl infrarust_api::player::private::Sealed for StalledPlayer {}
-
-impl Player for StalledPlayer {
-    fn id(&self) -> PlayerId {
-        PlayerId::new(1)
-    }
-    fn profile(&self) -> &GameProfile {
-        &self.profile
-    }
-    fn protocol_version(&self) -> ProtocolVersion {
-        ProtocolVersion::MINECRAFT_1_21
-    }
-    fn remote_addr(&self) -> SocketAddr {
-        SocketAddr::from(([127, 0, 0, 1], 0))
-    }
-    fn current_server(&self) -> Option<ServerId> {
-        None
-    }
-    fn is_connected(&self) -> bool {
-        true
-    }
-    fn is_active(&self) -> bool {
-        true
-    }
-    fn disconnect(&self, _reason: Component) -> BoxFuture<'_, ()> {
-        Box::pin(std::future::pending())
-    }
-    fn send_message(&self, _message: Component) -> Result<(), PlayerError> {
-        Ok(())
-    }
-    fn send_title(&self, _title: TitleData) -> Result<(), PlayerError> {
-        Ok(())
-    }
-    fn send_action_bar(&self, _message: Component) -> Result<(), PlayerError> {
-        Ok(())
-    }
-    fn send_packet(&self, _packet: RawPacket) -> Result<(), PlayerError> {
-        Ok(())
-    }
-    fn switch_server(&self, _target: ServerId) -> BoxFuture<'_, Result<(), PlayerError>> {
-        Box::pin(std::future::pending())
-    }
-    fn is_online_mode(&self) -> bool {
-        true
-    }
-    fn has_permission(&self, _permission: &str) -> bool {
-        false
-    }
-    fn refresh_permissions(&self) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
-    }
-    fn connected_at(&self) -> SystemTime {
-        SystemTime::UNIX_EPOCH
-    }
+fn stalled_player() -> Arc<dyn Player> {
+    MockPlayer::new(1, "tester")
+        .online_mode(true)
+        .stalled()
+        .into_arc()
 }
 
 #[tokio::test]
@@ -289,7 +155,7 @@ async fn an_offline_player_is_player_gone_and_a_bad_text_is_an_argument_error() 
 
 #[tokio::test]
 async fn switch_server_gives_up_long_before_the_host_call_timeout() {
-    let mut state = state_with(CapabilitySet::baseline(), vec![StalledPlayer::shared()]);
+    let mut state = state_with(CapabilitySet::baseline(), vec![stalled_player()]);
 
     let started = Instant::now();
     let result = players::Host::switch_server(&mut state, 1, "lobby".to_owned())
@@ -309,7 +175,7 @@ async fn switch_server_gives_up_long_before_the_host_call_timeout() {
 
 #[tokio::test]
 async fn switch_server_stops_at_the_call_deadline_when_that_comes_first() {
-    let mut state = state_with(CapabilitySet::baseline(), vec![StalledPlayer::shared()]);
+    let mut state = state_with(CapabilitySet::baseline(), vec![stalled_player()]);
     state.begin_call(Some(Deadline::after(Duration::ZERO)));
 
     let result = players::Host::switch_server(&mut state, 1, "lobby".to_owned())
@@ -326,7 +192,7 @@ async fn switch_server_stops_at_the_call_deadline_when_that_comes_first() {
 async fn player_write_calls_are_refused_without_the_capability() {
     let mut state = state_with(
         CapabilitySet::baseline().without(Capability::PlayerWrite),
-        vec![StalledPlayer::shared()],
+        vec![stalled_player()],
     );
     let denied = |result: Result<(), wt::HostError>| matches!(&result, Err(e) if e.kind == wt::ErrorKind::PermissionDenied && e.message.contains("player-write"));
 
@@ -1222,12 +1088,12 @@ async fn proxy_info_and_the_plugin_registry_answer_without_any_capability() {
 #[tokio::test]
 async fn load_balancer_reads_and_config_writes_reach_the_native_services() {
     let mut state = state_with(CapabilitySet::native_trusted(), vec![]);
-    assert_eq!(
-        load_balancer::Host::backends(&mut state, "lobby".into())
-            .await
-            .unwrap(),
-        Ok(vec![])
-    );
+    let backends = load_balancer::Host::backends(&mut state, "lobby".into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(backends.len(), 1);
+    assert_eq!(backends[0].address, address());
     assert_eq!(
         load_balancer::Host::set_drained(&mut state, "lobby".into(), address(), true)
             .await

@@ -3,7 +3,6 @@
 
 mod support;
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -11,6 +10,7 @@ use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::loader::PluginLoader;
+use infrarust_api::test_util::{MockConfigService, MockPlayerRegistry};
 use infrarust_api::types::{ProtocolVersion, ServerId};
 use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutcome};
 use infrarust_loader_wasm::WasmPluginLoader;
@@ -18,7 +18,6 @@ use tracing::Level;
 use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
-use support::mock_services::{CountingPlayerRegistry, MapConfigService};
 use support::{
     EnvOptions, TestEnv, fresh_loader, load_enabled, loader_from_toml, make_env_with, nil_profile,
     read_log, stage, write_script,
@@ -36,12 +35,11 @@ fn ban_outcome(plugins_dir: &Path) -> String {
 }
 
 fn host_caller_env(plugins_dir: &Path, options: EnvOptions) -> TestEnv {
-    let values = HashMap::from([("greeting".to_string(), "hello-wasm".to_string())]);
     make_env_with(
         plugins_dir.to_path_buf(),
         EnvOptions {
-            player_registry: Arc::new(CountingPlayerRegistry { count: 7 }),
-            config_service: Arc::new(MapConfigService { values }),
+            player_registry: Arc::new(MockPlayerRegistry::new().fake_online_count(7)),
+            config_service: Arc::new(MockConfigService::new().with_value("greeting", "hello-wasm")),
             ..options
         },
     )

@@ -3,7 +3,6 @@
 
 mod support;
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -11,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use infrarust_api::command::{CommandContext, CommandHandler, CommandSource, CommandSpec};
+use infrarust_api::command::{CommandContext, CommandHandler, CommandSpec};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::connection::{
@@ -20,8 +19,10 @@ use infrarust_api::events::connection::{
 use infrarust_api::events::lifecycle::PostLoginEvent;
 use infrarust_api::loader::{LoaderError, PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
-use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
+use infrarust_api::test_util::{
+    Gate, MockBanService, MockConfigService, MockPlayer, MockPlayerRegistry, player_source,
+};
+use infrarust_api::types::{ProtocolVersion, ServerId};
 use infrarust_config::ProxyConfig;
 use infrarust_core::event_bus::EventBusConfig;
 use infrarust_core::plugin::PluginContextFactoryImpl;
@@ -32,9 +33,6 @@ use infrarust_loader_wasm::WasmPluginLoader;
 use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
-use support::mock_services::{
-    CountingPlayerRegistry, Gate, GatedBanService, MapConfigService, RecordingPlayerRegistry,
-};
 use support::{
     EnvOptions, TestEnv, add_fixture, fresh_loader, load_enabled, loader_from_toml, make_env,
     make_env_with, nil_profile, read_log, stage, write_script,
@@ -202,12 +200,11 @@ async fn test_aot_cache_reused() {
 async fn test_host_caller_reads_services() {
     let (_tmp, plugins_dir) = stage("host-caller");
     let loader = fresh_loader();
-    let values = HashMap::from([("greeting".to_string(), "hello-wasm".to_string())]);
     let env = make_env_with(
         plugins_dir.clone(),
         EnvOptions {
-            player_registry: Arc::new(CountingPlayerRegistry { count: 7 }),
-            config_service: Arc::new(MapConfigService { values }),
+            player_registry: Arc::new(MockPlayerRegistry::new().fake_online_count(7)),
+            config_service: Arc::new(MockConfigService::new().with_value("greeting", "hello-wasm")),
             ..EnvOptions::default()
         },
     );
@@ -440,15 +437,14 @@ async fn test_guest_cannot_unregister_a_command_it_does_not_own() {
 async fn test_stats_count_command() {
     let (_tmp, plugins_dir) = stage("stats");
     let loader = fresh_loader();
-    let sent = Arc::new(Mutex::new(Vec::new()));
-    let registry = Arc::new(RecordingPlayerRegistry {
-        count: 7,
-        sent: Arc::clone(&sent),
-    });
+    let player = MockPlayer::new(1, "tester").online_mode(true).into_arc();
+    let registry = MockPlayerRegistry::new()
+        .with(Arc::clone(&player))
+        .fake_online_count(7);
     let env = make_env_with(
         plugins_dir.clone(),
         EnvOptions {
-            player_registry: Arc::clone(&registry) as _,
+            player_registry: Arc::new(registry),
             ..EnvOptions::default()
         },
     );
@@ -457,7 +453,7 @@ async fn test_stats_count_command() {
 
     let outcome = env
         .command_manager
-        .dispatch(player_source(&registry), "count")
+        .dispatch(player_source(&player), "count")
         .await;
     assert_eq!(
         outcome,
@@ -466,8 +462,8 @@ async fn test_stats_count_command() {
     );
 
     assert_eq!(
-        sent.lock().unwrap().as_slice(),
-        ["Online: 7".to_string()],
+        player.sent_text(),
+        "Online: 7",
         "wasm /count replied with the formatted online count"
     );
 }
@@ -504,15 +500,14 @@ async fn test_per_plugin_memory_limit_applies_to_that_plugin_only() {
 async fn test_denied_player_write_stops_messages_to_players() {
     let (_tmp, plugins_dir) = stage("stats");
     let loader = fresh_loader();
-    let sent = Arc::new(Mutex::new(Vec::new()));
-    let registry = Arc::new(RecordingPlayerRegistry {
-        count: 7,
-        sent: Arc::clone(&sent),
-    });
+    let player = MockPlayer::new(1, "tester").online_mode(true).into_arc();
+    let registry = MockPlayerRegistry::new()
+        .with(Arc::clone(&player))
+        .fake_online_count(7);
     let env = make_env_with(
         plugins_dir.clone(),
         EnvOptions {
-            player_registry: Arc::clone(&registry) as _,
+            player_registry: Arc::new(registry),
             ..EnvOptions::default()
         }
         .deny("stats", "player-write"),
@@ -522,12 +517,12 @@ async fn test_denied_player_write_stops_messages_to_players() {
 
     assert_eq!(
         env.command_manager
-            .dispatch(player_source(&registry), "count")
+            .dispatch(player_source(&player), "count")
             .await,
         DispatchOutcome::Executed
     );
     assert!(
-        sent.lock().unwrap().is_empty(),
+        player.messages().is_empty(),
         "player-write is denied, so the reply never reaches the player"
     );
 }
@@ -567,9 +562,7 @@ async fn enable_slow_handler(
     enable_slow_handler_with(
         loader,
         plugins_dir,
-        Arc::new(GatedBanService {
-            gate: Arc::clone(gate),
-        }),
+        Arc::new(MockBanService::gated(Arc::clone(gate))),
         SLOW_HANDLER_TIMEOUT,
     )
     .await
@@ -718,9 +711,7 @@ async fn test_full_queue_fails_fast_without_waiting_for_the_plugin() {
         let (env, _plugin) = enable_slow_handler_with(
             &loader,
             &plugins_dir,
-            Arc::new(GatedBanService {
-                gate: Arc::clone(&gate),
-            }),
+            Arc::new(MockBanService::gated(Arc::clone(&gate))),
             PATIENT_HANDLER_TIMEOUT,
         )
         .await;
@@ -854,12 +845,4 @@ async fn complete_line(commands: &CommandManagerImpl, input: &str) -> Vec<String
         .into_iter()
         .map(|suggestion| suggestion.text)
         .collect()
-}
-
-fn player_source(registry: &RecordingPlayerRegistry) -> CommandSource {
-    CommandSource::Player(
-        registry
-            .get_player_by_id(PlayerId::new(1))
-            .expect("the recording registry knows every id"),
-    )
 }

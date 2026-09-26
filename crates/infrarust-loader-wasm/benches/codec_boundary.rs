@@ -1,10 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 #[cfg(all(feature = "wasm", wasm_fixtures_available))]
-#[path = "../tests/support/mock_services.rs"]
-mod mock_services;
-
-#[cfg(all(feature = "wasm", wasm_fixtures_available))]
 fn main() {
     bench::run();
 }
@@ -33,21 +29,11 @@ mod bench {
     use infrarust_api::loader::{PluginContextFactory, PluginLoader};
     use infrarust_api::types::{ProtocolVersion, RawPacket};
     use infrarust_config::ProxyConfig;
-    use infrarust_core::event_bus::EventBusImpl;
     use infrarust_core::filter::codec_chain::{CodecFilterChain, build_codec_chains};
     use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
-    use infrarust_core::filter::transport_registry::TransportFilterRegistryImpl;
     use infrarust_core::plugin::manager::PluginServices;
-    use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions, PluginRegistryImpl};
-    use infrarust_core::routing::DomainRouter;
-    use infrarust_core::services::command_manager::CommandManagerImpl;
-    use infrarust_core::services::scheduler::SchedulerImpl;
-    use infrarust_core::services::server_manager_bridge::NoopServerManager;
+    use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions};
     use infrarust_loader_wasm::{WasmLoaderConfig, WasmPluginLoader, build_engine};
-
-    use super::mock_services::{
-        MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
-    };
 
     const ITERS: u64 = 200_000;
     const WARMUP: u64 = 20_000;
@@ -126,21 +112,9 @@ mod bench {
     ) {
         let registry = Arc::new(CodecFilterRegistryImpl::new());
         let services = PluginServices {
-            event_bus: Arc::new(EventBusImpl::new()),
-            player_registry: Arc::new(MockPlayerRegistry),
-            server_manager: Arc::new(NoopServerManager),
-            ban_service: Arc::new(MockBanService),
-            command_manager: Arc::new(CommandManagerImpl::new()),
-            scheduler: Arc::new(SchedulerImpl::new()),
-            config_service: Arc::new(MockConfigService),
-            load_balancer_service: Arc::new(MockLoadBalancerService),
-            plugin_registry: Arc::new(PluginRegistryImpl::new()),
             codec_filter_registry: Arc::clone(&registry),
-            transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),
-            domain_router: Arc::new(DomainRouter::new()),
-            proxy_shutdown: tokio_util::sync::CancellationToken::new(),
-            proxy_info: infrarust_api::services::proxy_info::ProxyInfo::default(),
             plugins_dir: plugins_dir.clone(),
+            ..PluginServices::for_tests()
         };
         let mut configs = HashMap::new();
         configs.insert(
