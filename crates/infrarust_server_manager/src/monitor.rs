@@ -67,12 +67,21 @@ pub async fn monitor_server(
                     service.notify_waiters(&server_id, &Ok(()));
                     fast_poll = false;
                 }
-                ServerState::Crashed | ServerState::Sleeping => {
+                ServerState::Crashed => {
                     service.notify_waiters(
                         &server_id,
                         &Err(ServerManagerError::ProcessExited {
                             server_id: server_id.clone(),
                             exit_code: None,
+                        }),
+                    );
+                    fast_poll = false;
+                }
+                ServerState::Sleeping => {
+                    service.notify_waiters(
+                        &server_id,
+                        &Err(ServerManagerError::WentToSleep {
+                            server_id: server_id.clone(),
                         }),
                     );
                     fast_poll = false;

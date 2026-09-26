@@ -275,55 +275,13 @@ impl ServerManagerService {
                         action: "connect".to_string(),
                     });
                 }
-                ServerState::Sleeping | ServerState::Crashed => {
-                    // Need to start the server
-                    let provider = Arc::clone(&entry.provider);
-                    let old_state = entry.state;
-                    entry.set_state(ServerState::Starting);
-
-                    // Drop the lock before calling provider.start()
-                    let start_timeout = entry.start_timeout;
-                    let (tx, rx) = oneshot::channel();
-                    entry.waiters.push(tx);
-                    drop(entry);
-
-                    self.fire_state_change(server_id, old_state, ServerState::Starting);
-
-                    // Call start on the provider (lock-free)
-                    if let Err(e) = provider.start().await {
-                        tracing::error!(server = %server_id, "provider start failed: {e}");
-                        // Reset state
-                        if let Some(mut entry) = self.entries.get_mut(server_id) {
-                            entry.set_state(ServerState::Crashed);
-                            // Notify waiters of failure
-                            let waiters = std::mem::take(&mut entry.waiters);
-                            drop(entry);
-                            self.fire_state_change(
-                                server_id,
-                                ServerState::Starting,
-                                ServerState::Crashed,
-                            );
-                            for tx in waiters {
-                                let _ = tx.send(Err(ServerManagerError::Provider {
-                                    server_id: server_id.to_string(),
-                                    message: "start failed".to_string(),
-                                }));
-                            }
-                        }
-                        return Err(e);
-                    }
-
-                    (rx, start_timeout)
-                }
                 ServerState::Starting => {
-                    // Already starting — just add a waiter
                     let (tx, rx) = oneshot::channel();
                     let start_timeout = entry.start_timeout;
                     entry.waiters.push(tx);
                     (rx, start_timeout)
                 }
-                _ => {
-                    // Unknown — try to start
+                ServerState::Sleeping | ServerState::Crashed | ServerState::Unknown => {
                     let provider = Arc::clone(&entry.provider);
                     let old_state = entry.state;
                     entry.set_state(ServerState::Starting);
@@ -333,26 +291,22 @@ impl ServerManagerService {
                     drop(entry);
 
                     self.fire_state_change(server_id, old_state, ServerState::Starting);
+
                     if let Err(e) = provider.start().await {
                         tracing::error!(server = %server_id, "provider start failed: {e}");
                         if let Some(mut entry) = self.entries.get_mut(server_id) {
                             entry.set_state(ServerState::Crashed);
-                            let waiters = std::mem::take(&mut entry.waiters);
                             drop(entry);
                             self.fire_state_change(
                                 server_id,
                                 ServerState::Starting,
                                 ServerState::Crashed,
                             );
-                            for tx in waiters {
-                                let _ = tx.send(Err(ServerManagerError::Provider {
-                                    server_id: server_id.to_string(),
-                                    message: "start failed".to_string(),
-                                }));
-                            }
                         }
+                        self.notify_waiters(server_id, &Err(e.clone()));
                         return Err(e);
                     }
+
                     (rx, start_timeout)
                 }
             }
@@ -550,13 +504,7 @@ impl ServerManagerService {
                 tracing::debug!(server = %server_id, count, "notifying waiters");
             }
             for tx in waiters {
-                let _ = match result {
-                    Ok(()) => tx.send(Ok(())),
-                    Err(_) => tx.send(Err(ServerManagerError::Provider {
-                        server_id: server_id.to_string(),
-                        message: "server failed to start".to_string(),
-                    })),
-                };
+                let _ = tx.send(result.clone());
             }
         }
     }

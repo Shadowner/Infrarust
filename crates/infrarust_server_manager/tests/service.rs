@@ -303,3 +303,122 @@ async fn test_manual_start_stop() {
     assert!(provider.stop_called.load(Ordering::Acquire));
     assert_eq!(service.get_state("test"), Some(ServerState::Sleeping));
 }
+
+struct FailingStartProvider {
+    release: tokio::sync::Notify,
+}
+
+impl ServerProvider for FailingStartProvider {
+    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+        Box::pin(async move {
+            self.release.notified().await;
+            Err(ServerManagerError::Provider {
+                server_id: "test".to_string(),
+                message: "docker daemon unreachable".to_string(),
+            })
+        })
+    }
+
+    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn check_status(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+        Box::pin(async { Ok(ProviderStatus::Stopped) })
+    }
+
+    fn provider_type(&self) -> &'static str {
+        "failing"
+    }
+}
+
+fn provider_message(result: &Result<(), ServerManagerError>) -> Option<&str> {
+    match result {
+        Err(ServerManagerError::Provider { message, .. }) => Some(message.as_str()),
+        _ => None,
+    }
+}
+
+#[tokio::test]
+async fn test_joined_waiter_receives_the_provider_start_error() {
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
+    let provider = Arc::new(FailingStartProvider {
+        release: tokio::sync::Notify::new(),
+    });
+
+    service.register_server(
+        "test".to_string(),
+        provider.clone(),
+        None,
+        Duration::from_secs(10),
+        Duration::from_secs(1),
+    );
+
+    let svc = Arc::clone(&service);
+    let first = tokio::spawn(async move { svc.ensure_started("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(service.get_state("test"), Some(ServerState::Starting));
+
+    let svc = Arc::clone(&service);
+    let second = tokio::spawn(async move { svc.ensure_started("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    provider.release.notify_one();
+
+    let first = tokio::time::timeout(Duration::from_secs(5), first)
+        .await
+        .expect("should not timeout")
+        .expect("task should not panic");
+    let second = tokio::time::timeout(Duration::from_secs(5), second)
+        .await
+        .expect("should not timeout")
+        .expect("task should not panic");
+
+    assert_eq!(provider_message(&first), Some("docker daemon unreachable"));
+    assert_eq!(
+        provider_message(&second),
+        Some("docker daemon unreachable"),
+        "joined waiter got {second:?}"
+    );
+    assert_eq!(service.get_state("test"), Some(ServerState::Crashed));
+}
+
+#[tokio::test]
+async fn test_waiter_learns_the_server_went_back_to_sleep() {
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
+    let provider = Arc::new(MockProvider::new(ProviderStatus::Stopped));
+
+    service.register_server(
+        "test".to_string(),
+        provider.clone(),
+        None,
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    );
+
+    let shutdown = CancellationToken::new();
+    let counter = Arc::new(MockPlayerCounter);
+    let _handles = service.start_monitoring(counter, shutdown.clone());
+
+    let svc = Arc::clone(&service);
+    let handle = tokio::spawn(async move { svc.ensure_started("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(provider.start_called.load(Ordering::Acquire));
+
+    *provider.status.lock().await = ProviderStatus::Stopped;
+
+    let result = tokio::time::timeout(Duration::from_secs(5), handle)
+        .await
+        .expect("should not timeout")
+        .expect("task should not panic");
+
+    assert!(
+        matches!(result, Err(ServerManagerError::WentToSleep { ref server_id }) if server_id == "test"),
+        "got {result:?}"
+    );
+    assert_eq!(service.get_state("test"), Some(ServerState::Sleeping));
+
+    shutdown.cancel();
+}
