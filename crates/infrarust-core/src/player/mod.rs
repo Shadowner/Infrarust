@@ -298,6 +298,7 @@ impl PlayerSession {
     /// Creates a test session with a new channel and cancellation token.
     ///
     /// Returns `(session, command_rx)` so tests can inspect commands.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new_test(active: bool) -> (Self, mpsc::Receiver<PlayerCommand>) {
         let (tx, rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
         let session = Self::new(

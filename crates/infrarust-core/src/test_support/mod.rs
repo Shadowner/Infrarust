@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::sync::OnceLock;
 
 use infrarust_protocol::io::PacketFrame;
@@ -17,3 +19,10 @@ pub fn join_game_frame(version: ProtocolVersion) -> Result<PacketFrame, CoreErro
     let join = build_limbo_join_game(version)?;
     encode_packet(&join, version, registry())
 }
+
+mod plugin;
+mod plugin_context;
+mod services;
+
+pub use plugin::TestPlugin;
+pub use plugin_context::{MockPluginContext, MockPluginContextFactory};

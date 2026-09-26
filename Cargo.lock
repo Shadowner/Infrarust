@@ -2021,6 +2021,7 @@ dependencies = [
  "hmac",
  "humantime",
  "infrarust-api",
+ "infrarust-core",
  "infrarust-transport",
  "infrarust_config",
  "infrarust_protocol",

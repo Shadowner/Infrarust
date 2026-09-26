@@ -31,6 +31,6 @@ pub mod services;
 pub mod session;
 pub mod status;
 pub mod telemetry;
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 pub mod util;

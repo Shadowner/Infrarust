@@ -7,20 +7,12 @@ use std::time::Duration;
 
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::scheduler::Scheduler;
-use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::context::PluginContextImpl;
 use infrarust_core::plugin::context_factory::{PluginContextFactory, PluginContextFactoryImpl};
 use infrarust_core::plugin::manager::PluginServices;
 use infrarust_core::plugin::tracking::TrackingScheduler;
-use infrarust_core::services::command_manager::CommandManagerImpl;
 use infrarust_core::services::scheduler::SchedulerImpl;
-use infrarust_core::services::server_manager_bridge::NoopServerManager;
 use tokio::time::Instant;
-
-mod mock_services;
-use mock_services::{
-    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
-};
 
 const MS: Duration = Duration::from_millis(1);
 
@@ -272,28 +264,7 @@ async fn a_plugin_cannot_cancel_another_plugins_task() {
 }
 
 fn factory() -> PluginContextFactoryImpl {
-    let services = PluginServices {
-        event_bus: Arc::new(EventBusImpl::new()),
-        player_registry: Arc::new(MockPlayerRegistry),
-        server_manager: Arc::new(NoopServerManager),
-        ban_service: Arc::new(MockBanService),
-        command_manager: Arc::new(CommandManagerImpl::new()),
-        scheduler: Arc::new(SchedulerImpl::new()),
-        config_service: Arc::new(MockConfigService),
-        load_balancer_service: Arc::new(MockLoadBalancerService),
-        plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
-        codec_filter_registry: Arc::new(
-            infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
-        ),
-        transport_filter_registry: Arc::new(
-            infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
-        ),
-        domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
-        proxy_shutdown: tokio_util::sync::CancellationToken::new(),
-        proxy_info: infrarust_api::services::proxy_info::ProxyInfo::default(),
-        plugins_dir: std::path::PathBuf::from("plugins"),
-    };
-    PluginContextFactoryImpl::new(services, HashMap::new())
+    PluginContextFactoryImpl::new(PluginServices::for_tests(), HashMap::new())
 }
 
 fn context(ctx: &Arc<dyn PluginContext>) -> &PluginContextImpl {

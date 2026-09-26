@@ -40,7 +40,7 @@ rustls-platform-verifier = { workspace = true, optional = true }
 
 [dev-dependencies]
 infrarust-api = { workspace = true, features = ["test-util"] }
-infrarust-core = { workspace = true }
+infrarust-core = { workspace = true, features = ["test-support"] }
 infrarust_config = { workspace = true }
 infrarust-plugin-stats-native = { workspace = true }
 infrarust-test-harness = { path = "../infrarust-test-harness" }

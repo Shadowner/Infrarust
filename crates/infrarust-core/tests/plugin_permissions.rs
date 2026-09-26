@@ -7,19 +7,10 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::{HandlerResult, LimboHandler, LimboSession};
 use infrarust_api::permissions::Capability;
 use infrarust_api::plugin::PluginContext;
-use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::PluginPermissions;
 use infrarust_core::plugin::context::PluginContextImpl;
 use infrarust_core::plugin::context_factory::{PluginContextFactory, PluginContextFactoryImpl};
 use infrarust_core::plugin::manager::PluginServices;
-use infrarust_core::services::command_manager::CommandManagerImpl;
-use infrarust_core::services::scheduler::SchedulerImpl;
-use infrarust_core::services::server_manager_bridge::NoopServerManager;
-
-mod mock_services;
-use mock_services::{
-    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
-};
 
 struct DummyLimbo;
 
@@ -36,30 +27,6 @@ impl LimboHandler for DummyLimbo {
     }
 }
 
-fn build_services(plugins_dir: &Path) -> PluginServices {
-    PluginServices {
-        event_bus: Arc::new(EventBusImpl::new()),
-        player_registry: Arc::new(MockPlayerRegistry),
-        server_manager: Arc::new(NoopServerManager),
-        ban_service: Arc::new(MockBanService),
-        command_manager: Arc::new(CommandManagerImpl::new()),
-        scheduler: Arc::new(SchedulerImpl::new()),
-        config_service: Arc::new(MockConfigService),
-        load_balancer_service: Arc::new(MockLoadBalancerService),
-        plugin_registry: Arc::new(infrarust_core::plugin::PluginRegistryImpl::new()),
-        codec_filter_registry: Arc::new(
-            infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
-        ),
-        transport_filter_registry: Arc::new(
-            infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new(),
-        ),
-        domain_router: Arc::new(infrarust_core::routing::DomainRouter::new()),
-        proxy_shutdown: tokio_util::sync::CancellationToken::new(),
-        proxy_info: infrarust_api::services::proxy_info::ProxyInfo::default(),
-        plugins_dir: plugins_dir.to_path_buf(),
-    }
-}
-
 fn factory_in(
     plugins_dir: &Path,
     entries: Vec<(&str, PluginPermissions)>,
@@ -68,7 +35,11 @@ fn factory_in(
         .into_iter()
         .map(|(id, p)| (id.to_string(), p))
         .collect();
-    PluginContextFactoryImpl::new(build_services(plugins_dir), map)
+    let services = PluginServices {
+        plugins_dir: plugins_dir.to_path_buf(),
+        ..PluginServices::for_tests()
+    };
+    PluginContextFactoryImpl::new(services, map)
 }
 
 fn factory(entries: Vec<(&str, PluginPermissions)>) -> PluginContextFactoryImpl {
