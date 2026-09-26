@@ -14,34 +14,34 @@ pub(crate) struct MissingGrant {
     pub(crate) functions: Vec<String>,
 }
 
-pub(crate) fn gate(interface: &str, function: &str) -> Option<Capability> {
+pub(crate) fn gate(interface: &str, function: &str) -> &'static [Capability] {
     match interface {
-        "event-bus" if function == "subscribe-packets" => Some(Capability::RawPacket),
-        "event-bus" => Some(Capability::EventBus),
-        "players" => Some(player_gate(function)),
-        "server-manager" => Some(Capability::ServerManage),
-        "ban-service" => Some(Capability::Ban),
-        "config-service" if function == "write-proxy-config-document" => {
-            Some(Capability::ConfigWrite)
+        "event-bus" if function == "subscribe-packets" => {
+            &[Capability::EventBus, Capability::RawPacket]
         }
-        "config-service" => Some(Capability::ConfigRead),
+        "event-bus" => &[Capability::EventBus],
+        "players" => player_gate(function),
+        "server-manager" => &[Capability::ServerManage],
+        "ban-service" => &[Capability::Ban],
+        "config-service" if function == "write-proxy-config-document" => &[Capability::ConfigWrite],
+        "config-service" => &[Capability::ConfigRead],
         "load-balancer" if matches!(function, "set-drained" | "reset-backend") => {
-            Some(Capability::ServerManage)
+            &[Capability::ServerManage]
         }
-        "load-balancer" => Some(Capability::ConfigRead),
-        "messaging" => Some(Capability::PluginMessaging),
-        "command-manager" => Some(Capability::Command),
-        "scheduler" => Some(Capability::Scheduler),
-        "codec-registry" => Some(Capability::CodecFilter),
-        "limbo" if function == "register-limbo-handler" => Some(Capability::Limbo),
-        "permissions" => Some(Capability::PermissionProvider),
-        "providers" if function == "register-ban-provider" => Some(Capability::BanProvider),
-        "providers" => Some(Capability::PermissionProvider),
-        _ => None,
+        "load-balancer" => &[Capability::ConfigRead],
+        "messaging" => &[Capability::PluginMessaging],
+        "command-manager" => &[Capability::Command],
+        "scheduler" => &[Capability::Scheduler],
+        "codec-registry" => &[Capability::CodecFilter],
+        "limbo" if function == "register-limbo-handler" => &[Capability::Limbo],
+        "permissions" => &[Capability::PermissionProvider],
+        "providers" if function == "register-ban-provider" => &[Capability::BanProvider],
+        "providers" => &[Capability::PermissionProvider],
+        _ => &[],
     }
 }
 
-fn player_gate(function: &str) -> Capability {
+fn player_gate(function: &str) -> &'static [Capability] {
     match function {
         "send-message"
         | "send-title"
@@ -59,9 +59,9 @@ fn player_gate(function: &str) -> Capability {
         | "transfer"
         | "store-cookie"
         | "request-cookie"
-        | "refresh-permissions" => Capability::PlayerWrite,
-        "send-packet" => Capability::RawPacket,
-        _ => Capability::PlayerRead,
+        | "refresh-permissions" => &[Capability::PlayerWrite],
+        "send-packet" => &[Capability::RawPacket],
+        _ => &[Capability::PlayerRead],
     }
 }
 
@@ -88,20 +88,21 @@ pub(crate) fn missing_grants(
             if !matches!(item, ComponentItem::ComponentFunc(_)) {
                 continue;
             }
-            let Some(capability) = gate(interface, function).filter(|cap| !granted.has(*cap))
-            else {
-                continue;
-            };
-            match missing
-                .iter_mut()
-                .find(|m| m.interface == interface && m.capability == capability)
-            {
-                Some(entry) => entry.functions.push(function.to_owned()),
-                None => missing.push(MissingGrant {
-                    interface: interface.to_owned(),
-                    capability,
-                    functions: vec![function.to_owned()],
-                }),
+            for &capability in gate(interface, function) {
+                if granted.has(capability) {
+                    continue;
+                }
+                match missing
+                    .iter_mut()
+                    .find(|m| m.interface == interface && m.capability == capability)
+                {
+                    Some(entry) => entry.functions.push(function.to_owned()),
+                    None => missing.push(MissingGrant {
+                        interface: interface.to_owned(),
+                        capability,
+                        functions: vec![function.to_owned()],
+                    }),
+                }
             }
         }
     }
@@ -237,6 +238,46 @@ mod tests {
     }
 
     #[test]
+    fn packet_subscriptions_need_the_event_bus_as_well_as_raw_packets() {
+        let engine = engine();
+        let component = Component::new(
+            &engine,
+            r#"
+            (component
+                (import "infrarust:plugin/event-bus@0.3.0" (instance
+                    (export "subscribe-packets" (func))
+                ))
+            )
+            "#,
+        )
+        .unwrap();
+
+        let only_raw = CapabilitySet::default().with(Capability::RawPacket);
+        assert_eq!(
+            grants(&missing_grants(&engine, &component, &only_raw)),
+            [(
+                "event-bus".to_string(),
+                Capability::EventBus,
+                vec!["subscribe-packets".to_string()]
+            )]
+        );
+        assert!(check_imports(&engine, &component, "p", &only_raw, true).is_err());
+
+        let only_bus = CapabilitySet::default().with(Capability::EventBus);
+        assert_eq!(
+            grants(&missing_grants(&engine, &component, &only_bus)),
+            [(
+                "event-bus".to_string(),
+                Capability::RawPacket,
+                vec!["subscribe-packets".to_string()]
+            )]
+        );
+
+        let both = only_bus.with(Capability::RawPacket);
+        assert!(missing_grants(&engine, &component, &both).is_empty());
+    }
+
+    #[test]
     fn strict_mode_turns_the_report_into_a_load_error() {
         let engine = engine();
         let component = Component::new(&engine, IMPORTS).unwrap();
@@ -262,70 +303,58 @@ mod tests {
 
     #[test]
     fn every_function_of_the_contract_has_a_gate_decision() {
-        assert_eq!(gate("limbo", "[method]limbo-session.send-message"), None);
-        assert_eq!(
-            gate("limbo", "register-limbo-handler"),
-            Some(Capability::Limbo)
-        );
-        assert_eq!(gate("log", "info"), None);
-        assert_eq!(gate("text", "parse-json"), None);
-        assert_eq!(gate("types", "anything"), None);
-        assert_eq!(gate("events", "anything"), None);
-        assert_eq!(gate("players", "get"), Some(Capability::PlayerRead));
-        assert_eq!(
-            gate("players", "has-permission"),
-            Some(Capability::PlayerRead)
-        );
-        assert_eq!(gate("players", "disconnect"), Some(Capability::PlayerWrite));
-        assert_eq!(gate("players", "send-packet"), Some(Capability::RawPacket));
-        assert_eq!(gate("event-bus", "unsubscribe"), Some(Capability::EventBus));
-        assert_eq!(gate("event-bus", "fire-named"), Some(Capability::EventBus));
+        assert!(gate("limbo", "[method]limbo-session.send-message").is_empty());
+        assert_eq!(gate("limbo", "register-limbo-handler"), [Capability::Limbo]);
+        assert!(gate("log", "info").is_empty());
+        assert!(gate("text", "parse-json").is_empty());
+        assert!(gate("types", "anything").is_empty());
+        assert!(gate("events", "anything").is_empty());
+        assert_eq!(gate("players", "get"), [Capability::PlayerRead]);
+        assert_eq!(gate("players", "has-permission"), [Capability::PlayerRead]);
+        assert_eq!(gate("players", "disconnect"), [Capability::PlayerWrite]);
+        assert_eq!(gate("players", "send-packet"), [Capability::RawPacket]);
+        assert_eq!(gate("event-bus", "unsubscribe"), [Capability::EventBus]);
+        assert_eq!(gate("event-bus", "fire-named"), [Capability::EventBus]);
         assert_eq!(
             gate("event-bus", "subscribe-packets"),
-            Some(Capability::RawPacket)
+            [Capability::EventBus, Capability::RawPacket]
         );
-        assert_eq!(gate("players", "connect"), Some(Capability::PlayerWrite));
-        assert_eq!(
-            gate("players", "request-cookie"),
-            Some(Capability::PlayerWrite)
-        );
+        assert_eq!(gate("players", "connect"), [Capability::PlayerWrite]);
+        assert_eq!(gate("players", "request-cookie"), [Capability::PlayerWrite]);
         assert_eq!(
             gate("messaging", "send-to-server"),
-            Some(Capability::PluginMessaging)
+            [Capability::PluginMessaging]
         );
-        assert_eq!(
-            gate("load-balancer", "backends"),
-            Some(Capability::ConfigRead)
-        );
+        assert_eq!(gate("load-balancer", "backends"), [Capability::ConfigRead]);
         assert_eq!(
             gate("load-balancer", "set-drained"),
-            Some(Capability::ServerManage)
+            [Capability::ServerManage]
         );
         assert_eq!(
             gate("config-service", "write-proxy-config-document"),
-            Some(Capability::ConfigWrite)
+            [Capability::ConfigWrite]
         );
         assert_eq!(
             gate("config-service", "list-server-sources"),
-            Some(Capability::ConfigRead)
+            [Capability::ConfigRead]
         );
-        assert_eq!(gate("proxy-info", "granted-capabilities"), None);
-        assert_eq!(gate("plugin-registry", "list"), None);
+        assert!(gate("proxy-info", "granted-capabilities").is_empty());
+        assert!(gate("plugin-registry", "list").is_empty());
         assert_eq!(
             gate("providers", "register-ban-provider"),
-            Some(Capability::BanProvider)
+            [Capability::BanProvider]
         );
         assert_eq!(
             gate("providers", "register-permission-provider"),
-            Some(Capability::PermissionProvider)
+            [Capability::PermissionProvider]
         );
         assert_eq!(
             gate("permissions", "set-snapshot"),
-            Some(Capability::PermissionProvider)
+            [Capability::PermissionProvider]
         );
         assert_eq!(
             gate("permissions", "release"),
-            Some(Capability::PermissionProvider)
+            [Capability::PermissionProvider]
         );
     }
 }
