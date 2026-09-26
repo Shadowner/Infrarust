@@ -303,13 +303,17 @@ fn load_server_config(path: &Path) -> Result<ServerConfig, ConfigError> {
             source,
         })?;
 
-    infrarust_config::validate_server_config(&config)?;
+    let warnings = infrarust_config::validate_server_config(&config)?;
 
     // Set id from filename if not explicitly set
     if config.id.is_none()
         && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
     {
         config.id = Some(stem.to_string());
+    }
+
+    for warning in warnings {
+        tracing::warn!(server = %config.effective_id(), "{warning}");
     }
 
     Ok(config)

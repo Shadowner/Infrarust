@@ -120,7 +120,7 @@ pub fn parse_document(doc: &ServerDocument) -> Result<infrarust_config::ServerCo
         config.id = Some(doc.id.as_str().to_string());
     }
 
-    infrarust_config::validate_server_config(&config).map_err(|e| e.to_string())?;
+    log_validation_warnings(&config)?;
     Ok(config)
 }
 
@@ -176,8 +176,16 @@ fn convert_api_to_config(
         bungeecord_channel: false,
     };
 
-    infrarust_config::validate_server_config(&config).map_err(|e| e.to_string())?;
+    log_validation_warnings(&config)?;
     Ok(config)
+}
+
+fn log_validation_warnings(config: &infrarust_config::ServerConfig) -> Result<(), String> {
+    let warnings = infrarust_config::validate_server_config(config).map_err(|e| e.to_string())?;
+    for warning in warnings {
+        tracing::warn!(server = %config.effective_id(), "{warning}");
+    }
+    Ok(())
 }
 
 fn make_provider_id(provider_prefix: &str, config_id: &str) -> ProviderId {

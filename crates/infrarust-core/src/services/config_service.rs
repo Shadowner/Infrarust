@@ -179,8 +179,11 @@ impl ConfigService for ConfigServiceImpl {
             let text = document.to_string();
             let config: ProxyConfig =
                 toml::from_str(&text).map_err(|e| ConfigWriteError::Parse(e.to_string()))?;
-            infrarust_config::validate_proxy_document(&config)
+            let warnings = infrarust_config::validate_proxy_document(&config)
                 .map_err(|e| ConfigWriteError::Validation(e.to_string()))?;
+            for warning in warnings {
+                tracing::warn!("{warning}");
+            }
 
             write_atomic(&self.config_path, &text).map_err(|e| ConfigWriteError::Io(e.to_string()))
         })

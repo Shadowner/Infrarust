@@ -472,17 +472,18 @@ pub async fn validate(headers: HeaderMap, body: String) -> Json<ApiResponse<Vali
             errors: vec![e],
             warnings: vec![],
         },
-        Ok(config) => {
-            let errors = infrarust_config::validate_server_config(&config)
-                .err()
-                .map(|e| vec![e.to_string()])
-                .unwrap_or_default();
-            ValidationResponse {
-                valid: errors.is_empty(),
-                errors,
-                warnings: infrarust_config::balance_warnings(&config),
-            }
-        }
+        Ok(config) => match infrarust_config::validate_server_config(&config) {
+            Ok(warnings) => ValidationResponse {
+                valid: true,
+                errors: vec![],
+                warnings,
+            },
+            Err(e) => ValidationResponse {
+                valid: false,
+                errors: vec![e.to_string()],
+                warnings: vec![],
+            },
+        },
     };
 
     ok(response)

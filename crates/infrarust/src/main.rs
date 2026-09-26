@@ -79,7 +79,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let config = if !cli.config.exists()
+    let (config, config_warnings) = if !cli.config.exists()
         && cli.config == Path::new("infrarust.toml")
         && std::io::stdout().is_terminal()
     {
@@ -181,6 +181,10 @@ fn main() -> ExitCode {
 
     infrarust_core::telemetry::formatter::print_banner();
 
+    for warning in config_warnings {
+        tracing::warn!("{warning}");
+    }
+
     tracing::info!(
         bind = %config.bind,
         servers_dir = %config.servers_dir.display(),
@@ -210,7 +214,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn load_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
+fn load_config(cli: &Cli) -> anyhow::Result<(ProxyConfig, Vec<String>)> {
     let content = std::fs::read_to_string(&cli.config)
         .with_context(|| format!("cannot read config file: {}", cli.config.display()))?;
 
@@ -232,10 +236,14 @@ fn apply_cli_overrides(cli: &Cli, config: &mut ProxyConfig) {
     }
 }
 
-fn finalize_config(cli: &Cli, mut config: ProxyConfig) -> anyhow::Result<ProxyConfig> {
+fn finalize_config(
+    cli: &Cli,
+    mut config: ProxyConfig,
+) -> anyhow::Result<(ProxyConfig, Vec<String>)> {
     apply_cli_overrides(cli, &mut config);
-    infrarust_config::validate_proxy_config(&config).context("configuration validation failed")?;
-    Ok(config)
+    let warnings = infrarust_config::validate_proxy_config(&config)
+        .context("configuration validation failed")?;
+    Ok((config, warnings))
 }
 
 async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Result<()> {
@@ -391,7 +399,8 @@ mod tests {
         let err = finalize_config(&parse(&["--bind", "0.0.0.0:8080"]), config.clone()).unwrap_err();
         assert!(format!("{err:#}").contains("collides"), "{err:#}");
 
-        let ok = finalize_config(&parse(&["--bind", "0.0.0.0:25566"]), config).unwrap();
+        let (ok, warnings) = finalize_config(&parse(&["--bind", "0.0.0.0:25566"]), config).unwrap();
         assert_eq!(ok.bind, "0.0.0.0:25566".parse().unwrap());
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 }

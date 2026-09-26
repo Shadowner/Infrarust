@@ -19,7 +19,7 @@ fn server_error(id: &str, reason: ServerValidationError) -> ConfigError {
     }
 }
 
-pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> {
+pub fn validate_server_config(config: &ServerConfig) -> Result<Vec<String>, ConfigError> {
     let id = config.effective_id();
     validate_effective_id(&id)?;
 
@@ -79,19 +79,15 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
         ));
     }
 
-    for warning in balance_warnings(config) {
-        tracing::warn!(server = %id, "{warning}");
-    }
+    #[allow(unused_mut)]
+    let mut warnings = balance_warnings(config);
 
     #[cfg(not(target_os = "linux"))]
     if config.proxy_mode == crate::types::ProxyMode::ZeroCopy {
-        tracing::warn!(
-            server = %id,
-            "proxy_mode = zero_copy is only supported on Linux"
-        );
+        warnings.push("proxy_mode = zero_copy is only supported on Linux".to_string());
     }
 
-    Ok(())
+    Ok(warnings)
 }
 
 pub fn validate_server_forwarding(
@@ -116,9 +112,6 @@ pub fn validate_server_forwarding(
     Ok(())
 }
 
-/// Returns the load-balancing configuration warnings for a server config.
-///
-/// Pure so it can be unit-tested; `validate_server_config` logs each entry.
 pub fn balance_warnings(config: &ServerConfig) -> Vec<String> {
     let mut warnings = Vec::new();
 
@@ -217,41 +210,42 @@ pub fn validate_server_configs(configs: &[ServerConfig]) -> Result<(), ConfigErr
     Ok(())
 }
 
-pub fn validate_proxy_config(config: &ProxyConfig) -> Result<(), ConfigError> {
+pub fn validate_proxy_config(config: &ProxyConfig) -> Result<Vec<String>, ConfigError> {
     if !config.servers_dir.is_dir() {
         return Err(ConfigError::DirectoryNotFound(config.servers_dir.clone()));
     }
 
-    validate_proxy_document(config)?;
+    let mut warnings = validate_proxy_document(config)?;
 
     if config
         .forwarding
         .as_ref()
         .is_some_and(ForwardingConfig::has_moved_channel_keys)
     {
-        tracing::warn!(
+        warnings.push(
             "[forwarding] bungeecord_channel and [forwarding.channel_permissions] are no longer \
              read: use [plugin_messaging] bungeecord, [plugin_messaging.bungeecord_permissions] \
              and bungeecord_channel = true in the server files"
+                .to_string(),
         );
     }
 
     if !config.plugins.is_empty() && !config.plugins_dir.is_dir() {
-        tracing::warn!(
-            plugins_dir = %config.plugins_dir.display(),
-            "plugins are configured but plugins_dir does not exist \
-             (only built-in plugins will be available)"
-        );
+        warnings.push(format!(
+            "plugins are configured but plugins_dir {} does not exist \
+             (only built-in plugins will be available)",
+            config.plugins_dir.display()
+        ));
     }
 
-    Ok(())
+    Ok(warnings)
 }
 
 fn zero_duration(key: &'static str) -> ConfigError {
     ConfigError::Proxy(ProxyValidationError::ZeroDuration { key })
 }
 
-pub fn validate_proxy_document(config: &ProxyConfig) -> Result<(), ConfigError> {
+pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, ConfigError> {
     for (key, value) in [
         ("connect_timeout", config.connect_timeout),
         ("events.handler_timeout", config.events.handler_timeout),
@@ -278,7 +272,7 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<(), ConfigError> 
         }
     }
 
-    validate_wasm_config(config)?;
+    let warnings = validate_wasm_config(config)?;
 
     if config.rate_limit.enabled {
         if config.rate_limit.window.is_zero() {
@@ -306,7 +300,7 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<(), ConfigError> 
         }
     }
 
-    Ok(())
+    Ok(warnings)
 }
 
 fn validate_web_bind(bind: &str, proxy_bind: SocketAddr) -> Result<(), ProxyValidationError> {
@@ -360,8 +354,9 @@ pub(crate) const WASM_MAX_INSTANCE_POOL: u32 = 32_768;
 pub(crate) const WASM_MAX_RESTARTS: u32 = 1000;
 const WASM_MAX_RECOVERY_DURATION: Duration = Duration::from_secs(86_400);
 
-pub fn validate_wasm_config(config: &ProxyConfig) -> Result<(), ConfigError> {
-    validate_wasm(config).map_err(ConfigError::Wasm)
+pub fn validate_wasm_config(config: &ProxyConfig) -> Result<Vec<String>, ConfigError> {
+    validate_wasm(config).map_err(ConfigError::Wasm)?;
+    Ok(wasm_warnings(config))
 }
 
 fn validate_wasm(config: &ProxyConfig) -> Result<(), WasmValidationError> {
@@ -369,53 +364,49 @@ fn validate_wasm(config: &ProxyConfig) -> Result<(), WasmValidationError> {
     if !(WASM_MIN_EPOCH_TICK..=WASM_MAX_EPOCH_TICK).contains(&tick) {
         return Err(WasmValidationError::EpochTickOutOfRange { tick });
     }
-    validate_wasm_limits("wasm", &config.wasm.limits(), tick)?;
     if config.wasm.instance_pool > WASM_MAX_INSTANCE_POOL {
         return Err(WasmValidationError::InstancePoolTooLarge {
             value: config.wasm.instance_pool,
         });
     }
-    let mut ids: Vec<&String> = config.plugins.keys().collect();
-    ids.sort();
-    for id in ids {
-        let overrides = config.plugins[id].wasm.as_ref();
-        if let Some(plugin) = overrides {
-            let limits = config.wasm.limits_for(overrides);
-            validate_wasm_limits(&format!("plugins.{id}.wasm"), &limits, tick)?;
-            validate_wasm_mounts(&format!("plugins.{id}.wasm.mounts"), plugin)?;
+    for (scope, plugin, limits) in wasm_scopes(config) {
+        validate_wasm_limits(&scope, &limits, tick)?;
+        if let Some(plugin) = plugin {
+            validate_wasm_mounts(&format!("{scope}.mounts"), plugin)?;
         }
-    }
-    for warning in wasm_warnings(config) {
-        tracing::warn!("{warning}");
     }
     Ok(())
 }
 
-pub fn wasm_warnings(config: &ProxyConfig) -> Vec<String> {
-    let mut scopes = vec![("wasm".to_string(), config.wasm.limits())];
+fn wasm_scopes(
+    config: &ProxyConfig,
+) -> impl Iterator<Item = (String, Option<&PluginWasmConfig>, WasmLimits)> {
     let mut ids: Vec<&String> = config.plugins.keys().collect();
     ids.sort();
-    for id in ids {
-        let overrides = config.plugins[id].wasm.as_ref();
-        if overrides.is_some() {
-            scopes.push((
+    std::iter::once(("wasm".to_string(), None, config.wasm.limits())).chain(
+        ids.into_iter().filter_map(move |id| {
+            let plugin = config.plugins[id].wasm.as_ref()?;
+            Some((
                 format!("plugins.{id}.wasm"),
-                config.wasm.limits_for(overrides),
-            ));
-        }
-    }
-    let mut warnings = Vec::new();
-    for (scope, limits) in scopes {
-        if limits.cpu_budget > limits.max_call_duration {
-            warnings.push(format!(
+                Some(plugin),
+                config.wasm.limits_for(Some(plugin)),
+            ))
+        }),
+    )
+}
+
+pub fn wasm_warnings(config: &ProxyConfig) -> Vec<String> {
+    wasm_scopes(config)
+        .filter(|(_, _, limits)| limits.cpu_budget > limits.max_call_duration)
+        .map(|(scope, _, limits)| {
+            format!(
                 "{scope}: cpu_budget ({}) is longer than max_call_duration ({}); \
                  max_call_duration stops a busy guest call first",
                 humantime::format_duration(limits.cpu_budget),
                 humantime::format_duration(limits.max_call_duration)
-            ));
-        }
-    }
-    warnings
+            )
+        })
+        .collect()
 }
 
 fn validate_wasm_limits(

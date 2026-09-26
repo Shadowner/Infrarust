@@ -122,17 +122,20 @@ pub async fn validate_proxy(
         serde_json::from_str(&body).map_err(|e| e.to_string())
     };
 
-    let errors = match parsed {
-        Err(e) => vec![e],
-        Ok(config) => infrarust_config::validate_proxy_document(&config)
-            .err()
-            .map(|e| vec![e.to_string()])
-            .unwrap_or_default(),
+    let response = match parsed.and_then(|config| {
+        infrarust_config::validate_proxy_document(&config).map_err(|e| e.to_string())
+    }) {
+        Ok(warnings) => ValidationResponse {
+            valid: true,
+            errors: vec![],
+            warnings,
+        },
+        Err(e) => ValidationResponse {
+            valid: false,
+            errors: vec![e],
+            warnings: vec![],
+        },
     };
 
-    ok(ValidationResponse {
-        valid: errors.is_empty(),
-        errors,
-        warnings: vec![],
-    })
+    ok(response)
 }

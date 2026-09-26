@@ -138,13 +138,19 @@ impl DockerProvider {
 
         let config = labels_to_server_config(container_name, labels, &address);
 
-        if let Err(e) = infrarust_config::validate_server_config(&config) {
-            tracing::warn!(
-                container = %container_name,
-                error = %e,
-                "skipping container with invalid config"
-            );
-            return Ok(None);
+        let warnings = match infrarust_config::validate_server_config(&config) {
+            Ok(warnings) => warnings,
+            Err(e) => {
+                tracing::warn!(
+                    container = %container_name,
+                    error = %e,
+                    "skipping container with invalid config"
+                );
+                return Ok(None);
+            }
+        };
+        for warning in warnings {
+            tracing::warn!(container = %container_name, "{warning}");
         }
 
         Ok(Some(ProviderConfig {

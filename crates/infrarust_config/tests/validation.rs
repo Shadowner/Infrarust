@@ -829,3 +829,54 @@ fn velocity_forwarding_on_an_intercepted_server_is_valid() {
     assert!(validate_server_config(&config).is_ok());
     assert!(validate_server_forwarding(&config, ForwardingMode::Velocity).is_ok());
 }
+
+#[test]
+fn test_server_validation_returns_its_warnings() {
+    let config = from_toml(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["10.0.0.1:25565", "10.0.0.2:25565"]
+        slow_start = "45s"
+    "#,
+    );
+    let warnings = validate_server_config(&config).unwrap();
+    assert_eq!(warnings, infrarust_config::balance_warnings(&config));
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+
+    let quiet = from_toml(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["10.0.0.1:25565"]
+    "#,
+    );
+    assert!(validate_server_config(&quiet).unwrap().is_empty());
+}
+
+#[test]
+fn test_proxy_validation_returns_its_warnings() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml(
+        "plugins_dir = \"/definitely/not/here\"\n\n[plugins.p]\n\n[plugins.p.wasm]\nmax_call_duration = \"2s\"\ncpu_budget = \"3s\"\n\n[forwarding]\nbungeecord_channel = true\n",
+        dir.path(),
+    );
+    let warnings = validate_proxy_config(&config).unwrap();
+    assert_eq!(warnings.len(), 3, "{warnings:?}");
+    assert!(
+        warnings[0].starts_with("plugins.p.wasm: cpu_budget"),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings[1].contains("[forwarding] bungeecord_channel"),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings[2].contains("plugins_dir /definitely/not/here does not exist"),
+        "{warnings:?}"
+    );
+
+    let document_warnings = infrarust_config::validate_proxy_document(&config).unwrap();
+    assert_eq!(document_warnings, wasm_warnings(&config));
+
+    let quiet = proxy_from_toml("", dir.path());
+    assert!(validate_proxy_config(&quiet).unwrap().is_empty());
+}

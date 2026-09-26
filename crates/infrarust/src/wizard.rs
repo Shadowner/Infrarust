@@ -326,7 +326,8 @@ fn verify_server_config(path: &Path) -> anyhow::Result<()> {
             "generated server config failed validation: {}",
             path.display()
         )
-    })
+    })?;
+    Ok(())
 }
 
 fn print_summary(settings: &WizardSettings) {
