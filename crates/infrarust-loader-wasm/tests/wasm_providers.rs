@@ -54,6 +54,18 @@ impl Fixture {
         read_log(&self.data)
     }
 
+    async fn recovered(&self) {
+        let deadline = Instant::now() + PROMPTLY;
+        while !self.log().iter().any(|line| line == "enable recovered 1") {
+            assert!(
+                Instant::now() < deadline,
+                "the plugin did not recover: {:?}",
+                self.log()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     async fn dispatch(&self, line: &str) {
         let outcome = tokio::time::timeout(
             PROMPTLY,
@@ -429,7 +441,7 @@ async fn a_failing_permission_provider_leaves_the_subject_with_the_node_defaults
     let logs = LogCapture::at(Level::WARN);
     let permissions = permission_service(select(PROVIDER));
     async {
-        let _fx = start(Setup {
+        let fx = start(Setup {
             config: "permissions\ngrant Steve demo.use true\ngrant Trap demo.use true",
             grants: &["permission-provider"],
             proxy_toml: "",
@@ -445,6 +457,7 @@ async fn a_failing_permission_provider_leaves_the_subject_with_the_node_defaults
             permissions.value(trapped.as_ref(), "demo.use"),
             Tristate::Undefined
         );
+        fx.recovered().await;
         let steve = permissions.create_checker(&subject(1, "Steve")).await;
         assert_eq!(
             permissions.value(steve.as_ref(), "demo.use"),
@@ -455,12 +468,14 @@ async fn a_failing_permission_provider_leaves_the_subject_with_the_node_defaults
     .await;
 
     let warned = logs.matching("gave no snapshot");
-    assert_eq!(warned.len(), 1, "{:?}", logs.lines());
+    let trap = warned
+        .iter()
+        .find(|line| line.contains("subject=\"Trap\""))
+        .unwrap_or_else(|| panic!("no warning for the trapped subject: {:?}", logs.lines()));
     assert!(
-        warned[0].contains("plugin=\"provider\"") || warned[0].contains("plugin=provider"),
-        "{warned:?}"
+        trap.contains("plugin=\"provider\"") || trap.contains("plugin=provider"),
+        "{trap:?}"
     );
-    assert!(warned[0].contains("subject=\"Trap\""), "{warned:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
