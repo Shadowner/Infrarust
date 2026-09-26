@@ -152,3 +152,47 @@ async fn test_nodelay_enabled() {
     assert!(conn.stream().nodelay().unwrap());
     token.cancel();
 }
+
+#[tokio::test]
+async fn connect_one_sends_the_proxy_header_without_notifying_the_observer() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use infrarust_transport::proxy_protocol::decode_proxy_protocol;
+    use infrarust_transport::{ConnectAttempt, ConnectAttemptObserver};
+
+    struct Counting(AtomicUsize);
+    impl ConnectAttemptObserver for Counting {
+        fn on_attempt(&self, _attempt: &ConnectAttempt<'_>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let header = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        decode_proxy_protocol(&mut stream).await.unwrap().0
+    });
+
+    let observer = Arc::new(Counting(AtomicUsize::new(0)));
+    let connector = test_connector().with_observer(Arc::clone(&observer) as _);
+    let address = ServerAddress {
+        host: addr.ip().to_string(),
+        port: addr.port(),
+    };
+    let info = test_client_info(addr);
+    let conn = connector
+        .connect_one(&address, Duration::from_secs(5), true, &info)
+        .await
+        .unwrap();
+
+    let header = header
+        .await
+        .unwrap()
+        .expect("a PROXY v2 header was written");
+    assert_eq!(header.source_addr, info.peer_addr);
+    assert_eq!(header.dest_addr, addr);
+    assert_eq!(conn.remote_addr(), addr);
+    assert_eq!(observer.0.load(Ordering::SeqCst), 0);
+}

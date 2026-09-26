@@ -23,6 +23,7 @@ use infrarust_protocol::packets::status::{
 };
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use serde_json::{Value, json};
+use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 use tokio::task::{JoinHandle, JoinSet};
@@ -84,7 +85,12 @@ struct BackendConfig {
     login: LoginBehavior,
     status: Option<Value>,
     hold_config: bool,
+    require_proxy_protocol: bool,
 }
+
+const PROXY_V2_SIGNATURE: [u8; 12] = [
+    0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A,
+];
 
 #[derive(Debug, Clone)]
 pub struct FakeBackendBuilder {
@@ -113,6 +119,12 @@ impl FakeBackendBuilder {
     #[must_use]
     pub const fn hold_config(mut self) -> Self {
         self.config.hold_config = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn require_proxy_protocol(mut self) -> Self {
+        self.config.require_proxy_protocol = true;
         self
     }
 
@@ -155,6 +167,7 @@ impl FakeBackend {
                 login: LoginBehavior::Accept,
                 status: None,
                 hold_config: false,
+                require_proxy_protocol: false,
             },
         }
     }
@@ -218,11 +231,14 @@ async fn accept_loop(
 }
 
 async fn serve(
-    stream: TcpStream,
+    mut stream: TcpStream,
     config: &BackendConfig,
     conn_tx: &mpsc::UnboundedSender<BackendConn>,
     status_requests: &AtomicUsize,
 ) -> HarnessResult<()> {
+    if config.require_proxy_protocol {
+        read_proxy_v2_header(&mut stream).await?;
+    }
     let mut conn = FramedConn::new(stream)?;
     let handshake = ObservedHandshake::parse(&read_required(&mut conn, "handshake").await?)?;
     match handshake.next_state {
@@ -240,6 +256,20 @@ async fn serve(
             "handshake next_state {other}"
         ))),
     }
+}
+
+async fn read_proxy_v2_header(stream: &mut TcpStream) -> HarnessResult<()> {
+    let mut fixed = [0u8; 16];
+    stream.read_exact(&mut fixed).await?;
+    if fixed[..12] != PROXY_V2_SIGNATURE {
+        return Err(HarnessError::Unexpected(
+            "expected a PROXY protocol v2 header before the handshake".to_string(),
+        ));
+    }
+    let length = usize::from(u16::from_be_bytes([fixed[14], fixed[15]]));
+    let mut addresses = vec![0u8; length];
+    stream.read_exact(&mut addresses).await?;
+    Ok(())
 }
 
 async fn read_required(conn: &mut FramedConn, what: &str) -> HarnessResult<PacketFrame> {

@@ -157,6 +157,27 @@ impl BackendConnector {
         )
     }
 
+    /// Connects to a single backend address without failover.
+    ///
+    /// Unlike [`connect`](Self::connect), the attempt is not reported to the
+    /// observer and no warning is logged: callers such as health probes
+    /// account for the outcome themselves.
+    ///
+    /// # Errors
+    ///
+    /// Returns the connection, socket configuration or proxy protocol error
+    /// of the attempt.
+    pub async fn connect_one(
+        &self,
+        address: &ServerAddress,
+        timeout: Duration,
+        send_proxy_protocol: bool,
+        client_info: &ConnectionInfo,
+    ) -> Result<BackendConnection, TransportError> {
+        self.try_connect(address, timeout, send_proxy_protocol, client_info)
+            .await
+    }
+
     async fn try_connect(
         &self,
         address: &ServerAddress,
