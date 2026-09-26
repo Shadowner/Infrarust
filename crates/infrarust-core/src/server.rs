@@ -29,11 +29,11 @@ use crate::handler::passthrough::PassthroughHandler;
 use crate::middleware::backend_selection::BackendSelectionMiddleware;
 use crate::middleware::ban_check::BanCheckMiddleware;
 use crate::middleware::ban_ip_check::BanIpCheckMiddleware;
-use crate::middleware::domain_router::DomainRouterMiddleware;
 use crate::middleware::handshake_parser::HandshakeParserMiddleware;
 use crate::middleware::ip_filter::IpFilterMiddleware;
 use crate::middleware::login_start_parser::LoginStartParserMiddleware;
 use crate::middleware::rate_limiter::RateLimiterMiddleware;
+use crate::middleware::domain_router::DomainRouterMiddleware;
 use crate::middleware::telemetry::{ConnectionSpan, TelemetryMiddleware};
 use crate::pipeline::Pipeline;
 use crate::pipeline::admission::{self, Admission};
@@ -159,14 +159,9 @@ impl ProxyServer {
         // Docker provider (feature-gated)
         #[cfg(feature = "docker")]
         if let Some(ref docker_config) = config.docker {
-            match crate::provider::docker::DockerProvider::new(docker_config) {
-                Ok(docker_provider) => {
-                    provider_registry.add_provider(Box::new(docker_provider));
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "failed to initialize docker provider, continuing without");
-                }
-            }
+            provider_registry.add_provider(Box::new(crate::provider::docker::DockerProvider::new(
+                docker_config,
+            )));
         }
 
         #[cfg(not(feature = "docker"))]

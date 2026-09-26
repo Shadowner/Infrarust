@@ -27,8 +27,6 @@ use crate::error::CoreError;
 use crate::provider::{ConfigProvider, ProviderConfig, ProviderEvent, ProviderId};
 
 /// Default Minecraft port.
-const DEFAULT_MC_PORT: u16 = 25565;
-
 /// Docker provider that auto-discovers containers with `infrarust.*` labels.
 pub struct DockerProvider {
     config: DockerProviderConfig,
@@ -37,11 +35,11 @@ pub struct DockerProvider {
 }
 
 impl DockerProvider {
-    pub fn new(config: &DockerProviderConfig) -> Result<Self, CoreError> {
-        Ok(Self {
+    pub fn new(config: &DockerProviderConfig) -> Self {
+        Self {
             config: config.clone(),
             known: Mutex::new(HashMap::new()),
-        })
+        }
     }
 
     /// Connects to the Docker daemon.
@@ -132,7 +130,7 @@ impl DockerProvider {
         let port = labels
             .get("infrarust.port")
             .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(DEFAULT_MC_PORT);
+            .unwrap_or(infrarust_config::DEFAULT_MC_PORT);
 
         let address = resolve_container_address(&info, self.config.network.as_deref(), port);
 
