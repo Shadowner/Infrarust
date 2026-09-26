@@ -9,7 +9,7 @@ use infrarust_api::permissions::Capability;
 use infrarust_api::plugin::PluginContext;
 use infrarust_core::plugin::PluginPermissions;
 use infrarust_core::plugin::context::PluginContextImpl;
-use infrarust_core::plugin::context_factory::{PluginContextFactory, PluginContextFactoryImpl};
+use infrarust_core::plugin::context_factory::PluginContextFactoryImpl;
 use infrarust_core::plugin::manager::PluginServices;
 
 struct DummyLimbo;
@@ -59,14 +59,9 @@ fn denying(mut perms: PluginPermissions, denied: &[&str]) -> PluginPermissions {
     perms
 }
 
-fn limbo_handlers_after_register(ctx: &Arc<dyn PluginContext>) -> usize {
+fn limbo_handlers_after_register(ctx: &Arc<PluginContextImpl>) -> usize {
     let registered = ctx.register_limbo_handler(Box::new(DummyLimbo));
-    let count = ctx
-        .as_any()
-        .downcast_ref::<PluginContextImpl>()
-        .expect("real PluginContextImpl")
-        .limbo_handlers()
-        .len();
+    let count = ctx.limbo_handlers().len();
     assert_eq!(registered.is_ok(), count == 1, "{registered:?}");
     if count == 0 {
         assert_eq!(
@@ -80,7 +75,7 @@ fn limbo_handlers_after_register(ctx: &Arc<dyn PluginContext>) -> usize {
 #[test]
 fn untrusted_plugin_without_caps_is_gated_to_baseline() {
     let f = factory(vec![("p", perms(&[], false))]);
-    let ctx = f.create_context("p");
+    let ctx = f.context("p");
     assert!(ctx.capabilities().has(Capability::EventBus));
     assert!(ctx.capabilities().has(Capability::PlayerWrite));
     assert!(!ctx.capabilities().has(Capability::ServerManage));
@@ -92,7 +87,7 @@ fn untrusted_plugin_without_caps_is_gated_to_baseline() {
 #[test]
 fn unknown_plugin_id_defaults_to_baseline() {
     let f = factory(vec![]);
-    let ctx = f.create_context("not-in-map");
+    let ctx = f.context("not-in-map");
     assert!(ctx.capabilities().has(Capability::EventBus));
     assert!(!ctx.capabilities().has(Capability::CodecFilter));
     assert!(ctx.codec_filters().is_none());
@@ -101,7 +96,7 @@ fn unknown_plugin_id_defaults_to_baseline() {
 #[test]
 fn config_capability_reflected_in_capabilities() {
     let f = factory(vec![("p", perms(&["server-manage"], false))]);
-    let ctx = f.create_context("p");
+    let ctx = f.context("p");
     assert!(ctx.capabilities().has(Capability::ServerManage));
     assert!(
         ctx.capabilities().has(Capability::EventBus),
@@ -112,16 +107,16 @@ fn config_capability_reflected_in_capabilities() {
 #[test]
 fn codec_filter_capability_unlocks_registry() {
     let denied = factory(vec![("p", perms(&[], false))]);
-    assert!(denied.create_context("p").codec_filters().is_none());
+    assert!(denied.context("p").codec_filters().is_none());
 
     let granted = factory(vec![("p", perms(&["codec-filter"], false))]);
-    assert!(granted.create_context("p").codec_filters().is_some());
+    assert!(granted.context("p").codec_filters().is_some());
 }
 
 #[test]
 fn transport_filter_never_granted_via_config() {
     let f = factory(vec![("p", perms(&["transport-filter"], false))]);
-    let ctx = f.create_context("p");
+    let ctx = f.context("p");
     assert!(!ctx.capabilities().has(Capability::TransportFilter));
     assert!(ctx.transport_filters().is_none());
 }
@@ -129,14 +124,14 @@ fn transport_filter_never_granted_via_config() {
 #[test]
 fn limbo_capability_allows_registration() {
     let f = factory(vec![("p", perms(&["limbo"], false))]);
-    let ctx = f.create_context("p");
+    let ctx = f.context("p");
     assert_eq!(limbo_handlers_after_register(&ctx), 1);
 }
 
 #[test]
 fn trusted_native_plugin_gets_full_set() {
     let f = factory(vec![("native", perms(&[], true))]);
-    let ctx = f.create_context("native");
+    let ctx = f.context("native");
     assert!(ctx.capabilities().has(Capability::TransportFilter));
     assert!(ctx.capabilities().has(Capability::CodecFilter));
     assert!(ctx.capabilities().has(Capability::Limbo));
@@ -148,7 +143,7 @@ fn trusted_native_plugin_gets_full_set() {
 #[test]
 fn trusted_wins_over_conflicting_config_so_native_keeps_limbo() {
     let f = factory(vec![("auth", perms(&["ban"], true))]);
-    let ctx = f.create_context("auth");
+    let ctx = f.context("auth");
     assert!(ctx.capabilities().has(Capability::Limbo));
     assert_eq!(limbo_handlers_after_register(&ctx), 1);
 }
@@ -158,7 +153,7 @@ fn data_dir_is_created_on_demand() {
     let tmp = tempfile::tempdir().unwrap();
     let f = factory_in(tmp.path(), vec![("p", perms(&[], false))]);
 
-    let dir = f.create_context("p").data_dir();
+    let dir = f.context("p").data_dir();
 
     assert_eq!(dir, tmp.path().join("p"));
     assert!(
@@ -173,14 +168,14 @@ fn data_dir_creates_missing_plugins_dir_too() {
     let plugins_dir = tmp.path().join("absent").join("plugins");
     let f = factory_in(&plugins_dir, vec![("admin_api", perms(&[], true))]);
 
-    assert!(f.create_context("admin_api").data_dir().is_dir());
+    assert!(f.context("admin_api").data_dir().is_dir());
 }
 
 #[test]
 fn data_dir_is_idempotent() {
     let tmp = tempfile::tempdir().unwrap();
     let f = factory_in(tmp.path(), vec![("p", perms(&[], false))]);
-    let ctx = f.create_context("p");
+    let ctx = f.context("p");
 
     let dir = ctx.data_dir();
     std::fs::write(dir.join("state.json"), b"{}").unwrap();
@@ -201,7 +196,7 @@ fn denied_capabilities_are_removed_after_baseline_and_grants() {
             &["player-write", "ban", "not-a-capability"],
         ),
     )]);
-    let caps = f.create_context("p").capabilities().clone();
+    let caps = f.context("p").capabilities().clone();
     assert!(
         !caps.has(Capability::PlayerWrite),
         "baseline capability denied"
@@ -217,7 +212,7 @@ fn denied_capabilities_are_removed_after_baseline_and_grants() {
 #[test]
 fn denied_capabilities_are_removed_from_trusted_plugins_too() {
     let f = factory(vec![("t", denying(perms(&[], true), &["codec-filter"]))]);
-    let ctx = f.create_context("t");
+    let ctx = f.context("t");
     assert!(!ctx.capabilities().has(Capability::CodecFilter));
     assert!(ctx.codec_filters().is_none());
     assert!(ctx.capabilities().has(Capability::ServerManage));

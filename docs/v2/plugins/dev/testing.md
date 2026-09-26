@@ -202,7 +202,6 @@ struct MockPluginContext {
 impl infrarust_api::plugin::private::Sealed for MockPluginContext {}
 
 impl PluginContext for MockPluginContext {
-    fn as_any(&self) -> &dyn std::any::Any { self }
     fn plugin_id(&self) -> &str { &self.plugin_id }
     fn data_dir(&self) -> std::path::PathBuf {
         std::path::PathBuf::from("plugins").join(&self.plugin_id)
@@ -677,7 +676,7 @@ use std::time::Duration;
 #[tokio::test(start_paused = true)]
 async fn the_reminder_repeats_until_the_plugin_is_disabled() {
     let factory = factory();
-    let ctx = factory.create_context("reminders");
+    let ctx = factory.context("reminders");
     let runs = Arc::new(AtomicU32::new(0));
     let counted = runs.clone();
     ctx.scheduler().repeat(
@@ -694,9 +693,8 @@ async fn the_reminder_repeats_until_the_plugin_is_disabled() {
     tokio::time::sleep(Duration::from_secs(150)).await;
     assert_eq!(runs.load(Ordering::SeqCst), 2);
 
-    let real = ctx.as_any().downcast_ref::<PluginContextImpl>().unwrap();
-    real.cleanup();
-    assert_eq!(real.tracked_tasks(), 0);
+    ctx.cleanup();
+    assert_eq!(ctx.tracked_tasks(), 0);
 
     tokio::time::sleep(Duration::from_secs(600)).await;
     assert_eq!(runs.load(Ordering::SeqCst), 2);

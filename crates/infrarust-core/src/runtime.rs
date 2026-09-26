@@ -168,19 +168,23 @@ impl ProxyRuntimeBuilder {
             proxy_info,
             plugins_dir,
         );
-        let context_factory = PluginContextFactoryImpl::new(
-            plugin_services,
-            plugin_permissions(plugin_cfgs, trusted),
-        )
-        .with_ban_providers(Arc::clone(&services.ban_manager))
-        .with_permissions(Arc::clone(&services.permission_service))
-        .with_limbo_handlers(Arc::clone(&services.limbo_handler_registry))
-        .with_messaging(
-            Arc::clone(&services.plugin_messaging),
-            Arc::clone(&services.connection_registry),
+        let context_factory = Arc::new(
+            PluginContextFactoryImpl::new(
+                plugin_services,
+                plugin_permissions(plugin_cfgs, trusted),
+            )
+            .with_ban_providers(Arc::clone(&services.ban_manager))
+            .with_permissions(Arc::clone(&services.permission_service))
+            .with_limbo_handlers(Arc::clone(&services.limbo_handler_registry))
+            .with_messaging(
+                Arc::clone(&services.plugin_messaging),
+                Arc::clone(&services.connection_registry),
+            ),
         );
 
-        let errors = plugin_manager.load_and_enable_all(&context_factory).await;
+        let errors = plugin_manager
+            .load_and_enable_all(Arc::clone(&context_factory))
+            .await;
         if !errors.is_empty() {
             tracing::warn!(count = errors.len(), "Some plugins failed to enable");
         }
@@ -383,7 +387,7 @@ pub struct RunningProxy {
     server: Arc<ProxyServer>,
     plugin_manager: Arc<RwLock<PluginManager>>,
     plugin_registry: Arc<PluginRegistryImpl>,
-    context_factory: PluginContextFactoryImpl,
+    context_factory: Arc<PluginContextFactoryImpl>,
     serve_task: JoinHandle<Result<(), CoreError>>,
     local_addr: SocketAddr,
     start_time: Instant,

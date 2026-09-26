@@ -38,7 +38,7 @@ async fn test_plugin_receives_events_end_to_end() {
 
     let mut manager = PluginManager::new(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
-    let errors = manager.load_and_enable_all(&factory).await;
+    let errors = manager.load_and_enable_all(Arc::new(factory)).await;
     assert!(errors.is_empty());
     assert!(manager.is_plugin_loaded("test_plugin"));
 
@@ -70,7 +70,7 @@ async fn test_dependency_order_end_to_end() {
 
     let mut manager = PluginManager::new(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
-    manager.load_and_enable_all(&factory).await;
+    manager.load_and_enable_all(Arc::new(factory)).await;
 
     assert!(parent.enable_order() < child.enable_order());
 }

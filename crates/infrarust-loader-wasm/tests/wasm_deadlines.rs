@@ -17,13 +17,12 @@ use infrarust_api::events::connection::{
 };
 use infrarust_api::events::lifecycle::{PreLoginEvent, PreLoginResult};
 use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboHandler};
-use infrarust_api::loader::{PluginContextFactory, PluginLoader};
+use infrarust_api::loader::PluginLoader;
 use infrarust_api::plugin::Plugin;
 use infrarust_api::test_util::RecordingLimboSession;
 use infrarust_api::test_util::{Gate, MockBanService};
 use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
 use infrarust_core::event_bus::EventBusConfig;
-use infrarust_core::plugin::context::PluginContextImpl;
 use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutcome};
 use infrarust_loader_wasm::WasmPluginLoader;
 
@@ -127,10 +126,7 @@ async fn poll_once<F: Future + Unpin>(future: &mut F) -> Option<F::Output> {
 
 fn ban_gate(env: &TestEnv) -> Arc<dyn LimboHandler> {
     env.factory
-        .create_context(FIXTURE)
-        .as_any()
-        .downcast_ref::<PluginContextImpl>()
-        .expect("PluginContextImpl")
+        .context(FIXTURE)
         .limbo_handlers()
         .into_iter()
         .find(|handler| handler.name() == "ban-gate")

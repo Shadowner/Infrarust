@@ -23,7 +23,7 @@ use crate::services::scheduler::SchedulerImpl;
 use super::PluginRegistryImpl;
 use super::PluginState;
 use super::context::PluginContextImpl;
-use super::context_factory::PluginContextFactory;
+use super::context_factory::{PluginContextFactory, PluginContextFactoryImpl};
 use super::dependency::resolve_load_order;
 use super::loader::PluginLoader;
 
@@ -46,23 +46,26 @@ pub struct PluginServices {
     pub plugins_dir: PathBuf,
 }
 
+type LoaderIndex = usize;
+
 pub struct PluginManager {
     loaders: Vec<Box<dyn PluginLoader>>,
     plugins: Vec<LoadedPlugin>,
     states: HashMap<String, PluginState>,
     load_order: Vec<String>,
-    loader_mapping: HashMap<String, String>, // plugin_id -> loader_name
-    loaded_loaders: Vec<String>,             // loaders whose on_load() succeeded
-    disabled: HashSet<String>,               // plugin ids disabled via config
+    loader_of: HashMap<String, LoaderIndex>,
+    loaded_loaders: Vec<LoaderIndex>,
+    disabled: HashSet<String>,
     event_bus: Option<Arc<EventBusImpl>>,
     registry: Option<Arc<PluginRegistryImpl>>,
+    context_factory: Option<Arc<PluginContextFactoryImpl>>,
 }
 
 struct LoadedPlugin {
     plugin: Box<dyn Plugin>,
-    context: Arc<dyn PluginContext>,
+    context: Arc<PluginContextImpl>,
     metadata: PluginMetadata,
-    loader_name: String,
+    loader: LoaderIndex,
 }
 
 impl PluginManager {
@@ -72,11 +75,12 @@ impl PluginManager {
             plugins: Vec::new(),
             states: HashMap::new(),
             load_order: Vec::new(),
-            loader_mapping: HashMap::new(),
+            loader_of: HashMap::new(),
             loaded_loaders: Vec::new(),
             disabled: HashSet::new(),
             event_bus: None,
             registry: None,
+            context_factory: None,
         }
     }
 
@@ -106,23 +110,23 @@ impl PluginManager {
         plugin_dir: &Path,
     ) -> Result<Vec<PluginMetadata>, PluginError> {
         let mut all_metadata: Vec<PluginMetadata> = Vec::new();
-        let mut seen_ids: HashMap<String, String> = HashMap::new();
+        let mut loader_of: HashMap<String, LoaderIndex> = HashMap::new();
 
-        for loader in &self.loaders {
+        for (at, loader) in self.loaders.iter().enumerate() {
             let discovered = loader.discover(plugin_dir).await.map_err(|e| {
                 PluginError::InitFailed(format!("Loader '{}' discovery failed: {e}", loader.name()))
             })?;
 
             for metadata in discovered {
-                if let Some(existing_loader) = seen_ids.get(&metadata.id) {
+                if let Some(existing) = loader_of.get(&metadata.id) {
                     return Err(PluginError::InitFailed(format!(
                         "Duplicate plugin id '{}': found in loader '{}' and '{}'",
                         metadata.id,
-                        existing_loader,
+                        self.loaders[*existing].name(),
                         loader.name()
                     )));
                 }
-                seen_ids.insert(metadata.id.clone(), loader.name().to_string());
+                loader_of.insert(metadata.id.clone(), at);
                 all_metadata.push(metadata);
             }
         }
@@ -130,30 +134,31 @@ impl PluginManager {
         let load_order = resolve_load_order(&all_metadata)?;
 
         self.load_order = load_order;
-        self.loader_mapping = seen_ids;
+        self.loader_of = loader_of;
 
         Ok(all_metadata)
     }
 
     pub async fn load_and_enable_all(
         &mut self,
-        context_factory: &dyn PluginContextFactory,
+        context_factory: Arc<PluginContextFactoryImpl>,
     ) -> Vec<PluginError> {
         let mut errors = Vec::new();
         let load_order = self.load_order.clone();
+        let factory: &dyn PluginContextFactory = context_factory.as_ref();
 
-        let mut failed_loaders: HashSet<String> = HashSet::new();
-        let mut ok_loaders: Vec<String> = Vec::new();
-        for loader in &self.loaders {
-            match loader.on_load(context_factory).await {
-                Ok(()) => ok_loaders.push(loader.name().to_string()),
+        let mut failed_loaders: HashSet<LoaderIndex> = HashSet::new();
+        let mut ok_loaders: Vec<LoaderIndex> = Vec::new();
+        for (at, loader) in self.loaders.iter().enumerate() {
+            match loader.on_load(factory).await {
+                Ok(()) => ok_loaders.push(at),
                 Err(e) => {
-                    let name = loader.name().to_string();
+                    let name = loader.name();
                     tracing::error!(loader = %name, error = %e, "Loader on_load() failed");
                     errors.push(PluginError::InitFailed(format!(
                         "Loader '{name}' on_load failed: {e}"
                     )));
-                    failed_loaders.insert(name);
+                    failed_loaders.insert(at);
                 }
             }
         }
@@ -165,17 +170,16 @@ impl PluginManager {
                 self.states.insert(plugin_id.clone(), PluginState::Disabled);
                 continue;
             }
-            let loader_name = match self.loader_mapping.get(plugin_id) {
-                Some(name) => name.clone(),
-                None => {
-                    errors.push(PluginError::InitFailed(format!(
-                        "No loader mapping for plugin '{plugin_id}'"
-                    )));
-                    continue;
-                }
+            let Some(&at) = self.loader_of.get(plugin_id) else {
+                errors.push(PluginError::InitFailed(format!(
+                    "No loader mapping for plugin '{plugin_id}'"
+                )));
+                continue;
             };
+            let loader = &self.loaders[at];
+            let loader_name = loader.name();
 
-            if failed_loaders.contains(&loader_name) {
+            if failed_loaders.contains(&at) {
                 self.states.insert(
                     plugin_id.clone(),
                     PluginState::Error(format!("loader '{loader_name}' on_load failed")),
@@ -183,17 +187,7 @@ impl PluginManager {
                 continue;
             }
 
-            let loader = match self.loaders.iter().find(|l| l.name() == loader_name) {
-                Some(l) => l,
-                None => {
-                    errors.push(PluginError::InitFailed(format!(
-                        "Loader '{loader_name}' not found for plugin '{plugin_id}'"
-                    )));
-                    continue;
-                }
-            };
-
-            let plugin = match loader.load(plugin_id, context_factory).await {
+            let plugin = match loader.load(plugin_id, factory).await {
                 Ok(p) => p,
                 Err(e) => {
                     let err = PluginError::InitFailed(format!(
@@ -208,7 +202,7 @@ impl PluginManager {
             };
 
             let metadata = plugin.metadata();
-            let ctx = context_factory.create_context(plugin_id);
+            let ctx = context_factory.context(plugin_id);
 
             self.states.insert(plugin_id.clone(), PluginState::Loading);
             match plugin.on_enable(ctx.as_ref()).await {
@@ -228,22 +222,21 @@ impl PluginManager {
                         plugin,
                         context: ctx,
                         metadata,
-                        loader_name,
+                        loader: at,
                     });
                 }
                 Err(e) => {
                     self.states
                         .insert(plugin_id.clone(), PluginState::Error(e.to_string()));
                     tracing::error!(plugin = %plugin_id, error = %e, "Plugin failed to enable");
-
-                    if let Some(ctx_impl) = ctx.as_any().downcast_ref::<PluginContextImpl>() {
-                        ctx_impl.cleanup();
-                    }
+                    ctx.cleanup();
+                    context_factory.forget_context(plugin_id);
                     errors.push(e);
                 }
             }
         }
 
+        self.context_factory = Some(context_factory);
         errors
     }
 
@@ -260,11 +253,10 @@ impl PluginManager {
         }
 
         let loaded = std::mem::take(&mut self.loaded_loaders);
-        for name in loaded.iter().rev() {
-            if let Some(loader) = self.loaders.iter().find(|l| l.name() == name)
-                && let Err(e) = loader.on_shutdown().await
-            {
-                tracing::error!(loader = %name, error = %e, "Loader on_shutdown() failed");
+        for at in loaded.into_iter().rev() {
+            let loader = &self.loaders[at];
+            if let Err(e) = loader.on_shutdown().await {
+                tracing::error!(loader = %loader.name(), error = %e, "Loader on_shutdown() failed");
             }
         }
     }
@@ -308,22 +300,22 @@ impl PluginManager {
             tracing::error!(plugin = %id, error = %e, "Plugin on_disable() failed");
         }
 
-        if let Some(ctx_impl) = loaded.context.as_any().downcast_ref::<PluginContextImpl>() {
-            ctx_impl.cleanup();
-        }
+        loaded.context.cleanup();
+        self.forget_context(id);
         self.announce(PluginDisabledEvent::new(id.clone())).await;
     }
 
     async fn unload(&self, loaded: &LoadedPlugin) {
-        let loader = self.loaders.iter().find(|l| l.name() == loaded.loader_name);
-        if let Some(loader) = loader
-            && let Err(e) = loader.unload(&loaded.metadata.id).await
-        {
-            tracing::error!(
-                plugin = %loaded.metadata.id,
-                error = %e,
-                "Loader unload failed"
-            );
+        let id = &loaded.metadata.id;
+        if let Err(e) = self.loaders[loaded.loader].unload(id).await {
+            tracing::error!(plugin = %id, error = %e, "Loader unload failed");
+        }
+        self.forget_context(id);
+    }
+
+    fn forget_context(&self, id: &str) {
+        if let Some(factory) = &self.context_factory {
+            factory.forget_context(id);
         }
     }
 
@@ -335,11 +327,8 @@ impl PluginManager {
     )> {
         let mut all = Vec::new();
         for loaded in &self.plugins {
-            if let Some(ctx_impl) = loaded.context.as_any().downcast_ref::<PluginContextImpl>() {
-                let providers = ctx_impl.take_config_providers();
-                for provider in providers {
-                    all.push((loaded.metadata.id.clone(), provider));
-                }
+            for provider in loaded.context.take_config_providers() {
+                all.push((loaded.metadata.id.clone(), provider));
             }
         }
         all
@@ -349,17 +338,15 @@ impl PluginManager {
         &self,
         results: Vec<(String, crate::provider::plugin_adapter::ActivatedProvider)>,
     ) {
+        let contexts: HashMap<&str, &Arc<PluginContextImpl>> = self
+            .plugins
+            .iter()
+            .map(|loaded| (loaded.metadata.id.as_str(), &loaded.context))
+            .collect();
         for (plugin_id, activated) in results {
-            for loaded in &self.plugins {
-                if loaded.metadata.id == plugin_id {
-                    if let Some(ctx_impl) =
-                        loaded.context.as_any().downcast_ref::<PluginContextImpl>()
-                    {
-                        ctx_impl.register_active_provider_ids(activated.config_ids);
-                        ctx_impl.register_provider_token(activated.watch_token);
-                    }
-                    break;
-                }
+            if let Some(ctx) = contexts.get(plugin_id.as_str()) {
+                ctx.register_active_provider_ids(activated.config_ids);
+                ctx.register_provider_token(activated.watch_token);
             }
         }
     }
@@ -368,7 +355,7 @@ impl PluginManager {
         self.plugins
             .iter()
             .find(|loaded| loaded.metadata.id == id)
-            .map(|loaded| Arc::clone(&loaded.context))
+            .map(|loaded| Arc::clone(&loaded.context) as Arc<dyn PluginContext>)
     }
 
     pub fn is_plugin_loaded(&self, id: &str) -> bool {
@@ -391,10 +378,17 @@ mod tests {
     use infrarust_api::event::BoxFuture;
 
     use crate::plugin::static_loader::StaticPluginLoader;
-    use crate::test_support::{MockPluginContextFactory, TestPlugin};
+    use crate::test_support::TestPlugin;
     use crate::util::sync::lock;
 
     use super::*;
+
+    fn factory() -> Arc<PluginContextFactoryImpl> {
+        Arc::new(PluginContextFactoryImpl::new(
+            PluginServices::for_tests(),
+            HashMap::new(),
+        ))
+    }
 
     #[tokio::test]
     async fn test_plugin_manager_discovers_from_multiple_loaders() {
@@ -439,10 +433,9 @@ mod tests {
         plugin.register(&loader);
 
         let mut manager = PluginManager::new(vec![Box::new(loader)]);
-        let factory = MockPluginContextFactory;
 
         manager.discover_all(Path::new("plugins")).await.unwrap();
-        let errors = manager.load_and_enable_all(&factory).await;
+        let errors = manager.load_and_enable_all(factory()).await;
         assert!(errors.is_empty());
         assert!(plugin.is_enabled());
 
@@ -538,7 +531,7 @@ mod tests {
         };
         let mut mgr = PluginManager::new(vec![Box::new(loader)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
-        let errors = mgr.load_and_enable_all(&MockPluginContextFactory).await;
+        let errors = mgr.load_and_enable_all(factory()).await;
         assert!(errors.is_empty());
         mgr.shutdown().await;
 
@@ -565,7 +558,7 @@ mod tests {
         };
         let mut mgr = PluginManager::new(vec![Box::new(loader)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
-        let errors = mgr.load_and_enable_all(&MockPluginContextFactory).await;
+        let errors = mgr.load_and_enable_all(factory()).await;
         assert!(errors.is_empty());
         mgr.shutdown().await;
 
@@ -591,7 +584,7 @@ mod tests {
         };
         let mut mgr = PluginManager::new(vec![Box::new(bad), Box::new(good)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
-        let errors = mgr.load_and_enable_all(&MockPluginContextFactory).await;
+        let errors = mgr.load_and_enable_all(factory()).await;
 
         // The failed on_load surfaces exactly one error...
         assert_eq!(errors.len(), 1);
@@ -625,7 +618,7 @@ mod tests {
         };
         let mut mgr = PluginManager::new(vec![Box::new(loader)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
-        mgr.load_and_enable_all(&MockPluginContextFactory).await;
+        mgr.load_and_enable_all(factory()).await;
         mgr.shutdown().await;
         mgr.shutdown().await;
 

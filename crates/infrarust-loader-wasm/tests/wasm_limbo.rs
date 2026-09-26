@@ -7,11 +7,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboHandler};
-use infrarust_api::loader::{PluginContextFactory, PluginLoader};
+use infrarust_api::loader::PluginLoader;
 use infrarust_api::test_util::RecordingLimboSession;
 use infrarust_api::types::{PlayerId, ServerId};
 use infrarust_core::plugin::PluginContextFactoryImpl;
-use infrarust_core::plugin::context::PluginContextImpl;
 use tracing::Level;
 use tracing::instrument::WithSubscriber;
 
@@ -30,12 +29,7 @@ fn limbo_env(plugins_dir: PathBuf, plugin_id: &str, grant: bool) -> PluginContex
 }
 
 fn take_handlers(factory: &PluginContextFactoryImpl, id: &str) -> Vec<Arc<dyn LimboHandler>> {
-    factory
-        .create_context(id)
-        .as_any()
-        .downcast_ref::<PluginContextImpl>()
-        .expect("PluginContextImpl")
-        .limbo_handlers()
+    factory.context(id).limbo_handlers()
 }
 
 fn find_handler(handlers: Vec<Arc<dyn LimboHandler>>, name: &str) -> Arc<dyn LimboHandler> {

@@ -48,9 +48,6 @@ impl MockPluginContext {
 impl infrarust_api::plugin::private::Sealed for MockPluginContext {}
 
 impl PluginContext for MockPluginContext {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
     fn event_bus(&self) -> Arc<dyn EventBus> {
         unimplemented!("mock")
     }

@@ -7,8 +7,7 @@ use std::time::Duration;
 
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::scheduler::Scheduler;
-use infrarust_core::plugin::context::PluginContextImpl;
-use infrarust_core::plugin::context_factory::{PluginContextFactory, PluginContextFactoryImpl};
+use infrarust_core::plugin::context_factory::PluginContextFactoryImpl;
 use infrarust_core::plugin::manager::PluginServices;
 use infrarust_core::plugin::tracking::TrackingScheduler;
 use infrarust_core::services::scheduler::SchedulerImpl;
@@ -274,17 +273,11 @@ fn factory() -> PluginContextFactoryImpl {
     PluginContextFactoryImpl::new(PluginServices::for_tests(), HashMap::new())
 }
 
-fn context(ctx: &Arc<dyn PluginContext>) -> &PluginContextImpl {
-    ctx.as_any()
-        .downcast_ref::<PluginContextImpl>()
-        .expect("real PluginContextImpl")
-}
-
 #[tokio::test(start_paused = true)]
 async fn disabling_a_plugin_cancels_every_task_it_scheduled() {
     let factory = factory();
-    let ctx = factory.create_context("p");
-    let bystander = factory.create_context("q");
+    let ctx = factory.context("p");
+    let bystander = factory.context("q");
     let (runs, seen) = counter();
     let (other_runs, other_seen) = counter();
     let handle = ctx.scheduler();
@@ -313,14 +306,14 @@ async fn disabling_a_plugin_cancels_every_task_it_scheduled() {
 
     advance(25 * MS).await;
     assert_eq!(seen.load(Ordering::SeqCst), 2);
-    assert_eq!(context(&ctx).tracked_tasks(), 3);
+    assert_eq!(ctx.tracked_tasks(), 3);
 
-    context(&ctx).cleanup();
-    assert_eq!(context(&ctx).tracked_tasks(), 0);
+    ctx.cleanup();
+    assert_eq!(ctx.tracked_tasks(), 0);
     advance(50 * MS).await;
     assert_eq!(seen.load(Ordering::SeqCst), 2);
     assert_eq!(other_seen.load(Ordering::SeqCst), 7);
-    assert_eq!(context(&bystander).tracked_tasks(), 1);
+    assert_eq!(bystander.tracked_tasks(), 1);
 }
 
 fn time_to_never() -> Duration {

@@ -9,7 +9,7 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::permissions::AllPermissionsChecker;
 use infrarust_api::plugin::PluginContext;
 use infrarust_core::plugin::context::PluginContextImpl;
-use infrarust_core::plugin::context_factory::{PluginContextFactory, PluginContextFactoryImpl};
+use infrarust_core::plugin::context_factory::PluginContextFactoryImpl;
 use infrarust_core::plugin::manager::PluginServices;
 use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutcome};
 
@@ -42,18 +42,12 @@ fn factory(commands: &Arc<CommandManagerImpl>) -> PluginContextFactoryImpl {
     PluginContextFactoryImpl::new(services, HashMap::new())
 }
 
-fn disable(ctx: &Arc<dyn PluginContext>) {
-    ctx.as_any()
-        .downcast_ref::<PluginContextImpl>()
-        .expect("real PluginContextImpl")
-        .cleanup();
+fn disable(ctx: &Arc<PluginContextImpl>) {
+    ctx.cleanup();
 }
 
-fn tracked(ctx: &Arc<dyn PluginContext>) -> Vec<String> {
-    ctx.as_any()
-        .downcast_ref::<PluginContextImpl>()
-        .expect("real PluginContextImpl")
-        .tracked_commands()
+fn tracked(ctx: &Arc<PluginContextImpl>) -> Vec<String> {
+    ctx.tracked_commands()
 }
 
 async fn run(commands: &CommandManagerImpl, input: &str) -> bool {
@@ -75,7 +69,7 @@ async fn disabling_a_plugin_whose_registration_was_refused_keeps_the_builtin() {
     let calls = Calls::default();
     let commands = with_builtin(&calls);
     let f = factory(&commands);
-    let evil = f.create_context("evil");
+    let evil = f.context("evil");
 
     assert_eq!(
         evil.command_manager()
@@ -95,8 +89,8 @@ async fn a_plugin_cannot_take_over_or_remove_another_plugins_command() {
     let calls = Calls::default();
     let commands = Arc::new(CommandManagerImpl::new());
     let f = factory(&commands);
-    let a = f.create_context("a");
-    let b = f.create_context("b");
+    let a = f.context("a");
+    let b = f.context("b");
 
     a.command_manager()
         .register(CommandSpec::new("hello"), handler("a", &calls))
@@ -129,7 +123,7 @@ async fn an_alias_cannot_shadow_a_builtin_alias() {
     let calls = Calls::default();
     let commands = with_builtin(&calls);
     let f = factory(&commands);
-    let p = f.create_context("p");
+    let p = f.context("p");
 
     let registration = p
         .command_manager()
@@ -150,8 +144,8 @@ async fn disabling_a_plugin_removes_only_its_own_commands() {
     let calls = Calls::default();
     let commands = with_builtin(&calls);
     let f = factory(&commands);
-    let a = f.create_context("a");
-    let b = f.create_context("b");
+    let a = f.context("a");
+    let b = f.context("b");
     a.command_manager()
         .register(CommandSpec::new("home").alias("h"), handler("a", &calls))
         .unwrap();
@@ -177,7 +171,7 @@ async fn a_handle_kept_after_enable_registers_for_the_same_plugin() {
     let calls = Calls::default();
     let commands = Arc::new(CommandManagerImpl::new());
     let f = factory(&commands);
-    let late = f.create_context("late");
+    let late = f.context("late");
     let handle = late.command_manager();
 
     handle

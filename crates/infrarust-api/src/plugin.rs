@@ -180,9 +180,6 @@ pub mod private {
 /// Gives access to all proxy services and registration methods.
 /// The proxy is the sole implementor.
 pub trait PluginContext: Send + Sync + private::Sealed {
-    /// Used internally by the plugin manager for cleanup via downcast.
-    fn as_any(&self) -> &dyn std::any::Any;
-
     fn event_bus(&self) -> Arc<dyn EventBus>;
 
     fn player_registry(&self) -> Arc<dyn PlayerRegistry>;

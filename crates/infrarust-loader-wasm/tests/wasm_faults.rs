@@ -19,7 +19,6 @@ use infrarust_api::test_util::RecordingLimboSession;
 use infrarust_api::test_util::{Gate, MockBanService};
 use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
 use infrarust_core::event_bus::{EventBusConfig, EventBusImpl};
-use infrarust_core::plugin::context::PluginContextImpl;
 use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutcome};
 use infrarust_loader_wasm::WasmPluginLoader;
 use tracing::Level;
@@ -164,12 +163,7 @@ fn break_the_log(data: &Path) -> PathBuf {
 }
 
 fn limbo_handlers(env: &TestEnv, id: &str) -> Vec<Arc<dyn LimboHandler>> {
-    env.factory
-        .create_context(id)
-        .as_any()
-        .downcast_ref::<PluginContextImpl>()
-        .expect("PluginContextImpl")
-        .limbo_handlers()
+    env.factory.context(id).limbo_handlers()
 }
 
 fn named(handlers: &mut Vec<Arc<dyn LimboHandler>>, name: &str) -> Arc<dyn LimboHandler> {

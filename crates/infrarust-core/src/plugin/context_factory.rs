@@ -92,8 +92,8 @@ impl PluginContextFactoryImpl {
     }
 }
 
-impl PluginContextFactory for PluginContextFactoryImpl {
-    fn create_context(&self, plugin_id: &str) -> Arc<dyn PluginContext> {
+impl PluginContextFactoryImpl {
+    pub fn context(&self, plugin_id: &str) -> Arc<PluginContextImpl> {
         let mut cache = lock(&self.contexts);
         if let Some(existing) = cache.get(plugin_id).and_then(Weak::upgrade) {
             return existing;
@@ -160,6 +160,16 @@ impl PluginContextFactory for PluginContextFactoryImpl {
 
         cache.insert(plugin_id.to_string(), Arc::downgrade(&ctx));
         ctx
+    }
+
+    pub fn remembers_context(&self, plugin_id: &str) -> bool {
+        lock(&self.contexts).contains_key(plugin_id)
+    }
+}
+
+impl PluginContextFactory for PluginContextFactoryImpl {
+    fn create_context(&self, plugin_id: &str) -> Arc<dyn PluginContext> {
+        self.context(plugin_id)
     }
 
     fn forget_context(&self, plugin_id: &str) {
