@@ -126,8 +126,8 @@ impl ConsoleCommand for HelpCommand {
                 for (namespaced, info) in plugin_commands {
                     lines.push(OutputLine::Info(format!(
                         "    {:<25} {}",
-                        format!("{} ({namespaced})", info.name),
-                        info.description
+                        format!("{} ({namespaced})", info.spec.name),
+                        info.spec.description
                     )));
                 }
             }

@@ -263,7 +263,7 @@ impl CommandManagerImpl {
 
     pub fn list(&self) -> Vec<CommandInfo> {
         let mut infos: Vec<CommandInfo> = self.read().commands.values().map(Entry::info).collect();
-        infos.sort_by(|a, b| a.name.cmp(&b.name).then(a.plugin_id.cmp(&b.plugin_id)));
+        infos.sort_by(|a, b| a.name().cmp(b.name()).then(a.plugin_id.cmp(&b.plugin_id)));
         infos
     }
 

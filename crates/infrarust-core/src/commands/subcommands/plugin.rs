@@ -76,7 +76,7 @@ impl SubcommandHandler for PluginSubcommand {
                     for info in &cmds {
                         player.send_message(ProxyMessage::detail(&format!(
                             "  /{} - {}",
-                            info.name, info.description
+                            info.spec.name, info.spec.description
                         )));
                     }
                 }
@@ -123,7 +123,7 @@ impl SubcommandHandler for PluginSubcommand {
                         .command_manager
                         .commands_for_plugin(plugin_id)
                         .into_iter()
-                        .map(|info| info.name)
+                        .map(|info| info.spec.name)
                         .filter(|name| name.starts_with(prefix))
                         .collect()
                 }

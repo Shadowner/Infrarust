@@ -293,32 +293,23 @@ impl CommandRegistration {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CommandInfo {
-    pub name: String,
-    pub aliases: Vec<String>,
-    pub description: String,
-    pub usage: Option<String>,
-    pub permission: Option<String>,
-    pub hidden: bool,
+    pub spec: CommandSpec,
     pub plugin_id: Option<String>,
 }
 
 impl CommandInfo {
     pub fn new(spec: CommandSpec, plugin_id: Option<String>) -> Self {
-        Self {
-            name: spec.name,
-            aliases: spec.aliases,
-            description: spec.description,
-            usage: spec.usage,
-            permission: spec.permission,
-            hidden: spec.hidden,
-            plugin_id,
-        }
+        Self { spec, plugin_id }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.spec.name
     }
 
     pub fn namespaced(&self) -> Option<String> {
         self.plugin_id
             .as_ref()
-            .map(|plugin| format!("{plugin}:{}", self.name))
+            .map(|plugin| format!("{plugin}:{}", self.spec.name))
     }
 }
 
