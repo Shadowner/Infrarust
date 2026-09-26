@@ -2,7 +2,8 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use infrarust_api::services::ban_service::BanTarget;
+use infrarust_api::error::ServiceError;
+use infrarust_api::services::ban_service::{BanService, BanTarget};
 use infrarust_api::services::config_service::ProxyMode;
 use infrarust_api::types::ServerAddress;
 
@@ -35,6 +36,11 @@ pub fn get_memory_rss() -> Option<u64> {
     {
         None
     }
+}
+
+pub async fn active_ban_count(ban_service: &dyn BanService) -> Result<usize, ServiceError> {
+    let bans = ban_service.list_all().await?;
+    Ok(bans.iter().filter(|ban| !ban.is_expired()).count())
 }
 
 pub fn get_active_features() -> Vec<String> {

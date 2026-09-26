@@ -322,7 +322,16 @@ mod tests {
 
     // ── Mock BanService ──
 
-    struct MockBanService;
+    #[derive(Default)]
+    struct MockBanService {
+        entries: Vec<BanEntry>,
+    }
+
+    impl MockBanService {
+        fn with_entries(entries: Vec<BanEntry>) -> Self {
+            Self { entries }
+        }
+    }
 
     impl infrarust_api::services::ban_service::private::Sealed for MockBanService {}
 
@@ -355,11 +364,30 @@ mod tests {
             Box::pin(async { Ok(None) })
         }
         fn list(&self, _query: BanQuery) -> BoxFuture<'_, Result<BanPage, ServiceError>> {
-            Box::pin(async { Ok(BanPage::default()) })
+            let entries = self.entries.clone();
+            Box::pin(async move { Ok(BanPage::new(entries, None)) })
         }
         fn features(&self) -> BanFeatures {
             BanFeatures::new()
         }
+    }
+
+    fn one_expired_and_one_active_ban() -> Vec<BanEntry> {
+        let hour = Duration::from_secs(3600);
+        let expired = BanEntry::new(
+            "expired",
+            BanTarget::Username("gone".into()),
+            BanSource::System,
+        )
+        .created_at(std::time::SystemTime::now() - 2 * hour)
+        .lasting(hour);
+        let active = BanEntry::new(
+            "active",
+            BanTarget::Username("here".into()),
+            BanSource::System,
+        )
+        .lasting(hour);
+        vec![expired, active]
     }
 
     // ── Mock ServerManager ──
@@ -681,10 +709,26 @@ api_key = \"super-secret-key-value\"
         requests_per_minute: u64,
         config_service: Arc<MockConfigService>,
     ) -> Arc<ApiState> {
+        test_state_with_services(
+            data_dir,
+            api_key,
+            requests_per_minute,
+            config_service,
+            Arc::new(MockBanService::default()),
+        )
+    }
+
+    fn test_state_with_services(
+        data_dir: &std::path::Path,
+        api_key: &str,
+        requests_per_minute: u64,
+        config_service: Arc<MockConfigService>,
+        ban_service: Arc<MockBanService>,
+    ) -> Arc<ApiState> {
         let (event_tx, _) = broadcast::channel::<ApiEvent>(16);
         Arc::new(ApiState {
             player_registry: Arc::new(MockPlayerRegistry { count: 3 }),
-            ban_service: Arc::new(MockBanService),
+            ban_service,
             server_manager: Arc::new(MockServerManager),
             config_service,
             load_balancer: Arc::new(MockLoadBalancerService {
@@ -1715,6 +1759,57 @@ server_id = \"abc\"
         assert!(data["uptime_seconds"].is_u64());
         assert!(data["players_by_server"].is_object());
         assert!(data["servers_by_state"].is_object());
+    }
+
+    #[tokio::test]
+    async fn stats_overview_counts_only_the_bans_still_in_force() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with_services(
+            dir.path(),
+            "test-key",
+            1000,
+            Arc::new(MockConfigService::new(2)),
+            Arc::new(MockBanService::with_entries(
+                one_expired_and_one_active_ban(),
+            )),
+        );
+        let app = build_router(state, true);
+        let (name, value) = auth_header();
+        let request = Request::builder()
+            .uri("/api/v1/stats")
+            .header(name, value)
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_body(response).await;
+        assert_eq!(body["data"]["bans_active"], 1);
+    }
+
+    #[tokio::test]
+    async fn stats_ticks_count_only_the_bans_still_in_force() {
+        let (event_tx, mut events) = broadcast::channel::<ApiEvent>(16);
+        let shutdown = CancellationToken::new();
+        let ticker = crate::sse::stats_ticker::StatsTicker::new(
+            event_tx,
+            Arc::new(MockPlayerRegistry { count: 0 }),
+            Arc::new(MockServerManager),
+            Arc::new(MockBanService::with_entries(
+                one_expired_and_one_active_ban(),
+            )),
+            Instant::now(),
+            shutdown.clone(),
+        );
+        let running = tokio::spawn(ticker.run());
+
+        let tick = events.recv().await.unwrap();
+        shutdown.cancel();
+        running.await.unwrap();
+        match tick {
+            ApiEvent::StatsTick { bans_active, .. } => assert_eq!(bans_active, 1),
+            other => panic!("expected a stats tick, got {other:?}"),
+        }
     }
 
     // ── Config ──

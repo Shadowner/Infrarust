@@ -9,15 +9,15 @@ use crate::dto::stats::StatsResponse;
 use crate::error::ApiError;
 use crate::response::{ApiResponse, ok};
 use crate::state::ApiState;
-use crate::util::get_memory_rss;
+use crate::util::{active_ban_count, get_memory_rss};
 
 pub async fn overview(
     State(state): State<Arc<ApiState>>,
 ) -> Result<Json<ApiResponse<StatsResponse>>, ApiError> {
     let players = state.player_registry.get_all_players();
     let all_servers = state.server_manager.get_all_servers();
-    let bans_active = match state.ban_service.list_all().await {
-        Ok(bans) => bans.iter().filter(|b| !b.is_expired()).count(),
+    let bans_active = match active_ban_count(&*state.ban_service).await {
+        Ok(count) => count,
         Err(ServiceError::Unavailable(_)) => 0,
         Err(e) => return Err(ApiError::Internal(format!("Failed to fetch bans: {e}"))),
     };
