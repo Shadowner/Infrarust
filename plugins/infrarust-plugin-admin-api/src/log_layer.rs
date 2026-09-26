@@ -158,30 +158,23 @@ mod tests {
     }
 
     #[test]
-    fn ring_buffer_evicts_old_entries() {
-        let lb = LogBroadcast::new(64, 3);
-        let layer = lb.layer();
+    fn the_layer_keeps_only_the_newest_entries() {
+        use tracing_subscriber::layer::SubscriberExt;
 
-        // Simulate pushing entries directly to ring buffer
-        for i in 0..5 {
-            let entry = LogEntry {
-                timestamp: format!("2026-01-01T00:00:0{i}Z"),
-                level: "INFO".into(),
-                target: "test".into(),
-                message: format!("msg {i}"),
-                fields: HashMap::new(),
-            };
-            let mut history = layer.history.lock().unwrap();
-            if history.len() >= layer.max_history {
-                history.pop_front();
+        let lb = LogBroadcast::new(64, 3);
+        let subscriber = tracing_subscriber::registry().with(lb.layer());
+
+        tracing::subscriber::with_default(subscriber, || {
+            for i in 0..5 {
+                tracing::info!("msg {i}");
             }
-            history.push_back(entry);
-        }
+        });
 
         let history = lb.history.lock().unwrap();
         assert_eq!(history.len(), 3);
         assert_eq!(history[0].message, "msg 2");
         assert_eq!(history[2].message, "msg 4");
+        assert_eq!(history[2].level, "INFO");
     }
 
     #[test]
