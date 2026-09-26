@@ -63,6 +63,50 @@ pub trait ArenaNode {
     fn text_bytes(&self) -> usize;
 }
 
+#[macro_export]
+macro_rules! impl_arena_node {
+    ($wt:ident) => {
+        impl $crate::arena::ArenaNode for $wt::ComponentNode {
+            fn references(&self, visit: &mut dyn FnMut(u32)) {
+                if let $wt::NodeContent::Translatable((_, args, _)) = &self.content {
+                    for arg in args {
+                        visit(*arg);
+                    }
+                }
+                if let Some($wt::HoverEvent::ShowText(tooltip)) = &self.hover {
+                    visit(*tooltip);
+                }
+                for child in &self.children {
+                    visit(*child);
+                }
+            }
+
+            fn text_bytes(&self) -> usize {
+                let content = match &self.content {
+                    $wt::NodeContent::Text(text) | $wt::NodeContent::Keybind(text) => text.len(),
+                    $wt::NodeContent::Translatable((key, _, fallback)) => {
+                        key.len() + fallback.as_ref().map_or(0, String::len)
+                    }
+                };
+                let style = [&self.style.color, &self.style.font, &self.style.insertion]
+                    .into_iter()
+                    .map(|value| value.as_ref().map_or(0, String::len))
+                    .sum::<usize>();
+                let click = match &self.click {
+                    Some(
+                        $wt::ClickEvent::OpenUrl(value)
+                        | $wt::ClickEvent::RunCommand(value)
+                        | $wt::ClickEvent::SuggestCommand(value)
+                        | $wt::ClickEvent::CopyToClipboard(value),
+                    ) => value.len(),
+                    Some($wt::ClickEvent::ChangePage(_)) | None => 0,
+                };
+                content + style + click
+            }
+        }
+    };
+}
+
 pub fn validate<N: ArenaNode>(nodes: &[N]) -> Result<(), ArenaError> {
     if nodes.is_empty() {
         return Err(ArenaError::Empty);
