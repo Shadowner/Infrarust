@@ -313,9 +313,11 @@ fn api_event_impls() -> BTreeSet<String> {
         if path.extension().is_none_or(|ext| ext != "rs") {
             continue;
         }
-        for line in std::fs::read_to_string(&path).unwrap().lines() {
-            if let Some(rest) = line.trim().strip_prefix("impl Event for ") {
+        let source = std::fs::read_to_string(&path).unwrap();
+        for marker in ["impl Event for ", "crate::event::resulted_event!("] {
+            for rest in source.split(marker).skip(1) {
                 let name: String = rest
+                    .trim_start()
                     .chars()
                     .take_while(|c| c.is_alphanumeric() || *c == '_')
                     .collect();
