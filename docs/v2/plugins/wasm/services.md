@@ -491,6 +491,8 @@ impl Plugin for HostCaller {
 }
 ```
 
+The fixture runs against a mock config service that has a `greeting` key. Against a real proxy, `Config::get` takes a dotted path of the running proxy config, such as `bind` or `keepalive.retries`.
+
 ## See also
 
 - [Capabilities](./capabilities): the full capability list and how grants work

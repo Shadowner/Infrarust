@@ -404,7 +404,7 @@ impl Plugin for HostCaller {
 }
 ```
 
-`Players::count()` answers `0` when the plugin lacks `player-read`; `Config::get` returns an error of kind `PermissionDenied` when it lacks `config-read`, which the fixture treats like a missing value. The full set of host services is in [Services](./services).
+`Players::count()` answers `0` when the plugin lacks `player-read`; `Config::get` returns an error of kind `PermissionDenied` when it lacks `config-read`, which the fixture treats like a missing value. `greeting` is a key of the mock config service the fixture runs against; on a real proxy, `Config::get` takes a dotted path of the running proxy config, such as `bind` or `keepalive.retries`. The full set of host services is in [Services](./services).
 
 ## net-probe
 
