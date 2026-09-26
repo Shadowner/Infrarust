@@ -26,6 +26,7 @@ pub fn for_switch(dimension: &DimensionInfo, version: ProtocolVersion) -> Protoc
         };
         return Ok(CRespawn {
             dimension: dim_id,
+            dimension_type: dimension_as_name(dimension),
             level_name,
             hashed_seed: HASHED_SEED,
             gamemode: GAMEMODE_SURVIVAL,
@@ -203,7 +204,16 @@ mod tests {
         let respawn = for_switch(&dim, ProtocolVersion::V1_20_2).unwrap();
         assert!(respawn.raw_payload.is_none());
         assert_eq!(respawn.level_name, "minecraft:overworld");
+        assert_eq!(respawn.dimension_type, "minecraft:overworld");
         assert_eq!(respawn.data_to_keep, 0x01);
+    }
+
+    #[test]
+    fn test_for_switch_1_20_2_keeps_the_target_dimension_type() {
+        let dim = DimensionInfo::Named("minecraft:the_nether".to_string());
+        let respawn = for_switch(&dim, ProtocolVersion::V1_20_2);
+        assert_eq!(respawn.dimension_type, "minecraft:the_nether");
+        assert_eq!(respawn.level_name, "minecraft:the_nether");
     }
 
     #[test]

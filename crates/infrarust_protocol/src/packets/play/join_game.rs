@@ -22,6 +22,7 @@ pub struct CJoinGame {
     pub is_debug: bool,
     pub is_flat: bool,
     pub dimension: i32,
+    pub dimension_type: String,
     pub portal_cooldown: i32,
     pub sea_level: i32,
     pub enforces_secure_chat: bool,
@@ -50,6 +51,7 @@ impl Default for CJoinGame {
             is_debug: false,
             is_flat: false,
             dimension: 0,
+            dimension_type: String::new(),
             portal_cooldown: 0,
             sea_level: 63,
             enforces_secure_chat: false,
@@ -137,11 +139,10 @@ fn decode_1_20_2_up(
     let enable_respawn_screen = r.read_bool()?;
     let do_limited_crafting = r.read_bool()?;
 
-    let dimension = if version.no_less_than(ProtocolVersion::V1_21_2) {
-        r.read_var_int()?.0
+    let (dimension, dimension_type) = if version.no_less_than(ProtocolVersion::V1_21_2) {
+        (r.read_var_int()?.0, String::new())
     } else {
-        let _dim_key = r.read_string()?;
-        0
+        (0, r.read_string()?)
     };
 
     let level_name = r.read_string()?;
@@ -177,6 +178,7 @@ fn decode_1_20_2_up(
         is_debug,
         is_flat,
         dimension,
+        dimension_type,
         portal_cooldown,
         sea_level,
         enforces_secure_chat,
@@ -208,7 +210,7 @@ fn encode_1_20_2_up(
     if version.no_less_than(ProtocolVersion::V1_21_2) {
         w.write_var_int(&VarInt(pkt.dimension))?;
     } else {
-        w.write_string(&pkt.level_name)?;
+        w.write_string(&pkt.dimension_type)?;
     }
 
     w.write_string(&pkt.level_name)?;
@@ -261,6 +263,7 @@ mod tests {
             is_debug: false,
             is_flat: false,
             dimension: 0,
+            dimension_type: "minecraft:overworld".to_string(),
             portal_cooldown: 20,
             sea_level: 63,
             enforces_secure_chat: true,
@@ -307,6 +310,7 @@ mod tests {
             is_debug: false,
             is_flat: false,
             dimension: 0,
+            dimension_type: "minecraft:overworld".to_string(),
             portal_cooldown: 20,
             sea_level: 63,
             enforces_secure_chat: true,
@@ -386,5 +390,25 @@ mod tests {
         };
         let decoded = round_trip_version(&pkt, ProtocolVersion::V1_21_2);
         assert_eq!(decoded.sea_level, 128);
+    }
+
+    #[test]
+    fn test_join_game_keeps_custom_dimension_type_below_1_21_2() {
+        let pkt = CJoinGame {
+            entity_id: 7,
+            level_names: vec!["world_nether".to_string()],
+            level_name: "world_nether".to_string(),
+            dimension_type: "minecraft:the_nether".to_string(),
+            ..Default::default()
+        };
+        let version = ProtocolVersion::V1_20_2;
+        let mut first = Vec::new();
+        pkt.encode(&mut first, version).unwrap();
+        let decoded = CJoinGame::decode(&mut first.as_slice(), version).unwrap();
+        assert_eq!(decoded.dimension_type, "minecraft:the_nether");
+        assert_eq!(decoded.level_name, "world_nether");
+        let mut second = Vec::new();
+        decoded.encode(&mut second, version).unwrap();
+        assert_eq!(first, second);
     }
 }

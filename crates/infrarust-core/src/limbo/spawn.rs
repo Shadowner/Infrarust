@@ -298,6 +298,7 @@ pub(crate) fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGam
         is_debug: false,
         is_flat: false,
         dimension: LIMBO_DIMENSION_ID,
+        dimension_type: LIMBO_DIMENSION_NAME.to_string(),
         portal_cooldown: 0,
         sea_level: 0, // End has no sea
         enforces_secure_chat: false,
