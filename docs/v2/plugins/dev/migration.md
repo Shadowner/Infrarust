@@ -818,6 +818,8 @@ What to do: rename `load_initial_documents` to `load_initial`, delete the old `l
 - `ServerConfig::new` takes only the `ServerId`; the other nine fields have chained setters (`.addresses(..)`, `.proxy_mode(..)`, `.max_players(..)`, ...) and stay public.
 - `infrarust_api::services` and the prelude re-export `ServerSource`, `RateLimitInfo`, `StatusCacheInfo`, `KeepaliveInfo` and `UnknownDomainBehavior` next to `ServerConfig` and `ProxyInfo`.
 - `types::namespaced_key` (`is_valid`, `parse`) is the one validator behind `ChannelId` and `cookie_key`.
+- `EventBus::fire_erased` takes `&mut dyn ErasedEvent` (blanket-implemented for every `Event`) and no longer a type name; `fire` from `EventBusExt` is unchanged.
+- `ServiceHandle` and `LimboHandlerRegistration` share `types::Revocation` and derive `Debug`; their methods are unchanged.
 
 ## Checklist
 
