@@ -220,9 +220,35 @@ impl EventBusImpl {
     }
 
     pub async fn flush(&self) {
-        let (done, flushed) = oneshot::channel();
-        if self.queue.send(Queued::Barrier(done)).is_ok() {
-            let _ = flushed.await;
+        let undispatched = lock(&self.undispatched).as_mut().map(|queue| {
+            let mut drained = Vec::new();
+            while let Ok(queued) = queue.try_recv() {
+                drained.push(queued);
+            }
+            drained
+        });
+        let Some(queued) = undispatched else {
+            let (done, flushed) = oneshot::channel();
+            if self.queue.send(Queued::Barrier(done)).is_ok() {
+                let _ = flushed.await;
+            }
+            return;
+        };
+        for item in queued {
+            match item {
+                Queued::Barrier(done) => {
+                    let _ = done.send(());
+                }
+                Queued::Event(mut posted) => {
+                    self.dispatch(
+                        posted.type_id,
+                        posted.event_type,
+                        &mut *posted.event,
+                        &self.core_owner,
+                    )
+                    .await;
+                }
+            }
         }
     }
 
@@ -681,7 +707,7 @@ fn remove_handler<K: Copy + Eq + std::hash::Hash>(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     struct TestEvent;
@@ -728,6 +754,25 @@ mod tests {
         bus.unsubscribe(handle);
         assert!(bus.packet_handlers.read().unwrap().is_empty());
         assert_eq!(bus.packet_listener_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn flush_without_a_dispatcher_delivers_the_posted_events() {
+        let bus = EventBusImpl::new();
+        let seen = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&seen);
+        bus.subscribe_erased(
+            TypeId::of::<TestEvent>(),
+            EventPriority::NORMAL,
+            Box::new(move |_| flag.store(true, Ordering::SeqCst)),
+        );
+
+        bus.post(TestEvent);
+        tokio::time::timeout(Duration::from_secs(1), bus.flush())
+            .await
+            .expect("flush must not wait for a dispatcher that never started");
+
+        assert!(seen.load(Ordering::SeqCst));
     }
 
     #[test]

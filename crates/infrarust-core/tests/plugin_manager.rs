@@ -215,7 +215,6 @@ async fn lifecycle_events_follow_enable_and_disable_order() {
     use infrarust_api::events::plugin::{PluginDisabledEvent, PluginEnabledEvent};
 
     let bus = Arc::new(EventBusImpl::new());
-    bus.start_dispatcher();
     let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let listen: &dyn EventBus = bus.as_ref();
     let on_enabled = Arc::clone(&seen);
