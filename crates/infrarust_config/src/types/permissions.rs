@@ -3,7 +3,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct PermissionsConfig {
     pub provider: PermissionProviderSelection,
 
@@ -99,5 +99,40 @@ mod tests {
     fn trust_offline_admins_is_read() {
         let config: PermissionsConfig = toml::from_str("trust_offline_admins = true").unwrap();
         assert!(config.trust_offline_admins);
+    }
+
+    #[test]
+    fn every_documented_key_loads() {
+        let config: PermissionsConfig = toml::from_str(
+            "provider = \"luckperms\"\n\
+             admins = [\"Notch\", \"069a79f4-44e9-4726-a5be-fca90e38aaf5\"]\n\
+             player_commands = [\"help\", \"list\"]\n\
+             trust_offline_admins = true\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.provider,
+            PermissionProviderSelection::Plugin("luckperms".into())
+        );
+        assert_eq!(config.admins.len(), 2);
+        assert_eq!(config.player_commands, ["help", "list"]);
+        assert!(config.trust_offline_admins);
+    }
+
+    #[test]
+    fn a_misspelled_key_is_refused() {
+        let error = toml::from_str::<PermissionsConfig>("provder = \"luckperms\"")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown field `provder`"), "{error}");
+        assert!(error.contains("`provider`"), "{error}");
+    }
+
+    #[test]
+    fn a_misspelled_key_stops_the_proxy_config_from_loading() {
+        let error = toml::from_str::<crate::ProxyConfig>("[permissions]\nadmin = [\"Notch\"]\n")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown field `admin`"), "{error}");
     }
 }

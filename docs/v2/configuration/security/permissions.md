@@ -30,7 +30,7 @@ player_commands = ["help", "version", "list", "server", "find"]
 trust_offline_admins = false
 ```
 
-The section is read at startup. Changing it needs a restart; use the console's `op` and `deop` to change admins at runtime.
+The section is read at startup. Changing it needs a restart; use the console's `op` and `deop` to change admins at runtime. A key the section does not know, such as a misspelled `provder`, stops the proxy from starting instead of being ignored.
 
 ### `provider`
 
