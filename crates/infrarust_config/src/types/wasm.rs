@@ -34,6 +34,9 @@ pub struct WasmConfig {
     #[serde(default = "defaults::wasm_queue_capacity")]
     pub queue_capacity: usize,
 
+    #[serde(default = "defaults::wasm_instance_pool")]
+    pub instance_pool: u32,
+
     #[serde(default)]
     pub recovery: WasmRecoveryConfig,
 }
@@ -48,6 +51,7 @@ impl Default for WasmConfig {
             host_call_timeout: defaults::wasm_host_call_timeout(),
             max_call_duration: defaults::wasm_max_call_duration(),
             queue_capacity: defaults::wasm_queue_capacity(),
+            instance_pool: defaults::wasm_instance_pool(),
             recovery: WasmRecoveryConfig::default(),
         }
     }
@@ -222,6 +226,7 @@ mod tests {
         let config: ProxyConfig = toml::from_str("").unwrap();
         assert_eq!(config.wasm, WasmConfig::default());
         assert_eq!(config.wasm.epoch_tick, Duration::from_millis(50));
+        assert_eq!(config.wasm.instance_pool, 0);
         assert_eq!(
             config.wasm.limits(),
             WasmLimits {
@@ -248,10 +253,12 @@ mod tests {
             host_call_timeout = "10s"
             max_call_duration = "45s"
             queue_capacity = 64
+            instance_pool = 256
             "#,
         )
         .unwrap();
         assert_eq!(config.wasm.epoch_tick, Duration::from_millis(20));
+        assert_eq!(config.wasm.instance_pool, 256);
         assert_eq!(
             config.wasm.limits(),
             WasmLimits {

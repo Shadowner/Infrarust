@@ -215,7 +215,7 @@ impl CodecFilter for OpFilter {
 
 ## Zero-copy pass
 
-Returning `Verdict::Pass` on a packet you did not mutate, with no injections, sends nothing back to the host. The host keeps the original bytes and forwards them unchanged.
+Returning `Verdict::Pass` on a packet you did not mutate, with no injections, sends nothing back to the host. The host keeps the original bytes and forwards them unchanged. At the WIT level, `filter` answers `pass` or `drop` as a plain enum; only a modified, injected, replaced or failed frame makes the host fetch the full `filter-output` with a second call, `take-output`.
 
 ```mermaid
 flowchart TD

@@ -1577,8 +1577,11 @@ interface codec-filter {
         error(codec-filter-error),
     }
 
+    enum filter-verdict { pass, drop, modified }
+
     resource filter-instance {
-        filter: func(packet-id: s32, data: list<u8>) -> filter-output;
+        filter: func(packet-id: s32, data: list<u8>) -> filter-verdict;
+        take-output: func() -> filter-output;
         on-state-change: func(new-state: connection-state);
         on-compression-change: func(threshold: s32);
         on-encryption-enabled: func();
@@ -1589,7 +1592,7 @@ interface codec-filter {
 }
 ```
 
-The boundary has no `&mut`, so a changed frame is returned in `filter-extras`; `packet none` means unchanged. Codec instances run in a separate synchronous store: `log` works there, the other host imports trap. See [Codec Filters](./codec-filters).
+`filter` answers `pass` or `drop` on its own. Anything else (a changed frame, injected frames, a `replace`, an error) is answered as `modified`, and the host then calls `take-output` to fetch the `filter-output` the guest set aside. Splitting the two keeps the common `pass` answer free of list cleanup, so it costs one guest call less than returning `filter-output` directly. The boundary has no `&mut`, so a changed frame is returned in `filter-extras`; `packet none` means unchanged. Codec instances run in a separate synchronous store: `log` works there, the other host imports trap. See [Codec Filters](./codec-filters).
 
 ## Building against the contract
 

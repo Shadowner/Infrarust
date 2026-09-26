@@ -429,6 +429,7 @@ codec_cpu_budget = "800ms"
 host_call_timeout = "30s"
 max_call_duration = "60s"
 queue_capacity = 1024
+instance_pool = 0
 ```
 
 Limits that apply to every WASM plugin. Each plugin runs in its own sandbox and handles one call at a time: its event listeners, commands, scheduled tasks and limbo callbacks wait in a queue and run in order.
@@ -442,6 +443,7 @@ Limits that apply to every WASM plugin. Each plugin runs in its own sandbox and 
 | `host_call_timeout` | How long one host call that waits on the proxy may take: server-manager `start` and `stop`, every ban-service call, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named`, `set-snapshot` and `release` on `permissions`, and the timeouts of each HTTP request. When it runs out the plugin gets a `host-error` of kind `timeout` and carries on. `switch-server` has its own 250 ms cap. A host call also ends early, with the same error, shortly before the deadline of the call it belongs to (`[events] handler_timeout` for an event, `max_call_duration` for a command, a scheduled task or a limbo callback), so the plugin always gets to decide. |
 | `max_call_duration` | Wall-clock limit on one call into a plugin, host calls included. A call still running at this limit is abandoned and the plugin's instance is replaced by a fresh one. |
 | `queue_capacity` | How many calls may wait for a busy plugin. When the queue is full a new call is refused on the spot: an event gets no answer from that plugin and a command does nothing. The refusal is logged as a warning, at most once every 5 seconds per plugin. |
+| `instance_pool` | Proxy-wide only. `0` (the default) creates every WASM instance on demand. A positive value reserves that many instance slots at startup and recycles them, which roughly halves the cost of building a codec filter instance for a new connection. Count one slot per loaded plugin plus two per connection and per codec filter plugin, since each connection side gets its own instance. When every slot is taken, a codec filter instance cannot be built and that connection side passes packets through unfiltered, with an error in the log, and no plugin can be loaded or restarted until a slot frees up. Each slot reserves about 4 GiB of virtual address space, not memory; when the reservation fails the proxy logs a warning and falls back to on-demand allocation. |
 
 A plugin call that has started always runs to the end, even when its caller stops waiting. If the event bus gives up on a WASM listener after `[events] handler_timeout`, the event moves on without that plugin's answer, the call finishes inside the plugin, and the plugin stays healthy. A call that is still queued when its caller gives up is dropped without running.
 
@@ -454,6 +456,7 @@ Startup fails when a value is out of range:
 - `cpu_budget` and `codec_cpu_budget` must be at least one `epoch_tick` and at most `1h`.
 - `host_call_timeout` and `max_call_duration` must be greater than zero and at most `1h`.
 - `queue_capacity` must be between 1 and 1048576.
+- `instance_pool` must be at most 32768.
 
 The proxy logs a warning, without refusing to start, when `cpu_budget` is longer than `max_call_duration`: the wall-clock limit then stops a busy guest call first instead of the CPU budget trapping it.
 

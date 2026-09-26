@@ -36,5 +36,9 @@ codegen-units = 16
 strip = true
 panic = "abort"
 
+[profile.release.package.fixture-codec-modify]
+opt-level = 3
+codegen-units = 1
+
 [profile.dev]
 panic = "abort"

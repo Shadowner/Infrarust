@@ -303,7 +303,7 @@ Epoch interruption cannot preempt a guest parked inside a host `.await` (such as
 
 ### Memory cap
 
-Each instance is built with a `StoreLimits` that caps linear memory at `memory_limit_mb` and traps on a growth that would exceed it. The cap also applies to the memory a component declares up front, so a limit smaller than the component's initial memory makes it fail to load. Instance, table, and memory *counts* keep wasmtime's defaults; only memory growth is bounded. Codec filter instances get the same cap as their plugin.
+Each instance is built with a `StoreLimits` that caps linear memory at `memory_limit_mb` and traps on a growth that would exceed it. The cap also applies to the memory a component declares up front, so a limit smaller than the component's initial memory makes it fail to load. Only memory growth is bounded: instance, table, and memory *counts* are unlimited unless `[wasm] instance_pool` is set, in which case that many instance slots are reserved up front and a connection whose codec filter instance finds no free slot passes through unfiltered (see [Global Settings](../../configuration/global#wasm-plugin-sandbox)). Codec filter instances get the same cap as their plugin.
 
 ### One call at a time
 

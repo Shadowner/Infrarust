@@ -194,6 +194,10 @@ pub const fn wasm_queue_capacity() -> usize {
     1024
 }
 
+pub const fn wasm_instance_pool() -> u32 {
+    0
+}
+
 pub const fn wasm_recovery_max_restarts() -> u32 {
     5
 }

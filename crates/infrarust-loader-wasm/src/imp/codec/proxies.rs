@@ -10,7 +10,9 @@ use wasmtime::Store;
 use wasmtime::component::ResourceAny;
 
 use super::CodecInstantiator;
-use super::bindings::exports::infrarust::plugin::codec_filter::Guest as CodecGuest;
+use super::bindings::exports::infrarust::plugin::codec_filter::{
+    FilterVerdict, Guest as CodecGuest,
+};
 use super::convert;
 use super::store_state::CodecStoreState;
 
@@ -99,12 +101,16 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
             return CodecVerdict::Pass;
         }
         self.store.set_epoch_deadline(self.deadline_ticks);
-        match self.guest.filter_instance().call_filter(
-            &mut self.store,
-            self.handle,
-            packet.packet_id,
-            &packet.data,
-        ) {
+        let guest = self.guest.filter_instance();
+        let verdict =
+            guest.call_filter(&mut self.store, self.handle, packet.packet_id, &packet.data);
+        let taken = match verdict {
+            Ok(FilterVerdict::Pass) => return CodecVerdict::Pass,
+            Ok(FilterVerdict::Drop) => return CodecVerdict::Drop,
+            Ok(FilterVerdict::Modified) => guest.call_take_output(&mut self.store, self.handle),
+            Err(trap) => Err(trap),
+        };
+        match taken {
             Ok(out) => convert::apply_filter_output(out, packet, output),
             Err(trap) => {
                 self.poison("filter", &trap);

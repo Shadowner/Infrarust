@@ -146,6 +146,11 @@ macro_rules! raw_fixture {
                 &self,
                 _packet_id: i32,
                 _data: ::std::vec::Vec<u8>,
+            ) -> crate::exports::infrarust::plugin::codec_filter::FilterVerdict {
+                crate::exports::infrarust::plugin::codec_filter::FilterVerdict::Pass
+            }
+            fn take_output(
+                &self,
             ) -> crate::exports::infrarust::plugin::codec_filter::FilterOutput {
                 crate::exports::infrarust::plugin::codec_filter::FilterOutput::Pass
             }

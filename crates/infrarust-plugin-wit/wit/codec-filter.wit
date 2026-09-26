@@ -32,8 +32,11 @@ interface codec-filter {
         error(codec-filter-error),
     }
 
+    enum filter-verdict { pass, drop, modified }
+
     resource filter-instance {
-        filter: func(packet-id: s32, data: list<u8>) -> filter-output;
+        filter: func(packet-id: s32, data: list<u8>) -> filter-verdict;
+        take-output: func() -> filter-output;
         on-state-change: func(new-state: connection-state);
         on-compression-change: func(threshold: s32);
         on-encryption-enabled: func();

@@ -144,7 +144,8 @@ Several host imports are async on the host side. `start` and `stop` on `server-m
 Codec filtering is different. It runs synchronously on the packet hot path. The host creates one `filter-instance` per connection side, then calls `filter` for every frame, then drops the instance:
 
 ```wit
-filter: func(packet-id: s32, data: list<u8>) -> filter-output;
+filter: func(packet-id: s32, data: list<u8>) -> filter-verdict;
+take-output: func() -> filter-output;
 ```
 
 A separate, synchronous codec store handles this path so per-packet dispatch stays off the async machinery. See [Codec filters](./codec-filters).

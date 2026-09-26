@@ -116,6 +116,7 @@ mod bench {
     /// filter into, plus the keep-alives that must outlive the chains.
     async fn load_wasm(
         plugins_dir: PathBuf,
+        wasm_section: &str,
     ) -> (
         Arc<CodecFilterRegistryImpl>,
         Box<dyn infrarust_api::plugin::Plugin>,
@@ -150,7 +151,7 @@ mod bench {
         );
         let factory = PluginContextFactoryImpl::new(services, configs);
 
-        let config: ProxyConfig = toml::from_str("").unwrap();
+        let config: ProxyConfig = toml::from_str(wasm_section).unwrap();
         let loader = WasmPluginLoader::new(
             build_engine(&config).unwrap(),
             WasmLoaderConfig::from_proxy_config(&config),
@@ -184,8 +185,10 @@ mod bench {
             .build()
             .unwrap();
         let plugins_dir = staged_plugins_dir();
-        let (wasm_registry, _plugin, _loader) = rt.block_on(load_wasm(plugins_dir));
+        let (wasm_registry, _plugin, _loader) = rt.block_on(load_wasm(plugins_dir.clone(), ""));
         let mut wasm_chain = client_chain(&wasm_registry);
+        let (pooled_registry, _pooled_plugin, _pooled_loader) =
+            rt.block_on(load_wasm(plugins_dir, "[wasm]\ninstance_pool = 4096\n"));
 
         println!(
             "\ncodec boundary benchmark — {ITERS} iterations/measurement, id 0x10 (pass-through, zero-copy return)"
@@ -214,8 +217,9 @@ mod bench {
         );
         let native_create = us_per_create(&native_registry);
         let wasm_create = us_per_create(&wasm_registry);
+        let pooled_create = us_per_create(&pooled_registry);
         println!(
-            "  chain create + close ({CREATE_ITERS} iterations, client + server side): native {native_create:.2}µs, wasm {wasm_create:.2}µs\n"
+            "  chain create + close ({CREATE_ITERS} iterations, client + server side): native {native_create:.2}µs, wasm {wasm_create:.2}µs, wasm with instance_pool {pooled_create:.2}µs\n"
         );
     }
 }

@@ -382,6 +382,7 @@ const WASM_MAX_EPOCH_TICK: Duration = Duration::from_secs(1);
 const WASM_MAX_DURATION: Duration = Duration::from_secs(3600);
 const WASM_MAX_MEMORY_MB: u32 = 4096;
 const WASM_MAX_QUEUE_CAPACITY: usize = 1 << 20;
+const WASM_MAX_INSTANCE_POOL: u32 = 32_768;
 const WASM_MAX_RESTARTS: u32 = 1000;
 const WASM_MAX_RECOVERY_DURATION: Duration = Duration::from_secs(86_400);
 
@@ -396,6 +397,12 @@ pub fn validate_wasm_config(config: &ProxyConfig) -> Result<(), ConfigError> {
         )));
     }
     validate_wasm_limits("wasm", &config.wasm.limits(), tick)?;
+    if config.wasm.instance_pool > WASM_MAX_INSTANCE_POOL {
+        return Err(ConfigError::Validation(format!(
+            "wasm.instance_pool must be at most {WASM_MAX_INSTANCE_POOL} (got {})",
+            config.wasm.instance_pool
+        )));
+    }
     let mut ids: Vec<&String> = config.plugins.keys().collect();
     ids.sort();
     for id in ids {

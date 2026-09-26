@@ -5,7 +5,8 @@ use std::thread::LocalKey;
 use crate::ban_provider::{BanProvider, BanQuery, LoginAttempt, UnbanRequest};
 use crate::bindings::ban_service as wb;
 use crate::bindings::codec_filter::{
-    CodecSessionInit as WitSessionInit, ConnectionState, FilterOutput, GuestFilterInstance,
+    CodecSessionInit as WitSessionInit, ConnectionState, FilterOutput, FilterVerdict,
+    GuestFilterInstance,
 };
 use crate::bindings::codec_registry::CodecFilterMetadata;
 use crate::bindings::command_manager::CommandSpec;
@@ -457,6 +458,7 @@ pub fn create_codec_filter<P: Plugin>(factory: u64, init: WitSessionInit) -> Fil
 pub struct FilterInstanceProxy {
     inner: RefCell<Box<dyn CodecFilter>>,
     ctx: RefCell<CodecContext>,
+    pending: RefCell<Option<FilterOutput>>,
 }
 
 impl FilterInstanceProxy {
@@ -464,17 +466,31 @@ impl FilterInstanceProxy {
         Self {
             inner: RefCell::new(inner.unwrap_or_else(|| Box::new(PassthroughFilter))),
             ctx: RefCell::new(ctx),
+            pending: RefCell::new(None),
         }
     }
 }
 
 impl GuestFilterInstance for FilterInstanceProxy {
-    fn filter(&self, packet_id: i32, data: Vec<u8>) -> FilterOutput {
+    fn filter(&self, packet_id: i32, data: Vec<u8>) -> FilterVerdict {
         let mut inner = self.inner.borrow_mut();
         let mut packet = Packet::from_parts(packet_id, data);
         let mut injections = Injections::default();
         let verdict = inner.filter(&self.ctx.borrow(), &mut packet, &mut injections);
-        build_filter_output(verdict, packet, injections)
+        match build_filter_output(verdict, packet, injections) {
+            FilterOutput::Pass => FilterVerdict::Pass,
+            FilterOutput::Drop => FilterVerdict::Drop,
+            output => {
+                *self.pending.borrow_mut() = Some(output);
+                FilterVerdict::Modified
+            }
+        }
+    }
+    fn take_output(&self) -> FilterOutput {
+        self.pending
+            .borrow_mut()
+            .take()
+            .unwrap_or(FilterOutput::Pass)
     }
     fn on_state_change(&self, new_state: ConnectionState) {
         self.ctx.borrow_mut().state = new_state;
