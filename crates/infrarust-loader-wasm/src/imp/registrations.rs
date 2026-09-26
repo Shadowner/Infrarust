@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use infrarust_api::command::CommandRegistration;
@@ -71,9 +71,24 @@ pub(crate) struct Registrations {
     ban_provider: Mutex<Option<Arc<WasmBanProvider>>>,
     permission_provider: Mutex<Option<Arc<WasmPermissionProvider>>>,
     snapshots: Arc<PermissionSnapshots>,
+    codec_filters: Mutex<BTreeSet<String>>,
 }
 
 impl Registrations {
+    pub(crate) fn record_codec_filter(&self, id: &str) {
+        lock(&self.codec_filters).insert(id.to_owned());
+    }
+
+    pub(crate) fn forget_codec_filter(&self, id: &str) {
+        lock(&self.codec_filters).remove(id);
+    }
+
+    pub(crate) fn take_codec_filters(&self) -> Vec<String> {
+        std::mem::take(&mut *lock(&self.codec_filters))
+            .into_iter()
+            .collect()
+    }
+
     pub(crate) fn snapshots(&self) -> &Arc<PermissionSnapshots> {
         &self.snapshots
     }
@@ -277,6 +292,20 @@ mod tests {
             registrations.bind_command("dropped", 3, 8),
             Bound::Fresh(_)
         ));
+    }
+
+    #[test]
+    fn codec_filters_are_tracked_across_generations_until_taken() {
+        let registrations = Registrations::default();
+        registrations.record_codec_filter("tally");
+        registrations.record_codec_filter("ops");
+        registrations.record_codec_filter("tally");
+        registrations.record_codec_filter("dropped");
+        registrations.forget_codec_filter("dropped");
+        registrations.sweep(2);
+
+        assert_eq!(registrations.take_codec_filters(), ["ops", "tally"]);
+        assert!(registrations.take_codec_filters().is_empty());
     }
 
     #[test]

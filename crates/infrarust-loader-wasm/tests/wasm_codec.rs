@@ -9,14 +9,16 @@ use std::sync::Arc;
 use bytes::Bytes;
 use infrarust_api::loader::PluginLoader;
 use infrarust_api::types::{ProtocolVersion, RawPacket};
+use infrarust_core::filter::FilterOwner;
 use infrarust_core::filter::codec_chain::{CodecFilterChain, FilterResult, build_codec_chains};
 use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
 use infrarust_core::plugin::PluginContextFactoryImpl;
+use infrarust_core::services::command_manager::DispatchOutcome;
 use tracing::Level;
 use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
-use support::{EnvOptions, fresh_loader, load_enabled, make_env_with, stage};
+use support::{EnvOptions, console, fresh_loader, load_enabled, make_env_with, stage};
 
 fn codec_env(
     plugins_dir: PathBuf,
@@ -241,5 +243,93 @@ async fn codec_filter_logging_is_rate_limited_per_plugin() {
     assert!(
         (1..limit).contains(&seen),
         "{seen} of {PACKETS} filter log lines reached the proxy log"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn disabling_a_wasm_plugin_removes_its_codec_filter() {
+    let (_tmp, plugins_dir) = stage("codec-modify");
+    let loader = fresh_loader();
+    let (factory, registry) = codec_env(plugins_dir.clone(), "codec-modify", true);
+    loader.discover(&plugins_dir).await.unwrap();
+    let plugin = load_enabled(&loader, &factory, "codec-modify").await;
+    assert_eq!(
+        registry.owner_of("ops"),
+        Some(FilterOwner::plugin("codec-modify"))
+    );
+
+    plugin.on_disable().await.unwrap();
+
+    assert!(
+        registry.is_empty(),
+        "the stopped plugin's filter no longer joins new connections"
+    );
+    let mut packet = RawPacket::new(0x02, Bytes::from_static(b"original"));
+    assert!(matches!(
+        client_chain(&registry).process(&mut packet),
+        FilterResult::Pass
+    ));
+    assert_eq!(&packet.data[..], b"original");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unloading_a_wasm_plugin_removes_its_codec_filter() {
+    let (_tmp, plugins_dir) = stage("codec-modify");
+    let loader = fresh_loader();
+    let (factory, registry) = codec_env(plugins_dir.clone(), "codec-modify", true);
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &factory, "codec-modify").await;
+    assert!(!registry.is_empty());
+
+    loader.unload("codec-modify").await.unwrap();
+
+    assert!(registry.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_codec_filter_survives_a_recovery_of_its_plugin() {
+    let (_tmp, plugins_dir) = stage("codec-std");
+    let loader = fresh_loader();
+    let env = make_env_with(
+        plugins_dir.clone(),
+        EnvOptions::default().grant("codec-std", "codec-filter"),
+    );
+    let registry = Arc::clone(&env.codec_registry);
+    let logs = LogCapture::at(Level::INFO);
+
+    let (owner, count, left_after_unload) = async {
+        loader.discover(&plugins_dir).await.unwrap();
+        let _plugin = load_enabled(&loader, &env.factory, "codec-std").await;
+        assert_eq!(
+            env.command_manager
+                .dispatch(console(), "codec-std-trap")
+                .await,
+            DispatchOutcome::Executed
+        );
+        let mut packet = RawPacket::new(0x05, Bytes::new());
+        client_chain(&registry).process(&mut packet);
+        let owner = registry.owner_of("tally");
+        loader.unload("codec-std").await.unwrap();
+        (owner, count_of(&packet), registry.owned_by("codec-std"))
+    }
+    .with_subscriber(logs.clone())
+    .await;
+
+    let recovered = logs.matching("wasm plugin recovered");
+    assert_eq!(recovered.len(), 1, "{:?}", logs.lines());
+    assert!(recovered[0].contains("generation=2"), "{recovered:?}");
+    assert!(
+        logs.matching("codec filter registration").is_empty(),
+        "the fresh instance registers its own filter id again: {:?}",
+        logs.lines()
+    );
+    assert_eq!(owner, Some(FilterOwner::plugin("codec-std")));
+    assert_eq!(
+        count, 1,
+        "a connection opened after the recovery runs the filter"
+    );
+    assert!(
+        left_after_unload.is_empty(),
+        "unloading the recovered plugin still removes the filter: {left_after_unload:?}"
     );
 }

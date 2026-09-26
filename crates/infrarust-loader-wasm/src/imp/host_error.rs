@@ -1,5 +1,6 @@
 use infrarust_api::command::CommandError;
 use infrarust_api::error::{PlayerError, ServiceError};
+use infrarust_api::filter::FilterRegistryError;
 use infrarust_api::limbo::LimboHandlerError;
 use infrarust_api::messaging::MessagingError;
 use infrarust_api::permissions::Capability;
@@ -89,6 +90,15 @@ pub(crate) fn command_error(error: &CommandError) -> HostError {
     host_error(kind, error.to_string())
 }
 
+pub(crate) fn filter_error(error: &FilterRegistryError) -> HostError {
+    let kind = match error {
+        FilterRegistryError::OwnedBy { .. } => ErrorKind::Conflict,
+        FilterRegistryError::NotFound(_) => ErrorKind::NotFound,
+        _ => ErrorKind::Internal,
+    };
+    host_error(kind, error.to_string())
+}
+
 pub(crate) fn messaging_error(error: &MessagingError) -> HostError {
     let kind = match error {
         MessagingError::NoCarrier => ErrorKind::Unavailable,
@@ -144,6 +154,18 @@ mod tests {
             })
             .kind,
             ErrorKind::Conflict
+        );
+        assert_eq!(
+            filter_error(&FilterRegistryError::OwnedBy {
+                id: "x".into(),
+                owner: "p".into()
+            })
+            .kind,
+            ErrorKind::Conflict
+        );
+        assert_eq!(
+            filter_error(&FilterRegistryError::NotFound("x".into())).kind,
+            ErrorKind::NotFound
         );
         assert_eq!(
             missing_capability(Capability::Ban).message,

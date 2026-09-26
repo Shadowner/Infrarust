@@ -15,7 +15,9 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, W
 use crate::actor::{CallKind, InstanceRef};
 use crate::codec::CodecInstantiator;
 use crate::config::SandboxLimits;
-use crate::consts::{COMMAND_REFUSAL_BURST, DENIED_CALL_LOG_INTERVAL, EPOCH_DEADLINE_TICKS};
+use crate::consts::{
+    CODEC_REFUSAL_BURST, COMMAND_REFUSAL_BURST, DENIED_CALL_LOG_INTERVAL, EPOCH_DEADLINE_TICKS,
+};
 use crate::deadline::{Deadline, HostCallLimit};
 use crate::error::WasmLoaderError;
 use crate::rate_limit::RateLimit;
@@ -51,6 +53,7 @@ pub(crate) struct PluginStoreState {
     codec: Option<Arc<CodecInstantiator>>,
     denials: HashMap<Capability, RateLimit>,
     command_refusals: RateLimit,
+    codec_refusals: RateLimit,
 }
 
 impl PluginStoreState {
@@ -103,6 +106,14 @@ impl PluginStoreState {
         };
         tracing::warn!(plugin = %self.plugin_id, command = name, suppressed,
             "wasm plugin command registration: {reason}");
+    }
+
+    pub(crate) fn report_codec_refusal(&mut self, filter: &str, reason: &str) {
+        let Some(suppressed) = self.codec_refusals.admit(Instant::now()) else {
+            return;
+        };
+        tracing::warn!(plugin = %self.plugin_id, filter, suppressed,
+            "wasm plugin codec filter registration: {reason}");
     }
 
     pub(crate) fn instance_ref(&self, kind: CallKind) -> InstanceRef {
@@ -254,6 +265,7 @@ pub(crate) fn build_load_state(
         codec: setup.codec.clone(),
         denials: HashMap::new(),
         command_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, COMMAND_REFUSAL_BURST),
+        codec_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, CODEC_REFUSAL_BURST),
     })
 }
 
@@ -278,6 +290,7 @@ pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> P
         codec: None,
         denials: HashMap::new(),
         command_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, COMMAND_REFUSAL_BURST),
+        codec_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, CODEC_REFUSAL_BURST),
     }
 }
 

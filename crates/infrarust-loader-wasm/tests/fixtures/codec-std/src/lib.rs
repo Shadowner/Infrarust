@@ -33,7 +33,10 @@ impl CodecFilter for Tally {
 
 #[plugin(id = "codec-std", name = "Codec Std Fixture")]
 impl Plugin for CodecStd {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
+        ctx.command("codec-std-trap")
+            .handler(|_| panic!("codec-std: trap on purpose"))
+            .register()?;
         Ok(())
     }
 

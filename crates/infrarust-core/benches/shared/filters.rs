@@ -6,8 +6,8 @@
 use bytes::Bytes;
 
 use infrarust_api::filter::{
-    CodecFilterFactory, CodecFilterInstance, CodecFilterRegistry, CodecSessionInit, CodecVerdict,
-    FilterMetadata, FrameOutput,
+    CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict, FilterMetadata,
+    FrameOutput,
 };
 use infrarust_api::types::{ProtocolVersion, RawPacket};
 use infrarust_core::filter::codec_chain::{CodecFilterChain, build_codec_chains};
@@ -101,9 +101,10 @@ pub fn build_chain(populate: impl FnOnce(&CodecFilterRegistryImpl)) -> CodecFilt
 pub fn pass_chain(n: usize) -> CodecFilterChain {
     build_chain(|reg| {
         for i in 0..n {
-            reg.register(Box::new(PassFactory {
+            reg.register_builtin(Box::new(PassFactory {
                 id: format!("pass-{i}"),
-            }));
+            }))
+            .unwrap();
         }
     })
 }
@@ -111,23 +112,27 @@ pub fn pass_chain(n: usize) -> CodecFilterChain {
 /// Chain with a single payload-scanning filter.
 pub fn scan_chain() -> CodecFilterChain {
     build_chain(|reg| {
-        reg.register(Box::new(ScanFactory {
+        reg.register_builtin(Box::new(ScanFactory {
             id: "scan".to_string(),
-        }));
+        }))
+        .unwrap();
     })
 }
 
 /// A representative small plugin stack: one scanner + two passthroughs.
 pub fn realistic_chain() -> CodecFilterChain {
     build_chain(|reg| {
-        reg.register(Box::new(ScanFactory {
+        reg.register_builtin(Box::new(ScanFactory {
             id: "scan".to_string(),
-        }));
-        reg.register(Box::new(PassFactory {
+        }))
+        .unwrap();
+        reg.register_builtin(Box::new(PassFactory {
             id: "pass-a".to_string(),
-        }));
-        reg.register(Box::new(PassFactory {
+        }))
+        .unwrap();
+        reg.register_builtin(Box::new(PassFactory {
             id: "pass-b".to_string(),
-        }));
+        }))
+        .unwrap();
     })
 }

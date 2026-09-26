@@ -312,12 +312,12 @@ Every fallible host function returns `result<T, host-error>`. The `kind` is the 
 | Kind | Raised when |
 |------|-------------|
 | `invalid-argument` | An argument is malformed: an invalid text component, an unparsable IP range, a bad command name. |
-| `not-found` | The thing named does not exist, or the plugin does not own the command it unregisters. |
+| `not-found` | The thing named does not exist, or the plugin does not own the command it unregisters. Also a codec filter id nobody registered. |
 | `permission-denied` | The plugin lacks the capability the call needs. The message names it: `missing capability: ban`. |
 | `unavailable` | The service could not do it right now, or host services are not available yet (during `metadata()`). |
 | `timeout` | The host call ran out of time, either its own timeout or the deadline of the guest call around it. |
 | `player-gone` | The player id is not online any more. |
-| `conflict` | The name is taken: a command owned by another plugin, a limbo handler name already registered. |
+| `conflict` | The name is taken: a command owned by another plugin, a limbo handler name already registered, a codec filter id owned by another plugin or the proxy (on register and on unregister). |
 | `invalid-state` | The player is not in a state that allows the action, such as no backend yet. |
 | `unsupported` | The proxy does not offer the service. |
 | `internal` | Anything else. |

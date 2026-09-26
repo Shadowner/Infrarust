@@ -75,7 +75,7 @@ pub trait Plugin: Send + Sync {
 
 `on_enable()` receives a `PluginContext` for registering event listeners, commands, limbo handlers, config providers, and filters. This is the only place you should register resources, because the context tracks everything for automatic cleanup.
 
-`on_disable()` is optional. Override it only if your plugin holds external resources (database connections, open files, network sockets) that need explicit teardown. Event listeners, commands, and scheduled tasks are cleaned up automatically.
+`on_disable()` is optional. Override it only if your plugin holds external resources (database connections, open files, network sockets) that need explicit teardown. Event listeners, commands, filters, and scheduled tasks are cleaned up automatically.
 
 ::: warning
 `on_enable` and `on_disable` return `BoxFuture` because the trait uses manual async dispatch. Wrap your implementation in `Box::pin(async move { ... })`.
@@ -197,6 +197,7 @@ During cleanup (on disable or on enable failure), the context automatically:
 
 - Unsubscribes all event listeners registered through `ctx.event_bus()`
 - Unregisters all commands registered through `ctx.command_manager()` or its handle, and only those: a registration the proxy refused was never recorded
+- Removes every codec and transport filter it owns, registered through `ctx.codec_filters()` and `ctx.transport_filters()`, and rebuilds the transport filter chain. Connections opened afterwards run none of its filter code
 - Cancels all scheduled tasks registered through `ctx.scheduler()` or `ctx.scheduler_handle()`, async and blocking ones included
 - Removes its limbo handlers. A player one of them holds is released with the "Limbo handler unavailable" denial rather than left waiting
 - Withdraws every service it provided through `ctx.services()`, posting a `ServiceRemovedEvent` for each

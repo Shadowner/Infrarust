@@ -110,6 +110,8 @@ The `PluginContext` trait provides access to every service and registration meth
 
 `codec_filters()` and `transport_filters()` return `None` unless the plugin holds the matching capability in its Infrarust config, with the transport filter capability reserved for trusted native plugins.
 
+A filter belongs to the plugin that registered it. `register` and `unregister` return `Result<(), FilterRegistryError>`: registering an id that another plugin or the proxy owns fails with `FilterRegistryError::OwnedBy { id, owner }`, and registering one of your own ids again replaces it. `unregister` removes only a filter you own, and answers `OwnedBy` for someone else's id and `NotFound` for an id nobody registered. Filters the proxy registers itself are owned by `PROXY_FILTER_OWNER` (`"infrarust"`), which no plugin can take over. Every filter a plugin owns is removed when it is disabled, so connections opened afterwards no longer run its code.
+
 The `_handle()` variants return `Arc` so you can move them into event handlers, scheduled tasks, or any `'static` closure:
 
 ```rust

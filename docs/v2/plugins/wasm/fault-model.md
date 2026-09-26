@@ -59,7 +59,7 @@ Commands and limbo handlers are known to the proxy by name, so they are not regi
 | Files in the plugin's data directory | Everything in guest memory: statics, caches, counters, `RefCell` maps |
 | The plugin's capabilities, configuration and limits | Event subscriptions of the old instance (`on_enable` makes new ones) |
 | Commands and limbo handlers that `on_enable` registers again | Commands and limbo handlers registered later, outside `on_enable`, unless `on_enable` registers them again |
-| Codec filters (separate instances) | Scheduled tasks (`delay` and `interval`) |
+| Codec filters (separate instances; the fresh instance registers the same ids again, which the plugin still owns) | Scheduled tasks (`delay` and `interval`) |
 | | Players the old instance held in limbo (released with a deny) |
 | | Resource handles the guest held, such as limbo session handles |
 
@@ -98,7 +98,7 @@ The budget only applies once the plugin has been enabled. If the first `on_enabl
 
 ## Disable and unload
 
-On `on_disable`, a plugin with a live instance runs its guest `on_disable` as usual. A quarantined plugin has no instance to run it in, so the call is skipped with a warning. In every case the proxy then removes the instance's listeners and scheduled tasks, releases the players it holds in limbo, and stops the plugin's task. Unloading the plugin does the same without calling `on_disable`.
+On `on_disable`, a plugin with a live instance runs its guest `on_disable` as usual. A quarantined plugin has no instance to run it in, so the call is skipped with a warning. In every case the proxy then removes the instance's listeners and scheduled tasks, releases the players it holds in limbo, removes the plugin's codec filters, and stops the plugin's task. Unloading the plugin does the same without calling `on_disable`.
 
 ## Configuration
 

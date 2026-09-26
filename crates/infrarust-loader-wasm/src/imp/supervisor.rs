@@ -167,7 +167,25 @@ impl Supervisor {
             live.release_host_resources();
         }
         self.factory.registrations().fail_holds(None);
+        self.withdraw_codec_filters();
         tracing::debug!(plugin = %self.factory.plugin_id(), "wasm plugin task stopped");
+    }
+
+    fn withdraw_codec_filters(&self) {
+        let filters = self.factory.registrations().take_codec_filters();
+        if filters.is_empty() {
+            return;
+        }
+        let ctx = self.factory.ctx();
+        let Some(registry) = ctx.codec_filters() else {
+            return;
+        };
+        for id in filters {
+            if let Err(e) = registry.unregister(&id) {
+                tracing::debug!(plugin = %self.factory.plugin_id(), filter = %id,
+                    "codec filter already gone when the plugin stopped: {e}");
+            }
+        }
     }
 
     async fn disable(&mut self, op: &'static str, mut call: Box<dyn GuestCall>, chain: CallChain) {

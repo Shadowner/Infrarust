@@ -66,7 +66,9 @@ impl Plugin for MyPlugin {
 | `priority` | `FilterPriority` | Ordering bucket across all registered filters. |
 | `constructor` | `impl Fn(&CodecSessionInit) -> Box<dyn CodecFilter> + 'static` | Per-connection factory. |
 
-`FilterPriority` is `First`, `Early`, `Normal` (the default), `Late`, or `Last`, the same names as the WIT `filter-priority` enum. When the host refuses the registration (no `codec-filter` capability, or no codec registry), the filter is simply not part of the chain and the host logs why.
+`FilterPriority` is `First`, `Early`, `Normal` (the default), `Late`, or `Last`, the same names as the WIT `filter-priority` enum. When the host refuses the registration (no `codec-filter` capability, no codec registry, or an id another plugin or the proxy already owns), the filter is simply not part of the chain and the host logs why.
+
+A filter id belongs to the plugin that registered it. At the WIT level, `register-codec-filter` answers `conflict` for an id owned by someone else, and registering one of your own ids again replaces it. `unregister-codec-filter` removes only your own filters: it answers `conflict` for an id another plugin owns and `not-found` for an id nobody registered. The host removes all of a plugin's codec filters when the plugin is disabled or unloaded, so connections opened afterwards run none of its filter code.
 
 ## Per-connection state
 

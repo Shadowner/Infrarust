@@ -9,6 +9,10 @@ use infrarust_api::error::PlayerError;
 use infrarust_api::event::bus::EventBusExt;
 use infrarust_api::event::{BoxFuture, EventPriority};
 use infrarust_api::events::named::NamedEvent;
+use infrarust_api::filter::{
+    CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict, FilterMetadata,
+    FrameOutput,
+};
 use infrarust_api::loader::PluginContextFactory;
 use infrarust_api::messaging::ChannelId;
 use infrarust_api::permissions::{Capability, CapabilitySet};
@@ -28,10 +32,11 @@ use infrarust_api::types::{
     TitleData,
 };
 use infrarust_core::event_bus::EventBusImpl;
+use infrarust_core::filter::FilterOwner;
 use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
 use infrarust_core::filter::transport_registry::TransportFilterRegistryImpl;
 use infrarust_core::plugin::manager::PluginServices;
-use infrarust_core::plugin::{PluginContextFactoryImpl, PluginRegistryImpl};
+use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions, PluginRegistryImpl};
 use infrarust_core::routing::DomainRouter;
 use infrarust_core::services::command_manager::CommandManagerImpl;
 use infrarust_core::services::scheduler::SchedulerImpl;
@@ -104,11 +109,15 @@ impl LoadBalancerService for NoBalancer {
 }
 
 fn context(players: Vec<Arc<dyn Player>>) -> Arc<dyn PluginContext> {
+    PluginContextFactoryImpl::new(services(players), HashMap::new()).create_context("test")
+}
+
+fn services(players: Vec<Arc<dyn Player>>) -> PluginServices {
     let registry = MockPlayerRegistry::new();
     for player in players {
         registry.add_dyn(player);
     }
-    let services = PluginServices {
+    PluginServices {
         event_bus: Arc::new(EventBusImpl::new()),
         player_registry: Arc::new(registry),
         server_manager: Arc::new(NoopServerManager),
@@ -124,8 +133,7 @@ fn context(players: Vec<Arc<dyn Player>>) -> Arc<dyn PluginContext> {
         proxy_shutdown: CancellationToken::new(),
         proxy_info: ProxyInfo::default(),
         plugins_dir: PathBuf::from("plugins"),
-    };
-    PluginContextFactoryImpl::new(services, HashMap::new()).create_context("test")
+    }
 }
 
 fn state_with(capabilities: CapabilitySet, players: Vec<Arc<dyn Player>>) -> PluginStoreState {
@@ -1236,4 +1244,81 @@ async fn load_balancer_reads_and_config_writes_reach_the_native_services() {
             .unwrap(),
         Ok(vec![])
     );
+}
+
+struct PassFactory(&'static str);
+
+struct Pass;
+
+impl CodecFilterFactory for PassFactory {
+    fn metadata(&self) -> FilterMetadata {
+        FilterMetadata::new(self.0)
+    }
+
+    fn create(&self, _init: &CodecSessionInit) -> Box<dyn CodecFilterInstance> {
+        Box::new(Pass)
+    }
+}
+
+impl CodecFilterInstance for Pass {
+    fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
+        CodecVerdict::Pass
+    }
+}
+
+fn codec_state(factory: &PluginContextFactoryImpl, plugin_id: &str) -> PluginStoreState {
+    build_probe_state(plugin_id.to_owned(), &SandboxLimits::default())
+        .with_capabilities(CapabilitySet::baseline().with(Capability::CodecFilter))
+        .with_ctx(factory.create_context(plugin_id))
+}
+
+#[tokio::test]
+async fn a_codec_filter_can_only_be_unregistered_by_the_plugin_that_owns_it() {
+    let registry = Arc::new(CodecFilterRegistryImpl::new());
+    let grant = |plugin_id: &str| {
+        let permissions = PluginPermissions {
+            permissions: vec![Capability::CodecFilter.to_kebab().to_owned()],
+            ..PluginPermissions::default()
+        };
+        (plugin_id.to_owned(), permissions)
+    };
+    let factory = PluginContextFactoryImpl::new(
+        PluginServices {
+            codec_filter_registry: Arc::clone(&registry),
+            ..services(vec![])
+        },
+        HashMap::from([grant("owner"), grant("intruder")]),
+    );
+    let mut owner = codec_state(&factory, "owner");
+    let mut intruder = codec_state(&factory, "intruder");
+    owner
+        .ctx()
+        .and_then(|ctx| ctx.codec_filters())
+        .expect("the owner holds the codec-filter capability")
+        .register(Box::new(PassFactory("shared")))
+        .unwrap();
+
+    let refused = codec_registry::Host::unregister_codec_filter(&mut intruder, "shared".into())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.kind, wt::ErrorKind::Conflict);
+    assert!(refused.message.contains("owner"), "{}", refused.message);
+    assert_eq!(
+        registry.owner_of("shared"),
+        Some(FilterOwner::plugin("owner"))
+    );
+    let missing = codec_registry::Host::unregister_codec_filter(&mut intruder, "missing".into())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(missing.kind, wt::ErrorKind::NotFound);
+
+    assert_eq!(
+        codec_registry::Host::unregister_codec_filter(&mut owner, "shared".into())
+            .await
+            .unwrap(),
+        Ok(())
+    );
+    assert!(registry.is_empty());
 }

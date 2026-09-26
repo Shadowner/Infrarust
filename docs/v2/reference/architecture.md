@@ -90,9 +90,12 @@ The registries inside it each track one kind of thing:
 - The packet registry holds packet codecs keyed by protocol version. Infrarust supports 36 Minecraft versions, from 1.7.2 (protocol 4) to 26.2 (protocol 776), defined in `crates/infrarust_protocol/src/version.rs`. Each packet type declares its own per-version ID table via `Packet::IDS`; the registry indexes those tables rather than owning them.
 - The command manager registers and dispatches the in-game `/infrarust` subcommands.
 - The codec filter registry builds the per-connection codec filter chain used by intercepted modes.
+- The transport filter registry keeps the transport filter chain, rebuilt whenever a filter is added or removed. The chain runs on accept, before the connection pipeline, and can reject a peer at the socket level.
 - The limbo handler registry holds named limbo handler instances.
 
-Alongside the registries, `ProxyServices` carries the event bus, the ban manager, the domain router, the optional server manager, the active forwarding mode and its secret, the permission service, and the parsed `ProxyConfig`. The transport filter chain also lives here; it runs on accept, before the connection pipeline, and can reject a peer at the socket level.
+Both filter registries tag every filter with its owner, the proxy or a plugin id. A plugin can only replace or remove its own filters, and the plugin's filters are removed when it is disabled.
+
+Alongside the registries, `ProxyServices` carries the event bus, the ban manager, the domain router, the optional server manager, the active forwarding mode and its secret, the permission service, and the parsed `ProxyConfig`.
 
 Server configs are not loaded directly by the server. A provider registry (`crates/infrarust-core/src/provider/`) owns the file provider, which is always on, and an optional Docker provider behind a feature flag. Providers load the initial configs into the domain router and start watchers that push live updates, which is how config hot-reload works without restarting the proxy.
 

@@ -102,12 +102,16 @@ fn on_enable<'a>(
 ) -> BoxFuture<'a, Result<(), PluginError>> {
     Box::pin(async move {
         if let Some(registry) = ctx.transport_filters() {
-            registry.register(Box::new(MyTransportFilter));
+            registry
+                .register(Box::new(MyTransportFilter))
+                .map_err(|e| PluginError::InitFailed(e.to_string()))?;
         }
         Ok(())
     })
 }
 ```
+
+The filter id is owned by the plugin that registers it. Registering an id that another plugin already owns fails with `FilterRegistryError::OwnedBy`, and `unregister` only removes your own filters. When the plugin is disabled, the proxy removes its transport filters and rebuilds the chain, so the next accepted connection no longer runs them.
 
 ## Layer 2: CodecFilter
 
@@ -167,9 +171,14 @@ The factory's `create` method receives a `CodecSessionInit` struct with the clie
 
 ```rust
 if let Some(registry) = ctx.codec_filters() {
-    registry.register(Box::new(MyCodecFilterFactory));
+    if let Err(e) = registry.register(Box::new(MyCodecFilterFactory)) {
+        // FilterRegistryError::OwnedBy: another plugin or the proxy owns this id.
+        tracing::warn!("codec filter not registered: {e}");
+    }
 }
 ```
+
+The same ownership rules apply as for transport filters. The proxy builds the codec chain of each session when it starts, so disabling the plugin removes its codec filters from every connection opened afterwards; sessions already running keep the instances they were created with until they close.
 
 ## Layer 3: EventBus
 

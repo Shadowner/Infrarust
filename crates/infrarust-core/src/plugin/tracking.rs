@@ -12,10 +12,16 @@ use infrarust_api::event::bus::{ErasedAsyncHandler, ErasedHandler, EventBus, Fir
 use infrarust_api::event::{
     BoxFuture, ConnectionState, ListenerHandle, PacketDirection, PacketFilter,
 };
+use infrarust_api::filter::{
+    CodecFilterFactory, CodecFilterRegistry, FilterRegistryError, TransportFilter,
+    TransportFilterRegistry,
+};
 use infrarust_api::services::scheduler::{AsyncTask, RepeatingTask, Scheduler, TaskHandle};
 
 use crate::event_bus::EventBusImpl;
 use crate::event_bus::handler::HandlerKind;
+use crate::filter::codec_registry::CodecFilterRegistryImpl;
+use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::services::scheduler::SchedulerImpl;
 
@@ -206,6 +212,60 @@ impl CommandManager for TrackingCommandManager {
 
     fn list(&self) -> Vec<CommandInfo> {
         self.inner.list()
+    }
+}
+
+pub struct TrackingCodecFilterRegistry {
+    inner: Arc<CodecFilterRegistryImpl>,
+    plugin_id: String,
+}
+
+impl TrackingCodecFilterRegistry {
+    pub fn new(inner: Arc<CodecFilterRegistryImpl>, plugin_id: String) -> Self {
+        Self { inner, plugin_id }
+    }
+
+    pub fn unregister_all(&self) -> usize {
+        self.inner.unregister_owner(&self.plugin_id)
+    }
+}
+
+impl infrarust_api::filter::registry::private::Sealed for TrackingCodecFilterRegistry {}
+
+impl CodecFilterRegistry for TrackingCodecFilterRegistry {
+    fn register(&self, factory: Box<dyn CodecFilterFactory>) -> Result<(), FilterRegistryError> {
+        self.inner.register_owned(&self.plugin_id, factory)
+    }
+
+    fn unregister(&self, filter_id: &str) -> Result<(), FilterRegistryError> {
+        self.inner.unregister_owned(&self.plugin_id, filter_id)
+    }
+}
+
+pub struct TrackingTransportFilterRegistry {
+    inner: Arc<TransportFilterRegistryImpl>,
+    plugin_id: String,
+}
+
+impl TrackingTransportFilterRegistry {
+    pub fn new(inner: Arc<TransportFilterRegistryImpl>, plugin_id: String) -> Self {
+        Self { inner, plugin_id }
+    }
+
+    pub fn unregister_all(&self) -> usize {
+        self.inner.unregister_owner(&self.plugin_id)
+    }
+}
+
+impl infrarust_api::filter::registry::private::Sealed for TrackingTransportFilterRegistry {}
+
+impl TransportFilterRegistry for TrackingTransportFilterRegistry {
+    fn register(&self, filter: Box<dyn TransportFilter>) -> Result<(), FilterRegistryError> {
+        self.inner.register_owned(&self.plugin_id, filter)
+    }
+
+    fn unregister(&self, filter_id: &str) -> Result<(), FilterRegistryError> {
+        self.inner.unregister_owned(&self.plugin_id, filter_id)
     }
 }
 

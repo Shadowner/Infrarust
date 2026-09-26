@@ -25,8 +25,8 @@ mod bench {
 
     use bytes::Bytes;
     use infrarust_api::filter::{
-        CodecFilterFactory, CodecFilterInstance, CodecFilterRegistry, CodecSessionInit,
-        CodecVerdict, FilterMetadata, FrameOutput,
+        CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict, FilterMetadata,
+        FrameOutput,
     };
     use infrarust_api::loader::{PluginContextFactory, PluginLoader};
     use infrarust_api::types::{ProtocolVersion, RawPacket};
@@ -173,7 +173,9 @@ mod bench {
     pub fn run() {
         // Native baseline.
         let native_registry = CodecFilterRegistryImpl::new();
-        native_registry.register(Box::new(NativePassthroughFactory));
+        native_registry
+            .register_builtin(Box::new(NativePassthroughFactory))
+            .unwrap();
         let mut native_chain = client_chain(&native_registry);
 
         // WASM synchronous filter (production path).

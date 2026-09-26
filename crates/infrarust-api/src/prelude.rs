@@ -76,8 +76,9 @@ pub use crate::message::ProxyMessage;
 // Filters
 pub use crate::filter::{
     CodecFilterError, CodecFilterFactory, CodecFilterInstance, CodecFilterRegistry,
-    CodecSessionInit, CodecVerdict, ConnectionSide, FilterMetadata, FilterPriority, FilterVerdict,
-    FrameOutput, TransportContext, TransportFilter, TransportFilterRegistry,
+    CodecSessionInit, CodecVerdict, ConnectionSide, FilterMetadata, FilterPriority,
+    FilterRegistryError, FilterVerdict, FrameOutput, TransportContext, TransportFilter,
+    TransportFilterRegistry,
 };
 
 pub use crate::provider::{

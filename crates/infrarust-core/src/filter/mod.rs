@@ -9,3 +9,5 @@ pub mod ordering;
 mod registry_base;
 pub mod transport_chain;
 pub mod transport_registry;
+
+pub use registry_base::FilterOwner;

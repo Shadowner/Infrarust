@@ -22,6 +22,7 @@ pub(crate) const FAR_FUTURE: Duration = Duration::from_secs(86_400 * 365 * 30);
 
 pub(crate) const DENIED_CALL_LOG_INTERVAL: Duration = Duration::from_secs(60);
 pub(crate) const COMMAND_REFUSAL_BURST: u32 = 5;
+pub(crate) const CODEC_REFUSAL_BURST: u32 = 5;
 
 pub(crate) const CODEC_LOG_INTERVAL: Duration = Duration::from_secs(1);
 

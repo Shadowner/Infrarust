@@ -419,12 +419,14 @@ mod tests {
         let registry = CodecFilterRegistryImpl::new();
         let create_count = Arc::new(AtomicU32::new(0));
 
-        registry.register(Box::new(MockFactory {
-            id: "test",
-            priority: FilterPriority::Normal,
-            create_count: Arc::clone(&create_count),
-            verdict: CodecVerdict::Pass,
-        }));
+        registry
+            .register_builtin(Box::new(MockFactory {
+                id: "test",
+                priority: FilterPriority::Normal,
+                create_count: Arc::clone(&create_count),
+                verdict: CodecVerdict::Pass,
+            }))
+            .unwrap();
 
         let (_client_chain, _server_chain) = build_codec_chains(
             &registry,

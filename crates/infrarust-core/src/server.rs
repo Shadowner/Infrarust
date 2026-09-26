@@ -294,7 +294,9 @@ impl ProxyServer {
                 ),
             ),
             codec_filter_registry: Arc::clone(&codec_filter_registry),
-            transport_filter_chain: crate::filter::transport_chain::TransportFilterChain::empty(),
+            transport_filter_registry: Arc::new(
+                crate::filter::transport_registry::TransportFilterRegistryImpl::new(),
+            ),
             limbo_handler_registry,
             registry_codec_cache: Arc::new(crate::limbo::registry_cache::RegistryCodecCache::new(
                 Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider),
@@ -479,7 +481,8 @@ impl ProxyServer {
             // Runs BEFORE the connection pipeline — real_ip is not yet available
             // (set by PROXY protocol middleware later) and connection_id is 0
             // (assigned per-session, not per-accept).
-            if !self.services.transport_filter_chain.is_empty() {
+            let transport_chain = self.services.transport_filter_registry.chain();
+            if !transport_chain.is_empty() {
                 use infrarust_api::filter::{FilterVerdict, TransportContext};
                 use infrarust_api::types::Extensions;
 
@@ -495,10 +498,7 @@ impl ProxyServer {
                 };
 
                 if matches!(
-                    self.services
-                        .transport_filter_chain
-                        .on_accept(&mut transport_ctx)
-                        .await,
+                    transport_chain.on_accept(&mut transport_ctx).await,
                     FilterVerdict::Reject
                 ) {
                     tracing::debug!(peer = %peer, "Connection rejected by transport filter");
@@ -755,17 +755,6 @@ impl ProxyServer {
 
     pub fn domain_router(&self) -> &Arc<DomainRouter> {
         &self.services.domain_router
-    }
-
-    /// Rebuilds the transport filter chain from a registry.
-    ///
-    /// Call this after plugins have been loaded and may have registered
-    /// transport filters.
-    pub fn rebuild_transport_filter_chain(
-        &mut self,
-        registry: &crate::filter::transport_registry::TransportFilterRegistryImpl,
-    ) {
-        self.services.transport_filter_chain = registry.build_chain();
     }
 
     pub const fn shutdown(&self) -> &CancellationToken {

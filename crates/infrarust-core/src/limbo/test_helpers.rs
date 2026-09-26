@@ -26,7 +26,7 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use crate::ban::manager::BanManager;
 use crate::event_bus::bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
-use crate::filter::transport_chain::TransportFilterChain;
+use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::limbo::registry_cache::RegistryCodecCache;
 use crate::player::PlayerSession;
@@ -117,7 +117,7 @@ pub fn test_proxy_services() -> ProxyServices {
         domain_router,
         backend_health,
         codec_filter_registry: Arc::new(CodecFilterRegistryImpl::new()),
-        transport_filter_chain: TransportFilterChain::empty(),
+        transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),
         limbo_handler_registry: Arc::new(LimboHandlerRegistry::new()),
         registry_codec_cache: Arc::new(RegistryCodecCache::new(provider)),
         provider_event_sender: tokio::sync::mpsc::channel(1).0,

@@ -20,5 +20,7 @@ pub use codec::{
     ConnectionSide, FrameOutput,
 };
 pub use metadata::{FilterMetadata, FilterPriority};
-pub use registry::{CodecFilterRegistry, TransportFilterRegistry};
+pub use registry::{
+    CodecFilterRegistry, FilterRegistryError, PROXY_FILTER_OWNER, TransportFilterRegistry,
+};
 pub use transport::{FilterVerdict, TransportContext, TransportFilter};

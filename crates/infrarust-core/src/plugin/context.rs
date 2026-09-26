@@ -40,7 +40,10 @@ use crate::services::command_manager::CommandManagerImpl;
 use crate::services::scheduler::SchedulerImpl;
 
 use super::service_registry::{PluginServiceRegistry, ServiceRegistryImpl};
-use super::tracking::{TrackingCommandManager, TrackingEventBus, TrackingScheduler};
+use super::tracking::{
+    TrackingCodecFilterRegistry, TrackingCommandManager, TrackingEventBus, TrackingScheduler,
+    TrackingTransportFilterRegistry,
+};
 
 /// Per-plugin context that aggregates all proxy services.
 ///
@@ -65,8 +68,8 @@ pub struct PluginContextImpl {
     limbo_handlers: Arc<LimboHandlerRegistry>,
     services: Arc<PluginServiceRegistry>,
     config_providers: Mutex<Vec<Box<dyn PluginConfigProvider>>>,
-    codec_filter_registry: Arc<CodecFilterRegistryImpl>,
-    transport_filter_registry: Arc<TransportFilterRegistryImpl>,
+    codec_filters: Arc<TrackingCodecFilterRegistry>,
+    transport_filters: Arc<TrackingTransportFilterRegistry>,
     domain_router: Arc<DomainRouter>,
     proxy_shutdown: CancellationToken,
     proxy_info: ProxyInfo,
@@ -107,6 +110,14 @@ impl PluginContextImpl {
             plugin_id.clone(),
         ));
         let tracking_sched = Arc::new(TrackingScheduler::new(scheduler, &plugin_id));
+        let codec_filters = Arc::new(TrackingCodecFilterRegistry::new(
+            codec_filter_registry,
+            plugin_id.clone(),
+        ));
+        let transport_filters = Arc::new(TrackingTransportFilterRegistry::new(
+            transport_filter_registry,
+            plugin_id.clone(),
+        ));
         let services = Arc::new(PluginServiceRegistry::new(
             Arc::new(ServiceRegistryImpl::default()),
             &plugin_id,
@@ -137,8 +148,8 @@ impl PluginContextImpl {
             limbo_handlers: Arc::new(LimboHandlerRegistry::new()),
             services,
             config_providers: Mutex::new(Vec::new()),
-            codec_filter_registry,
-            transport_filter_registry,
+            codec_filters,
+            transport_filters,
             domain_router,
             proxy_shutdown,
             proxy_info,
@@ -228,6 +239,8 @@ impl PluginContextImpl {
         // Unregister all commands
         self.command_manager.unregister_all();
 
+        self.codec_filters.unregister_all();
+        self.transport_filters.unregister_all();
         self.scheduler.cancel_all();
         self.limbo_handlers.unregister_owner(&self.plugin_id);
         self.services.withdraw_all();
@@ -434,7 +447,7 @@ impl PluginContext for PluginContextImpl {
 
     fn codec_filters(&self) -> Option<&dyn CodecFilterRegistry> {
         if self.capabilities.has(Capability::CodecFilter) {
-            Some(self.codec_filter_registry.as_ref())
+            Some(self.codec_filters.as_ref())
         } else {
             None
         }
@@ -442,7 +455,7 @@ impl PluginContext for PluginContextImpl {
 
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry> {
         if self.capabilities.has(Capability::TransportFilter) {
-            Some(self.transport_filter_registry.as_ref())
+            Some(self.transport_filters.as_ref())
         } else {
             None
         }

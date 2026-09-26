@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use crate::ban::manager::BanManager;
 use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
-use crate::filter::transport_chain::TransportFilterChain;
+use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::forwarding::{ForwardingHandler, ForwardingMode, build_forwarding_handler};
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::limbo::registry_cache::RegistryCodecCache;
@@ -62,8 +62,8 @@ pub struct ProxyServices {
     pub load_balancer_service: Arc<crate::services::load_balancer_service::LoadBalancerServiceImpl>,
     /// Codec filter registry for building per-connection filter chains.
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
-    /// Transport filter chain applied to accepted connections.
-    pub transport_filter_chain: TransportFilterChain,
+    /// Transport filter registry whose chain is applied to accepted connections.
+    pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
     /// Registry of limbo handler instances, keyed by name.
     pub limbo_handler_registry: Arc<LimboHandlerRegistry>,
     /// Multi-version registry data cache for limbo login.

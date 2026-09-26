@@ -20,7 +20,6 @@ use infrarust_config::proxy::PluginConfig;
 use infrarust_transport::Listener;
 
 use crate::error::CoreError;
-use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::plugin::manager::{PluginManager, PluginServices};
 use crate::plugin::{
     PluginContextFactoryImpl, PluginLoader, PluginPermissions, PluginRegistryImpl,
@@ -104,7 +103,7 @@ impl ProxyRuntimeBuilder {
         let plugins_dir = config.plugins_dir.clone();
         let plugin_cfgs = config.plugins.clone();
 
-        let mut server = ProxyServer::new(config, config_path, shutdown.clone()).await?;
+        let server = ProxyServer::new(config, config_path, shutdown.clone()).await?;
 
         let mut plugin_manager = PluginManager::new(loaders);
         plugin_manager.set_event_bus(Arc::clone(&server.services().event_bus));
@@ -122,7 +121,6 @@ impl ProxyRuntimeBuilder {
             .map_err(|e| CoreError::Other(format!("failed to discover plugins: {e}")))?;
 
         let services = server.services();
-        let transport_filter_registry = Arc::new(TransportFilterRegistryImpl::new());
         let plugin_registry = Arc::new(PluginRegistryImpl::new());
         let start_time = Instant::now();
 
@@ -136,7 +134,6 @@ impl ProxyRuntimeBuilder {
         let plugin_services = plugin_services(
             services,
             &plugin_registry,
-            &transport_filter_registry,
             shutdown.clone(),
             proxy_info,
             plugins_dir,
@@ -165,8 +162,6 @@ impl ProxyRuntimeBuilder {
         });
 
         activate_config_providers(&plugin_manager, services, server.background_token()).await;
-
-        server.rebuild_transport_filter_chain(&transport_filter_registry);
 
         let plugin_manager = Arc::new(RwLock::new(plugin_manager));
         let server = Arc::new(server);
@@ -200,7 +195,6 @@ impl ProxyRuntimeBuilder {
 fn plugin_services(
     services: &ProxyServices,
     plugin_registry: &Arc<PluginRegistryImpl>,
-    transport_filter_registry: &Arc<TransportFilterRegistryImpl>,
     proxy_shutdown: CancellationToken,
     proxy_info: ProxyInfo,
     plugins_dir: PathBuf,
@@ -225,7 +219,7 @@ fn plugin_services(
         load_balancer_service: Arc::clone(&services.load_balancer_service) as _,
         plugin_registry: Arc::clone(plugin_registry) as Arc<dyn PluginRegistry>,
         codec_filter_registry: Arc::clone(&services.codec_filter_registry),
-        transport_filter_registry: Arc::clone(transport_filter_registry),
+        transport_filter_registry: Arc::clone(&services.transport_filter_registry),
         domain_router: Arc::clone(&services.domain_router),
         proxy_shutdown,
         proxy_info,
