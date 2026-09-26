@@ -60,7 +60,10 @@ async fn codec_filter_modifies_drops_and_injects() {
     let mut chain = client_chain(&registry);
 
     let mut packet = RawPacket::new(0x02, Bytes::from_static(b"original"));
-    assert!(matches!(chain.process(&mut packet), FilterResult::Pass));
+    assert!(matches!(
+        chain.process(&mut packet),
+        FilterResult::Pass { .. }
+    ));
     assert_eq!(
         &packet.data[..],
         b"MODIFIED",
@@ -72,7 +75,7 @@ async fn codec_filter_modifies_drops_and_injects() {
 
     let mut packet = RawPacket::new(0x03, Bytes::new());
     match chain.process(&mut packet) {
-        FilterResult::PassWithInjections(mut output) => {
+        FilterResult::PassWithInjections { mut output, .. } => {
             assert_eq!(output.take_before().len(), 1, "one injected 'before' frame");
             assert_eq!(output.take_after().len(), 1, "one injected 'after' frame");
         }
@@ -80,7 +83,10 @@ async fn codec_filter_modifies_drops_and_injects() {
     }
 
     let mut packet = RawPacket::new(0x10, Bytes::from_static(b"keep"));
-    assert!(matches!(chain.process(&mut packet), FilterResult::Pass));
+    assert!(matches!(
+        chain.process(&mut packet),
+        FilterResult::Pass { .. }
+    ));
     assert_eq!(
         &packet.data[..],
         b"keep",
@@ -184,7 +190,10 @@ async fn codec_filter_can_log_and_use_std_collections() {
         let mut counts = Vec::new();
         for id in [0x05, 0x05, 0x06, 0x05] {
             let mut packet = RawPacket::new(id, Bytes::new());
-            assert!(matches!(chain.process(&mut packet), FilterResult::Pass));
+            assert!(matches!(
+                chain.process(&mut packet),
+                FilterResult::Pass { .. }
+            ));
             counts.push(count_of(&packet));
         }
         counts
@@ -267,7 +276,7 @@ async fn disabling_a_wasm_plugin_removes_its_codec_filter() {
     let mut packet = RawPacket::new(0x02, Bytes::from_static(b"original"));
     assert!(matches!(
         client_chain(&registry).process(&mut packet),
-        FilterResult::Pass
+        FilterResult::Pass { modified: false }
     ));
     assert_eq!(&packet.data[..], b"original");
 }

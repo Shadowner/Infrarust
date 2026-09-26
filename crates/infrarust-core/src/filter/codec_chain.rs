@@ -12,14 +12,14 @@ use super::codec_registry::CodecFilterRegistryImpl;
 
 /// Result of processing a packet through the codec filter chain.
 pub enum FilterResult {
-    /// Packet passes through unchanged (or modified in place).
-    Pass,
-    /// Packet was dropped by a filter.
+    Pass { modified: bool },
     Dropped,
-    /// The original packet is replaced by injected frames.
     Replaced(FrameOutput),
-    /// Packet passes through, but additional frames were injected.
-    PassWithInjections(FrameOutput),
+    PassWithInjections { output: FrameOutput, modified: bool },
+}
+
+fn same_payload(before: &bytes::Bytes, after: &bytes::Bytes) -> bool {
+    (before.as_ptr() == after.as_ptr() && before.len() == after.len()) || before == after
 }
 
 /// A chain of [`CodecFilterInstance`]s for one side of one connection.
@@ -52,8 +52,10 @@ impl CodecFilterChain {
     /// This is a sync operation — no `.await`.
     pub fn process(&mut self, packet: &mut RawPacket) -> FilterResult {
         if self.instances.is_empty() {
-            return FilterResult::Pass;
+            return FilterResult::Pass { modified: false };
         }
+        let id_before = packet.packet_id;
+        let data_before = packet.data.clone();
 
         #[cfg(feature = "bench-timing")]
         let packet_start = quanta::Instant::now();
@@ -99,10 +101,11 @@ impl CodecFilterChain {
         #[cfg(feature = "bench-timing")]
         emit_packet_total(packet, packet_start);
 
+        let modified = packet.packet_id != id_before || !same_payload(&data_before, &packet.data);
         if output.has_injections() {
-            FilterResult::PassWithInjections(output)
+            FilterResult::PassWithInjections { output, modified }
         } else {
-            FilterResult::Pass
+            FilterResult::Pass { modified }
         }
     }
 
@@ -309,7 +312,7 @@ mod tests {
         let mut chain = empty_chain(ConnectionSide::ClientSide);
         let mut packet = RawPacket::new(0x1A, bytes::Bytes::from_static(b"test"));
         let result = chain.process(&mut packet);
-        assert!(matches!(result, FilterResult::Pass));
+        assert!(matches!(result, FilterResult::Pass { modified: false }));
     }
 
     #[test]
@@ -340,7 +343,7 @@ mod tests {
         let ptr = data.as_ptr();
         let mut packet = RawPacket::new(0x2A, data);
         let result = chain.process(&mut packet);
-        assert!(matches!(result, FilterResult::Pass));
+        assert!(matches!(result, FilterResult::Pass { modified: false }));
         assert_eq!(packet.packet_id, 0x2A);
         assert_eq!(packet.data.as_ptr(), ptr);
         assert_eq!(packet.data.len(), b"payload".len());
@@ -359,8 +362,39 @@ mod tests {
         let mut chain = chain_with_instances(vec![instance]);
         let mut packet = RawPacket::new(0x00, bytes::Bytes::from_static(b"original"));
         let result = chain.process(&mut packet);
-        assert!(matches!(result, FilterResult::Pass));
+        assert!(matches!(result, FilterResult::Pass { modified: true }));
         assert_eq!(&packet.data[..], b"modified");
+    }
+
+    #[test]
+    fn rewriting_identical_bytes_does_not_count_as_a_modification() {
+        let instance: Box<dyn CodecFilterInstance> = Box::new(MockInstance {
+            verdict_fn: Box::new(|packet, _| {
+                packet.data = bytes::Bytes::copy_from_slice(&packet.data);
+                CodecVerdict::Pass
+            }),
+            call_count: Arc::new(AtomicU32::new(0)),
+        });
+
+        let mut chain = chain_with_instances(vec![instance]);
+        let mut packet = RawPacket::new(0x00, bytes::Bytes::from_static(b"same"));
+        assert!(matches!(
+            chain.process(&mut packet),
+            FilterResult::Pass { modified: false }
+        ));
+
+        let instance: Box<dyn CodecFilterInstance> = Box::new(MockInstance {
+            verdict_fn: Box::new(|packet, _| {
+                packet.packet_id = 0x01;
+                CodecVerdict::Pass
+            }),
+            call_count: Arc::new(AtomicU32::new(0)),
+        });
+        let mut chain = chain_with_instances(vec![instance]);
+        assert!(matches!(
+            chain.process(&mut packet),
+            FilterResult::Pass { modified: true }
+        ));
     }
 
     #[test]
@@ -377,7 +411,7 @@ mod tests {
         let mut packet = RawPacket::new(0x00, bytes::Bytes::new());
         let result = chain.process(&mut packet);
         match result {
-            FilterResult::PassWithInjections(mut output) => {
+            FilterResult::PassWithInjections { mut output, .. } => {
                 let before = output.take_before();
                 assert_eq!(before.len(), 1);
                 assert_eq!(before[0].packet_id, 0xFF);

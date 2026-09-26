@@ -96,18 +96,6 @@ fn raw_to_frame(raw: &RawPacket) -> PacketFrame {
     PacketFrame::new(raw.packet_id, raw.data.clone())
 }
 
-const fn assert_immutable_payload(_: &bytes::Bytes) {}
-
-#[inline]
-fn filter_modified(frame: &PacketFrame, raw: &RawPacket) -> bool {
-    assert_immutable_payload(&raw.data);
-    assert_immutable_payload(&frame.payload);
-
-    raw.packet_id != frame.id
-        || raw.data.len() != frame.payload.len()
-        || raw.data.as_ptr() != frame.payload.as_ptr()
-}
-
 struct HotIds {
     s_chat_session: Option<i32>,
     s_tab_request: Option<i32>,
@@ -1046,8 +1034,8 @@ fn apply_codec_filter(
 
     let mut raw = frame_to_raw(frame);
     match chain.process(&mut raw) {
-        FilterResult::Pass => {
-            if filter_modified(frame, &raw) {
+        FilterResult::Pass { modified } => {
+            if modified {
                 *frame = raw_to_frame(&raw);
             }
             Ok(false)
@@ -1057,10 +1045,12 @@ fn apply_codec_filter(
             send_injected_frames(writer, &mut output, true, true)?;
             Ok(true) // Original frame is NOT sent
         }
-        FilterResult::PassWithInjections(mut output) => {
-            // Queue before-injections, then the (possibly modified) original, then after-injections
+        FilterResult::PassWithInjections {
+            mut output,
+            modified,
+        } => {
             send_injected_frames(writer, &mut output, true, false)?;
-            if filter_modified(frame, &raw) {
+            if modified {
                 *frame = raw_to_frame(&raw);
             }
             writer.queue_frame(frame)?;
