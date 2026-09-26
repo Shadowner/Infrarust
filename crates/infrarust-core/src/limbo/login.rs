@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfig, SKnownPacks};
+use infrarust_protocol::packets::play::start_configuration::SAcknowledgeConfiguration;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
@@ -44,6 +45,17 @@ pub(crate) async fn complete_config_for_limbo(
     codec_cache: &RegistryCodecCache,
     observer: Option<&ClientObserver>,
 ) -> Result<(), CoreError> {
+    if client.awaits_config_ack() {
+        absorb_until(
+            client,
+            registry.get_packet_id::<SAcknowledgeConfiguration>(version),
+            "limbo login: client did not acknowledge the configuration phase in time",
+            None,
+        )
+        .await?;
+        client.reconfiguration_acknowledged();
+    }
+
     // 1. KnownPacks handshake (>= 1.20.5, protocol >= 766)
     if let Ok(Some(kp_frame)) = codec_cache.get_known_packs_frame(version) {
         client.write_frame(&kp_frame).await?;

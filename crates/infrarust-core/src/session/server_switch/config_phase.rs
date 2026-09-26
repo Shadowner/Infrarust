@@ -108,6 +108,12 @@ pub(super) async fn handle_config_phase_switch(
             .send_packet(&CStartConfiguration, registry)
             .await
             .map_err(PhaseError::Client)?;
+        client.begin_reconfiguration();
+        pending = Some(first);
+    }
+    *stranded = true;
+
+    if client.awaits_config_ack() {
         let ack_id = registry.get_packet_id::<SAcknowledgeConfiguration>(version);
         loop {
             let frame = client_frame(client).await?;
@@ -125,9 +131,8 @@ pub(super) async fn handle_config_phase_switch(
                 "absorbing client packet during config transition"
             );
         }
-        pending = Some(first);
+        client.reconfiguration_acknowledged();
     }
-    *stranded = true;
 
     client.set_state(ConnectionState::Config);
     backend.set_state(ConnectionState::Config);

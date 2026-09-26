@@ -62,6 +62,7 @@ pub struct FakeClient {
     claimed_uuid: Option<Uuid>,
     hello: Option<ClientHello>,
     replies: ClientReplies,
+    acks_configuration: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -107,7 +108,14 @@ impl FakeClient {
             claimed_uuid: None,
             hello: None,
             replies: ClientReplies::default(),
+            acks_configuration: true,
         }
+    }
+
+    #[must_use]
+    pub const fn hold_configuration_ack(mut self) -> Self {
+        self.acks_configuration = false;
+        self
     }
 
     #[must_use]
@@ -245,6 +253,7 @@ impl FakeClient {
             events: events_tx,
             hello: self.hello.clone(),
             replies: self.replies.clone(),
+            acks_configuration: self.acks_configuration,
         };
         let driver = TaskGuard(tokio::spawn(driver.run()));
 
@@ -325,6 +334,7 @@ struct Driver {
     events: mpsc::UnboundedSender<ClientEvent>,
     hello: Option<ClientHello>,
     replies: ClientReplies,
+    acks_configuration: bool,
 }
 
 impl Driver {
@@ -498,7 +508,9 @@ impl Driver {
             return Ok(Flow::Continue);
         }
         if wire::is::<CStartConfiguration>(&frame, version) {
-            self.send(&SAcknowledgeConfiguration).await?;
+            if self.acks_configuration {
+                self.send(&SAcknowledgeConfiguration).await?;
+            }
             self.state = ConnectionState::Config;
             return Ok(Flow::Continue);
         }

@@ -37,6 +37,7 @@ pub struct ClientBridge {
     /// The client's protocol version.
     pub protocol_version: ProtocolVersion,
     state: ConnectionState,
+    awaiting_config_ack: bool,
 }
 
 impl ClientBridge {
@@ -61,6 +62,7 @@ impl ClientBridge {
             decrypt_cipher: None,
             protocol_version,
             state: ConnectionState::Login,
+            awaiting_config_ack: false,
         }
     }
 
@@ -164,6 +166,19 @@ impl ClientBridge {
 
     pub const fn state(&self) -> ConnectionState {
         self.state
+    }
+
+    pub const fn begin_reconfiguration(&mut self) {
+        self.state = ConnectionState::Config;
+        self.awaiting_config_ack = true;
+    }
+
+    pub const fn reconfiguration_acknowledged(&mut self) {
+        self.awaiting_config_ack = false;
+    }
+
+    pub const fn awaits_config_ack(&self) -> bool {
+        self.awaiting_config_ack
     }
 
     /// Encodes and sends a typed packet to the client.

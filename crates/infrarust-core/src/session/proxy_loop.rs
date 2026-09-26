@@ -208,8 +208,8 @@ impl LoopState {
         }
     }
 
-    const fn client_reading(&self, client: &ClientBridge) -> ConnectionState {
-        if self.reconfiguring {
+    const fn client_reading(client: &ClientBridge) -> ConnectionState {
+        if client.awaits_config_ack() {
             ConnectionState::Play
         } else {
             client.state()
@@ -800,13 +800,14 @@ async fn handle_client_to_backend(
     loop_state: &mut LoopState,
 ) -> Result<(), CoreError> {
     let version = client.protocol_version;
-    let state = loop_state.client_reading(client);
+    let state = LoopState::client_reading(client);
 
     // In Play state: CodecFilter → chat/command → RawPacketEvent → forward
     if state == ConnectionState::Play {
         if loop_state.reconfiguring && Some(frame.id) == hot_ids.s_ack_config {
             backend.queue_frame(&frame)?;
             backend.set_state(ConnectionState::Config);
+            client.reconfiguration_acknowledged();
             loop_state.reconfiguring = false;
             codec_chain.notify_state_change(protocol_state_to_api(ConnectionState::Config));
             tracing::debug!("state transition: Play → Config (AcknowledgeConfiguration)");
@@ -1110,7 +1111,7 @@ async fn handle_backend_to_client(
         }
         if Some(frame.id) == hot_ids.c_start_config {
             client.queue_frame(&frame)?;
-            client.set_state(ConnectionState::Config);
+            client.begin_reconfiguration();
             loop_state.reconfiguring = true;
             loop_state.presentation_lost = true;
             tracing::debug!("state transition: Play → Config (backend StartConfiguration)");

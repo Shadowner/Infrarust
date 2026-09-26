@@ -11,18 +11,21 @@ use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::player::Player;
 use infrarust_api::types::{Component, NamedColor, ServerId};
 use infrarust_protocol::packets::play::chat::SChatMessage;
+use infrarust_protocol::packets::play::start_configuration::SAcknowledgeConfiguration;
+use infrarust_test_harness::plugin_message::{self, PluginMessage};
 use infrarust_test_harness::recorder::component_value;
 use infrarust_test_harness::{
     ClientSession, ConnectionState, DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeSessionServer,
-    LoginBehavior, ProtocolVersion, Recorded, Recorder, ScriptedPlugin, ServerSpec, TestProxy,
-    version_matrix,
+    LoginBehavior, PacketFrame, ProtocolVersion, Recorded, Recorder, ScriptedPlugin, ServerSpec,
+    TestProxy, version_matrix, wire,
 };
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 const T: Duration = DEFAULT_TIMEOUT;
 const STEVE: &str = "Steve";
 const CATCH: &str = "catch";
+const ACKED: &str = "harness:acked";
 const KICK_JSON: &str = r#"{ "color" : "red", "translate" : "disconnect.closed", "extra" : [ { "text" : " (maintenance)" } ] }"#;
 
 fn kick_component() -> Component {
@@ -864,3 +867,110 @@ async fn a_config_kick_during_the_initial_join_can_redirect(version: ProtocolVer
 }
 
 version_matrix!(a_config_kick_during_the_initial_join_can_redirect; p764 = 764, p774 = 774);
+
+async fn a_redirect_after_a_kick_mid_reconfiguration_absorbs_the_late_ack(
+    version: ProtocolVersion,
+) {
+    let backend_a = FakeBackend::builder().spawn().await.unwrap();
+    let backend_b = FakeBackend::builder().hold_config().spawn().await.unwrap();
+    let recorder = Recorder::new();
+    let (deciding_tx, mut deciding) = mpsc::unbounded_channel();
+    let (release, released) = watch::channel(false);
+    let redirect = ScriptedPlugin::new("redirect").on_async::<KickedFromServerEvent>(
+        EventPriority::NORMAL,
+        move |event| {
+            let deciding_tx = deciding_tx.clone();
+            let mut released = released.clone();
+            Box::pin(async move {
+                let _ = deciding_tx.send(());
+                let _ = released.wait_for(|go| *go).await;
+                event.redirect_to(ServerId::new("b"));
+            })
+        },
+    );
+    let proxy = TestProxy::builder()
+        .server(network(ServerSpec::offline("a").backend(backend_a.addr())))
+        .server(network(ServerSpec::offline("b").backend(backend_b.addr())))
+        .plugin(redirect)
+        .plugin(recorder.plugin())
+        .start()
+        .await
+        .unwrap();
+    let mut session = proxy
+        .client_for("a", version)
+        .unwrap()
+        .hold_configuration_ack()
+        .login(STEVE)
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let mut conn_a = backend_a.next_connection(T).await.unwrap();
+
+    conn_a.start_configuration().await.unwrap();
+    conn_a.kick_json(r#"{"text":"Restarting"}"#).await.unwrap();
+    tokio::time::timeout(T, deciding.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let early = wire::encode(
+        &SChatMessage {
+            message: "sent before the acknowledgement".to_string(),
+            ..SChatMessage::default()
+        },
+        version,
+    )
+    .unwrap();
+    session.send_frame(&early).await.unwrap();
+    session
+        .send_packet(&SAcknowledgeConfiguration)
+        .await
+        .unwrap();
+    let acked = plugin_message::to_backend(
+        &PluginMessage::new(ACKED, b"acked".to_vec()),
+        ConnectionState::Config,
+        version,
+    )
+    .unwrap();
+    session.send_frame(&acked).await.unwrap();
+    release.send_replace(true);
+
+    let mut conn_b = backend_b.next_connection(T).await.unwrap();
+    plugin_message::backend_message(&mut conn_b, ACKED, T)
+        .await
+        .unwrap();
+    conn_b.finish_config(T).await.unwrap();
+    session.expect_join(T).await.unwrap();
+
+    let ack_id = wire::encode(&SAcknowledgeConfiguration, version)
+        .unwrap()
+        .id;
+    let late = |frame: &PacketFrame| {
+        frame.id == ack_id || (frame.id == early.id && frame.payload == early.payload)
+    };
+    let stray: Vec<_> = conn_b.received().into_iter().filter(|f| late(f)).collect();
+    assert!(
+        stray.is_empty(),
+        "play packets the client sent before acknowledging the kicking server's configuration must not reach the redirect target: {stray:?}"
+    );
+    let leaked: Vec<_> = conn_a.received().into_iter().filter(|f| late(f)).collect();
+    assert!(
+        leaked.is_empty(),
+        "nothing is forwarded to the server that kicked the player: {leaked:?}"
+    );
+
+    let kick = kicked(&recorder, "a").await;
+    assert_eq!(kick.detail["cause"], json!("config_disconnect"));
+    assert_eq!(kick.detail["during_connect"], json!(false));
+    session.chat("landed").await.unwrap();
+    assert_eq!(
+        conn_b.expect::<SChatMessage>(T).await.unwrap().message,
+        "landed"
+    );
+
+    session.quit().await;
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_redirect_after_a_kick_mid_reconfiguration_absorbs_the_late_ack;
+    p764 = 764, p766 = 766, p774 = 774);
