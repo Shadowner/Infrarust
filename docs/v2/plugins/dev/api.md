@@ -284,7 +284,7 @@ On a passive path (`Passthrough`, `ZeroCopy`, `ServerOnly`), the proxy only copi
 | `Failed(reason)` | The server could not be reached, refused the login, or disconnected the player during the switch. `reason` is the server's disconnect reason, or its `disconnect_message` when it gave none. What happens to the player is up to [`KickedFromServerEvent`](./events#kickedfromserverevent); by default they stay |
 | `Cancelled` | The switch ended without an outcome: the player left or was kicked, the proxy shut down, a listener sent the player to limbo instead, or the request was dropped |
 
-`is_success()` is `true` for `Success` and `AlreadyConnected`. `connect` returns `Err(PlayerError::NotActive)` on a passive path and `Err(PlayerError::Disconnected)` when the player has left. It has no timeout of its own; wrap it in `tokio::time::timeout` to bound the wait.
+`is_success()` is `true` for `Success` and `AlreadyConnected`. `connect` returns `Err(PlayerError::NotActive)` on a passive path and `Err(PlayerError::Disconnected)` when the player has left. Called from code the player's own session is waiting on, such as a listener of that player's `ChatMessageEvent` or a limbo callback, it returns `Err(PlayerError::WouldDeadlock)` at once; see [Calling back into the proxy](./threading#calling-back-into-the-proxy). It has no timeout of its own; wrap it in `tokio::time::timeout` to bound the wait.
 
 `switch_server(target)` queues the same request and returns as soon as it is queued. It stays for code that does not need the outcome, like the proxy's `/server` and `/send` commands. Both fire `ServerPreConnectEvent` with the cause `switch`. When several `connect` calls wait for the same server, one switch there settles all of them.
 
@@ -396,7 +396,7 @@ match player.request_cookie("myplugin:ticket").await? {
 
 A key is an identifier: `namespace:path` in lowercase letters, digits, `_`, `-` and `.`, with `/` also allowed in the path. A key without a namespace gets `minecraft:`, as the client would give it. Another key, or data over 5120 bytes, returns `Err(PlayerError::InvalidArgument)`.
 
-`request_cookie` resolves with `Some(data)`, or `None` when the client has no cookie under that key. It returns `Err(PlayerError::Disconnected)` if the player leaves before answering. It has no timeout of its own: a vanilla client always answers, and `tokio::time::timeout` bounds the wait when you need to. The proxy matches answers to requests by key and in order, so a plugin and a backend can ask for the same cookie at the same time: each gets its own answer, and only the backend's reaches the backend.
+`request_cookie` resolves with `Some(data)`, or `None` when the client has no cookie under that key. It returns `Err(PlayerError::Disconnected)` if the player leaves before answering, and `Err(PlayerError::WouldDeadlock)` at once from code the player's own session is waiting on, like `connect`. It has no timeout of its own: a vanilla client always answers, and `tokio::time::timeout` bounds the wait when you need to. The proxy matches answers to requests by key and in order, so a plugin and a backend can ask for the same cookie at the same time: each gets its own answer, and only the backend's reaches the backend.
 
 ## Scheduler
 

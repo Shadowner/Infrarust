@@ -51,7 +51,9 @@ pub(crate) fn timed_out(message: String) -> HostError {
 pub(crate) fn player_error(error: PlayerError) -> HostError {
     let kind = match &error {
         PlayerError::Disconnected => ErrorKind::PlayerGone,
-        PlayerError::NotActive | PlayerError::NoBackend => ErrorKind::InvalidState,
+        PlayerError::NotActive | PlayerError::NoBackend | PlayerError::WouldDeadlock => {
+            ErrorKind::InvalidState
+        }
         PlayerError::ServerNotFound(_) => ErrorKind::NotFound,
         PlayerError::MessageTooLarge { .. } => ErrorKind::InvalidArgument,
         PlayerError::SendFailed(_) | PlayerError::SwitchFailed(_) => ErrorKind::Unavailable,
@@ -143,6 +145,10 @@ mod tests {
         assert_eq!(
             player_error(PlayerError::ServerNotFound("x".into())).kind,
             ErrorKind::NotFound
+        );
+        assert_eq!(
+            player_error(PlayerError::WouldDeadlock).kind,
+            ErrorKind::InvalidState
         );
         let failed = service_error(ServiceError::OperationFailed("disk full".into()));
         assert_eq!(failed.kind, ErrorKind::Internal);

@@ -503,6 +503,11 @@ fn subscribe(ctx: &Context, event: EventName, priority: u8, action: Action) {
                 Action::Allow => e.allow(),
                 Action::Deny(reason) => e.deny(text(reason)),
                 Action::Modify(message) => e.modify(message.as_str()),
+                Action::Connect(server) => {
+                    let outcome = connect(&e.player, server);
+                    let line = script::connect_line(event.as_str(), server, &outcome);
+                    script::append(&log(), &line);
+                }
                 _ => {}
             }
         }),

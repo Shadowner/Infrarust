@@ -143,6 +143,7 @@ impl Job {
         kind: JobKind,
         deadline: Option<Deadline>,
         generation: Option<u64>,
+        chain: CallChain,
         call: F,
     ) -> (Self, oneshot::Receiver<Result<T, CallFailure>>)
     where
@@ -160,7 +161,7 @@ impl Job {
             kind,
             deadline,
             generation,
-            chain: CallChain::current(),
+            chain,
             call: Box::new(TypedCall {
                 reply,
                 call: Some(call),
@@ -307,7 +308,7 @@ impl InstanceRef {
             + Send
             + 'static,
     {
-        let answer = self.enqueue(op, call)?;
+        let answer = self.enqueue(op, CallChain::current().unawaited(), call)?;
         tokio::spawn(async move {
             let _ = answer.await;
         });
@@ -317,6 +318,7 @@ impl InstanceRef {
     fn enqueue<T, F>(
         &self,
         op: &'static str,
+        chain: CallChain,
         call: F,
     ) -> Result<oneshot::Receiver<Result<T, CallFailure>>, CallFailure>
     where
@@ -332,7 +334,14 @@ impl InstanceRef {
             return Err(CallFailure::Stopped);
         };
         let deadline = Deadline::after(self.info.budget(self.kind));
-        let (job, answer) = Job::new(op, JobKind::Call, Some(deadline), self.generation, call);
+        let (job, answer) = Job::new(
+            op,
+            JobKind::Call,
+            Some(deadline),
+            self.generation,
+            chain,
+            call,
+        );
         match jobs.try_send(job) {
             Ok(()) => Ok(answer),
             Err(TrySendError::Full(_)) => {
@@ -353,7 +362,7 @@ impl InstanceRef {
             + Send
             + 'static,
     {
-        let answer = self.enqueue(op, call)?;
+        let answer = self.enqueue(op, CallChain::current(), call)?;
         answer.await.unwrap_or(Err(CallFailure::Dropped))
     }
 
@@ -372,7 +381,7 @@ impl InstanceRef {
             + 'static,
     {
         let budget = self.info.budget(self.kind);
-        let answer = self.enqueue(op, call)?;
+        let answer = self.enqueue(op, CallChain::current(), call)?;
         match tokio::time::timeout(budget, answer).await {
             Ok(answer) => answer.unwrap_or(Err(CallFailure::Dropped)),
             Err(_) => Err(CallFailure::TimedOut),
@@ -441,7 +450,7 @@ impl PluginActor {
         let Some(jobs) = jobs else {
             return Err(CallFailure::Stopped);
         };
-        let (job, answer) = Job::new(op, kind, None, None, call);
+        let (job, answer) = Job::new(op, kind, None, None, CallChain::current(), call);
         if jobs.send(job).await.is_err() {
             return Err(CallFailure::Stopped);
         }

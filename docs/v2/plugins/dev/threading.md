@@ -208,16 +208,16 @@ A task that panics is logged with your plugin id and ends that run only: a repea
 
 ## Calling back into the proxy
 
-Plugin code calls proxy services all the time. Most calls are safe from anywhere; a few wait on a player's session and must not be awaited from that same session.
+Plugin code calls proxy services all the time. Most calls are safe from anywhere; two wait on a player's session and cannot be answered while that session is waiting on you.
 
 **Safe from any listener, command or task:**
 
-- Player actions that queue a command for the session and return: `send_message`, `send_title`, `send_action_bar`, `clear_title`, `set_player_list_header_footer`, `show_boss_bar`, `send_resource_pack`, `remove_resource_pack`, `send_plugin_message`, `send_plugin_message_to_backend`, `store_cookie`, `send_packet`, `disconnect` and `switch_server`. Those sent while the player is still logging in wait and go out in order once the client can take them.
+- Player actions that queue a command for the session and return: `send_message`, `send_title`, `send_action_bar`, `clear_title`, `set_player_list_header_footer`, `show_boss_bar`, `send_resource_pack`, `remove_resource_pack`, `send_plugin_message`, `send_plugin_message_to_backend`, `store_cookie`, `send_packet`, `disconnect`, `switch_server` and `transfer`. Those sent while the player is still logging in wait and go out in order once the client can take them. From code the player's own session is waiting on, `switch_server` and `transfer` never wait for room in the player's queue of pending actions: when it is full they return `PlayerError::SendFailed` at once.
 - Lookups in the player registry and the other services, and reading the player handle.
 - Subscribing and unsubscribing, even from inside a listener. A dispatch in progress keeps the listener list it started with, so a new listener sees the next event; a removed listener is skipped even by the dispatch in progress.
 - Registering or removing commands, limbo handlers, permission nodes, services and filters, at any time.
 
-**Do not await from the same player's session:**
+**Calls that wait for the player's session:**
 
 `Player::connect` and `Player::request_cookie` wait for the player's session to carry out the request and answer. A command handler can await them for the player who typed the command, because commands run on the player's [command queue](#player-commands-run-on-a-queue-of-their-own), not in the session:
 
@@ -243,14 +243,36 @@ impl CommandHandler for Hub {
 }
 ```
 
-If you await them from code the session itself is awaiting (a listener of one of that player's session events, a limbo callback for that player), the session cannot handle the request until your code returns:
+Code the session itself is awaiting is different: a listener of one of that player's [session events](#player-events-run-in-the-player-s-session) (`DisconnectEvent` included) and a limbo callback for that player. The session cannot carry out the request until your code returns, so the proxy does not let you wait for it: `connect` and `request_cookie` for that same player return `Err(PlayerError::WouldDeadlock)` at once, and the proxy logs a warning that names the player and the call, at most once every 10 seconds per player. The same holds for a WASM plugin handling that player's event.
 
-- a listener waits until `handler_timeout` cancels it, and the request is then carried out without anyone waiting for the answer;
-- a limbo callback has no timeout, so that player's session stays stuck.
+In those places, queue the request with `switch_server` when you do not need the outcome, or start the wait in a task of its own and let your code return:
 
-Queue the request with `switch_server` there when you do not need the outcome, or await `connect` in a task of its own.
+```rust
+let scheduler = ctx.scheduler_handle();
+ctx.event_bus()
+    .subscribe_async::<ChatMessageEvent, _>(EventPriority::NORMAL, move |event| {
+        let scheduler = Arc::clone(&scheduler);
+        let player = Arc::clone(&event.player);
+        let wants_hub = event.message == "!hub";
+        Box::pin(async move {
+            if !wants_hub {
+                return;
+            }
+            // The listener runs in the player's session: start the wait elsewhere and return.
+            scheduler.spawn(Box::pin(async move {
+                if let Ok(result) = player.connect(ServerId::new("hub")).await
+                    && !result.is_success()
+                {
+                    let _ = player.send_message(Component::error("Could not reach the hub"));
+                }
+            }));
+        })
+    });
+```
 
-Awaiting these calls for another player, from a queued event or from a scheduled task is fine: the session that answers is not waiting on you.
+The proxy recognises the session by the task your code runs in, so it cannot see through a task you spawn and then await: awaiting that task from the listener brings the deadlock back, and nothing reports it. Spawn the wait and return.
+
+Awaiting these calls for another player, from a queued event such as `PlayerClientBrandEvent`, or from a scheduled task is fine: the session that answers is not waiting on you.
 
 **Firing events from a listener:** `EventBusExt::fire` dispatches inline and returns when every listener of the fired event has run, and that time counts against your own listener's `handler_timeout`. A listener that fires the event type it listens to recurses; nothing stops it but your own code.
 

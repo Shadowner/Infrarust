@@ -14,7 +14,7 @@ pub mod registry;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock, Weak};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use bytes::Bytes;
 
@@ -31,7 +31,7 @@ use infrarust_api::messaging::{ChannelId, MAX_TO_BACKEND_PAYLOAD, MAX_TO_CLIENT_
 use infrarust_api::permissions::{DefaultPermissionChecker, PermissionChecker, PermissionSubject};
 use infrarust_api::player::{
     BossBar, BossBarControl, BossBarHandle, BossBarUpdate, ClientSettings, ConnectionResult,
-    MAX_COOKIE_SIZE, Player, ResourcePackRequest, cookie_key,
+    MAX_COOKIE_SIZE, Player, ResourcePackRequest, cookie_key, session_task,
 };
 use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
@@ -57,6 +57,8 @@ const MAX_TRANSFER_HOST: usize = 32_767;
 
 /// Channel buffer size for player commands.
 const COMMAND_CHANNEL_SIZE: usize = 32;
+
+const SELF_WAIT_WARN_INTERVAL: Duration = Duration::from_secs(10);
 
 pub const SHUTDOWN_REASON: &str = "Proxy is shutting down";
 
@@ -128,11 +130,31 @@ struct Routing {
     pending: Option<ServerId>,
 }
 
+#[derive(Default)]
+struct WarnWindow {
+    last: Option<Instant>,
+    suppressed: u64,
+}
+
+impl WarnWindow {
+    fn admit(&mut self, now: Instant) -> Option<u64> {
+        if self
+            .last
+            .is_some_and(|last| now.saturating_duration_since(last) < SELF_WAIT_WARN_INTERVAL)
+        {
+            self.suppressed = self.suppressed.saturating_add(1);
+            return None;
+        }
+        self.last = Some(now);
+        Some(std::mem::take(&mut self.suppressed))
+    }
+}
+
 /// Concrete implementation of [`Player`].
 ///
 /// Holds identity data and a command channel to the proxy loop.
 /// Sync methods (`send_message`, etc.) use `try_send` on the bounded channel.
-/// `switch_server` uses `send().await`.
+/// `switch_server` uses `send().await`, and `try_send` from the player's own session.
 pub struct PlayerSession {
     player_id: PlayerId,
     profile: GameProfile,
@@ -159,6 +181,7 @@ pub struct PlayerSession {
     shared: OnceLock<Weak<Self>>,
     connects: Mutex<Vec<(ServerId, oneshot::Sender<ConnectionResult>)>>,
     typed_commands: CommandQueue,
+    self_waits: Mutex<WarnWindow>,
 }
 
 impl std::fmt::Debug for PlayerSession {
@@ -218,6 +241,7 @@ impl PlayerSession {
             shared: OnceLock::new(),
             connects: Mutex::new(Vec::new()),
             typed_commands,
+            self_waits: Mutex::default(),
         }
     }
 
@@ -477,11 +501,38 @@ impl PlayerSession {
     }
 
     async fn send_command(&self, cmd: PlayerCommand) -> Result<(), PlayerError> {
+        if self.runs_this_code() {
+            return self.try_send_command(cmd);
+        }
         self.ready()?;
         self.command_tx
             .send(cmd)
             .await
             .map_err(|e| PlayerError::SendFailed(e.to_string()))
+    }
+
+    fn runs_this_code(&self) -> bool {
+        session_task::current() == Some(self.player_id)
+    }
+
+    fn refuse_self_wait(&self, call: &'static str) -> Result<(), PlayerError> {
+        if !self.runs_this_code() {
+            return Ok(());
+        }
+        let admitted = self
+            .self_waits
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .admit(Instant::now());
+        if let Some(suppressed) = admitted {
+            tracing::warn!(
+                player = %self.profile.username,
+                call,
+                suppressed,
+                "a plugin awaited a call that needs the player's session from code that session is running; the call fails at once instead of waiting on itself. Use switch_server, or await the call in a task of its own"
+            );
+        }
+        Err(PlayerError::WouldDeadlock)
     }
 
     fn ready(&self) -> Result<(), PlayerError> {
@@ -610,16 +661,8 @@ impl Player for PlayerSession {
 
     fn switch_server(&self, target: ServerId) -> BoxFuture<'_, Result<(), PlayerError>> {
         Box::pin(async move {
-            if !self.active {
-                return Err(PlayerError::NotActive);
-            }
-            if !self.connected.load(Ordering::Acquire) {
-                return Err(PlayerError::Disconnected);
-            }
-            self.command_tx
-                .send(PlayerCommand::SwitchServer(target, ConnectCause::Switch))
+            self.send_command(PlayerCommand::SwitchServer(target, ConnectCause::Switch))
                 .await
-                .map_err(|e| PlayerError::SendFailed(e.to_string()))
         })
     }
 
@@ -695,6 +738,7 @@ impl Player for PlayerSession {
     fn connect(&self, target: ServerId) -> BoxFuture<'_, Result<ConnectionResult, PlayerError>> {
         Box::pin(async move {
             self.ready()?;
+            self.refuse_self_wait("connect")?;
             let (reply, result) = oneshot::channel();
             self.connects
                 .lock()
@@ -793,6 +837,7 @@ impl Player for PlayerSession {
         Box::pin(async move {
             self.supports(COOKIES_SINCE, "cookies")?;
             let key = key.map_err(PlayerError::InvalidArgument)?;
+            self.refuse_self_wait("request_cookie")?;
             let (reply, answer) = oneshot::channel();
             self.send_command(PlayerCommand::Client(ClientCommand::RequestCookie {
                 key,

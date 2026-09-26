@@ -318,7 +318,7 @@ Every fallible host function returns `result<T, host-error>`. The `kind` is the 
 | `timeout` | The host call ran out of time, either its own timeout or the deadline of the guest call around it. |
 | `player-gone` | The player id is not online any more. |
 | `conflict` | The name is taken: a command owned by another plugin, a limbo handler name already registered, a codec filter id owned by another plugin or the proxy (on register and on unregister). |
-| `invalid-state` | The player is not in a state that allows the action, such as no backend yet. |
+| `invalid-state` | The player is not in a state that allows the action, such as no backend yet, or the call would wait on the player's own session while that session is waiting on the plugin. |
 | `unsupported` | The proxy does not offer the service. |
 | `internal` | Anything else. |
 

@@ -177,6 +177,7 @@ impl EventName {
                 self,
                 Self::ChatMessage | Self::CommandExecute | Self::RawPacket
             ),
+            Action::Connect(_) => self == Self::ChatMessage,
             Action::Description(_) => self == Self::ProxyPing,
             Action::Custom(_) => self == Self::PermissionsSetup,
         }
@@ -201,6 +202,7 @@ pub enum Action {
     Description(String),
     Custom(String),
     Rename(String),
+    Connect(String),
     ForwardToBackend,
     Drop,
     Forward,
@@ -413,6 +415,7 @@ fn parse_action(text: &str) -> Result<Action, String> {
         "description" => Action::Description(arg),
         "custom" if matches!(arg.as_str(), "admin" | "player") => Action::Custom(arg),
         "rename" => Action::Rename(arg),
+        "connect" => Action::Connect(arg),
         "replace" => Action::Replace(arg),
         "reply" => Action::Reply(arg),
         "respond" => Action::Respond(arg),

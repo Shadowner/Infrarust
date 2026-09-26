@@ -101,7 +101,7 @@ ctx.command("ping")
     .register()?;
 ```
 
-A player's command does not run in that player's session: the host hands it to the player's command queue, which runs the player's commands one at a time, in the order they were typed, while the session goes on with the player's packets. A handler can therefore call `connect` or `request_cookie` for the player who typed the command and wait for the answer. Tab completions take the same queue. See [Where the chain does not reach](./threading#where-the-chain-does-not-reach).
+A player's command does not run in that player's session: the host hands it to the player's command queue, which runs the player's commands one at a time, in the order they were typed, while the session goes on with the player's packets. A handler can therefore call `connect` or `request_cookie` for the player who typed the command and wait for the answer. Tab completions take the same queue. See [Calls that wait on the player's own session](./threading#calls-that-wait-on-the-player-s-own-session).
 
 ## Tab-completion
 

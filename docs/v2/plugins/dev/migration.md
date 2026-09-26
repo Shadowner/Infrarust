@@ -502,7 +502,7 @@ What to do: replace field access with `content`, `style` and `children`; use `Na
 - `refresh_permissions()` is new.
 - New methods, all with default implementations: `virtual_host`, `client_brand`, `settings`, `known_channels`, `ping`, `send_plugin_message`, `send_plugin_message_to_backend`, `connect`, `set_player_list_header_footer`, `clear_title`, `show_boss_bar`, `send_resource_pack`, `remove_resource_pack`, `transfer`, `store_cookie` and `request_cookie`.
 - `connect(server)` resolves once the switch is over and returns a `ConnectionResult` (`Success`, `AlreadyConnected`, `Denied`, `Failed`, `Cancelled`); `switch_server` still returns once the session took the request.
-- `PlayerError` gains `NoBackend`, `MessageTooLarge`, `Unsupported`, `InvalidArgument` and `Denied`.
+- `PlayerError` gains `NoBackend`, `MessageTooLarge`, `Unsupported`, `InvalidArgument`, `Denied` and `WouldDeadlock`.
 - **Compiles unchanged**: `remote_addr()` is the address from the PROXY protocol header when there is one, not the load balancer's. A kick sent with `disconnect` now reaches the client with its reason; in beta.3 about one in four arrived as a bare connection close.
 
 ```rust
@@ -521,7 +521,7 @@ if player.has_permission(ADMIN_PERMISSION) {
 }
 ```
 
-What to do: replace `permission_level()`, and prefer `connect` where you need to know whether the switch worked. A command handler may await `connect` or `request_cookie` for the player who typed it. Do not await them from a listener or limbo callback that runs in the same player's session; see [Calling back into the proxy](./threading#calling-back-into-the-proxy). See [The Player trait](./api#the-player-trait).
+What to do: replace `permission_level()`, and prefer `connect` where you need to know whether the switch worked. A command handler may await `connect` or `request_cookie` for the player who typed it. A listener of that player's session events or a limbo callback for that player gets `Err(PlayerError::WouldDeadlock)` at once: use `switch_server` there, or spawn the wait; see [Calling back into the proxy](./threading#calling-back-into-the-proxy). See [The Player trait](./api#the-player-trait).
 
 ## Services
 

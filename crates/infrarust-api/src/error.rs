@@ -41,6 +41,11 @@ pub enum PlayerError {
 
     #[error("denied: {0}")]
     Denied(Box<crate::types::Component>),
+
+    #[error(
+        "the player's session is waiting for the code that made this call, so it cannot answer it; use switch_server, or await the call in a task of its own"
+    )]
+    WouldDeadlock,
 }
 
 /// Errors that can occur when interacting with proxy services.

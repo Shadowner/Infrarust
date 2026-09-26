@@ -3,17 +3,26 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use bytes::Bytes;
 use infrarust_api::command::{
     CommandContext, CommandHandler, CommandSpec, SuggestContext, Suggestion,
 };
 use infrarust_api::error::PlayerError;
-use infrarust_api::event::BoxFuture;
+use infrarust_api::event::{BoxFuture, EventPriority};
+use infrarust_api::events::chat::ChatMessageEvent;
+use infrarust_api::events::lifecycle::DisconnectEvent;
+use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
+use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::player::{ConnectionResult, Player};
+use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::packets::play::chat::{CChatMessageLegacy, CSystemChatMessage};
 use infrarust_protocol::packets::play::join_game::CJoinGame;
 use infrarust_protocol::packets::play::tab_complete::{CTabCompleteResponse, STabCompleteRequest};
 use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::time::Instant;
+use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use infrarust_test_harness::text::component_text;
 use infrarust_test_harness::{
@@ -22,6 +31,8 @@ use infrarust_test_harness::{
 };
 
 const T: Duration = DEFAULT_TIMEOUT;
+const FAST: Duration = Duration::from_secs(1);
+const HOLD: &str = "self-wait-hold";
 
 type Log = Arc<Mutex<Vec<String>>>;
 
@@ -304,6 +315,193 @@ impl CommandHandler for Forward {
     }
 }
 
+#[derive(Clone, Default)]
+struct Logs(Arc<Mutex<Vec<u8>>>);
+
+impl Logs {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+
+    fn warnings(&self) -> Vec<String> {
+        self.text()
+            .lines()
+            .filter(|line| line.contains("WARN"))
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+impl std::io::Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> MakeWriter<'a> for Logs {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+fn capture_warnings() -> (Logs, impl Drop) {
+    infrarust_test_harness::init_tracing();
+    let logs = Logs::default();
+    let guard = tracing_subscriber::fmt()
+        .with_writer(logs.clone())
+        .with_ansi(false)
+        .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
+        .finish()
+        .set_default();
+    (logs, guard)
+}
+
+fn assert_self_wait_warning(logs: &Logs) {
+    let warnings: Vec<String> = logs
+        .warnings()
+        .into_iter()
+        .filter(|line| line.contains("switch_server"))
+        .collect();
+    assert_eq!(
+        warnings.len(),
+        1,
+        "one rate-limited warning points to switch_server: {}",
+        logs.text()
+    );
+    assert!(warnings[0].contains("Steve"), "{}", warnings[0]);
+}
+
+type Outcomes = mpsc::UnboundedSender<(Result<ConnectionResult, PlayerError>, Duration)>;
+
+struct SelfWaits {
+    connect: Result<ConnectionResult, PlayerError>,
+    cookie: Result<Option<Bytes>, PlayerError>,
+    waited: Duration,
+    switch: Result<(), PlayerError>,
+    told: Result<(), PlayerError>,
+}
+
+fn self_waiting_chat(outcomes: mpsc::UnboundedSender<SelfWaits>) -> ScriptedPlugin {
+    ScriptedPlugin::new("hopper").on_async::<ChatMessageEvent>(
+        EventPriority::NORMAL,
+        move |event| {
+            let outcomes = outcomes.clone();
+            let player = Arc::clone(&event.player);
+            Box::pin(async move {
+                let started = Instant::now();
+                let connect = player.connect(ServerId::new("b")).await;
+                let cookie = player.request_cookie("infrarust:probe").await;
+                let waited = started.elapsed();
+                let switch = player.switch_server(ServerId::new("b")).await;
+                let told = player.send_message(Component::text("moving you"));
+                let _ = outcomes.send(SelfWaits {
+                    connect,
+                    cookie,
+                    waited,
+                    switch,
+                    told,
+                });
+            })
+        },
+    )
+}
+
+#[tokio::test]
+async fn a_chat_listener_waiting_for_its_own_players_session_fails_at_once() {
+    let (logs, _capture) = capture_warnings();
+    let (outcomes, mut seen) = mpsc::unbounded_channel();
+    let backend_a = FakeBackend::builder().spawn().await.unwrap();
+    let backend_b = FakeBackend::builder().spawn().await.unwrap();
+    let recorder = Recorder::new();
+    let proxy = two_servers(
+        &backend_a,
+        &backend_b,
+        self_waiting_chat(outcomes),
+        &recorder,
+    )
+    .await;
+    let (mut session, player) = join(&proxy, ProtocolVersion(774)).await;
+    let mut conn = backend_a.next_connection(T).await.unwrap();
+
+    session.chat("hello").await.unwrap();
+
+    let seen = tokio::time::timeout(T, seen.recv())
+        .await
+        .expect("the listener's calls answer long before [events] handler_timeout")
+        .unwrap();
+    assert!(
+        matches!(seen.connect, Err(PlayerError::WouldDeadlock)),
+        "{:?}",
+        seen.connect
+    );
+    assert!(
+        matches!(seen.cookie, Err(PlayerError::WouldDeadlock)),
+        "{:?}",
+        seen.cookie
+    );
+    assert!(seen.waited < FAST, "the listener waited {:?}", seen.waited);
+    seen.switch
+        .expect("switch_server still works from the listener");
+    seen.told
+        .expect("send_message still works from the listener");
+    conn.chat_until("hello", T)
+        .await
+        .expect("the chat message goes on to the backend");
+    joined_and_told(&mut session, "moving you").await;
+    let _conn_b = backend_b.next_connection(T).await.unwrap();
+    assert_eq!(player.current_server(), Some(ServerId::new("b")));
+    assert_self_wait_warning(&logs);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_disconnect_listener_waiting_for_its_own_players_switch_fails_at_once() {
+    let (outcomes, mut seen) = mpsc::unbounded_channel();
+    let listener = {
+        let outcomes: Outcomes = outcomes;
+        ScriptedPlugin::new("farewell").on_async::<DisconnectEvent>(
+            EventPriority::NORMAL,
+            move |event| {
+                let outcomes = outcomes.clone();
+                let player = Arc::clone(&event.player);
+                Box::pin(async move {
+                    let started = Instant::now();
+                    let result = player.connect(ServerId::new("b")).await;
+                    let _ = outcomes.send((result, started.elapsed()));
+                })
+            },
+        )
+    };
+    let backend_a = FakeBackend::builder().spawn().await.unwrap();
+    let backend_b = FakeBackend::builder().spawn().await.unwrap();
+    let recorder = Recorder::new();
+    let proxy = two_servers(&backend_a, &backend_b, listener, &recorder).await;
+    let (session, _player) = join(&proxy, ProtocolVersion(774)).await;
+
+    session.quit().await;
+
+    let (result, waited) = tokio::time::timeout(T, seen.recv())
+        .await
+        .expect("connect answers long before [events] handler_timeout")
+        .unwrap();
+    assert!(
+        matches!(result, Err(PlayerError::WouldDeadlock)),
+        "{result:?}"
+    );
+    assert!(waited < FAST, "connect waited {waited:?}");
+    proxy.wait_for_connection_count(0, T).await.unwrap();
+
+    proxy.shutdown().await.unwrap();
+}
+
 struct SlowCompleter {
     started: mpsc::UnboundedSender<()>,
     gate: Arc<Notify>,
@@ -380,6 +578,90 @@ async fn a_slow_completer_does_not_hold_the_players_session() {
     assert_eq!((response.start, response.length), (4, 2));
     assert_eq!(response.matches.len(), 1);
     assert_eq!(response.matches[0].text, "world");
+
+    proxy.shutdown().await.unwrap();
+}
+
+struct SelfWaitingLimbo {
+    players: Arc<dyn PlayerRegistry>,
+    outcomes: Outcomes,
+}
+
+impl LimboHandler for SelfWaitingLimbo {
+    fn name(&self) -> &str {
+        HOLD
+    }
+
+    fn on_player_enter<'a>(
+        &'a self,
+        session: &'a dyn LimboSession,
+    ) -> BoxFuture<'a, HandlerResult> {
+        Box::pin(async move {
+            if let Some(player) = self.players.get_player_by_id(session.player_id()) {
+                let started = Instant::now();
+                let result = player.connect(ServerId::new("b")).await;
+                let _ = self.outcomes.send((result, started.elapsed()));
+            }
+            HandlerResult::Hold
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_limbo_callback_waiting_for_its_own_players_switch_fails_at_once() {
+    let (logs, _capture) = capture_warnings();
+    let (outcomes, mut seen) = mpsc::unbounded_channel();
+    let limbo = ScriptedPlugin::new("gate").on_enable(move |ctx| {
+        ctx.register_limbo_handler(Box::new(SelfWaitingLimbo {
+            players: ctx.player_registry_handle(),
+            outcomes: outcomes.clone(),
+        }))
+        .unwrap();
+    });
+    let backend_b = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(
+            ServerSpec::offline("hub")
+                .unreachable()
+                .network("main")
+                .limbo_handlers([HOLD]),
+        )
+        .server(
+            ServerSpec::offline("b")
+                .backend(backend_b.addr())
+                .network("main"),
+        )
+        .plugin(limbo)
+        .start()
+        .await
+        .unwrap();
+    let mut session = proxy
+        .client_for("hub", ProtocolVersion(774))
+        .unwrap()
+        .login("Steve")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let player = proxy.wait_for_player("Steve", T).await.unwrap();
+
+    let (result, waited) = tokio::time::timeout(T, seen.recv())
+        .await
+        .expect("connect answers a limbo callback at once")
+        .unwrap();
+    assert!(
+        matches!(result, Err(PlayerError::WouldDeadlock)),
+        "{result:?}"
+    );
+    assert!(waited < FAST, "connect waited {waited:?}");
+    player
+        .send_message(Component::text("still in limbo"))
+        .unwrap();
+    assert_eq!(
+        session.expect_system_text(T).await.unwrap(),
+        "still in limbo"
+    );
+    assert_self_wait_warning(&logs);
 
     proxy.shutdown().await.unwrap();
 }

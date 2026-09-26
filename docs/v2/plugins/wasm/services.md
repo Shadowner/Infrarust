@@ -170,6 +170,8 @@ ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
 
 `connect` runs the whole switch on the player's session, which fires `ServerPreConnectEvent` and the other connection events. A plugin that listens to one of those events cannot answer it while it is itself waiting in `connect`: the event bus gives up on that listener after `[events] handler_timeout` and the switch goes on without it. A plugin that listens to connection events should move players with `switch_server`, which does not wait for the switch.
 
+From a handler the player's own session is waiting on, such as that player's `ChatMessageEvent` or a limbo callback for that player, `connect` and `request_cookie` for that player return `InvalidState` at once: the session could not answer before the handler returns. A command handler is not in that case and can wait for its own player's switch. See [Calls that wait on the player's own session](./threading#calls-that-wait-on-the-player-s-own-session).
+
 `transfer` needs a 1.20.5+ client and fires `PreTransferEvent` first; an older client answers `Unsupported`. The plugin that calls `transfer` does not get a say in its own `PreTransferEvent`: see [Firing an event you listen to](./events#named-events). Cookie keys are `namespace:path` (a bare path means `minecraft:`), and a cookie holds at most 5120 bytes. A resource pack carries its own `Uuid` so you can remove it later; `hash` must be the 40 hexadecimal characters of the pack's SHA-1, and a bad one returns `InvalidArgument`.
 
 A boss bar stays until you hide it or the player leaves. `show_boss_bar` returns a `BossBarHandle` you keep to change it:

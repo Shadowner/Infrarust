@@ -13,6 +13,7 @@ use infrarust_test_harness::text::component_text;
 use infrarust_test_harness::{
     ClientSession, FakeBackend, PacketFrame, ProtocolVersion, ServerSpec, TestProxy, wire,
 };
+use tokio::time::Instant;
 use toml::Value;
 use toml::value::Table;
 
@@ -142,6 +143,34 @@ async fn a_wasm_command_can_wait_for_its_own_players_switch() {
         "{:?}",
         read_log(&world.data)
     );
+
+    world.proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wasm_listener_waiting_for_its_own_players_switch_fails_at_once() {
+    let world = World::start("on chat-message normal connect b").await;
+    let session = world.join().await;
+    let mut conn = world.backend_a.next_connection(T).await.unwrap();
+
+    let sent = Instant::now();
+    session.chat("hello").await.unwrap();
+    conn.chat_until("hello", T)
+        .await
+        .expect("the chat goes on long before host_call_timeout");
+    let waited = sent.elapsed();
+
+    assert!(
+        waited < Duration::from_secs(1),
+        "the chat waited {waited:?}"
+    );
+    assert!(
+        logged(&world.data, "chat-message connect b invalid-state"),
+        "{:?}",
+        read_log(&world.data)
+    );
+    let player = world.proxy.wait_for_player("Steve", T).await.unwrap();
+    assert_eq!(player.current_server(), Some(ServerId::new("a")));
 
     world.proxy.shutdown().await.unwrap();
 }

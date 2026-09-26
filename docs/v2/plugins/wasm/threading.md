@@ -1,6 +1,6 @@
 ---
 title: Threading and Concurrency
-description: How the host runs a WASM plugin. One actor and one call at a time, the call queue, no re-entry and the call-chain guard, deadlines and host-call timeouts, why guest state needs no Send or Sync, and why WASM threads are not supported.
+description: How the host runs a WASM plugin. One actor and one call at a time, the call queue, no re-entry and the call-chain guard, calls that wait on a player's own session, deadlines and host-call timeouts, why guest state needs no Send or Sync, and why WASM threads are not supported.
 outline: [2, 3]
 ---
 
@@ -90,16 +90,15 @@ Providers get the same protection. A [ban provider](./bans) that calls the ban s
 
 Events the proxy queues rather than fires inline, such as the `BanIssuedEvent` after `Bans::ban`, are delivered by the proxy's event queue on its own task. They reach your plugin after the current call, like any other event.
 
-### Where the chain does not reach
+The chain also records the player whose session is waiting on the call, if any: see [Calls that wait on the player's own session](#calls-that-wait-on-the-player-s-own-session). An event delivered without anyone waiting for it, as above, does not carry that player.
 
-The chain follows the call's own work. It does not follow work the host hands to another task, and a player's session is another task.
+### Calls that wait on the player's own session
 
-`Player::connect` and `Player::request_cookie` hand the request to the player's session and wait for it to finish. Two consequences:
+`Player::connect` and `Player::request_cookie` hand the request to the player's session and wait for it to finish. A player's session is a proxy task of its own, and it waits on your plugin whenever it delivers one of that player's session events: `ChatMessageEvent`, `CommandExecuteEvent`, `PluginMessageEvent`, `RawPacketEvent`, the login and connection events, `KickedFromServerEvent`, the limbo events and `DisconnectEvent`, and every limbo callback for that player. While it waits, it cannot carry out a request.
 
-- If your plugin listens to `ServerPreConnectEvent`, `ServerConnectedEvent` or `ServerPostConnectEvent` and calls `connect`, the session fires those events while your `connect` call is still running. Their delivery waits in your queue behind it, and the session waits up to `[events] handler_timeout` for each before it goes on without your answer.
-- If you call `connect` or `request_cookie` from a call that the same player's session is waiting on (a `ChatMessageEvent`, `CommandExecuteEvent` or `PluginMessageEvent` from that player, a limbo callback for that player), the session cannot carry out the request before your call returns. The host call ends with a `Timeout` error at its [limit](#deadlines-and-host-call-timeouts), your call returns, and only then does the session act.
+So the host records that player in the call's chain, and a `connect` or `request_cookie` for that same player from such a call fails at once with an `Error` of kind `InvalidState`, instead of waiting until its [limit](#deadlines-and-host-call-timeouts) with the session paused. The proxy logs a warning that names the player and the call, at most once every 10 seconds per player. The same calls for another player work as usual.
 
-Use `switch_server` in those places. It returns as soon as the session has taken the request (within 250 ms), and the switch then runs on its own:
+Use `switch_server` in those places. It returns as soon as the session has taken the request, and the switch then runs on its own:
 
 ```rust
 ctx.on::<ChatMessageEvent>(EventPriority::Normal, |event| {
@@ -131,6 +130,10 @@ ctx.command("hub")
 ```
 
 The session goes on with the player's packets meanwhile, and the player's commands run one at a time, in the order they were typed. Tab completions take the same queue. See [Player commands run on a queue of their own](../dev/threading#player-commands-run-on-a-queue-of-their-own) in the native guide.
+
+### Where the chain does not reach
+
+The chain follows the call's own work. It does not follow work the host hands to another task, and a player's session is another task. If your plugin listens to `ServerPreConnectEvent`, `ServerConnectedEvent` or `ServerPostConnectEvent` and calls `connect`, the session fires those events while your `connect` call is still running. Their delivery waits in your queue behind it, and the session waits up to `[events] handler_timeout` for each before it goes on without your answer. A plugin that listens to connection events should move players with `switch_server`.
 
 ## Deadlines and host-call timeouts
 

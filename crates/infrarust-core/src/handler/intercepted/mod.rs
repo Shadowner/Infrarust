@@ -10,7 +10,7 @@ use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::lifecycle::{
     DisconnectCause, GameProfileRequestEvent, LoginEvent, LoginResult,
 };
-use infrarust_api::player::Player;
+use infrarust_api::player::{Player, session_task};
 use infrarust_api::services::ban_service::LoginAttempt;
 use infrarust_api::types::{Component, PlayerId, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
@@ -79,6 +79,15 @@ impl InterceptedHandler {
 
     #[tracing::instrument(name = "proxy.session", skip_all, fields(mode = self.auth_strategy.mode_label()))]
     pub async fn handle(
+        &self,
+        ctx: ConnectionContext,
+        shutdown: CancellationToken,
+    ) -> Result<(), CoreError> {
+        let player = PlayerId::new(ctx.connection_id);
+        session_task::scope(Some(player), self.serve(ctx, shutdown)).await
+    }
+
+    async fn serve(
         &self,
         mut ctx: ConnectionContext,
         shutdown: CancellationToken,
