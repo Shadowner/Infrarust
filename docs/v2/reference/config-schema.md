@@ -262,7 +262,7 @@ player_commands = ["list", "find"]
 
 ### `[events]`
 
-Limits on plugin event listeners. A listener that panics is skipped and the event continues with the next listener.
+Limits on plugin event listeners and transport filters. A listener that panics is skipped and the event continues with the next listener; a transport filter that panics or times out rejects its connection.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -270,8 +270,9 @@ Limits on plugin event listeners. A listener that panics is skipped and the even
 | `slow_handler_threshold` | duration | `"1s"` | Listeners running longer than this are logged as slow |
 | `packet_handler_timeout` | duration | `"10s"` | Longest an async raw packet listener may run before it is cancelled |
 | `disconnect_deadline` | duration | `"15s"` | Longest the `DisconnectEvent` dispatch for one player may take, all listeners included. The player is removed from the registry when it ends or at the deadline. Also bounds how long a duplicate login waits for the previous session to end |
+| `transport_filter_timeout` | duration | `"5s"` | Longest a native transport filter's `on_accept` may run for one connection. A filter that runs out of time, or panics, rejects that connection |
 
-All four must be greater than zero. Synchronous listeners can't be cancelled; one that overruns is reported as slow.
+All five must be greater than zero. Synchronous listeners can't be cancelled; one that overruns is reported as slow.
 
 ```toml
 [events]
@@ -279,6 +280,7 @@ handler_timeout = "10s"
 slow_handler_threshold = "1s"
 packet_handler_timeout = "10s"
 disconnect_deadline = "15s"
+transport_filter_timeout = "5s"
 ```
 
 ### `[plugin_messaging]`
@@ -689,6 +691,7 @@ handler_timeout = "10s"
 slow_handler_threshold = "1s"
 packet_handler_timeout = "10s"
 disconnect_deadline = "15s"
+transport_filter_timeout = "5s"
 
 [wasm]
 memory_limit_mb = 64

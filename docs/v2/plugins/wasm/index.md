@@ -52,7 +52,7 @@ Infrarust has two plugin systems. Native plugins are Rust crates compiled into t
 | Language | Any language targeting `wasm32-wasip2` (the SDK is Rust) | Rust only |
 | API shape | Synchronous `Plugin` trait | Async `Plugin` trait (`BoxFuture`) |
 
-Transport filters run below the codec layer at the TCP stream level and stay native-only: the `transport-filter` capability is never grantable through config, so a WASM plugin cannot register one.
+Transport filters gate TCP connections below the codec layer and stay native-only: the `transport-filter` capability is never grantable through config, so a WASM plugin cannot register one.
 
 :::info Choosing between them
 Pick WASM when you want to ship a plugin as a file, run untrusted or third-party code, or write in a language other than Rust. Pick native when you need transport-level filters, unrestricted host access, or the async API.

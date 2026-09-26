@@ -46,7 +46,7 @@ flowchart TD
 
 Infrarust binds a TCP listener on the configured address (default `0.0.0.0:25565`). The default `max_connections` is `0`, which means unlimited and no limiting. When `max_connections` is set above zero, the listener creates a semaphore of that size and acquires a permit before each accept; once the permits run out, new connections wait until an open one is dropped. The permit is held for the lifetime of the connection.
 
-Before any packet parsing, plugins can register transport filters that inspect the raw `TransportContext` (remote address, local address, connection time). A filter returning `Reject` drops the connection immediately. This runs before the proxy even reads a byte from the client.
+Each accepted connection is handed to its own task. Before any packet parsing, that task runs the transport filters that native plugins registered. A filter sees the connection's `TransportContext` (remote address, local address, the real client IP from the PROXY protocol header, connection time and a connection id) and answers `Continue` or `Reject`. A rejected connection is closed without an answer, and a filter that panics or runs past `[events] transport_filter_timeout` rejects it too. Because the filters run in the connection's task, a slow filter holds up only that connection, never the listener. Every filter that let a connection through is told when it closes. See [transport filters](../plugins/dev/architecture#layer-1-transportfilter).
 
 ## The common pipeline
 

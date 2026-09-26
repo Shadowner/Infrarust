@@ -12,7 +12,7 @@ use infrarust_api::events::lifecycle::{
 };
 use infrarust_api::player::Player;
 use infrarust_api::services::ban_service::LoginAttempt;
-use infrarust_api::types::{Component, ServerId};
+use infrarust_api::types::{Component, PlayerId, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use tokio_util::sync::CancellationToken;
 
@@ -145,7 +145,7 @@ impl InterceptedHandler {
         let session_token = shutdown.child_token();
         let (cmd_tx, cmd_rx) = PlayerSession::channel();
         let player = PlayerSession::new(
-            crate::player::next_player_id(),
+            PlayerId::new(ctx.connection_id),
             profile.clone(),
             api_version,
             remote_addr,

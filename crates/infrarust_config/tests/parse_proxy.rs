@@ -94,6 +94,10 @@ fn test_parse_proxy_events_defaults() {
         Duration::from_secs(10)
     );
     assert_eq!(config.events.disconnect_deadline, Duration::from_secs(15));
+    assert_eq!(
+        config.events.transport_filter_timeout,
+        Duration::from_secs(5)
+    );
 }
 
 #[test]
@@ -105,6 +109,7 @@ fn test_parse_proxy_events_section() {
         slow_handler_threshold = "50ms"
         packet_handler_timeout = "2s"
         disconnect_deadline = "300ms"
+        transport_filter_timeout = "750ms"
         "#,
     )
     .unwrap();
@@ -118,6 +123,10 @@ fn test_parse_proxy_events_section() {
     assert_eq!(
         config.events.disconnect_deadline,
         Duration::from_millis(300)
+    );
+    assert_eq!(
+        config.events.transport_filter_timeout,
+        Duration::from_millis(750)
     );
 }
 

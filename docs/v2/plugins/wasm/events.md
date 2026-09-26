@@ -127,7 +127,7 @@ The events arrive in the order described in the native [player lifecycle](../dev
 
 `DisconnectCause` is `ClientQuit`, `Kicked(Option<Component>)`, `BackendClosed(Option<Component>)`, `Shutdown` or `Error`; `cause.reason()` returns the text when there is one.
 
-`RejectReason` is `IpFilter`, `RateLimit`, `UnknownDomain`, `IpBanned`, `Banned`, `ServerUnavailable` or `Plugin(Option<String>)` (the plugin that refused the handshake). `LimboExitReason` is `Released`, `Redirected`, `SentToLimbo(handlers)`, `Kicked(Component)`, `Disconnected`, `TimedOut` or `Shutdown`. `BanSource` says who issued or lifted a ban: `Console`, `Player { uuid, name }`, `Plugin(id)`, `WebApi(actor)` or `System`. `ResourcePackStatus` keeps an unknown status id as `Unknown(i32)`, and `is_final()` tells whether the client is done with the pack.
+`RejectReason` is `IpFilter`, `RateLimit`, `UnknownDomain`, `IpBanned`, `Banned`, `ServerUnavailable` or `Plugin(Option<String>)` (the plugin that refused the connection, from a handshake listener or a native transport filter). `LimboExitReason` is `Released`, `Redirected`, `SentToLimbo(handlers)`, `Kicked(Component)`, `Disconnected`, `TimedOut` or `Shutdown`. `BanSource` says who issued or lifted a ban: `Console`, `Player { uuid, name }`, `Plugin(id)`, `WebApi(actor)` or `System`. `ResourcePackStatus` keeps an unknown status id as `Unknown(i32)`, and `is_final()` tells whether the client is done with the pack.
 
 ### Resulted events
 

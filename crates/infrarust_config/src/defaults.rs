@@ -162,6 +162,10 @@ pub const fn event_disconnect_deadline() -> Duration {
     Duration::from_secs(15)
 }
 
+pub const fn event_transport_filter_timeout() -> Duration {
+    Duration::from_secs(5)
+}
+
 pub const fn wasm_epoch_tick() -> Duration {
     Duration::from_millis(50)
 }

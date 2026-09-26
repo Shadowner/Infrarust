@@ -5,7 +5,7 @@ use std::sync::{Arc, RwLock};
 use infrarust_api::filter::{FilterMetadata, FilterRegistryError, TransportFilter};
 
 use super::registry_base::{FilterOwner, FilterRegistryBase, HasFilterMetadata};
-use super::transport_chain::TransportFilterChain;
+use super::transport_chain::{ChainedFilter, TransportFilterChain};
 
 impl HasFilterMetadata for Arc<dyn TransportFilter> {
     fn metadata(&self) -> FilterMetadata {
@@ -96,13 +96,17 @@ impl TransportFilterRegistryImpl {
     fn rebuild(&self) {
         let mut chain = self.chain.write().expect("lock poisoned");
         *chain = self.base.with_ordered(|filters, ordered| {
-            let ordered_filters: Vec<Arc<dyn TransportFilter>> = ordered
+            let ordered_filters: Vec<ChainedFilter> = ordered
                 .iter()
                 .filter_map(|id| {
                     filters
                         .iter()
                         .find(|entry| entry.metadata.id == *id)
-                        .map(|entry| Arc::clone(&entry.item))
+                        .map(|entry| ChainedFilter {
+                            id: entry.metadata.id.clone(),
+                            owner: entry.owner.clone(),
+                            filter: Arc::clone(&entry.item),
+                        })
                 })
                 .collect();
 
@@ -120,7 +124,7 @@ impl Default for TransportFilterRegistryImpl {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use infrarust_api::event::BoxFuture;
     use infrarust_api::filter::*;
@@ -148,22 +152,6 @@ mod tests {
             let verdict = self.verdict;
             Box::pin(async move { verdict })
         }
-
-        fn on_client_data<'a>(
-            &'a self,
-            _ctx: &'a mut TransportContext,
-            _data: &'a mut bytes::BytesMut,
-        ) -> BoxFuture<'a, FilterVerdict> {
-            Box::pin(async { FilterVerdict::Continue })
-        }
-
-        fn on_server_data<'a>(
-            &'a self,
-            _ctx: &'a mut TransportContext,
-            _data: &'a mut bytes::BytesMut,
-        ) -> BoxFuture<'a, FilterVerdict> {
-            Box::pin(async { FilterVerdict::Continue })
-        }
     }
 
     fn mock(id: &'static str, priority: FilterPriority) -> Box<dyn TransportFilter> {
@@ -183,17 +171,18 @@ mod tests {
     }
 
     async fn verdict(chain: &TransportFilterChain) -> FilterVerdict {
-        let mut ctx = TransportContext {
+        let ctx = TransportContext {
             remote_addr: "127.0.0.1:12345".parse().unwrap(),
             local_addr: "0.0.0.0:25565".parse().unwrap(),
             real_ip: None,
             connection_time: Instant::now(),
-            bytes_received: 0,
-            bytes_sent: 0,
             connection_id: 1,
             extensions: Extensions::new(),
         };
-        chain.on_accept(&mut ctx).await
+        match chain.open(ctx, Duration::from_secs(5)).await {
+            Ok(_) => FilterVerdict::Continue,
+            Err(_) => FilterVerdict::Reject,
+        }
     }
 
     #[test]

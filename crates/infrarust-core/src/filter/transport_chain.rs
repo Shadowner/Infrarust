@@ -1,24 +1,108 @@
 //! Transport filter chain.
 
+use std::net::SocketAddr;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::time::Duration;
 
+use futures_util::FutureExt;
+use infrarust_api::events::handshake::RejectReason;
 use infrarust_api::filter::{FilterVerdict, TransportContext, TransportFilter};
+
+use super::registry_base::FilterOwner;
+use crate::event_bus::diagnostic::panic_message;
+
+#[derive(Clone)]
+pub struct ChainedFilter {
+    pub id: String,
+    pub owner: FilterOwner,
+    pub filter: Arc<dyn TransportFilter>,
+}
 
 /// A chain of [`TransportFilter`]s applied to each connection.
 ///
 /// Filters are shared (`Arc`) and the chain is cloned per-connection.
-///
-/// Only `on_accept`/`on_close` are wired into the accept path. The
-/// `TransportFilter` data hooks (`on_client_data`/`on_server_data`) are
-/// never invoked — they would require wrapping the TCP stream, which is
-/// not implemented.
 #[derive(Clone)]
 pub struct TransportFilterChain {
-    filters: Arc<Vec<Arc<dyn TransportFilter>>>,
+    filters: Arc<Vec<ChainedFilter>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransportFault {
+    Panicked(String),
+    TimedOut(Duration),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransportRejection {
+    pub filter_id: String,
+    pub owner: FilterOwner,
+    pub fault: Option<TransportFault>,
+}
+
+impl TransportRejection {
+    pub fn reason(&self) -> RejectReason {
+        let plugin_id = match &self.owner {
+            FilterOwner::Plugin(plugin_id) => Some(plugin_id.clone()),
+            FilterOwner::Proxy => None,
+        };
+        RejectReason::Plugin { plugin_id }
+    }
+
+    pub fn log(&self, peer: SocketAddr) {
+        let filter = self.filter_id.as_str();
+        let plugin = self.owner.name();
+        match &self.fault {
+            None => {
+                tracing::debug!(%peer, filter, plugin, "connection rejected by a transport filter")
+            }
+            Some(TransportFault::Panicked(panic)) => tracing::warn!(
+                %peer,
+                filter,
+                plugin,
+                %panic,
+                "transport filter panicked, rejecting the connection"
+            ),
+            Some(TransportFault::TimedOut(after)) => tracing::warn!(
+                %peer,
+                filter,
+                plugin,
+                timeout = ?after,
+                "transport filter timed out, rejecting the connection"
+            ),
+        }
+    }
+}
+
+pub struct TransportSession {
+    ctx: TransportContext,
+    accepted: Vec<ChainedFilter>,
+}
+
+impl TransportSession {
+    pub const fn context(&self) -> &TransportContext {
+        &self.ctx
+    }
+}
+
+impl Drop for TransportSession {
+    fn drop(&mut self) {
+        for link in self.accepted.iter().rev() {
+            let closed = catch_unwind(AssertUnwindSafe(|| link.filter.on_close(&self.ctx)));
+            if let Err(payload) = closed {
+                tracing::warn!(
+                    filter = link.id.as_str(),
+                    plugin = link.owner.name(),
+                    panic = %panic_message(payload.as_ref()),
+                    "transport filter panicked in on_close"
+                );
+            }
+        }
+    }
 }
 
 impl TransportFilterChain {
-    pub fn new(filters: Vec<Arc<dyn TransportFilter>>) -> Self {
+    pub fn new(filters: Vec<ChainedFilter>) -> Self {
         Self {
             filters: Arc::new(filters),
         }
@@ -32,37 +116,62 @@ impl TransportFilterChain {
         }
     }
 
-    /// Runs all filters' `on_accept` in order.
-    ///
-    /// Returns [`FilterVerdict::Reject`] if any filter rejects.
-    pub async fn on_accept(&self, ctx: &mut TransportContext) -> FilterVerdict {
-        for filter in self.filters.iter() {
-            match filter.on_accept(ctx).await {
-                FilterVerdict::Continue | FilterVerdict::Modified => continue,
-                FilterVerdict::Reject => return FilterVerdict::Reject,
-                _ => continue, // non-exhaustive
-            }
-        }
-        FilterVerdict::Continue
-    }
-
-    /// Notifies all filters of connection close.
-    pub fn on_close(&self, ctx: &TransportContext) {
-        for filter in self.filters.iter() {
-            filter.on_close(ctx);
-        }
-    }
-
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.filters.is_empty()
+    }
+
+    pub async fn open(
+        &self,
+        ctx: TransportContext,
+        timeout: Duration,
+    ) -> Result<TransportSession, TransportRejection> {
+        let mut session = TransportSession {
+            ctx,
+            accepted: Vec::with_capacity(self.filters.len()),
+        };
+        for link in self.filters.iter() {
+            match accept(link, &mut session.ctx, timeout).await {
+                Ok(FilterVerdict::Continue) => session.accepted.push(link.clone()),
+                Ok(FilterVerdict::Reject) => return Err(rejection(link, None)),
+                Err(fault) => return Err(rejection(link, Some(fault))),
+            }
+        }
+        Ok(session)
+    }
+}
+
+fn rejection(link: &ChainedFilter, fault: Option<TransportFault>) -> TransportRejection {
+    TransportRejection {
+        filter_id: link.id.clone(),
+        owner: link.owner.clone(),
+        fault,
+    }
+}
+
+async fn accept(
+    link: &ChainedFilter,
+    ctx: &mut TransportContext,
+    timeout: Duration,
+) -> Result<FilterVerdict, TransportFault> {
+    let filter = link.filter.as_ref();
+    let verdict = catch_unwind(AssertUnwindSafe(move || {
+        let ctx = ctx;
+        filter.on_accept(ctx)
+    }))
+    .map_err(|payload| TransportFault::Panicked(panic_message(payload.as_ref())))?;
+    match tokio::time::timeout(timeout, AssertUnwindSafe(verdict).catch_unwind()).await {
+        Ok(Ok(verdict)) => Ok(verdict),
+        Ok(Err(payload)) => Err(TransportFault::Panicked(panic_message(payload.as_ref()))),
+        Err(_) => Err(TransportFault::TimedOut(timeout)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::panic)]
     use std::net::SocketAddr;
+    use std::sync::Mutex;
     use std::time::Instant;
 
     use infrarust_api::event::BoxFuture;
@@ -71,44 +180,74 @@ mod tests {
 
     use super::*;
 
-    struct AcceptFilter {
-        verdict: FilterVerdict,
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    #[derive(Clone, Copy)]
+    enum Act {
+        Pass,
+        Refuse,
+        PanicNow,
+        PanicLater,
+        Stall,
+        PanicOnClose,
     }
 
-    // FilterVerdict doesn't impl Clone, so we need a helper
-    fn make_verdict(reject: bool) -> FilterVerdict {
-        if reject {
-            FilterVerdict::Reject
-        } else {
-            FilterVerdict::Continue
-        }
+    type Journal = Arc<Mutex<Vec<String>>>;
+
+    struct Scripted {
+        id: &'static str,
+        act: Act,
+        journal: Journal,
     }
 
-    impl TransportFilter for AcceptFilter {
+    impl TransportFilter for Scripted {
         fn metadata(&self) -> FilterMetadata {
-            FilterMetadata::new("accept_filter")
+            FilterMetadata::new(self.id)
         }
 
-        fn on_accept<'a>(&'a self, _ctx: &'a mut TransportContext) -> BoxFuture<'a, FilterVerdict> {
-            let reject = matches!(self.verdict, FilterVerdict::Reject);
-            Box::pin(async move { make_verdict(reject) })
+        fn on_accept<'a>(&'a self, ctx: &'a mut TransportContext) -> BoxFuture<'a, FilterVerdict> {
+            self.journal
+                .lock()
+                .unwrap()
+                .push(format!("accept {}", self.id));
+            ctx.extensions.insert(self.id);
+            match self.act {
+                Act::PanicNow => panic!("{} refuses to build a future", self.id),
+                Act::PanicLater => Box::pin(async move { panic!("{} fails", self.id) }),
+                Act::Stall => Box::pin(std::future::pending()),
+                Act::Refuse => Box::pin(async { FilterVerdict::Reject }),
+                Act::Pass | Act::PanicOnClose => Box::pin(async { FilterVerdict::Continue }),
+            }
         }
 
-        fn on_client_data<'a>(
-            &'a self,
-            _ctx: &'a mut TransportContext,
-            _data: &'a mut bytes::BytesMut,
-        ) -> BoxFuture<'a, FilterVerdict> {
-            Box::pin(async { FilterVerdict::Continue })
+        fn on_close(&self, ctx: &TransportContext) {
+            self.journal.lock().unwrap().push(format!(
+                "close {} id={} ext={:?}",
+                self.id,
+                ctx.connection_id,
+                ctx.extensions.get::<&'static str>()
+            ));
+            if matches!(self.act, Act::PanicOnClose) {
+                panic!("{} fails to close", self.id);
+            }
         }
+    }
 
-        fn on_server_data<'a>(
-            &'a self,
-            _ctx: &'a mut TransportContext,
-            _data: &'a mut bytes::BytesMut,
-        ) -> BoxFuture<'a, FilterVerdict> {
-            Box::pin(async { FilterVerdict::Continue })
-        }
+    fn chain(journal: &Journal, filters: &[(&'static str, Act)]) -> TransportFilterChain {
+        TransportFilterChain::new(
+            filters
+                .iter()
+                .map(|(id, act)| ChainedFilter {
+                    id: (*id).to_string(),
+                    owner: FilterOwner::plugin("owner"),
+                    filter: Arc::new(Scripted {
+                        id,
+                        act: *act,
+                        journal: Arc::clone(journal),
+                    }),
+                })
+                .collect(),
+        )
     }
 
     fn test_ctx() -> TransportContext {
@@ -117,96 +256,156 @@ mod tests {
             local_addr: "0.0.0.0:25565".parse::<SocketAddr>().unwrap(),
             real_ip: None,
             connection_time: Instant::now(),
-            bytes_received: 0,
-            bytes_sent: 0,
-            connection_id: 1,
+            connection_id: 7,
             extensions: Extensions::new(),
         }
     }
 
-    #[tokio::test]
-    async fn test_accept_reject() {
-        let chain = TransportFilterChain::new(vec![Arc::new(AcceptFilter {
-            verdict: FilterVerdict::Reject,
-        })]);
-        let mut ctx = test_ctx();
-        let result = chain.on_accept(&mut ctx).await;
-        assert!(matches!(result, FilterVerdict::Reject));
+    fn entries(journal: &Journal) -> Vec<String> {
+        journal.lock().unwrap().clone()
     }
 
     #[tokio::test]
-    async fn test_accept_continue() {
-        let chain = TransportFilterChain::new(vec![Arc::new(AcceptFilter {
-            verdict: FilterVerdict::Continue,
-        })]);
-        let mut ctx = test_ctx();
-        let result = chain.on_accept(&mut ctx).await;
-        assert!(matches!(result, FilterVerdict::Continue));
+    async fn filters_accept_in_order_and_close_in_reverse_once_the_session_ends() {
+        let journal = Journal::default();
+        let chain = chain(&journal, &[("first", Act::Pass), ("second", Act::Pass)]);
+
+        let session = chain.open(test_ctx(), TIMEOUT).await.unwrap();
+        assert_eq!(entries(&journal), ["accept first", "accept second"]);
+        assert_eq!(session.context().connection_id, 7);
+
+        drop(session);
+        assert_eq!(
+            entries(&journal),
+            [
+                "accept first",
+                "accept second",
+                "close second id=7 ext=Some(\"second\")",
+                "close first id=7 ext=Some(\"second\")",
+            ]
+        );
     }
 
     #[tokio::test]
-    async fn test_chain_order() {
-        use std::sync::atomic::{AtomicU32, Ordering};
+    async fn a_rejection_closes_the_filters_that_accepted_and_skips_the_rest() {
+        let journal = Journal::default();
+        let chain = chain(
+            &journal,
+            &[
+                ("first", Act::Pass),
+                ("gate", Act::Refuse),
+                ("last", Act::Pass),
+            ],
+        );
 
-        let call_counter = Arc::new(AtomicU32::new(0));
+        let rejection = chain.open(test_ctx(), TIMEOUT).await.err().unwrap();
 
-        struct OrderedFilter {
-            id: &'static str,
-            counter: Arc<AtomicU32>,
-            actual_order: Arc<std::sync::Mutex<u32>>,
-        }
-
-        impl TransportFilter for OrderedFilter {
-            fn metadata(&self) -> FilterMetadata {
-                FilterMetadata::new(self.id)
+        assert_eq!(
+            rejection,
+            TransportRejection {
+                filter_id: "gate".into(),
+                owner: FilterOwner::plugin("owner"),
+                fault: None,
             }
-
-            fn on_accept<'a>(
-                &'a self,
-                _ctx: &'a mut TransportContext,
-            ) -> BoxFuture<'a, FilterVerdict> {
-                let order = self.counter.fetch_add(1, Ordering::Relaxed);
-                *self.actual_order.lock().unwrap() = order;
-                Box::pin(async { FilterVerdict::Continue })
+        );
+        assert_eq!(
+            rejection.reason(),
+            RejectReason::Plugin {
+                plugin_id: Some("owner".into())
             }
+        );
+        assert_eq!(
+            entries(&journal),
+            [
+                "accept first",
+                "accept gate",
+                "close first id=7 ext=Some(\"gate\")"
+            ]
+        );
+    }
 
-            fn on_client_data<'a>(
-                &'a self,
-                _ctx: &'a mut TransportContext,
-                _data: &'a mut bytes::BytesMut,
-            ) -> BoxFuture<'a, FilterVerdict> {
-                Box::pin(async { FilterVerdict::Continue })
-            }
+    #[tokio::test]
+    async fn a_panic_building_the_future_rejects() {
+        let journal = Journal::default();
+        let chain = chain(&journal, &[("first", Act::Pass), ("boom", Act::PanicNow)]);
 
-            fn on_server_data<'a>(
-                &'a self,
-                _ctx: &'a mut TransportContext,
-                _data: &'a mut bytes::BytesMut,
-            ) -> BoxFuture<'a, FilterVerdict> {
-                Box::pin(async { FilterVerdict::Continue })
-            }
-        }
+        let rejection = chain.open(test_ctx(), TIMEOUT).await.err().unwrap();
 
-        let order_a = Arc::new(std::sync::Mutex::new(u32::MAX));
-        let order_b = Arc::new(std::sync::Mutex::new(u32::MAX));
+        assert_eq!(rejection.filter_id, "boom");
+        assert_eq!(
+            rejection.fault,
+            Some(TransportFault::Panicked(
+                "boom refuses to build a future".into()
+            ))
+        );
+        assert_eq!(
+            entries(&journal).last().unwrap(),
+            "close first id=7 ext=Some(\"boom\")"
+        );
+    }
 
-        let chain = TransportFilterChain::new(vec![
-            Arc::new(OrderedFilter {
-                id: "first",
-                counter: Arc::clone(&call_counter),
-                actual_order: Arc::clone(&order_a),
-            }),
-            Arc::new(OrderedFilter {
-                id: "second",
-                counter: Arc::clone(&call_counter),
-                actual_order: Arc::clone(&order_b),
-            }),
-        ]);
+    #[tokio::test]
+    async fn a_panic_inside_the_future_rejects() {
+        let journal = Journal::default();
+        let chain = chain(&journal, &[("boom", Act::PanicLater)]);
 
-        let mut ctx = test_ctx();
-        chain.on_accept(&mut ctx).await;
+        let rejection = chain.open(test_ctx(), TIMEOUT).await.err().unwrap();
 
-        assert_eq!(*order_a.lock().unwrap(), 0);
-        assert_eq!(*order_b.lock().unwrap(), 1);
+        assert_eq!(
+            rejection.fault,
+            Some(TransportFault::Panicked("boom fails".into()))
+        );
+        assert_eq!(entries(&journal), ["accept boom"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_filter_that_never_answers_times_out_and_rejects() {
+        let journal = Journal::default();
+        let chain = chain(&journal, &[("first", Act::Pass), ("stuck", Act::Stall)]);
+        let timeout = Duration::from_millis(250);
+
+        let rejection = chain.open(test_ctx(), timeout).await.err().unwrap();
+
+        assert_eq!(rejection.filter_id, "stuck");
+        assert_eq!(rejection.fault, Some(TransportFault::TimedOut(timeout)));
+        assert_eq!(
+            entries(&journal),
+            [
+                "accept first",
+                "accept stuck",
+                "close first id=7 ext=Some(\"stuck\")"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_panic_in_on_close_does_not_skip_the_other_filters() {
+        let journal = Journal::default();
+        let chain = chain(
+            &journal,
+            &[("first", Act::Pass), ("clumsy", Act::PanicOnClose)],
+        );
+
+        drop(chain.open(test_ctx(), TIMEOUT).await.unwrap());
+
+        assert_eq!(
+            entries(&journal),
+            [
+                "accept first",
+                "accept clumsy",
+                "close clumsy id=7 ext=Some(\"clumsy\")",
+                "close first id=7 ext=Some(\"clumsy\")",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_chain_opens_a_session_that_closes_nothing() {
+        let session = TransportFilterChain::empty()
+            .open(test_ctx(), TIMEOUT)
+            .await
+            .unwrap();
+        assert!(TransportFilterChain::empty().is_empty());
+        drop(session);
     }
 }

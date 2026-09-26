@@ -1,6 +1,7 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bytes::BytesMut;
@@ -11,6 +12,13 @@ use tokio::time::Instant;
 use infrarust_transport::{AcceptedConnection, ConnectionInfo};
 
 use crate::error::CoreError;
+use crate::filter::transport_chain::TransportSession;
+
+static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_connection_id() -> u64 {
+    NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Type-erased extension map for storing middleware data.
 ///
@@ -83,6 +91,9 @@ pub struct ConnectionContext {
     pub buffered_data: BytesMut,
     /// Type-erased data accumulated by middlewares.
     pub extensions: Extensions,
+    pub connection_id: u64,
+    pub real_ip: Option<IpAddr>,
+    transport: Option<TransportSession>,
     _permit: Option<OwnedSemaphorePermit>,
 }
 
@@ -91,6 +102,7 @@ impl ConnectionContext {
     pub fn from_accepted(accepted: AcceptedConnection) -> Self {
         let peer_addr = accepted.connection.peer_addr();
         let client_ip = accepted.connection.client_addr();
+        let real_ip = accepted.connection.real_ip().map(|_| client_ip);
         let local_addr = accepted.connection.local_addr();
         let connected_at = accepted.connection.connected_at();
         let (connection, permit) = accepted.into_parts();
@@ -105,6 +117,9 @@ impl ConnectionContext {
             connected_at,
             buffered_data,
             extensions: Extensions::new(),
+            connection_id: next_connection_id(),
+            real_ip,
+            transport: None,
             _permit: permit,
         }
     }
@@ -175,8 +190,15 @@ impl ConnectionContext {
             connected_at: Instant::now(),
             buffered_data: BytesMut::new(),
             extensions: Extensions::new(),
+            connection_id: next_connection_id(),
+            real_ip: None,
+            transport: None,
             _permit: None,
         }
+    }
+
+    pub fn attach_transport(&mut self, session: TransportSession) {
+        self.transport = Some(session);
     }
 
     pub const fn client_addr(&self) -> SocketAddr {

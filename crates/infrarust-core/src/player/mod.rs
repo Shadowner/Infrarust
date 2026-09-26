@@ -11,7 +11,7 @@ pub(crate) mod presentation;
 pub mod registry;
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock, Weak};
 use std::time::{Duration, SystemTime};
 
@@ -57,11 +57,6 @@ const MAX_TRANSFER_HOST: usize = 32_767;
 const COMMAND_CHANNEL_SIZE: usize = 32;
 
 pub const SHUTDOWN_REASON: &str = "Proxy is shutting down";
-
-static NEXT_PLAYER_ID: AtomicU64 = AtomicU64::new(1);
-pub fn next_player_id() -> PlayerId {
-    PlayerId::new(NEXT_PLAYER_ID.fetch_add(1, Ordering::Relaxed))
-}
 
 /// Commands sent to the proxy loop for a specific player.
 #[derive(Debug)]

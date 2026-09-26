@@ -12,7 +12,7 @@ use infrarust_api::events::lifecycle::{
 };
 use infrarust_api::player::Player;
 use infrarust_api::services::ban_service::LoginAttempt;
-use infrarust_api::types::{Component, GameProfile, ServerId};
+use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
 use infrarust_config::{DomainRewrite, ProxyMode, ServerAddress, ServerConfig};
 use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketEncoder;
@@ -222,7 +222,7 @@ impl ForwardedLogin<'_> {
         let (command_tx, commands) = PlayerSession::channel();
         let player = Arc::new(
             PlayerSession::new(
-                crate::player::next_player_id(),
+                PlayerId::new(ctx.connection_id),
                 profile,
                 arrival.protocol_version,
                 remote_addr,

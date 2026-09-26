@@ -273,6 +273,10 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<(), ConfigError> 
             "events.disconnect_deadline",
             config.events.disconnect_deadline,
         ),
+        (
+            "events.transport_filter_timeout",
+            config.events.transport_filter_timeout,
+        ),
         ("ban.check_timeout", config.ban.check_timeout),
     ] {
         if value.is_zero() {

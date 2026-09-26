@@ -177,6 +177,7 @@ handler_timeout = "10s"
 slow_handler_threshold = "1s"
 packet_handler_timeout = "10s"
 disconnect_deadline = "15s"
+transport_filter_timeout = "5s"
 ```
 
 `provider` picks who decides who is banned: `"builtin"` (the default) uses the ban file, `"none"` turns ban checks off, and a plugin id hands bans to that plugin. See [Bans](./security/bans#choosing-a-provider). `file` is the path to the JSON file where the built-in provider stores bans. `purge_interval` controls how often expired bans are removed from the file. When `enable_audit_log` is `true`, every ban and unban operation is logged. `check_timeout` (default `5s`) bounds each ban check: a login whose check gets no answer in time is refused, a server list ping is answered.
@@ -369,17 +370,20 @@ handler_timeout = "10s"
 slow_handler_threshold = "1s"
 packet_handler_timeout = "10s"
 disconnect_deadline = "15s"
+transport_filter_timeout = "5s"
 ```
 
-Limits on the event listeners that plugins register. A listener that panics is skipped and the event moves on to the next listener, so a buggy plugin can't take down a player's connection or the proxy. Whatever the listener changed on the event before it panicked is kept.
+Limits on the event listeners and transport filters that plugins register. A listener that panics is skipped and the event moves on to the next listener, so a buggy plugin can't take down a player's connection or the proxy. Whatever the listener changed on the event before it panicked is kept.
 
 `handler_timeout` caps how long one async listener may run for a regular event such as `PreLoginEvent` or `ChatMessageEvent`. When it runs out, the proxy cancels that listener and continues with the next one, so a stuck plugin delays a login by this much at most. `packet_handler_timeout` does the same for raw packet listeners.
 
 `slow_handler_threshold` logs a warning for any listener that takes longer than this. Synchronous listeners can't be interrupted, so one that runs past `handler_timeout` finishes anyway and shows up as slow rather than timed out.
 
+`transport_filter_timeout` caps how long one native plugin's transport filter may take to answer `on_accept` for a new connection. Unlike an event listener, a transport filter that runs out of time or panics does not let the connection through: the proxy closes that connection without an answer and logs a warning naming the filter and its plugin. The filters run in each connection's own task, so a slow filter delays only the connection it is deciding on. See [transport filters](../plugins/dev/architecture#layer-1-transportfilter).
+
 `disconnect_deadline` bounds the whole `DisconnectEvent` dispatch for one player, every listener included. When a player leaves, the proxy runs the `DisconnectEvent` listeners and removes the player from the registry once they are done, or once this deadline passes, whichever comes first. Listeners still running at the deadline are cancelled and a warning is logged. The same deadline bounds how long a second login with the same UUID waits for the first session to finish its `DisconnectEvent`. See [the player lifecycle](../plugins/dev/events#player-lifecycle).
 
-Panics and timeouts are logged at error level, slow listeners at warn level, and each log line names the plugin and the event. All four values must be greater than zero.
+Listener panics and timeouts are logged at error level, slow listeners at warn level, and each log line names the plugin and the event. A transport filter's panic or timeout is logged at warn level with the filter id and the plugin. All five values must be greater than zero.
 
 ## Plugin messaging
 

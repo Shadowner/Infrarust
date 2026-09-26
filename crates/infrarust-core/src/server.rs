@@ -13,7 +13,8 @@ use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
 use tracing::Instrument;
 
 use infrarust_api::events::proxy::ServerStateChangeEvent;
-use infrarust_api::types::{Component, ServerId};
+use infrarust_api::filter::TransportContext;
+use infrarust_api::types::{Component, Extensions, ServerId};
 use infrarust_server_manager::ServerManagerService;
 
 use crate::event_bus::conversion::convert_server_state;
@@ -467,38 +468,7 @@ impl ProxyServer {
 
             let sessions = self.sessions.clone();
             let peer = accepted.connection.peer_addr();
-            let local = accepted.connection.local_addr();
             tracing::debug!(peer = %peer, "new connection");
-
-            // Transport filter: on_accept
-            // Runs BEFORE the connection pipeline — real_ip is not yet available
-            // (set by PROXY protocol middleware later) and connection_id is 0
-            // (assigned per-session, not per-accept).
-            let transport_chain = self.services.transport_filter_registry.chain();
-            if !transport_chain.is_empty() {
-                use infrarust_api::filter::{FilterVerdict, TransportContext};
-                use infrarust_api::types::Extensions;
-
-                let mut transport_ctx = TransportContext {
-                    remote_addr: peer,
-                    local_addr: local,
-                    real_ip: None,
-                    connection_time: std::time::Instant::now(),
-                    bytes_received: 0,
-                    bytes_sent: 0,
-                    connection_id: 0,
-                    extensions: Extensions::new(),
-                };
-
-                if matches!(
-                    transport_chain.on_accept(&mut transport_ctx).await,
-                    FilterVerdict::Reject
-                ) {
-                    tracing::debug!(peer = %peer, "Connection rejected by transport filter");
-                    drop(accepted);
-                    continue;
-                }
-            }
 
             let server = Arc::clone(&self);
             self.connections.spawn(async move {
@@ -550,6 +520,9 @@ impl ProxyServer {
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
         let mut ctx = ConnectionContext::from_accepted(accepted);
+        if !self.open_transport(&mut ctx, &shutdown).await {
+            return Ok(());
+        }
 
         let common = tokio::select! {
             biased;
@@ -693,6 +666,39 @@ impl ProxyServer {
         }
 
         Ok(())
+    }
+
+    async fn open_transport(
+        &self,
+        ctx: &mut ConnectionContext,
+        shutdown: &CancellationToken,
+    ) -> bool {
+        let chain = self.services.transport_filter_registry.chain();
+        if chain.is_empty() {
+            return true;
+        }
+        let timeout = self.services.config.events.transport_filter_timeout;
+        let opened = tokio::select! {
+            biased;
+            () = shutdown.cancelled() => return false,
+            opened = chain.open(transport_context(ctx), timeout) => opened,
+        };
+        match opened {
+            Ok(session) => {
+                ctx.attach_transport(session);
+                true
+            }
+            Err(rejection) => {
+                rejection.log(ctx.client_addr());
+                admission::reject(
+                    &self.services.event_bus,
+                    ctx.client_addr(),
+                    None,
+                    rejection.reason(),
+                );
+                false
+            }
+        }
     }
 
     async fn answer_status(
@@ -845,6 +851,17 @@ impl ProxyServer {
                 }
             }
         }
+    }
+}
+
+fn transport_context(ctx: &ConnectionContext) -> TransportContext {
+    TransportContext {
+        remote_addr: ctx.peer_addr,
+        local_addr: ctx.local_addr,
+        real_ip: ctx.real_ip,
+        connection_time: ctx.connected_at.into_std(),
+        connection_id: ctx.connection_id,
+        extensions: Extensions::new(),
     }
 }
 

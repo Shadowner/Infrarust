@@ -16,6 +16,7 @@ The events a player goes through depend on the proxy mode of the server they joi
 
 ```
 connection accepted
+  → transport filters ── Reject, panic, timeout ──▶ ConnectionRejectedEvent (plugin)
   → IP filter ──────────────────────── refused ──▶ ConnectionRejectedEvent (ip_filter)
   → handshake read
   → IP ban, for a server list ping ─── banned ───▶ ConnectionRejectedEvent (ip_banned)
@@ -293,9 +294,9 @@ Posted when the proxy refuses a connection before a player exists, exactly once 
 | `IpBanned` (`ip_banned`) | A ban on the address or a range that contains it, for a server list ping or a login |
 | `Banned` (`banned`) | A ban on the name (or the UUID the client claimed) before authentication, or a ban check that failed and refused the login |
 | `ServerUnavailable` (`server_unavailable`) | Not posted any more. The server manager starts a server once the player exists, and a server it cannot start is reported by `KickedFromServerEvent`, see [server wake](#server-wake). The variant remains so that existing matches compile |
-| `Plugin { plugin_id }` (`plugin`) | A `ConnectionHandshakeEvent` listener denied or dropped the connection. `plugin_id` is the plugin that set the result, `None` when the proxy cannot tell |
+| `Plugin { plugin_id }` (`plugin`) | A `ConnectionHandshakeEvent` listener denied or dropped the connection, or a [transport filter](./architecture#layer-1-transportfilter) rejected it, panicked on it or ran past `[events] transport_filter_timeout`. `plugin_id` is the plugin that set the result or registered the filter, `None` when the proxy cannot tell or the filter is the proxy's own |
 
-Connections a plugin's transport filter rejects are not reported. The listener limit ([`max_connections`](../../configuration/global#connection-limits)) refuses nothing: while it is reached, the proxy waits before it accepts the next connection, so the kernel holds it in the backlog.
+A connection a transport filter refuses has no `virtual_host`: the filters run before the handshake is read. The listener limit ([`max_connections`](../../configuration/global#connection-limits)) refuses nothing: while it is reached, the proxy waits before it accepts the next connection, so the kernel holds it in the backlog.
 
 ```rust
 use infrarust_api::events::handshake::{ConnectionRejectedEvent, RejectReason};

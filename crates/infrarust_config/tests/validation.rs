@@ -412,6 +412,7 @@ fn test_proxy_zero_event_timeouts_are_invalid() {
         "handler_timeout",
         "slow_handler_threshold",
         "packet_handler_timeout",
+        "transport_filter_timeout",
     ] {
         let config = proxy_from_toml(&format!("[events]\n{key} = \"0s\""), dir.path());
         let err = validate_proxy_config(&config).unwrap_err().to_string();

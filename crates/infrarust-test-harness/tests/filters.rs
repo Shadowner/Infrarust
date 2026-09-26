@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::filter::{
     CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict, ConnectionSide,
@@ -73,22 +73,6 @@ impl TransportFilter for Gate {
 
     fn on_accept<'a>(&'a self, _ctx: &'a mut TransportContext) -> BoxFuture<'a, FilterVerdict> {
         Box::pin(async { FilterVerdict::Reject })
-    }
-
-    fn on_client_data<'a>(
-        &'a self,
-        _ctx: &'a mut TransportContext,
-        _data: &'a mut BytesMut,
-    ) -> BoxFuture<'a, FilterVerdict> {
-        Box::pin(async { FilterVerdict::Continue })
-    }
-
-    fn on_server_data<'a>(
-        &'a self,
-        _ctx: &'a mut TransportContext,
-        _data: &'a mut BytesMut,
-    ) -> BoxFuture<'a, FilterVerdict> {
-        Box::pin(async { FilterVerdict::Continue })
     }
 }
 
