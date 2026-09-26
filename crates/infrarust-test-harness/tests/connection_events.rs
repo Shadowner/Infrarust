@@ -20,7 +20,7 @@ use infrarust_plugin_admin_api::sse::event_bridge::EventBridge;
 use infrarust_plugin_admin_api::state::ApiEvent;
 use infrarust_plugin_server_wake::ServerWakePlugin;
 use infrarust_protocol::packets::play::chat::SChatMessage;
-use infrarust_test_harness::versions::CURRENT;
+use infrarust_test_harness::versions::{CURRENT, LIMBO};
 use infrarust_test_harness::{
     ClientSession, DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeServerProvider, FakeSessionServer,
     LoginBehavior, ProtocolVersion, Recorded, Recorder, ScriptedPlugin, ServerSpec, TestProxy,
@@ -868,7 +868,7 @@ async fn the_admin_api_says_why_a_player_left() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn server_wake_holds_the_player_until_the_server_is_online() {
-    let version = ProtocolVersion(CURRENT);
+    let version = ProtocolVersion(LIMBO);
     let provider = FakeServerProvider::sleeping();
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let recorder = Recorder::new();

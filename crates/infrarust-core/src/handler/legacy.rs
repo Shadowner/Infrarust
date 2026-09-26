@@ -11,7 +11,7 @@ use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_protocol::legacy::{
     LegacyPingRequest, LegacyPingVariant, parse_legacy_handshake, parse_legacy_ping,
 };
-use infrarust_protocol::{CURRENT_MC_PROTOCOL, CURRENT_MC_VERSION, LegacyPingResponse};
+use infrarust_protocol::{LegacyPingResponse, ProtocolVersion};
 
 use infrarust_server_manager::ServerState;
 use infrarust_transport::BackendConnector;
@@ -281,8 +281,8 @@ impl LegacyHandler {
         };
 
         LegacyPingResponse {
-            protocol_version: CURRENT_MC_PROTOCOL,
-            server_version: CURRENT_MC_VERSION.to_string(),
+            protocol_version: ProtocolVersion::CURRENT.0,
+            server_version: ProtocolVersion::CURRENT.name().to_string(),
             motd,
             online_players: online,
             max_players: max,
@@ -307,8 +307,8 @@ impl LegacyHandler {
         };
 
         LegacyPingResponse {
-            protocol_version: CURRENT_MC_PROTOCOL,
-            server_version: CURRENT_MC_VERSION.to_string(),
+            protocol_version: ProtocolVersion::CURRENT.0,
+            server_version: ProtocolVersion::CURRENT.name().to_string(),
             motd: motd_entry.map_or_else(|| default_text.to_string(), |e| e.text.clone()),
             online_players: self.services.connection_registry.count_by_server(config_id) as i32,
             max_players: motd_entry

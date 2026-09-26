@@ -580,7 +580,7 @@ async fn an_unreachable_initial_server_falls_back_to_its_limbo(version: Protocol
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(TEXT, an_unreachable_initial_server_falls_back_to_its_limbo);
+version_matrix!(an_unreachable_initial_server_falls_back_to_its_limbo; p47 = 47, p764 = 764, p765 = 765, p774 = 774);
 
 async fn a_refused_initial_login_shows_the_backend_reason(version: ProtocolVersion) {
     let sessions = FakeSessionServer::spawn().await.unwrap();

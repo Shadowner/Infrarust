@@ -43,6 +43,10 @@ fn load_embedded(map: &mut HashMap<i32, ExtractedRegistryData>, compressed: &[u8
     }
 }
 
+pub(crate) fn highest_version() -> Option<ProtocolVersion> {
+    EMBEDDED_DATA.keys().max().copied().map(ProtocolVersion)
+}
+
 pub(crate) struct EmbeddedRegistryDataProvider;
 
 impl RegistryDataProvider for EmbeddedRegistryDataProvider {

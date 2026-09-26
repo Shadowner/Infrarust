@@ -84,6 +84,8 @@ impl ProtocolVersion {
 
     pub const HIGHEST_KNOWN: Self = Self::V26_2;
 
+    pub const CURRENT: Self = Self::HIGHEST_KNOWN;
+
     pub const fn is_known(self) -> bool {
         self.0 <= Self::HIGHEST_KNOWN.0
     }
@@ -346,6 +348,13 @@ mod tests {
             display.contains("protocol:42"),
             "expected 'protocol:42', got '{display}'"
         );
+    }
+
+    #[test]
+    fn test_current_is_the_highest_known_version_with_a_name() {
+        assert_eq!(ProtocolVersion::CURRENT, ProtocolVersion::HIGHEST_KNOWN);
+        assert!(!ProtocolVersion::CURRENT.name().is_empty());
+        assert_ne!(ProtocolVersion::CURRENT.name(), "legacy");
     }
 
     #[test]

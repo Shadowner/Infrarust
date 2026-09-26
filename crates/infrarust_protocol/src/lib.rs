@@ -46,7 +46,3 @@ pub use version::{ConnectionState, Direction, ProtocolVersion};
 pub const MAX_PACKET_SIZE: usize = 2_097_152;
 
 pub const MAX_PACKET_DATA_SIZE: usize = 8_388_608;
-
-pub const CURRENT_MC_PROTOCOL: i32 = 774;
-
-pub const CURRENT_MC_VERSION: &str = "1.21.11";

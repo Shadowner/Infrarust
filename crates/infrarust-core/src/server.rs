@@ -727,10 +727,10 @@ impl ProxyServer {
         ctx: &mut ConnectionContext,
         reason: &Component,
     ) -> Result<(), CoreError> {
-        let version = ctx.extensions.get::<HandshakeData>().map_or(
-            ProtocolVersion(infrarust_protocol::CURRENT_MC_PROTOCOL),
-            |h| h.protocol_version,
-        );
+        let version = ctx
+            .extensions
+            .get::<HandshakeData>()
+            .map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
 
         crate::handler::helpers::send_login_disconnect(
             ctx.stream_mut(),

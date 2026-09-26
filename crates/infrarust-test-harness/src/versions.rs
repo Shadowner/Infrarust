@@ -1,10 +1,14 @@
 use infrarust_protocol::version::ProtocolVersion;
 
-pub const CURRENT: i32 = infrarust_protocol::CURRENT_MC_PROTOCOL;
+pub const CURRENT: i32 = ProtocolVersion::CURRENT.0;
+
+pub const LIMBO: i32 = 774;
+
+const _: () = assert!(LIMBO <= CURRENT);
 
 pub const LIFECYCLE: &[i32] = &[47, 340, 754, 762, 763, 764, 765, 766, 770, 774, 776];
 
-pub const SWITCH: &[i32] = &[47, 754, 763, 764, 766, CURRENT];
+pub const SWITCH: &[i32] = &[47, 754, 763, 764, 766, LIMBO];
 
 pub const CHAT: &[i32] = &[340, 758, 760, 762, 770, CURRENT];
 
@@ -27,11 +31,11 @@ macro_rules! version_matrix {
     };
     (CHAT, $body:ident) => {
         $crate::version_matrix!(@named CHAT, $body;
-            p340 = 340, p758 = 758, p760 = 760, p762 = 762, p770 = 770, p774 = 774);
+            p340 = 340, p758 = 758, p760 = 760, p762 = 762, p770 = 770, p776 = 776);
     };
     (TEXT, $body:ident) => {
         $crate::version_matrix!(@named TEXT, $body;
-            p47 = 47, p764 = 764, p765 = 765, p774 = 774);
+            p47 = 47, p764 = 764, p765 = 765, p776 = 776);
     };
     (@named $matrix:ident, $body:ident; $($name:ident = $version:literal),+ $(,)?) => {
         mod $body {
@@ -63,6 +67,14 @@ macro_rules! version_matrix {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn limbo_is_the_highest_version_with_embedded_registry_data() {
+        assert_eq!(
+            infrarust_core::registry_data::highest_embedded_version(),
+            Some(ProtocolVersion(LIMBO))
+        );
+    }
 
     #[test]
     fn every_matrix_version_is_known_to_the_registry() {

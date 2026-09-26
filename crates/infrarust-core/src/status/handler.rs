@@ -14,11 +14,11 @@ use tokio::sync::Mutex as TokioMutex;
 use infrarust_api::events::proxy::ProxyPingEvent;
 use infrarust_api::types::ServerId;
 use infrarust_config::{MotdConfig, ServerConfig};
+use infrarust_protocol::Packet;
 use infrarust_protocol::io::{PacketDecoder, PacketEncoder};
 use infrarust_protocol::packets::status::{CPingResponse, CStatusResponse, SPingRequest};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
-use infrarust_protocol::{CURRENT_MC_PROTOCOL, Packet};
 
 use infrarust_server_manager::{ServerManagerService, ServerState};
 
@@ -125,7 +125,7 @@ impl StatusHandler {
 
         let client_version = handshake
             .as_ref()
-            .map_or(ProtocolVersion(CURRENT_MC_PROTOCOL), |h| h.protocol_version);
+            .map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
         let sent = core_to_api_ping_response(&response);
         let event = ProxyPingEvent::new(
             ctx.client_addr(),
@@ -231,8 +231,7 @@ impl StatusHandler {
         }
 
         let domain = handshake.map_or("localhost", |h| h.domain.as_str());
-        let protocol_version =
-            handshake.map_or(ProtocolVersion(CURRENT_MC_PROTOCOL), |h| h.protocol_version);
+        let protocol_version = handshake.map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
         let client_info = ctx.connection_info();
 
         match self

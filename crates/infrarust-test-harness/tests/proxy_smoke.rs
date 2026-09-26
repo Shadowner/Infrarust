@@ -9,7 +9,7 @@ use infrarust_api::events::lifecycle::PreLoginEvent;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_protocol::packets::play::chat::SChatMessage;
-use infrarust_test_harness::versions::CURRENT;
+use infrarust_test_harness::versions::{CURRENT, LIMBO};
 use infrarust_test_harness::{
     ConnectionState, DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeSessionServer, LoginOutcome,
     ProtocolVersion, Recorded, Recorder, ScriptedPlugin, ServerSpec, TestProxy, version_matrix,
@@ -19,8 +19,8 @@ use serde_json::json;
 const T: Duration = DEFAULT_TIMEOUT;
 
 #[test]
-fn ad_hoc_matrices_end_at_the_current_protocol() {
-    assert_eq!(CURRENT, 774);
+fn ad_hoc_matrices_end_at_the_limbo_protocol() {
+    assert_eq!(LIMBO, 774);
 }
 
 async fn offline_login(version: ProtocolVersion) {
