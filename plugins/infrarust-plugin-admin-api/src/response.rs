@@ -40,11 +40,11 @@ pub fn created(
     (axum::http::StatusCode::CREATED, Json(ApiResponse { data }))
 }
 
-pub(crate) const fn default_page() -> usize {
+const fn default_page() -> usize {
     1
 }
 
-pub(crate) const fn default_per_page() -> usize {
+const fn default_per_page() -> usize {
     20
 }
 

@@ -1,4 +1,5 @@
 use axum::http::StatusCode;
+use infrarust_api::test_util::MockPlayer;
 use serde_json::json;
 
 use crate::common::TestApi;
@@ -103,4 +104,20 @@ async fn listing_players_by_an_unknown_mode_is_a_bad_request() {
     let (status, body) = TestApi::new().get("/api/v1/players?mode=turbo").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"]["code"], "BAD_REQUEST");
+}
+
+#[tokio::test]
+async fn players_are_paged_by_the_query_string() {
+    let api = TestApi::builder()
+        .players((1..=7).map(|n| MockPlayer::new(n, &format!("Player{n}")).into_arc()))
+        .build();
+
+    let (status, body) = api.get("/api/v1/players?page=2&per_page=5").await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"].as_array().unwrap().len(), 2);
+    assert_eq!(body["meta"]["total"], 7);
+    assert_eq!(body["meta"]["page"], 2);
+    assert_eq!(body["meta"]["per_page"], 5);
+    assert_eq!(body["meta"]["total_pages"], 2);
 }

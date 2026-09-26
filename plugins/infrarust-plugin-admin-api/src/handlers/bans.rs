@@ -11,30 +11,22 @@ use crate::dto::ban::{BanCheckResponse, BanResponse};
 use crate::dto::requests::{BanTargetRequest, CreateBanRequest};
 use crate::error::ApiError;
 use crate::response::{
-    ApiResponse, MutationResult, PaginatedResponse, PaginationParams, created, default_page,
-    default_per_page, mutation_ok, ok,
+    ApiResponse, MutationResult, PaginatedResponse, PaginationParams, created, mutation_ok, ok,
 };
 use crate::state::{ApiEvent, ApiState};
 use crate::util::{BanTargetKind, BanTargetParts, now_iso8601, parse_ban_target};
 
 #[derive(Debug, Deserialize)]
 pub struct BanListQuery {
-    #[serde(default = "default_page")]
-    pub page: usize,
-    #[serde(default = "default_per_page")]
-    pub per_page: usize,
     pub target_type: Option<String>,
     pub source: Option<String>,
 }
 
 pub async fn list(
     State(state): State<Arc<ApiState>>,
+    Query(mut pagination): Query<PaginationParams>,
     Query(query): Query<BanListQuery>,
 ) -> Result<Json<PaginatedResponse<BanResponse>>, ApiError> {
-    let mut pagination = PaginationParams {
-        page: query.page,
-        per_page: query.per_page,
-    };
     pagination.normalize();
 
     let target_kind = query

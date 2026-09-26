@@ -10,7 +10,7 @@ use infrarust_api::services::config_service::{ConfigWriteError, ServerSource};
 use infrarust_api::services::load_balancer::{BackendState, BackendStatus};
 use infrarust_api::services::plugin_registry::{PluginDependencyInfo, PluginInfo};
 use infrarust_api::test_util::{
-    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
+    MockBanService, MockConfigService, MockLoadBalancerService, MockPlayer, MockPlayerRegistry,
     MockPluginRegistry, MockServerManager,
 };
 use infrarust_api::types::{ServerAddress, ServerId};
@@ -150,6 +150,7 @@ pub struct TestApiBuilder {
     requests_per_minute: u64,
     config: Option<Arc<MockConfigService>>,
     ban_service: Option<Arc<MockBanService>>,
+    players: Vec<Arc<MockPlayer>>,
     logs: Option<LogBroadcast>,
     files: Vec<(&'static str, &'static str)>,
 }
@@ -180,6 +181,12 @@ impl TestApiBuilder {
     }
 
     #[must_use]
+    pub fn players(mut self, players: impl IntoIterator<Item = Arc<MockPlayer>>) -> Self {
+        self.players.extend(players);
+        self
+    }
+
+    #[must_use]
     pub fn logs(mut self, logs: LogBroadcast) -> Self {
         self.logs = Some(logs);
         self
@@ -200,8 +207,12 @@ impl TestApiBuilder {
         }
         let config = self.config.unwrap_or_else(|| Arc::new(config_service()));
         let (event_tx, _) = broadcast::channel::<ApiEvent>(16);
+        let player_registry = MockPlayerRegistry::new().fake_online_count(3);
+        for player in self.players {
+            player_registry.add(player);
+        }
         let state = Arc::new(ApiState {
-            player_registry: Arc::new(MockPlayerRegistry::new().fake_online_count(3)),
+            player_registry: Arc::new(player_registry),
             ban_service: self
                 .ban_service
                 .unwrap_or_else(|| Arc::new(MockBanService::new())),
@@ -253,6 +264,7 @@ impl TestApi {
             requests_per_minute: 1000,
             config: None,
             ban_service: None,
+            players: Vec::new(),
             logs: None,
             files: Vec::new(),
         }

@@ -11,8 +11,7 @@ use crate::dto::player::{PlayerCountResponse, PlayerDetailResponse, PlayerRespon
 use crate::dto::requests::{BroadcastRequest, KickRequest, MessageRequest, SendRequest};
 use crate::error::ApiError;
 use crate::response::{
-    ApiResponse, MutationResult, PaginatedResponse, PaginationParams, default_page,
-    default_per_page, mutation_ok, ok,
+    ApiResponse, MutationResult, PaginatedResponse, PaginationParams, mutation_ok, ok,
 };
 use crate::state::ApiState;
 use crate::util::ProxyModeName;
@@ -30,22 +29,15 @@ fn validate_text(text: &str) -> Result<(), ApiError> {
 
 #[derive(Debug, Deserialize)]
 pub struct PlayerListQuery {
-    #[serde(default = "default_page")]
-    pub page: usize,
-    #[serde(default = "default_per_page")]
-    pub per_page: usize,
     pub server: Option<String>,
     pub mode: Option<String>,
 }
 
 pub async fn list(
     State(state): State<Arc<ApiState>>,
+    Query(mut pagination): Query<PaginationParams>,
     Query(query): Query<PlayerListQuery>,
 ) -> Result<Json<PaginatedResponse<PlayerResponse>>, ApiError> {
-    let mut pagination = PaginationParams {
-        page: query.page,
-        per_page: query.per_page,
-    };
     pagination.normalize();
 
     let mode_filter = query
