@@ -41,6 +41,9 @@ pub struct LocalManagerConfig {
     #[serde(default = "defaults::start_timeout")]
     #[serde(with = "humantime_serde")]
     pub start_timeout: Duration,
+    #[serde(default = "defaults::poll_interval")]
+    #[serde(with = "humantime_serde")]
+    pub poll_interval: Duration,
 }
 
 /// Pterodactyl provider: REST API.

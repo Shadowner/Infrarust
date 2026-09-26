@@ -89,7 +89,7 @@ impl ServerManagerService {
                     Arc::new(LocalProvider::new(cfg.clone())),
                     cfg.shutdown_after,
                     cfg.start_timeout,
-                    Duration::from_secs(5),
+                    cfg.poll_interval,
                 ),
                 ServerManagerConfig::Pterodactyl(cfg) => (
                     Arc::new(PterodactylProvider::new(cfg, http_client.clone())),
@@ -518,7 +518,9 @@ impl ServerManagerService {
     pub(crate) fn get_poll_interval(&self, server_id: &str) -> Duration {
         self.entries
             .get(server_id)
-            .map_or(Duration::from_secs(5), |e| e.poll_interval)
+            .map_or_else(infrarust_config::defaults::poll_interval, |e| {
+                e.poll_interval
+            })
     }
 }
 

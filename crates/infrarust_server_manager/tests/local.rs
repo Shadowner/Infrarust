@@ -30,6 +30,7 @@ fn make_config(script_path: &std::path::Path, working_dir: &std::path::Path) -> 
         shutdown_timeout: std::time::Duration::from_secs(5),
         shutdown_after: None,
         start_timeout: std::time::Duration::from_secs(10),
+        poll_interval: std::time::Duration::from_secs(5),
     }
 }
 

@@ -613,6 +613,7 @@ Launches a local process (typically `java` or `docker`).
 | `shutdown_timeout` | duration | `"30s"` | Time to wait for graceful shutdown |
 | `shutdown_after` | duration | none | Shut down the server after this idle duration. Omit to disable |
 | `start_timeout` | duration | `"60s"` | Maximum time to wait for the server to become ready |
+| `poll_interval` | duration | `"5s"` | How often to check the process state |
 
 ```toml
 [server_manager]

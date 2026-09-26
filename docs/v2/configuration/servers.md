@@ -244,6 +244,7 @@ start_timeout = "60s"
 | `shutdown_timeout` | duration | `"30s"` | How long to wait for graceful shutdown before killing the process. |
 | `shutdown_after` | duration | none | Idle time before auto-shutdown. Omit to keep the server running. |
 | `start_timeout` | duration | `"60s"` | How long to wait for the ready pattern before giving up. |
+| `poll_interval` | duration | `"5s"` | How often to check the process state. |
 
 #### Pterodactyl
 

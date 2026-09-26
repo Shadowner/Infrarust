@@ -10,6 +10,8 @@ use crate::provider::ProviderStatus;
 use crate::service::{PlayerCounter, ServerManagerService};
 use crate::state::ServerState;
 
+const SLOW_POLL_FACTOR: u32 = 6;
+
 /// Per-server monitoring task.
 ///
 /// Polls the provider for status changes, notifies waiters on transitions,
@@ -28,7 +30,7 @@ pub async fn monitor_server(
         let interval = if fast_poll {
             service.get_poll_interval(&server_id)
         } else {
-            service.get_poll_interval(&server_id) * 6
+            service.get_poll_interval(&server_id) * SLOW_POLL_FACTOR
         };
 
         tokio::select! {

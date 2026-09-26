@@ -369,6 +369,7 @@ fn convert_server_manager(
                 shutdown_timeout: crate::defaults::shutdown_timeout(),
                 shutdown_after,
                 start_timeout: crate::defaults::start_timeout(),
+                poll_interval: crate::defaults::poll_interval(),
             }))
         }
         "pterodactyl" => {
