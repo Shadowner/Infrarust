@@ -10,10 +10,32 @@ const ASK_SERVER: Option<&str> = Some("minecraft:ask_server");
 const SINGLE_WORD: i32 = 0;
 const GREEDY_PHRASE: i32 = 2;
 
-fn push_node(nodes: &mut Vec<CommandNode>, base: i32, node: CommandNode) -> i32 {
-    let idx = base + nodes.len() as i32;
-    nodes.push(node);
-    idx
+struct SubTree {
+    base: i32,
+    nodes: Vec<CommandNode>,
+}
+
+impl SubTree {
+    fn new(base: usize) -> Self {
+        Self {
+            base: base as i32,
+            nodes: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, node: CommandNode) -> usize {
+        self.nodes.push(node);
+        self.nodes.len() - 1
+    }
+
+    fn absolute(&self, local: usize) -> i32 {
+        self.base + local as i32
+    }
+
+    fn link(&mut self, parent: usize, child: usize) {
+        let child = self.absolute(child);
+        self.nodes[parent].children.push(child);
+    }
 }
 
 const LITERAL: u8 = 0x01;
@@ -49,7 +71,6 @@ pub fn inject_proxy_commands(
     visible_subcommands: Option<&HashSet<String>>,
 ) -> ProtocolResult<()> {
     drop_shadowed_roots(commands, &tree.shadowed);
-    let base = commands.nodes.len() as i32;
     let root = commands.root_index;
 
     let is_visible = |name: &str| -> bool {
@@ -65,176 +86,133 @@ pub fn inject_proxy_commands(
     };
 
     if has_any_visible {
-        let mut nodes: Vec<CommandNode> = Vec::new();
-        let infrarust_idx = push_node(&mut nodes, base, CommandNode::literal("infrarust"));
+        let mut sub = SubTree::new(commands.nodes.len());
+        let infrarust_idx = sub.push(CommandNode::literal("infrarust"));
         let mut ir_children = Vec::new();
 
         if is_visible("help") {
-            let help_idx = push_node(&mut nodes, base, CommandNode::literal_executable("help"));
-            let help_cmd_idx = push_node(
-                &mut nodes,
-                base,
-                CommandNode::argument("command", string_parser(SINGLE_WORD, version)?, ASK_SERVER),
-            );
-            nodes[(help_idx - base) as usize]
-                .children
-                .push(help_cmd_idx);
+            let help_idx = sub.push(CommandNode::literal_executable("help"));
+            let help_cmd_idx = sub.push(CommandNode::argument(
+                "command",
+                string_parser(SINGLE_WORD, version)?,
+                ASK_SERVER,
+            ));
+            sub.link(help_idx, help_cmd_idx);
             ir_children.push(help_idx);
         }
 
         if is_visible("version") {
-            ir_children.push(push_node(
-                &mut nodes,
-                base,
-                CommandNode::literal_executable("version"),
-            ));
+            ir_children.push(sub.push(CommandNode::literal_executable("version")));
         }
 
         if is_visible("list") {
-            ir_children.push(push_node(
-                &mut nodes,
-                base,
-                CommandNode::literal_executable("list"),
-            ));
+            ir_children.push(sub.push(CommandNode::literal_executable("list")));
         }
 
         if is_visible("plugins") {
-            ir_children.push(push_node(
-                &mut nodes,
-                base,
-                CommandNode::literal_executable("plugins"),
-            ));
+            ir_children.push(sub.push(CommandNode::literal_executable("plugins")));
         }
 
         if is_visible("reload") {
-            ir_children.push(push_node(
-                &mut nodes,
-                base,
-                CommandNode::literal_executable("reload"),
-            ));
+            ir_children.push(sub.push(CommandNode::literal_executable("reload")));
         }
 
         if is_visible("server") {
-            let server_idx = push_node(&mut nodes, base, CommandNode::literal_executable("server"));
-            let server_name_idx = push_node(
-                &mut nodes,
-                base,
-                CommandNode::argument("name", string_parser(SINGLE_WORD, version)?, ASK_SERVER),
-            );
-            nodes[(server_idx - base) as usize]
-                .children
-                .push(server_name_idx);
+            let server_idx = sub.push(CommandNode::literal_executable("server"));
+            let server_name_idx = sub.push(CommandNode::argument(
+                "name",
+                string_parser(SINGLE_WORD, version)?,
+                ASK_SERVER,
+            ));
+            sub.link(server_idx, server_name_idx);
             ir_children.push(server_idx);
         }
 
         if is_visible("find") {
-            let find_idx = push_node(&mut nodes, base, CommandNode::literal("find"));
-            let find_player_idx = push_node(
-                &mut nodes,
-                base,
-                CommandNode::argument("player", string_parser(SINGLE_WORD, version)?, ASK_SERVER),
-            );
-            nodes[(find_idx - base) as usize]
-                .children
-                .push(find_player_idx);
+            let find_idx = sub.push(CommandNode::literal("find"));
+            let find_player_idx = sub.push(CommandNode::argument(
+                "player",
+                string_parser(SINGLE_WORD, version)?,
+                ASK_SERVER,
+            ));
+            sub.link(find_idx, find_player_idx);
             ir_children.push(find_idx);
         }
 
         if is_visible("send") {
-            let send_idx = push_node(&mut nodes, base, CommandNode::literal("send"));
-            let send_player_idx = push_node(
-                &mut nodes,
-                base,
-                CommandNode::argument_non_executable(
-                    "player",
-                    string_parser(SINGLE_WORD, version)?,
-                    ASK_SERVER,
-                ),
-            );
-            let send_server_idx = push_node(
-                &mut nodes,
-                base,
-                CommandNode::argument("server", string_parser(SINGLE_WORD, version)?, ASK_SERVER),
-            );
-            nodes[(send_player_idx - base) as usize]
-                .children
-                .push(send_server_idx);
-            nodes[(send_idx - base) as usize]
-                .children
-                .push(send_player_idx);
+            let send_idx = sub.push(CommandNode::literal("send"));
+            let send_player_idx = sub.push(CommandNode::argument_non_executable(
+                "player",
+                string_parser(SINGLE_WORD, version)?,
+                ASK_SERVER,
+            ));
+            let send_server_idx = sub.push(CommandNode::argument(
+                "server",
+                string_parser(SINGLE_WORD, version)?,
+                ASK_SERVER,
+            ));
+            sub.link(send_player_idx, send_server_idx);
+            sub.link(send_idx, send_player_idx);
             ir_children.push(send_idx);
         }
 
         if is_visible("kick") {
-            let kick_idx = push_node(&mut nodes, base, CommandNode::literal("kick"));
-            let kick_player_idx = push_node(
-                &mut nodes,
-                base,
-                CommandNode::argument("player", string_parser(SINGLE_WORD, version)?, ASK_SERVER),
-            );
-            let kick_reason_idx = push_node(
-                &mut nodes,
-                base,
-                CommandNode::argument("reason", string_parser(GREEDY_PHRASE, version)?, None),
-            );
-            nodes[(kick_player_idx - base) as usize]
-                .children
-                .push(kick_reason_idx);
-            nodes[(kick_idx - base) as usize]
-                .children
-                .push(kick_player_idx);
+            let kick_idx = sub.push(CommandNode::literal("kick"));
+            let kick_player_idx = sub.push(CommandNode::argument(
+                "player",
+                string_parser(SINGLE_WORD, version)?,
+                ASK_SERVER,
+            ));
+            let kick_reason_idx = sub.push(CommandNode::argument(
+                "reason",
+                string_parser(GREEDY_PHRASE, version)?,
+                None,
+            ));
+            sub.link(kick_player_idx, kick_reason_idx);
+            sub.link(kick_idx, kick_player_idx);
             ir_children.push(kick_idx);
         }
 
         if is_visible("broadcast") {
-            let broadcast_idx = push_node(&mut nodes, base, CommandNode::literal("broadcast"));
-            let broadcast_msg_idx = push_node(
-                &mut nodes,
-                base,
-                CommandNode::argument("message", string_parser(GREEDY_PHRASE, version)?, None),
-            );
-            nodes[(broadcast_idx - base) as usize]
-                .children
-                .push(broadcast_msg_idx);
+            let broadcast_idx = sub.push(CommandNode::literal("broadcast"));
+            let broadcast_msg_idx = sub.push(CommandNode::argument(
+                "message",
+                string_parser(GREEDY_PHRASE, version)?,
+                None,
+            ));
+            sub.link(broadcast_idx, broadcast_msg_idx);
             ir_children.push(broadcast_idx);
         }
 
         if is_visible("plugin") {
-            let plugin_lit_idx = push_node(&mut nodes, base, CommandNode::literal("plugin"));
-            let plugin_id_idx = push_node(
-                &mut nodes,
-                base,
-                CommandNode::argument_non_executable(
-                    "plugin_id",
-                    string_parser(SINGLE_WORD, version)?,
-                    ASK_SERVER,
-                ),
-            );
-            let plugin_cmd_idx = push_node(
-                &mut nodes,
-                base,
-                CommandNode::argument(
-                    "command",
-                    string_parser(GREEDY_PHRASE, version)?,
-                    ASK_SERVER,
-                ),
-            );
-            nodes[(plugin_id_idx - base) as usize]
-                .children
-                .push(plugin_cmd_idx);
-            nodes[(plugin_lit_idx - base) as usize]
-                .children
-                .push(plugin_id_idx);
+            let plugin_lit_idx = sub.push(CommandNode::literal("plugin"));
+            let plugin_id_idx = sub.push(CommandNode::argument_non_executable(
+                "plugin_id",
+                string_parser(SINGLE_WORD, version)?,
+                ASK_SERVER,
+            ));
+            let plugin_cmd_idx = sub.push(CommandNode::argument(
+                "command",
+                string_parser(GREEDY_PHRASE, version)?,
+                ASK_SERVER,
+            ));
+            sub.link(plugin_id_idx, plugin_cmd_idx);
+            sub.link(plugin_lit_idx, plugin_id_idx);
             ir_children.push(plugin_lit_idx);
         }
 
-        nodes[(infrarust_idx - base) as usize].children = ir_children;
+        let children: Vec<i32> = ir_children
+            .iter()
+            .map(|&child| sub.absolute(child))
+            .collect();
+        sub.nodes[infrarust_idx].children = children;
 
-        let ir_idx = push_node(&mut nodes, base, CommandNode::redirect("ir", infrarust_idx));
+        let ir_idx = sub.push(CommandNode::redirect("ir", sub.absolute(infrarust_idx)));
 
-        commands.nodes.extend(nodes);
-        commands.nodes[root as usize].children.push(infrarust_idx);
-        commands.nodes[root as usize].children.push(ir_idx);
+        let (infrarust, ir) = (sub.absolute(infrarust_idx), sub.absolute(ir_idx));
+        commands.nodes.extend(sub.nodes);
+        commands.nodes[root as usize].children.push(infrarust);
+        commands.nodes[root as usize].children.push(ir);
     }
 
     for labels in &tree.commands {
