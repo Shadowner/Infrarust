@@ -87,14 +87,17 @@ fn test_offline_without_domain_is_valid() {
 }
 
 #[test]
-fn test_full_without_domain_is_valid() {
+fn full_mode_is_reserved_and_rejected() {
     let config = from_toml(
         r#"
+        domains = ["mc.example.com"]
         addresses = ["127.0.0.1:25565"]
         proxy_mode = "full"
     "#,
     );
-    assert!(validate_server_config(&config).is_ok());
+    let error = validate_server_config(&config).unwrap_err().to_string();
+    assert!(error.contains("full"), "{error}");
+    assert!(error.contains("not implemented"), "{error}");
 }
 
 #[test]

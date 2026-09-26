@@ -118,6 +118,8 @@ All modes use `snake_case` in the config file.
 
 Passthrough, zero-copy, and server-only are "forwarding" modes: the proxy relays raw bytes after the handshake. Client-only and offline are "intercepted" modes: the proxy parses and may modify packets.
 
+The value `"full"` (encryption on both sides) is reserved for a future release. A server file that uses it is rejected when it is loaded.
+
 ::: tip
 Zero-copy mode only works on Linux. On other platforms, Infrarust logs a warning and still accepts the config, but performance won't differ from passthrough.
 :::

@@ -32,6 +32,13 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
     let id = config.effective_id();
     validate_effective_id(&id)?;
 
+    if config.proxy_mode == crate::types::ProxyMode::Full {
+        return Err(ConfigError::Validation(format!(
+            "server '{id}': proxy_mode = \"full\" is reserved and not implemented; use \
+             client_only, offline, passthrough, zero_copy or server_only"
+        )));
+    }
+
     if config.proxy_mode.is_forwarding() {
         if config.domains.is_empty() {
             return Err(ConfigError::NoDomains {

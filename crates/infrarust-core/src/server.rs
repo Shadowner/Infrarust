@@ -654,13 +654,13 @@ impl ProxyServer {
                             .await?;
                     }
                     ProxyMode::Full => {
-                        tracing::warn!(
-                            "Full mode not yet implemented, falling back to Passthrough"
-                        );
-                        self.passthrough_handler
-                            .handle(ctx, shutdown.child_token())
-                            .instrument(span)
-                            .await?;
+                        return Err(CoreError::Other(format!(
+                            "server '{}' is configured with the reserved proxy_mode = \"full\", \
+                             which configuration validation rejects",
+                            ctx.require_extension::<RoutingData>("RoutingData")?
+                                .server_config
+                                .effective_id()
+                        )));
                     }
                     _ => {
                         self.passthrough_handler

@@ -96,25 +96,6 @@ macro_rules! family {
                 )
                 .await;
             }
-
-            #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-            async fn full_p47() {
-                super::$body(ProxyMode::Full, ProtocolVersion(47)).await;
-            }
-
-            #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-            async fn full_p764() {
-                super::$body(ProxyMode::Full, ProtocolVersion(764)).await;
-            }
-
-            #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-            async fn full_current() {
-                super::$body(
-                    ProxyMode::Full,
-                    ProtocolVersion(infrarust_test_harness::versions::CURRENT),
-                )
-                .await;
-            }
         }
     };
 }
