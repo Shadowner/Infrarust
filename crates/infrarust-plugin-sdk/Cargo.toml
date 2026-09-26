@@ -20,4 +20,5 @@ workspace = true
 wit-bindgen = { workspace = true }
 infrarust-plugin-macros = { workspace = true }
 infrarust-plugin-wit = { workspace = true }
+infrarust-plugin-common = { workspace = true }
 uuid = { version = "1.23.3", default-features = false }

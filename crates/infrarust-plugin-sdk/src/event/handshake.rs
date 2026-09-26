@@ -3,15 +3,9 @@ use std::net::SocketAddr;
 use super::{GuestEvent, ResultCell};
 use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
 use crate::component::{Component, from_host};
-use crate::types::{ServerId, socket_from_wit};
+use crate::types::{FromWit, ServerId, socket_from_wit};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum HandshakeIntent {
-    Status,
-    Login,
-    Transfer,
-}
+pub use infrarust_plugin_common::enums::HandshakeIntent;
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -75,11 +69,7 @@ impl GuestEvent for ConnectionHandshakeEvent {
             raw_host: e.raw_host,
             port: e.port,
             protocol: e.protocol,
-            intent: match e.intent {
-                we::HandshakeIntent::Status => HandshakeIntent::Status,
-                we::HandshakeIntent::Login => HandshakeIntent::Login,
-                we::HandshakeIntent::Transfer => HandshakeIntent::Transfer,
-            },
+            intent: HandshakeIntent::from_wit(e.intent),
             legacy: e.legacy,
             server: e.server.map(ServerId::from),
             result: ResultCell::new(match e.result {

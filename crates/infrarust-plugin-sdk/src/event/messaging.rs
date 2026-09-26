@@ -1,6 +1,6 @@
 use super::{GuestEvent, ResultCell};
 use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
-use crate::types::{ChannelId, PlayerRef, ServerId};
+use crate::types::{ChannelId, FromWit, PlayerRef, ServerId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -9,12 +9,7 @@ pub enum MessageEndpoint {
     Backend(ServerId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum MessagePhase {
-    Configuration,
-    Play,
-}
+pub use infrarust_plugin_common::enums::MessagePhase;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -82,10 +77,7 @@ impl GuestEvent for PluginMessageEvent {
             channel: ChannelId::from_wit(e.channel),
             raw_channel: e.raw_channel,
             data: e.data,
-            phase: match e.phase {
-                we::MessagePhase::Configuration => MessagePhase::Configuration,
-                we::MessagePhase::Play => MessagePhase::Play,
-            },
+            phase: MessagePhase::from_wit(e.phase),
             result: ResultCell::new(match e.result {
                 we::PluginMessageResult::Forward => PluginMessageResult::Forward,
                 we::PluginMessageResult::Handled => PluginMessageResult::Handled,

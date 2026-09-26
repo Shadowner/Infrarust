@@ -4,8 +4,26 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use uuid::Uuid;
 
+use infrarust_plugin_common::enums::{
+    BackendState, ConnectCause, FilterPriority, HandshakeIntent, LoginStage, MessagePhase,
+    ResourcePackStatus, SessionEndReason, TransferOrigin, UnknownDomainBehavior,
+};
+
+use crate::bindings::ban_service as wb;
+use crate::bindings::codec_registry as wc;
+use crate::bindings::events as we;
+use crate::bindings::guest as wg;
+use crate::bindings::proxy_info as wi;
 use crate::bindings::types as wt;
 use crate::player::Player;
+
+pub(crate) trait FromWit<W>: Sized {
+    fn from_wit(w: W) -> Self;
+}
+
+pub(crate) trait ToWit<W> {
+    fn to_wit(&self) -> W;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PlayerId(u64);
@@ -202,51 +220,9 @@ impl fmt::Display for ServerAddress {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ServerState {
-    Online,
-    Offline,
-    Starting,
-    Stopping,
-    Sleeping,
-    Crashed,
-}
+pub use infrarust_plugin_common::enums::ServerState;
 
-impl ServerState {
-    pub(crate) const fn from_wit(state: wt::ServerState) -> Self {
-        match state {
-            wt::ServerState::Online => Self::Online,
-            wt::ServerState::Offline => Self::Offline,
-            wt::ServerState::Starting => Self::Starting,
-            wt::ServerState::Stopping => Self::Stopping,
-            wt::ServerState::Sleeping => Self::Sleeping,
-            wt::ServerState::Crashed => Self::Crashed,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ProxyMode {
-    Passthrough,
-    ZeroCopy,
-    ClientOnly,
-    Offline,
-    ServerOnly,
-}
-
-impl ProxyMode {
-    pub(crate) const fn from_wit(mode: wt::ProxyMode) -> Self {
-        match mode {
-            wt::ProxyMode::Passthrough => Self::Passthrough,
-            wt::ProxyMode::ZeroCopy => Self::ZeroCopy,
-            wt::ProxyMode::ClientOnly => Self::ClientOnly,
-            wt::ProxyMode::Offline => Self::Offline,
-            wt::ProxyMode::ServerOnly => Self::ServerOnly,
-        }
-    }
-}
+pub use infrarust_plugin_common::enums::ProxyMode;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ChannelId {
@@ -324,51 +300,9 @@ impl fmt::Display for ChannelId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum PacketDirection {
-    Serverbound,
-    Clientbound,
-}
+pub use infrarust_plugin_common::enums::PacketDirection;
 
-impl PacketDirection {
-    pub(crate) const fn from_wit(direction: wt::PacketDirection) -> Self {
-        match direction {
-            wt::PacketDirection::Serverbound => Self::Serverbound,
-            wt::PacketDirection::Clientbound => Self::Clientbound,
-        }
-    }
-
-    pub(crate) const fn to_wit(self) -> wt::PacketDirection {
-        match self {
-            Self::Serverbound => wt::PacketDirection::Serverbound,
-            Self::Clientbound => wt::PacketDirection::Clientbound,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ChatMode {
-    Enabled,
-    CommandsOnly,
-    Hidden,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum MainHand {
-    Left,
-    Right,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ParticleStatus {
-    All,
-    Decreased,
-    Minimal,
-}
+pub use infrarust_plugin_common::enums::{ChatMode, MainHand, ParticleStatus};
 
 pub use crate::bindings::types::SkinParts;
 
@@ -391,82 +325,94 @@ impl ClientSettings {
         Self {
             locale: settings.locale,
             view_distance: settings.view_distance,
-            chat_mode: match settings.chat_mode {
-                wt::ChatMode::Enabled => ChatMode::Enabled,
-                wt::ChatMode::CommandsOnly => ChatMode::CommandsOnly,
-                wt::ChatMode::Hidden => ChatMode::Hidden,
-            },
+            chat_mode: ChatMode::from_wit(settings.chat_mode),
             chat_colors: settings.chat_colors,
             skin_parts: settings.skin_parts,
-            main_hand: match settings.main_hand {
-                wt::MainHand::Left => MainHand::Left,
-                wt::MainHand::Right => MainHand::Right,
-            },
+            main_hand: MainHand::from_wit(settings.main_hand),
             text_filtering: settings.text_filtering,
             allow_listing: settings.allow_listing,
-            particle_status: match settings.particle_status {
-                wt::ParticleStatus::All => ParticleStatus::All,
-                wt::ParticleStatus::Decreased => ParticleStatus::Decreased,
-                wt::ParticleStatus::Minimal => ParticleStatus::Minimal,
-            },
+            particle_status: ParticleStatus::from_wit(settings.particle_status),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Capability {
-    EventBus,
-    PlayerRead,
-    PlayerWrite,
-    RawPacket,
-    ServerManage,
-    Ban,
-    Command,
-    Scheduler,
-    ConfigRead,
-    ConfigWrite,
-    CodecFilter,
-    TransportFilter,
-    Limbo,
-    VirtualBackend,
-    PermissionProvider,
-    FilesystemExtended,
-    Network,
-    ChatIntercept,
-    BanProvider,
-    PluginMessaging,
+pub use infrarust_plugin_common::capability::Capability;
+
+impl FromWit<wt::ServerState> for ServerState {
+    fn from_wit(w: wt::ServerState) -> Self {
+        match w {
+            wt::ServerState::Online => Self::Online,
+            wt::ServerState::Offline => Self::Offline,
+            wt::ServerState::Starting => Self::Starting,
+            wt::ServerState::Stopping => Self::Stopping,
+            wt::ServerState::Sleeping => Self::Sleeping,
+            wt::ServerState::Crashed => Self::Crashed,
+        }
+    }
 }
 
-impl Capability {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
+impl FromWit<wt::ProxyMode> for ProxyMode {
+    fn from_wit(w: wt::ProxyMode) -> Self {
+        match w {
+            wt::ProxyMode::Passthrough => Self::Passthrough,
+            wt::ProxyMode::ZeroCopy => Self::ZeroCopy,
+            wt::ProxyMode::ClientOnly => Self::ClientOnly,
+            wt::ProxyMode::Offline => Self::Offline,
+            wt::ProxyMode::ServerOnly => Self::ServerOnly,
+        }
+    }
+}
+
+impl FromWit<wt::PacketDirection> for PacketDirection {
+    fn from_wit(w: wt::PacketDirection) -> Self {
+        match w {
+            wt::PacketDirection::Serverbound => Self::Serverbound,
+            wt::PacketDirection::Clientbound => Self::Clientbound,
+        }
+    }
+}
+
+impl ToWit<wt::PacketDirection> for PacketDirection {
+    fn to_wit(&self) -> wt::PacketDirection {
         match self {
-            Self::EventBus => "event-bus",
-            Self::PlayerRead => "player-read",
-            Self::PlayerWrite => "player-write",
-            Self::RawPacket => "raw-packet",
-            Self::ServerManage => "server-manage",
-            Self::Ban => "ban",
-            Self::Command => "command",
-            Self::Scheduler => "scheduler",
-            Self::ConfigRead => "config-read",
-            Self::ConfigWrite => "config-write",
-            Self::CodecFilter => "codec-filter",
-            Self::TransportFilter => "transport-filter",
-            Self::Limbo => "limbo",
-            Self::VirtualBackend => "virtual-backend",
-            Self::PermissionProvider => "permission-provider",
-            Self::FilesystemExtended => "filesystem-extended",
-            Self::Network => "network",
-            Self::ChatIntercept => "chat-intercept",
-            Self::BanProvider => "ban-provider",
-            Self::PluginMessaging => "plugin-messaging",
+            Self::Clientbound => wt::PacketDirection::Clientbound,
+            _ => wt::PacketDirection::Serverbound,
         }
     }
+}
 
-    pub(crate) const fn from_wit(capability: wt::Capability) -> Self {
-        match capability {
+impl FromWit<wt::ChatMode> for ChatMode {
+    fn from_wit(w: wt::ChatMode) -> Self {
+        match w {
+            wt::ChatMode::Enabled => Self::Enabled,
+            wt::ChatMode::CommandsOnly => Self::CommandsOnly,
+            wt::ChatMode::Hidden => Self::Hidden,
+        }
+    }
+}
+
+impl FromWit<wt::MainHand> for MainHand {
+    fn from_wit(w: wt::MainHand) -> Self {
+        match w {
+            wt::MainHand::Left => Self::Left,
+            wt::MainHand::Right => Self::Right,
+        }
+    }
+}
+
+impl FromWit<wt::ParticleStatus> for ParticleStatus {
+    fn from_wit(w: wt::ParticleStatus) -> Self {
+        match w {
+            wt::ParticleStatus::All => Self::All,
+            wt::ParticleStatus::Decreased => Self::Decreased,
+            wt::ParticleStatus::Minimal => Self::Minimal,
+        }
+    }
+}
+
+impl FromWit<wt::Capability> for Capability {
+    fn from_wit(w: wt::Capability) -> Self {
+        match w {
             wt::Capability::EventBus => Self::EventBus,
             wt::Capability::PlayerRead => Self::PlayerRead,
             wt::Capability::PlayerWrite => Self::PlayerWrite,
@@ -491,9 +437,114 @@ impl Capability {
     }
 }
 
-impl fmt::Display for Capability {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+impl FromWit<wi::UnknownDomainBehavior> for UnknownDomainBehavior {
+    fn from_wit(w: wi::UnknownDomainBehavior) -> Self {
+        match w {
+            wi::UnknownDomainBehavior::DefaultMotd => Self::DefaultMotd,
+            wi::UnknownDomainBehavior::Drop => Self::Drop,
+        }
+    }
+}
+
+impl FromWit<we::MessagePhase> for MessagePhase {
+    fn from_wit(w: we::MessagePhase) -> Self {
+        match w {
+            we::MessagePhase::Configuration => Self::Configuration,
+            we::MessagePhase::Play => Self::Play,
+        }
+    }
+}
+
+impl FromWit<we::HandshakeIntent> for HandshakeIntent {
+    fn from_wit(w: we::HandshakeIntent) -> Self {
+        match w {
+            we::HandshakeIntent::Status => Self::Status,
+            we::HandshakeIntent::Login => Self::Login,
+            we::HandshakeIntent::Transfer => Self::Transfer,
+        }
+    }
+}
+
+impl FromWit<we::ConnectCause> for ConnectCause {
+    fn from_wit(w: we::ConnectCause) -> Self {
+        match w {
+            we::ConnectCause::Initial => Self::Initial,
+            we::ConnectCause::Switch => Self::Switch,
+            we::ConnectCause::LimboExit => Self::LimboExit,
+            we::ConnectCause::KickRedirect => Self::KickRedirect,
+            we::ConnectCause::PluginMessage => Self::PluginMessage,
+        }
+    }
+}
+
+impl FromWit<we::TransferOrigin> for TransferOrigin {
+    fn from_wit(w: we::TransferOrigin) -> Self {
+        match w {
+            we::TransferOrigin::Plugin => Self::Plugin,
+            we::TransferOrigin::Backend => Self::Backend,
+        }
+    }
+}
+
+impl FromWit<we::BackendState> for BackendState {
+    fn from_wit(w: we::BackendState) -> Self {
+        match w {
+            we::BackendState::Healthy => Self::Healthy,
+            we::BackendState::Probing => Self::Probing,
+            we::BackendState::Unhealthy => Self::Unhealthy,
+            we::BackendState::Draining => Self::Draining,
+        }
+    }
+}
+
+impl FromWit<wb::LoginStage> for LoginStage {
+    fn from_wit(w: wb::LoginStage) -> Self {
+        match w {
+            wb::LoginStage::Status => Self::Status,
+            wb::LoginStage::PreAuth => Self::PreAuth,
+            wb::LoginStage::PostAuth => Self::PostAuth,
+        }
+    }
+}
+
+impl FromWit<wg::SessionEndReason> for SessionEndReason {
+    fn from_wit(w: wg::SessionEndReason) -> Self {
+        match w {
+            wg::SessionEndReason::Disconnected => Self::Disconnected,
+            wg::SessionEndReason::Released => Self::Released,
+            wg::SessionEndReason::Kicked => Self::Kicked,
+            wg::SessionEndReason::Redirected => Self::Redirected,
+            wg::SessionEndReason::TimedOut => Self::TimedOut,
+            wg::SessionEndReason::Shutdown => Self::Shutdown,
+        }
+    }
+}
+
+impl ToWit<wc::FilterPriority> for FilterPriority {
+    fn to_wit(&self) -> wc::FilterPriority {
+        match self {
+            Self::First => wc::FilterPriority::First,
+            Self::Early => wc::FilterPriority::Early,
+            Self::Normal => wc::FilterPriority::Normal,
+            Self::Late => wc::FilterPriority::Late,
+            Self::Last => wc::FilterPriority::Last,
+        }
+    }
+}
+
+impl FromWit<we::ResourcePackStatus> for ResourcePackStatus {
+    fn from_wit(w: we::ResourcePackStatus) -> Self {
+        match w {
+            we::ResourcePackStatus::SuccessfullyLoaded => Self::SuccessfullyLoaded,
+            we::ResourcePackStatus::Declined => Self::Declined,
+            we::ResourcePackStatus::FailedDownload => Self::FailedDownload,
+            we::ResourcePackStatus::Accepted => Self::Accepted,
+            we::ResourcePackStatus::Downloaded => Self::Downloaded,
+            we::ResourcePackStatus::InvalidUrl => Self::InvalidUrl,
+            we::ResourcePackStatus::FailedReload => Self::FailedReload,
+            we::ResourcePackStatus::Discarded => Self::Discarded,
+            we::ResourcePackStatus::Unknown(id) => Self::Unknown(id),
+        }
     }
 }
 
@@ -596,7 +647,7 @@ mod tests {
     #[test]
     fn capabilities_have_their_config_names() {
         assert_eq!(
-            Capability::from_wit(wt::Capability::PluginMessaging).as_str(),
+            Capability::from_wit(wt::Capability::PluginMessaging).to_kebab(),
             "plugin-messaging"
         );
         assert_eq!(Capability::ChatIntercept.to_string(), "chat-intercept");

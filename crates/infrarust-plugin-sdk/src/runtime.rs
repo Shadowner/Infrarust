@@ -29,7 +29,7 @@ use crate::permissions::{PermissionProvider, PermissionSnapshot, PermissionSubje
 use crate::plugin::Plugin;
 use crate::registry::Registry;
 use crate::services::{BanRequest, BanTarget};
-use crate::types::PlayerId;
+use crate::types::{FromWit, PlayerId};
 
 pub(crate) const NO_BAN_PROVIDER: &str = "this plugin provides no bans";
 

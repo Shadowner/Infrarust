@@ -3,7 +3,9 @@ use uuid::Uuid;
 use super::{GuestEvent, ResultCell};
 use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
 use crate::component::{Component, from_host};
-use crate::types::{ClientSettings, PacketDirection, PlayerRef, ServerAddress, uuid_from_wit};
+use crate::types::{
+    ClientSettings, FromWit, PacketDirection, PlayerRef, ServerAddress, uuid_from_wit,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -70,40 +72,7 @@ impl GuestEvent for PlayerChannelRegisterEvent {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ResourcePackStatus {
-    SuccessfullyLoaded,
-    Declined,
-    FailedDownload,
-    Accepted,
-    Downloaded,
-    InvalidUrl,
-    FailedReload,
-    Discarded,
-    Unknown(i32),
-}
-
-impl ResourcePackStatus {
-    #[must_use]
-    pub const fn is_final(self) -> bool {
-        !matches!(self, Self::Accepted | Self::Downloaded | Self::Unknown(_))
-    }
-
-    const fn from_wit(status: we::ResourcePackStatus) -> Self {
-        match status {
-            we::ResourcePackStatus::SuccessfullyLoaded => Self::SuccessfullyLoaded,
-            we::ResourcePackStatus::Declined => Self::Declined,
-            we::ResourcePackStatus::FailedDownload => Self::FailedDownload,
-            we::ResourcePackStatus::Accepted => Self::Accepted,
-            we::ResourcePackStatus::Downloaded => Self::Downloaded,
-            we::ResourcePackStatus::InvalidUrl => Self::InvalidUrl,
-            we::ResourcePackStatus::FailedReload => Self::FailedReload,
-            we::ResourcePackStatus::Discarded => Self::Discarded,
-            we::ResourcePackStatus::Unknown(id) => Self::Unknown(id),
-        }
-    }
-}
+pub use infrarust_plugin_common::enums::ResourcePackStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -140,12 +109,7 @@ impl GuestEvent for PlayerResourcePackStatusEvent {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum TransferOrigin {
-    Plugin,
-    Backend,
-}
+pub use infrarust_plugin_common::enums::TransferOrigin;
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -199,10 +163,7 @@ impl GuestEvent for PreTransferEvent {
             player: PlayerRef::from_wit(e.player),
             host: e.host,
             port: e.port,
-            origin: match e.origin {
-                we::TransferOrigin::Plugin => TransferOrigin::Plugin,
-                we::TransferOrigin::Backend => TransferOrigin::Backend,
-            },
+            origin: TransferOrigin::from_wit(e.origin),
             result: ResultCell::new(match e.result {
                 we::PreTransferResult::Allowed => PreTransferResult::Allowed,
                 we::PreTransferResult::Denied(reason) => {

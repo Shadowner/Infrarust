@@ -6,7 +6,8 @@ use super::{GuestEvent, ResultCell};
 use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
 use crate::component::{Component, from_host};
 use crate::types::{
-    ServerAddress, ServerId, ServerState, server_ids, socket_from_wit, uuid_from_wit, uuid_to_wit,
+    FromWit, ServerAddress, ServerId, ServerState, server_ids, socket_from_wit, uuid_from_wit,
+    uuid_to_wit,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -185,14 +186,7 @@ impl GuestEvent for ServerStateChangeEvent {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum BackendState {
-    Healthy,
-    Probing,
-    Unhealthy,
-    Draining,
-}
+pub use infrarust_plugin_common::enums::BackendState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -212,12 +206,7 @@ impl GuestEvent for BackendHealthEvent {
         Some(Self {
             address: ServerAddress::from_wit(e.address),
             servers: server_ids(e.servers),
-            state: match e.state {
-                we::BackendState::Healthy => BackendState::Healthy,
-                we::BackendState::Probing => BackendState::Probing,
-                we::BackendState::Unhealthy => BackendState::Unhealthy,
-                we::BackendState::Draining => BackendState::Draining,
-            },
+            state: BackendState::from_wit(e.state),
         })
     }
 }

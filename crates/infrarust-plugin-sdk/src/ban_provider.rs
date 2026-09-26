@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
 
+use infrarust_plugin_common::ban::{ip_in_range, parse_ip_range, username_matches};
 use uuid::Uuid;
 
 use crate::bindings::ban_service as wb;
@@ -8,15 +9,9 @@ use crate::component::Component;
 use crate::error::PluginError;
 use crate::event::BanSource;
 use crate::services::{BanRequest, BanTarget};
-use crate::types::{ServerId, ip_from_wit, millis_since_epoch, uuid_from_wit};
+use crate::types::{FromWit, ServerId, ip_from_wit, millis_since_epoch, uuid_from_wit};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum LoginStage {
-    Status,
-    PreAuth,
-    PostAuth,
-}
+pub use infrarust_plugin_common::enums::LoginStage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -38,11 +33,7 @@ impl LoginAttempt {
 
     pub(crate) fn from_wit(attempt: wb::LoginAttempt) -> Self {
         Self {
-            stage: match attempt.stage {
-                wb::LoginStage::Status => LoginStage::Status,
-                wb::LoginStage::PreAuth => LoginStage::PreAuth,
-                wb::LoginStage::PostAuth => LoginStage::PostAuth,
-            },
+            stage: LoginStage::from_wit(attempt.stage),
             ip: ip_from_wit(attempt.ip),
             username: attempt.username,
             uuid: attempt.uuid.map(uuid_from_wit),
@@ -58,46 +49,14 @@ impl BanTarget {
     pub fn matches(&self, attempt: &LoginAttempt) -> bool {
         match self {
             Self::Ip(ip) => ip.to_canonical() == attempt.ip.to_canonical(),
-            Self::IpRange(range) => in_range(range, attempt.ip),
+            Self::IpRange(range) => parse_ip_range(range)
+                .is_some_and(|(network, prefix)| ip_in_range(attempt.ip, network, prefix)),
             Self::Username(name) => attempt
                 .username
                 .as_deref()
-                .is_some_and(|username| username.to_lowercase() == name.to_lowercase()),
+                .is_some_and(|username| username_matches(name, username)),
             Self::Uuid(uuid) => attempt.uuid == Some(*uuid),
         }
-    }
-}
-
-fn in_range(range: &str, ip: IpAddr) -> bool {
-    let Some((network, prefix)) = range.split_once('/') else {
-        return range
-            .parse::<IpAddr>()
-            .is_ok_and(|single| single.to_canonical() == ip.to_canonical());
-    };
-    let (Ok(network), Ok(prefix)) = (network.parse::<IpAddr>(), prefix.parse::<u32>()) else {
-        return false;
-    };
-    let (network, prefix) = canonical_network(network, prefix);
-    match (network, ip.to_canonical()) {
-        (IpAddr::V4(network), IpAddr::V4(ip)) if prefix <= 32 => {
-            let mask = u32::MAX.checked_shl(32 - prefix).unwrap_or(0);
-            u32::from(network) & mask == u32::from(ip) & mask
-        }
-        (IpAddr::V6(network), IpAddr::V6(ip)) if prefix <= 128 => {
-            let mask = u128::MAX.checked_shl(128 - prefix).unwrap_or(0);
-            u128::from(network) & mask == u128::from(ip) & mask
-        }
-        _ => false,
-    }
-}
-
-fn canonical_network(network: IpAddr, prefix: u32) -> (IpAddr, u32) {
-    match network {
-        IpAddr::V6(v6) if prefix >= 96 => match v6.to_ipv4_mapped() {
-            Some(v4) => (IpAddr::V4(v4), prefix - 96),
-            None => (network, prefix),
-        },
-        other => (other, prefix),
     }
 }
 

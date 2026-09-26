@@ -3,7 +3,7 @@ use crate::bindings::event_bus as wb;
 use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
 use crate::bindings::types as wt;
 use crate::codec::ConnectionState;
-use crate::types::{PacketDirection, PlayerId};
+use crate::types::{FromWit, PacketDirection, PlayerId, ToWit};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketFilter {
@@ -32,7 +32,7 @@ impl PacketFilter {
         Self::new(packet_id, state, PacketDirection::Clientbound)
     }
 
-    pub(crate) const fn to_wit(self) -> wb::PacketFilter {
+    pub(crate) fn to_wit(self) -> wb::PacketFilter {
         wb::PacketFilter {
             packet_id: self.packet_id,
             state: self.state,

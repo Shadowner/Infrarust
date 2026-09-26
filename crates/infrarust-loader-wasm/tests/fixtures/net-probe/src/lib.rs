@@ -62,7 +62,7 @@ fn run(args: &[String]) -> Result<String, String> {
         "exists" => Ok(std::path::Path::new(arg(1)?).exists().to_string()),
         "caps" => Ok(Proxy::granted_capabilities()
             .into_iter()
-            .map(Capability::as_str)
+            .map(Capability::to_kebab)
             .collect::<Vec<_>>()
             .join(",")),
         "trap" => panic!("net-probe was told to trap"),

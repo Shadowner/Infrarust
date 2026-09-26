@@ -1,9 +1,6 @@
 use std::time::Duration;
 
-use crate::bindings::guest::{
-    HandlerResult as WitHandlerResult, LimboSession as RawSession,
-    SessionEndReason as WitSessionEndReason,
-};
+use crate::bindings::guest::{HandlerResult as WitHandlerResult, LimboSession as RawSession};
 use crate::bindings::limbo::{
     HoldTimeout as WitHoldTimeout, LimboEntryContext as WitEntryContext,
     LimboSessionHandle as RawSessionHandle, TimeoutOutcome as WitTimeoutOutcome,
@@ -65,29 +62,7 @@ impl HandlerOutcome {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum SessionEndReason {
-    Disconnected,
-    Released,
-    Kicked,
-    Redirected,
-    TimedOut,
-    Shutdown,
-}
-
-impl SessionEndReason {
-    pub(crate) const fn from_wit(r: WitSessionEndReason) -> Self {
-        match r {
-            WitSessionEndReason::Disconnected => Self::Disconnected,
-            WitSessionEndReason::Released => Self::Released,
-            WitSessionEndReason::Kicked => Self::Kicked,
-            WitSessionEndReason::Redirected => Self::Redirected,
-            WitSessionEndReason::TimedOut => Self::TimedOut,
-            WitSessionEndReason::Shutdown => Self::Shutdown,
-        }
-    }
-}
+pub use infrarust_plugin_common::enums::SessionEndReason;
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]

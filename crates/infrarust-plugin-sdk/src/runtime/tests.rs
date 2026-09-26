@@ -13,6 +13,7 @@ use crate::event::ProxyShutdownEvent;
 use crate::host;
 use crate::limbo::{HandlerOutcome, LimboHandler, LimboSession};
 use crate::plugin::PluginMetadata;
+use crate::types::ToWit;
 
 type Invocation = (Vec<String>, Option<u64>);
 

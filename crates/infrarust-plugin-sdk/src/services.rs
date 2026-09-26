@@ -3,7 +3,6 @@ use std::time::{Duration, SystemTime};
 
 use uuid::Uuid;
 
-use crate::bindings::events as we;
 use crate::bindings::{
     ban_service as wb, config_service as wc, load_balancer as wl, messaging as wm,
     plugin_registry as wr, proxy_info as wi, server_manager as ws,
@@ -12,8 +11,8 @@ use crate::error::Error;
 use crate::event::BackendState;
 use crate::plugin::PluginDependency;
 use crate::types::{
-    Capability, ChannelId, PlayerId, ProxyMode, ServerAddress, ServerId, ServerState, ip_from_wit,
-    ip_to_wit, millis, socket_from_wit, time_from_millis, uuid_from_wit, uuid_to_wit,
+    Capability, ChannelId, FromWit, PlayerId, ProxyMode, ServerAddress, ServerId, ServerState,
+    ip_from_wit, ip_to_wit, millis, socket_from_wit, time_from_millis, uuid_from_wit, uuid_to_wit,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -310,12 +309,7 @@ impl BackendStatus {
             address: ServerAddress::from_wit(status.address),
             weight: status.weight,
             effective_weight: status.effective_weight,
-            state: match status.state {
-                we::BackendState::Healthy => BackendState::Healthy,
-                we::BackendState::Probing => BackendState::Probing,
-                we::BackendState::Unhealthy => BackendState::Unhealthy,
-                we::BackendState::Draining => BackendState::Draining,
-            },
+            state: BackendState::from_wit(status.state),
             active_connections: status.active_connections,
             healthy_since: status.healthy_since_secs.map(Duration::from_secs),
             ejections: status.ejections,
@@ -406,12 +400,7 @@ impl Messaging {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum UnknownDomainBehavior {
-    DefaultMotd,
-    Drop,
-}
+pub use infrarust_plugin_common::enums::UnknownDomainBehavior;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -486,10 +475,9 @@ impl ProxyDetails {
             docker_enabled: details.docker_enabled,
             web_api_enabled: details.web_api_enabled,
             web_ui_enabled: details.web_ui_enabled,
-            unknown_domain_behavior: match details.unknown_domain_behavior {
-                wi::UnknownDomainBehavior::DefaultMotd => UnknownDomainBehavior::DefaultMotd,
-                wi::UnknownDomainBehavior::Drop => UnknownDomainBehavior::Drop,
-            },
+            unknown_domain_behavior: UnknownDomainBehavior::from_wit(
+                details.unknown_domain_behavior,
+            ),
         }
     }
 }

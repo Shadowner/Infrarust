@@ -1,7 +1,7 @@
 use super::{GuestEvent, ResultCell};
 use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
 use crate::component::{Component, from_host};
-use crate::types::{PlayerRef, ServerId};
+use crate::types::{FromWit, PlayerRef, ServerId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -85,27 +85,7 @@ impl GuestEvent for PlayerChooseInitialServerEvent {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ConnectCause {
-    Initial,
-    Switch,
-    LimboExit,
-    KickRedirect,
-    PluginMessage,
-}
-
-impl ConnectCause {
-    const fn from_wit(cause: we::ConnectCause) -> Self {
-        match cause {
-            we::ConnectCause::Initial => Self::Initial,
-            we::ConnectCause::Switch => Self::Switch,
-            we::ConnectCause::LimboExit => Self::LimboExit,
-            we::ConnectCause::KickRedirect => Self::KickRedirect,
-            we::ConnectCause::PluginMessage => Self::PluginMessage,
-        }
-    }
-}
+pub use infrarust_plugin_common::enums::ConnectCause;
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]

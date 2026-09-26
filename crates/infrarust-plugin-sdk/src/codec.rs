@@ -2,8 +2,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use crate::bindings::codec_filter::{CodecSessionInit as WitSessionInit, RawPacket};
 pub use crate::bindings::codec_filter::{ConnectionSide, ConnectionState};
-use crate::bindings::codec_registry::FilterPriority as WitFilterPriority;
-use crate::types::{ip_from_wit, socket_from_wit};
+use crate::types::{ToWit, ip_from_wit, socket_from_wit};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CodecSessionInit {
@@ -126,27 +125,7 @@ impl Injections {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub enum FilterPriority {
-    First,
-    Early,
-    #[default]
-    Normal,
-    Late,
-    Last,
-}
-
-impl FilterPriority {
-    const fn to_wit(self) -> WitFilterPriority {
-        match self {
-            Self::First => WitFilterPriority::First,
-            Self::Early => WitFilterPriority::Early,
-            Self::Normal => WitFilterPriority::Normal,
-            Self::Late => WitFilterPriority::Late,
-            Self::Last => WitFilterPriority::Last,
-        }
-    }
-}
+pub use infrarust_plugin_common::enums::FilterPriority;
 
 pub trait CodecFilter {
     /// Inspect/modify a single packet. Mutating `packet` is applied; push frames
