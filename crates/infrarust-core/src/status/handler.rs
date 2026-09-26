@@ -8,14 +8,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex as TokioMutex;
 
 use infrarust_api::events::proxy::ProxyPingEvent;
 use infrarust_api::types::ServerId;
 use infrarust_config::{MotdConfig, ServerConfig};
-use infrarust_protocol::Packet;
-use infrarust_protocol::io::{PacketDecoder, PacketEncoder};
+use infrarust_protocol::io::PacketDecoder;
 use infrarust_protocol::packets::status::{CPingResponse, CStatusResponse, SPingRequest};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
@@ -23,10 +21,12 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use infrarust_server_manager::{ServerManagerService, ServerState};
 
 use super::STATUS_PROTOCOL_VERSION;
+
+const STATUS_READ_TIMEOUT: Duration = Duration::from_secs(5);
 use super::cache::StatusCache;
 use super::favicon::FaviconCache;
 use super::motd::{DEFAULT_PROXY_MOTD, state_max_players, state_motd};
-use super::relay::StatusRelayClient;
+use super::relay::{StatusRelayClient, read_frame_within, send_packet};
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
@@ -34,7 +34,6 @@ use crate::event_bus::conversion::{core_to_api_ping_response, merge_ping_event};
 use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, peek_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
-use crate::player::packets::packet_id;
 use crate::registry::ConnectionRegistry;
 use crate::util::text::api_version;
 
@@ -151,8 +150,13 @@ impl StatusHandler {
         let status_resp = CStatusResponse {
             json_response: json,
         };
-        self.send_packet(ctx, &status_resp, STATUS_PROTOCOL_VERSION)
-            .await?;
+        send_packet(
+            &self.registry,
+            ctx.stream_mut(),
+            &status_resp,
+            STATUS_PROTOCOL_VERSION,
+        )
+        .await?;
 
         self.handle_ping_pong(ctx).await?;
 
@@ -375,49 +379,31 @@ impl StatusHandler {
         }
     }
 
-    /// Reads the `SStatusRequest` frame from the client (with timeout).
     async fn read_status_request(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
-        tokio::time::timeout(Duration::from_secs(5), async {
-            let mut decoder = PacketDecoder::new();
-            if !ctx.buffered_data.is_empty() {
-                decoder.queue_bytes(&ctx.buffered_data);
-                ctx.buffered_data.clear();
-            }
-            loop {
-                if decoder.try_next_frame()?.is_some() {
-                    return Ok(());
-                }
-                let mut buf = [0u8; 512];
-                let n = ctx.stream_mut().read(&mut buf).await?;
-                if n == 0 {
-                    return Err(CoreError::ConnectionClosed);
-                }
-                decoder.queue_bytes(&buf[..n]);
-            }
-        })
-        .await
-        .map_err(|_| CoreError::Timeout("status request read timed out".into()))?
+        let mut decoder = PacketDecoder::new();
+        if !ctx.buffered_data.is_empty() {
+            decoder.queue_bytes(&ctx.buffered_data);
+            ctx.buffered_data.clear();
+        }
+        read_frame_within(
+            ctx.stream_mut(),
+            &mut decoder,
+            STATUS_READ_TIMEOUT,
+            "status request",
+        )
+        .await?;
+        Ok(())
     }
 
-    /// Handles the ping/pong exchange after status response.
-    #[allow(clippy::similar_names)] // decoder vs decoded are contextually different
     async fn handle_ping_pong(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
-        let frame = tokio::time::timeout(Duration::from_secs(5), async {
-            let mut decoder = PacketDecoder::new();
-            loop {
-                if let Some(frame) = decoder.try_next_frame()? {
-                    return Ok(frame);
-                }
-                let mut buf = [0u8; 512];
-                let n = ctx.stream_mut().read(&mut buf).await?;
-                if n == 0 {
-                    return Err(CoreError::ConnectionClosed);
-                }
-                decoder.queue_bytes(&buf[..n]);
-            }
-        })
-        .await
-        .map_err(|_| CoreError::Timeout("ping request read timed out".into()))??;
+        let mut decoder = PacketDecoder::new();
+        let frame = read_frame_within(
+            ctx.stream_mut(),
+            &mut decoder,
+            STATUS_READ_TIMEOUT,
+            "ping request",
+        )
+        .await?;
 
         let decoded = self.registry.decode_frame(
             &frame,
@@ -435,27 +421,12 @@ impl StatusHandler {
         };
 
         let pong = CPingResponse { payload };
-        self.send_packet(ctx, &pong, STATUS_PROTOCOL_VERSION).await
-    }
-
-    /// Encodes and sends a typed packet to the client stream.
-    async fn send_packet<P: Packet>(
-        &self,
-        ctx: &mut ConnectionContext,
-        packet: &P,
-        version: ProtocolVersion,
-    ) -> Result<(), CoreError> {
-        let packet_id = packet_id::<P>(&self.registry, version)?;
-
-        let mut payload = Vec::new();
-        packet.encode(&mut payload, version)?;
-
-        let mut encoder = PacketEncoder::new();
-        encoder.append_raw(packet_id, &payload)?;
-        let bytes = encoder.take();
-
-        ctx.stream_mut().write_all(&bytes).await?;
-        ctx.stream_mut().flush().await?;
-        Ok(())
+        send_packet(
+            &self.registry,
+            ctx.stream_mut(),
+            &pong,
+            STATUS_PROTOCOL_VERSION,
+        )
+        .await
     }
 }

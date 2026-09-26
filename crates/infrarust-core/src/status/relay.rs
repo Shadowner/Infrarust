@@ -12,7 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use infrarust_config::{DomainRewrite, ServerAddress, ServerConfig};
 use infrarust_protocol::Packet;
 use infrarust_protocol::codec::VarInt;
-use infrarust_protocol::io::{PacketDecoder, PacketEncoder};
+use infrarust_protocol::io::{PacketDecoder, PacketEncoder, PacketFrame};
 use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::packets::status::{
     CPingResponse, CStatusResponse, SPingRequest, SStatusRequest,
@@ -232,8 +232,7 @@ fn resolve_relay_domain(
     }
 }
 
-/// Encodes and sends a typed packet on the stream.
-async fn send_packet<P: Packet>(
+pub(super) async fn send_packet<P: Packet>(
     registry: &PacketRegistry,
     stream: &mut tokio::net::TcpStream,
     packet: &P,
@@ -253,14 +252,21 @@ async fn send_packet<P: Packet>(
     Ok(())
 }
 
-/// Reads the next packet frame from the stream using a persistent decoder.
-///
-/// The decoder must be reused across calls on the same stream to avoid
-/// losing data when TCP delivers multiple packets in a single read.
-async fn read_next_frame(
+pub(super) async fn read_frame_within(
     stream: &mut tokio::net::TcpStream,
     decoder: &mut PacketDecoder,
-) -> Result<infrarust_protocol::io::PacketFrame, CoreError> {
+    timeout: Duration,
+    what: &str,
+) -> Result<PacketFrame, CoreError> {
+    tokio::time::timeout(timeout, read_next_frame(stream, decoder))
+        .await
+        .map_err(|_| CoreError::Timeout(format!("{what} read timed out")))?
+}
+
+pub(super) async fn read_next_frame(
+    stream: &mut tokio::net::TcpStream,
+    decoder: &mut PacketDecoder,
+) -> Result<PacketFrame, CoreError> {
     let mut buf = [0u8; 4096];
 
     loop {
