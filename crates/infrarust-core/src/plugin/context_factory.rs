@@ -3,17 +3,16 @@ use std::sync::{Arc, Mutex, Weak};
 
 use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
-use infrarust_api::services::ban_service::BanService;
 
 pub use infrarust_api::loader::PluginContextFactory;
 
-use super::context::PluginContextImpl;
+use super::context::{HostRegistries, PluginContextImpl};
 use super::manager::PluginServices;
 use super::service_registry::ServiceRegistryImpl;
 use crate::ban::BanManager;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::permissions::PermissionService;
-use crate::services::ban_bridge::PluginBanService;
+use crate::plugin_messaging::PluginChannels;
 use crate::util::sync::lock;
 
 /// Per-plugin permissions extracted from proxy configuration.
@@ -29,8 +28,8 @@ pub struct PluginContextFactoryImpl {
     services: PluginServices,
     plugin_configs: HashMap<String, PluginPermissions>,
     contexts: Mutex<HashMap<String, Weak<PluginContextImpl>>>,
-    ban_providers: Option<Arc<BanManager>>,
-    permissions: Option<Arc<PermissionService>>,
+    ban_manager: Option<Arc<BanManager>>,
+    permissions: Arc<PermissionService>,
     limbo_handlers: Arc<LimboHandlerRegistry>,
     service_registry: Arc<ServiceRegistryImpl>,
     messaging: Option<(
@@ -51,8 +50,8 @@ impl PluginContextFactoryImpl {
             services,
             plugin_configs,
             contexts: Mutex::new(HashMap::new()),
-            ban_providers: None,
-            permissions: None,
+            ban_manager: None,
+            permissions: Arc::new(PermissionService::new_sync(&Default::default())),
             limbo_handlers: Arc::new(LimboHandlerRegistry::new()),
             service_registry,
             messaging: None,
@@ -80,19 +79,33 @@ impl PluginContextFactoryImpl {
     }
 
     #[must_use]
-    pub fn with_ban_providers(mut self, bans: Arc<BanManager>) -> Self {
-        self.ban_providers = Some(bans);
+    pub fn with_ban_manager(mut self, bans: Arc<BanManager>) -> Self {
+        self.ban_manager = Some(bans);
         self
     }
 
     #[must_use]
     pub fn with_permissions(mut self, permissions: Arc<PermissionService>) -> Self {
-        self.permissions = Some(permissions);
+        self.permissions = permissions;
         self
     }
-}
 
-impl PluginContextFactoryImpl {
+    fn registries(&self, plugin_id: &str) -> HostRegistries {
+        let channels = match &self.messaging {
+            Some((messaging, players)) => {
+                PluginChannels::new(plugin_id, messaging, Arc::clone(players))
+            }
+            None => PluginChannels::default(),
+        };
+        HostRegistries {
+            ban_manager: self.ban_manager.clone(),
+            permissions: Arc::clone(&self.permissions),
+            limbo_handlers: Arc::clone(&self.limbo_handlers),
+            services: Arc::clone(&self.service_registry),
+            channels,
+        }
+    }
+
     pub fn context(&self, plugin_id: &str) -> Arc<PluginContextImpl> {
         let mut cache = lock(&self.contexts);
         if let Some(existing) = cache.get(plugin_id).and_then(Weak::upgrade) {
@@ -120,42 +133,12 @@ impl PluginContextFactoryImpl {
             );
         }
 
-        let mut ctx = PluginContextImpl::new(
-            plugin_id.to_string(),
-            Arc::clone(&self.services.event_bus),
-            Arc::clone(&self.services.player_registry),
-            Arc::clone(&self.services.server_manager),
-            Arc::new(PluginBanService::new(
-                Arc::clone(&self.services.ban_service),
-                plugin_id,
-            )) as Arc<dyn BanService>,
-            self.ban_providers.clone(),
-            Arc::clone(&self.services.config_service),
-            Arc::clone(&self.services.load_balancer_service),
-            Arc::clone(&self.services.plugin_registry),
-            Arc::clone(&self.services.command_manager),
-            Arc::clone(&self.services.scheduler),
-            Arc::clone(&self.services.codec_filter_registry),
-            Arc::clone(&self.services.transport_filter_registry),
-            Arc::clone(&self.services.domain_router),
-            self.services.proxy_shutdown.clone(),
-            self.services.proxy_info.clone(),
-            self.services.plugins_dir.clone(),
+        let ctx = PluginContextImpl::new(
+            plugin_id,
+            &self.services,
+            self.registries(plugin_id),
             capabilities,
         );
-        if let Some(permissions) = &self.permissions {
-            ctx = ctx.with_permissions(Arc::clone(permissions));
-        }
-        ctx = ctx
-            .with_limbo_handlers(Arc::clone(&self.limbo_handlers))
-            .with_services(Arc::clone(&self.service_registry));
-        if let Some((messaging, players)) = &self.messaging {
-            ctx = ctx.with_channels(crate::plugin_messaging::PluginChannels::new(
-                plugin_id,
-                messaging,
-                Arc::clone(players),
-            ));
-        }
         let ctx = Arc::new(ctx);
 
         cache.insert(plugin_id.to_string(), Arc::downgrade(&ctx));

@@ -128,7 +128,7 @@ fn with_bans(manager: &Arc<BanManager>) -> EnvOptions {
     EnvOptions {
         ban_service: Arc::clone(manager)
             as Arc<dyn infrarust_api::services::ban_service::BanService>,
-        ban_providers: Some(Arc::clone(manager)),
+        ban_manager: Some(Arc::clone(manager)),
         ..EnvOptions::default()
     }
 }

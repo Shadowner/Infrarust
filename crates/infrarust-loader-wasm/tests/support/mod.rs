@@ -37,7 +37,7 @@ pub struct EnvOptions {
     pub ban_service: Arc<dyn BanService>,
     pub bus_config: EventBusConfig,
     pub grants: HashMap<String, PluginPermissions>,
-    pub ban_providers: Option<Arc<BanManager>>,
+    pub ban_manager: Option<Arc<BanManager>>,
     pub permissions: Option<Arc<PermissionService>>,
 }
 
@@ -49,7 +49,7 @@ impl Default for EnvOptions {
             ban_service: Arc::new(MockBanService::new()),
             bus_config: EventBusConfig::default(),
             grants: HashMap::new(),
-            ban_providers: None,
+            ban_manager: None,
             permissions: None,
         }
     }
@@ -93,8 +93,8 @@ pub fn make_env_with(plugins_dir: PathBuf, options: EnvOptions) -> TestEnv {
         ..PluginServices::for_tests_with(Arc::clone(&event_bus))
     };
     let mut factory = PluginContextFactoryImpl::new(services, options.grants);
-    if let Some(bans) = options.ban_providers {
-        factory = factory.with_ban_providers(bans);
+    if let Some(bans) = options.ban_manager {
+        factory = factory.with_ban_manager(bans);
     }
     if let Some(permissions) = options.permissions {
         factory = factory.with_permissions(permissions);

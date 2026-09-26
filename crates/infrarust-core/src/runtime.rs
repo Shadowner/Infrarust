@@ -173,7 +173,7 @@ impl ProxyRuntimeBuilder {
                 plugin_services,
                 plugin_permissions(plugin_cfgs, trusted),
             )
-            .with_ban_providers(Arc::clone(&services.ban_manager))
+            .with_ban_manager(Arc::clone(&services.ban_manager))
             .with_permissions(Arc::clone(&services.permission_service))
             .with_limbo_handlers(Arc::clone(&services.limbo_handler_registry))
             .with_messaging(

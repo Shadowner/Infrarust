@@ -30,35 +30,36 @@ use infrarust_api::services::{
 };
 
 use crate::ban::BanManager;
-use crate::event_bus::EventBusImpl;
-use crate::filter::codec_registry::CodecFilterRegistryImpl;
-use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::permissions::PermissionService;
+use crate::plugin_messaging::PluginChannels;
 use crate::provider::ProviderId;
 use crate::routing::DomainRouter;
-use crate::services::command_manager::CommandManagerImpl;
-use crate::services::scheduler::SchedulerImpl;
+use crate::services::ban_bridge::PluginBanService;
+use crate::services::config_service::ReadOnlyConfigService;
 use crate::util::sync::lock;
 
+use super::manager::PluginServices;
 use super::service_registry::{PluginServiceRegistry, ServiceRegistryImpl};
 use super::tracking::{
     TrackingCodecFilterRegistry, TrackingCommandManager, TrackingEventBus, TrackingScheduler,
     TrackingTransportFilterRegistry,
 };
 
-/// Per-plugin context that aggregates all proxy services.
-///
-/// Each plugin receives its own `PluginContextImpl` with shared service
-/// references and a unique `plugin_id`. Tracking wrappers transparently
-/// record all registered listeners, commands, and tasks for automatic
-/// cleanup when the plugin is disabled.
+pub struct HostRegistries {
+    pub ban_manager: Option<Arc<BanManager>>,
+    pub permissions: Arc<PermissionService>,
+    pub limbo_handlers: Arc<LimboHandlerRegistry>,
+    pub services: Arc<ServiceRegistryImpl>,
+    pub channels: PluginChannels,
+}
+
 pub struct PluginContextImpl {
     event_bus: Arc<TrackingEventBus>,
     player_registry: Arc<dyn PlayerRegistry>,
     server_manager: Arc<dyn ServerManager>,
     ban_service: Arc<dyn BanService>,
-    ban_providers: Option<Arc<BanManager>>,
+    ban_manager: Option<Arc<BanManager>>,
     registered_ban_provider: AtomicBool,
     permissions: Arc<PermissionService>,
     registered_permission_provider: AtomicBool,
@@ -78,114 +79,79 @@ pub struct PluginContextImpl {
     plugin_id: String,
     plugins_dir: PathBuf,
     capabilities: CapabilitySet,
-
-    registered_provider_ids: Arc<Mutex<Vec<ProviderId>>>,
-    registered_provider_tokens: Arc<Mutex<Vec<CancellationToken>>>,
-    channels: crate::plugin_messaging::PluginChannels,
+    registered_provider_ids: Mutex<Vec<ProviderId>>,
+    registered_provider_tokens: Mutex<Vec<CancellationToken>>,
+    channels: PluginChannels,
 }
 
 impl PluginContextImpl {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        plugin_id: String,
-        event_bus: Arc<EventBusImpl>,
-        player_registry: Arc<dyn PlayerRegistry>,
-        server_manager: Arc<dyn ServerManager>,
-        ban_service: Arc<dyn BanService>,
-        ban_providers: Option<Arc<BanManager>>,
-        config_service: Arc<dyn ConfigService>,
-        load_balancer_service: Arc<dyn LoadBalancerService>,
-        plugin_registry: Arc<dyn PluginRegistry>,
-        command_manager: Arc<CommandManagerImpl>,
-        scheduler: Arc<SchedulerImpl>,
-        codec_filter_registry: Arc<CodecFilterRegistryImpl>,
-        transport_filter_registry: Arc<TransportFilterRegistryImpl>,
-        domain_router: Arc<DomainRouter>,
-        proxy_shutdown: CancellationToken,
-        proxy_info: ProxyInfo,
-        plugins_dir: PathBuf,
+        plugin_id: &str,
+        host: &PluginServices,
+        registries: HostRegistries,
         capabilities: CapabilitySet,
     ) -> Self {
-        let tracking_bus = Arc::new(TrackingEventBus::new(event_bus, &plugin_id));
-        let tracking_cmd = Arc::new(TrackingCommandManager::new(
-            command_manager,
-            plugin_id.clone(),
+        let event_bus = Arc::new(TrackingEventBus::new(
+            Arc::clone(&host.event_bus),
+            plugin_id,
         ));
-        let tracking_sched = Arc::new(TrackingScheduler::new(scheduler, &plugin_id));
+        let command_manager = Arc::new(TrackingCommandManager::new(
+            Arc::clone(&host.command_manager),
+            plugin_id.to_owned(),
+        ));
+        let scheduler = Arc::new(TrackingScheduler::new(
+            Arc::clone(&host.scheduler),
+            plugin_id,
+        ));
         let codec_filters = Arc::new(TrackingCodecFilterRegistry::new(
-            codec_filter_registry,
-            plugin_id.clone(),
+            Arc::clone(&host.codec_filter_registry),
+            plugin_id.to_owned(),
         ));
         let transport_filters = Arc::new(TrackingTransportFilterRegistry::new(
-            transport_filter_registry,
-            plugin_id.clone(),
+            Arc::clone(&host.transport_filter_registry),
+            plugin_id.to_owned(),
         ));
-        let services = Arc::new(PluginServiceRegistry::new(
-            Arc::new(ServiceRegistryImpl::default()),
-            &plugin_id,
+        let services = Arc::new(PluginServiceRegistry::new(registries.services, plugin_id));
+        let ban_service: Arc<dyn BanService> = Arc::new(PluginBanService::new(
+            Arc::clone(&host.ban_service),
+            plugin_id,
         ));
 
         let config_service: Arc<dyn ConfigService> = if capabilities.has(Capability::ConfigWrite) {
-            config_service
+            Arc::clone(&host.config_service)
         } else {
-            Arc::new(crate::services::config_service::ReadOnlyConfigService::new(
-                config_service,
-            ))
+            Arc::new(ReadOnlyConfigService::new(Arc::clone(&host.config_service)))
         };
 
         Self {
-            event_bus: tracking_bus,
-            player_registry,
-            server_manager,
+            event_bus,
+            player_registry: Arc::clone(&host.player_registry),
+            server_manager: Arc::clone(&host.server_manager),
             ban_service,
-            ban_providers,
+            ban_manager: registries.ban_manager,
             registered_ban_provider: AtomicBool::new(false),
-            permissions: Arc::new(PermissionService::new_sync(&Default::default())),
+            permissions: registries.permissions,
             registered_permission_provider: AtomicBool::new(false),
             config_service,
-            load_balancer_service,
-            plugin_registry,
-            command_manager: tracking_cmd,
-            scheduler: tracking_sched,
-            limbo_handlers: Arc::new(LimboHandlerRegistry::new()),
+            load_balancer_service: Arc::clone(&host.load_balancer_service),
+            plugin_registry: Arc::clone(&host.plugin_registry),
+            command_manager,
+            scheduler,
+            limbo_handlers: registries.limbo_handlers,
             services,
             config_providers: Mutex::new(Vec::new()),
             codec_filters,
             transport_filters,
-            domain_router,
-            proxy_shutdown,
-            proxy_info,
-            plugin_id,
-            plugins_dir,
+            domain_router: Arc::clone(&host.domain_router),
+            proxy_shutdown: host.proxy_shutdown.clone(),
+            proxy_info: host.proxy_info.clone(),
+            plugin_id: plugin_id.to_owned(),
+            plugins_dir: host.plugins_dir.clone(),
             capabilities,
-            registered_provider_ids: Arc::new(Mutex::new(Vec::new())),
-            registered_provider_tokens: Arc::new(Mutex::new(Vec::new())),
-            channels: crate::plugin_messaging::PluginChannels::default(),
+            registered_provider_ids: Mutex::new(Vec::new()),
+            registered_provider_tokens: Mutex::new(Vec::new()),
+            channels: registries.channels,
         }
-    }
-
-    #[must_use]
-    pub fn with_channels(mut self, channels: crate::plugin_messaging::PluginChannels) -> Self {
-        self.channels = channels;
-        self
-    }
-
-    #[must_use]
-    pub fn with_permissions(mut self, permissions: Arc<PermissionService>) -> Self {
-        self.permissions = permissions;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn with_limbo_handlers(mut self, registry: Arc<LimboHandlerRegistry>) -> Self {
-        self.limbo_handlers = registry;
-        self
-    }
-
-    #[must_use]
-    pub fn with_services(mut self, registry: Arc<ServiceRegistryImpl>) -> Self {
-        self.services = Arc::new(PluginServiceRegistry::new(registry, &self.plugin_id));
-        self
     }
 
     pub fn tracked_tasks(&self) -> usize {
@@ -252,7 +218,7 @@ impl PluginContextImpl {
         }
 
         if self.registered_ban_provider.swap(false, Ordering::SeqCst)
-            && let Some(bans) = &self.ban_providers
+            && let Some(bans) = &self.ban_manager
         {
             bans.unregister_provider(&self.plugin_id);
         }
@@ -303,7 +269,7 @@ impl PluginContext for PluginContextImpl {
                 kind: ProviderKind::Ban,
             });
         }
-        let Some(bans) = &self.ban_providers else {
+        let Some(bans) = &self.ban_manager else {
             return Err(ProviderRejected::NotSelected {
                 kind: ProviderKind::Ban,
                 selected: infrarust_config::BanProviderSelection::BUILTIN.to_string(),
