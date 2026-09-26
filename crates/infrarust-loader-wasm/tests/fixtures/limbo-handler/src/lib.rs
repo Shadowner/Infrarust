@@ -1,11 +1,22 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use infrarust_plugin_sdk::prelude::*;
 
 #[derive(Default)]
 struct LimboPlugin;
+
+static RECOVERED: AtomicBool = AtomicBool::new(false);
+
+struct FirstBootGate;
+
+impl LimboHandler for FirstBootGate {
+    fn on_player_enter(&self, _session: &LimboSession) -> HandlerOutcome {
+        HandlerOutcome::Hold
+    }
+}
 
 struct Gate {
     waiting: RefCell<HashSet<PlayerId>>,
@@ -92,11 +103,16 @@ impl LimboHandler for DelayedGate {
 
 #[plugin(id = "limbo-handler", name = "Limbo Handler Fixture")]
 impl Plugin for LimboPlugin {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
+        let recovered = matches!(ctx.enable_reason(), Some(EnableReason::Recovered(_)));
+        RECOVERED.store(recovered, Ordering::SeqCst);
         Ok(())
     }
 
     fn register_limbo_handlers(reg: &mut LimboRegistrar) {
+        if !RECOVERED.load(Ordering::SeqCst) {
+            reg.add("first-boot-gate", FirstBootGate);
+        }
         reg.add(
             "gate",
             Gate {

@@ -274,9 +274,16 @@ impl Supervisor {
         match chain.scope(enable(&mut live, limit, &reason)).await {
             Ok(()) => {
                 let ctx = self.factory.ctx();
-                for name in self.factory.registrations().sweep(generation) {
+                let stale = self.factory.registrations().sweep(generation);
+                for name in stale.commands {
                     if let Err(e) = ctx.command_manager().unregister(&name) {
                         tracing::debug!(plugin = %self.factory.plugin_id(), "stale command already gone: {e}");
+                    }
+                }
+                for registration in stale.limbo {
+                    if !registration.unregister() {
+                        tracing::debug!(plugin = %self.factory.plugin_id(), name = registration.name(),
+                            "stale limbo handler already gone");
                     }
                 }
                 tracing::info!(plugin = %self.factory.plugin_id(), generation,

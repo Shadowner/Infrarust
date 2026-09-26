@@ -487,10 +487,76 @@ async fn a_hold_owned_by_the_trapped_instance_is_released_with_the_fallback() {
     let mut after = limbo_handlers(&env, "limbo-handler");
     assert_eq!(
         after.len(),
-        registered,
-        "the recovered instance rebinds its handlers instead of registering them again"
+        registered - 1,
+        "the recovered instance rebinds the handlers it registers again and only first-boot-gate is dropped"
     );
     assert!(Arc::ptr_eq(&named(&mut after, "gate"), &gate));
+}
+
+struct NativeGate;
+
+impl LimboHandler for NativeGate {
+    fn name(&self) -> &str {
+        "first-boot-gate"
+    }
+
+    fn on_player_enter<'a>(
+        &'a self,
+        _session: &'a dyn infrarust_api::limbo::LimboSession,
+    ) -> infrarust_api::event::BoxFuture<'a, HandlerResult> {
+        Box::pin(async { HandlerResult::Accept })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_limbo_handler_the_recovered_instance_drops_is_unregistered() {
+    let (_tmp, plugins_dir) = stage("limbo-handler");
+    let env = make_env_with(
+        plugins_dir.clone(),
+        EnvOptions::default().grant("limbo-handler", "limbo"),
+    );
+    let loader = fresh_loader();
+    loader.discover(&plugins_dir).await.unwrap();
+    let _plugin = load_enabled(&loader, &env.factory, "limbo-handler").await;
+    let mut handlers = limbo_handlers(&env, "limbo-handler");
+    let registered = handlers.len();
+    let first_boot = named(&mut handlers, "first-boot-gate");
+    let boom = named(&mut handlers, "boom");
+    let gate = named(&mut handlers, "gate");
+
+    assert!(matches!(
+        boom.on_player_enter(limbo_session(1).as_ref()).await,
+        HandlerResult::Deny(_)
+    ));
+    let next = limbo_session(2);
+    assert!(
+        matches!(
+            gate.on_player_enter(next.as_ref()).await,
+            HandlerResult::Hold
+        ),
+        "the recovered instance is serving"
+    );
+
+    let after = limbo_handlers(&env, "limbo-handler");
+    let names: Vec<&str> = after.iter().map(|handler| handler.name()).collect();
+    assert!(
+        !names.contains(&"first-boot-gate"),
+        "a handler the recovered instance did not register again is gone: {names:?}"
+    );
+    assert_eq!(after.len(), registered - 1, "{names:?}");
+
+    let late = limbo_session(3);
+    assert!(
+        matches!(
+            first_boot.on_player_enter(late.as_ref()).await,
+            HandlerResult::Deny(_)
+        ),
+        "the dropped handler denies the players that still reach it"
+    );
+    env.factory
+        .create_context("limbo-handler")
+        .register_limbo_handler(Box::new(NativeGate))
+        .expect("the name is free again");
 }
 
 #[tokio::test(flavor = "multi_thread")]

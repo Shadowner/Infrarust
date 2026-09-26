@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use infrarust_api::command::CommandRegistration;
-use infrarust_api::limbo::SessionHandle;
+use infrarust_api::limbo::{LimboHandlerRegistration, SessionHandle};
 use infrarust_api::types::PlayerId;
 
 use crate::limbo::deny_unavailable;
@@ -63,10 +63,17 @@ struct Hold {
 }
 
 #[derive(Default)]
+pub(crate) struct Stale {
+    pub(crate) commands: Vec<String>,
+    pub(crate) limbo: Vec<LimboHandlerRegistration>,
+}
+
+#[derive(Default)]
 pub(crate) struct Registrations {
     commands: Mutex<HashMap<String, Arc<Binding>>>,
     command_registrations: Mutex<HashMap<String, CommandRegistration>>,
     limbo: Mutex<HashMap<String, Arc<Binding>>>,
+    limbo_registrations: Mutex<HashMap<String, LimboHandlerRegistration>>,
     holds: Mutex<HashMap<PlayerId, Hold>>,
     ban_provider: Mutex<Option<Arc<WasmBanProvider>>>,
     permission_provider: Mutex<Option<Arc<WasmPermissionProvider>>>,
@@ -134,26 +141,43 @@ impl Registrations {
         bind(&self.limbo, name, generation, callback, true)
     }
 
-    pub(crate) fn sweep(&self, generation: u64) -> Vec<String> {
-        let mut stale = Vec::new();
+    pub(crate) fn record_limbo_registration(
+        &self,
+        name: &str,
+        registration: LimboHandlerRegistration,
+    ) {
+        lock(&self.limbo_registrations).insert(name.to_owned(), registration);
+    }
+
+    pub(crate) fn sweep(&self, generation: u64) -> Stale {
+        let mut stale = Stale::default();
         lock(&self.commands).retain(|name, binding| {
             let current = binding.generation() == Some(generation);
             if !current {
                 binding.clear();
-                stale.push(name.clone());
+                stale.commands.push(name.clone());
             }
             current
         });
         let mut registrations = lock(&self.command_registrations);
-        for name in &stale {
+        for name in &stale.commands {
             registrations.remove(name);
         }
         drop(registrations);
-        for binding in lock(&self.limbo).values() {
-            if binding.generation() != Some(generation) {
+        let mut gone = Vec::new();
+        lock(&self.limbo).retain(|name, binding| {
+            let current = binding.generation() == Some(generation);
+            if !current {
                 binding.clear();
+                gone.push(name.clone());
             }
-        }
+            current
+        });
+        let mut registrations = lock(&self.limbo_registrations);
+        stale.limbo = gone
+            .iter()
+            .filter_map(|name| registrations.remove(name))
+            .collect();
         stale
     }
 
@@ -208,6 +232,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use infrarust_api::limbo::test_util::RecordingLimboSession;
     use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboSession};
     use infrarust_api::types::{GameProfile, ServerId};
@@ -278,16 +304,31 @@ mod tests {
         let gone = fresh(registrations.bind_limbo("gone", 1, 4));
         registrations.bind_command("kept", 2, 5);
         registrations.bind_limbo("gate", 2, 6);
+        let revoked = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&revoked);
+        registrations.record_limbo_registration(
+            "gone",
+            LimboHandlerRegistration::new("gone", move || !flag.swap(true, Ordering::SeqCst)),
+        );
+        registrations.record_limbo_registration(
+            "gate",
+            LimboHandlerRegistration::new("gate", || panic!("the kept handler is not revoked")),
+        );
 
-        assert_eq!(registrations.sweep(2), ["dropped".to_string()]);
+        let stale = registrations.sweep(2);
+        assert_eq!(stale.commands, ["dropped".to_string()]);
+        let stale_limbo: Vec<&str> = stale.limbo.iter().map(|r| r.name()).collect();
+        assert_eq!(stale_limbo, ["gone"]);
+        assert!(stale.limbo[0].unregister());
+        assert!(revoked.load(Ordering::SeqCst));
         assert_eq!(dropped.callback_for(1), None);
         assert_eq!(gate.callback_for(2), Some(6));
         assert_eq!(gone.callback_for(1), None);
         assert!(
-            matches!(registrations.bind_limbo("gone", 3, 7), Bound::Rebound),
-            "a cleared limbo name is rebound when it comes back"
+            matches!(registrations.bind_limbo("gone", 3, 7), Bound::Fresh(_)),
+            "a swept limbo name is registered afresh when it comes back"
         );
-        assert_eq!(gone.callback_for(3), Some(7));
+        assert_eq!(gone.callback_for(3), None);
         assert!(matches!(
             registrations.bind_command("dropped", 3, 8),
             Bound::Fresh(_)

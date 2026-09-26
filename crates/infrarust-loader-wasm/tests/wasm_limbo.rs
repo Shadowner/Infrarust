@@ -66,8 +66,8 @@ async fn registers_named_handlers_and_holds_on_entry() {
     let handlers = take_handlers(&factory, FIXTURE);
     assert_eq!(
         handlers.len(),
-        4,
-        "the guest registered `gate`, `boom`, `timed-gate`, `delayed-gate`"
+        5,
+        "the guest registered `first-boot-gate`, `gate`, `boom`, `timed-gate`, `delayed-gate`"
     );
     let gate = find_handler(handlers, "gate");
 

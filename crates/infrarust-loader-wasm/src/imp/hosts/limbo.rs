@@ -34,17 +34,20 @@ impl PluginStoreState {
         else {
             return Ok(());
         };
-        ctx.register_limbo_handler(Box::new(WasmLimboHandler::new(
-            binding,
-            name,
-            instance,
-            Arc::clone(self.registrations()),
-        )))
-        .map(|_| ())
-        .map_err(|error| {
-            tracing::warn!(plugin = %self.plugin_id, %error, "limbo handler refused");
-            limbo_error(&error)
-        })
+        let registration = ctx
+            .register_limbo_handler(Box::new(WasmLimboHandler::new(
+                binding,
+                name.clone(),
+                instance,
+                Arc::clone(self.registrations()),
+            )))
+            .map_err(|error| {
+                tracing::warn!(plugin = %self.plugin_id, %error, "limbo handler refused");
+                limbo_error(&error)
+            })?;
+        self.registrations()
+            .record_limbo_registration(&name, registration);
+        Ok(())
     }
 }
 
