@@ -403,29 +403,49 @@ mod tests {
         }
     }
 
+    fn relay_client(connect_timeout: Duration, relay_timeout: Duration) -> StatusRelayClient {
+        StatusRelayClient::new(
+            Arc::new(BackendConnector::new(
+                connect_timeout,
+                KeepaliveConfig::default(),
+            )),
+            Arc::new(build_default_registry()),
+            relay_timeout,
+        )
+    }
+
+    async fn relay_to(
+        client: &StatusRelayClient,
+        config: &ServerConfig,
+        addresses: &[ServerAddress],
+        version: ProtocolVersion,
+    ) -> Result<RelayResult, CoreError> {
+        client
+            .relay(
+                "test",
+                config,
+                addresses,
+                "test.mc",
+                version,
+                &make_client_info(),
+            )
+            .await
+    }
+
     #[tokio::test]
     async fn test_relay_success() {
         let (addrs, shutdown) = spawn_mock_mc_status(TEST_JSON).await;
         let server_config = make_server_config(addrs);
+        let client = relay_client(Duration::from_secs(5), Duration::from_secs(5));
 
-        let connector = Arc::new(BackendConnector::new(
-            Duration::from_secs(5),
-            KeepaliveConfig::default(),
-        ));
-        let registry = Arc::new(build_default_registry());
-        let client = StatusRelayClient::new(connector, registry, Duration::from_secs(5));
-
-        let result = client
-            .relay(
-                "test",
-                &server_config,
-                &server_config.address_list(),
-                "test.mc",
-                ProtocolVersion::V1_21,
-                &make_client_info(),
-            )
-            .await
-            .unwrap();
+        let result = relay_to(
+            &client,
+            &server_config,
+            &server_config.address_list(),
+            ProtocolVersion::V1_21,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.response.players.online, 42);
         assert_eq!(result.response.players.max, 100);
@@ -443,28 +463,16 @@ mod tests {
         let dead: ServerAddress = "127.0.0.1:1".parse().unwrap();
         let mut server_config = make_server_config(vec![dead.clone(), live.clone()]);
         server_config.domain_rewrite = DomainRewrite::FromBackend;
+        let client = relay_client(Duration::from_secs(2), Duration::from_secs(5));
 
-        let connector = Arc::new(BackendConnector::new(
-            Duration::from_secs(2),
-            KeepaliveConfig::default(),
-        ));
-        let client = StatusRelayClient::new(
-            connector,
-            Arc::new(build_default_registry()),
-            Duration::from_secs(5),
-        );
-
-        let result = client
-            .relay(
-                "test",
-                &server_config,
-                &[dead, live],
-                "test.mc",
-                ProtocolVersion::V1_21,
-                &make_client_info(),
-            )
-            .await
-            .unwrap();
+        let result = relay_to(
+            &client,
+            &server_config,
+            &[dead, live],
+            ProtocolVersion::V1_21,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.response.players.online, 42);
         shutdown.cancel();
@@ -472,36 +480,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_timeout() {
-        // Bind a listener that never accepts
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        // Accept but never respond
         tokio::spawn(async move {
             let (_stream, _) = listener.accept().await.unwrap();
-            // Hold the connection open but never send data
             tokio::time::sleep(Duration::from_secs(60)).await;
         });
 
         let server_addr: ServerAddress = format!("127.0.0.1:{}", addr.port()).parse().unwrap();
         let server_config = make_server_config(vec![server_addr]);
+        let client = relay_client(Duration::from_secs(5), Duration::from_millis(200));
 
-        let connector = Arc::new(BackendConnector::new(
-            Duration::from_secs(5),
-            KeepaliveConfig::default(),
-        ));
-        let registry = Arc::new(build_default_registry());
-        let client = StatusRelayClient::new(connector, registry, Duration::from_millis(200));
-
-        let result = client
-            .relay(
-                "test",
-                &server_config,
-                &server_config.address_list(),
-                "test.mc",
-                ProtocolVersion::V1_21,
-                &make_client_info(),
-            )
-            .await;
+        let result = relay_to(
+            &client,
+            &server_config,
+            &server_config.address_list(),
+            ProtocolVersion::V1_21,
+        )
+        .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -513,27 +509,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_connection_refused() {
-        // Use a port that no one is listening on
         let server_addr: ServerAddress = "127.0.0.1:1".parse().unwrap();
         let server_config = make_server_config(vec![server_addr]);
+        let client = relay_client(Duration::from_secs(1), Duration::from_secs(5));
 
-        let connector = Arc::new(BackendConnector::new(
-            Duration::from_secs(1),
-            KeepaliveConfig::default(),
-        ));
-        let registry = Arc::new(build_default_registry());
-        let client = StatusRelayClient::new(connector, registry, Duration::from_secs(5));
-
-        let result = client
-            .relay(
-                "test",
-                &server_config,
-                &server_config.address_list(),
-                "test.mc",
-                ProtocolVersion::V1_21,
-                &make_client_info(),
-            )
-            .await;
+        let result = relay_to(
+            &client,
+            &server_config,
+            &server_config.address_list(),
+            ProtocolVersion::V1_21,
+        )
+        .await;
 
         assert!(result.is_err());
     }
@@ -542,24 +528,15 @@ mod tests {
     async fn test_relay_invalid_json() {
         let (addrs, shutdown) = spawn_mock_mc_status("not valid json {{{").await;
         let server_config = make_server_config(addrs);
+        let client = relay_client(Duration::from_secs(5), Duration::from_secs(5));
 
-        let connector = Arc::new(BackendConnector::new(
-            Duration::from_secs(5),
-            KeepaliveConfig::default(),
-        ));
-        let registry = Arc::new(build_default_registry());
-        let client = StatusRelayClient::new(connector, registry, Duration::from_secs(5));
-
-        let result = client
-            .relay(
-                "test",
-                &server_config,
-                &server_config.address_list(),
-                "test.mc",
-                ProtocolVersion::V1_21,
-                &make_client_info(),
-            )
-            .await;
+        let result = relay_to(
+            &client,
+            &server_config,
+            &server_config.address_list(),
+            ProtocolVersion::V1_21,
+        )
+        .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -607,26 +584,16 @@ mod tests {
     async fn test_relay_with_unsupported_protocol_version() {
         let (addrs, shutdown) = spawn_mock_mc_status(TEST_JSON).await;
         let server_config = make_server_config(addrs);
+        let client = relay_client(Duration::from_secs(5), Duration::from_secs(5));
 
-        let connector = Arc::new(BackendConnector::new(
-            Duration::from_secs(5),
-            KeepaliveConfig::default(),
-        ));
-        let registry = Arc::new(build_default_registry());
-        let client = StatusRelayClient::new(connector, registry, Duration::from_secs(5));
-
-        let future_version = ProtocolVersion(9999);
-        let result = client
-            .relay(
-                "test",
-                &server_config,
-                &server_config.address_list(),
-                "test.mc",
-                future_version,
-                &make_client_info(),
-            )
-            .await
-            .unwrap();
+        let result = relay_to(
+            &client,
+            &server_config,
+            &server_config.address_list(),
+            ProtocolVersion(9999),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.response.players.online, 42);
         assert_eq!(result.response.players.max, 100);
