@@ -684,10 +684,10 @@ async fn disconnect(
         }
         (None, None) => {
             client
-                .disconnect(&server_message(route, &kick.server), registry)
+                .disconnect(&shown_reason(route, kick), registry)
                 .await
                 .ok();
-            None
+            kick.reason()
         }
     };
     match &kick.cause {

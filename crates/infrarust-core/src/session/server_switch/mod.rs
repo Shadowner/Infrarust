@@ -31,6 +31,7 @@ use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::kick::{BackendKick, Kick};
 use crate::session::server_join::{ServerJoin, pre_connect};
+use crate::session::wake::wake;
 
 use config_phase::PhaseError;
 
@@ -161,6 +162,12 @@ pub(crate) async fn perform_switch(
                 ))
             })?
     };
+
+    if let Err(unavailable) = wake(services, &server_config, session.shutdown_token()).await {
+        return Ok(SwitchResult::Failed(
+            unavailable.into_kick(effective_target),
+        ));
+    }
 
     let connection_info = infrarust_transport::ConnectionInfo {
         peer_addr,

@@ -17,6 +17,7 @@ use infrarust_api::services::proxy_info::{
 use infrarust_api::services::server_manager::ServerManager;
 use infrarust_config::ProxyConfig;
 use infrarust_config::proxy::PluginConfig;
+use infrarust_server_manager::ServerProvider;
 use infrarust_transport::Listener;
 
 use crate::error::CoreError;
@@ -42,8 +43,16 @@ impl ProxyRuntime {
             trusted: Vec::new(),
             proxy_info: None,
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
+            server_providers: Vec::new(),
         }
     }
+}
+
+struct ProviderOverride {
+    server_id: String,
+    provider: Arc<dyn ServerProvider>,
+    start_timeout: Duration,
+    poll_interval: Duration,
 }
 
 pub struct ProxyRuntimeBuilder {
@@ -54,6 +63,7 @@ pub struct ProxyRuntimeBuilder {
     trusted: Vec<String>,
     proxy_info: Option<ProxyInfo>,
     drain_timeout: Duration,
+    server_providers: Vec<ProviderOverride>,
 }
 
 impl ProxyRuntimeBuilder {
@@ -87,6 +97,23 @@ impl ProxyRuntimeBuilder {
         self
     }
 
+    #[must_use]
+    pub fn server_provider(
+        mut self,
+        server_id: impl Into<String>,
+        provider: Arc<dyn ServerProvider>,
+        start_timeout: Duration,
+        poll_interval: Duration,
+    ) -> Self {
+        self.server_providers.push(ProviderOverride {
+            server_id: server_id.into(),
+            provider,
+            start_timeout,
+            poll_interval,
+        });
+        self
+    }
+
     pub async fn start(self) -> Result<RunningProxy, CoreError> {
         let Self {
             config,
@@ -96,6 +123,7 @@ impl ProxyRuntimeBuilder {
             trusted,
             proxy_info,
             drain_timeout,
+            server_providers,
         } = self;
 
         let proxy_info = proxy_info
@@ -104,6 +132,7 @@ impl ProxyRuntimeBuilder {
         let plugin_cfgs = config.plugins.clone();
 
         let server = ProxyServer::new(config, config_path, shutdown.clone()).await?;
+        register_server_providers(&server, server_providers)?;
 
         let mut plugin_manager = PluginManager::new(loaders);
         plugin_manager.set_event_bus(Arc::clone(&server.services().event_bus));
@@ -190,6 +219,36 @@ impl ProxyRuntimeBuilder {
             drain_timeout,
         })
     }
+}
+
+fn register_server_providers(
+    server: &ProxyServer,
+    providers: Vec<ProviderOverride>,
+) -> Result<(), CoreError> {
+    if providers.is_empty() {
+        return Ok(());
+    }
+    let Some(manager) = server.services().server_manager.as_ref() else {
+        return Err(CoreError::Other(
+            "a server provider was given but no server has a [server_manager] section".to_string(),
+        ));
+    };
+    for provider in providers {
+        if manager.get_state(&provider.server_id).is_none() {
+            return Err(CoreError::Other(format!(
+                "a server provider was given for {}, which has no [server_manager] section",
+                provider.server_id
+            )));
+        }
+        manager.register_server(
+            provider.server_id,
+            provider.provider,
+            None,
+            provider.start_timeout,
+            provider.poll_interval,
+        );
+    }
+    Ok(())
 }
 
 fn plugin_services(

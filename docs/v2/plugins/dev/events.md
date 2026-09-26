@@ -25,7 +25,6 @@ connection accepted
   → ConnectionHandshakeEvent ── Deny, DropSilently ──▶ ConnectionRejectedEvent (plugin)
   → server list ping: ProxyPingEvent
   → login: name and IP ban ─────────── banned ───▶ ConnectionRejectedEvent (banned, ip_banned)
-           server manager ──────────── unavailable ▶ ConnectionRejectedEvent (server_unavailable)
            PreLoginEvent, and the flows below
 ```
 
@@ -53,6 +52,7 @@ PreLoginEvent ─────────────── Denied ──▶ dis
   → PlayerChooseInitialServerEvent
   → ServerPreConnectEvent (cause: initial)
   → limbo gate, when the server or a listener asks for one (LimboEnterEvent → LimboExitEvent)
+  → server wake, for a managed server ── unavailable ──▶ KickedFromServerEvent
   → backend login ────────────── refused ──▶ no ServerConnectedEvent
   → ServerConnectedEvent       the backend accepted the login
   → ServerPostConnectEvent     the server's JoinGame reached the client
@@ -75,6 +75,7 @@ PreLoginEvent ─────────────── Denied ──▶ dis
   → PostLoginEvent
   → PlayerChooseInitialServerEvent
   → ServerPreConnectEvent (cause: initial) ── Denied ──▶ disconnected during login
+  → server wake, for a managed server ── unavailable ──▶ KickedFromServerEvent
   → backend connection ─── unreachable ──▶ KickedFromServerEvent
   → ServerConnectedEvent       the login packets were sent to the backend
   → forwarding
@@ -90,7 +91,7 @@ PreLoginEvent ─────────────── Denied ──▶ dis
 - `PlayerChooseInitialServerEvent`: `Redirect` is honored. `ServerPreConnectEvent`: `Allowed`, `ConnectTo` and `Denied` are honored.
 - `SendToLimbo`, from either event, disconnects the player with "Limbo is not available on this server" and logs a warning: limbo needs the proxy to run the login, which only `offline` and `client_only` do. The `DisconnectEvent` cause is `Kicked` with that reason.
 - A redirect (`Redirect`, `ConnectTo`, or `RedirectTo` from `KickedFromServerEvent`) must target a server in a forwarding mode. Forwarding the login to an `offline` or `client_only` server would skip the login the proxy runs for it, so the player is disconnected with "This server cannot be joined from here" and a warning is logged. An unknown server disconnects the player with "Unknown server".
-- `KickedFromServerEvent` fires only when the backend cannot be reached (`cause` is `Unreachable`), or the connection drops while the login packets are sent (`ConnectionLost`). `during_connect` is `true`, `reason` is `None` and `previous_server` is `None`. Nothing reached the client yet, so `RedirectTo` works: it goes through `ServerPreConnectEvent` with the cause `KickRedirect`, and after three redirects in a row that failed, the next one is handled as `DisconnectPlayer { reason: None }`. The default result is `DisconnectPlayer { reason: None }`, which shows the server's `disconnect_message`. `Notify` has no server to keep the player on and disconnects with its message. `SendToLimbo` is handled as `DisconnectPlayer { reason: None }` and logs a warning. When the player ends up disconnected, the `DisconnectEvent` cause is `Error` for an unreachable server and `BackendClosed` for a lost connection.
+- `KickedFromServerEvent` fires only when the backend cannot be reached or the [server manager](#server-wake) cannot start it (`cause` is `Unreachable`), or the connection drops while the login packets are sent (`ConnectionLost`). `during_connect` is `true` and `previous_server` is `None`. `reason` is `None`, except for a server the server manager could not start, where it is the proxy's message. Nothing reached the client yet, so `RedirectTo` works: it goes through `ServerPreConnectEvent` with the cause `KickRedirect`, and after three redirects in a row that failed, the next one is handled as `DisconnectPlayer { reason: None }`. The default result is `DisconnectPlayer { reason: None }`, which shows the event's `reason`, or the server's `disconnect_message` when it is `None`. `Notify` has no server to keep the player on and disconnects with its message. `SendToLimbo` is handled as `DisconnectPlayer { reason: None }` and logs a warning. When the player ends up disconnected, the `DisconnectEvent` cause is `Error` for an unreachable server and `BackendClosed` for a lost connection.
 
 The proxy never reads the backend's packets in these modes, which changes three things:
 
@@ -131,6 +132,16 @@ These hold for `offline` and `client_only`. Passthrough modes differ as describe
 - `current_server()` stays `None` until the first `ServerPostConnectEvent`, also while a limbo gate holds the player before their first server. The player already counts toward that server in `PlayerRegistry::online_count_on` and `get_players_on_server`, in the status player count and in the server manager's idle detection.
 - A switch to the server the player is already on does nothing and fires no event.
 - `DisconnectEvent::last_server` is the last server the player joined, `None` if they never got a `ServerPostConnectEvent`.
+
+### Server wake
+
+A server with a [`[server_manager]`](../../guide/server-management) section is started when the proxy is about to connect a player to it, once `ServerPreConnectEvent` has picked it: the initial connection, a switch, a limbo exit or a kick redirect, in every proxy mode. This holds for the forwarding modes and for clients older than 1.7 too.
+
+- Nothing starts a server for a player refused before (`PreLoginEvent`, `LoginEvent`, a ban, a `ServerPreConnectEvent` denial) or sent to another server by `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent` or `KickedFromServerEvent`.
+- A limbo gate on the server runs before the wake. The [server wake plugin](../builtin/server-wake) is such a gate: it starts the server itself and releases the player once it is online, so the proxy finds it online.
+- While the server starts, the proxy holds the connection and forwards nothing: the client stays on its loading screen for the initial connection, and on its current server for a switch. A client gives up after about 30 seconds without packets, so hold players in limbo, with the server wake plugin for example, when a server starts slower than that.
+- A server that is stopping, does not start within its `start_timeout`, or whose provider fails, is a failed connection: [`KickedFromServerEvent`](#kickedfromserverevent) fires with `cause` `Unreachable`, `during_connect` `true` and `reason` set to "Server is shutting down, please try again later.", "Server failed to start in time. Please try again." or "Server is unavailable. Please try again later.". A listener can redirect the player or send them to limbo, and the default result shows that message. No `ConnectionRejectedEvent` is posted, since the player exists by then.
+- Once a start succeeds, the server's addresses begin their [slow start](../../configuration/load-balancing#slow-start) ramp before the proxy picks the one to connect to.
 
 ### Proxy shutdown
 
@@ -281,7 +292,7 @@ Posted when the proxy refuses a connection before a player exists, exactly once 
 | `UnknownDomain` (`unknown_domain`) | No server has the domain: a login, or any connection when `unknown_domain_behavior` is `drop` |
 | `IpBanned` (`ip_banned`) | A ban on the address or a range that contains it, for a server list ping or a login |
 | `Banned` (`banned`) | A ban on the name (or the UUID the client claimed) before authentication, or a ban check that failed and refused the login |
-| `ServerUnavailable` (`server_unavailable`) | The [server manager](../../guide/server-management) could not start the server, or it is stopping |
+| `ServerUnavailable` (`server_unavailable`) | Not posted any more. The server manager starts a server once the player exists, and a server it cannot start is reported by `KickedFromServerEvent`, see [server wake](#server-wake). The variant remains so that existing matches compile |
 | `Plugin { plugin_id }` (`plugin`) | A `ConnectionHandshakeEvent` listener denied or dropped the connection. `plugin_id` is the plugin that set the result, `None` when the proxy cannot tell |
 
 Connections a plugin's transport filter rejects are not reported. The listener limit ([`max_connections`](../../configuration/global#connection-limits)) refuses nothing: while it is reached, the proxy waits before it accepts the next connection, so the kernel holds it in the backlog.
@@ -640,7 +651,7 @@ It does not fire when a `ServerPreConnectEvent` listener denies a connection, or
 |-------|------|-------------|
 | `player` | `Arc<dyn Player>` | The player |
 | `server` | `ServerId` | The server that dropped the player, or that the player could not join |
-| `reason` | `Option<Component>` | The reason the server sent, parsed from its disconnect packet. `None` when it sent none |
+| `reason` | `Option<Component>` | The reason the server sent, parsed from its disconnect packet, or the proxy's message when the server manager could not start the server. `None` when there is neither |
 | `cause` | `KickCause` | How the server dropped the player |
 | `during_connect` | `bool` | `true` when the player had not joined `server` yet |
 | `previous_server` | `Option<ServerId>` | When `during_connect`, the player's `current_server()`: the server they are on, or the one that kicked them before a redirect, `None` before their first server. Otherwise the server they were on before `server` |
@@ -651,7 +662,7 @@ It does not fire when a `ServerPreConnectEvent` listener denies a connection, or
 
 | Variant | Description |
 |---------|-------------|
-| `Unreachable { error }` (`unreachable`) | The proxy could not connect, or the login or configuration phase did not finish in time. `error` describes the failure |
+| `Unreachable { error }` (`unreachable`) | The proxy could not connect, the login or configuration phase did not finish in time, or the server manager could not start the server. `error` describes the failure |
 | `LoginRefused` (`login_refused`) | The server answered the login with a disconnect |
 | `ConfigDisconnect` (`config_disconnect`) | The server sent a disconnect during the configuration phase (1.20.2+) |
 | `PlayDisconnect` (`play_disconnect`) | The server sent a disconnect in the play phase |

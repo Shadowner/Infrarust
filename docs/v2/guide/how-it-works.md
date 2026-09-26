@@ -110,7 +110,7 @@ Status connections go to the status handler, which returns the server list ping 
 
 ## The login pipeline
 
-Login connections run through a second pipeline: the login start parser, the ban check, and telemetry, plus a server manager middleware that is added only when at least one server has a `server_manager` configuration.
+Login connections run through a second pipeline: the login start parser, the ban check, telemetry, and the backend selection that orders the server's addresses.
 
 ### Login start parser
 
@@ -124,9 +124,9 @@ Checks the player's username and IP against the ban system. This is the full che
 
 Creates a tracing span for the session, tagged with the server name, player username, and proxy mode. This span wraps the entire proxy handler execution for distributed tracing.
 
-### Server manager
+### Server wake
 
-If the matched server has a `server_manager` configuration, this middleware checks whether the backend is online. If the server is stopped or sleeping, it triggers a wake-up and holds the connection until the server is ready. This is how the "start server on player connect" feature works.
+Starting a server that has a `server_manager` configuration is not part of the pipeline. The handler does it right before it connects the player to that server, once the plugins have picked it: a player refused at login or sent to another server never starts it. The player waits until the server is ready, and a server that cannot start fires `KickedFromServerEvent`, so a plugin can send the player elsewhere. This is how the "start server on player connect" feature works.
 
 ## Proxy handlers
 
@@ -139,9 +139,10 @@ Used by the forwarding modes: `passthrough`, `zero_copy`, and `server_only`. The
 1. Fires `PreLoginEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent` and `LoginEvent`, and checks bans against the final profile (a plugin can refuse the player here, before any backend is contacted)
 2. Registers a `PlayerSession` in the connection registry and fires `PostLoginEvent`
 3. Fires `PlayerChooseInitialServerEvent` and `ServerPreConnectEvent` through the event bus (a plugin can deny the connection or pick another server in a forwarding mode; send-to-limbo disconnects the player, since only the intercepted handler can hold a player in limbo)
-4. Connects to the backend server using the addresses from the server config, and fires `KickedFromServerEvent` when none answers, so a plugin can redirect the player
-5. Forwards the raw handshake and login packets to the backend and fires `ServerConnectedEvent`
-6. Starts bidirectional forwarding between the client and backend TCP streams
+4. Starts the chosen server when it has a `server_manager` and is not online, and waits until it is
+5. Connects to the backend server using the addresses from the server config, and fires `KickedFromServerEvent` when none answers or the server could not be started, so a plugin can redirect the player
+6. Forwards the raw handshake and login packets to the backend and fires `ServerConnectedEvent`
+7. Starts bidirectional forwarding between the client and backend TCP streams
 
 If `domain_rewrite` is configured, the handler re-encodes the handshake packet with the new domain before forwarding. Three rewrite modes exist: `none` (forward as-is), `explicit` (use a fixed string), and `from_backend` (use the host of the first backend address).
 

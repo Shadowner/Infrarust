@@ -63,7 +63,9 @@ The login pipeline runs only after a connection is identified as a login:
 1. `LoginStartParser` reads the username and, on 1.20.2 and newer, the player UUID.
 2. `BanCheck` rejects banned players by name or UUID.
 3. `Telemetry` opens the per-connection tracing span. Login connections are always traced at full sampling.
-4. `ServerManager` is added only when at least one configured server has a server manager. It wakes a sleeping backend and waits for readiness before the connection proceeds.
+4. `BackendSelection` orders the routed server's backend addresses for the handler.
+
+Waking a managed server is not a pipeline step. The handlers wake it once the plugins have chosen the server the player connects to, after `ServerPreConnectEvent`, so a player refused at login or sent to another server never starts it. See [server wake](../plugins/dev/events#server-wake).
 
 The order matters. Cheap address-level checks run before the handshake is parsed, parsing runs before rate limiting and routing, and player-identity checks run only once routing has chosen a server. The IP filter and ban checks come first so that an unwanted peer is dropped before the proxy spends work decoding its packets.
 

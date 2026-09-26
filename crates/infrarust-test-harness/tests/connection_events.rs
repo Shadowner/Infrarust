@@ -9,13 +9,11 @@ use infrarust_api::events::connection::{
     PlayerChooseInitialServerEvent, ServerConnectedEvent, ServerPostConnectEvent,
     ServerPreConnectEvent,
 };
-use infrarust_api::events::proxy::ServerStateChangeEvent;
 use infrarust_api::limbo::handle::SessionHandle;
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_plugin_admin_api::sse::event_bridge::EventBridge;
@@ -24,12 +22,12 @@ use infrarust_plugin_server_wake::ServerWakePlugin;
 use infrarust_protocol::packets::play::chat::SChatMessage;
 use infrarust_test_harness::versions::CURRENT;
 use infrarust_test_harness::{
-    ClientSession, DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeSessionServer, LoginBehavior,
-    ProtocolVersion, Recorded, Recorder, ScriptedPlugin, ServerSpec, TestProxy, version_matrix,
+    ClientSession, DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeServerProvider, FakeSessionServer,
+    LoginBehavior, ProtocolVersion, Recorded, Recorder, ScriptedPlugin, ServerSpec, TestProxy,
+    version_matrix,
 };
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc};
-use toml::Table;
 use uuid::Uuid;
 
 const T: Duration = DEFAULT_TIMEOUT;
@@ -868,22 +866,10 @@ async fn the_admin_api_says_why_a_player_left() {
     proxy.shutdown().await.unwrap();
 }
 
-fn sleeping_manager(workdir: &std::path::Path) -> impl FnOnce(&mut Table) + Send + 'static {
-    let workdir = workdir.to_str().unwrap().to_string();
-    move |table: &mut Table| {
-        let manager: Table = toml::from_str(&format!(
-            "type = \"local\"\ncommand = \"sleep\"\nargs = [\"10\"]\nworking_dir = {workdir:?}\n"
-        ))
-        .unwrap();
-        table.insert("server_manager".into(), toml::Value::Table(manager));
-    }
-}
-
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn server_wake_holds_the_player_until_the_server_is_online() {
     let version = ProtocolVersion(CURRENT);
-    let workdir = tempfile::tempdir().unwrap();
+    let provider = FakeServerProvider::sleeping();
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let recorder = Recorder::new();
     let lobby_first = ScriptedPlugin::new("lobby_first")
@@ -896,7 +882,7 @@ async fn server_wake_holds_the_player_until_the_server_is_online() {
             ServerSpec::offline("lobby")
                 .backend(backend.addr())
                 .limbo_handlers(["server_wake"])
-                .patch(sleeping_manager(workdir.path())),
+                .managed(Arc::clone(&provider)),
         ))
         .plugin(lobby_first)
         .plugin(ServerWakePlugin::new())
@@ -929,14 +915,7 @@ async fn server_wake_holds_the_player_until_the_server_is_online() {
     assert_eq!(registry.count_by_server("hub"), 0);
     assert_eq!(backend.accepted_connections(), 0);
 
-    proxy
-        .bus()
-        .fire(ServerStateChangeEvent {
-            server: ServerId::new("lobby"),
-            old_state: ServerState::Starting,
-            new_state: ServerState::Online,
-        })
-        .await;
+    provider.boot();
     let _conn = backend.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
     sync(&mut session, player.as_ref()).await;

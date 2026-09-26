@@ -33,7 +33,6 @@ use crate::middleware::handshake_parser::HandshakeParserMiddleware;
 use crate::middleware::ip_filter::IpFilterMiddleware;
 use crate::middleware::login_start_parser::LoginStartParserMiddleware;
 use crate::middleware::rate_limiter::RateLimiterMiddleware;
-use crate::middleware::server_manager::ServerManagerMiddleware;
 use crate::middleware::telemetry::{ConnectionSpan, TelemetryMiddleware};
 use crate::pipeline::Pipeline;
 use crate::pipeline::admission::{self, Admission};
@@ -323,17 +322,11 @@ impl ProxyServer {
         ))));
 
         // Build login pipeline:
-        // LoginStartParser → BanCheck → Telemetry → ServerManager → BackendSelection
+        // LoginStartParser → BanCheck → Telemetry → BackendSelection
         let mut login_pipeline = Pipeline::new();
         login_pipeline.add(Box::new(LoginStartParserMiddleware::new()));
         login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
         login_pipeline.add(Box::new(TelemetryMiddleware));
-        if let Some(ref sm) = server_manager {
-            login_pipeline.add(Box::new(
-                ServerManagerMiddleware::new(Arc::clone(sm))
-                    .with_backend_health(Arc::clone(&backend_health)),
-            ));
-        }
         login_pipeline.add(Box::new(
             BackendSelectionMiddleware::new(
                 Arc::clone(&backend_load) as _,

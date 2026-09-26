@@ -27,6 +27,7 @@ use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
+use crate::session::wake::wake;
 
 pub(super) enum ConnectionMode {
     Backend(BackendBridge),
@@ -228,20 +229,9 @@ pub(super) async fn resolve_initial_mode(
     let routing = redirected.as_ref().unwrap_or(routing);
     let server_config = &routing.server_config;
 
-    let redirected_targets = redirected.as_ref().map(|r| BackendTargets {
-        addresses: crate::loadbalancer::select_backend_addresses(
-            &r.server_config,
-            r.load_balancer.as_ref(),
-            services.pending_backends.as_ref(),
-            services.backend_health.as_ref(),
-        ),
-    });
-    if let Some(picked) = redirected_targets
+    let redirected_targets = redirected
         .as_ref()
-        .and_then(|t| t.addresses.first())
-    {
-        *pending_ticket = Some(services.pending_backends.reserve(picked));
-    }
+        .map(|r| fresh_targets(r, services, pending_ticket));
     let backend_targets = redirected_targets.as_ref().or(backend_targets);
 
     if initial_mode.is_none()
@@ -273,9 +263,26 @@ pub(super) async fn resolve_initial_mode(
     } else {
         Pending::nothing()
     };
+    let woken = if initial_mode.is_none() {
+        wake(services, server_config, player.shutdown_token()).await
+    } else {
+        Ok(false)
+    };
     let mode = if let Some(limbo_mode) = initial_mode {
         limbo_mode
+    } else if let Err(unavailable) = woken {
+        tracing::info!(
+            server = %routing.config_id,
+            reason = ?unavailable,
+            "the server manager could not start the initial server"
+        );
+        pending = Pending::nothing();
+        ConnectionMode::Kicked(unavailable.into_kick(target_server_id.clone()))
     } else {
+        let warmed =
+            matches!(woken, Ok(true)).then(|| fresh_targets(routing, services, pending_ticket));
+        let backend_targets = warmed.as_ref().or(backend_targets);
+
         let forwarding_handler = services.resolve_forwarding_handler(server_config);
         if requires_proxy_completed_login(
             &forwarding_handler,
@@ -321,6 +328,25 @@ pub(super) async fn resolve_initial_mode(
         server_id: target_server_id,
         pending,
     })
+}
+
+fn fresh_targets(
+    routing: &RoutingData,
+    services: &ProxyServices,
+    pending_ticket: &mut Option<PendingTicket>,
+) -> BackendTargets {
+    let targets = BackendTargets {
+        addresses: crate::loadbalancer::select_backend_addresses(
+            &routing.server_config,
+            routing.load_balancer.as_ref(),
+            services.pending_backends.as_ref(),
+            services.backend_health.as_ref(),
+        ),
+    };
+    if let Some(picked) = targets.addresses.first() {
+        *pending_ticket = Some(services.pending_backends.reserve(picked));
+    }
+    targets
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -15,6 +15,7 @@ use infrarust_core::runtime::{ProxyRuntime, RunningProxy};
 use infrarust_core::server::ProxyServer;
 use infrarust_core::services::ProxyServices;
 use infrarust_protocol::version::ProtocolVersion;
+use infrarust_server_manager::ServerProvider;
 use tempfile::TempDir;
 use tokio::net::TcpSocket;
 use tokio_util::sync::CancellationToken;
@@ -26,6 +27,8 @@ use crate::legacy::LegacyClient;
 use crate::session::FakeSessionServer;
 
 const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+const MANAGED_START_TIMEOUT: Duration = Duration::from_secs(10);
+const MANAGED_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONFIG_FILE: &str = "infrarust.toml";
 
@@ -39,6 +42,7 @@ pub struct ServerSpec {
     domains: Option<Vec<String>>,
     network: Option<String>,
     limbo_handlers: Vec<String>,
+    provider: Option<Arc<dyn ServerProvider>>,
     patches: Vec<TablePatch>,
 }
 
@@ -52,6 +56,7 @@ impl std::fmt::Debug for ServerSpec {
             .field("domains", &self.domains)
             .field("network", &self.network)
             .field("limbo_handlers", &self.limbo_handlers)
+            .field("managed", &self.provider.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -66,6 +71,7 @@ impl ServerSpec {
             domains: None,
             network: None,
             limbo_handlers: Vec::new(),
+            provider: None,
             patches: Vec::new(),
         }
     }
@@ -137,6 +143,22 @@ impl ServerSpec {
     pub fn patch(mut self, patch: impl FnOnce(&mut Table) + Send + 'static) -> Self {
         self.patches.push(Box::new(patch));
         self
+    }
+
+    #[must_use]
+    pub fn managed<P: ServerProvider + 'static>(mut self, provider: Arc<P>) -> Self {
+        self.provider = Some(provider);
+        self.patch(|table| {
+            let manager = Table::from_iter([
+                ("type".to_string(), Value::String("local".into())),
+                (
+                    "command".to_string(),
+                    Value::String("infrarust-harness-managed-server".into()),
+                ),
+                ("working_dir".to_string(), Value::String(".".into())),
+            ]);
+            table.insert("server_manager".into(), Value::Table(manager));
+        })
     }
 
     fn domain_list(&self) -> Vec<String> {
@@ -243,7 +265,7 @@ impl TestProxyBuilder {
     pub async fn start(self) -> HarnessResult<TestProxy> {
         crate::init_tracing();
         let Self {
-            servers,
+            mut servers,
             plugins,
             loaders,
             session_url,
@@ -257,6 +279,10 @@ impl TestProxyBuilder {
         std::fs::create_dir(&servers_dir)?;
         std::fs::create_dir(&plugins_dir)?;
 
+        let providers: Vec<(String, Arc<dyn ServerProvider>)> = servers
+            .iter_mut()
+            .filter_map(|spec| spec.provider.take().map(|p| (spec.id.clone(), p)))
+            .collect();
         let mut reserved = Vec::new();
         let routes = write_servers(servers, &servers_dir, &mut reserved)?;
 
@@ -314,6 +340,10 @@ impl TestProxyBuilder {
         };
         for loader in loaders {
             builder = builder.loader(loader);
+        }
+        for (id, provider) in providers {
+            builder =
+                builder.server_provider(id, provider, MANAGED_START_TIMEOUT, MANAGED_POLL_INTERVAL);
         }
 
         let running = match builder.start().await {

@@ -37,6 +37,7 @@ use crate::player::{PlayerCommand, PlayerSession, SHUTDOWN_REASON};
 use crate::services::ProxyServices;
 use crate::session::kick::Kick;
 use crate::session::server_join::pre_connect;
+use crate::session::wake::wake;
 
 pub(crate) const LIMBO_UNAVAILABLE: &str = "Limbo is not available on this server";
 pub(crate) const UNKNOWN_SERVER: &str = "Unknown server";
@@ -298,7 +299,7 @@ impl ForwardedLogin<'_> {
                 return Ok(None);
             }
 
-            let route = match self.resolve(ctx, &server, origin) {
+            let mut route = match self.resolve(ctx, &server, origin) {
                 Ok(route) => route,
                 Err(reason) => {
                     let reason = Component::text(reason);
@@ -313,34 +314,59 @@ impl ForwardedLogin<'_> {
                 }
             };
 
-            let error = match self.open_backend(ctx, &admitted, &route, opening).await {
-                Ok(backend) => {
-                    self.services
-                        .event_bus
-                        .fire(ServerConnectedEvent::new(
-                            Arc::clone(&admitted.player) as Arc<dyn Player>,
-                            server.clone(),
-                            admitted.player.current_server(),
-                        ))
-                        .await;
-                    admitted.player.set_current_server(server.clone());
-                    ctx.extensions.remove::<PendingTicket>();
-                    return Ok(Some(Ready {
-                        player: admitted.player,
-                        server,
-                        mode: route.routing.server_config.proxy_mode,
-                        backend,
-                        lifecycle: admitted.lifecycle,
-                        commands: admitted.commands,
-                        session_token: admitted.session_token,
-                        shutdown: self.shutdown.clone(),
-                    }));
+            let woken = wake(
+                self.services,
+                &route.routing.server_config,
+                &admitted.session_token,
+            )
+            .await;
+            if let Some(ended) = self.interrupted(ctx, &mut admitted).await {
+                admitted.lifecycle.end(ended).await;
+                return Ok(None);
+            }
+            let kick = match woken {
+                Ok(warmed) => {
+                    if warmed {
+                        route.addresses = self.select(ctx, &route.routing);
+                    }
+                    match self.open_backend(ctx, &admitted, &route, opening).await {
+                        Ok(backend) => {
+                            self.services
+                                .event_bus
+                                .fire(ServerConnectedEvent::new(
+                                    Arc::clone(&admitted.player) as Arc<dyn Player>,
+                                    server.clone(),
+                                    admitted.player.current_server(),
+                                ))
+                                .await;
+                            admitted.player.set_current_server(server.clone());
+                            ctx.extensions.remove::<PendingTicket>();
+                            return Ok(Some(Ready {
+                                player: admitted.player,
+                                server,
+                                mode: route.routing.server_config.proxy_mode,
+                                backend,
+                                lifecycle: admitted.lifecycle,
+                                commands: admitted.commands,
+                                session_token: admitted.session_token,
+                                shutdown: self.shutdown.clone(),
+                            }));
+                        }
+                        Err(error) => {
+                            tracing::warn!(server = %server, error = %error, "backend connection failed");
+                            Kick::failed(server, error, false)
+                        }
+                    }
                 }
-                Err(error) => error,
+                Err(unavailable) => {
+                    tracing::info!(
+                        server = %server,
+                        reason = ?unavailable,
+                        "the server manager could not start the server"
+                    );
+                    unavailable.into_kick(server)
+                }
             };
-
-            tracing::warn!(server = %server, error = %error, "backend connection failed");
-            let kick = Kick::failed(server, error, false);
             let reason = match self.fire_kicked(&admitted, &kick).await {
                 KickedFromServerResult::RedirectTo(next) if redirects < MAX_KICK_REDIRECTS => {
                     redirects += 1;
@@ -367,7 +393,7 @@ impl ForwardedLogin<'_> {
                 }
                 _ => None,
             };
-            let shown = reason.clone().unwrap_or_else(|| {
+            let shown = reason.clone().or_else(|| kick.reason()).unwrap_or_else(|| {
                 Component::text(route.routing.server_config.effective_disconnect_message())
             });
             self.kick(ctx, &shown).await;
@@ -413,9 +439,20 @@ impl ForwardedLogin<'_> {
             );
             return Err(PROXY_LOGIN_SERVER);
         }
+        let routing = RoutingData {
+            server_config,
+            config_id: server.to_string(),
+            load_balancer,
+        };
+        let addresses = self.select(ctx, &routing);
+        Ok(Route { routing, addresses })
+    }
+
+    fn select(&self, ctx: &mut ConnectionContext, routing: &RoutingData) -> Vec<ServerAddress> {
+        let services = self.services;
         let addresses = select_backend_addresses(
-            &server_config,
-            load_balancer.as_ref(),
+            &routing.server_config,
+            routing.load_balancer.as_ref(),
             services.pending_backends.as_ref(),
             services.backend_health.as_ref(),
         )
@@ -424,14 +461,7 @@ impl ForwardedLogin<'_> {
             ctx.extensions
                 .insert(services.pending_backends.reserve(first));
         }
-        Ok(Route {
-            routing: RoutingData {
-                server_config,
-                config_id: server.to_string(),
-                load_balancer,
-            },
-            addresses,
-        })
+        addresses
     }
 
     async fn open_backend(

@@ -11,6 +11,8 @@ The feature has two parts: the `[server_manager]` table in a server's config fil
 
 ## How it works
 
+The proxy wakes a managed server when it is about to connect a player to it, once the plugins have chosen that server (after `ServerPreConnectEvent`). A player refused at login, or sent to another server by a plugin, does not start it. The same holds for switches, limbo exits and redirects after a kick. See [server wake](../plugins/dev/events#server-wake) for the details plugins can rely on.
+
 When a player connects to a managed server:
 
 1. The server manager receives a wake request and calls the provider's start method.
@@ -119,7 +121,7 @@ Crafty does not expose a detailed state enum, only a running/stopped boolean. Th
 
 ## The server-wake plugin
 
-The `server-wake` plugin is what keeps players in limbo during startup. Without it, a player connecting to a sleeping server would get an immediate "connection refused" error. With it, they see a title screen and animated progress while the backend wakes up.
+The `server-wake` plugin is what keeps players in limbo during startup. Without it, the proxy holds a player connecting to a sleeping server in the login screen until the backend is online, with no feedback, and the client gives up after about 30 seconds. With it, they see a title screen and animated progress while the backend wakes up.
 
 The plugin is a native (non-WASM) plugin that ships with Infrarust. To enable it, add `"server_wake"` to the `limbo_handlers` list on any server that has a `[server_manager]` configured.
 
@@ -162,7 +164,7 @@ Compatible modes: `client_only`, `offline`.
 
 Incompatible modes (the proxy cannot inspect packets): `passthrough`, `zero_copy`, `server_only`.
 
-A server managed by `[server_manager]` but using a passthrough mode will still wake and stop automatically, but connecting players will see a connection error rather than a holding screen while the backend starts.
+A server managed by `[server_manager]` but using a passthrough mode will still wake and stop automatically, but connecting players wait in the login screen rather than in a holding screen while the backend starts, and the client gives up if that takes longer than about 30 seconds.
 
 ## MOTD while sleeping
 

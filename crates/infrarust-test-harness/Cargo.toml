@@ -16,6 +16,7 @@ infrarust-core = { workspace = true, features = ["test-support"] }
 infrarust-api = { workspace = true }
 infrarust_protocol = { workspace = true }
 infrarust_config = { workspace = true }
+infrarust_server_manager = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 bytes = { workspace = true }
 uuid = { workspace = true }

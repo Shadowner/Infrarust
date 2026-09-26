@@ -64,6 +64,7 @@ pub(crate) struct Kick {
     pub(crate) packet: Option<BackendKick>,
     pub(crate) during_connect: bool,
     pub(crate) stranded: bool,
+    message: Option<&'static str>,
 }
 
 impl Kick {
@@ -74,6 +75,7 @@ impl Kick {
             packet: Some(packet),
             during_connect,
             stranded: false,
+            message: None,
         }
     }
 
@@ -84,6 +86,18 @@ impl Kick {
             packet: None,
             during_connect,
             stranded: false,
+            message: None,
+        }
+    }
+
+    pub(crate) fn unavailable(server: ServerId, message: &'static str, error: String) -> Self {
+        Self {
+            server,
+            cause: KickCause::Unreachable { error },
+            packet: None,
+            during_connect: true,
+            stranded: false,
+            message: Some(message),
         }
     }
 
@@ -109,11 +123,15 @@ impl Kick {
             packet: None,
             during_connect: true,
             stranded: false,
+            message: None,
         }
     }
 
     pub(crate) fn reason(&self) -> Option<Component> {
-        self.packet.as_ref().map(|packet| packet.reason.clone())
+        self.packet
+            .as_ref()
+            .map(|packet| packet.reason.clone())
+            .or_else(|| self.message.map(Component::text))
     }
 }
 

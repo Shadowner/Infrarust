@@ -62,6 +62,8 @@ pub trait BackendHealthView: Send + Sync {
     fn claim_probe(&self, _addr: &ServerAddress) -> bool {
         false
     }
+
+    fn mark_warming(&self, _addr: &ServerAddress, _ramp_window: Duration) {}
 }
 
 const DEFAULT_FAILURE_THRESHOLD: u32 = 3;
@@ -324,27 +326,6 @@ impl PassiveBackendHealth {
         }
     }
 
-    pub fn mark_warming(&self, addr: &ServerAddress, ramp_window: Duration) {
-        {
-            let mut entry = self
-                .state
-                .entry(addr.clone())
-                .or_insert(AddressHealth::fresh(false));
-            entry.consecutive_failures = 0;
-            entry.first_failure = None;
-            entry.probe_claimed_at = None;
-            let in_ramp = entry.healthy
-                && entry
-                    .healthy_since
-                    .is_some_and(|since| since.elapsed() < ramp_window);
-            if !in_ramp {
-                entry.healthy = true;
-                entry.healthy_since = Some(Instant::now());
-            }
-        }
-        self.maybe_prune();
-    }
-
     pub fn retain_known(&self, known: &HashSet<ServerAddress>) {
         self.state.retain(|addr, _| known.contains(addr));
     }
@@ -422,6 +403,27 @@ impl BackendHealthView for PassiveBackendHealth {
         }
         entry.probe_claimed_at = Some(now);
         true
+    }
+
+    fn mark_warming(&self, addr: &ServerAddress, ramp_window: Duration) {
+        {
+            let mut entry = self
+                .state
+                .entry(addr.clone())
+                .or_insert(AddressHealth::fresh(false));
+            entry.consecutive_failures = 0;
+            entry.first_failure = None;
+            entry.probe_claimed_at = None;
+            let in_ramp = entry.healthy
+                && entry
+                    .healthy_since
+                    .is_some_and(|since| since.elapsed() < ramp_window);
+            if !in_ramp {
+                entry.healthy = true;
+                entry.healthy_since = Some(Instant::now());
+            }
+        }
+        self.maybe_prune();
     }
 }
 
