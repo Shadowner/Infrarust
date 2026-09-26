@@ -176,7 +176,7 @@ let config = MockConfigService::new()
 
 - `MockServerManager::new().with_server("lobby", ServerState::Online)` answers `get_state`; `set_state` changes it while the plugin runs, and `started()` and `stopped()` list the servers the plugin asked to start or stop.
 - `MockLoadBalancerService::new().with_server("lobby", "least_conn", addresses)` gives a server a pool of healthy backends; `set_status(&server, status)` changes one backend, and `set_drained` and `reset_backend` from the trait work on the pool.
-- `MockPluginRegistry::new().with_plugin(info)` answers `list_plugins` and `get_plugin` from the `PluginInfo` values you add.
+- `MockPluginRegistry::new().with_plugin(info)` answers `list_plugin_info` and `plugin_info` from the `PluginInfo` values you add.
 
 ### Permissions and command sources
 
