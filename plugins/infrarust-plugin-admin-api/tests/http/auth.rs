@@ -175,7 +175,6 @@ async fn test_mutation_endpoints_require_auth() {
         ),
         ("POST", "/api/v1/config/reload"),
         ("POST", "/api/v1/proxy/shutdown"),
-        ("POST", "/api/v1/proxy/gc"),
     ];
 
     for (method, uri) in endpoints {

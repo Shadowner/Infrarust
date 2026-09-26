@@ -4,7 +4,6 @@ import {
   ArrowRightIcon,
   Cog6ToothIcon,
   ExclamationTriangleIcon,
-  TrashIcon,
   PowerIcon,
 } from '@heroicons/vue/24/outline';
 import type { ProxyStatus, ProviderDto, ApiEnvelope, MutationResult } from '~/types/api';
@@ -35,12 +34,6 @@ const operations = [
     variant: 'accent' as const,
   },
   {
-    label: 'Run GC',
-    description: 'Trigger garbage collection to free unused memory.',
-    icon: TrashIcon,
-    variant: 'accent' as const,
-  },
-  {
     label: 'Shutdown Proxy',
     description: 'Gracefully terminate the proxy. This is irreversible.',
     icon: PowerIcon,
@@ -53,9 +46,6 @@ async function handleOperation(op: typeof operations[number]) {
     if (op.label === 'Reload Config') {
       await request<ApiEnvelope<MutationResult>>('/config/reload', { method: 'POST', body: {} });
       push({ type: 'success', title: 'Config reload requested' });
-    } else if (op.label === 'Run GC') {
-      await request<ApiEnvelope<MutationResult>>('/proxy/gc', { method: 'POST', body: {} });
-      push({ type: 'success', title: 'GC completed' });
     } else if (op.label === 'Shutdown Proxy') {
       const first = await ask('Shutdown Proxy', 'Are you sure? This will disconnect all players.');
       if (!first) return;

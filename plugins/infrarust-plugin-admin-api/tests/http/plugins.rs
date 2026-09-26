@@ -1,5 +1,4 @@
 use axum::http::StatusCode;
-use serde_json::json;
 
 use crate::common::TestApi;
 
@@ -26,22 +25,4 @@ async fn test_plugins_get_returns_404_for_unknown() {
     let (status, body) = TestApi::new().get("/api/v1/plugins/nonexistent").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["error"]["code"], "NOT_FOUND");
-}
-
-#[tokio::test]
-async fn test_plugin_disable_returns_503() {
-    let (status, body) = TestApi::new()
-        .post("/api/v1/plugins/admin_api/disable", json!({}))
-        .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["error"]["code"], "SERVICE_UNAVAILABLE");
-}
-
-#[tokio::test]
-async fn test_plugin_enable_returns_503() {
-    let (status, body) = TestApi::new()
-        .post("/api/v1/plugins/admin_api/enable", json!({}))
-        .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["error"]["code"], "SERVICE_UNAVAILABLE");
 }

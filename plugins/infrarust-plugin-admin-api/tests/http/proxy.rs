@@ -85,10 +85,3 @@ async fn test_proxy_shutdown_returns_200() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["success"], true);
 }
-
-#[tokio::test]
-async fn test_proxy_gc_returns_200() {
-    let (status, body) = TestApi::new().post("/api/v1/proxy/gc", json!({})).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["data"]["success"], true);
-}

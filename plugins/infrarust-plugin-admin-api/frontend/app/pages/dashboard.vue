@@ -2,7 +2,6 @@
 import {
   ArrowPathIcon,
   MegaphoneIcon,
-  TrashIcon,
   PowerIcon,
   ServerStackIcon,
 } from '@heroicons/vue/24/outline';
@@ -130,9 +129,6 @@ async function handleAction(label: string) {
     } else if (label === 'Broadcast') {
       showBroadcast.value = true;
       return;
-    } else if (label === 'Run GC') {
-      await request<ApiEnvelope<MutationResult>>('/proxy/gc', { method: 'POST', body: {} });
-      push({ type: 'success', title: 'GC completed' });
     } else if (label === 'Shutdown') {
       const first = await ask('Shutdown Proxy', 'This will disconnect all players. Continue?');
       if (!first) return;
@@ -150,7 +146,6 @@ async function handleAction(label: string) {
 const quickActions = [
   { label: 'Reload Config', icon: ArrowPathIcon },
   { label: 'Broadcast', icon: MegaphoneIcon },
-  { label: 'Run GC', icon: TrashIcon },
   { label: 'Shutdown', icon: PowerIcon },
 ];
 </script>

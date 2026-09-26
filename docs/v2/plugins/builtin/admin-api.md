@@ -147,7 +147,6 @@ Paginated endpoints accept `?page=1&per_page=20` query parameters. Maximum `per_
 |--------|------|-------------|
 | GET | `/api/v1/proxy` | Proxy status: version, uptime, player count, server count, features, memory usage |
 | POST | `/api/v1/proxy/shutdown` | Graceful proxy shutdown |
-| POST | `/api/v1/proxy/gc` | Trigger garbage collection (no-op in Rust, returns success) |
 
 ### Players
 
@@ -288,8 +287,6 @@ The ban endpoints go through whichever [ban provider](../../configuration/securi
 |--------|------|-------------|
 | GET | `/api/v1/plugins` | List all loaded plugins |
 | GET | `/api/v1/plugins/{id}` | Get a specific plugin's info |
-| POST | `/api/v1/plugins/{id}/enable` | Enable a plugin |
-| POST | `/api/v1/plugins/{id}/disable` | Disable a plugin |
 
 ### Configuration
 
