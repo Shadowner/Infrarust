@@ -916,10 +916,8 @@ impl Loop<'_> {
     }
 }
 
-/// Action to take after processing a backend → client packet.
 #[derive(Debug)]
 enum BackendAction {
-    /// Continue the loop normally.
     Continue,
     Kicked(Box<BackendKick>),
 }
