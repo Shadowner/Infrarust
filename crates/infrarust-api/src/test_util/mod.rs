@@ -1,11 +1,13 @@
 mod ban;
 mod command;
+mod load_balancer;
 mod permissions;
 mod player;
 mod registry;
 
 pub use ban::MockBanService;
 pub use command::{command_context, console, console_with, player_source};
+pub use load_balancer::MockLoadBalancerService;
 pub use permissions::MockPermissionChecker;
 pub use player::MockPlayer;
 pub use registry::MockPlayerRegistry;

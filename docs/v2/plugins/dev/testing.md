@@ -484,6 +484,7 @@ use std::path::PathBuf;
 use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 use infrarust_api::services::proxy_info::ProxyInfo;
+use infrarust_api::test_util::{MockBanService, MockLoadBalancerService, MockPlayerRegistry};
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::manager::PluginServices;
 use infrarust_core::plugin::{PluginContextFactoryImpl, PluginRegistryImpl};
@@ -501,7 +502,7 @@ let services = PluginServices {
     command_manager: Arc::new(CommandManagerImpl::new()),
     scheduler: Arc::new(SchedulerImpl::new()),
     config_service: Arc::new(MockConfigService),
-    load_balancer_service: Arc::new(MockLoadBalancerService),
+    load_balancer_service: Arc::new(MockLoadBalancerService::new()),
     plugin_registry: Arc::new(PluginRegistryImpl::new()),
     codec_filter_registry: Arc::new(
         infrarust_core::filter::codec_registry::CodecFilterRegistryImpl::new(),
@@ -522,7 +523,7 @@ let factory = PluginContextFactoryImpl::new(
 );
 ```
 
-`PluginServices` has every field the proxy fills in, so a test has to supply all of them. The `MockPlayerRegistry` and `MockBanService` from `infrarust_api::test_util` fit the `player_registry` and `ban_service` fields. `EventBusImpl`, `CommandManagerImpl`, `SchedulerImpl`, and `PluginRegistryImpl` are real implementations that work without any proxy infrastructure. `NoopServerManager` is a built-in stub for proxies without managed servers. `proxy_shutdown` is a `CancellationToken` the proxy triggers at shutdown, and `proxy_info` carries static metadata; both have sensible test defaults. The second argument to `PluginContextFactoryImpl::new` is a `HashMap<String, PluginPermissions>` mapping plugin IDs to their configured capabilities; an empty map gives every plugin the baseline grant set.
+`PluginServices` has every field the proxy fills in, so a test has to supply all of them. The `MockPlayerRegistry`, `MockBanService` and `MockLoadBalancerService` from `infrarust_api::test_util` fit the `player_registry`, `ban_service` and `load_balancer_service` fields; `MockLoadBalancerService::new().with_server("lobby", "least_conn", addresses)` gives a server healthy backends that `set_drained` and `reset_backend` then change. `EventBusImpl`, `CommandManagerImpl`, `SchedulerImpl`, and `PluginRegistryImpl` are real implementations that work without any proxy infrastructure. `NoopServerManager` is a built-in stub for proxies without managed servers. `proxy_shutdown` is a `CancellationToken` the proxy triggers at shutdown, and `proxy_info` carries static metadata; both have sensible test defaults. The second argument to `PluginContextFactoryImpl::new` is a `HashMap<String, PluginPermissions>` mapping plugin IDs to their configured capabilities; an empty map gives every plugin the baseline grant set.
 
 ### Testing event handling
 
