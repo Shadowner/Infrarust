@@ -179,15 +179,6 @@ impl ServerManagerService {
         id
     }
 
-    /// Removes a previously registered state change listener.
-    pub fn remove_on_state_change(&self, listener_id: u64) {
-        let mut listeners = self
-            .listeners
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
-        listeners.retain(|(id, _)| *id != listener_id);
-    }
-
     fn fire_state_change(&self, server_id: &str, old: ServerState, new: ServerState) {
         let snapshot = {
             let listeners = self

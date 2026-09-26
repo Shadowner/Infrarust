@@ -607,10 +607,6 @@ impl BackendConn {
         }
     }
 
-    pub fn is_closed(&self) -> bool {
-        *self.closed.borrow()
-    }
-
     pub async fn closed(&self, timeout: Duration) -> HarnessResult<()> {
         let mut closed = self.closed.clone();
         match tokio::time::timeout(timeout, closed.wait_for(|c| *c)).await {

@@ -256,10 +256,6 @@ impl Recorder {
         self.filter(|e| e.kind == kind)
     }
 
-    pub fn for_player(&self, player: PlayerId) -> Vec<Recorded> {
-        self.filter(|e| e.player == Some(player))
-    }
-
     pub fn for_username(&self, username: &str) -> Vec<Recorded> {
         self.filter(|e| e.username.as_deref() == Some(username))
     }
@@ -327,24 +323,8 @@ pub struct RecordingPlugin {
 }
 
 impl RecordingPlugin {
-    pub fn new() -> Self {
-        Recorder::new().plugin()
-    }
-
-    #[must_use]
-    pub fn with_id(mut self, id: impl Into<String>) -> Self {
-        self.id = id.into();
-        self
-    }
-
     pub fn recorder(&self) -> Recorder {
         self.recorder.clone()
-    }
-}
-
-impl Default for RecordingPlugin {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

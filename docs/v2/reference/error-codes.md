@@ -514,14 +514,6 @@ failed to unload plugin '<plugin_id>': <reason>
 
 A plugin couldn't be cleanly unloaded. Resources may not have been fully released.
 
-### `DuplicateId`
-
-```
-duplicate plugin id '<plugin_id>' (found in loader '<first>' and '<second>')
-```
-
-Two different plugin sources provide a plugin with the same ID. Rename one of the plugins or remove the duplicate.
-
 ## Filter ordering errors
 
 ### `CyclicDependency`

@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use bytes::Bytes;
 use infrarust_protocol::codec::{McBufReadExt, McBufWriteExt};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
@@ -473,8 +472,4 @@ pub fn config_messages(
         }
     }
     Ok(found)
-}
-
-pub fn bytes_of(message: &PluginMessage) -> Bytes {
-    Bytes::from(message.data.clone())
 }

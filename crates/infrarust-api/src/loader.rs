@@ -33,13 +33,6 @@ pub enum LoaderError {
 
     #[error("failed to unload plugin '{plugin_id}': {reason}")]
     UnloadFailed { plugin_id: String, reason: String },
-
-    #[error("duplicate plugin id '{plugin_id}' (found in loader '{first}' and '{second}')")]
-    DuplicateId {
-        plugin_id: String,
-        first: String,
-        second: String,
-    },
 }
 
 /// Passed to loaders during `load()` so they can bind proxy services

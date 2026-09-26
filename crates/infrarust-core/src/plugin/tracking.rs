@@ -42,10 +42,6 @@ impl TrackingEventBus {
         }
     }
 
-    pub fn owner(&self) -> &str {
-        &self.owner
-    }
-
     pub fn tracked_count(&self) -> usize {
         lock(&self.handles).len()
     }

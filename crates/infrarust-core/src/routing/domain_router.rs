@@ -238,11 +238,6 @@ impl DomainRouter {
         None
     }
 
-    /// Convenience: resolves a domain and returns only the config.
-    pub fn resolve_config(&self, domain: &str) -> Option<Arc<ServerConfig>> {
-        self.resolve(domain).map(|(_, cfg)| cfg)
-    }
-
     pub fn get(&self, id: &ProviderId) -> Option<Arc<ServerConfig>> {
         self.configs
             .get(id)

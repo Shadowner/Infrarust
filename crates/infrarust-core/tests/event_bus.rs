@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{BoxFuture, Event, EventPriority};
@@ -54,8 +53,9 @@ async fn test_fire_async_handler_modifies() {
 }
 
 #[tokio::test]
-async fn test_fire_and_forget_executes() {
+async fn test_posted_event_executes() {
     let bus = Arc::new(EventBusImpl::new());
+    bus.start_dispatcher();
     let flag = Arc::new(AtomicBool::new(false));
     let flag_clone = Arc::clone(&flag);
 
@@ -64,10 +64,9 @@ async fn test_fire_and_forget_executes() {
         flag_clone.store(true, Ordering::SeqCst);
     });
 
-    bus.fire_and_forget_arc(TestEvent { value: 0 });
+    bus.post(TestEvent { value: 0 });
+    bus.flush().await;
 
-    // Give the spawned task time to run
-    tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(flag.load(Ordering::SeqCst));
 }
 

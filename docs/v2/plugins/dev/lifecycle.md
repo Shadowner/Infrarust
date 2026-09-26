@@ -312,7 +312,6 @@ Errors during the lifecycle surface as `PluginError` or `LoaderError` depending 
 | `InvalidFormat` | Plugin file is corrupt or unreadable |
 | `LoadFailed` | Plugin instantiation failed |
 | `UnloadFailed` | Cleanup after disable failed |
-| `DuplicateId` | Two loaders found plugins with the same ID |
 
 `PluginError` has two variants:
 

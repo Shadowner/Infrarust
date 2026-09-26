@@ -91,8 +91,8 @@ impl Drop for OtelGuard {
 fn build_span_exporter(config: &TelemetryConfig) -> Result<SpanExporter, CoreError> {
     let endpoint = config
         .endpoint
-        .as_deref()
-        .unwrap_or("http://localhost:4317");
+        .clone()
+        .unwrap_or_else(infrarust_config::defaults::otlp_endpoint);
 
     match config.protocol.as_str() {
         "grpc" => SpanExporter::builder()
@@ -115,8 +115,8 @@ fn build_span_exporter(config: &TelemetryConfig) -> Result<SpanExporter, CoreErr
 fn build_metric_exporter(config: &TelemetryConfig) -> Result<MetricExporter, CoreError> {
     let endpoint = config
         .endpoint
-        .as_deref()
-        .unwrap_or("http://localhost:4317");
+        .clone()
+        .unwrap_or_else(infrarust_config::defaults::otlp_endpoint);
 
     match config.protocol.as_str() {
         "grpc" => MetricExporter::builder()

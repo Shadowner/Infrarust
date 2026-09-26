@@ -125,10 +125,6 @@ impl MockPlayer {
         &self.permissions
     }
 
-    pub fn set_server(&self, server: Option<ServerId>) {
-        lock(&self.recorded).server = server;
-    }
-
     #[must_use]
     pub fn messages(&self) -> Vec<Component> {
         lock(&self.recorded).messages.clone()

@@ -90,14 +90,6 @@ impl FakeSessionServer {
         format!("http://{}{HAS_JOINED_PATH}", self.addr)
     }
 
-    pub fn accept_all(&self) {
-        self.state
-            .rejected
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
-    }
-
     pub fn reject(&self, username: impl Into<String>) {
         self.state
             .rejected

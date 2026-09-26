@@ -56,14 +56,6 @@ pub enum WasmLoaderError {
         reason: String,
     },
 
-    /// A guest export returned `Err(string)` from a `result<_, string>` (not a trap).
-    #[error("wasm guest '{plugin_id}' returned an error from {op}: {message}")]
-    GuestError {
-        plugin_id: String,
-        op: &'static str,
-        message: String,
-    },
-
     /// Could not extract or validate [`PluginMetadata`] from a component.
     ///
     /// [`PluginMetadata`]: infrarust_api::plugin::PluginMetadata

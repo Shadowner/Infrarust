@@ -76,10 +76,6 @@ impl PermissionService {
         &self.selection
     }
 
-    pub fn uses_builtin(&self) -> bool {
-        self.selection == PermissionProviderSelection::Builtin
-    }
-
     pub fn builtin(&self) -> &ConfigPermissionProvider {
         &self.builtin
     }

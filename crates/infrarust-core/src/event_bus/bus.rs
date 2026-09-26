@@ -198,13 +198,6 @@ impl EventBusImpl {
         (event, decided_by)
     }
 
-    pub fn fire_and_forget_arc<E: Event + Send + 'static>(self: &Arc<Self>, event: E) {
-        let bus = Arc::clone(self);
-        tokio::spawn(async move {
-            let _ = bus.fire(event).await;
-        });
-    }
-
     pub fn post<E: Event>(&self, event: E) {
         let posted = PostedEvent {
             type_id: TypeId::of::<E>(),
