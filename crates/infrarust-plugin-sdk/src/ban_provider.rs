@@ -62,7 +62,7 @@ impl BanTarget {
             Self::Username(name) => attempt
                 .username
                 .as_deref()
-                .is_some_and(|username| username.eq_ignore_ascii_case(name)),
+                .is_some_and(|username| username.to_lowercase() == name.to_lowercase()),
             Self::Uuid(uuid) => attempt.uuid == Some(*uuid),
         }
     }
@@ -77,7 +77,8 @@ fn in_range(range: &str, ip: IpAddr) -> bool {
     let (Ok(network), Ok(prefix)) = (network.parse::<IpAddr>(), prefix.parse::<u32>()) else {
         return false;
     };
-    match (network.to_canonical(), ip.to_canonical()) {
+    let (network, prefix) = canonical_network(network, prefix);
+    match (network, ip.to_canonical()) {
         (IpAddr::V4(network), IpAddr::V4(ip)) if prefix <= 32 => {
             let mask = u32::MAX.checked_shl(32 - prefix).unwrap_or(0);
             u32::from(network) & mask == u32::from(ip) & mask
@@ -87,6 +88,16 @@ fn in_range(range: &str, ip: IpAddr) -> bool {
             u128::from(network) & mask == u128::from(ip) & mask
         }
         _ => false,
+    }
+}
+
+fn canonical_network(network: IpAddr, prefix: u32) -> (IpAddr, u32) {
+    match network {
+        IpAddr::V6(v6) if prefix >= 96 => match v6.to_ipv4_mapped() {
+            Some(v4) => (IpAddr::V4(v4), prefix - 96),
+            None => (network, prefix),
+        },
+        other => (other, prefix),
     }
 }
 
@@ -345,6 +356,36 @@ mod tests {
         assert!(BanTarget::IpRange("2001:db8:abcd::/48".into()).matches(&v6));
         assert!(!BanTarget::IpRange("2001:db8:abce::/48".into()).matches(&v6));
         assert!(!BanTarget::Username("Steve".into()).matches(&v6));
+    }
+
+    #[test]
+    fn a_v4_mapped_range_matches_the_v4_hosts_it_covers() {
+        let mapped = BanTarget::IpRange("::ffff:10.0.0.0/104".into());
+        assert!(mapped.matches(&attempt("10.1.2.3", None, None)));
+        assert!(mapped.matches(&attempt("::ffff:10.1.2.3", None, None)));
+        assert!(!mapped.matches(&attempt("11.1.2.3", None, None)));
+
+        let plain = BanTarget::IpRange("10.0.0.0/8".into());
+        assert!(plain.matches(&attempt("::ffff:10.1.2.3", None, None)));
+        assert!(plain.matches(&attempt("10.1.2.3", None, None)));
+
+        assert!(
+            !BanTarget::IpRange("2001:db8::/32".into()).matches(&attempt("10.1.2.3", None, None))
+        );
+        assert!(!BanTarget::IpRange("10.0.0.0/8".into()).matches(&attempt(
+            "2001:db8::1",
+            None,
+            None
+        )));
+        assert!(!BanTarget::IpRange("::/0".into()).matches(&attempt("10.1.2.3", None, None)));
+    }
+
+    #[test]
+    fn usernames_match_case_insensitively_beyond_ascii() {
+        let steve = attempt("10.0.0.1", Some("STRASSE"), None);
+        assert!(BanTarget::Username("strasse".into()).matches(&steve));
+        let unicode = attempt("10.0.0.1", Some("ÉLODIE"), None);
+        assert!(BanTarget::Username("élodie".into()).matches(&unicode));
     }
 
     #[test]
