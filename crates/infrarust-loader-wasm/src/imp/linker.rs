@@ -66,10 +66,3 @@ pub(crate) fn build_linker(
 
     Ok(linker)
 }
-
-pub(crate) fn build_probe_linker(
-    engine: &Engine,
-    plugin_id: &str,
-) -> Result<Linker<PluginStoreState>, WasmLoaderError> {
-    build_linker(engine, plugin_id)
-}

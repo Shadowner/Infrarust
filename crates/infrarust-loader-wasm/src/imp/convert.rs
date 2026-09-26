@@ -14,6 +14,7 @@ use infrarust_api::services::ban_service::{
     UnbanRequest,
 };
 use infrarust_api::services::config_service::{ProxyMode, ServerConfig};
+use infrarust_api::services::load_balancer::BackendState;
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{
     Component, GameProfile, ProfileProperty, RawPacket, ServerAddress, ServerId, TitleData,
@@ -22,6 +23,7 @@ use infrarust_plugin_wit::arena::ArenaError;
 
 use crate::bindings::infrarust::plugin::ban_service as wb;
 use crate::bindings::infrarust::plugin::config_service as wc;
+use crate::bindings::infrarust::plugin::events as we;
 use crate::bindings::infrarust::plugin::limbo as wl;
 use crate::bindings::infrarust::plugin::permissions as wp;
 use crate::bindings::infrarust::plugin::types as wt;
@@ -50,6 +52,10 @@ macro_rules! wit_enum_map {
 }
 
 pub(crate) use wit_enum_map;
+
+wit_enum_map!(backend_state_to_wit: BackendState => we::BackendState {
+    Healthy, Probing, Draining
+} else Unhealthy);
 
 wit_enum_map!(server_state_to_wit: ServerState => wt::ServerState {
     Online, Offline, Starting, Stopping, Sleeping, Crashed

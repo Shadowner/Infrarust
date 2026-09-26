@@ -1,7 +1,6 @@
-use infrarust_api::services::load_balancer::{BackendState, BackendStatus};
+use infrarust_api::services::load_balancer::BackendStatus;
 use infrarust_api::types::ServerId;
 
-use crate::bindings::infrarust::plugin::events as we;
 use crate::bindings::infrarust::plugin::load_balancer as wl;
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::convert;
@@ -13,12 +12,7 @@ fn backend_status(status: &BackendStatus) -> wl::BackendStatus {
         address: convert::server_address_to_wit(&status.address),
         weight: status.weight,
         effective_weight: status.effective_weight,
-        state: match status.state {
-            BackendState::Healthy => we::BackendState::Healthy,
-            BackendState::Probing => we::BackendState::Probing,
-            BackendState::Draining => we::BackendState::Draining,
-            _ => we::BackendState::Unhealthy,
-        },
+        state: convert::backend_state_to_wit(status.state),
         active_connections: u64::try_from(status.active_connections).unwrap_or(u64::MAX),
         healthy_since_secs: status.healthy_since_secs,
         ejections: status.ejections,

@@ -2,7 +2,6 @@ use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
-use infrarust_api::services::load_balancer::BackendState;
 use infrarust_api::types::ProtocolVersion;
 
 use super::{Applied, Texts, WasmEvent, unmatched};
@@ -114,12 +113,7 @@ impl WasmEvent for BackendHealthEvent {
         we::Event::BackendHealth(we::BackendHealthEvent {
             address: convert::server_address_to_wit(&self.address),
             servers: convert::server_ids(&self.servers),
-            state: match self.state {
-                BackendState::Healthy => we::BackendState::Healthy,
-                BackendState::Probing => we::BackendState::Probing,
-                BackendState::Draining => we::BackendState::Draining,
-                _ => we::BackendState::Unhealthy,
-            },
+            state: convert::backend_state_to_wit(self.state),
         })
     }
 }
@@ -127,6 +121,7 @@ impl WasmEvent for BackendHealthEvent {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use infrarust_api::services::load_balancer::BackendState;
     use infrarust_api::types::{Component, HoverEvent, ServerId};
 
     use super::*;
