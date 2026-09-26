@@ -3,7 +3,6 @@ use std::sync::Arc;
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::provider::{PluginConfigProvider, PluginProviderSender, ServerDocument};
-use infrarust_api::services::config_service::ServerConfig;
 use tokio_util::sync::CancellationToken;
 
 use crate::server_dir::{ProviderSenderSlot, ServerDir};
@@ -23,11 +22,7 @@ impl PluginConfigProvider for ApiConfigProvider {
         "api"
     }
 
-    fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ServerConfig>, PluginError>> {
-        Box::pin(async { Ok(vec![]) })
-    }
-
-    fn load_initial_documents(&self) -> BoxFuture<'_, Result<Vec<ServerDocument>, PluginError>> {
+    fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ServerDocument>, PluginError>> {
         Box::pin(async { Ok(self.dir.initial_documents().await) })
     }
 
@@ -74,7 +69,7 @@ mod tests {
 
         std::fs::write(root.path().join("servers/lobby.toml"), LOBBY).unwrap();
 
-        let documents = provider.load_initial_documents().await.unwrap();
+        let documents = provider.load_initial().await.unwrap();
         assert_eq!(documents.len(), 1);
         assert_eq!(documents[0].id.as_str(), "lobby");
     }
@@ -90,7 +85,7 @@ mod tests {
             sender: Arc::new(ProviderSenderSlot::new(None)),
             shutdown: shutdown.clone(),
         };
-        assert!(provider.load_initial_documents().await.unwrap().is_empty());
+        assert!(provider.load_initial().await.unwrap().is_empty());
 
         std::fs::write(root.path().join("servers/lobby.toml"), LOBBY).unwrap();
         let recorder = RecordingSender::default();

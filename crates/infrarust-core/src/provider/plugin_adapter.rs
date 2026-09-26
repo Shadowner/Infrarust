@@ -27,21 +27,15 @@ impl PluginProviderSender for PluginProviderSenderImpl {
     fn send(&self, event: PluginProviderEvent) -> BoxFuture<'_, bool> {
         Box::pin(async move {
             let core_event = match event {
-                PluginProviderEvent::Added(config) => {
-                    self.provider_config_of(&config).map(ProviderEvent::Added)
+                PluginProviderEvent::Added(doc) => {
+                    self.provider_config_from(&doc).map(ProviderEvent::Added)
                 }
-                PluginProviderEvent::Updated(config) => {
-                    self.provider_config_of(&config).map(ProviderEvent::Updated)
+                PluginProviderEvent::Updated(doc) => {
+                    self.provider_config_from(&doc).map(ProviderEvent::Updated)
                 }
                 PluginProviderEvent::Removed(server_id) => Some(ProviderEvent::Removed(
                     make_provider_id(&self.provider_prefix, server_id.as_str()),
                 )),
-                PluginProviderEvent::AddedDocument(doc) => {
-                    self.provider_config_from(&doc).map(ProviderEvent::Added)
-                }
-                PluginProviderEvent::UpdatedDocument(doc) => {
-                    self.provider_config_from(&doc).map(ProviderEvent::Updated)
-                }
                 _ => {
                     tracing::warn!(
                         provider = %self.provider_prefix,
@@ -66,27 +60,6 @@ impl PluginProviderSender for PluginProviderSenderImpl {
 }
 
 impl PluginProviderSenderImpl {
-    fn provider_config_of(
-        &self,
-        api: &infrarust_api::services::config_service::ServerConfig,
-    ) -> Option<ProviderConfig> {
-        match convert_api_to_config(api) {
-            Ok(config) => Some(ProviderConfig {
-                id: make_provider_id(&self.provider_prefix, api.id.as_str()),
-                config,
-            }),
-            Err(e) => {
-                tracing::warn!(
-                    provider = %self.provider_prefix,
-                    server = %api.id.as_str(),
-                    error = %e,
-                    "rejecting invalid server config"
-                );
-                None
-            }
-        }
-    }
-
     fn provider_config_from(&self, doc: &ServerDocument) -> Option<ProviderConfig> {
         match parse_document(doc) {
             Ok(config) => Some(ProviderConfig {
@@ -124,62 +97,6 @@ pub fn parse_document(doc: &ServerDocument) -> Result<infrarust_config::ServerCo
     Ok(config)
 }
 
-/// Projects a plugin-supplied [`infrarust_api`] config onto the proxy's own,
-/// held to the same validation as a TOML document.
-fn convert_api_to_config(
-    api: &infrarust_api::services::config_service::ServerConfig,
-) -> Result<infrarust_config::ServerConfig, String> {
-    use infrarust_api::services::config_service::ProxyMode as ApiMode;
-    use infrarust_config::ProxyMode as ConfigMode;
-
-    let proxy_mode = match api.proxy_mode {
-        ApiMode::Passthrough => ConfigMode::Passthrough,
-        ApiMode::ZeroCopy => ConfigMode::ZeroCopy,
-        ApiMode::ClientOnly => ConfigMode::ClientOnly,
-        ApiMode::Offline => ConfigMode::Offline,
-        ApiMode::ServerOnly => ConfigMode::ServerOnly,
-        _ => ConfigMode::Passthrough,
-    };
-
-    let addresses = api
-        .addresses
-        .iter()
-        .map(|a| {
-            infrarust_config::WeightedAddress::from(infrarust_config::ServerAddress {
-                host: a.host.clone(),
-                port: a.port,
-            })
-        })
-        .collect();
-
-    let config = infrarust_config::ServerConfig {
-        id: Some(api.id.as_str().to_string()),
-        name: None,
-        network: api.network.clone(),
-        domains: api.domains.clone(),
-        addresses,
-        balance: Default::default(),
-        slow_start: None,
-        slow_start_aggression: 1.0,
-        active_health: None,
-        proxy_mode,
-        forwarding_mode: None,
-        send_proxy_protocol: api.send_proxy_protocol,
-        domain_rewrite: Default::default(),
-        motd: Default::default(),
-        server_manager: None,
-        timeouts: None,
-        max_players: api.max_players,
-        ip_filter: None,
-        disconnect_message: api.disconnect_message.clone(),
-        limbo_handlers: api.limbo_handlers.clone(),
-        bungeecord_channel: false,
-    };
-
-    log_validation_warnings(&config)?;
-    Ok(config)
-}
-
 fn log_validation_warnings(config: &infrarust_config::ServerConfig) -> Result<(), String> {
     let warnings = infrarust_config::validate_server_config(config).map_err(|e| e.to_string())?;
     for warning in warnings {
@@ -205,44 +122,6 @@ pub async fn activate_plugin_providers(
         let mut loaded_ids = Vec::new();
 
         match provider.load_initial().await {
-            Ok(configs) => {
-                let mut count = 0;
-                for config in &configs {
-                    match convert_api_to_config(config) {
-                        Ok(server_config) => {
-                            let pid = make_provider_id(&provider_prefix, config.id.as_str());
-                            domain_router.add(pid.clone(), server_config);
-                            loaded_ids.push(pid);
-                            count += 1;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                plugin = %plugin_id,
-                                server = %config.id.as_str(),
-                                error = %e,
-                                "skipping invalid server config"
-                            );
-                        }
-                    }
-                }
-                tracing::info!(
-                    plugin = %plugin_id,
-                    provider = provider.provider_type(),
-                    count,
-                    "plugin config provider loaded initial configs"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    plugin = %plugin_id,
-                    provider = provider.provider_type(),
-                    error = %e,
-                    "plugin config provider failed to load initial configs"
-                );
-            }
-        }
-
-        match provider.load_initial_documents().await {
             Ok(documents) => {
                 let mut count = 0;
                 for doc in &documents {
@@ -402,24 +281,6 @@ mod tests {
         assert_eq!(parse_document(&doc).unwrap().effective_id(), "explicit");
     }
 
-    fn projected(
-        id: &str,
-        addresses: Vec<infrarust_api::types::ServerAddress>,
-    ) -> infrarust_api::services::config_service::ServerConfig {
-        infrarust_api::services::config_service::ServerConfig::new(
-            ServerId::new(id),
-            None,
-            addresses,
-            vec!["mc.example.com".to_string()],
-            infrarust_api::services::config_service::ProxyMode::Passthrough,
-            vec![],
-            0,
-            None,
-            false,
-            false,
-        )
-    }
-
     fn test_sender() -> (PluginProviderSenderImpl, mpsc::Receiver<ProviderEvent>) {
         let (sender, receiver) = mpsc::channel(4);
         (
@@ -432,31 +293,27 @@ mod tests {
         )
     }
 
-    /// A projected config reaches the router without ever being written as
-    /// TOML, so it has to be validated here or not at all.
+    /// A rejected document must not look like a closed channel, or the plugin
+    /// would stop watching.
     #[tokio::test]
-    async fn projected_configs_are_validated_like_documents() {
+    async fn rejected_documents_are_dropped_without_closing_the_sender() {
         let (sender, mut receiver) = test_sender();
 
         assert!(
             sender
-                .send(PluginProviderEvent::Added(projected(
+                .send(PluginProviderEvent::Added(document(
                     "no-addresses",
-                    vec![]
+                    "addresses = []"
                 )))
                 .await
         );
         assert!(receiver.try_recv().is_err());
 
-        let address = infrarust_api::types::ServerAddress {
-            host: "10.0.0.1".to_string(),
-            port: 25565,
-        };
         assert!(
             sender
-                .send(PluginProviderEvent::Added(projected(
+                .send(PluginProviderEvent::Added(document(
                     "lobby",
-                    vec![address.clone()]
+                    "domains = [\"lobby.example.com\"]\naddresses = [\"10.0.0.1:25565\"]"
                 )))
                 .await
         );
@@ -467,13 +324,20 @@ mod tests {
 
         assert!(
             sender
-                .send(PluginProviderEvent::Updated(projected(
+                .send(PluginProviderEvent::Updated(document(
                     "Bad Id",
-                    vec![address]
+                    "domains = [\"bad.example.com\"]\naddresses = [\"10.0.0.1:25565\"]"
                 )))
                 .await
         );
         assert!(receiver.try_recv().is_err());
+
+        drop(receiver);
+        assert!(
+            !sender
+                .send(PluginProviderEvent::Removed(ServerId::new("lobby")))
+                .await
+        );
     }
 
     #[test]

@@ -135,8 +135,8 @@ pub enum DirChange {
 impl DirChange {
     fn into_event(self) -> PluginProviderEvent {
         match self {
-            DirChange::Added(doc) => PluginProviderEvent::AddedDocument(doc),
-            DirChange::Updated(doc) => PluginProviderEvent::UpdatedDocument(doc),
+            DirChange::Added(doc) => PluginProviderEvent::Added(doc),
+            DirChange::Updated(doc) => PluginProviderEvent::Updated(doc),
             DirChange::Removed(id) => PluginProviderEvent::Removed(id),
         }
     }
@@ -699,8 +699,8 @@ pub mod test_support {
     impl PluginProviderSender for RecordingSender {
         fn send(&self, event: PluginProviderEvent) -> BoxFuture<'_, bool> {
             let label = match event {
-                PluginProviderEvent::AddedDocument(doc) => format!("added:{}", doc.id.as_str()),
-                PluginProviderEvent::UpdatedDocument(doc) => format!("updated:{}", doc.id.as_str()),
+                PluginProviderEvent::Added(doc) => format!("added:{}", doc.id.as_str()),
+                PluginProviderEvent::Updated(doc) => format!("updated:{}", doc.id.as_str()),
                 PluginProviderEvent::Removed(id) => format!("removed:{}", id.as_str()),
                 _ => "other".to_string(),
             };
@@ -762,8 +762,7 @@ pub mod test_support {
         fn send(&self, event: PluginProviderEvent) -> BoxFuture<'_, bool> {
             Box::pin(async move {
                 let (id, announced) = match event {
-                    PluginProviderEvent::AddedDocument(doc)
-                    | PluginProviderEvent::UpdatedDocument(doc) => {
+                    PluginProviderEvent::Added(doc) | PluginProviderEvent::Updated(doc) => {
                         (doc.id.as_str().to_string(), doc.toml)
                     }
                     _ => return true,

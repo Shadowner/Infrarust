@@ -307,7 +307,7 @@ pub async fn create(
 
     let text = restore_secrets(&to_document_text(&config)?, None)?;
     let committed = state.server_dir.create(&document, text.clone()).await?;
-    let event = document_event(&committed, text, PluginProviderEvent::AddedDocument);
+    let event = document_event(&committed, text, PluginProviderEvent::Added);
     announce(&state, committed, event).await;
 
     tracing::info!(
@@ -343,7 +343,7 @@ pub async fn update(
         state.server_dir.document_text(&id),
     )?;
     let committed = state.server_dir.replace(&document, text.clone()).await?;
-    let event = document_event(&committed, text, PluginProviderEvent::UpdatedDocument);
+    let event = document_event(&committed, text, PluginProviderEvent::Updated);
     announce(&state, committed, event).await;
 
     tracing::info!(
@@ -436,7 +436,7 @@ pub async fn update_raw(
     settle_id(&mut config, &id)?;
 
     let committed = state.server_dir.replace(&document, text.clone()).await?;
-    let event = document_event(&committed, text, PluginProviderEvent::UpdatedDocument);
+    let event = document_event(&committed, text, PluginProviderEvent::Updated);
     announce(&state, committed, event).await;
 
     tracing::info!(
