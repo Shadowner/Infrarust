@@ -218,6 +218,7 @@ export default
               { text: 'Deploying & Configuring', link: '/plugins/wasm/deploying' },
               { text: 'WIT API Reference', link: '/plugins/wasm/api-reference' },
               { text: 'Capabilities & Sandbox', link: '/plugins/wasm/capabilities' },
+              { text: 'Network & Extra Folders', link: '/plugins/wasm/network' },
               { text: 'Virtual Backend (Planned)', link: '/plugins/wasm/virtual-backend' },
               { text: 'Examples & Cookbook', link: '/plugins/wasm/examples' },
               { text: 'Migrating to 0.3', link: '/plugins/wasm/migration-0.3' },

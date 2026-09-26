@@ -133,6 +133,18 @@ impl PluginLoader for WasmPluginLoader {
             let capabilities = ctx.capabilities().clone();
             let data_dir = ctx.data_dir();
             let sandbox = self.config.sandbox_for(plugin_id);
+            let network = crate::network::policy_for(
+                plugin_id,
+                self.config.network_for(plugin_id),
+                &capabilities,
+                sandbox.host_call_timeout,
+            );
+            let mounts = crate::mounts::resolve_mounts(
+                plugin_id,
+                self.config.mounts_for(plugin_id),
+                &capabilities,
+            )
+            .map_err(|e| e.into_loader_error(plugin_id))?;
 
             check_imports(
                 &self.engine,
@@ -168,6 +180,8 @@ impl PluginLoader for WasmPluginLoader {
                 codec,
                 sandbox,
                 registrations: Arc::new(Registrations::default()),
+                network,
+                mounts: mounts.into(),
             };
             let factory =
                 InstanceFactory::new(self.engine.clone(), &entry.component, &linker, setup)

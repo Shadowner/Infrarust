@@ -7,7 +7,9 @@ use std::time::Duration;
 use crate::error::ConfigError;
 use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
-use crate::types::{BalanceStrategy, ForwardingConfig, WasmLimits, WasmRecoveryConfig};
+use crate::types::{
+    BalanceStrategy, ForwardingConfig, PluginWasmConfig, WasmLimits, WasmRecoveryConfig,
+};
 
 /// Validates a single server configuration.
 ///
@@ -394,9 +396,10 @@ pub fn validate_wasm_config(config: &ProxyConfig) -> Result<(), ConfigError> {
     ids.sort();
     for id in ids {
         let overrides = config.plugins[id].wasm.as_ref();
-        if overrides.is_some() {
+        if let Some(plugin) = overrides {
             let limits = config.wasm.limits_for(overrides);
             validate_wasm_limits(&format!("plugins.{id}.wasm"), &limits, tick)?;
+            validate_wasm_mounts(&format!("plugins.{id}.wasm.mounts"), plugin)?;
         }
     }
     for warning in wasm_warnings(config) {
@@ -475,6 +478,40 @@ fn validate_wasm_limits(
         )));
     }
     validate_wasm_recovery(scope, &limits.recovery)
+}
+
+fn validate_wasm_mounts(scope: &str, plugin: &PluginWasmConfig) -> Result<(), ConfigError> {
+    let mut guests: Vec<String> = Vec::with_capacity(plugin.mounts.len());
+    for mount in &plugin.mounts {
+        if mount.host.as_os_str().is_empty() {
+            return Err(ConfigError::Validation(format!(
+                "{scope}: the host path of \"{}\" must not be empty",
+                mount.guest
+            )));
+        }
+        let guest = mount
+            .guest_path()
+            .map_err(|reason| ConfigError::Validation(format!("{scope}: {reason}")))?;
+        for other in &guests {
+            let (short, long) = if other.len() <= guest.len() {
+                (other.as_str(), guest.as_str())
+            } else {
+                (guest.as_str(), other.as_str())
+            };
+            if short == long {
+                return Err(ConfigError::Validation(format!(
+                    "{scope}: guest path \"{guest}\" is mounted twice"
+                )));
+            }
+            if long.starts_with(short) && long.as_bytes()[short.len()] == b'/' {
+                return Err(ConfigError::Validation(format!(
+                    "{scope}: guest paths \"{short}\" and \"{long}\" overlap"
+                )));
+            }
+        }
+        guests.push(guest);
+    }
+    Ok(())
 }
 
 fn validate_wasm_recovery(scope: &str, recovery: &WasmRecoveryConfig) -> Result<(), ConfigError> {

@@ -497,6 +497,7 @@ Plugin configurations are keyed by plugin ID.
 - `strict_capabilities` (WASM plugins, defaults to `false`) refuses to load the plugin when it imports a host function whose capability it lacks. Without it such a plugin loads, a warning names each import that will be refused, and the calls are refused when made. See [What a missing capability does](../plugins/wasm/capabilities#what-a-missing-capability-does).
 - `enabled` skips the plugin when set to `false` (defaults to `true` when omitted).
 - `[plugins.<id>.wasm]` overrides the `[wasm]` limits for that plugin. It accepts every key of `[wasm]` except `epoch_tick`, and `[plugins.<id>.wasm.recovery]` overrides `[wasm.recovery]`; keys it leaves out keep the proxy-wide value.
+- `[plugins.<id>.wasm.network]` lists the destinations a plugin with the `network` capability may reach, and `[[plugins.<id>.wasm.mounts]]` the host folders a plugin with `filesystem-extended` sees. See [Network & Extra Folders](../plugins/wasm/network).
 
 Unknown capability names in `permissions` or `deny` are ignored with a warning. The capability strings are listed in [Capabilities & Sandbox](../plugins/wasm/capabilities#capability-matrix). `path` is accepted for compatibility; WASM plugins are always discovered in `plugins_dir`.
 

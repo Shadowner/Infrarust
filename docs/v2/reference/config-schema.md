@@ -401,6 +401,40 @@ max_call_duration = "10s"
 max_restarts = 2
 ```
 
+#### `[plugins.<id>.wasm.network]`
+
+Outbound network for a WASM plugin that has the `network` capability. Without the capability the table is ignored with a warning; with the capability and no rules, everything is refused. See [Network & Extra Folders](../plugins/wasm/network).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `allow` | array of strings | `[]` | `host:port` rules. Host: IPv4 address, `[IPv6]` address, IPv4 range `a.b.c.d/n`, IPv6 range `[x::/n]`, hostname, or `*.suffix` (HTTP only, subdomains only). Port: number, `a-b`, or `*`. A bare `*` host is rejected; write `0.0.0.0/0:*` or `[::/0]:*`. Parsed at load; a bad rule is a config error |
+| `dns` | boolean | `true` if `allow` has a hostname rule, else `false` | Let the guest resolve names (`wasi:sockets/ip-name-lookup`) |
+| `http` | boolean | `true` | Let the guest send requests with `wasi:http/outgoing-handler`, filtered by `allow` |
+
+```toml
+[plugins.libertybans.wasm.network]
+allow = ["127.0.0.1:5432", "10.0.0.0/8:3306", "[::1]:*", "db.internal:5432", "*.example.org:443", "10.1.2.3:8000-8100"]
+dns = true
+http = true
+```
+
+#### `[[plugins.<id>.wasm.mounts]]`
+
+Host folders mounted into a WASM plugin that has the `filesystem-extended` capability. Without the capability nothing is mounted and a warning is logged.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `host` | path | **required** | Host directory. Canonicalised when the plugin loads; a missing directory fails that plugin's load |
+| `guest` | string | **required** | Absolute path inside the guest. Must not be `/`, contain `.` or `..`, or equal or contain another mount's path |
+| `read_only` | boolean | `true` | Set to `false` to let the plugin write |
+
+```toml
+[[plugins.libertybans.wasm.mounts]]
+host = "/srv/libertybans/shared"
+guest = "/shared"
+read_only = true
+```
+
 ---
 
 ## Server config (`servers/*.toml`)

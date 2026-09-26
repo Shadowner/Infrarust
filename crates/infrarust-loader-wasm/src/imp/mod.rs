@@ -27,6 +27,8 @@ pub(crate) mod limbo;
 pub(crate) mod linker;
 pub(crate) mod loader;
 pub(crate) mod metadata;
+pub(crate) mod mounts;
+pub(crate) mod network;
 pub(crate) mod plugin;
 pub(crate) mod providers;
 pub(crate) mod proxies;

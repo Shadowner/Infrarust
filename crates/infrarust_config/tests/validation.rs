@@ -640,3 +640,75 @@ fn test_the_moved_forwarding_channel_keys_still_load() {
     assert!(!proxy.plugin_messaging.bungeecord);
     assert!(validate_proxy_config(&proxy).is_ok());
 }
+
+#[test]
+fn test_proxy_wasm_mount_guest_paths_are_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let mounts = |entries: &[(&str, &str)]| {
+        entries
+            .iter()
+            .map(|(host, guest)| {
+                format!("[[plugins.p.wasm.mounts]]\nhost = \"{host}\"\nguest = \"{guest}\"\n")
+            })
+            .collect::<String>()
+    };
+    for (entries, expected) in [
+        (
+            vec![("/srv/a", "shared")],
+            "plugins.p.wasm.mounts: guest path \"shared\" must be absolute",
+        ),
+        (
+            vec![("/srv/a", "/")],
+            "plugins.p.wasm.mounts: guest path \"/\" is the plugin data directory; mount somewhere below it",
+        ),
+        (
+            vec![("/srv/a", "/a/../b")],
+            "plugins.p.wasm.mounts: guest path \"/a/../b\" must not contain `.` or `..`",
+        ),
+        (
+            vec![("/srv/a", "/shared"), ("/srv/b", "/shared/")],
+            "plugins.p.wasm.mounts: guest path \"/shared\" is mounted twice",
+        ),
+        (
+            vec![("/srv/a", "/shared"), ("/srv/b", "/shared/sub")],
+            "plugins.p.wasm.mounts: guest paths \"/shared\" and \"/shared/sub\" overlap",
+        ),
+        (
+            vec![("/srv/a", "/shared/sub"), ("/srv/b", "/shared")],
+            "plugins.p.wasm.mounts: guest paths \"/shared\" and \"/shared/sub\" overlap",
+        ),
+        (
+            vec![("", "/shared")],
+            "plugins.p.wasm.mounts: the host path of \"/shared\" must not be empty",
+        ),
+    ] {
+        let config = proxy_from_toml(&mounts(&entries), dir.path());
+        let err = validate_proxy_config(&config)
+            .expect_err(expected)
+            .to_string();
+        assert_eq!(err, format!("validation error: {expected}"));
+    }
+
+    let fine = proxy_from_toml(
+        &mounts(&[
+            ("/srv/a", "/shared"),
+            ("/srv/b", "/shared-two"),
+            ("/srv/c", "/x/y"),
+        ]),
+        dir.path(),
+    );
+    assert!(validate_proxy_config(&fine).is_ok());
+}
+
+#[test]
+fn test_proxy_wasm_mount_hosts_are_not_checked_by_the_document_validation() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml(
+        "[[plugins.p.wasm.mounts]]\nhost = \"/definitely/not/here\"\nguest = \"/shared\"\n",
+        dir.path(),
+    );
+    assert!(
+        validate_proxy_config(&config).is_ok(),
+        "a missing host directory fails the plugin load, not the proxy"
+    );
+}

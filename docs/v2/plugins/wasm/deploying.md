@@ -59,7 +59,7 @@ The `PluginConfig` table accepts these keys:
 | `deny` | list of strings | `[]` | All plugins. Capabilities to remove, applied after the baseline and `permissions`. |
 | `strict_capabilities` | bool | `false` | WASM plugins. `true` refuses to load the plugin when it imports a host function it lacks the capability for, see [Missing capability](#missing-capability). |
 | `enabled` | bool | `true` | All plugins. `false` skips the plugin at startup. |
-| `wasm` | table | none | WASM plugins. Per-plugin sandbox limits, see [Sandbox limits](#sandbox-limits). |
+| `wasm` | table | none | WASM plugins. Per-plugin sandbox limits, see [Sandbox limits](#sandbox-limits), and the `network` allow-list and `mounts`, see [Network and extra folders](#network-and-extra-folders). |
 | `path` | string | none | Native plugins only. WASM plugins omit it. |
 
 ::: warning
@@ -181,8 +181,8 @@ Each plugin runs in an isolated wasmtime instance with hard limits:
 | Memory | Linear memory is capped per instance at `memory_limit_mb` (64 MiB). |
 | Call time | One call may run for `max_call_duration` (60 s), host calls included; each ban or server-manager call is capped at `host_call_timeout` (30 s). |
 | Call queue | The plugin handles one call at a time; up to `queue_capacity` (1024) calls wait, further calls are refused immediately. |
-| Filesystem | One preopened directory, `plugins_dir/<plugin-id>`, mounted as `/`. No other host paths are reachable. |
-| Network | No outbound access in the current build. |
+| Filesystem | One preopened directory, `plugins_dir/<plugin-id>`, mounted as `/`. With `filesystem-extended`, the folders listed in `[[plugins.<id>.wasm.mounts]]` as well, read-only by default. |
+| Network | None by default. With `network`, only the destinations listed in `[plugins.<id>.wasm.network] allow`. |
 
 The defaults come from the `[wasm]` table of `infrarust.toml`. Override them for one plugin under `[plugins.<id>.wasm]`:
 
@@ -198,11 +198,42 @@ queue_capacity = 4096
 
 Every `[wasm]` key except `epoch_tick` can be overridden; keys left out keep the proxy-wide value. See [Global Settings](../../configuration/global#wasm-plugin-sandbox) for each key and its accepted range.
 
-Capabilities gate which host services a plugin can call; the sandbox gates how much machine it can consume. The two together mean a misbehaving plugin cannot stall the proxy or read files outside its own data directory. Capability details are in [Capabilities](./capabilities).
+Capabilities gate which host services a plugin can call; the sandbox gates how much machine it can consume. The two together mean a misbehaving plugin cannot stall the proxy, or reach files and hosts you did not list. Capability details are in [Capabilities](./capabilities).
+
+## Network and extra folders
+
+A plugin that needs a database, a web API or a folder shared with another program gets the capability and a list of what it may reach. Both keys live under `[plugins.<id>.wasm]`:
+
+```toml
+[plugins.libertybans]
+permissions = ["network", "filesystem-extended"]
+
+[plugins.libertybans.wasm.network]
+allow = ["127.0.0.1:5432", "db.internal:5432", "api.example.com:443"]
+# dns = true     # default: on when allow has a hostname rule
+# http = true    # default
+
+[[plugins.libertybans.wasm.mounts]]
+host = "/srv/libertybans/shared"
+guest = "/shared"
+# read_only = true   # default
+```
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `network.allow` | list of `host:port` rules | `[]` | Destinations the plugin may reach. Hosts: an IPv4 address, `[IPv6]`, a range (`10.0.0.0/8`, `[fd00::/8]`), a hostname, or `*.suffix` (HTTP only). Ports: a number, `a-b`, or `*`. A bare `*` host is refused |
+| `network.dns` | bool | `true` if `allow` has a hostname rule | Lets the guest resolve names itself |
+| `network.http` | bool | `true` | Lets the guest send HTTP and HTTPS requests, still filtered by `allow` |
+| `mounts[].host` | path | required | Host directory; must exist when the plugin loads |
+| `mounts[].guest` | path | required | Absolute guest path, not `/`, not overlapping another mount |
+| `mounts[].read_only` | bool | `true` | `false` allows writes |
+
+Without the matching capability the table is ignored and a warning says so. `network` with an empty list refuses everything. A missing mount directory fails the load of that plugin, naming the plugin and the path. The rules, what each one allows, and the security trade-offs are on [Network & Extra Folders](./network).
 
 ## Next steps
 
 - [Building a Plugin](./building): produce the `.wasm` artifact.
 - [Capabilities](./capabilities): the full capability table and host interfaces.
+- [Network & Extra Folders](./network): outbound access and extra mounts.
 - [Getting Started](./getting-started): write your first plugin against the SDK.
 - [Configuration reference](../../configuration/): every `infrarust.toml` setting.

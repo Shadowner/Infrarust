@@ -71,8 +71,8 @@ Additional capabilities that require an explicit grant:
 | `codec-filter` | Register codec-level packet filters |
 | `limbo` | Provide limbo handlers (hold players in a void world) |
 | `config-write` | Rewrite the global `infrarust.toml` |
-| `filesystem-extended` | Access paths outside the plugin's data directory |
-| `network` | Make outbound network connections |
+| `filesystem-extended` | See the host folders listed in `[[plugins.<id>.wasm.mounts]]` |
+| `network` | Reach the destinations listed in `[plugins.<id>.wasm.network] allow` |
 
 Two more capability strings exist in the model. `transport-filter` is the one value that config parsing refuses outright: it is native-only and listing it in `permissions` puts it on the rejected list. `virtual-backend` parses fine but its proxy-side bridge is not yet implemented, so granting it does nothing today. Treat it as planned.
 

@@ -95,3 +95,39 @@ fn test_plugin_strict_capabilities_is_an_opt_in_flag() {
         .expect_err("a misspelt key is refused, not ignored");
     assert!(typo.to_string().contains("strict_capability"), "{typo}");
 }
+
+#[test]
+fn test_plugin_network_and_mounts_live_under_the_wasm_table() {
+    let config: ProxyConfig = toml::from_str(
+        r#"
+        [plugins.libertybans]
+        permissions = ["network", "filesystem-extended"]
+
+        [plugins.libertybans.wasm.network]
+        allow = ["127.0.0.1:5432", "db.internal:5432"]
+        http = false
+
+        [[plugins.libertybans.wasm.mounts]]
+        host = "/srv/libertybans/shared"
+        guest = "/shared"
+
+        [[plugins.libertybans.wasm.mounts]]
+        host = "/srv/libertybans/out"
+        guest = "/out"
+        read_only = false
+        "#,
+    )
+    .unwrap();
+    let plugin = &config.plugins["libertybans"];
+    assert_eq!(plugin.permissions, vec!["network", "filesystem-extended"]);
+    let wasm = plugin.wasm.as_ref().unwrap();
+    let network = wasm.network.as_ref().unwrap();
+    assert_eq!(network.allow.len(), 2);
+    assert_eq!(network.allow[1].hostname(), Some("db.internal"));
+    assert!(network.dns_enabled());
+    assert!(!network.http);
+    assert_eq!(wasm.mounts.len(), 2);
+    assert!(wasm.mounts[0].read_only);
+    assert!(!wasm.mounts[1].read_only);
+    assert_eq!(wasm.mounts[1].guest_path().unwrap(), "/out");
+}

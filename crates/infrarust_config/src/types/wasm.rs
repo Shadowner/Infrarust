@@ -3,6 +3,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::defaults;
+use crate::types::{WasmMount, WasmNetworkConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -100,6 +101,12 @@ pub struct PluginWasmConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery: Option<PluginWasmRecoveryConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<WasmNetworkConfig>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<WasmMount>,
 }
 
 impl PluginWasmConfig {
@@ -358,6 +365,188 @@ mod tests {
         let back: PluginWasmConfig = toml::from_str(&text).unwrap();
         assert_eq!(back, overrides);
         assert!(!text.contains("cpu_budget"), "{text}");
+    }
+
+    #[test]
+    fn the_network_table_and_mounts_parse_into_typed_rules() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [plugins.libertybans]
+            permissions = ["network", "filesystem-extended"]
+
+            [plugins.libertybans.wasm.network]
+            allow = ["127.0.0.1:5432", "10.0.0.0/8:3306", "[::1]:*", "db.internal:5432", "api.example.com:443", "*.example.org:443", "10.1.2.3:8000-8100"]
+            dns = true
+            http = true
+
+            [[plugins.libertybans.wasm.mounts]]
+            host = "/srv/libertybans/shared"
+            guest = "/shared"
+            read_only = true
+            "#,
+        )
+        .unwrap();
+        let wasm = config.plugins["libertybans"].wasm.as_ref().unwrap();
+        let network = wasm.network.as_ref().unwrap();
+        let allow: Vec<String> = network.allow.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            allow,
+            [
+                "127.0.0.1:5432",
+                "10.0.0.0/8:3306",
+                "[::1]:*",
+                "db.internal:5432",
+                "api.example.com:443",
+                "*.example.org:443",
+                "10.1.2.3:8000-8100",
+            ]
+        );
+        assert!(matches!(
+            network.allow[1].host(),
+            crate::HostPattern::Net(_)
+        ));
+        assert_eq!(network.dns, Some(true));
+        assert!(network.http);
+        assert_eq!(
+            wasm.mounts,
+            [WasmMount {
+                host: std::path::PathBuf::from("/srv/libertybans/shared"),
+                guest: "/shared".to_owned(),
+                read_only: true,
+            }]
+        );
+        assert_eq!(
+            config.wasm.limits_for(Some(wasm)),
+            config.wasm.limits(),
+            "network and mounts are not limits"
+        );
+    }
+
+    #[test]
+    fn network_and_mount_defaults() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [plugins.p.wasm.network]
+            allow = ["db.internal:5432"]
+
+            [[plugins.p.wasm.mounts]]
+            host = "/srv/p"
+            guest = "/data"
+            "#,
+        )
+        .unwrap();
+        let wasm = config.plugins["p"].wasm.as_ref().unwrap();
+        let network = wasm.network.as_ref().unwrap();
+        assert_eq!(network.dns, None);
+        assert!(network.dns_enabled(), "a hostname rule turns dns on");
+        assert!(network.http, "http defaults to true");
+        assert!(wasm.mounts[0].read_only, "mounts are read-only by default");
+
+        let empty: ProxyConfig = toml::from_str(
+            "[plugins.p.wasm.network]
+",
+        )
+        .unwrap();
+        let network = empty.plugins["p"].wasm.as_ref().unwrap().network.clone();
+        assert_eq!(network, Some(WasmNetworkConfig::default()));
+        assert!(!WasmNetworkConfig::default().dns_enabled());
+        assert!(WasmNetworkConfig::default().allow.is_empty());
+
+        let absent: ProxyConfig = toml::from_str(
+            "[plugins.p.wasm]
+memory_limit_mb = 8
+",
+        )
+        .unwrap();
+        let wasm = absent.plugins["p"].wasm.as_ref().unwrap();
+        assert!(wasm.network.is_none());
+        assert!(wasm.mounts.is_empty());
+    }
+
+    #[test]
+    fn a_bad_network_rule_fails_the_parse_with_the_rule_and_the_reason() {
+        let err = toml::from_str::<ProxyConfig>(
+            "[plugins.p.wasm.network]\nallow = [\"127.0.0.1:80\", \"*:443\"]\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("invalid network rule \"*:443\": a bare `*` host is not allowed"),
+            "{err}"
+        );
+        let err =
+            toml::from_str::<ProxyConfig>("[plugins.p.wasm.network]\nallow = [\"db.internal\"]\n")
+                .unwrap_err()
+                .to_string();
+        assert!(
+            err.contains("invalid network rule \"db.internal\": missing `:port`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn unknown_network_and_mount_keys_are_rejected() {
+        for text in [
+            "[plugins.p.wasm.network]\nallowed = []\n",
+            "[plugins.p.wasm.network]\nhttps = true\n",
+            "[[plugins.p.wasm.mounts]]\nhost = \"/a\"\nguest = \"/b\"\nwritable = true\n",
+            "[[plugins.p.wasm.mounts]]\nguest = \"/b\"\n",
+            "[[plugins.p.wasm.mounts]]\nhost = \"/a\"\n",
+            "[wasm.network]\nallow = []\n",
+        ] {
+            assert!(
+                toml::from_str::<ProxyConfig>(text).is_err(),
+                "{text} must not parse"
+            );
+        }
+    }
+
+    #[test]
+    fn network_and_mounts_round_trip() {
+        let overrides = PluginWasmConfig {
+            network: Some(WasmNetworkConfig {
+                allow: ["127.0.0.1:5432", "[fd00::/8]:*", "*.example.org:443"]
+                    .iter()
+                    .map(|text| text.parse().unwrap())
+                    .collect(),
+                dns: Some(false),
+                http: false,
+            }),
+            mounts: vec![
+                WasmMount {
+                    host: std::path::PathBuf::from("/srv/shared"),
+                    guest: "/shared".to_owned(),
+                    read_only: true,
+                },
+                WasmMount {
+                    host: std::path::PathBuf::from("/srv/out"),
+                    guest: "/out".to_owned(),
+                    read_only: false,
+                },
+            ],
+            ..PluginWasmConfig::default()
+        };
+        let text = toml::to_string(&overrides).unwrap();
+        let back: PluginWasmConfig = toml::from_str(&text).unwrap();
+        assert_eq!(back, overrides);
+        assert!(text.contains("\"[fd00::/8]:*\""), "{text}");
+
+        let plain = toml::to_string(&PluginWasmConfig::default()).unwrap();
+        assert!(
+            !plain.contains("network") && !plain.contains("mounts"),
+            "{plain}"
+        );
+
+        let implicit_dns = PluginWasmConfig {
+            network: Some(WasmNetworkConfig::default()),
+            ..PluginWasmConfig::default()
+        };
+        let text = toml::to_string(&implicit_dns).unwrap();
+        assert!(!text.contains("dns"), "{text}");
+        assert_eq!(
+            toml::from_str::<PluginWasmConfig>(&text).unwrap(),
+            implicit_dns
+        );
     }
 
     #[test]

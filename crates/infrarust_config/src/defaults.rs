@@ -205,3 +205,11 @@ pub const fn wasm_recovery_backoff_initial() -> Duration {
 pub const fn wasm_recovery_backoff_max() -> Duration {
     Duration::from_secs(300)
 }
+
+pub const fn wasm_network_http() -> bool {
+    true
+}
+
+pub const fn wasm_mount_read_only() -> bool {
+    true
+}

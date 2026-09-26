@@ -35,6 +35,8 @@ fn new_linker_with_wasi(
     let mut linker = Linker::<PluginStoreState>::new(engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
         .map_err(|e| instantiate_err(plugin_id, "wasi linker setup", e))?;
+    wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
+        .map_err(|e| instantiate_err(plugin_id, "wasi-http linker setup", e))?;
     Ok(linker)
 }
 

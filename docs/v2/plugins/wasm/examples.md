@@ -406,6 +406,10 @@ impl Plugin for HostCaller {
 
 `Players::count()` answers `0` when the plugin lacks `player-read`; `Config::get` returns an error of kind `PermissionDenied` when it lacks `config-read`, which the fixture treats like a missing value. The full set of host services is in [Services](./services).
 
+## net-probe
+
+What it shows: outbound TCP and UDP with `std::net`, HTTP through `wasi:http`, and files in a mounted folder with `std::fs`, all limited by the `network` and `filesystem-extended` config. A short, commented plugin doing the same is on [Network & Extra Folders](./network#example). The `net-probe` fixture runs each call on command so the loader tests can check what gets through and what is refused; read `crates/infrarust-loader-wasm/tests/fixtures/net-probe/src/lib.rs` for the HTTP body loop and the error reporting.
+
 ## See also
 
 - [Getting Started](./getting-started): the project layout and build steps.

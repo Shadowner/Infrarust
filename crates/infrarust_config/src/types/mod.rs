@@ -18,6 +18,7 @@ mod server_manager;
 mod status;
 mod telemetry;
 mod wasm;
+mod wasm_network;
 mod web;
 
 pub use address::{DomainRewrite, ServerAddress};
@@ -41,6 +42,9 @@ pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
 pub use telemetry::{MetricsConfig, ResourceConfig, TelemetryConfig, TracesConfig};
 pub use wasm::{
     PluginWasmConfig, PluginWasmRecoveryConfig, WasmConfig, WasmLimits, WasmRecoveryConfig,
+};
+pub use wasm_network::{
+    HostPattern, NetworkRule, NetworkRuleError, PortRange, WasmMount, WasmNetworkConfig,
 };
 pub use web::WebConfig;
 

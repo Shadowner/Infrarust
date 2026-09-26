@@ -1,7 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use infrarust_config::{EventsConfig, ProxyConfig, WasmConfig, WasmLimits, WasmRecoveryConfig};
+use infrarust_config::{
+    EventsConfig, ProxyConfig, WasmConfig, WasmLimits, WasmMount, WasmNetworkConfig,
+    WasmRecoveryConfig,
+};
 
 #[derive(Debug, Clone)]
 pub struct WasmLoaderConfig {
@@ -10,6 +13,8 @@ pub struct WasmLoaderConfig {
     defaults: WasmLimits,
     plugins: HashMap<String, WasmLimits>,
     strict_capabilities: HashSet<String>,
+    network: HashMap<String, WasmNetworkConfig>,
+    mounts: HashMap<String, Vec<WasmMount>>,
 }
 
 impl WasmLoaderConfig {
@@ -31,12 +36,27 @@ impl WasmLoaderConfig {
             .filter(|(_, plugin)| plugin.strict_capabilities)
             .map(|(id, _)| id.clone())
             .collect();
+        let wasm_tables = || {
+            config
+                .plugins
+                .iter()
+                .filter_map(|(id, plugin)| plugin.wasm.as_ref().map(|wasm| (id, wasm)))
+        };
+        let network = wasm_tables()
+            .filter_map(|(id, wasm)| wasm.network.clone().map(|network| (id.clone(), network)))
+            .collect();
+        let mounts = wasm_tables()
+            .filter(|(_, wasm)| !wasm.mounts.is_empty())
+            .map(|(id, wasm)| (id.clone(), wasm.mounts.clone()))
+            .collect();
         Self {
             epoch_tick: config.wasm.epoch_tick,
             event_handler_timeout: config.events.handler_timeout,
             defaults: config.wasm.limits(),
             plugins,
             strict_capabilities,
+            network,
+            mounts,
         }
     }
 
@@ -56,6 +76,14 @@ impl WasmLoaderConfig {
     #[must_use]
     pub fn strict_capabilities(&self, plugin_id: &str) -> bool {
         self.strict_capabilities.contains(plugin_id)
+    }
+
+    pub(crate) fn network_for(&self, plugin_id: &str) -> Option<&WasmNetworkConfig> {
+        self.network.get(plugin_id)
+    }
+
+    pub(crate) fn mounts_for(&self, plugin_id: &str) -> &[WasmMount] {
+        self.mounts.get(plugin_id).map_or(&[], Vec::as_slice)
     }
 
     pub(crate) fn sandbox_for(&self, plugin_id: &str) -> SandboxLimits {
@@ -80,6 +108,8 @@ impl Default for WasmLoaderConfig {
             defaults: wasm.limits(),
             plugins: HashMap::new(),
             strict_capabilities: HashSet::new(),
+            network: HashMap::new(),
+            mounts: HashMap::new(),
         }
     }
 }
@@ -235,6 +265,35 @@ mod tests {
         assert!(!loader.strict_capabilities("relaxed"));
         assert!(!loader.strict_capabilities("unknown"));
         assert!(!WasmLoaderConfig::default().strict_capabilities("locked"));
+    }
+
+    #[test]
+    fn network_and_mounts_are_read_per_plugin() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [plugins.net.wasm.network]
+            allow = ["127.0.0.1:5432"]
+            http = false
+
+            [[plugins.files.wasm.mounts]]
+            host = "/srv/files"
+            guest = "/files"
+
+            [plugins.plain.wasm]
+            memory_limit_mb = 8
+            "#,
+        )
+        .unwrap();
+        let loader = WasmLoaderConfig::from_proxy_config(&config);
+        let net = loader.network_for("net").unwrap();
+        assert_eq!(net.allow[0].to_string(), "127.0.0.1:5432");
+        assert!(!net.http);
+        assert!(loader.network_for("files").is_none());
+        assert!(loader.network_for("plain").is_none());
+        assert_eq!(loader.mounts_for("files")[0].guest, "/files");
+        assert!(loader.mounts_for("net").is_empty());
+        assert!(loader.mounts_for("unknown").is_empty());
+        assert!(WasmLoaderConfig::default().network_for("net").is_none());
     }
 
     #[test]

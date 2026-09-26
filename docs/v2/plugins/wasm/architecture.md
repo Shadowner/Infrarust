@@ -28,7 +28,7 @@ cargo build --release --target wasm32-wasip2
 The build is plain `cargo build`. The interface bindings are generated inside the SDK, so you do not install or run `cargo-component`.
 :::
 
-Infrarust instantiates one wasmtime `Store` per plugin. Each store holds its own linear memory, its own [WASI](https://wasi.dev) context (a single pre-opened data directory), a resource table, the plugin's [capability set](./capabilities), and a CPU budget enforced through wasmtime epoch interruption. Plugins share no memory with the host or with each other. A guest trap discards that one store; the host never dispatches into it again and builds a fresh one for the plugin (see [Fault model](./fault-model)).
+Infrarust instantiates one wasmtime `Store` per plugin. Each store holds its own linear memory, its own [WASI](https://wasi.dev) context (the pre-opened data directory, plus any [mounts and network allow-list](./network) the operator configured), a resource table, the plugin's [capability set](./capabilities), and a CPU budget enforced through wasmtime epoch interruption. Plugins share no memory with the host or with each other. A guest trap discards that one store; the host never dispatches into it again and builds a fresh one for the plugin (see [Fault model](./fault-model)).
 
 ## The contract: imports and exports
 

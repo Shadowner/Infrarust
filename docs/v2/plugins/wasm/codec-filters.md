@@ -242,7 +242,7 @@ A codec filter instance runs in its own synchronous store, separate from the plu
 | `wasi:cli/environment` | Empty environment, no arguments, no working directory. |
 | stdout, stderr | Writes succeed and are discarded, so a stray `println!` does not break the filter. |
 | stdin | Always at end of stream. |
-| Everything else | Traps: the filesystem (there is no preopened directory), sockets, `exit`, sleeping on a clock (`subscribe-duration`, `subscribe-instant`), and every other `infrarust:plugin` interface. |
+| Everything else | Traps: the filesystem (there is no preopened directory), sockets and `wasi:http` (even when the plugin has the `network` capability), `exit`, sleeping on a clock (`subscribe-duration`, `subscribe-instant`), and every other `infrarust:plugin` interface. |
 
 A trap poisons that connection-side instance as described in [Trap behavior](#trap-behavior), so a filter that calls a trapping import passes every later packet through unchanged. The plugin's other host services (players, bans, config, the scheduler) are not reachable from a filter; read what you need in `on_enable` and pass it through the constructor, or reconstruct it from the [`CodecSessionInit`](#codecsessioninit).
 

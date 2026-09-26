@@ -11,6 +11,8 @@ use infrarust_api::services::scheduler::TaskHandle;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi_http::WasiHttpCtx;
+use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
 
 use crate::actor::{CallKind, InstanceRef};
 use crate::codec::CodecInstantiator;
@@ -20,6 +22,8 @@ use crate::consts::{
 };
 use crate::deadline::{Deadline, HostCallLimit};
 use crate::error::WasmLoaderError;
+use crate::mounts::Mount;
+use crate::network::{HttpHooks, NetworkPolicy, probe_policy};
 use crate::rate_limit::RateLimit;
 use crate::registrations::Registrations;
 
@@ -31,11 +35,15 @@ pub(crate) struct PluginSetup {
     pub(crate) codec: Option<Arc<CodecInstantiator>>,
     pub(crate) sandbox: SandboxLimits,
     pub(crate) registrations: Arc<Registrations>,
+    pub(crate) network: Arc<NetworkPolicy>,
+    pub(crate) mounts: Arc<[Mount]>,
 }
 
 pub(crate) struct PluginStoreState {
     table: ResourceTable,
     wasi: WasiCtx,
+    http: WasiHttpCtx,
+    http_hooks: HttpHooks,
     limits: StoreLimits,
     capabilities: CapabilitySet,
     ctx: Option<Arc<dyn PluginContext>>,
@@ -218,6 +226,16 @@ impl WasiView for PluginStoreState {
     }
 }
 
+impl WasiHttpView for PluginStoreState {
+    fn http(&mut self) -> WasiHttpCtxView<'_> {
+        WasiHttpCtxView {
+            ctx: &mut self.http,
+            table: &mut self.table,
+            hooks: &mut self.http_hooks,
+        }
+    }
+}
+
 fn store_limits(sandbox: &SandboxLimits) -> StoreLimits {
     StoreLimitsBuilder::new()
         .memory_size(sandbox.memory_bytes)
@@ -225,7 +243,11 @@ fn store_limits(sandbox: &SandboxLimits) -> StoreLimits {
         .build()
 }
 
-fn build_wasi_ctx(data_dir: &Path) -> Result<WasiCtx, WasmLoaderError> {
+fn build_wasi_ctx(
+    data_dir: &Path,
+    network: &Arc<NetworkPolicy>,
+    mounts: &[Mount],
+) -> Result<WasiCtx, WasmLoaderError> {
     std::fs::create_dir_all(data_dir).map_err(|source| WasmLoaderError::WasiSetup {
         path: data_dir.to_path_buf(),
         source,
@@ -237,6 +259,18 @@ fn build_wasi_ctx(data_dir: &Path) -> Result<WasiCtx, WasmLoaderError> {
             path: data_dir.to_path_buf(),
             source: std::io::Error::other(e.to_string()),
         })?;
+    for mount in mounts {
+        let (dirs, files) = mount.perms();
+        builder
+            .preopened_dir(&mount.host, &mount.guest, dirs, files)
+            .map_err(|e| WasmLoaderError::WasiSetup {
+                path: mount.host.clone(),
+                source: std::io::Error::other(e.to_string()),
+            })?;
+    }
+    builder
+        .socket_addr_check(network.socket_check())
+        .allow_ip_name_lookup(network.dns());
     Ok(builder.build())
 }
 
@@ -245,9 +279,13 @@ pub(crate) fn build_load_state(
     generation: u64,
     instance: InstanceRef,
 ) -> Result<PluginStoreState, WasmLoaderError> {
+    let wasi = build_wasi_ctx(&setup.data_dir, &setup.network, &setup.mounts)?;
+    setup.network.warm_in_background();
     Ok(PluginStoreState {
         table: ResourceTable::new(),
-        wasi: build_wasi_ctx(&setup.data_dir)?,
+        wasi,
+        http: WasiHttpCtx::new(),
+        http_hooks: HttpHooks::new(Arc::clone(&setup.network), setup.sandbox.host_call_timeout),
         limits: store_limits(&setup.sandbox),
         capabilities: setup.capabilities.clone(),
         ctx: Some(Arc::clone(&setup.ctx)),
@@ -273,6 +311,8 @@ pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> P
     PluginStoreState {
         table: ResourceTable::new(),
         wasi: WasiCtxBuilder::new().build(),
+        http: WasiHttpCtx::new(),
+        http_hooks: HttpHooks::new(probe_policy(plugin_id.clone()), sandbox.host_call_timeout),
         limits: store_limits(sandbox),
         capabilities: CapabilitySet::default(),
         ctx: None,

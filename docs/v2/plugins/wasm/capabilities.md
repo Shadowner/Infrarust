@@ -1,6 +1,6 @@
 ---
 title: Capabilities & Sandbox
-description: The capability model, the baseline-vs-opt-in matrix, revoking capabilities with deny, and the CPU, memory, call-queue and filesystem sandbox enforced on every WASM plugin.
+description: The capability model, the baseline-vs-opt-in matrix, revoking capabilities with deny, and the CPU, memory, call-queue, filesystem and network sandbox enforced on every WASM plugin.
 outline: [2, 3]
 ---
 
@@ -8,7 +8,7 @@ outline: [2, 3]
 
 A WASM plugin starts with no access to the host. It receives a fixed baseline of capabilities, and the proxy operator grants anything beyond that in config. Each capability gates one host interface, or a few methods of one. Every interface is linked for every plugin: the host checks the capability each time a gated function is called and refuses the call when it is missing. At load time the host logs which imports will be refused, and `strict_capabilities = true` turns that report into a load failure.
 
-This page covers the capability enum, the baseline-vs-opt-in split, how granting and revoking work, what a refused call returns, and the CPU, memory, call-queue, and filesystem limits the runtime enforces.
+This page covers the capability enum, the baseline-vs-opt-in split, how granting and revoking work, what a refused call returns, and the CPU, memory, call-queue, filesystem and network limits the runtime enforces.
 
 ## The capability model
 
@@ -64,8 +64,8 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `TransportFilter` | `transport-filter` | Register transport filters (never grantable via config) | No |
 | `VirtualBackend` | `virtual-backend` | Provide virtual backends (planned, not implemented) | No |
 | `PermissionProvider` | `permission-provider` | Become the permission provider named by `[permissions] provider`, and replace or clear a player's permission snapshot (`providers.register-permission-provider`, `permissions.*`, see [Permissions](./permissions)) | No |
-| `FilesystemExtended` | `filesystem-extended` | Filesystem access beyond the per-plugin data directory (deferred) | No |
-| `Network` | `network` | Outbound network access (deferred) | No |
+| `FilesystemExtended` | `filesystem-extended` | Mount the host folders listed in `[[plugins.<id>.wasm.mounts]]`, see [Network & Extra Folders](./network) | No |
+| `Network` | `network` | Outbound TCP, UDP, name lookups and HTTP to the destinations in `[plugins.<id>.wasm.network] allow`, see [Network & Extra Folders](./network) | No |
 
 ::: warning transport-filter is host-only
 `transport-filter` is a valid capability string, but `from_config_strings` puts it in the rejected list rather than granting it. A WASM plugin cannot register transport filters. The capability exists for native plugins, which receive it through `native_trusted`.
@@ -251,7 +251,7 @@ Use it for a plugin that cannot do its job without the capabilities it imports, 
 
 ## The sandbox
 
-Every WASM plugin runs under limits enforced by the wasmtime runtime: a CPU budget, a linear-memory cap, a wall-clock limit per call, a bounded call queue, and a filesystem view. The numbers come from the `[wasm]` table of `infrarust.toml`, and `[plugins.<id>.wasm]` overrides them for one plugin. The defaults:
+Every WASM plugin runs under limits enforced by the wasmtime runtime: a CPU budget, a linear-memory cap, a wall-clock limit per call, a bounded call queue, a filesystem view and a network allow-list. The numbers come from the `[wasm]` table of `infrarust.toml`, and `[plugins.<id>.wasm]` overrides them for one plugin. The defaults:
 
 | Key | Default | Applies to |
 |-----|---------|------------|
@@ -326,7 +326,21 @@ builder
     .preopened_dir(data_dir, "/", DirPerms::all(), FilePerms::all())?;
 ```
 
-There is no network access, no inherited stdio, and no second preopen. Outbound network (`network`) and access outside the data directory (`filesystem-extended`) are deferred; the capabilities are defined but the WASI context does not yet widen for them.
+There is no inherited stdio. With `filesystem-extended`, each entry of `[[plugins.<id>.wasm.mounts]]` adds one more preopen at its `guest` path: `DirPerms::READ` and `FilePerms::READ` for a read-only mount (the default), full permissions otherwise. A host directory that does not exist fails that plugin's load. Without the capability the mounts are ignored with one warning, and the plugin sees only its data directory. `..` cannot climb out of a preopen, and a symbolic link that points outside it is refused.
+
+### Network
+
+Without `network`, the WASI context refuses every socket address, name lookups are off and every `wasi:http` request fails with `HTTP-request-denied`. The `wasi:sockets` and `wasi:http` interfaces are still linked, so a plugin that imports them loads and gets a refusal instead of a link error.
+
+With `network`, the plugin reaches only what `[plugins.<id>.wasm.network] allow` lists:
+
+- Each TCP connect, UDP connect and UDP datagram goes through an address check. An address matches an IP or range rule, or an address the proxy resolved from a hostname rule (re-resolved at most every 30 seconds per name when a connection misses).
+- Listening is refused unless a rule names the exact bind address. Ranges and hostnames never allow a bind, so even `0.0.0.0/0:*` does not let a plugin open a server socket. UDP sockets may bind port `0` so they can send.
+- Name lookups from the guest are on only when `dns` is (by default, when the list has a hostname rule). A lookup can carry data out even when the connection that follows is refused; keep `dns` off unless the plugin connects by name through a socket.
+- HTTP requests are checked by authority. The proxy resolves hostnames itself, verifies HTTPS certificates against the system trust store and caps the request timeouts at `host_call_timeout`.
+- An empty allow list refuses everything; config present without the capability is ignored. Each case logs one warning at load, and each refused call logs a rate-limited warning naming the plugin, the destination and the reason.
+
+Codec filter instances get none of this: sockets and HTTP trap inside a filter whatever the plugin is granted. The full rules, the config keys and a working example are on [Network & Extra Folders](./network).
 
 Codec filter instances get a narrower host than this: clocks, randomness, an empty environment and discarded stdio, with no filesystem at all. See [Codec Filters](./codec-filters#what-a-filter-can-call).
 
@@ -339,6 +353,7 @@ Restarts are budgeted by `[wasm.recovery]`. A plugin that keeps faulting is quar
 ## See also
 
 - [Deploying](./deploying): where the `permissions` and `deny` config keys live and how rejected strings surface.
+- [Network & Extra Folders](./network): the `network` allow-list and the `filesystem-extended` mounts in full.
 - [Global Settings](../../configuration/global#wasm-plugin-sandbox): the `[wasm]` table and its accepted ranges.
 - [Fault model](./fault-model): recovery, restart budget and quarantine in full.
 - [Lifecycle](./lifecycle): the stages from discovery to disable.

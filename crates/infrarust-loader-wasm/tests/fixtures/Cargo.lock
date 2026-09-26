@@ -25,7 +25,7 @@ name = "fixture-capability-denied"
 version = "0.0.0"
 dependencies = [
  "fixture-common",
- "wit-bindgen",
+ "wit-bindgen 0.58.0",
 ]
 
 [[package]]
@@ -65,7 +65,7 @@ name = "fixture-cpu-spin"
 version = "0.0.0"
 dependencies = [
  "fixture-common",
- "wit-bindgen",
+ "wit-bindgen 0.58.0",
 ]
 
 [[package]]
@@ -94,14 +94,30 @@ name = "fixture-memory-bomb"
 version = "0.0.0"
 dependencies = [
  "fixture-common",
- "wit-bindgen",
+ "wit-bindgen 0.58.0",
+]
+
+[[package]]
+name = "fixture-net-codec"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+ "wasip2",
+]
+
+[[package]]
+name = "fixture-net-probe"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+ "wasip2",
 ]
 
 [[package]]
 name = "fixture-old-world"
 version = "0.0.0"
 dependencies = [
- "wit-bindgen",
+ "wit-bindgen 0.58.0",
 ]
 
 [[package]]
@@ -137,7 +153,7 @@ name = "fixture-trap-on-purpose"
 version = "0.0.0"
 dependencies = [
  "fixture-common",
- "wit-bindgen",
+ "wit-bindgen 0.58.0",
 ]
 
 [[package]]
@@ -195,7 +211,7 @@ dependencies = [
  "infrarust-plugin-macros",
  "infrarust-plugin-wit",
  "uuid",
- "wit-bindgen",
+ "wit-bindgen 0.58.0",
 ]
 
 [[package]]
@@ -343,6 +359,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
 
 [[package]]
+name = "wasip2"
+version = "1.0.4+wasi-0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
+dependencies = [
+ "wit-bindgen 0.57.1",
+]
+
+[[package]]
 name = "wasm-encoder"
 version = "0.251.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -374,6 +399,15 @@ dependencies = [
  "hashbrown",
  "indexmap",
  "semver",
+]
+
+[[package]]
+name = "wit-bindgen"
+version = "0.57.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+dependencies = [
+ "bitflags",
 ]
 
 [[package]]
